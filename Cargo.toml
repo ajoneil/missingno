@@ -3,3 +3,7 @@
 name = "missingno-gmb"
 version = "0.0.1"
 authors = [ "andy@andyofniall.net" ]
+
+[[bin]]
+name = "missingno-gmb"
+path = "src/main.rs"
