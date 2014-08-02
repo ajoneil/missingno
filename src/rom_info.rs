@@ -1,5 +1,17 @@
 pub struct RomInfo {
-    title: String
+    title: String,
+    mbc: MbcType
+}
+
+pub enum MbcType {
+    NoMBC,
+    MBC1,
+    MBC2,
+    MMM01,
+    MBC3,
+    MBC4,
+    MBC5,
+    Unknown
 }
 
 impl RomInfo {
@@ -13,8 +25,20 @@ impl RomInfo {
              title.push_char(*character as char)
          }
 
+         let mbc = match rom[0x147] {
+             0x00|0x08|0x09 => NoMBC,
+             0x01..0x03 => MBC1,
+             0x05|0x06 => MBC2,
+             0x0b..0x0d => MMM01,
+             0x0f..0x13 => MBC3,
+             0x15..0x17 => MBC4,
+             0x19..0x1e => MBC5,
+             _ => Unknown
+         };
+
          RomInfo {
-             title: title
+             title: title,
+             mbc: mbc
          }
     }
 

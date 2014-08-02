@@ -1,17 +1,21 @@
 use rom_info::RomInfo;
 use cpu::Cpu;
+use cartridge::Cartridge;
 
 pub struct Gameboy {
     info: RomInfo,
-    rom: Vec<u8>,
+    cartridge: Cartridge,
     cpu: Cpu
 }
 
 impl Gameboy {
     pub fn new(rom: Vec<u8>) -> Gameboy {
+        let info = RomInfo::new(rom.as_slice());
+        let cartridge = Cartridge::new(rom);
+
         let gb = Gameboy {
-            info: RomInfo::new(rom.as_slice()),
-            rom: rom,
+            info: info,
+            cartridge: cartridge,
             cpu: Cpu::new()
         };
 
