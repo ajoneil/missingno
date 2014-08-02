@@ -3,6 +3,7 @@ use std::os;
 use std::io::File;
 use std::path::Path;
 
+mod cpu;
 mod gameboy;
 mod rom_info;
 
