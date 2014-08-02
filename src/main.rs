@@ -1,8 +1,9 @@
-use rom_info::RomInfo;
+use gameboy::Gameboy;
 use std::os;
 use std::io::File;
 use std::path::Path;
 
+mod gameboy;
 mod rom_info;
 
 
@@ -15,7 +16,5 @@ fn main() {
         Ok(e) => e,
         _ => fail!()
     };
-    let rom_info = RomInfo::new(rom.as_slice());
-
-    println!("{}", rom_info.title());
+    let gb = Gameboy::new(rom);
 }
