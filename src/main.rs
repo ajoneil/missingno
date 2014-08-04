@@ -7,6 +7,7 @@ mod cartridge;
 mod cpu;
 mod gameboy;
 mod mbc;
+mod mmu;
 mod rom_info;
 
 

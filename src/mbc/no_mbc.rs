@@ -9,7 +9,7 @@ impl NoMbc {
 }
 
 impl Mbc for NoMbc {
-    fn read(address: u16, rom: &[u8]) -> u8 {
+    fn read(&self, address: u16, rom: &[u8]) -> u8 {
         rom[address as uint]
     }
 }
