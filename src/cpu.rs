@@ -1,3 +1,5 @@
+use mmu::Mmu;
+
 pub struct Cpu {
     a: u8,
     f: u8,
@@ -25,5 +27,19 @@ impl Cpu {
             sp: 0xfffe,
             pc: 0x100
         }
+    }
+
+    pub fn step(&mut self, mmu: &Mmu) -> int {
+        let instruction = self.read_and_inc_pc(mmu);
+        match instruction {
+            0x00 => 4,
+            _ => fail!("Unimplemented instruction {:x}", instruction)
+        }
+    }
+
+    pub fn read_and_inc_pc(&mut self, mmu: &Mmu) -> u8 {
+        let byte = mmu.read(self.pc);
+        self.pc += 1;
+        byte
     }
 }

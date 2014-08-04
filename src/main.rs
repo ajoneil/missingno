@@ -20,5 +20,7 @@ fn main() {
         Ok(e) => e,
         _ => fail!()
     };
-    let gb = Gameboy::new(rom);
+    let mut gb = Gameboy::new(rom);
+
+    gb.run();
 }

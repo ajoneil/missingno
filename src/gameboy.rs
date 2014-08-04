@@ -25,4 +25,10 @@ impl Gameboy {
 
         gb
     }
+
+    pub fn run(&mut self) {
+        loop {
+            self.cpu.step(&self.mmu);
+        }
+    }
 }
