@@ -1,6 +1,6 @@
 pub struct RomInfo {
-    title: String,
-    mbc: MbcType
+    pub title: String,
+    pub mbc_type: MbcType
 }
 
 pub enum MbcType {
@@ -25,7 +25,7 @@ impl RomInfo {
              title.push_char(*character as char)
          }
 
-         let mbc = match rom[0x147] {
+         let mbc_type = match rom[0x147] {
              0x00|0x08|0x09 => NoMBC,
              0x01..0x03 => MBC1,
              0x05|0x06 => MBC2,
@@ -38,11 +38,7 @@ impl RomInfo {
 
          RomInfo {
              title: title,
-             mbc: mbc
+             mbc_type: mbc_type
          }
-    }
-
-    pub fn title(&self) -> &str {
-        self.title.as_slice()
     }
 }

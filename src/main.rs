@@ -6,6 +6,7 @@ use std::path::Path;
 mod cartridge;
 mod cpu;
 mod gameboy;
+mod mbc;
 mod rom_info;
 
 

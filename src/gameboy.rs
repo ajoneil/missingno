@@ -11,7 +11,7 @@ pub struct Gameboy {
 impl Gameboy {
     pub fn new(rom: Vec<u8>) -> Gameboy {
         let info = RomInfo::new(rom.as_slice());
-        let cartridge = Cartridge::new(rom);
+        let cartridge = Cartridge::new(rom, info.mbc_type);
 
         let gb = Gameboy {
             info: info,
@@ -19,7 +19,7 @@ impl Gameboy {
             cpu: Cpu::new()
         };
 
-        println!("{}", gb.info.title());
+        println!("{}", gb.info.title);
 
         gb
     }
