@@ -1,9 +1,9 @@
 [package]
 
-name = "missingno-gmb"
+name = "missingnogmb"
 version = "0.0.1"
 authors = [ "andy@andyofniall.net" ]
 
 [[bin]]
-name = "missingno-gmb"
+name = "missingnogmb"
 path = "src/main.rs"
