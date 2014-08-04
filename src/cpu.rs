@@ -13,6 +13,11 @@ pub struct Cpu {
     pc: u16
 }
 
+static Z_FLAG: u8 = 0b10000000;
+static N_FLAG: u8 = 0b01000000;
+static H_FLAG: u8 = 0b00010000;
+static C_FLAG: u8 = 0b00001000;
+
 impl Cpu {
     pub fn new() -> Cpu {
         Cpu {
@@ -32,15 +37,48 @@ impl Cpu {
     pub fn step(&mut self, mmu: &Mmu) -> int {
         let instruction = self.read_and_inc_pc(mmu);
         match instruction {
-            0x00 => 4,                                       // nop
+            0x00 => 4, // nop
+            0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
+            0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
+            0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor d
+            0xab => { self.a = self.a ^ self.e; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor e
+            0xac => { self.a = self.a ^ self.h; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor h
+            0xad => { self.a = self.a ^ self.l; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor l
+            0xae => { self.a = self.a ^ self.read_hl(mmu); let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 8 } // xor (hl)
+            0xaf => { self.a = self.a ^ self.a; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor a
             0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
+            0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 8 } // xor nn
             _ => fail!("Unimplemented instruction {:x} at {:x}", instruction, self.pc)
         }
     }
 
-    pub fn read_and_inc_pc(&mut self, mmu: &Mmu) -> u8 {
+    fn read_and_inc_pc(&mut self, mmu: &Mmu) -> u8 {
         let byte = mmu.read(self.pc);
         self.pc += 1;
         byte
+    }
+
+    fn read_hl(&self, mmu: &Mmu) -> u8 {
+        mmu.read((self.h as u16 * 256) + self.l as u16)
+    }
+
+    fn set_z(&mut self, val: u8) {
+        if val == 0 {
+            self.f = self.f | Z_FLAG;
+        } else {
+            self.f = self.f ^ Z_FLAG;
+        }
+    }
+
+    fn clear_n(&mut self) {
+        self.f = self.f ^ N_FLAG;
+    }
+
+    fn clear_h(&mut self) {
+        self.f = self.f ^ H_FLAG;
+    }
+
+    fn clear_c(&mut self) {
+        self.f = self.f & C_FLAG;
     }
 }
