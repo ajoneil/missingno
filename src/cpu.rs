@@ -32,8 +32,9 @@ impl Cpu {
     pub fn step(&mut self, mmu: &Mmu) -> int {
         let instruction = self.read_and_inc_pc(mmu);
         match instruction {
-            0x00 => 4,
-            _ => fail!("Unimplemented instruction {:x}", instruction)
+            0x00 => 4,                                       // nop
+            0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
+            _ => fail!("Unimplemented instruction {:x} at {:x}", instruction, self.pc)
         }
     }
 

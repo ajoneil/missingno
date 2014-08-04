@@ -21,4 +21,8 @@ impl Mmu {
             _ => fail!("Unimplemented read from {}", address)
         }
     }
+
+    pub fn read_word(&self, address: u16) -> u16 {
+        self.read(address) as u16 + (self.read(address + 1) as u16 * 256)
+    }
 }
