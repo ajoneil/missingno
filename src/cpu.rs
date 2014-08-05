@@ -38,6 +38,10 @@ impl Cpu {
         let instruction = self.read_and_inc_pc(mmu);
         match instruction {
             0x00 => 4, // nop
+            0x01 => { self.b = self.read_and_inc_pc(mmu); self.c = self.read_and_inc_pc(mmu); 12 } // ld bc,nn
+            0x11 => { self.d = self.read_and_inc_pc(mmu); self.e = self.read_and_inc_pc(mmu); 12 } // ld de,nn
+            0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
+            0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
             0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
             0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
             0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor d
@@ -55,6 +59,12 @@ impl Cpu {
     fn read_and_inc_pc(&mut self, mmu: &Mmu) -> u8 {
         let byte = mmu.read(self.pc);
         self.pc += 1;
+        byte
+    }
+
+    fn read_word_and_inc_pc(&mut self, mmu: &Mmu) -> u16 {
+        let byte = mmu.read_word(self.pc);
+        self.pc += 2;
         byte
     }
 
