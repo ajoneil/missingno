@@ -39,19 +39,26 @@ impl Cpu {
         match instruction {
             0x00 => 4, // nop
             0x01 => { self.b = self.read_and_inc_pc(mmu); self.c = self.read_and_inc_pc(mmu); 12 } // ld bc,nn
+            0x05 => { self.b = self.b - 1; let b = self.b; self.set_z(b); 4 } // dec b
             0x06 => { self.b = self.read_and_inc_pc(mmu); 8 } // ld b,n
+            0x0d => { self.c = self.c - 1; let c = self.c; self.set_z(c); 4 } // dec c
             0x0e => { self.c = self.read_and_inc_pc(mmu); 8 } // ld c,n
             0x11 => { self.d = self.read_and_inc_pc(mmu); self.e = self.read_and_inc_pc(mmu); 12 } // ld de,nn
+            0x15 => { self.d = self.d - 1; let d = self.d; self.set_z(d); 4 } // dec d
             0x16 => { self.d = self.read_and_inc_pc(mmu); 8 } // ld d,n
+            0x1d => { self.e = self.e - 1; let e = self.e; self.set_z(e); 4 } // dec e
             0x1e => { self.e = self.read_and_inc_pc(mmu); 8 } // ld e,n
             0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
             0x22 => { self.write_hl(mmu, self.a); self.increment_hl(); 8 } // ldi (hl),a
+            0x25 => { self.h = self.h - 1; let h = self.h; self.set_z(h); 4 } // dec h
             0x26 => { self.h = self.read_and_inc_pc(mmu); 8 } // ld h,n
             0x2a => { self.a = self.read_hl(mmu); self.increment_hl(); 8 } // ldi a,(hl)
+            0x2d => { self.l = self.l - 1; let l = self.l; self.set_z(l); 4 } // dec l
             0x2e => { self.l = self.read_and_inc_pc(mmu); 8 } // ld l,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
             0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
             0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
+            0x3d => { self.a = self.a - 1; let a = self.a; self.set_z(a); 4 } // dec b
             0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
             0x40 => { 4 } // ld b,b
             0x41 => { self.b = self.c; 4 } // ld b,c
@@ -102,12 +109,12 @@ impl Cpu {
             0x7c => { self.a = self.h; 4 } // ld a,h
             0x7d => { self.a = self.l; 4 } // ld a,l
             0x7f => { 4 } // ld a,a
-            0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
-            0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
-            0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor d
-            0xab => { self.a = self.a ^ self.e; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor e
-            0xac => { self.a = self.a ^ self.h; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor h
-            0xad => { self.a = self.a ^ self.l; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor l
+            0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor b
+            0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor c
+            0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor d
+            0xab => { self.a = self.a ^ self.e; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor e
+            0xac => { self.a = self.a ^ self.h; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor h
+            0xad => { self.a = self.a ^ self.l; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor l
             0xae => { self.a = self.a ^ self.read_hl(mmu); let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 8 } // xor (hl)
             0xaf => { self.a = self.a ^ self.a; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor a
             0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
