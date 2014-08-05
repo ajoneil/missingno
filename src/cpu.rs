@@ -39,9 +39,16 @@ impl Cpu {
         match instruction {
             0x00 => 4, // nop
             0x01 => { self.b = self.read_and_inc_pc(mmu); self.c = self.read_and_inc_pc(mmu); 12 } // ld bc,nn
+            0x06 => { self.b = self.read_and_inc_pc(mmu); 8 } // ld b,n
+            0x0e => { self.c = self.read_and_inc_pc(mmu); 8 } // ld c,n
             0x11 => { self.d = self.read_and_inc_pc(mmu); self.e = self.read_and_inc_pc(mmu); 12 } // ld de,nn
+            0x16 => { self.d = self.read_and_inc_pc(mmu); 8 } // ld d,n
+            0x1e => { self.e = self.read_and_inc_pc(mmu); 8 } // ld e,n
             0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
+            0x26 => { self.h = self.read_and_inc_pc(mmu); 8 } // ld h,n
+            0x2e => { self.l = self.read_and_inc_pc(mmu); 8 } // ld l,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
+            0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
             0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
             0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
             0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor d
