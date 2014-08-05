@@ -48,15 +48,19 @@ impl Cpu {
             0x16 => { self.d = self.read_and_inc_pc(mmu); 8 } // ld d,n
             0x1d => { self.e = self.e - 1; let e = self.e; self.set_z(e); 4 } // dec e
             0x1e => { self.e = self.read_and_inc_pc(mmu); 8 } // ld e,n
+            0x20 => { let distance = self.read_and_inc_pc(mmu); if !self.z() { self.jr(distance); 12 } else { 8 } } // jr nz,n
             0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
             0x22 => { self.write_hl(mmu, self.a); self.increment_hl(); 8 } // ldi (hl),a
             0x25 => { self.h = self.h - 1; let h = self.h; self.set_z(h); 4 } // dec h
             0x26 => { self.h = self.read_and_inc_pc(mmu); 8 } // ld h,n
+            0x28 => { let distance = self.read_and_inc_pc(mmu); if self.z() { self.jr(distance); 12 } else { 8 } } // jr z,n
             0x2a => { self.a = self.read_hl(mmu); self.increment_hl(); 8 } // ldi a,(hl)
             0x2d => { self.l = self.l - 1; let l = self.l; self.set_z(l); 4 } // dec l
             0x2e => { self.l = self.read_and_inc_pc(mmu); 8 } // ld l,n
+            0x30 => { let distance = self.read_and_inc_pc(mmu); if !self.c() { self.jr(distance); 12 } else { 8 } } // jr nc,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
             0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
+            0x38 => { let distance = self.read_and_inc_pc(mmu); if self.c() { self.jr(distance); 12 } else { 8 } } // jr c,n
             0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
             0x3d => { self.a = self.a - 1; let a = self.a; self.set_z(a); 4 } // dec b
             0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
@@ -161,6 +165,10 @@ impl Cpu {
         }
     }
 
+    fn z(&self) -> bool {
+        self.f & Z_FLAG == Z_FLAG
+    }
+
     fn set_z(&mut self, val: u8) {
         if val == 0 {
             self.f = self.f | Z_FLAG;
@@ -177,7 +185,20 @@ impl Cpu {
         self.f = self.f ^ H_FLAG;
     }
 
+    fn c(&self) -> bool {
+        self.c & C_FLAG == C_FLAG
+    }
+
     fn clear_c(&mut self) {
         self.f = self.f & C_FLAG;
+    }
+
+    fn jr(&mut self, distance: u8) {
+        if distance & 0x80 != 0x00 {
+            let  distance = (distance - 1) ^ 0x00;
+            self.pc = self.pc - distance as u16;
+        } else {
+            self.pc = self.pc + distance as u16;
+        }
     }
 }
