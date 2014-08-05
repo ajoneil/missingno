@@ -53,6 +53,55 @@ impl Cpu {
             0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
             0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
             0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
+            0x40 => { 4 } // ld b,b
+            0x41 => { self.b = self.c; 4 } // ld b,c
+            0x42 => { self.b = self.d; 4 } // ld b,d
+            0x43 => { self.b = self.e; 4 } // ld b,e
+            0x44 => { self.b = self.h; 4 } // ld b,h
+            0x45 => { self.b = self.l; 4 } // ld b,l
+            0x47 => { self.b = self.a; 4 } // ld b,a
+            0x48 => { self.c = self.b; 4 } // ld c,b
+            0x49 => { 4 } // ld c,c
+            0x4a => { self.c = self.d; 4 } // ld c,d
+            0x4b => { self.c = self.e; 4 } // ld c,e
+            0x4c => { self.c = self.h; 4 } // ld c,h
+            0x4d => { self.c = self.l; 4 } // ld c,l
+            0x4f => { self.c = self.a; 4 } // ld c,a
+            0x50 => { self.d = self.b; 4 } // ld d,b
+            0x51 => { self.d = self.c; 4 } // ld d,c
+            0x52 => { 4 } // ld d,d
+            0x53 => { self.d = self.e; 4 } // ld d,e
+            0x54 => { self.d = self.h; 4 } // ld d,h
+            0x55 => { self.d = self.l; 4 } // ld d,l
+            0x57 => { self.d = self.a; 4 } // ld d,a
+            0x58 => { self.e = self.b; 4 } // ld e,b
+            0x59 => { self.e = self.c; 4 } // ld e,c
+            0x5a => { self.e = self.d; 4 } // ld e,d
+            0x5b => { 4 } // ld e,e
+            0x5c => { self.e = self.h; 4 } // ld e,h
+            0x5d => { self.e = self.l; 4 } // ld e,l
+            0x5f => { self.e = self.a; 4 } // ld e,a
+            0x60 => { self.h = self.b; 4 } // ld h,b
+            0x61 => { self.h = self.c; 4 } // ld h,c
+            0x62 => { self.h = self.d; 4 } // ld h,d
+            0x63 => { self.h = self.e; 4 } // ld h,e
+            0x64 => { 4 } // ld h,h
+            0x65 => { self.h = self.l; 4 } // ld h,l
+            0x67 => { self.h = self.a; 4 } // ld h,a
+            0x68 => { self.l = self.b; 4 } // ld l,b
+            0x69 => { self.l = self.c; 4 } // ld l,c
+            0x6a => { self.l = self.d; 4 } // ld l,d
+            0x6b => { self.l = self.e; 4 } // ld l,e
+            0x6c => { self.l = self.h; 4 } // ld l,h
+            0x6d => { 4 } // ld l,l
+            0x6f => { self.l = self.a; 4 } // ld l,a
+            0x78 => { self.a = self.b; 4 } // ld a,b
+            0x79 => { self.a = self.c; 4 } // ld a,c
+            0x7a => { self.a = self.d; 4 } // ld a,d
+            0x7b => { self.a = self.e; 4 } // ld a,e
+            0x7c => { self.a = self.h; 4 } // ld a,h
+            0x7d => { self.a = self.l; 4 } // ld a,l
+            0x7f => { 4 } // ld a,a
             0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
             0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
             0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor d
