@@ -28,7 +28,7 @@ impl Gameboy {
 
     pub fn run(&mut self) {
         loop {
-            self.cpu.step(&self.mmu);
+            self.cpu.step(&mut self.mmu);
         }
     }
 }

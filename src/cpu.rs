@@ -34,7 +34,7 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, mmu: &Mmu) -> int {
+    pub fn step(&mut self, mmu: &mut Mmu) -> int {
         let instruction = self.read_and_inc_pc(mmu);
         match instruction {
             0x00 => 4, // nop
@@ -45,9 +45,13 @@ impl Cpu {
             0x16 => { self.d = self.read_and_inc_pc(mmu); 8 } // ld d,n
             0x1e => { self.e = self.read_and_inc_pc(mmu); 8 } // ld e,n
             0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
+            0x22 => { self.write_hl(mmu, self.a); self.increment_hl(); 8 } // ldi (hl),a
             0x26 => { self.h = self.read_and_inc_pc(mmu); 8 } // ld h,n
+            0x2a => { self.a = self.read_hl(mmu); self.increment_hl(); 8 } // ldi a,(hl)
             0x2e => { self.l = self.read_and_inc_pc(mmu); 8 } // ld l,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
+            0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
+            0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
             0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
             0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor b
             0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor c
@@ -77,6 +81,28 @@ impl Cpu {
 
     fn read_hl(&self, mmu: &Mmu) -> u8 {
         mmu.read((self.h as u16 * 256) + self.l as u16)
+    }
+
+    fn write_hl(&self, mmu: &mut Mmu, val: u8) {
+        mmu.write((self.h as u16 * 256) + self.l as u16, val);
+    }
+
+    fn decrement_hl(&mut self) {
+        if self.l == 0x00 {
+            self.h = self.h - 1;
+            self.l = 0xff;
+        } else {
+            self.l = self.l - 1;
+        }
+    }
+
+    fn increment_hl(&mut self) {
+        if self.l == 0xff {
+            self.h = self.h + 1;
+            self.l = 0x00;
+        } else {
+            self.l = self.l + 1;
+        }
     }
 
     fn set_z(&mut self, val: u8) {
