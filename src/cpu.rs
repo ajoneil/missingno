@@ -57,10 +57,10 @@ impl Cpu {
             0x2a => { self.a = self.read_hl(mmu); self.increment_hl(); 8 } // ldi a,(hl)
             0x2d => { self.l = self.l - 1; let l = self.l; self.set_z(l); 4 } // dec l
             0x2e => { self.l = self.read_and_inc_pc(mmu); 8 } // ld l,n
-            0x30 => { let distance = self.read_and_inc_pc(mmu); if !self.c() { self.jr(distance); 12 } else { 8 } } // jr nc,n
+            0x30 => { let distance = self.read_and_inc_pc(mmu); if !self.carry() { self.jr(distance); 12 } else { 8 } } // jr nc,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
             0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
-            0x38 => { let distance = self.read_and_inc_pc(mmu); if self.c() { self.jr(distance); 12 } else { 8 } } // jr c,n
+            0x38 => { let distance = self.read_and_inc_pc(mmu); if self.carry() { self.jr(distance); 12 } else { 8 } } // jr c,n
             0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
             0x3d => { self.a = self.a - 1; let a = self.a; self.set_z(a); 4 } // dec b
             0x3e => { self.a = self.read_and_inc_pc(mmu); 8 } // ld a,n
@@ -113,16 +113,32 @@ impl Cpu {
             0x7c => { self.a = self.h; 4 } // ld a,h
             0x7d => { self.a = self.l; 4 } // ld a,l
             0x7f => { 4 } // ld a,a
-            0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor b
-            0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor c
-            0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor d
-            0xab => { self.a = self.a ^ self.e; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor e
-            0xac => { self.a = self.a ^ self.h; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor h
-            0xad => { self.a = self.a ^ self.l; let a = self.a; self.set_z(a); self.clear_c(); 4 } // xor l
-            0xae => { self.a = self.a ^ self.read_hl(mmu); let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 8 } // xor (hl)
-            0xaf => { self.a = self.a ^ self.a; let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 4 } // xor a
+            0x98 => { let mut result : i16 = self.a as i16 - self.b as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,b
+            0x99 => { let mut result : i16 = self.a as i16 - self.c as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,c
+            0x9a => { let mut result : i16 = self.a as i16 - self.d as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,d
+            0x9b => { let mut result : i16 = self.a as i16 - self.e as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,e
+            0x9c => { let mut result : i16 = self.a as i16 - self.h as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,h
+            0x9d => { let mut result : i16 = self.a as i16 - self.l as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,l
+            0x9e => { let mut result : i16 = self.a as i16 - self.read_hl(mmu) as i16 - (if self.carry() { 1 } else { 0 } );
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 8 } // sbc a,(hl)
+            0x9f => { let result : i16 = if self.carry() { -1 } else { 0 };
+                      if result < 0 { self.set_carry(); } else { self.clear_carry(); } self.a = (0xff & result) as u8; self.set_z((0xff & result) as u8); 4 } // sbc a,a
+            0xa8 => { self.a = self.a ^ self.b; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor b
+            0xa9 => { self.a = self.a ^ self.c; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor c
+            0xaa => { self.a = self.a ^ self.d; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor d
+            0xab => { self.a = self.a ^ self.e; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor e
+            0xac => { self.a = self.a ^ self.h; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor h
+            0xad => { self.a = self.a ^ self.l; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor l
+            0xae => { self.a = self.a ^ self.read_hl(mmu); let a = self.a; self.set_z(a); self.clear_carry(); 8 } // xor (hl)
+            0xaf => { self.a = self.a ^ self.a; let a = self.a; self.set_z(a); self.clear_carry(); 4 } // xor a
             0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
-            0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let a = self.a; self.set_z(a); self.clear_n(); self.clear_h(); self.clear_c(); 8 } // xor nn
+            0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let a = self.a; self.set_z(a); self.clear_carry(); 8 } // xor nn
             _ => fail!("Unimplemented instruction {:x} at {:x}", instruction, self.pc)
         }
     }
@@ -177,20 +193,16 @@ impl Cpu {
         }
     }
 
-    fn clear_n(&mut self) {
-        self.f = self.f ^ N_FLAG;
-    }
-
-    fn clear_h(&mut self) {
-        self.f = self.f ^ H_FLAG;
-    }
-
-    fn c(&self) -> bool {
+    fn carry(&self) -> bool {
         self.c & C_FLAG == C_FLAG
     }
 
-    fn clear_c(&mut self) {
-        self.f = self.f & C_FLAG;
+    fn set_carry(&mut self) {
+        self.f = self.f | C_FLAG;
+    }
+
+    fn clear_carry(&mut self) {
+        self.f = self.f ^ C_FLAG;
     }
 
     fn jr(&mut self, distance: u8) {
