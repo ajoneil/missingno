@@ -138,6 +138,10 @@ impl Cpu {
             0xae => { self.a = self.a ^ self.read_hl(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor (hl)
             0xaf => { self.a = self.a ^ self.a; let z = self.a == 0; self.set_z(z); self.set_carry(false); 4 } // xor a
             0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
+            0xc4 => { let address = self.read_word_and_inc_pc(mmu); if !self.z() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nz,nn
+            0xcc => { let address = self.read_word_and_inc_pc(mmu); if self.z() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call z,nn
+            0xd4 => { let address = self.read_word_and_inc_pc(mmu); if !self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nc,nn
+            0xdc => { let address = self.read_word_and_inc_pc(mmu); if self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call c,nn
             0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor nn
             _ => fail!("Unimplemented instruction {:x} at {:x}", instruction, self.pc)
         }
