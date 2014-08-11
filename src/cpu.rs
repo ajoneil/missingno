@@ -15,8 +15,8 @@ pub struct Cpu {
 
 static Z_FLAG: u8 = 0b10000000;
 static N_FLAG: u8 = 0b01000000;
-static H_FLAG: u8 = 0b00010000;
-static C_FLAG: u8 = 0b00001000;
+static H_FLAG: u8 = 0b00100000;
+static C_FLAG: u8 = 0b00010000;
 
 impl Cpu {
     pub fn new() -> Cpu {
@@ -38,18 +38,18 @@ impl Cpu {
         let instruction = self.read_and_inc_pc(mmu);
         match instruction {
             0x00 => 4, // nop
-            0x01 => { self.b = self.read_and_inc_pc(mmu); self.c = self.read_and_inc_pc(mmu); 12 } // ld bc,nn
+            0x01 => { self.c = self.read_and_inc_pc(mmu); self.b = self.read_and_inc_pc(mmu); 12 } // ld bc,nn
             0x05 => { self.b = self.b - 1; let z = self.b == 0; self.set_z(z); 4 } // dec b
             0x06 => { self.b = self.read_and_inc_pc(mmu); 8 } // ld b,n
             0x0d => { self.c = self.c - 1; let z = self.c == 0; self.set_z(z); 4 } // dec c
             0x0e => { self.c = self.read_and_inc_pc(mmu); 8 } // ld c,n
-            0x11 => { self.d = self.read_and_inc_pc(mmu); self.e = self.read_and_inc_pc(mmu); 12 } // ld de,nn
+            0x11 => { self.e = self.read_and_inc_pc(mmu); self.d = self.read_and_inc_pc(mmu); 12 } // ld de,nn
             0x15 => { self.d = self.d - 1; let z = self.d == 0; self.set_z(z); 4 } // dec d
             0x16 => { self.d = self.read_and_inc_pc(mmu); 8 } // ld d,n
             0x1d => { self.e = self.e - 1; let z = self.e == 0; self.set_z(z); 4 } // dec e
             0x1e => { self.e = self.read_and_inc_pc(mmu); 8 } // ld e,n
             0x20 => { let distance = self.read_and_inc_pc(mmu); if !self.z() { self.jr(distance); 12 } else { 8 } } // jr nz,n
-            0x21 => { self.h = self.read_and_inc_pc(mmu); self.l = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
+            0x21 => { self.l = self.read_and_inc_pc(mmu); self.h = self.read_and_inc_pc(mmu); 12 } // ld hl,nn
             0x22 => { self.write_hl(mmu, self.a); self.increment_hl(); 8 } // ldi (hl),a
             0x25 => { self.h = self.h - 1; let z = self.h == 0; self.set_z(z); 4 } // dec h
             0x26 => { self.h = self.read_and_inc_pc(mmu); 8 } // ld h,n
@@ -211,10 +211,15 @@ impl Cpu {
 
     fn jr(&mut self, distance: u8) {
         if distance & 0x80 != 0x00 {
-            let  distance = (distance - 1) ^ 0x00;
+            let distance = (distance - 1) ^ 0xff;
             self.pc = self.pc - distance as u16;
         } else {
             self.pc = self.pc + distance as u16;
         }
+    }
+
+    pub fn as_string(self) -> String {
+        format!("pc: {:x} sp: {:x} a: {:x} b: {:x} c: {:x} d: {:x} e: {:x} h: {:x} l: {:x} carry: {}, z: {}",
+                 self.pc, self.sp, self.a, self.b, self.c, self.d, self.e, self.h, self.l, self.carry(), self.z())
     }
 }
