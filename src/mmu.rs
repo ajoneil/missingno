@@ -3,7 +3,9 @@ use cartridge::Cartridge;
 pub struct Mmu {
     cartridge: Cartridge,
     wram: [u8, .. 0x2000],
-    hram: [u8, .. 0x80]
+    hram: [u8, .. 0x7f],
+    interrupt_flag: u8,
+    interrupt_enable: u8
 }
 
 impl Mmu {
@@ -11,7 +13,9 @@ impl Mmu {
         Mmu {
             cartridge: cartridge,
             wram: [0, .. 0x2000],
-            hram: [0, .. 0x80]
+            hram: [0, .. 0x7f],
+            interrupt_flag: 0x00,
+            interrupt_enable: 0x00
         }
     }
 
@@ -20,7 +24,9 @@ impl Mmu {
             0x0000..0x7fff => self.cartridge.read(address),
             0xc000..0xdfff => self.wram[address as uint - 0xc000],
             0xe000..0xfdff => self.wram[address as uint - 0xe000],
-            0xff80..0xffff => self.hram[address as uint - 0xff80],
+            0xff0f => self.interrupt_flag,
+            0xff80..0xfffe => self.hram[address as uint - 0xff80],
+            0xffff => self.interrupt_enable,
             _ => fail!("Unimplemented read from {:x}", address)
         }
     }
@@ -33,7 +39,9 @@ impl Mmu {
         match address {
             0xc000..0xdfff => self.wram[address as uint - 0xc000] = val,
             0xe000..0xfdff => self.wram[address as uint - 0xe000] = val,
-            0xff80..0xffff => self.hram[address as uint - 0xff80] = val,
+            0xff0f => self.interrupt_flag = val,
+            0xff80..0xfffe => self.hram[address as uint - 0xff80] = val,
+            0xffff => self.interrupt_enable = val,
             _ => fail!("Unimplemented write to {:x}", address)
         }
     }

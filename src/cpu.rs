@@ -152,7 +152,9 @@ impl Cpu {
             0xcc => { let address = self.read_word_and_inc_pc(mmu); if self.z() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call z,nn
             0xd4 => { let address = self.read_word_and_inc_pc(mmu); if !self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nc,nn
             0xdc => { let address = self.read_word_and_inc_pc(mmu); if self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call c,nn
+            0xe0 => { let address = 0xff00 + self.read_and_inc_pc(mmu) as u16; mmu.write(address, self.a); 12 } // ldh (n),a
             0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor nn
+            0xf0 => { let address = 0xff00 + self.read_and_inc_pc(mmu) as u16; self.a = mmu.read(address); 12 } // ldh a,(n)
             0xf3 => { self.ime = false; 4 } // di
             0xfb => { self.ime = true; 4 } // ei
             0xfe => { let val = self.read_and_inc_pc(mmu); let z = self.a == val; self.set_z(z); let carry = self.a < val; self.set_carry(carry); 8} // cp n
