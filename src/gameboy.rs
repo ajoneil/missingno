@@ -2,23 +2,29 @@ use rom_info::RomInfo;
 use cpu::Cpu;
 use cartridge::Cartridge;
 use mmu::Mmu;
+use video::Video;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct Gameboy {
     info: RomInfo,
     cpu: Cpu,
-    mmu: Mmu
+    mmu: Mmu,
+    video: Rc<RefCell<Video>>
 }
 
 impl Gameboy {
     pub fn new(rom: Vec<u8>) -> Gameboy {
         let info = RomInfo::new(rom.as_slice());
         let cartridge = Cartridge::new(rom, info.mbc_type);
-        let mmu = Mmu::new(cartridge);
+        let video = Rc::new(RefCell::new(Video::new()));
+        let mmu = Mmu::new(cartridge, video.clone());
 
         let gb = Gameboy {
             info: info,
             cpu: Cpu::new(),
-            mmu: mmu
+            mmu: mmu,
+            video: video
         };
 
         println!("{}", gb.info.title);

@@ -1,7 +1,11 @@
 use cartridge::Cartridge;
+use video::Video;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub struct Mmu {
     cartridge: Cartridge,
+    video: Rc<RefCell<Video>>,
     wram: [u8, .. 0x2000],
     hram: [u8, .. 0x7f],
     interrupt_flag: u8,
@@ -9,9 +13,10 @@ pub struct Mmu {
 }
 
 impl Mmu {
-    pub fn new(cartridge: Cartridge) -> Mmu {
+    pub fn new(cartridge: Cartridge, video: Rc<RefCell<Video>>) -> Mmu {
         Mmu {
             cartridge: cartridge,
+            video: video,
             wram: [0, .. 0x2000],
             hram: [0, .. 0x7f],
             interrupt_flag: 0x00,
@@ -25,6 +30,8 @@ impl Mmu {
             0xc000..0xdfff => self.wram[address as uint - 0xc000],
             0xe000..0xfdff => self.wram[address as uint - 0xe000],
             0xff0f => self.interrupt_flag,
+            0xff01..0xff02 => 0x00, // link cable NYI
+            0xff40..0xff4a => self.video.borrow().read(address),
             0xff80..0xfffe => self.hram[address as uint - 0xff80],
             0xffff => self.interrupt_enable,
             _ => fail!("Unimplemented read from {:x}", address)
@@ -39,7 +46,9 @@ impl Mmu {
         match address {
             0xc000..0xdfff => self.wram[address as uint - 0xc000] = val,
             0xe000..0xfdff => self.wram[address as uint - 0xe000] = val,
+            0xff01..0xff02 => {}, // link cable, NYI
             0xff0f => self.interrupt_flag = val,
+            0xff40..0xff4a => self.video.borrow_mut().write(address, val),
             0xff80..0xfffe => self.hram[address as uint - 0xff80] = val,
             0xffff => self.interrupt_enable = val,
             _ => fail!("Unimplemented write to {:x}", address)

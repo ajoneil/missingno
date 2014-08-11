@@ -9,6 +9,7 @@ mod gameboy;
 mod mbc;
 mod mmu;
 mod rom_info;
+mod video;
 
 
 fn main() {
