@@ -137,12 +137,21 @@ impl Cpu {
             0xad => { self.a = self.a ^ self.l; let z = self.a == 0; self.set_z(z); self.set_carry(false); 4 } // xor l
             0xae => { self.a = self.a ^ self.read_hl(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor (hl)
             0xaf => { self.a = self.a ^ self.a; let z = self.a == 0; self.set_z(z); self.set_carry(false); 4 } // xor a
+            0xb8 => { let z = self.a == self.b; self.set_z(z); let carry = self.a < self.b; self.set_carry(carry); 4} // cp b
+            0xb9 => { let z = self.a == self.c; self.set_z(z); let carry = self.a < self.c; self.set_carry(carry); 4} // cp c
+            0xba => { let z = self.a == self.d; self.set_z(z); let carry = self.a < self.d; self.set_carry(carry); 4} // cp d
+            0xbb => { let z = self.a == self.e; self.set_z(z); let carry = self.a < self.e; self.set_carry(carry); 4} // cp e
+            0xbc => { let z = self.a == self.h; self.set_z(z); let carry = self.a < self.h; self.set_carry(carry); 4} // cp h
+            0xbd => { let z = self.a == self.l; self.set_z(z); let carry = self.a < self.l; self.set_carry(carry); 4} // cp l
+            0xbe => { let val = self.read_hl(mmu); let z = self.a == val; self.set_z(z); let carry = self.a < val; self.set_carry(carry); 8} // cp (hl)
+            0xbf => { self.set_z(true); self.set_carry(false); 4 } // cp a
             0xc3 => { self.pc = mmu.read_word(self.pc); 16 } // jp nn
             0xc4 => { let address = self.read_word_and_inc_pc(mmu); if !self.z() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nz,nn
             0xcc => { let address = self.read_word_and_inc_pc(mmu); if self.z() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call z,nn
             0xd4 => { let address = self.read_word_and_inc_pc(mmu); if !self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nc,nn
             0xdc => { let address = self.read_word_and_inc_pc(mmu); if self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call c,nn
             0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor nn
+            0xfe => { let val = self.read_and_inc_pc(mmu); let z = self.a == val; self.set_z(z); let carry = self.a < val; self.set_carry(carry); 8} // cp n
             _ => fail!("Unimplemented instruction {:x} at {:x}", instruction, self.pc)
         }
     }
