@@ -48,6 +48,7 @@ impl Mmu {
             0xe000..0xfdff => self.wram[address as uint - 0xe000] = val,
             0xff01..0xff02 => {}, // link cable, NYI
             0xff0f => self.interrupt_flag = val,
+            0xff10..0xff26 => {}, // sound, nyi
             0xff40..0xff4a => self.video.borrow_mut().write(address, val),
             0xff80..0xfffe => self.hram[address as uint - 0xff80] = val,
             0xffff => self.interrupt_enable = val,
