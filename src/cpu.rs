@@ -62,6 +62,7 @@ impl Cpu {
             0x30 => { let distance = self.read_and_inc_pc(mmu); if !self.carry() { self.jr(distance); 12 } else { 8 } } // jr nc,n
             0x31 => { self.sp = self.read_word_and_inc_pc(mmu); 12 } // ld sp,nn
             0x32 => { self.write_hl(mmu, self.a); self.decrement_hl(); 8 } // ldd (hl),a
+            0x36 => { let val = self.read_and_inc_pc(mmu); self.write_hl(mmu, val); 12 } // ld (hl),n
             0x38 => { let distance = self.read_and_inc_pc(mmu); if self.carry() { self.jr(distance); 12 } else { 8 } } // jr c,n
             0x3a => { self.a = self.read_hl(mmu); self.decrement_hl(); 8 } // ldd a,(hl)
             0x3d => { self.a = self.a - 1; let z = self.a == 0; self.set_z(z); 4 } // dec a
@@ -153,6 +154,7 @@ impl Cpu {
             0xd4 => { let address = self.read_word_and_inc_pc(mmu); if !self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call nc,nn
             0xdc => { let address = self.read_word_and_inc_pc(mmu); if self.carry() { self.sp = self.sp - 2; mmu.write_word(self.sp, self.pc); self.pc = address; } 12} // call c,nn
             0xe0 => { let address = 0xff00 + self.read_and_inc_pc(mmu) as u16; mmu.write(address, self.a); 12 } // ldh (n),a
+            0xea => { let address = self.read_word_and_inc_pc(mmu); mmu.write(address, self.a); 16 } // ld (nn),a
             0xee => { self.a = self.a ^ self.read_and_inc_pc(mmu); let z = self.a == 0; self.set_z(z); self.set_carry(false); 8 } // xor nn
             0xf0 => { let address = 0xff00 + self.read_and_inc_pc(mmu) as u16; self.a = mmu.read(address); 12 } // ldh a,(n)
             0xf3 => { self.ime = false; 4 } // di
@@ -208,7 +210,7 @@ impl Cpu {
         if val {
             self.f = self.f | Z_FLAG;
         } else {
-            self.f = self.f ^ Z_FLAG;
+            self.f = self.f & !Z_FLAG;
         }
     }
 
@@ -220,7 +222,7 @@ impl Cpu {
         if val {
             self.f = self.f | C_FLAG;
         } else {
-            self.f = self.f ^ C_FLAG;
+            self.f = self.f & !C_FLAG;
         }
     }
 
