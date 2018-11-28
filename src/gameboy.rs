@@ -1,16 +1,16 @@
-use rom_info::RomInfo;
-use cpu::Cpu;
-use cartridge::Cartridge;
-use mmu::Mmu;
-use video::Video;
-use std::rc::Rc;
+use crate::cartridge::Cartridge;
+use crate::cpu::Cpu;
+use crate::mmu::Mmu;
+use crate::rom_info::RomInfo;
+use crate::video::Video;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Gameboy {
     info: RomInfo,
     cpu: Cpu,
     mmu: Mmu,
-    video: Rc<RefCell<Video>>
+    video: Rc<RefCell<Video>>,
 }
 
 impl Gameboy {
@@ -24,7 +24,7 @@ impl Gameboy {
             info: info,
             cpu: Cpu::new(),
             mmu: mmu,
-            video: video
+            video: video,
         };
 
         println!("{}", gb.info.title);
@@ -35,7 +35,7 @@ impl Gameboy {
     pub fn run(&mut self) {
         loop {
             self.cpu.step(&mut self.mmu);
-            println!("{}", self.cpu.as_string());
+            println!("{:?}", self.cpu);
         }
     }
 }

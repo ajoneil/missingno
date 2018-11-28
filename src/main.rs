@@ -1,6 +1,5 @@
-use gameboy::Gameboy;
-use std::os;
-use std::io::File;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 mod cartridge;
@@ -11,17 +10,14 @@ mod mmu;
 mod rom_info;
 mod video;
 
-
 fn main() {
-    let args = os::args();
+    let args: Vec<String> = std::env::args().collect();
     let filename = &args[1];
-    let path = Path::new(filename.as_slice());
-    let mut file = File::open(&path);
-    let rom = match file.read_to_end() {
-        Ok(e) => e,
-        _ => fail!()
-    };
-    let mut gb = Gameboy::new(rom);
+    let path = Path::new(&filename);
+    let mut file = File::open(&path).unwrap();
+    let mut rom = Vec::new();
+    file.read_to_end(&mut rom).unwrap();
+    let mut gb = gameboy::Gameboy::new(rom);
 
     gb.run();
 }
