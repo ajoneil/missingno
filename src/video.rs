@@ -7,7 +7,7 @@ pub struct Video {
     lyc: u8,
     bgp: u8,
     obp0: u8,
-    obp1: u8
+    obp1: u8,
 }
 
 impl Video {
@@ -21,7 +21,7 @@ impl Video {
             lyc: 0,
             bgp: 0xfc,
             obp0: 0xff,
-            obp1: 0xff
+            obp1: 0xff,
         }
     }
 
@@ -36,7 +36,7 @@ impl Video {
             0xff47 => self.bgp,
             0xff48 => self.obp0,
             0xff49 => self.obp1,
-            _ => fail!("Unimplemented video read from {:x}", address)
+            _ => panic!("Unimplemented video read from {:x}", address),
         }
     }
 
@@ -50,7 +50,7 @@ impl Video {
             0xff47 => self.bgp = val,
             0xff48 => self.obp0 = val,
             0xff49 => self.obp1 = val,
-            _ => fail!("Unimplemented video write to {:x}", address)
+            _ => panic!("Unimplemented video write to {:x}", address),
         }
     }
 }

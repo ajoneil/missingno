@@ -2,7 +2,8 @@
 
 name = "missingnogmb"
 version = "0.0.1"
-authors = [ "andy@andyofniall.net" ]
+authors = [ "Andrew O'Neil <andy@andyofniall.net>" ]
+edition = "2018"
 
 [[bin]]
 name = "missingnogmb"

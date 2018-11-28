@@ -1,15 +1,15 @@
-use cartridge::Cartridge;
-use video::Video;
-use std::rc::Rc;
+use crate::cartridge::Cartridge;
+use crate::video::Video;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub struct Mmu {
     cartridge: Cartridge,
     video: Rc<RefCell<Video>>,
-    wram: [u8, .. 0x2000],
-    hram: [u8, .. 0x7f],
+    wram: [u8; 0x2000],
+    hram: [u8; 0x7f],
     interrupt_flag: u8,
-    interrupt_enable: u8
+    interrupt_enable: u8,
 }
 
 impl Mmu {
@@ -17,24 +17,24 @@ impl Mmu {
         Mmu {
             cartridge: cartridge,
             video: video,
-            wram: [0, .. 0x2000],
-            hram: [0, .. 0x7f],
+            wram: [0; 0x2000],
+            hram: [0; 0x7f],
             interrupt_flag: 0x00,
-            interrupt_enable: 0x00
+            interrupt_enable: 0x00,
         }
     }
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            0x0000..0x7fff => self.cartridge.read(address),
-            0xc000..0xdfff => self.wram[address as uint - 0xc000],
-            0xe000..0xfdff => self.wram[address as uint - 0xe000],
+            0x0000...0x7fff => self.cartridge.read(address),
+            0xc000...0xdfff => self.wram[address as usize - 0xc000],
+            0xe000...0xfdff => self.wram[address as usize - 0xe000],
             0xff0f => self.interrupt_flag,
-            0xff01..0xff02 => 0x00, // link cable NYI
-            0xff40..0xff4a => self.video.borrow().read(address),
-            0xff80..0xfffe => self.hram[address as uint - 0xff80],
+            0xff01...0xff02 => 0x00, // link cable NYI
+            0xff40...0xff4a => self.video.borrow().read(address),
+            0xff80...0xfffe => self.hram[address as usize - 0xff80],
             0xffff => self.interrupt_enable,
-            _ => fail!("Unimplemented read from {:x}", address)
+            _ => panic!("Unimplemented read from {:x}", address),
         }
     }
 
@@ -44,15 +44,15 @@ impl Mmu {
 
     pub fn write(&mut self, address: u16, val: u8) {
         match address {
-            0xc000..0xdfff => self.wram[address as uint - 0xc000] = val,
-            0xe000..0xfdff => self.wram[address as uint - 0xe000] = val,
-            0xff01..0xff02 => {}, // link cable, NYI
+            0xc000...0xdfff => self.wram[address as usize - 0xc000] = val,
+            0xe000...0xfdff => self.wram[address as usize - 0xe000] = val,
+            0xff01...0xff02 => {} // link cable, NYI
             0xff0f => self.interrupt_flag = val,
-            0xff10..0xff26 => {}, // sound, nyi
-            0xff40..0xff4a => self.video.borrow_mut().write(address, val),
-            0xff80..0xfffe => self.hram[address as uint - 0xff80] = val,
+            0xff10...0xff26 => {} // sound, nyi
+            0xff40...0xff4a => self.video.borrow_mut().write(address, val),
+            0xff80...0xfffe => self.hram[address as usize - 0xff80] = val,
             0xffff => self.interrupt_enable = val,
-            _ => fail!("Unimplemented write to {:x}", address)
+            _ => panic!("Unimplemented write to {:x}", address),
         }
     }
 

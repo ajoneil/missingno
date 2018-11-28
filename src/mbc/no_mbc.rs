@@ -1,4 +1,4 @@
-use mbc::Mbc;
+use crate::mbc::Mbc;
 
 pub struct NoMbc;
 
@@ -10,6 +10,6 @@ impl NoMbc {
 
 impl Mbc for NoMbc {
     fn read(&self, address: u16, rom: &[u8]) -> u8 {
-        rom[address as uint]
+        rom[address as usize]
     }
 }
