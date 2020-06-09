@@ -4,12 +4,12 @@ use crate::rom_info::MbcType;
 
 pub struct Cartridge {
     rom: Vec<u8>,
-    mbc: Box<Mbc>,
+    mbc: Box<dyn Mbc>,
 }
 
 impl Cartridge {
     pub fn new(rom: Vec<u8>, mbc_type: MbcType) -> Cartridge {
-        let mbc: Box<Mbc> = match mbc_type {
+        let mbc: Box<dyn Mbc> = match mbc_type {
             MbcType::NoMBC => Box::new(NoMbc::new()),
             _ => panic!("Mbc not supported"),
         };
