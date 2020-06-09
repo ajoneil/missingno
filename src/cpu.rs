@@ -1,4 +1,5 @@
 use crate::mmu::Mmu;
+use crate::video::Video;
 use std::fmt;
 
 pub struct Cpu {
@@ -37,13 +38,13 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, mmu: &mut Mmu) -> u32 {
-        let instruction = self.read_and_inc_pc(mmu);
+    pub fn step(&mut self, mmu: &mut Mmu, video: &mut Video) -> u32 {
+        let instruction = self.read_and_inc_pc(mmu, video);
         match instruction {
             0x00 => 4, // nop
             0x01 => {
-                self.c = self.read_and_inc_pc(mmu);
-                self.b = self.read_and_inc_pc(mmu);
+                self.c = self.read_and_inc_pc(mmu, video);
+                self.b = self.read_and_inc_pc(mmu, video);
                 12
             } // ld bc,nn
             0x05 => {
@@ -53,7 +54,7 @@ impl Cpu {
                 4
             } // dec b
             0x06 => {
-                self.b = self.read_and_inc_pc(mmu);
+                self.b = self.read_and_inc_pc(mmu, video);
                 8
             } // ld b,n
             0x0d => {
@@ -63,12 +64,12 @@ impl Cpu {
                 4
             } // dec c
             0x0e => {
-                self.c = self.read_and_inc_pc(mmu);
+                self.c = self.read_and_inc_pc(mmu, video);
                 8
             } // ld c,n
             0x11 => {
-                self.e = self.read_and_inc_pc(mmu);
-                self.d = self.read_and_inc_pc(mmu);
+                self.e = self.read_and_inc_pc(mmu, video);
+                self.d = self.read_and_inc_pc(mmu, video);
                 12
             } // ld de,nn
             0x15 => {
@@ -78,7 +79,7 @@ impl Cpu {
                 4
             } // dec d
             0x16 => {
-                self.d = self.read_and_inc_pc(mmu);
+                self.d = self.read_and_inc_pc(mmu, video);
                 8
             } // ld d,n
             0x1d => {
@@ -88,11 +89,11 @@ impl Cpu {
                 4
             } // dec e
             0x1e => {
-                self.e = self.read_and_inc_pc(mmu);
+                self.e = self.read_and_inc_pc(mmu, video);
                 8
             } // ld e,n
             0x20 => {
-                let distance = self.read_and_inc_pc(mmu);
+                let distance = self.read_and_inc_pc(mmu, video);
                 if !self.z() {
                     self.jr(distance);
                     12
@@ -101,12 +102,12 @@ impl Cpu {
                 }
             } // jr nz,n
             0x21 => {
-                self.l = self.read_and_inc_pc(mmu);
-                self.h = self.read_and_inc_pc(mmu);
+                self.l = self.read_and_inc_pc(mmu, video);
+                self.h = self.read_and_inc_pc(mmu, video);
                 12
             } // ld hl,nn
             0x22 => {
-                self.write_hl(mmu, self.a);
+                self.write_hl(mmu, self.a, video);
                 self.increment_hl();
                 8
             } // ldi (hl),a
@@ -117,11 +118,11 @@ impl Cpu {
                 4
             } // dec h
             0x26 => {
-                self.h = self.read_and_inc_pc(mmu);
+                self.h = self.read_and_inc_pc(mmu, video);
                 8
             } // ld h,n
             0x28 => {
-                let distance = self.read_and_inc_pc(mmu);
+                let distance = self.read_and_inc_pc(mmu, video);
                 if self.z() {
                     self.jr(distance);
                     12
@@ -130,7 +131,7 @@ impl Cpu {
                 }
             } // jr z,n
             0x2a => {
-                self.a = self.read_hl(mmu);
+                self.a = self.read_hl(mmu, video);
                 self.increment_hl();
                 8
             } // ldi a,(hl)
@@ -141,11 +142,11 @@ impl Cpu {
                 4
             } // dec l
             0x2e => {
-                self.l = self.read_and_inc_pc(mmu);
+                self.l = self.read_and_inc_pc(mmu, video);
                 8
             } // ld l,n
             0x30 => {
-                let distance = self.read_and_inc_pc(mmu);
+                let distance = self.read_and_inc_pc(mmu, video);
                 if !self.carry() {
                     self.jr(distance);
                     12
@@ -154,21 +155,21 @@ impl Cpu {
                 }
             } // jr nc,n
             0x31 => {
-                self.sp = self.read_word_and_inc_pc(mmu);
+                self.sp = self.read_word_and_inc_pc(mmu, video);
                 12
             } // ld sp,nn
             0x32 => {
-                self.write_hl(mmu, self.a);
+                self.write_hl(mmu, self.a, video);
                 self.decrement_hl();
                 8
             } // ldd (hl),a
             0x36 => {
-                let val = self.read_and_inc_pc(mmu);
-                self.write_hl(mmu, val);
+                let val = self.read_and_inc_pc(mmu, video);
+                self.write_hl(mmu, val, video);
                 12
             } // ld (hl),n
             0x38 => {
-                let distance = self.read_and_inc_pc(mmu);
+                let distance = self.read_and_inc_pc(mmu, video);
                 if self.carry() {
                     self.jr(distance);
                     12
@@ -177,7 +178,7 @@ impl Cpu {
                 }
             } // jr c,n
             0x3a => {
-                self.a = self.read_hl(mmu);
+                self.a = self.read_hl(mmu, video);
                 self.decrement_hl();
                 8
             } // ldd a,(hl)
@@ -188,7 +189,7 @@ impl Cpu {
                 4
             } // dec a
             0x3e => {
-                self.a = self.read_and_inc_pc(mmu);
+                self.a = self.read_and_inc_pc(mmu, video);
                 8
             } // ld a,n
             0x40 => 4, // ld b,b
@@ -416,7 +417,7 @@ impl Cpu {
             } // sbc a,l
             0x9e => {
                 let result: i16 =
-                    self.a as i16 - self.read_hl(mmu) as i16 - (if self.carry() { 1 } else { 0 });
+                    self.a as i16 - self.read_hl(mmu, video) as i16 - (if self.carry() { 1 } else { 0 });
                 self.set_carry(result < 0);
                 self.set_z(result == 0);
                 self.a = (0xff & result) as u8;
@@ -472,7 +473,7 @@ impl Cpu {
                 4
             } // xor l
             0xae => {
-                self.a = self.a ^ self.read_hl(mmu);
+                self.a = self.a ^ self.read_hl(mmu, video);
                 let z = self.a == 0;
                 self.set_z(z);
                 self.set_carry(false);
@@ -528,7 +529,7 @@ impl Cpu {
                 4
             } // cp l
             0xbe => {
-                let val = self.read_hl(mmu);
+                let val = self.read_hl(mmu, video);
                 let z = self.a == val;
                 self.set_z(z);
                 let carry = self.a < val;
@@ -541,65 +542,65 @@ impl Cpu {
                 4
             } // cp a
             0xc3 => {
-                self.pc = mmu.read_word(self.pc);
+                self.pc = mmu.read_word(self.pc, video);
                 16
             } // jp nn
             0xc4 => {
-                let address = self.read_word_and_inc_pc(mmu);
+                let address = self.read_word_and_inc_pc(mmu, video);
                 if !self.z() {
                     self.sp = self.sp - 2;
-                    mmu.write_word(self.sp, self.pc);
+                    mmu.write_word(self.sp, self.pc, video);
                     self.pc = address;
                 }
                 12
             } // call nz,nn
             0xcc => {
-                let address = self.read_word_and_inc_pc(mmu);
+                let address = self.read_word_and_inc_pc(mmu, video);
                 if self.z() {
                     self.sp = self.sp - 2;
-                    mmu.write_word(self.sp, self.pc);
+                    mmu.write_word(self.sp, self.pc, video);
                     self.pc = address;
                 }
                 12
             } // call z,nn
             0xd4 => {
-                let address = self.read_word_and_inc_pc(mmu);
+                let address = self.read_word_and_inc_pc(mmu, video);
                 if !self.carry() {
                     self.sp = self.sp - 2;
-                    mmu.write_word(self.sp, self.pc);
+                    mmu.write_word(self.sp, self.pc, video);
                     self.pc = address;
                 }
                 12
             } // call nc,nn
             0xdc => {
-                let address = self.read_word_and_inc_pc(mmu);
+                let address = self.read_word_and_inc_pc(mmu, video);
                 if self.carry() {
                     self.sp = self.sp - 2;
-                    mmu.write_word(self.sp, self.pc);
+                    mmu.write_word(self.sp, self.pc, video);
                     self.pc = address;
                 }
                 12
             } // call c,nn
             0xe0 => {
-                let address = 0xff00 + self.read_and_inc_pc(mmu) as u16;
-                mmu.write(address, self.a);
+                let address = 0xff00 + self.read_and_inc_pc(mmu, video) as u16;
+                mmu.write(address, self.a, video);
                 12
             } // ldh (n),a
             0xea => {
-                let address = self.read_word_and_inc_pc(mmu);
-                mmu.write(address, self.a);
+                let address = self.read_word_and_inc_pc(mmu, video);
+                mmu.write(address, self.a, video);
                 16
             } // ld (nn),a
             0xee => {
-                self.a = self.a ^ self.read_and_inc_pc(mmu);
+                self.a = self.a ^ self.read_and_inc_pc(mmu, video);
                 let z = self.a == 0;
                 self.set_z(z);
                 self.set_carry(false);
                 8
             } // xor nn
             0xf0 => {
-                let address = 0xff00 + self.read_and_inc_pc(mmu) as u16;
-                self.a = mmu.read(address);
+                let address = 0xff00 + self.read_and_inc_pc(mmu, video) as u16;
+                self.a = mmu.read(address, video);
                 12
             } // ldh a,(n)
             0xf3 => {
@@ -611,7 +612,7 @@ impl Cpu {
                 4
             } // ei
             0xfe => {
-                let val = self.read_and_inc_pc(mmu);
+                let val = self.read_and_inc_pc(mmu, video);
                 let z = self.a == val;
                 self.set_z(z);
                 let carry = self.a < val;
@@ -625,24 +626,24 @@ impl Cpu {
         }
     }
 
-    fn read_and_inc_pc(&mut self, mmu: &Mmu) -> u8 {
-        let byte = mmu.read(self.pc);
+    fn read_and_inc_pc(&mut self, mmu: &Mmu, video: &Video) -> u8 {
+        let byte = mmu.read(self.pc, video);
         self.pc += 1;
         byte
     }
 
-    fn read_word_and_inc_pc(&mut self, mmu: &Mmu) -> u16 {
-        let byte = mmu.read_word(self.pc);
+    fn read_word_and_inc_pc(&mut self, mmu: &Mmu, video: &Video) -> u16 {
+        let byte = mmu.read_word(self.pc, video);
         self.pc += 2;
         byte
     }
 
-    fn read_hl(&self, mmu: &Mmu) -> u8 {
-        mmu.read((self.h as u16 * 256) + self.l as u16)
+    fn read_hl(&self, mmu: &Mmu, video: &Video) -> u8 {
+        mmu.read((self.h as u16 * 256) + self.l as u16, video)
     }
 
-    fn write_hl(&self, mmu: &mut Mmu, val: u8) {
-        mmu.write((self.h as u16 * 256) + self.l as u16, val);
+    fn write_hl(&self, mmu: &mut Mmu, val: u8, video: &mut Video) {
+        mmu.write((self.h as u16 * 256) + self.l as u16, val, video);
     }
 
     fn decrement_hl(&mut self) {
