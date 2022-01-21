@@ -1,10 +1,11 @@
 use crate::mmu::Mmu;
 use crate::video::Video;
+use bitflags::bitflags;
 use std::fmt;
 
 pub struct Cpu {
     a: u8,
-    f: u8,
+    f: Flags,
     b: u8,
     c: u8,
     d: u8,
@@ -16,16 +17,20 @@ pub struct Cpu {
     ime: bool,
 }
 
-static Z_FLAG: u8 = 0b10000000;
-static N_FLAG: u8 = 0b01000000;
-static H_FLAG: u8 = 0b00100000;
-static C_FLAG: u8 = 0b00010000;
+bitflags! {
+    struct Flags: u8 {
+        const Z = 0b10000000;
+        const N = 0b01000000;
+        const H = 0b00100000;
+        const C = 0b00010000;
+    }
+}
 
 impl Cpu {
     pub fn new() -> Cpu {
         Cpu {
             a: 0x01,
-            f: 0xb0,
+            f: Flags::empty(),
             b: 0x00,
             c: 0x13,
             d: 0x00,
@@ -416,8 +421,9 @@ impl Cpu {
                 4
             } // sbc a,l
             0x9e => {
-                let result: i16 =
-                    self.a as i16 - self.read_hl(mmu, video) as i16 - (if self.carry() { 1 } else { 0 });
+                let result: i16 = self.a as i16
+                    - self.read_hl(mmu, video) as i16
+                    - (if self.carry() { 1 } else { 0 });
                 self.set_carry(result < 0);
                 self.set_z(result == 0);
                 self.a = (0xff & result) as u8;
@@ -665,26 +671,26 @@ impl Cpu {
     }
 
     fn z(&self) -> bool {
-        self.f & Z_FLAG == Z_FLAG
+        self.f.contains(Flags::Z)
     }
 
     fn set_z(&mut self, val: bool) {
         if val {
-            self.f = self.f | Z_FLAG;
+            self.f.insert(Flags::Z);
         } else {
-            self.f = self.f & !Z_FLAG;
+            self.f.remove(Flags::Z);
         }
     }
 
     fn carry(&self) -> bool {
-        self.c & C_FLAG == C_FLAG
+        self.f.contains(Flags::C)
     }
 
     fn set_carry(&mut self, val: bool) {
         if val {
-            self.f = self.f | C_FLAG;
+            self.f.insert(Flags::C);
         } else {
-            self.f = self.f & !C_FLAG;
+            self.f.remove(Flags::C);
         }
     }
 
