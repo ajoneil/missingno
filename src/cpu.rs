@@ -50,6 +50,14 @@ impl Cpu {
             0x00 => 4,
 
             // arithmetic and logic
+            0x05 => Cpu::dec_r(&mut self.b, &mut self.f),
+            0x0d => Cpu::dec_r(&mut self.c, &mut self.f),
+            0x15 => Cpu::dec_r(&mut self.d, &mut self.f),
+            0x1d => Cpu::dec_r(&mut self.e, &mut self.f),
+            0x25 => Cpu::dec_r(&mut self.h, &mut self.f),
+            0x2d => Cpu::dec_r(&mut self.l, &mut self.f),
+            0x3d => Cpu::dec_r(&mut self.a, &mut self.f),
+
             0xa8 => self.xor_r(self.b),
             0xa9 => self.xor_r(self.c),
             0xaa => self.xor_r(self.d),
@@ -72,30 +80,8 @@ impl Cpu {
             0x21 => Cpu::ld_rr_nn(&mut self.h, &mut self.l, &mut self.pc, mmu, video),
             0x31 => Cpu::ld_sp_nn(&mut self.sp, &mut self.pc, mmu, video),
 
-            0x05 => {
-                self.b = self.b - 1;
-                let z = self.b == 0;
-                self.set_z(z);
-                4
-            } // dec b
-            0x0d => {
-                self.c = self.c - 1;
-                let z = self.c == 0;
-                self.set_z(z);
-                4
-            } // dec c
-            0x15 => {
-                self.d = self.d - 1;
-                let z = self.d == 0;
-                self.set_z(z);
-                4
-            } // dec d
-            0x1d => {
-                self.e = self.e - 1;
-                let z = self.e == 0;
-                self.set_z(z);
-                4
-            } // dec e
+            0x32 => self.ld_hlptr_dec_a(mmu, video),
+
             0x20 => {
                 let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
                 if !self.z() {
@@ -111,12 +97,6 @@ impl Cpu {
                 self.increment_hl();
                 8
             } // ldi (hl),a
-            0x25 => {
-                self.h = self.h - 1;
-                let z = self.h == 0;
-                self.set_z(z);
-                4
-            } // dec h
             0x28 => {
                 let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
                 if self.z() {
@@ -131,12 +111,6 @@ impl Cpu {
                 self.increment_hl();
                 8
             } // ldi a,(hl)
-            0x2d => {
-                self.l = self.l - 1;
-                let z = self.l == 0;
-                self.set_z(z);
-                4
-            } // dec l
             0x30 => {
                 let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
                 if !self.carry() {
@@ -146,11 +120,6 @@ impl Cpu {
                     8
                 }
             } // jr nc,n
-            0x32 => {
-                self.write_hl(mmu, self.a, video);
-                self.decrement_hl();
-                8
-            } // ldd (hl),a
             0x36 => {
                 let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
                 self.write_hl(mmu, val, video);
@@ -170,12 +139,6 @@ impl Cpu {
                 self.decrement_hl();
                 8
             } // ldd a,(hl)
-            0x3d => {
-                self.a = self.a - 1;
-                let z = self.a == 0;
-                self.set_z(z);
-                4
-            } // dec a
             0x40 => 4, // ld b,b
             0x41 => {
                 self.b = self.c;
@@ -635,6 +598,14 @@ impl Cpu {
         16
     }
 
+    fn dec_r(r: &mut u8, f: &mut Flags) -> u32 {
+        *r = if *r == 0 { 0xff } else { *r - 1 };
+
+        f.set(Flags::Z, *r == 0);
+        f.insert(Flags::N);
+        4
+    }
+
     fn xor_r(&mut self, r: u8) -> u32 {
         self.a = self.a ^ r;
         self.f = if self.a == 0 {
@@ -659,6 +630,12 @@ impl Cpu {
     fn ld_sp_nn(sp: &mut u16, pc: &mut u16, mmu: &Mmu, video: &Video) -> u32 {
         *sp = Cpu::read_word_and_inc_pc(pc, mmu, video);
         12
+    }
+
+    fn ld_hlptr_dec_a(&mut self, mmu: &mut Mmu, video: &mut Video) -> u32 {
+        self.write_hl(mmu, self.a, video);
+        self.decrement_hl();
+        8
     }
 }
 
