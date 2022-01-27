@@ -9,6 +9,33 @@ pub struct Mmu {
     interrupt_enable: u8,
 }
 
+pub struct Mapper<'a> {
+    mmu: &'a mut Mmu,
+    video: &'a mut Video,
+}
+
+impl Mapper<'_> {
+    pub fn new<'a>(mmu: &'a mut Mmu, video: &'a mut Video) -> Mapper<'a> {
+        Mapper { mmu, video }
+    }
+
+    pub fn read(&self, address: u16) -> u8 {
+        self.mmu.read(address, self.video)
+    }
+
+    pub fn read_word(&self, address: u16) -> u16 {
+        self.mmu.read_word(address, self.video)
+    }
+
+    pub fn write(&mut self, address: u16, val: u8) {
+        self.mmu.write(address, val, self.video)
+    }
+
+    pub fn write_word(&mut self, address: u16, val: u16) {
+        self.mmu.write_word(address, val, self.video)
+    }
+}
+
 impl Mmu {
     pub fn new(cartridge: Cartridge) -> Mmu {
         Mmu {

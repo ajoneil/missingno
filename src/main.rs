@@ -7,6 +7,7 @@ mod cpu;
 mod gameboy;
 mod mbc;
 mod mmu;
+mod ops;
 mod rom_info;
 mod video;
 
