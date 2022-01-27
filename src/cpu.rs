@@ -52,27 +52,7 @@ impl Cpu {
 
         let instruction = Cpu::read(&mut self.pc, &mapper);
         match instruction {
-            // nop
-            0x00 => Cycles(4),
-
-            // arithmetic and logic
-            0x05 => dec_r(&mut self.b, &mut self.f),
-            0x0d => dec_r(&mut self.c, &mut self.f),
-            0x15 => dec_r(&mut self.d, &mut self.f),
-            0x1d => dec_r(&mut self.e, &mut self.f),
-            0x25 => dec_r(&mut self.h, &mut self.f),
-            0x2d => dec_r(&mut self.l, &mut self.f),
-            0x3d => dec_r(&mut self.a, &mut self.f),
-
-            0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
-            0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
-            0xaa => xor_r(self.d, &mut self.a, &mut self.f),
-            0xab => xor_r(self.e, &mut self.a, &mut self.f),
-            0xac => xor_r(self.h, &mut self.a, &mut self.f),
-            0xad => xor_r(self.l, &mut self.a, &mut self.f),
-            0xaf => xor_r(self.a, &mut self.a, &mut self.f),
-
-            // load
+            // 8-bit load
             0x06 => ld_r_n(&mut self.b, Cpu::read(&mut self.pc, &mapper)),
             0x0e => ld_r_n(&mut self.c, Cpu::read(&mut self.pc, &mapper)),
             0x16 => ld_r_n(&mut self.d, Cpu::read(&mut self.pc, &mapper)),
@@ -96,7 +76,39 @@ impl Cpu {
                 &mut self.l,
                 Cpu::read_word(&mut self.pc, &mapper),
             ),
+
+            // 16-bit load
             0x31 => ld_sp_nn(&mut self.sp, Cpu::read_word(&mut self.pc, &mapper)),
+
+            // 8-bit arithmetic and logic
+            0x05 => dec_r(&mut self.b, &mut self.f),
+            0x0d => dec_r(&mut self.c, &mut self.f),
+            0x15 => dec_r(&mut self.d, &mut self.f),
+            0x1d => dec_r(&mut self.e, &mut self.f),
+            0x25 => dec_r(&mut self.h, &mut self.f),
+            0x2d => dec_r(&mut self.l, &mut self.f),
+            0x3d => dec_r(&mut self.a, &mut self.f),
+
+            0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
+            0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
+            0xaa => xor_r(self.d, &mut self.a, &mut self.f),
+            0xab => xor_r(self.e, &mut self.a, &mut self.f),
+            0xac => xor_r(self.h, &mut self.a, &mut self.f),
+            0xad => xor_r(self.l, &mut self.a, &mut self.f),
+            0xaf => xor_r(self.a, &mut self.a, &mut self.f),
+
+            // 16-bit arithmetic and logic
+
+            // rotate and shift
+
+            // cpu control
+            0x00 => Cycles(4), // no-op
+
+            // jump
+            0xc3 => {
+                let nn = Cpu::read_word(&mut self.pc, &mapper);
+                jp_nn(&mut self.pc, nn)
+            }
 
             // 0x32 => self.ld_hlptr_dec_a(mmu, video),
 
@@ -458,7 +470,6 @@ impl Cpu {
             //     self.set_carry(false);
             //     4
             // } // cp a
-            // 0xc3 => self.jp_nn(mmu, video),
             // 0xc4 => {
             //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
             //     if !self.z() {
@@ -585,11 +596,6 @@ impl Cpu {
         } else {
             self.pc = self.pc + distance as u16;
         }
-    }
-
-    fn jp_nn(&mut self, mmu: &Mmu, video: &Video) -> u32 {
-        self.pc = mmu.read_word(self.pc, video);
-        16
     }
 }
 
