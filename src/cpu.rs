@@ -85,14 +85,6 @@ impl Cpu {
             0x31 => ld_sp_nn(&mut self.sp, Cpu::read_word(&mut self.pc, mapper)),
 
             // 8-bit arithmetic and logic
-            0x05 => dec_r(&mut self.b, &mut self.f),
-            0x0d => dec_r(&mut self.c, &mut self.f),
-            0x15 => dec_r(&mut self.d, &mut self.f),
-            0x1d => dec_r(&mut self.e, &mut self.f),
-            0x25 => dec_r(&mut self.h, &mut self.f),
-            0x2d => dec_r(&mut self.l, &mut self.f),
-            0x3d => dec_r(&mut self.a, &mut self.f),
-
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
             0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
             0xaa => xor_r(self.d, &mut self.a, &mut self.f),
@@ -100,6 +92,22 @@ impl Cpu {
             0xac => xor_r(self.h, &mut self.a, &mut self.f),
             0xad => xor_r(self.l, &mut self.a, &mut self.f),
             0xaf => xor_r(self.a, &mut self.a, &mut self.f),
+            0xb8 => cp_r(self.b, self.a, &mut self.f),
+            0xb9 => cp_r(self.c, self.a, &mut self.f),
+            0xba => cp_r(self.d, self.a, &mut self.f),
+            0xbb => cp_r(self.e, self.a, &mut self.f),
+            0xbc => cp_r(self.h, self.a, &mut self.f),
+            0xbd => cp_r(self.b, self.a, &mut self.f),
+            0xbf => cp_r(self.a, self.a, &mut self.f),
+            0xfe => cp_n(Cpu::read(&mut self.pc, mapper), self.a, &mut self.f),
+            0xbe => cp_hlptr(self.h, self.l, self.a, &mut self.f, mapper),
+            0x05 => dec_r(&mut self.b, &mut self.f),
+            0x0d => dec_r(&mut self.c, &mut self.f),
+            0x15 => dec_r(&mut self.d, &mut self.f),
+            0x1d => dec_r(&mut self.e, &mut self.f),
+            0x25 => dec_r(&mut self.h, &mut self.f),
+            0x2d => dec_r(&mut self.l, &mut self.f),
+            0x3d => dec_r(&mut self.a, &mut self.f),
 
             // 16-bit arithmetic and logic
 
@@ -403,61 +411,6 @@ impl Cpu {
             //     self.set_carry(false);
             //     8
             // } // xor (hl)
-            // 0xb8 => {
-            //     let z = self.a == self.b;
-            //     self.set_z(z);
-            //     let carry = self.a < self.b;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp b
-            // 0xb9 => {
-            //     let z = self.a == self.c;
-            //     self.set_z(z);
-            //     let carry = self.a < self.c;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp c
-            // 0xba => {
-            //     let z = self.a == self.d;
-            //     self.set_z(z);
-            //     let carry = self.a < self.d;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp d
-            // 0xbb => {
-            //     let z = self.a == self.e;
-            //     self.set_z(z);
-            //     let carry = self.a < self.e;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp e
-            // 0xbc => {
-            //     let z = self.a == self.h;
-            //     self.set_z(z);
-            //     let carry = self.a < self.h;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp h
-            // 0xbd => {
-            //     let z = self.a == self.l;
-            //     self.set_z(z);
-            //     let carry = self.a < self.l;
-            //     self.set_carry(carry);
-            //     4
-            // } // cp l
-            // 0xbe => {
-            //     let val = self.read_hl(mmu, video);
-            //     let z = self.a == val;
-            //     self.set_z(z);
-            //     let carry = self.a < val;
-            //     self.set_carry(carry);
-            //     8
-            // } // cp (hl)
-            // 0xbf => {
-            //     self.set_z(true);
-            //     self.set_carry(false);
-            //     4
-            // } // cp a
             // 0xc4 => {
             //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
             //     if !self.z() {
@@ -506,14 +459,6 @@ impl Cpu {
             //     self.set_carry(false);
             //     8
             // } // xor nn
-            // 0xfe => {
-            //     let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     let z = self.a == val;
-            //     self.set_z(z);
-            //     let carry = self.a < val;
-            //     self.set_carry(carry);
-            //     8
-            // } // cp n
             _ => panic!(
                 "Unimplemented instruction {:x} at {:x}",
                 instruction, self.pc

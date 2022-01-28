@@ -1,5 +1,6 @@
 use crate::cpu::Cycles;
 use crate::mmu::Mapper;
+use crate::ops::hl;
 
 pub fn ld_r_n(r: &mut u8, n: u8) -> Cycles {
   *r = n;
@@ -30,10 +31,6 @@ pub fn ld_hlptr_dec_a(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cyc
   mapper.write(hl(*h, *l), a);
   decrement_hl(h, l);
   Cycles(8)
-}
-
-fn hl(h: u8, l: u8) -> u16 {
-  ((h as u16) << 8) + l as u16
 }
 
 fn decrement_hl(h: &mut u8, l: &mut u8) {
