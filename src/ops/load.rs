@@ -7,8 +7,8 @@ pub fn ld_r_n(r: &mut u8, n: u8) -> Cycles {
 }
 
 pub fn ld_rr_nn(r1: &mut u8, r2: &mut u8, nn: u16) -> Cycles {
-  *r1 = (nn & 0xff) as u8;
-  *r2 = ((nn & 0xff00) >> 8) as u8;
+  *r1 = ((nn & 0xff00) >> 8) as u8;
+  *r2 = (nn & 0xff) as u8;
   Cycles(12)
 }
 
