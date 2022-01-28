@@ -135,6 +135,7 @@ impl Cpu {
             0xfa => ld_a_nnptr(&mut self.a, mapper.read_word_pc(&mut self.pc), mapper),
             0x02 => ld_rrptr_a(self.b, self.c, self.a, mapper),
             0x12 => ld_rrptr_a(self.d, self.e, self.a, mapper),
+            0xea => ld_nnptr_a(mapper.read_word_pc(&mut self.pc), self.a, mapper),
             0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
@@ -218,11 +219,6 @@ impl Cpu {
             //     self.increment_hl();
             //     8
             // } // ldi a,(hl)
-            // 0x36 => {
-            //     let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     self.write_hl(mmu, val, video);
-            //     12
-            // } // ld (hl),n
             // 0x3a => {
             //     self.a = self.read_hl(mmu, video);
             //     self.decrement_hl();
@@ -334,11 +330,6 @@ impl Cpu {
             //     }
             //     12
             // } // call c,nn
-            // 0xea => {
-            //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
-            //     mmu.write(address, self.a, video);
-            //     16
-            // } // ld (nn),a
             // 0xee => {
             //     self.a = self.a ^ Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
             //     let z = self.a == 0;
