@@ -104,7 +104,9 @@ impl Cpu {
             // rotate and shift
 
             // cpu control
-            0x00 => Cycles(4), // no-op
+            0x00 => nop(),
+            0xf3 => di(&mut self.ime),
+            0xfb => ei(&mut self.ime),
 
             // jump
             0xc3 => {
@@ -512,14 +514,6 @@ impl Cpu {
             //     self.a = mmu.read(address, video);
             //     12
             // } // ldh a,(n)
-            // 0xf3 => {
-            //     self.ime = false;
-            //     4
-            // } // di
-            // 0xfb => {
-            //     self.ime = true;
-            //     4
-            // } // ei
             // 0xfe => {
             //     let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
             //     let z = self.a == val;
