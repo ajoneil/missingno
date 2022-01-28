@@ -23,17 +23,29 @@ impl Mapper<'_> {
         self.mmu.read(address, self.video)
     }
 
+    pub fn read_pc(&self, pc: &mut u16) -> u8 {
+        let val = self.read(*pc);
+        *pc += 1;
+        val
+    }
+
     pub fn read_word(&self, address: u16) -> u16 {
         self.mmu.read_word(address, self.video)
+    }
+
+    pub fn read_word_pc(&self, pc: &mut u16) -> u16 {
+        let val = self.read_word(*pc);
+        *pc += 2;
+        val
     }
 
     pub fn write(&mut self, address: u16, val: u8) {
         self.mmu.write(address, val, self.video)
     }
 
-    pub fn write_word(&mut self, address: u16, val: u16) {
-        self.mmu.write_word(address, val, self.video)
-    }
+    // pub fn write_word(&mut self, address: u16, val: u16) {
+    //     self.mmu.write_word(address, val, self.video)
+    // }
 }
 
 impl Mmu {
@@ -79,8 +91,8 @@ impl Mmu {
         }
     }
 
-    pub fn write_word(&mut self, address: u16, val: u16, video: &mut Video) {
-        self.write(address, (val % 0x100) as u8, video);
-        self.write(address + 1, (val / 0x100) as u8, video);
-    }
+    // pub fn write_word(&mut self, address: u16, val: u16, video: &mut Video) {
+    //     self.write(address, (val % 0x100) as u8, video);
+    //     self.write(address + 1, (val / 0x100) as u8, video);
+    // }
 }

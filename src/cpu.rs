@@ -49,40 +49,28 @@ impl Cpu {
 
     pub fn step(&mut self, mmu: &mut Mmu, video: &mut Video) -> Cycles {
         let mapper = &mut Mapper::new(mmu, video);
+        let instruction = mapper.read_pc(&mut self.pc);
 
-        let instruction = Cpu::read(&mut self.pc, mapper);
         match instruction {
             // 8-bit load
-            0x06 => ld_r_n(&mut self.b, Cpu::read(&mut self.pc, mapper)),
-            0x0e => ld_r_n(&mut self.c, Cpu::read(&mut self.pc, mapper)),
-            0x16 => ld_r_n(&mut self.d, Cpu::read(&mut self.pc, mapper)),
-            0x1e => ld_r_n(&mut self.e, Cpu::read(&mut self.pc, mapper)),
-            0x26 => ld_r_n(&mut self.h, Cpu::read(&mut self.pc, mapper)),
-            0x2e => ld_r_n(&mut self.l, Cpu::read(&mut self.pc, mapper)),
-            0x3e => ld_r_n(&mut self.a, Cpu::read(&mut self.pc, mapper)),
-            0xf0 => ld_a_nhptr(&mut self.a, Cpu::read(&mut self.pc, mapper), mapper),
-            0xe0 => ld_nhptr_a(Cpu::read(&mut self.pc, mapper), self.a, mapper),
+            0x06 => ld_r_n(&mut self.b, mapper.read_pc(&mut self.pc)),
+            0x0e => ld_r_n(&mut self.c, mapper.read_pc(&mut self.pc)),
+            0x16 => ld_r_n(&mut self.d, mapper.read_pc(&mut self.pc)),
+            0x1e => ld_r_n(&mut self.e, mapper.read_pc(&mut self.pc)),
+            0x26 => ld_r_n(&mut self.h, mapper.read_pc(&mut self.pc)),
+            0x2e => ld_r_n(&mut self.l, mapper.read_pc(&mut self.pc)),
+            0x3e => ld_r_n(&mut self.a, mapper.read_pc(&mut self.pc)),
+            0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
+            0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
             0xe2 => ld_chptr_a(self.c, self.a, mapper),
             0x32 => ld_hlptr_dec_a(&mut self.h, &mut self.l, self.a, mapper),
 
             // 16-bit load
-            0x01 => ld_rr_nn(
-                &mut self.b,
-                &mut self.c,
-                Cpu::read_word(&mut self.pc, mapper),
-            ),
-            0x11 => ld_rr_nn(
-                &mut self.d,
-                &mut self.e,
-                Cpu::read_word(&mut self.pc, mapper),
-            ),
-            0x21 => ld_rr_nn(
-                &mut self.h,
-                &mut self.l,
-                Cpu::read_word(&mut self.pc, mapper),
-            ),
-            0x31 => ld_sp_nn(&mut self.sp, Cpu::read_word(&mut self.pc, mapper)),
+            0x01 => ld_rr_nn(&mut self.b, &mut self.c, mapper.read_word_pc(&mut self.pc)),
+            0x11 => ld_rr_nn(&mut self.d, &mut self.e, mapper.read_word_pc(&mut self.pc)),
+            0x21 => ld_rr_nn(&mut self.h, &mut self.l, mapper.read_word_pc(&mut self.pc)),
+            0x31 => ld_sp_nn(&mut self.sp, mapper.read_word_pc(&mut self.pc)),
 
             // 8-bit arithmetic and logic
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
@@ -99,7 +87,7 @@ impl Cpu {
             0xbc => cp_r(self.h, self.a, &mut self.f),
             0xbd => cp_r(self.b, self.a, &mut self.f),
             0xbf => cp_r(self.a, self.a, &mut self.f),
-            0xfe => cp_n(Cpu::read(&mut self.pc, mapper), self.a, &mut self.f),
+            0xfe => cp_n(mapper.read_pc(&mut self.pc), self.a, &mut self.f),
             0xbe => cp_hlptr(self.h, self.l, self.a, &mut self.f, mapper),
             0x05 => dec_r(&mut self.b, &mut self.f),
             0x0d => dec_r(&mut self.c, &mut self.f),
@@ -120,28 +108,28 @@ impl Cpu {
 
             // jump
             0xc3 => {
-                let nn = Cpu::read_word(&mut self.pc, &mapper);
+                let nn = mapper.read_word_pc(&mut self.pc);
                 jp_nn(&mut self.pc, nn)
             }
 
             0x18 => {
-                let distance = Cpu::read(&mut self.pc, &mapper);
+                let distance = mapper.read_pc(&mut self.pc);
                 jr(&mut self.pc, distance)
             }
             0x20 => {
-                let distance = Cpu::read(&mut self.pc, &mapper);
+                let distance = mapper.read_pc(&mut self.pc);
                 jr_if(&mut self.pc, distance, !self.f.contains(Flags::Z))
             }
             0x28 => {
-                let distance = Cpu::read(&mut self.pc, &mapper);
+                let distance = mapper.read_pc(&mut self.pc);
                 jr_if(&mut self.pc, distance, self.f.contains(Flags::Z))
             }
             0x30 => {
-                let distance = Cpu::read(&mut self.pc, &mapper);
+                let distance = mapper.read_pc(&mut self.pc);
                 jr_if(&mut self.pc, distance, !self.f.contains(Flags::C))
             }
             0x38 => {
-                let distance = Cpu::read(&mut self.pc, &mapper);
+                let distance = mapper.read_pc(&mut self.pc);
                 jr_if(&mut self.pc, distance, self.f.contains(Flags::C))
             }
 
@@ -466,30 +454,18 @@ impl Cpu {
         }
     }
 
-    fn read(pc: &mut u16, mapper: &Mapper) -> u8 {
-        let byte = mapper.read(*pc);
-        *pc += 1;
-        byte
-    }
+    // fn read_hl(&self, mmu: &Mmu, video: &Video) -> u8 {
+    //     mmu.read((self.h as u16 * 256) + self.l as u16, video)
+    // }
 
-    fn read_word(pc: &mut u16, mapper: &Mapper) -> u16 {
-        let byte = mapper.read_word(*pc);
-        *pc += 2;
-        byte
-    }
-
-    fn read_hl(&self, mmu: &Mmu, video: &Video) -> u8 {
-        mmu.read((self.h as u16 * 256) + self.l as u16, video)
-    }
-
-    fn increment_hl(&mut self) {
-        if self.l == 0xff {
-            self.h = self.h + 1;
-            self.l = 0x00;
-        } else {
-            self.l = self.l + 1;
-        }
-    }
+    // fn increment_hl(&mut self) {
+    //     if self.l == 0xff {
+    //         self.h = self.h + 1;
+    //         self.l = 0x00;
+    //     } else {
+    //         self.l = self.l + 1;
+    //     }
+    // }
 }
 
 impl fmt::Debug for Cpu {

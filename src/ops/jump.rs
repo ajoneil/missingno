@@ -1,4 +1,4 @@
-use crate::cpu::{Cycles, Flags};
+use crate::cpu::Cycles;
 
 pub fn jp_nn(pc: &mut u16, nn: u16) -> Cycles {
   *pc = nn;
