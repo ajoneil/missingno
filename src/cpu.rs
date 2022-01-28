@@ -112,58 +112,42 @@ impl Cpu {
                 jp_nn(&mut self.pc, nn)
             }
 
-            // 0x20 => {
-            //     let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     if !self.z() {
-            //         self.jr(distance);
-            //         12
-            //     } else {
-            //         8
-            //     }
-            // } // jr nz,n
+            0x18 => {
+                let distance = Cpu::read(&mut self.pc, &mapper);
+                jr(&mut self.pc, distance)
+            }
+            0x20 => {
+                let distance = Cpu::read(&mut self.pc, &mapper);
+                jr_if(&mut self.pc, distance, !self.f.contains(Flags::Z))
+            }
+            0x28 => {
+                let distance = Cpu::read(&mut self.pc, &mapper);
+                jr_if(&mut self.pc, distance, self.f.contains(Flags::Z))
+            }
+            0x30 => {
+                let distance = Cpu::read(&mut self.pc, &mapper);
+                jr_if(&mut self.pc, distance, !self.f.contains(Flags::C))
+            }
+            0x38 => {
+                let distance = Cpu::read(&mut self.pc, &mapper);
+                jr_if(&mut self.pc, distance, self.f.contains(Flags::C))
+            }
 
             // 0x22 => {
             //     self.write_hl(mmu, self.a, video);
             //     self.increment_hl();
             //     8
             // } // ldi (hl),a
-            // 0x28 => {
-            //     let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     if self.z() {
-            //         self.jr(distance);
-            //         12
-            //     } else {
-            //         8
-            //     }
-            // } // jr z,n
             // 0x2a => {
             //     self.a = self.read_hl(mmu, video);
             //     self.increment_hl();
             //     8
             // } // ldi a,(hl)
-            // 0x30 => {
-            //     let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     if !self.carry() {
-            //         self.jr(distance);
-            //         12
-            //     } else {
-            //         8
-            //     }
-            // } // jr nc,n
             // 0x36 => {
             //     let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
             //     self.write_hl(mmu, val, video);
             //     12
             // } // ld (hl),n
-            // 0x38 => {
-            //     let distance = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     if self.carry() {
-            //         self.jr(distance);
-            //         12
-            //     } else {
-            //         8
-            //     }
-            // } // jr c,n
             // 0x3a => {
             //     self.a = self.read_hl(mmu, video);
             //     self.decrement_hl();
@@ -573,15 +557,6 @@ impl Cpu {
             self.l = 0x00;
         } else {
             self.l = self.l + 1;
-        }
-    }
-
-    fn jr(&mut self, distance: u8) {
-        if distance & 0x80 != 0x00 {
-            let distance = (distance - 1) ^ 0xff;
-            self.pc = self.pc - distance as u16;
-        } else {
-            self.pc = self.pc + distance as u16;
         }
     }
 }
