@@ -53,6 +53,55 @@ impl Cpu {
 
         match instruction {
             // 8-bit load
+            0x40 => Cycles(4), // ld b,b
+            0x41 => ld_r_r(&mut self.b, self.c),
+            0x42 => ld_r_r(&mut self.b, self.d),
+            0x43 => ld_r_r(&mut self.b, self.e),
+            0x44 => ld_r_r(&mut self.b, self.h),
+            0x45 => ld_r_r(&mut self.b, self.l),
+            0x47 => ld_r_r(&mut self.b, self.a),
+            0x48 => ld_r_r(&mut self.c, self.b),
+            0x49 => Cycles(4), // ld c,c
+            0x4a => ld_r_r(&mut self.c, self.d),
+            0x4b => ld_r_r(&mut self.c, self.e),
+            0x4c => ld_r_r(&mut self.c, self.h),
+            0x4d => ld_r_r(&mut self.c, self.l),
+            0x4f => ld_r_r(&mut self.c, self.a),
+            0x50 => ld_r_r(&mut self.d, self.b),
+            0x51 => ld_r_r(&mut self.d, self.c),
+            0x52 => Cycles(4), // ld d,d
+            0x53 => ld_r_r(&mut self.d, self.e),
+            0x54 => ld_r_r(&mut self.d, self.h),
+            0x55 => ld_r_r(&mut self.d, self.l),
+            0x57 => ld_r_r(&mut self.d, self.a),
+            0x58 => ld_r_r(&mut self.e, self.b),
+            0x59 => ld_r_r(&mut self.e, self.c),
+            0x5a => ld_r_r(&mut self.e, self.d),
+            0x5b => Cycles(4), // ld e,e
+            0x5c => ld_r_r(&mut self.e, self.h),
+            0x5d => ld_r_r(&mut self.e, self.l),
+            0x5f => ld_r_r(&mut self.e, self.a),
+            0x60 => ld_r_r(&mut self.h, self.b),
+            0x61 => ld_r_r(&mut self.h, self.c),
+            0x62 => ld_r_r(&mut self.h, self.d),
+            0x63 => ld_r_r(&mut self.h, self.e),
+            0x64 => Cycles(4), // ld h,h
+            0x65 => ld_r_r(&mut self.h, self.l),
+            0x67 => ld_r_r(&mut self.h, self.a),
+            0x68 => ld_r_r(&mut self.l, self.b),
+            0x69 => ld_r_r(&mut self.l, self.c),
+            0x6a => ld_r_r(&mut self.l, self.d),
+            0x6b => ld_r_r(&mut self.l, self.e),
+            0x6c => ld_r_r(&mut self.l, self.h),
+            0x6d => Cycles(4), // ld l,l
+            0x6f => ld_r_r(&mut self.l, self.a),
+            0x78 => ld_r_r(&mut self.a, self.b),
+            0x79 => ld_r_r(&mut self.a, self.c),
+            0x7a => ld_r_r(&mut self.a, self.d),
+            0x7b => ld_r_r(&mut self.a, self.e),
+            0x7c => ld_r_r(&mut self.a, self.h),
+            0x7d => ld_r_r(&mut self.a, self.l),
+            0x7f => Cycles(4), // ld a,a
             0x06 => ld_r_n(&mut self.b, mapper.read_pc(&mut self.pc)),
             0x0e => ld_r_n(&mut self.c, mapper.read_pc(&mut self.pc)),
             0x16 => ld_r_n(&mut self.d, mapper.read_pc(&mut self.pc)),
@@ -152,182 +201,6 @@ impl Cpu {
             //     self.a = self.read_hl(mmu, video);
             //     self.decrement_hl();
             //     8
-            // } // ldd a,(hl)
-            // 0x40 => 4, // ld b,b
-            // 0x41 => {
-            //     self.b = self.c;
-            //     4
-            // } // ld b,c
-            // 0x42 => {
-            //     self.b = self.d;
-            //     4
-            // } // ld b,d
-            // 0x43 => {
-            //     self.b = self.e;
-            //     4
-            // } // ld b,e
-            // 0x44 => {
-            //     self.b = self.h;
-            //     4
-            // } // ld b,h
-            // 0x45 => {
-            //     self.b = self.l;
-            //     4
-            // } // ld b,l
-            // 0x47 => {
-            //     self.b = self.a;
-            //     4
-            // } // ld b,a
-            // 0x48 => {
-            //     self.c = self.b;
-            //     4
-            // } // ld c,b
-            // 0x49 => 4, // ld c,c
-            // 0x4a => {
-            //     self.c = self.d;
-            //     4
-            // } // ld c,d
-            // 0x4b => {
-            //     self.c = self.e;
-            //     4
-            // } // ld c,e
-            // 0x4c => {
-            //     self.c = self.h;
-            //     4
-            // } // ld c,h
-            // 0x4d => {
-            //     self.c = self.l;
-            //     4
-            // } // ld c,l
-            // 0x4f => {
-            //     self.c = self.a;
-            //     4
-            // } // ld c,a
-            // 0x50 => {
-            //     self.d = self.b;
-            //     4
-            // } // ld d,b
-            // 0x51 => {
-            //     self.d = self.c;
-            //     4
-            // } // ld d,c
-            // 0x52 => 4, // ld d,d
-            // 0x53 => {
-            //     self.d = self.e;
-            //     4
-            // } // ld d,e
-            // 0x54 => {
-            //     self.d = self.h;
-            //     4
-            // } // ld d,h
-            // 0x55 => {
-            //     self.d = self.l;
-            //     4
-            // } // ld d,l
-            // 0x57 => {
-            //     self.d = self.a;
-            //     4
-            // } // ld d,a
-            // 0x58 => {
-            //     self.e = self.b;
-            //     4
-            // } // ld e,b
-            // 0x59 => {
-            //     self.e = self.c;
-            //     4
-            // } // ld e,c
-            // 0x5a => {
-            //     self.e = self.d;
-            //     4
-            // } // ld e,d
-            // 0x5b => 4, // ld e,e
-            // 0x5c => {
-            //     self.e = self.h;
-            //     4
-            // } // ld e,h
-            // 0x5d => {
-            //     self.e = self.l;
-            //     4
-            // } // ld e,l
-            // 0x5f => {
-            //     self.e = self.a;
-            //     4
-            // } // ld e,a
-            // 0x60 => {
-            //     self.h = self.b;
-            //     4
-            // } // ld h,b
-            // 0x61 => {
-            //     self.h = self.c;
-            //     4
-            // } // ld h,c
-            // 0x62 => {
-            //     self.h = self.d;
-            //     4
-            // } // ld h,d
-            // 0x63 => {
-            //     self.h = self.e;
-            //     4
-            // } // ld h,e
-            // 0x64 => 4, // ld h,h
-            // 0x65 => {
-            //     self.h = self.l;
-            //     4
-            // } // ld h,l
-            // 0x67 => {
-            //     self.h = self.a;
-            //     4
-            // } // ld h,a
-            // 0x68 => {
-            //     self.l = self.b;
-            //     4
-            // } // ld l,b
-            // 0x69 => {
-            //     self.l = self.c;
-            //     4
-            // } // ld l,c
-            // 0x6a => {
-            //     self.l = self.d;
-            //     4
-            // } // ld l,d
-            // 0x6b => {
-            //     self.l = self.e;
-            //     4
-            // } // ld l,e
-            // 0x6c => {
-            //     self.l = self.h;
-            //     4
-            // } // ld l,h
-            // 0x6d => 4, // ld l,l
-            // 0x6f => {
-            //     self.l = self.a;
-            //     4
-            // } // ld l,a
-            // 0x78 => {
-            //     self.a = self.b;
-            //     4
-            // } // ld a,b
-            // 0x79 => {
-            //     self.a = self.c;
-            //     4
-            // } // ld a,c
-            // 0x7a => {
-            //     self.a = self.d;
-            //     4
-            // } // ld a,d
-            // 0x7b => {
-            //     self.a = self.e;
-            //     4
-            // } // ld a,e
-            // 0x7c => {
-            //     self.a = self.h;
-            //     4
-            // } // ld a,h
-            // 0x7d => {
-            //     self.a = self.l;
-            //     4
-            // } // ld a,l
-            // 0x7f => 4, // ld a,a
             // 0x98 => {
             //     let result: i16 =
             //         self.a as i16 - self.b as i16 - (if self.carry() { 1 } else { 0 });

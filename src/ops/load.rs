@@ -2,6 +2,11 @@ use crate::cpu::Cycles;
 use crate::mmu::Mapper;
 use crate::ops::hl;
 
+pub fn ld_r_r(rw: &mut u8, rr: u8) -> Cycles {
+  *rw = rr;
+  Cycles(4)
+}
+
 pub fn ld_r_n(r: &mut u8, n: u8) -> Cycles {
   *r = n;
   Cycles(8)
