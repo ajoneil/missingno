@@ -129,6 +129,7 @@ impl Cpu {
             0x74 => ld_hlptr_r(self.h, self.l, self.h, mapper),
             0x75 => ld_hlptr_r(self.h, self.l, self.l, mapper),
             0x77 => ld_hlptr_r(self.h, self.l, self.a, mapper),
+            0x36 => ld_hlptr_n(self.h, self.l, mapper.read_pc(&mut self.pc), mapper),
             0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
