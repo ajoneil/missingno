@@ -140,7 +140,10 @@ impl Cpu {
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
             0xe2 => ld_chptr_a(self.c, self.a, mapper),
+            0x22 => ld_hlptr_inc_a(&mut self.h, &mut self.l, self.a, mapper),
+            0x2a => ld_a_hlptr_inc(&mut self.a, &mut self.h, &mut self.l, mapper),
             0x32 => ld_hlptr_dec_a(&mut self.h, &mut self.l, self.a, mapper),
+            0x3a => ld_a_hlptr_dec(&mut self.a, &mut self.h, &mut self.l, mapper),
 
             // 16-bit load
             0x01 => ld_rr_nn(&mut self.b, &mut self.c, mapper.read_word_pc(&mut self.pc)),
@@ -209,20 +212,6 @@ impl Cpu {
                 jr_if(&mut self.pc, distance, self.f.contains(Flags::C))
             }
 
-            // 0x22 => {
-            //     self.write_hl(mmu, self.a, video);
-            //     self.increment_hl();
-            //     8
-            // } // ldi (hl),a
-            // 0x2a => {
-            //     self.a = self.read_hl(mmu, video);
-            //     self.increment_hl();
-            //     8
-            // } // ldi a,(hl)
-            // 0x3a => {
-            //     self.a = self.read_hl(mmu, video);
-            //     self.decrement_hl();
-            //     8
             // 0x98 => {
             //     let result: i16 =
             //         self.a as i16 - self.b as i16 - (if self.carry() { 1 } else { 0 });
@@ -346,15 +335,6 @@ impl Cpu {
 
     // fn read_hl(&self, mmu: &Mmu, video: &Video) -> u8 {
     //     mmu.read((self.h as u16 * 256) + self.l as u16, video)
-    // }
-
-    // fn increment_hl(&mut self) {
-    //     if self.l == 0xff {
-    //         self.h = self.h + 1;
-    //         self.l = 0x00;
-    //     } else {
-    //         self.l = self.l + 1;
-    //     }
     // }
 }
 

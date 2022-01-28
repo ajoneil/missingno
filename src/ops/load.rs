@@ -62,10 +62,37 @@ pub fn ld_chptr_a(c: u8, a: u8, mapper: &mut Mapper) -> Cycles {
   Cycles(8)
 }
 
+pub fn ld_hlptr_inc_a(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cycles {
+  mapper.write(rr(*h, *l), a);
+  increment_hl(h, l);
+  Cycles(8)
+}
+
+pub fn ld_a_hlptr_inc(a: &mut u8, h: &mut u8, l: &mut u8, mapper: &Mapper) -> Cycles {
+  *a = mapper.read(rr(*h, *l));
+  increment_hl(h, l);
+  Cycles(8)
+}
+
 pub fn ld_hlptr_dec_a(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cycles {
   mapper.write(rr(*h, *l), a);
   decrement_hl(h, l);
   Cycles(8)
+}
+
+pub fn ld_a_hlptr_dec(a: &mut u8, h: &mut u8, l: &mut u8, mapper: &Mapper) -> Cycles {
+  *a = mapper.read(rr(*h, *l));
+  decrement_hl(h, l);
+  Cycles(8)
+}
+
+fn increment_hl(h: &mut u8, l: &mut u8) {
+  if *l == 0xff {
+    *h += 1;
+    *l = 0;
+  } else {
+    *l += 1;
+  }
 }
 
 fn decrement_hl(h: &mut u8, l: &mut u8) {
