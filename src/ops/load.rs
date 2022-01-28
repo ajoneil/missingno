@@ -17,7 +17,7 @@ pub fn ld_sp_nn(sp: &mut u16, nn: u16) -> Cycles {
   Cycles(12)
 }
 
-pub fn ld_hlptr_dec_a(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cycles {
+pub fn ld_a_hlptr_dec(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cycles {
   mapper.write(hl(*h, *l), a);
   decrement_hl(h, l);
   Cycles(8)
