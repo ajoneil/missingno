@@ -563,7 +563,7 @@ impl Cpu {
 
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "pc: {:x} sp: {:x} a: {:x} b: {:x} c: {:x} d: {:x} e: {:x} h: {:x} l: {:x} carry: {}, z: {}",
+        write!(f, "pc: {:04x} sp: {:04x} a: {:02x} b: {:02x} c: {:02x} d: {:02x} e: {:02x} h: {:02x} l: {:02x} carry: {}, z: {}",
                self.pc, self.sp, self.a, self.b, self.c, self.d, self.e, self.h, self.l, self.f.contains(Flags::C), self.f.contains(Flags::Z))
     }
 }
