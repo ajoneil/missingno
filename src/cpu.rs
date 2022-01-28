@@ -77,7 +77,7 @@ impl Cpu {
                 Cpu::read_word(&mut self.pc, mapper),
             ),
 
-            0x32 => ld_a_hlptr_dec(&mut self.h, &mut self.l, self.a, mapper),
+            0x32 => ld_hlptr_dec_a(&mut self.h, &mut self.l, self.a, mapper),
 
             // 16-bit load
             0x31 => ld_sp_nn(&mut self.sp, Cpu::read_word(&mut self.pc, mapper)),
