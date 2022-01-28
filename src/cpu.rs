@@ -122,6 +122,13 @@ impl Cpu {
                 ld_r_hlptr(&mut self.l, self.h, l, mapper)
             }
             0x7e => ld_r_hlptr(&mut self.a, self.h, self.l, mapper),
+            0x70 => ld_hlptr_r(self.h, self.l, self.b, mapper),
+            0x71 => ld_hlptr_r(self.h, self.l, self.c, mapper),
+            0x72 => ld_hlptr_r(self.h, self.l, self.d, mapper),
+            0x73 => ld_hlptr_r(self.h, self.l, self.e, mapper),
+            0x74 => ld_hlptr_r(self.h, self.l, self.h, mapper),
+            0x75 => ld_hlptr_r(self.h, self.l, self.l, mapper),
+            0x77 => ld_hlptr_r(self.h, self.l, self.a, mapper),
             0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
