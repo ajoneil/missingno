@@ -133,6 +133,8 @@ impl Cpu {
             0x0a => ld_r_rrptr(&mut self.a, self.b, self.c, mapper),
             0x1a => ld_r_rrptr(&mut self.a, self.d, self.e, mapper),
             0xfa => ld_a_nnptr(&mut self.a, mapper.read_word_pc(&mut self.pc), mapper),
+            0x02 => ld_rrptr_a(self.b, self.c, self.a, mapper),
+            0x12 => ld_rrptr_a(self.d, self.e, self.a, mapper),
             0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),

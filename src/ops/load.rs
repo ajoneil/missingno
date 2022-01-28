@@ -27,9 +27,14 @@ pub fn ld_hlptr_n(h: u8, l: u8, n: u8, mapper: &mut Mapper) -> Cycles {
   Cycles(12)
 }
 
-pub fn ld_a_nnptr(a: &mut u8, nn: u16, mapper: &mut Mapper) -> Cycles {
+pub fn ld_a_nnptr(a: &mut u8, nn: u16, mapper: &Mapper) -> Cycles {
   *a = mapper.read(nn);
   Cycles(16)
+}
+
+pub fn ld_rrptr_a(r1: u8, r2: u8, a: u8, mapper: &mut Mapper) -> Cycles {
+  mapper.write(rr(r1, r2), a);
+  Cycles(8)
 }
 
 pub fn ld_a_nhptr(a: &mut u8, n: u8, mapper: &Mapper) -> Cycles {
