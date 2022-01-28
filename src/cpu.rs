@@ -60,7 +60,13 @@ impl Cpu {
             0x26 => ld_r_n(&mut self.h, Cpu::read(&mut self.pc, mapper)),
             0x2e => ld_r_n(&mut self.l, Cpu::read(&mut self.pc, mapper)),
             0x3e => ld_r_n(&mut self.a, Cpu::read(&mut self.pc, mapper)),
+            0xf0 => ld_a_nhptr(&mut self.a, Cpu::read(&mut self.pc, mapper), mapper),
+            0xe0 => ld_nhptr_a(Cpu::read(&mut self.pc, mapper), self.a, mapper),
+            0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
+            0xe2 => ld_chptr_a(self.c, self.a, mapper),
+            0x32 => ld_hlptr_dec_a(&mut self.h, &mut self.l, self.a, mapper),
 
+            // 16-bit load
             0x01 => ld_rr_nn(
                 &mut self.b,
                 &mut self.c,
@@ -76,10 +82,6 @@ impl Cpu {
                 &mut self.l,
                 Cpu::read_word(&mut self.pc, mapper),
             ),
-
-            0x32 => ld_hlptr_dec_a(&mut self.h, &mut self.l, self.a, mapper),
-
-            // 16-bit load
             0x31 => ld_sp_nn(&mut self.sp, Cpu::read_word(&mut self.pc, mapper)),
 
             // 8-bit arithmetic and logic
@@ -492,11 +494,6 @@ impl Cpu {
             //     }
             //     12
             // } // call c,nn
-            // 0xe0 => {
-            //     let address = 0xff00 + Cpu::read_and_inc_pc(&mut self.pc, mmu, video) as u16;
-            //     mmu.write(address, self.a, video);
-            //     12
-            // } // ldh (n),a
             // 0xea => {
             //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
             //     mmu.write(address, self.a, video);
@@ -509,11 +506,6 @@ impl Cpu {
             //     self.set_carry(false);
             //     8
             // } // xor nn
-            // 0xf0 => {
-            //     let address = 0xff00 + Cpu::read_and_inc_pc(&mut self.pc, mmu, video) as u16;
-            //     self.a = mmu.read(address, video);
-            //     12
-            // } // ldh a,(n)
             // 0xfe => {
             //     let val = Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
             //     let z = self.a == val;
