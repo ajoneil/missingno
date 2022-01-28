@@ -1,6 +1,6 @@
 use crate::cpu::{Cycles, Flags};
 use crate::mmu::Mapper;
-use crate::ops::hl;
+use crate::ops::rr;
 
 pub fn xor_r(r: u8, a: &mut u8, f: &mut Flags) -> Cycles {
   *a = *a ^ r;
@@ -26,7 +26,7 @@ pub fn cp_n(n: u8, a: u8, f: &mut Flags) -> Cycles {
 }
 
 pub fn cp_hlptr(h: u8, l: u8, a: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
-  let val = mapper.read(hl(h, l));
+  let val = mapper.read(rr(h, l));
   f.set(Flags::Z, a == val);
   f.insert(Flags::N);
   f.set(Flags::C, val > a);

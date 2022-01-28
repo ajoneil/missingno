@@ -1,6 +1,6 @@
 use crate::cpu::Cycles;
 use crate::mmu::Mapper;
-use crate::ops::hl;
+use crate::ops::rr;
 
 pub fn ld_r_r(rw: &mut u8, rr: u8) -> Cycles {
   *rw = rr;
@@ -12,18 +12,18 @@ pub fn ld_r_n(r: &mut u8, n: u8) -> Cycles {
   Cycles(8)
 }
 
-pub fn ld_r_hlptr(r: &mut u8, h: u8, l: u8, mapper: &Mapper) -> Cycles {
-  *r = mapper.read(hl(h, l));
+pub fn ld_r_rrptr(rw: &mut u8, rr1: u8, rr2: u8, mapper: &Mapper) -> Cycles {
+  *rw = mapper.read(rr(rr1, rr2));
   Cycles(8)
 }
 
 pub fn ld_hlptr_r(h: u8, l: u8, r: u8, mapper: &mut Mapper) -> Cycles {
-  mapper.write(hl(h, l), r);
+  mapper.write(rr(h, l), r);
   Cycles(8)
 }
 
 pub fn ld_hlptr_n(h: u8, l: u8, n: u8, mapper: &mut Mapper) -> Cycles {
-  mapper.write(hl(h, l), n);
+  mapper.write(rr(h, l), n);
   Cycles(12)
 }
 pub fn ld_a_nhptr(a: &mut u8, n: u8, mapper: &Mapper) -> Cycles {
@@ -47,7 +47,7 @@ pub fn ld_chptr_a(c: u8, a: u8, mapper: &mut Mapper) -> Cycles {
 }
 
 pub fn ld_hlptr_dec_a(h: &mut u8, l: &mut u8, a: u8, mapper: &mut Mapper) -> Cycles {
-  mapper.write(hl(*h, *l), a);
+  mapper.write(rr(*h, *l), a);
   decrement_hl(h, l);
   Cycles(8)
 }

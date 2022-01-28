@@ -109,19 +109,19 @@ impl Cpu {
             0x26 => ld_r_n(&mut self.h, mapper.read_pc(&mut self.pc)),
             0x2e => ld_r_n(&mut self.l, mapper.read_pc(&mut self.pc)),
             0x3e => ld_r_n(&mut self.a, mapper.read_pc(&mut self.pc)),
-            0x46 => ld_r_hlptr(&mut self.b, self.h, self.l, mapper),
-            0x4e => ld_r_hlptr(&mut self.c, self.h, self.l, mapper),
-            0x56 => ld_r_hlptr(&mut self.d, self.h, self.l, mapper),
-            0x5e => ld_r_hlptr(&mut self.e, self.h, self.l, mapper),
+            0x46 => ld_r_rrptr(&mut self.b, self.h, self.l, mapper),
+            0x4e => ld_r_rrptr(&mut self.c, self.h, self.l, mapper),
+            0x56 => ld_r_rrptr(&mut self.d, self.h, self.l, mapper),
+            0x5e => ld_r_rrptr(&mut self.e, self.h, self.l, mapper),
             0x66 => {
                 let h = self.h;
-                ld_r_hlptr(&mut self.h, h, self.l, mapper)
+                ld_r_rrptr(&mut self.h, h, self.l, mapper)
             }
             0x6e => {
                 let l = self.l;
-                ld_r_hlptr(&mut self.l, self.h, l, mapper)
+                ld_r_rrptr(&mut self.l, self.h, l, mapper)
             }
-            0x7e => ld_r_hlptr(&mut self.a, self.h, self.l, mapper),
+            0x7e => ld_r_rrptr(&mut self.a, self.h, self.l, mapper),
             0x70 => ld_hlptr_r(self.h, self.l, self.b, mapper),
             0x71 => ld_hlptr_r(self.h, self.l, self.c, mapper),
             0x72 => ld_hlptr_r(self.h, self.l, self.d, mapper),
@@ -130,6 +130,8 @@ impl Cpu {
             0x75 => ld_hlptr_r(self.h, self.l, self.l, mapper),
             0x77 => ld_hlptr_r(self.h, self.l, self.a, mapper),
             0x36 => ld_hlptr_n(self.h, self.l, mapper.read_pc(&mut self.pc), mapper),
+            0x0a => ld_r_rrptr(&mut self.a, self.b, self.c, mapper),
+            0x1a => ld_r_rrptr(&mut self.a, self.d, self.e, mapper),
             0xf0 => ld_a_nhptr(&mut self.a, mapper.read_pc(&mut self.pc), mapper),
             0xe0 => ld_nhptr_a(mapper.read_pc(&mut self.pc), self.a, mapper),
             0xf2 => ld_a_chptr(&mut self.a, self.c, mapper),
