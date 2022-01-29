@@ -114,3 +114,9 @@ pub fn ld_sp_nn(sp: &mut u16, nn: u16) -> Cycles {
   *sp = nn;
   Cycles(12)
 }
+
+pub fn ld_nnptr_sp(nn: u16, sp: u16, mapper: &mut Mapper) -> Cycles {
+  mapper.write_word(nn, sp);
+
+  Cycles(20)
+}

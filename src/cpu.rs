@@ -150,6 +150,7 @@ impl Cpu {
             0x11 => ld_rr_nn(&mut self.d, &mut self.e, mapper.read_word_pc(&mut self.pc)),
             0x21 => ld_rr_nn(&mut self.h, &mut self.l, mapper.read_word_pc(&mut self.pc)),
             0x31 => ld_sp_nn(&mut self.sp, mapper.read_word_pc(&mut self.pc)),
+            0x08 => ld_nnptr_sp(mapper.read_word_pc(&mut self.pc), self.sp, mapper),
 
             // 8-bit arithmetic and logic
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
@@ -212,130 +213,12 @@ impl Cpu {
                 jr_if(&mut self.pc, distance, self.f.contains(Flags::C))
             }
 
-            // 0x98 => {
-            //     let result: i16 =
-            //         self.a as i16 - self.b as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,b
-            // 0x99 => {
-            //     let result: i16 =
-            //         self.a as i16 - self.c as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,c
-            // 0x9a => {
-            //     let result: i16 =
-            //         self.a as i16 - self.d as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,d
-            // 0x9b => {
-            //     let result: i16 =
-            //         self.a as i16 - self.e as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,e
-            // 0x9c => {
-            //     let result: i16 =
-            //         self.a as i16 - self.h as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,h
-            // 0x9d => {
-            //     let result: i16 =
-            //         self.a as i16 - self.l as i16 - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,l
-            // 0x9e => {
-            //     let result: i16 = self.a as i16
-            //         - self.read_hl(mmu, video) as i16
-            //         - (if self.carry() { 1 } else { 0 });
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     8
-            // } // sbc a,(hl)
-            // 0x9f => {
-            //     let result: i16 = if self.carry() { -1 } else { 0 };
-            //     self.set_carry(result < 0);
-            //     self.set_z(result == 0);
-            //     self.a = (0xff & result) as u8;
-            //     4
-            // } // sbc a,a
-            // 0xae => {
-            //     self.a = self.a ^ self.read_hl(mmu, video);
-            //     let z = self.a == 0;
-            //     self.set_z(z);
-            //     self.set_carry(false);
-            //     8
-            // } // xor (hl)
-            // 0xc4 => {
-            //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
-            //     if !self.z() {
-            //         self.sp = self.sp - 2;
-            //         mmu.write_word(self.sp, self.pc, video);
-            //         self.pc = address;
-            //     }
-            //     12
-            // } // call nz,nn
-            // 0xcc => {
-            //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
-            //     if self.z() {
-            //         self.sp = self.sp - 2;
-            //         mmu.write_word(self.sp, self.pc, video);
-            //         self.pc = address;
-            //     }
-            //     12
-            // } // call z,nn
-            // 0xd4 => {
-            //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
-            //     if !self.carry() {
-            //         self.sp = self.sp - 2;
-            //         mmu.write_word(self.sp, self.pc, video);
-            //         self.pc = address;
-            //     }
-            //     12
-            // } // call nc,nn
-            // 0xdc => {
-            //     let address = Cpu::read_word_and_inc_pc(&mut self.pc, mmu, video);
-            //     if self.carry() {
-            //         self.sp = self.sp - 2;
-            //         mmu.write_word(self.sp, self.pc, video);
-            //         self.pc = address;
-            //     }
-            //     12
-            // } // call c,nn
-            // 0xee => {
-            //     self.a = self.a ^ Cpu::read_and_inc_pc(&mut self.pc, mmu, video);
-            //     let z = self.a == 0;
-            //     self.set_z(z);
-            //     self.set_carry(false);
-            //     8
-            // } // xor nn
             _ => panic!(
                 "Unimplemented instruction {:x} at {:x}",
                 instruction, self.pc
             ),
         }
     }
-
-    // fn read_hl(&self, mmu: &Mmu, video: &Video) -> u8 {
-    //     mmu.read((self.h as u16 * 256) + self.l as u16, video)
-    // }
 }
 
 impl fmt::Debug for Cpu {

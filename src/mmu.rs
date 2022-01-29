@@ -43,9 +43,9 @@ impl Mapper<'_> {
         self.mmu.write(address, val, self.video)
     }
 
-    // pub fn write_word(&mut self, address: u16, val: u16) {
-    //     self.mmu.write_word(address, val, self.video)
-    // }
+    pub fn write_word(&mut self, address: u16, val: u16) {
+        self.mmu.write_word(address, val, self.video)
+    }
 }
 
 impl Mmu {
@@ -91,8 +91,8 @@ impl Mmu {
         }
     }
 
-    // pub fn write_word(&mut self, address: u16, val: u16, video: &mut Video) {
-    //     self.write(address, (val % 0x100) as u8, video);
-    //     self.write(address + 1, (val / 0x100) as u8, video);
-    // }
+    pub fn write_word(&mut self, address: u16, val: u16, video: &mut Video) {
+        self.write(address, (val & 0xff) as u8, video);
+        self.write(address + 1, (val >> 8) as u8, video);
+    }
 }
