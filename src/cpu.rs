@@ -151,6 +151,7 @@ impl Cpu {
             0x21 => ld_rr_nn(&mut self.h, &mut self.l, mapper.read_word_pc(&mut self.pc)),
             0x31 => ld_sp_nn(&mut self.sp, mapper.read_word_pc(&mut self.pc)),
             0x08 => ld_nnptr_sp(mapper.read_word_pc(&mut self.pc), self.sp, mapper),
+            0xf9 => ld_sp_hl(&mut self.sp, self.h, self.l),
 
             // 8-bit arithmetic and logic
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
