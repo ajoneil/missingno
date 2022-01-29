@@ -152,6 +152,14 @@ impl Cpu {
             0x31 => ld_sp_nn(&mut self.sp, mapper.read_word_pc(&mut self.pc)),
             0x08 => ld_nnptr_sp(mapper.read_word_pc(&mut self.pc), self.sp, mapper),
             0xf9 => ld_sp_hl(&mut self.sp, self.h, self.l),
+            0xc5 => push_rr(self.b, self.c, &mut self.sp, mapper),
+            0xd5 => push_rr(self.d, self.e, &mut self.sp, mapper),
+            0xe5 => push_rr(self.h, self.l, &mut self.sp, mapper),
+            0xf5 => push_rr(self.a, self.f.bits(), &mut self.sp, mapper),
+            0xc1 => pop_rr(&mut self.b, &mut self.c, &mut self.sp, mapper),
+            0xd1 => pop_rr(&mut self.d, &mut self.e, &mut self.sp, mapper),
+            0xe1 => pop_rr(&mut self.h, &mut self.l, &mut self.sp, mapper),
+            0xf1 => pop_af(&mut self.a, &mut self.f, &mut self.sp, mapper),
 
             // 8-bit arithmetic and logic
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),

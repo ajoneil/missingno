@@ -1,4 +1,4 @@
-use crate::cpu::Cycles;
+use crate::cpu::{Cycles, Flags};
 use crate::mmu::Mapper;
 use crate::ops::rr;
 
@@ -123,4 +123,24 @@ pub fn ld_nnptr_sp(nn: u16, sp: u16, mapper: &mut Mapper) -> Cycles {
 pub fn ld_sp_hl(sp: &mut u16, h: u8, l: u8) -> Cycles {
   *sp = rr(h, l);
   Cycles(8)
+}
+
+pub fn push_rr(r1: u8, r2: u8, sp: &mut u16, mapper: &mut Mapper) -> Cycles {
+  *sp -= 2;
+  mapper.write_word(*sp, rr(r1, r2));
+  Cycles(16)
+}
+
+pub fn pop_rr(r1: &mut u8, r2: &mut u8, sp: &mut u16, mapper: &mut Mapper) -> Cycles {
+  *r1 = mapper.read(*sp);
+  *r2 = mapper.read(*sp + 1);
+  *sp += 2;
+  Cycles(16)
+}
+
+pub fn pop_af(a: &mut u8, f: &mut Flags, sp: &mut u16, mapper: &mut Mapper) -> Cycles {
+  *a = mapper.read(*sp);
+  *f = Flags::from_bits_truncate(mapper.read(*sp + 1));
+  *sp += 2;
+  Cycles(16)
 }
