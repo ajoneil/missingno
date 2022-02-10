@@ -174,6 +174,16 @@ impl Cpu {
             }
             0xc6 => add_a_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
             0x86 => add_a_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
+            0x88 => adc_a_r(&mut self.a, self.b, &mut self.f),
+            0x89 => adc_a_r(&mut self.a, self.c, &mut self.f),
+            0x8a => adc_a_r(&mut self.a, self.d, &mut self.f),
+            0x8b => adc_a_r(&mut self.a, self.e, &mut self.f),
+            0x8c => adc_a_r(&mut self.a, self.h, &mut self.f),
+            0x8d => adc_a_r(&mut self.a, self.l, &mut self.f),
+            0x8f => {
+                let a = self.a;
+                adc_a_r(&mut self.a, a, &mut self.f)
+            }
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
             0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
             0xaa => xor_r(self.d, &mut self.a, &mut self.f),
