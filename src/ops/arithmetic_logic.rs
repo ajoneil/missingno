@@ -242,6 +242,17 @@ pub fn xor_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cy
   Cycles(8)
 }
 
+pub fn or_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
+  *a = *a | r;
+
+  f.set(Flags::Z, *a == 0);
+  f.remove(Flags::N);
+  f.remove(Flags::H);
+  f.remove(Flags::C);
+
+  Cycles(4)
+}
+
 pub fn cp_r(r: u8, a: u8, f: &mut Flags) -> Cycles {
   f.set(Flags::Z, a == r);
   f.insert(Flags::N);
