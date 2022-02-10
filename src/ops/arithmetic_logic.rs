@@ -382,3 +382,12 @@ pub fn daa(a: &mut u8, f: &mut Flags) -> Cycles {
   *a = (res & 0xff) as u8;
   Cycles(4)
 }
+
+pub fn cpl(a: &mut u8, f: &mut Flags) -> Cycles {
+  *a = *a ^ 0xff;
+
+  f.insert(Flags::N);
+  f.insert(Flags::H);
+
+  Cycles(4)
+}

@@ -272,6 +272,7 @@ impl Cpu {
             0x3d => dec_r(&mut self.a, &mut self.f),
             0x35 => dec_hlptr(self.h, self.l, &mut self.f, mapper),
             0x27 => daa(&mut self.a, &mut self.f),
+            0x2f => cpl(&mut self.a, &mut self.f),
 
             // 16-bit arithmetic and logic
 
