@@ -253,6 +253,17 @@ pub fn or_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   Cycles(4)
 }
 
+pub fn or_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
+  *a = *a | n;
+
+  f.set(Flags::Z, *a == 0);
+  f.remove(Flags::N);
+  f.remove(Flags::H);
+  f.remove(Flags::C);
+
+  Cycles(8)
+}
+
 pub fn cp_r(r: u8, a: u8, f: &mut Flags) -> Cycles {
   f.set(Flags::Z, a == r);
   f.insert(Flags::N);
