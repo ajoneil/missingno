@@ -198,6 +198,16 @@ impl Cpu {
             }
             0xd6 => sub_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
             0x96 => sub_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
+            0x98 => sbc_a_r(&mut self.a, self.b, &mut self.f),
+            0x99 => sbc_a_r(&mut self.a, self.c, &mut self.f),
+            0x9a => sbc_a_r(&mut self.a, self.d, &mut self.f),
+            0x9b => sbc_a_r(&mut self.a, self.e, &mut self.f),
+            0x9c => sbc_a_r(&mut self.a, self.h, &mut self.f),
+            0x9d => sbc_a_r(&mut self.a, self.l, &mut self.f),
+            0x9f => {
+                let a = self.a;
+                sbc_a_r(&mut self.a, a, &mut self.f)
+            }
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
             0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
             0xaa => xor_r(self.d, &mut self.a, &mut self.f),
