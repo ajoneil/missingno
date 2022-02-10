@@ -174,6 +174,17 @@ pub fn sbc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> 
   Cycles(8)
 }
 
+pub fn and_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
+  *a = *a & r;
+
+  f.set(Flags::Z, *a == 0);
+  f.remove(Flags::N);
+  f.insert(Flags::H);
+  f.remove(Flags::C);
+
+  Cycles(4)
+}
+
 pub fn xor_r(r: u8, a: &mut u8, f: &mut Flags) -> Cycles {
   *a = *a ^ r;
   *f = if *a == 0 { Flags::Z } else { Flags::empty() };
