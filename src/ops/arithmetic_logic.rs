@@ -112,6 +112,19 @@ pub fn sub_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   Cycles(8)
 }
 
+pub fn sub_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
+  let val = mapper.read(rr(h, l));
+  let res = *a as i16 - val as i16;
+  *a = (res & 0xff) as u8;
+
+  f.set(Flags::Z, *a == 0);
+  f.insert(Flags::N);
+  f.set(Flags::H, (*a & 0xf) < (val & 0xf));
+  f.set(Flags::C, res < 0);
+
+  Cycles(8)
+}
+
 pub fn xor_r(r: u8, a: &mut u8, f: &mut Flags) -> Cycles {
   *a = *a ^ r;
   *f = if *a == 0 { Flags::Z } else { Flags::empty() };
