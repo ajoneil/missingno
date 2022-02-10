@@ -233,6 +233,7 @@ impl Cpu {
                 xor_r(&mut self.a, a, &mut self.f)
             }
             0xee => xor_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
+            0xae => xor_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
             0xb8 => cp_r(self.b, self.a, &mut self.f),
             0xb9 => cp_r(self.c, self.a, &mut self.f),
             0xba => cp_r(self.d, self.a, &mut self.f),

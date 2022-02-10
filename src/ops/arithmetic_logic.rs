@@ -230,6 +230,18 @@ pub fn xor_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   Cycles(8)
 }
 
+pub fn xor_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
+  let val = mapper.read(rr(h, l));
+  *a = *a ^ val;
+
+  f.set(Flags::Z, *a == 0);
+  f.remove(Flags::N);
+  f.remove(Flags::H);
+  f.remove(Flags::C);
+
+  Cycles(8)
+}
+
 pub fn cp_r(r: u8, a: u8, f: &mut Flags) -> Cycles {
   f.set(Flags::Z, a == r);
   f.insert(Flags::N);
