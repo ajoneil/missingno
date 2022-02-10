@@ -162,6 +162,16 @@ impl Cpu {
             0xf1 => pop_af(&mut self.a, &mut self.f, &mut self.sp, mapper),
 
             // 8-bit arithmetic and logic
+            0x80 => add_a_r(&mut self.a, self.b, &mut self.f),
+            0x81 => add_a_r(&mut self.a, self.c, &mut self.f),
+            0x82 => add_a_r(&mut self.a, self.d, &mut self.f),
+            0x83 => add_a_r(&mut self.a, self.e, &mut self.f),
+            0x84 => add_a_r(&mut self.a, self.h, &mut self.f),
+            0x85 => add_a_r(&mut self.a, self.l, &mut self.f),
+            0x87 => {
+                let a = self.a;
+                add_a_r(&mut self.a, a, &mut self.f)
+            }
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
             0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
             0xaa => xor_r(self.d, &mut self.a, &mut self.f),
