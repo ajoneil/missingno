@@ -311,13 +311,26 @@ pub fn cp_hlptr(a: u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
 }
 
 pub fn inc_r(r: &mut u8, f: &mut Flags) -> Cycles {
-  *r = if *r == 0xff { 0 } else { *r + 1 };
+  let res = if *r == 0xff { 0 } else { *r + 1 };
 
-  f.set(Flags::Z, *r == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(Flags::H, (((*r & 0xf) + 1) & 0x10) != 0);
 
+  *r = res;
   Cycles(4)
+}
+
+pub fn inc_hlptr(h: u8, l: u8, f: &mut Flags, mapper: &mut Mapper) -> Cycles {
+  let val = mapper.read(rr(h, l));
+  let res = if val == 0xff { 0 } else { val + 1 };
+
+  f.set(Flags::Z, res == 0);
+  f.remove(Flags::N);
+  f.set(Flags::H, (((val & 0xf) + 1) & 0x10) != 0);
+
+  mapper.write(rr(h, l), res);
+  Cycles(12)
 }
 
 pub fn dec_r(r: &mut u8, f: &mut Flags) -> Cycles {

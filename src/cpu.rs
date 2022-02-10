@@ -262,6 +262,7 @@ impl Cpu {
             0x24 => inc_r(&mut self.h, &mut self.f),
             0x2c => inc_r(&mut self.l, &mut self.f),
             0x3c => inc_r(&mut self.a, &mut self.f),
+            0x34 => inc_hlptr(self.h, self.l, &mut self.f, mapper),
             0x05 => dec_r(&mut self.b, &mut self.f),
             0x0d => dec_r(&mut self.c, &mut self.f),
             0x15 => dec_r(&mut self.d, &mut self.f),
