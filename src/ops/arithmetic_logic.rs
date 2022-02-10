@@ -355,3 +355,30 @@ pub fn dec_hlptr(h: u8, l: u8, f: &mut Flags, mapper: &mut Mapper) -> Cycles {
   mapper.write(rr(h, l), res);
   Cycles(12)
 }
+
+pub fn daa(a: &mut u8, f: &mut Flags) -> Cycles {
+  let mut res = *a as i16;
+
+  if f.contains(Flags::N) {
+    if f.contains(Flags::C) {
+      res -= 0x60
+    }
+    if f.contains(Flags::H) {
+      res -= 0x6
+    }
+  } else {
+    if f.contains(Flags::C) || *a > 0x99 {
+      res += 0x60;
+      f.insert(Flags::C)
+    }
+    if f.contains(Flags::H) || (res & 0xf) > 0x9 {
+      res += 0x6
+    }
+  }
+
+  f.set(Flags::Z, res == 0);
+  f.remove(Flags::H);
+
+  *a = (res & 0xff) as u8;
+  Cycles(4)
+}
