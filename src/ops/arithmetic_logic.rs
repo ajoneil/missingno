@@ -4,47 +4,46 @@ use crate::ops::rr;
 
 pub fn add_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   let res = *a as u16 + r as u16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(Flags::H, (((*a & 0xf) + (r & 0xf)) & 0x10) != 0);
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(4)
 }
 
 pub fn add_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   let res = *a as u16 + n as u16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(Flags::H, (((*a & 0xf) + (n & 0xf)) & 0x10) != 0);
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
 pub fn add_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
   let val = mapper.read(rr(h, l));
   let res = *a as u16 + val as u16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(Flags::H, (((*a & 0xf) + (val & 0xf)) & 0x10) != 0);
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
 pub fn adc_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let res = *a as u16 + r as u16 + carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(
     Flags::H,
@@ -52,15 +51,15 @@ pub fn adc_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   );
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(4)
 }
 
 pub fn adc_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let res = *a as u16 + n as u16 + carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(
     Flags::H,
@@ -68,6 +67,7 @@ pub fn adc_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   );
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
@@ -75,9 +75,8 @@ pub fn adc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> 
   let val = mapper.read(rr(h, l));
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let res = *a as u16 + val as u16 + carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.remove(Flags::N);
   f.set(
     Flags::H,
@@ -85,52 +84,52 @@ pub fn adc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> 
   );
   f.set(Flags::C, res > 0xff);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
 pub fn sub_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   let res = *a as i16 - r as i16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(Flags::H, (*a & 0xf) < (r & 0xf));
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(4)
 }
 
 pub fn sub_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   let res = *a as i16 - n as i16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(Flags::H, (*a & 0xf) < (n & 0xf));
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
 pub fn sub_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
   let val = mapper.read(rr(h, l));
   let res = *a as i16 - val as i16;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(Flags::H, (*a & 0xf) < (val & 0xf));
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
 pub fn sbc_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let res = *a as i16 - r as i16 - carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(
     Flags::H,
@@ -138,15 +137,15 @@ pub fn sbc_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   );
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(4)
 }
 
 pub fn sbc_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let res = *a as i16 - n as i16 - carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(
     Flags::H,
@@ -154,6 +153,7 @@ pub fn sbc_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   );
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
@@ -161,9 +161,8 @@ pub fn sbc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> 
   let carry = if f.contains(Flags::C) { 1 } else { 0 };
   let val = mapper.read(rr(h, l));
   let res = *a as i16 - val as i16 - carry;
-  *a = (res & 0xff) as u8;
 
-  f.set(Flags::Z, *a == 0);
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
   f.set(
     Flags::H,
@@ -171,6 +170,7 @@ pub fn sbc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> 
   );
   f.set(Flags::C, res < 0);
 
+  *a = (res & 0xff) as u8;
   Cycles(8)
 }
 
