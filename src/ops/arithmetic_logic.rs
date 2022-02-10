@@ -157,6 +157,23 @@ pub fn sbc_a_n(a: &mut u8, n: u8, f: &mut Flags) -> Cycles {
   Cycles(8)
 }
 
+pub fn sbc_a_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
+  let carry = if f.contains(Flags::C) { 1 } else { 0 };
+  let val = mapper.read(rr(h, l));
+  let res = *a as i16 - val as i16 - carry;
+  *a = (res & 0xff) as u8;
+
+  f.set(Flags::Z, *a == 0);
+  f.insert(Flags::N);
+  f.set(
+    Flags::H,
+    ((*a & 0xf) as u16) < (((val & 0xf) as u16) + carry as u16),
+  );
+  f.set(Flags::C, res < 0);
+
+  Cycles(8)
+}
+
 pub fn xor_r(r: u8, a: &mut u8, f: &mut Flags) -> Cycles {
   *a = *a ^ r;
   *f = if *a == 0 { Flags::Z } else { Flags::empty() };
