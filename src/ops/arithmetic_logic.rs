@@ -310,6 +310,16 @@ pub fn cp_hlptr(a: u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
   Cycles(8)
 }
 
+pub fn inc_r(r: &mut u8, f: &mut Flags) -> Cycles {
+  *r = if *r == 0xff { 0 } else { *r + 1 };
+
+  f.set(Flags::Z, *r == 0);
+  f.remove(Flags::N);
+  f.set(Flags::H, (((*r & 0xf) + 1) & 0x10) != 0);
+
+  Cycles(4)
+}
+
 pub fn dec_r(r: &mut u8, f: &mut Flags) -> Cycles {
   *r = if *r == 0 { 0xff } else { *r - 1 };
   f.set(Flags::Z, *r == 0);
