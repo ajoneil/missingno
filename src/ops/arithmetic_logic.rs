@@ -334,9 +334,24 @@ pub fn inc_hlptr(h: u8, l: u8, f: &mut Flags, mapper: &mut Mapper) -> Cycles {
 }
 
 pub fn dec_r(r: &mut u8, f: &mut Flags) -> Cycles {
-  *r = if *r == 0 { 0xff } else { *r - 1 };
-  f.set(Flags::Z, *r == 0);
-  f.insert(Flags::N);
+  let res = if *r == 0 { 0xff } else { *r - 1 };
 
+  f.set(Flags::Z, res == 0);
+  f.insert(Flags::N);
+  f.set(Flags::H, (*r & 0xf) == 0);
+
+  *r = res;
   Cycles(4)
+}
+
+pub fn dec_hlptr(h: u8, l: u8, f: &mut Flags, mapper: &mut Mapper) -> Cycles {
+  let val = mapper.read(rr(h, l));
+  let res = if val == 0 { 0xff } else { val - 1 };
+
+  f.set(Flags::Z, res == 0);
+  f.insert(Flags::N);
+  f.set(Flags::H, (val & 0xf) == 0);
+
+  mapper.write(rr(h, l), res);
+  Cycles(12)
 }
