@@ -222,13 +222,17 @@ impl Cpu {
             }
             0xe6 => and_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
             0xa6 => and_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
-            0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
-            0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
-            0xaa => xor_r(self.d, &mut self.a, &mut self.f),
-            0xab => xor_r(self.e, &mut self.a, &mut self.f),
-            0xac => xor_r(self.h, &mut self.a, &mut self.f),
-            0xad => xor_r(self.l, &mut self.a, &mut self.f),
-            0xaf => xor_r(self.a, &mut self.a, &mut self.f),
+            0xa8 => xor_r(&mut self.a, self.b, &mut self.f),
+            0xa9 => xor_r(&mut self.a, self.c, &mut self.f),
+            0xaa => xor_r(&mut self.a, self.d, &mut self.f),
+            0xab => xor_r(&mut self.a, self.e, &mut self.f),
+            0xac => xor_r(&mut self.a, self.h, &mut self.f),
+            0xad => xor_r(&mut self.a, self.l, &mut self.f),
+            0xaf => {
+                let a = self.a;
+                xor_r(&mut self.a, a, &mut self.f)
+            }
+            0xee => xor_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
             0xb8 => cp_r(self.b, self.a, &mut self.f),
             0xb9 => cp_r(self.c, self.a, &mut self.f),
             0xba => cp_r(self.d, self.a, &mut self.f),
