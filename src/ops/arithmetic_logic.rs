@@ -276,27 +276,36 @@ pub fn or_hlptr(a: &mut u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cyc
   Cycles(8)
 }
 
-pub fn cp_r(r: u8, a: u8, f: &mut Flags) -> Cycles {
-  f.set(Flags::Z, a == r);
+pub fn cp_r(a: u8, r: u8, f: &mut Flags) -> Cycles {
+  let res = a as i16 - r as i16;
+
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
-  f.set(Flags::C, r > a);
+  f.set(Flags::H, (a & 0xf) < (r & 0xf));
+  f.set(Flags::C, res < 0);
 
   Cycles(4)
 }
 
-pub fn cp_n(n: u8, a: u8, f: &mut Flags) -> Cycles {
-  f.set(Flags::Z, a == n);
+pub fn cp_n(a: u8, n: u8, f: &mut Flags) -> Cycles {
+  let res = a as i16 - n as i16;
+
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
-  f.set(Flags::C, n > a);
+  f.set(Flags::H, (a & 0xf) < (n & 0xf));
+  f.set(Flags::C, res < 0);
 
   Cycles(8)
 }
 
-pub fn cp_hlptr(h: u8, l: u8, a: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
+pub fn cp_hlptr(a: u8, h: u8, l: u8, f: &mut Flags, mapper: &Mapper) -> Cycles {
   let val = mapper.read(rr(h, l));
-  f.set(Flags::Z, a == val);
+  let res = a as i16 - val as i16;
+
+  f.set(Flags::Z, res == 0);
   f.insert(Flags::N);
-  f.set(Flags::C, val > a);
+  f.set(Flags::H, (a & 0xf) < (val & 0xf));
+  f.set(Flags::C, res < 0);
 
   Cycles(8)
 }
