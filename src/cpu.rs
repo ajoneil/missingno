@@ -196,6 +196,7 @@ impl Cpu {
                 let a = self.a;
                 sub_r(&mut self.a, a, &mut self.f)
             }
+            0xd6 => sub_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
             0xa8 => xor_r(self.b, &mut self.a, &mut self.f),
             0xa9 => xor_r(self.c, &mut self.a, &mut self.f),
             0xaa => xor_r(self.d, &mut self.a, &mut self.f),
