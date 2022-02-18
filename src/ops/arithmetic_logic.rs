@@ -454,3 +454,15 @@ pub fn add_sp_dd(sp: &mut u16, dd: i8, f: &mut Flags) -> Cycles {
 
   Cycles(16)
 }
+
+pub fn ld_hl_sp_dd(h: &mut u8, l: &mut u8, sp: u16, dd: i8, f: &mut Flags) -> Cycles {
+  let res = sp as i32 + dd as i32;
+  set_rr(h, l, (res & 0xffff) as u16);
+
+  f.remove(Flags::Z);
+  f.remove(Flags::N);
+  f.set(Flags::H, (res & 0xf) as u8 + (dd & 0xf) as u8 > 0xf);
+  f.set(Flags::C, res as u32 & 0xffff0000 != 0);
+
+  Cycles(12)
+}

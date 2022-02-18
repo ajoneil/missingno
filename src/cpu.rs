@@ -295,6 +295,13 @@ impl Cpu {
                 mapper.read_pc(&mut self.pc) as i8,
                 &mut self.f,
             ),
+            0xf8 => ld_hl_sp_dd(
+                &mut self.h,
+                &mut self.l,
+                self.sp,
+                mapper.read_pc(&mut self.pc) as i8,
+                &mut self.f,
+            ),
 
             // rotate and shift
 
