@@ -429,3 +429,16 @@ pub fn inc_sp(sp: &mut u16) -> Cycles {
 
   Cycles(8)
 }
+
+pub fn dec_rr(r1: &mut u8, r2: &mut u8) -> Cycles {
+  let val = rr(*r1, *r2);
+  set_rr(r1, r2, val - 1);
+
+  Cycles(8)
+}
+
+pub fn dec_sp(sp: &mut u16) -> Cycles {
+  *sp -= 1;
+
+  Cycles(8)
+}
