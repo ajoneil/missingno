@@ -416,3 +416,16 @@ pub fn add_hl_sp(h: &mut u8, l: &mut u8, sp: u16, f: &mut Flags) -> Cycles {
 
   Cycles(8)
 }
+
+pub fn inc_rr(r1: &mut u8, r2: &mut u8) -> Cycles {
+  let val = rr(*r1, *r2);
+  set_rr(r1, r2, val + 1);
+
+  Cycles(8)
+}
+
+pub fn inc_sp(sp: &mut u16) -> Cycles {
+  *sp += 1;
+
+  Cycles(8)
+}

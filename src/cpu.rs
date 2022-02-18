@@ -282,6 +282,10 @@ impl Cpu {
                 add_hl_rr(&mut self.h, &mut self.l, h, l, &mut self.f)
             }
             0x39 => add_hl_sp(&mut self.h, &mut self.l, self.sp, &mut self.f),
+            0x03 => inc_rr(&mut self.b, &mut self.c),
+            0x13 => inc_rr(&mut self.d, &mut self.e),
+            0x23 => inc_rr(&mut self.h, &mut self.l),
+            0x33 => inc_sp(&mut self.sp),
 
             // rotate and shift
 
