@@ -290,6 +290,11 @@ impl Cpu {
             0x1b => dec_rr(&mut self.d, &mut self.e),
             0x2b => dec_rr(&mut self.h, &mut self.l),
             0x3b => dec_sp(&mut self.sp),
+            0xe8 => add_sp_dd(
+                &mut self.sp,
+                mapper.read_pc(&mut self.pc) as i8,
+                &mut self.f,
+            ),
 
             // rotate and shift
 

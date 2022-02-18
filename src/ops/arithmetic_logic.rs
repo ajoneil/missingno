@@ -411,7 +411,7 @@ pub fn add_hl_sp(h: &mut u8, l: &mut u8, sp: u16, f: &mut Flags) -> Cycles {
   set_rr(h, l, (res & 0xffff) as u16);
 
   f.remove(Flags::N);
-  f.set(Flags::H, ((res & 0x0f) as u16) + (sp & 0x0f) > 0x0f);
+  f.set(Flags::H, (res & 0xf) as u16 + (sp & 0xf) > 0xf);
   f.set(Flags::C, res & 0xff != 0);
 
   Cycles(8)
@@ -441,4 +441,16 @@ pub fn dec_sp(sp: &mut u16) -> Cycles {
   *sp -= 1;
 
   Cycles(8)
+}
+
+pub fn add_sp_dd(sp: &mut u16, dd: i8, f: &mut Flags) -> Cycles {
+  let res = *sp as i32 + dd as i32;
+  *sp = (res & 0xffff) as u16;
+
+  f.remove(Flags::Z);
+  f.remove(Flags::N);
+  f.set(Flags::H, (res & 0xf) as u8 + (dd & 0xf) as u8 > 0xf);
+  f.set(Flags::C, res as u32 & 0xffff0000 != 0);
+
+  Cycles(16)
 }
