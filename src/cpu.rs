@@ -275,6 +275,13 @@ impl Cpu {
             0x2f => cpl(&mut self.a, &mut self.f),
 
             // 16-bit arithmetic and logic
+            0x09 => add_hl_rr(&mut self.h, &mut self.l, self.b, self.c, &mut self.f),
+            0x19 => add_hl_rr(&mut self.h, &mut self.l, self.d, self.e, &mut self.f),
+            0x29 => {
+                let (h, l) = (self.h, self.l);
+                add_hl_rr(&mut self.h, &mut self.l, h, l, &mut self.f)
+            }
+            0x39 => add_hl_sp(&mut self.h, &mut self.l, self.sp, &mut self.f),
 
             // rotate and shift
 

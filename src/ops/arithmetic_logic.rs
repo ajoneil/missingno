@@ -1,6 +1,6 @@
 use crate::cpu::{Cycles, Flags};
 use crate::mmu::Mapper;
-use crate::ops::rr;
+use crate::ops::{rr, set_rr};
 
 pub fn add_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
   let res = *a as u16 + r as u16;
@@ -390,4 +390,29 @@ pub fn cpl(a: &mut u8, f: &mut Flags) -> Cycles {
   f.insert(Flags::H);
 
   Cycles(4)
+}
+
+pub fn add_hl_rr(h: &mut u8, l: &mut u8, r1: u8, r2: u8, f: &mut Flags) -> Cycles {
+  let hl = rr(*h, *l);
+  let val = rr(r1, r2);
+  let res = hl as u32 + val as u32;
+  set_rr(h, l, (res & 0xffff) as u16);
+
+  f.remove(Flags::N);
+  f.set(Flags::H, ((res & 0x0f) as u16) + (val & 0x0f) > 0x0f);
+  f.set(Flags::C, res & 0xff != 0);
+
+  Cycles(8)
+}
+
+pub fn add_hl_sp(h: &mut u8, l: &mut u8, sp: u16, f: &mut Flags) -> Cycles {
+  let hl = rr(*h, *l);
+  let res = hl as u32 + sp as u32;
+  set_rr(h, l, (res & 0xffff) as u16);
+
+  f.remove(Flags::N);
+  f.set(Flags::H, ((res & 0x0f) as u16) + (sp & 0x0f) > 0x0f);
+  f.set(Flags::C, res & 0xff != 0);
+
+  Cycles(8)
 }
