@@ -304,6 +304,10 @@ impl Cpu {
             ),
 
             // rotate and shift
+            0x07 => rlca(&mut self.a, &mut self.f),
+            0x17 => rla(&mut self.a, &mut self.f),
+            0x0f => rrca(&mut self.a, &mut self.f),
+            0x1f => rra(&mut self.a, &mut self.f),
 
             // cpu control
             0x00 => nop(),
