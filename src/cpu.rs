@@ -408,6 +408,36 @@ impl Cpu {
                 jr_if(&mut self.pc, distance, self.f.contains(Flags::C))
             }
 
+            0xcd => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                call_nn(&mut self.pc, &mut self.sp, nn, mapper)
+            }
+            0xc9 => ret(&mut self.pc, &mut self.sp, mapper),
+            0xc0 => ret_f(
+                &mut self.pc,
+                &mut self.sp,
+                !self.f.contains(Flags::N),
+                mapper,
+            ),
+            0xc8 => ret_f(
+                &mut self.pc,
+                &mut self.sp,
+                self.f.contains(Flags::Z),
+                mapper,
+            ),
+            0xd0 => ret_f(
+                &mut self.pc,
+                &mut self.sp,
+                !self.f.contains(Flags::C),
+                mapper,
+            ),
+            0xd8 => ret_f(
+                &mut self.pc,
+                &mut self.sp,
+                self.f.contains(Flags::C),
+                mapper,
+            ),
+
             _ => panic!(
                 "Unimplemented instruction {:x} at {:x}",
                 instruction, self.pc
