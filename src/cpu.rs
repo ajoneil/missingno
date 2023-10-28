@@ -447,6 +447,23 @@ impl Cpu {
             ),
             0xd9 => reti(&mut self.pc, &mut self.sp, &mut self.ime, mapper),
 
+            0xcb => {
+                let cb_instruction = mapper.read_pc(&mut self.pc);
+                match cb_instruction {
+                    0x30 => swap_r(&mut self.b),
+                    0x31 => swap_r(&mut self.c),
+                    0x32 => swap_r(&mut self.d),
+                    0x33 => swap_r(&mut self.e),
+                    0x34 => swap_r(&mut self.h),
+                    0x35 => swap_r(&mut self.l),
+                    0x37 => swap_r(&mut self.a),
+                    _ => panic!(
+                        "Unimplemented instruction cb{:2x} at {:4x}",
+                        cb_instruction, self.pc
+                    ),
+                }
+            }
+
             _ => panic!(
                 "Unimplemented instruction {:x} at {:x}",
                 instruction, self.pc
