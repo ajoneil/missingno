@@ -91,6 +91,8 @@ impl Mmu {
             0xff0f => self.interrupt_flags = Interrupts::from_bits_retain(val),
             0xff10..=0xff26 => {} // sound, nyi
             0xff40..=0xff4a => video.write(address, val),
+            // Invalid I/O addresses
+            0xff7f => {}
             0xff80..=0xfffe => self.hram[address as usize - 0xff80] = val,
             0xffff => self.enabled_interrupts = Interrupts::from_bits_retain(val),
             _ => panic!("Unimplemented write to {:x}", address),
