@@ -8,7 +8,6 @@ pub struct Video {
     stat: u8,
     scroll_x: u8,
     scroll_y: u8,
-    ly: u8,
     lyc: u8,
     bgp: u8,
     obp0: u8,
@@ -85,7 +84,6 @@ impl Video {
             stat: 0,
             scroll_x: 0,
             scroll_y: 0,
-            ly: 0,
             lyc: 0,
             bgp: 0xfc,
             obp0: 0xff,
@@ -105,7 +103,12 @@ impl Video {
             0xff41 => self.stat,
             0xff42 => self.scroll_y,
             0xff43 => self.scroll_x,
-            0xff44 => self.ly,
+            0xff44 => match &self.state {
+                State::Render { line, .. } => *line,
+                State::VBlank { timer } => {
+                    Self::RESOLUTION_Y + (timer.counted().0 / Self::LINE_TIME.0) as u8
+                }
+            },
             0xff45 => self.lyc,
             0xff47 => self.bgp,
             0xff48 => self.obp0,
