@@ -33,8 +33,8 @@ impl Gameboy {
     pub fn run(&mut self) {
         loop {
             let cycles = self.cpu.step(&mut self.mmu, &mut self.video);
-            self.video.step(cycles);
-            println!("{:?}", self.cpu);
+            self.video.step(cycles, &mut self.mmu);
+            //println!("{:?}", self.cpu);
         }
     }
 }

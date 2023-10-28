@@ -1,12 +1,13 @@
 use crate::cartridge::Cartridge;
+use crate::cpu::Interrupts;
 use crate::video::Video;
 
 pub struct Mmu {
     cartridge: Cartridge,
     wram: [u8; 0x2000],
     hram: [u8; 0x7f],
-    interrupt_flag: u8,
-    interrupt_enable: u8,
+    interrupt_flags: Interrupts,
+    enabled_interrupts: Interrupts,
 }
 
 pub struct Mapper<'a> {
@@ -54,8 +55,8 @@ impl Mmu {
             cartridge: cartridge,
             wram: [0; 0x2000],
             hram: [0; 0x7f],
-            interrupt_flag: 0x00,
-            interrupt_enable: 0x00,
+            interrupt_flags: Interrupts::empty(),
+            enabled_interrupts: Interrupts::empty(),
         }
     }
 
@@ -64,11 +65,11 @@ impl Mmu {
             0x0000..=0x7fff => self.cartridge.read(address),
             0xc000..=0xdfff => self.wram[address as usize - 0xc000],
             0xe000..=0xfdff => self.wram[address as usize - 0xe000],
-            0xff0f => self.interrupt_flag,
+            0xff0f => self.interrupt_flags.bits(),
             0xff01..=0xff02 => 0x00, // link cable NYI
             0xff40..=0xff4a => video.read(address),
             0xff80..=0xfffe => self.hram[address as usize - 0xff80],
-            0xffff => self.interrupt_enable,
+            0xffff => self.enabled_interrupts.bits(),
             _ => panic!("Unimplemented read from {:x}", address),
         }
     }
@@ -82,11 +83,11 @@ impl Mmu {
             0xc000..=0xdfff => self.wram[address as usize - 0xc000] = val,
             0xe000..=0xfdff => self.wram[address as usize - 0xe000] = val,
             0xff01..=0xff02 => {} // link cable, NYI
-            0xff0f => self.interrupt_flag = val,
+            0xff0f => self.interrupt_flags = Interrupts::from_bits_retain(val),
             0xff10..=0xff26 => {} // sound, nyi
             0xff40..=0xff4a => video.write(address, val),
             0xff80..=0xfffe => self.hram[address as usize - 0xff80] = val,
-            0xffff => self.interrupt_enable = val,
+            0xffff => self.enabled_interrupts = Interrupts::from_bits_retain(val),
             _ => panic!("Unimplemented write to {:x}", address),
         }
     }
@@ -94,5 +95,21 @@ impl Mmu {
     pub fn write_word(&mut self, address: u16, val: u16, video: &mut Video) {
         self.write(address, (val & 0xff) as u8, video);
         self.write(address + 1, (val >> 8) as u8, video);
+    }
+
+    pub fn set_interrupt_flag(&mut self, interrupt: Interrupts) {
+        self.interrupt_flags.insert(interrupt)
+    }
+
+    pub fn reset_interrupt_flag(&mut self, interrupt: Interrupts) {
+        self.interrupt_flags.remove(interrupt)
+    }
+
+    pub fn interrupt_flags(&self) -> Interrupts {
+        self.interrupt_flags
+    }
+
+    pub fn enabled_interrupts(&self) -> Interrupts {
+        self.enabled_interrupts
     }
 }

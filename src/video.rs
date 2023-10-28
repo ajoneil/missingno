@@ -1,4 +1,7 @@
-use crate::cpu::Cycles;
+use crate::{
+    cpu::{Cycles, Interrupts},
+    mmu::Mmu,
+};
 
 pub struct Video {
     lcdc: u8,
@@ -125,7 +128,7 @@ impl Video {
         }
     }
 
-    pub fn step(&mut self, cycles: Cycles) {
+    pub fn step(&mut self, cycles: Cycles, mmu: &mut Mmu) {
         let mut cycles_left = cycles;
 
         while cycles_left > Cycles(0) {
@@ -174,7 +177,11 @@ impl Video {
                                     self.state = State::VBlank {
                                         timer: Timer::new(Self::VBLANK_TIME),
                                     };
-                                    println!("Entering vblank");
+                                    println!(
+                                        "Entering vblank, enabled interrupts {:?}",
+                                        mmu.enabled_interrupts()
+                                    );
+                                    mmu.set_interrupt_flag(Interrupts::VBLANK)
                                 } else {
                                     *state = RenderState::OAM;
                                     *line += 1;

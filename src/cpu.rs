@@ -51,11 +51,27 @@ impl std::ops::SubAssign for Cycles {
 }
 
 bitflags! {
+    #[derive(Debug)]
     pub struct Flags: u8 {
         const Z = 0b10000000;
         const N = 0b01000000;
         const H = 0b00100000;
         const C = 0b00010000;
+
+        const _OTHER = !0;
+    }
+}
+
+bitflags! {
+    #[derive(Copy,Clone,Debug)]
+    pub struct Interrupts: u8 {
+        const JOYPAD = 0b00010000;
+        const SERIAL = 0b00001000;
+        const TIMER  = 0b00000100;
+        const LCD    = 0b00000010;
+        const VBLANK = 0b00000001;
+
+        const _OTHER = !0;
     }
 }
 
@@ -77,9 +93,27 @@ impl Cpu {
     }
 
     pub fn step(&mut self, mmu: &mut Mmu, video: &mut Video) -> Cycles {
+        if self.ime {
+            let interrupts = mmu.interrupt_flags().intersection(mmu.enabled_interrupts());
+            if !interrupts.is_empty() {
+                self.ime = false;
+                self.sp -= 2;
+                mmu.write_word(self.sp, self.pc, video);
+
+                if interrupts.contains(Interrupts::VBLANK) {
+                    self.pc = 0x40;
+                    mmu.reset_interrupt_flag(Interrupts::VBLANK);
+                    println!("vblank interrupt!");
+                } else {
+                    panic!("unhandled interrupt {:?}", interrupts)
+                }
+
+                return Cycles(20);
+            }
+        }
+
         let mapper = &mut Mapper::new(mmu, video);
         let instruction = mapper.read_pc(&mut self.pc);
-
         match instruction {
             // 8-bit load
             0x40 => Cycles(4), // ld b,b
