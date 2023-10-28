@@ -1,5 +1,6 @@
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
+use crate::joypad::Joypad;
 use crate::mmu::Mmu;
 use crate::rom_info::RomInfo;
 use crate::timers::timers::Timers;
@@ -11,6 +12,7 @@ pub struct Gameboy {
     timers: Timers,
     mmu: Mmu,
     video: Video,
+    joypad: Joypad,
 }
 
 impl Gameboy {
@@ -26,6 +28,7 @@ impl Gameboy {
             info: info,
             mmu: mmu,
             video: video,
+            joypad: Joypad::new(),
         };
 
         println!("{}", gb.info.title);
@@ -35,9 +38,12 @@ impl Gameboy {
 
     pub fn run(&mut self) {
         loop {
-            let cycles = self
-                .cpu
-                .step(&mut self.mmu, &mut self.video, &mut self.timers);
+            let cycles = self.cpu.step(
+                &mut self.mmu,
+                &mut self.video,
+                &mut self.timers,
+                &mut self.joypad,
+            );
             self.timers.step(cycles, &mut self.mmu);
             self.video.step(cycles, &mut self.mmu);
             //println!("{:?}", self.cpu);

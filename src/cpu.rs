@@ -1,3 +1,4 @@
+use crate::joypad::Joypad;
 use crate::mmu::Mapper;
 use crate::mmu::Mmu;
 use crate::ops::*;
@@ -97,13 +98,19 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, mmu: &mut Mmu, video: &mut Video, timers: &mut Timers) -> Cycles {
+    pub fn step(
+        &mut self,
+        mmu: &mut Mmu,
+        video: &mut Video,
+        timers: &mut Timers,
+        joypad: &mut Joypad,
+    ) -> Cycles {
         if self.ime {
             let interrupts = mmu.interrupt_flags().intersection(mmu.enabled_interrupts());
             if !interrupts.is_empty() {
                 self.ime = false;
                 self.sp -= 2;
-                mmu.write_word(self.sp, self.pc, video, timers);
+                mmu.write_word(self.sp, self.pc, video, timers, joypad);
 
                 if interrupts.contains(Interrupts::VBLANK) {
                     self.pc = 0x40;
@@ -117,7 +124,7 @@ impl Cpu {
             }
         }
 
-        let mapper = &mut Mapper::new(mmu, video, timers);
+        let mapper = &mut Mapper::new(mmu, video, timers, joypad);
         let instruction = mapper.read_pc(&mut self.pc);
         match instruction {
             // 8-bit load

@@ -5,6 +5,7 @@ use std::path::Path;
 mod cartridge;
 mod cpu;
 mod gameboy;
+mod joypad;
 mod mbc;
 mod mmu;
 mod ops;
