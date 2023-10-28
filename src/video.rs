@@ -18,6 +18,8 @@ pub struct Video {
 
     dma_transfer_timer: Option<Timer>,
 
+    window: Window,
+
     state: State,
 }
 
@@ -97,6 +99,9 @@ impl Video {
             vram: [0; 0x2000],
             oam: [0; 0xa0],
             dma_transfer_timer: None,
+
+            window: Window::new(),
+
             state: State::Render {
                 line: 0,
                 line_timer: Timer::new(Self::LINE_TIME),
@@ -131,6 +136,8 @@ impl Video {
             0xff47 => self.bgp,
             0xff48 => self.obp0,
             0xff49 => self.obp1,
+            0xff4a => self.window.y,
+            0xff4b => self.window.x,
             _ => panic!("Unimplemented video read from {:x}", address),
         }
     }
@@ -149,6 +156,8 @@ impl Video {
             0xff47 => self.bgp = val,
             0xff48 => self.obp0 = val,
             0xff49 => self.obp1 = val,
+            0xff4a => self.window.y = val,
+            0xff4b => self.window.x = val,
             _ => panic!("Unimplemented video write to {:x}", address),
         }
     }
@@ -292,5 +301,16 @@ impl Video {
                 }
             }
         }
+    }
+}
+
+struct Window {
+    pub x: u8,
+    pub y: u8,
+}
+
+impl Window {
+    pub fn new() -> Self {
+        Self { x: 0, y: 0 }
     }
 }
