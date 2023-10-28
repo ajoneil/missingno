@@ -34,7 +34,7 @@ impl Gameboy {
         loop {
             let cycles = self.cpu.step(&mut self.mmu, &mut self.video);
             self.video.step(cycles, &mut self.mmu);
-            println!("{:?}", self.cpu);
+            //println!("{:?}", self.cpu);
         }
     }
 }

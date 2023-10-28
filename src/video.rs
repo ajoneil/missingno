@@ -16,6 +16,8 @@ pub struct Video {
     vram: [u8; 0x2000],
     oam: [u8; 0xa0],
 
+    dma_transfer_timer: Option<Timer>,
+
     state: State,
 }
 
@@ -94,6 +96,7 @@ impl Video {
 
             vram: [0; 0x2000],
             oam: [0; 0xa0],
+            dma_transfer_timer: None,
             state: State::Render {
                 line: 0,
                 line_timer: Timer::new(Self::LINE_TIME),
@@ -132,7 +135,7 @@ impl Video {
         }
     }
 
-    pub fn write(&mut self, address: u16, val: u8) {
+    pub fn write(&mut self, address: u16, val: u8, mmu: &Mmu) {
         match address {
             0x8000..=0x9fff => self.write_vram(address, val),
             0xfe00..=0xfe9f => self.write_oam(address, val),
@@ -142,11 +145,28 @@ impl Video {
             0xff42 => self.scroll_y = val,
             0xff43 => self.scroll_x = val,
             0xff45 => self.lyc = val,
+            0xff46 => self.begin_dma_transfer(val, mmu),
             0xff47 => self.bgp = val,
             0xff48 => self.obp0 = val,
             0xff49 => self.obp1 = val,
             _ => panic!("Unimplemented video write to {:x}", address),
         }
+    }
+
+    fn begin_dma_transfer(&mut self, address: u8, mmu: &Mmu) {
+        let start_address = address as u16 * 0x100;
+
+        println!("Beginning DMA transfer from {:4x}", start_address);
+
+        for i in 0..=0x9f {
+            self.oam[i] = mmu.read(start_address + i as u16, &self)
+        }
+
+        self.dma_transfer_timer = Some(Timer::new(Cycles(580)));
+    }
+
+    pub fn dma_transfer_in_progess(&self) -> bool {
+        self.dma_transfer_timer.is_some()
     }
 
     fn vram_accessible(&self) -> bool {
@@ -198,6 +218,14 @@ impl Video {
     }
 
     pub fn step(&mut self, cycles: Cycles, mmu: &mut Mmu) {
+        if let Some(dma_transfer_timer) = &mut self.dma_transfer_timer {
+            dma_transfer_timer.tick(cycles);
+            if dma_transfer_timer.finished() {
+                println!("DMA transfer complete!");
+                self.dma_transfer_timer = None;
+            }
+        }
+
         let mut cycles_left = cycles;
 
         while cycles_left > Cycles(0) {
