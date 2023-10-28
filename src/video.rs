@@ -1,6 +1,7 @@
 use crate::{
     cpu::{Cycles, Interrupts},
     mmu::Mmu,
+    timers::cycle_timer::CycleTimer,
 };
 
 pub struct Video {
@@ -16,58 +17,20 @@ pub struct Video {
     vram: [u8; 0x2000],
     oam: [u8; 0xa0],
 
-    dma_transfer_timer: Option<Timer>,
+    dma_transfer_timer: Option<CycleTimer>,
 
     window: Window,
 
     state: State,
 }
 
-struct Timer {
-    length: Cycles,
-    counted: Cycles,
-}
-
-impl Timer {
-    pub fn new(length: Cycles) -> Self {
-        Self {
-            length,
-            counted: Cycles(0),
-        }
-    }
-
-    pub fn tick(&mut self, delta: Cycles) {
-        self.counted += delta;
-    }
-
-    pub fn counted(&self) -> Cycles {
-        self.counted
-    }
-
-    pub fn finished(&self) -> bool {
-        self.counted >= self.length
-    }
-
-    pub fn reset(&mut self) {
-        self.counted = Cycles(0)
-    }
-
-    pub fn overflow(&self) -> Option<Cycles> {
-        if self.counted > self.length {
-            Some(self.counted - self.length)
-        } else {
-            None
-        }
-    }
-}
-
 enum State {
     VBlank {
-        timer: Timer,
+        timer: CycleTimer,
     },
     Render {
         line: u8,
-        line_timer: Timer,
+        line_timer: CycleTimer,
         state: RenderState,
     },
 }
@@ -104,7 +67,7 @@ impl Video {
 
             state: State::Render {
                 line: 0,
-                line_timer: Timer::new(Self::LINE_TIME),
+                line_timer: CycleTimer::new(Self::LINE_TIME),
                 state: RenderState::OAM,
             },
         }
@@ -171,7 +134,7 @@ impl Video {
             self.oam[i] = mmu.read(start_address + i as u16, &self)
         }
 
-        self.dma_transfer_timer = Some(Timer::new(Cycles(580)));
+        self.dma_transfer_timer = Some(CycleTimer::new(Cycles(580)));
     }
 
     pub fn dma_transfer_in_progess(&self) -> bool {
@@ -246,7 +209,7 @@ impl Video {
                         println!("Beginning render");
                         self.state = State::Render {
                             line: 0,
-                            line_timer: Timer::new(Self::LINE_TIME),
+                            line_timer: CycleTimer::new(Self::LINE_TIME),
                             state: RenderState::OAM,
                         };
 
@@ -281,7 +244,7 @@ impl Video {
                             if line_timer.finished() {
                                 if (*line + 1) == Self::RESOLUTION_Y {
                                     self.state = State::VBlank {
-                                        timer: Timer::new(Self::VBLANK_TIME),
+                                        timer: CycleTimer::new(Self::VBLANK_TIME),
                                     };
                                     println!(
                                         "Entering vblank, enabled interrupts {:?}",
