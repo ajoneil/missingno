@@ -437,6 +437,7 @@ impl Cpu {
                 self.f.contains(Flags::C),
                 mapper,
             ),
+            0xd9 => reti(&mut self.pc, &mut self.sp, &mut self.ime, mapper),
 
             _ => panic!(
                 "Unimplemented instruction {:x} at {:x}",

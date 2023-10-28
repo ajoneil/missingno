@@ -46,3 +46,11 @@ pub fn ret_f(pc: &mut u16, sp: &mut u16, f: bool, mapper: &Mapper) -> Cycles {
         Cycles(8)
     }
 }
+
+pub fn reti(pc: &mut u16, sp: &mut u16, ime: &mut bool, mapper: &Mapper) -> Cycles {
+    *pc = mapper.read_word(*sp);
+    *sp += 2;
+    println!("master interrupt enabled");
+    *ime = true;
+    Cycles(16)
+}
