@@ -1,9 +1,10 @@
 pub struct RomInfo {
     pub title: String,
     pub mbc_type: MbcType,
+    pub checksum: u8,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MbcType {
     NoMBC,
     MBC1,
@@ -40,6 +41,7 @@ impl RomInfo {
         RomInfo {
             title: title,
             mbc_type: mbc_type,
+            checksum: rom[0x14d],
         }
     }
 }

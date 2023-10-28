@@ -66,7 +66,7 @@ impl Mmu {
             0xc000..=0xdfff => self.wram[address as usize - 0xc000],
             0xe000..=0xfdff => self.wram[address as usize - 0xe000],
             0xff0f => self.interrupt_flags.bits(),
-            0xff01..=0xff02 => 0x00, // link cable NYI
+            //0xff01..=0xff02 => 0x00, // link cable NYI
             0xff40..=0xff4a => video.read(address),
             0xff80..=0xfffe => self.hram[address as usize - 0xff80],
             0xffff => self.enabled_interrupts.bits(),
@@ -84,7 +84,7 @@ impl Mmu {
             0xe000..=0xfdff => self.wram[address as usize - 0xe000] = val,
             0xff01..=0xff02 => {} // link cable, NYI
             0xff0f => self.interrupt_flags = Interrupts::from_bits_retain(val),
-            0xff10..=0xff26 => {} // sound, nyi
+            //0xff10..=0xff26 => {} // sound, nyi
             0xff40..=0xff4a => video.write(address, val),
             0xff80..=0xfffe => self.hram[address as usize - 0xff80] = val,
             0xffff => self.enabled_interrupts = Interrupts::from_bits_retain(val),

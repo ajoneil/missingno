@@ -76,10 +76,14 @@ bitflags! {
 }
 
 impl Cpu {
-    pub fn new() -> Cpu {
+    pub fn new(checksum: u8) -> Cpu {
         Cpu {
             a: 0x01,
-            f: Flags::empty(),
+            f: if checksum == 0 {
+                Flags::Z
+            } else {
+                Flags::Z | Flags::C | Flags::H
+            },
             b: 0x00,
             c: 0x13,
             d: 0x00,
@@ -87,7 +91,7 @@ impl Cpu {
             h: 0x01,
             l: 0x4d,
             sp: 0xfffe,
-            pc: 0x100,
+            pc: 0x0100,
             ime: false,
         }
     }
