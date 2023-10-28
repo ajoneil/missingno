@@ -446,6 +446,14 @@ impl Cpu {
                 mapper,
             ),
             0xd9 => reti(&mut self.pc, &mut self.sp, &mut self.ime, mapper),
+            0xc7 => rst_n(&mut self.pc, &mut self.sp, 0x00, mapper),
+            0xcf => rst_n(&mut self.pc, &mut self.sp, 0x08, mapper),
+            0xd7 => rst_n(&mut self.pc, &mut self.sp, 0x10, mapper),
+            0xdf => rst_n(&mut self.pc, &mut self.sp, 0x18, mapper),
+            0xe7 => rst_n(&mut self.pc, &mut self.sp, 0x20, mapper),
+            0xef => rst_n(&mut self.pc, &mut self.sp, 0x28, mapper),
+            0xf7 => rst_n(&mut self.pc, &mut self.sp, 0x30, mapper),
+            0xff => rst_n(&mut self.pc, &mut self.sp, 0x38, mapper),
 
             0xcb => {
                 let cb_instruction = mapper.read_pc(&mut self.pc);

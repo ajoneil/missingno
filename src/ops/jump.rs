@@ -24,10 +24,14 @@ pub fn jr_if(pc: &mut u16, distance: u8, condition: bool) -> Cycles {
     }
 }
 
-pub fn call_nn(pc: &mut u16, sp: &mut u16, nn: u16, mapper: &mut Mapper) -> Cycles {
+fn call(pc: &mut u16, sp: &mut u16, address: u16, mapper: &mut Mapper) {
     *sp -= 2;
     mapper.write_word(*sp, *pc);
-    *pc = nn;
+    *pc = address;
+}
+
+pub fn call_nn(pc: &mut u16, sp: &mut u16, nn: u16, mapper: &mut Mapper) -> Cycles {
+    call(pc, sp, nn, mapper);
     Cycles(24)
 }
 
@@ -52,5 +56,10 @@ pub fn reti(pc: &mut u16, sp: &mut u16, ime: &mut bool, mapper: &Mapper) -> Cycl
     *sp += 2;
     println!("master interrupt enabled");
     *ime = true;
+    Cycles(16)
+}
+
+pub fn rst_n(pc: &mut u16, sp: &mut u16, n: u8, mapper: &mut Mapper) -> Cycles {
+    call(pc, sp, n as u16, mapper);
     Cycles(16)
 }
