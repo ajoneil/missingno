@@ -2,11 +2,13 @@ use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::mmu::Mmu;
 use crate::rom_info::RomInfo;
+use crate::timers::timers::Timers;
 use crate::video::Video;
 
 pub struct Gameboy {
     info: RomInfo,
     cpu: Cpu,
+    timers: Timers,
     mmu: Mmu,
     video: Video,
 }
@@ -20,6 +22,7 @@ impl Gameboy {
 
         let gb = Gameboy {
             cpu: Cpu::new(info.checksum),
+            timers: Timers::new(),
             info: info,
             mmu: mmu,
             video: video,
@@ -32,7 +35,10 @@ impl Gameboy {
 
     pub fn run(&mut self) {
         loop {
-            let cycles = self.cpu.step(&mut self.mmu, &mut self.video);
+            let cycles = self
+                .cpu
+                .step(&mut self.mmu, &mut self.video, &mut self.timers);
+            self.timers.step(cycles, &mut self.mmu);
             self.video.step(cycles, &mut self.mmu);
             //println!("{:?}", self.cpu);
         }

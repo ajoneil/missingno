@@ -1,7 +1,7 @@
 use crate::{
     cpu::{Cycles, Interrupts},
     mmu::Mmu,
-    timers::cycle_timer::CycleTimer,
+    timers::{cycle_timer::CycleTimer, timers::Timers},
 };
 
 pub struct Video {
@@ -105,7 +105,7 @@ impl Video {
         }
     }
 
-    pub fn write(&mut self, address: u16, val: u8, mmu: &Mmu) {
+    pub fn write(&mut self, address: u16, val: u8, mmu: &Mmu, timers: &mut Timers) {
         match address {
             0x8000..=0x9fff => self.write_vram(address, val),
             0xfe00..=0xfe9f => self.write_oam(address, val),
@@ -115,7 +115,7 @@ impl Video {
             0xff42 => self.scroll_y = val,
             0xff43 => self.scroll_x = val,
             0xff45 => self.lyc = val,
-            0xff46 => self.begin_dma_transfer(val, mmu),
+            0xff46 => self.begin_dma_transfer(val, mmu, timers),
             0xff47 => self.bgp = val,
             0xff48 => self.obp0 = val,
             0xff49 => self.obp1 = val,
@@ -125,13 +125,13 @@ impl Video {
         }
     }
 
-    fn begin_dma_transfer(&mut self, address: u8, mmu: &Mmu) {
+    fn begin_dma_transfer(&mut self, address: u8, mmu: &Mmu, timers: &Timers) {
         let start_address = address as u16 * 0x100;
 
         println!("Beginning DMA transfer from {:4x}", start_address);
 
         for i in 0..=0x9f {
-            self.oam[i] = mmu.read(start_address + i as u16, &self)
+            self.oam[i] = mmu.read(start_address + i as u16, &self, timers)
         }
 
         self.dma_transfer_timer = Some(CycleTimer::new(Cycles(580)));

@@ -29,6 +29,11 @@ impl CycleTimer {
         self.counted = Cycles(0)
     }
 
+    pub fn lap(&mut self) {
+        assert!(self.finished());
+        self.counted -= self.length
+    }
+
     pub fn overflow(&self) -> Option<Cycles> {
         if self.counted > self.length {
             Some(self.counted - self.length)
