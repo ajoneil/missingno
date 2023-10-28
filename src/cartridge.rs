@@ -20,4 +20,8 @@ impl Cartridge {
     pub fn read(&self, address: u16) -> u8 {
         self.mbc.read(address, self.rom.as_slice())
     }
+
+    pub fn write(&mut self, address: u16, val: u8) {
+        self.mbc.write(address, val)
+    }
 }
