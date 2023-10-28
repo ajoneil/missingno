@@ -394,6 +394,7 @@ impl Cpu {
                 let nn = mapper.read_word_pc(&mut self.pc);
                 jp_nn(&mut self.pc, nn)
             }
+            0xe9 => jp_hl(&mut self.pc, self.h, self.l),
 
             0x18 => {
                 let distance = mapper.read_pc(&mut self.pc);

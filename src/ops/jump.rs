@@ -1,8 +1,15 @@
 use crate::{cpu::Cycles, mmu::Mapper};
 
+use super::rr;
+
 pub fn jp_nn(pc: &mut u16, nn: u16) -> Cycles {
     *pc = nn;
     Cycles(16)
+}
+
+pub fn jp_hl(pc: &mut u16, h: u8, l: u8) -> Cycles {
+    *pc = rr(h, l);
+    Cycles(4)
 }
 
 pub fn jr(pc: &mut u16, distance: u8) -> Cycles {
