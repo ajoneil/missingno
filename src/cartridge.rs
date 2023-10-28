@@ -14,7 +14,7 @@ impl Cartridge {
             _ => panic!("Mbc not supported"),
         };
 
-        Cartridge { rom: rom, mbc: mbc }
+        Cartridge { rom, mbc }
     }
 
     pub fn read(&self, address: u16) -> u8 {
