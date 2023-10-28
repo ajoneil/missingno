@@ -63,7 +63,7 @@ impl Mmu {
     pub fn read(&self, address: u16, video: &Video) -> u8 {
         match address {
             0x0000..=0x7fff => self.cartridge.read(address),
-            0x8000..=0x97ff => video.read(address),
+            0x8000..=0x9fff => video.read(address),
             0xc000..=0xdfff => self.wram[address as usize - 0xc000],
             0xe000..=0xfdff => self.wram[address as usize - 0xe000],
             0xff0f => self.interrupt_flags.bits(),
@@ -82,7 +82,7 @@ impl Mmu {
     pub fn write(&mut self, address: u16, val: u8, video: &mut Video) {
         match address {
             0x0000..=0x7fff => self.cartridge.write(address, val),
-            0x8000..=0x97ff => video.write(address, val),
+            0x8000..=0x9fff => video.write(address, val),
             0xc000..=0xdfff => self.wram[address as usize - 0xc000] = val,
             0xe000..=0xfdff => self.wram[address as usize - 0xe000] = val,
             0xff01..=0xff02 => {} // link cable, NYI

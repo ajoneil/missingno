@@ -13,6 +13,8 @@ pub struct Video {
     obp0: u8,
     obp1: u8,
 
+    vram: [u8; 0x2000],
+
     state: State,
 }
 
@@ -89,6 +91,7 @@ impl Video {
             obp0: 0xff,
             obp1: 0xff,
 
+            vram: [0; 0x2000],
             state: State::Render {
                 line: 0,
                 line_timer: Timer::new(Self::LINE_TIME),
@@ -99,6 +102,7 @@ impl Video {
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
+            0x8000..=0x9fff => self.read_vram(address),
             0xff40 => self.lcdc,
             0xff41 => self.stat,
             0xff42 => self.scroll_y,
@@ -117,8 +121,27 @@ impl Video {
         }
     }
 
+    fn vram_accessible(&self) -> bool {
+        match &self.state {
+            State::VBlank { .. } => true,
+            State::Render { state, .. } => match state {
+                RenderState::OAM | RenderState::HBlank => true,
+                RenderState::Pixel(_) => false,
+            },
+        }
+    }
+
+    fn read_vram(&self, address: u16) -> u8 {
+        if self.vram_accessible() {
+            self.vram[address as usize - 0x8000]
+        } else {
+            0xff
+        }
+    }
+
     pub fn write(&mut self, address: u16, val: u8) {
         match address {
+            0x8000..=0x9fff => self.write_vram(address, val),
             0xff40 => self.lcdc = val,
             0xff41 => self.stat = val,
             0xff42 => self.scroll_y = val,
@@ -128,6 +151,12 @@ impl Video {
             0xff48 => self.obp0 = val,
             0xff49 => self.obp1 = val,
             _ => panic!("Unimplemented video write to {:x}", address),
+        }
+    }
+
+    fn write_vram(&mut self, address: u16, val: u8) {
+        if self.vram_accessible() {
+            self.vram[address as usize - 0x8000] = val
         }
     }
 
