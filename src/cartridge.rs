@@ -11,7 +11,10 @@ impl Cartridge {
     pub fn new(rom: Vec<u8>, mbc_type: MbcType) -> Cartridge {
         let mbc: Box<dyn Mbc> = match mbc_type {
             MbcType::NoMBC => Box::new(NoMbc::new()),
-            _ => panic!("Mbc not supported"),
+            _ => {
+                println!("Mbc {:?} not supported, continuing anyway..", mbc_type);
+                Box::new(NoMbc::new())
+            }
         };
 
         Cartridge { rom, mbc }
