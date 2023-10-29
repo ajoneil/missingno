@@ -116,6 +116,10 @@ impl Cpu {
                     self.pc = 0x40;
                     mmu.reset_interrupt_flag(Interrupts::VBLANK);
                     println!("vblank interrupt!");
+                } else if interrupts.contains(Interrupts::SERIAL) {
+                    // self.pc = 0x58;
+                    mmu.reset_interrupt_flag(Interrupts::SERIAL);
+                    println!("serial interrupt! - ignoring");
                 } else {
                     panic!("unhandled interrupt {:?}", interrupts)
                 }
@@ -466,17 +470,23 @@ impl Cpu {
                     0x34 => swap_r(&mut self.h),
                     0x35 => swap_r(&mut self.l),
                     0x37 => swap_r(&mut self.a),
-                    _ => panic!(
-                        "Unimplemented instruction cb{:2x} at {:4x}",
-                        cb_instruction, self.pc
-                    ),
+                    _ => {
+                        println!(
+                            "Unimplemented instruction cb{:2x} at {:4x}",
+                            cb_instruction, self.pc
+                        );
+                        Cycles(4)
+                    }
                 }
             }
 
-            _ => panic!(
-                "Unimplemented instruction {:x} at {:x}",
-                instruction, self.pc
-            ),
+            _ => {
+                println!(
+                    "Unimplemented instruction {:x} at {:x}",
+                    instruction, self.pc
+                );
+                Cycles(4)
+            }
         }
     }
 }
