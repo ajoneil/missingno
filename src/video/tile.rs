@@ -30,7 +30,18 @@ impl Tile {
     }
 
     pub fn pixel_bits(&self, x: u8, y: u8) -> u8 {
-        let pix_num = x * 8 + y;
-        self.data[(pix_num / 4) as usize] << pix_num % 4
+        let line_start = y * 2;
+
+        let low_byte = self.data[line_start as usize];
+        let high_byte = self.data[(line_start + 1) as usize];
+
+        let shift = 7 - x;
+
+        let low_bit = (low_byte >> shift) & 0b1;
+        let high_bit = (high_byte >> shift) & 0b1;
+
+        let out = (high_bit << 1) + low_bit;
+
+        out
     }
 }

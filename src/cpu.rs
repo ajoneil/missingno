@@ -117,9 +117,9 @@ impl Cpu {
                     mmu.reset_interrupt_flag(Interrupts::VBLANK);
                     println!("vblank interrupt!");
                 } else if interrupts.contains(Interrupts::SERIAL) {
-                    // self.pc = 0x58;
+                    self.pc = 0x58;
                     mmu.reset_interrupt_flag(Interrupts::SERIAL);
-                    println!("serial interrupt! - ignoring");
+                    println!("serial interrupt!");
                 } else {
                     panic!("unhandled interrupt {:?}", interrupts)
                 }
@@ -400,6 +400,23 @@ impl Cpu {
             }
             0xe9 => jp_hl(&mut self.pc, self.h, self.l),
 
+            0xc2 => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                jp_f_nn(&mut self.pc, !self.f.contains(Flags::Z), nn)
+            }
+            0xca => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                jp_f_nn(&mut self.pc, self.f.contains(Flags::Z), nn)
+            }
+            0xd2 => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                jp_f_nn(&mut self.pc, !self.f.contains(Flags::C), nn)
+            }
+            0xda => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                jp_f_nn(&mut self.pc, self.f.contains(Flags::C), nn)
+            }
+
             0x18 => {
                 let distance = mapper.read_pc(&mut self.pc);
                 jr(&mut self.pc, distance)
@@ -470,8 +487,12 @@ impl Cpu {
                     0x34 => swap_r(&mut self.h),
                     0x35 => swap_r(&mut self.l),
                     0x37 => swap_r(&mut self.a),
+
+                    0xcf => set_n_r(1, &mut self.a),
+
+                    0x87 => res_n_r(0, &mut self.a),
                     _ => {
-                        println!(
+                        panic!(
                             "Unimplemented instruction cb{:2x} at {:4x}",
                             cb_instruction, self.pc
                         );
@@ -481,7 +502,7 @@ impl Cpu {
             }
 
             _ => {
-                println!(
+                panic!(
                     "Unimplemented instruction {:x} at {:x}",
                     instruction, self.pc
                 );

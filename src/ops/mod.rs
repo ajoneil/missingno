@@ -3,12 +3,14 @@ mod control;
 mod jump;
 mod load;
 mod rotate_shift;
+mod single_bit;
 
 pub use crate::ops::arithmetic_logic::*;
 pub use crate::ops::control::*;
 pub use crate::ops::jump::*;
 pub use crate::ops::load::*;
 pub use crate::ops::rotate_shift::*;
+pub use crate::ops::single_bit::*;
 
 fn rr(r1: u8, r2: u8) -> u16 {
     ((r1 as u16) << 8) + r2 as u16

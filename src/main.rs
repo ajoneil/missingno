@@ -76,7 +76,7 @@ fn main() {
                     for (tile_num, tile) in gb.video().all_tiles().iter().enumerate() {
                         for line_num in 0..TILE_PIXELS {
                             let fb_line_num = (tile_num / TILES_PER_LINE) * TILE_PIXELS + line_num;
-                            let fb_line_start = fb_line_num * LINE_MEMORY_SIZE_BYTES;
+                            let fb_line_start: usize = fb_line_num * LINE_MEMORY_SIZE_BYTES;
                             let tile_pos_in_line = tile_num % TILES_PER_LINE;
                             let fb_tile_line_start =
                                 fb_line_start + (tile_pos_in_line * FB_SINGLE_TILE_LINE_SIZE);

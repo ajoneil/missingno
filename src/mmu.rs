@@ -10,6 +10,7 @@ pub struct Mmu {
     hram: [u8; 0x7f],
     interrupt_flags: Interrupts,
     enabled_interrupts: Interrupts,
+    serial_debug: Vec<u8>,
 }
 
 pub struct Mapper<'a> {
@@ -74,6 +75,7 @@ impl Mmu {
             hram: [0; 0x7f],
             interrupt_flags: Interrupts::empty(),
             enabled_interrupts: Interrupts::empty(),
+            serial_debug: Vec::new(),
         }
     }
 
@@ -95,7 +97,10 @@ impl Mmu {
             0xff40..=0xff4b => video.read(address),
             0xff80..=0xfffe => self.hram[address as usize - 0xff80],
             0xffff => self.enabled_interrupts.bits(),
-            _ => panic!("Unimplemented read from {:x}", address),
+            _ => {
+                println!("Unimplemented read from {:x}", address);
+                0xff
+            }
         }
     }
 
@@ -121,18 +126,27 @@ impl Mmu {
             0x8000..=0x9fff => video.write(address, val, self, timers, joypad),
             0xc000..=0xdfff => self.wram[address as usize - 0xc000] = val,
             0xe000..=0xfdff => self.wram[address as usize - 0xe000] = val,
-            0xfe00..=0xfeff => video.write(address, val, &self, timers, joypad),
+            0xfe00..=0xfeff => video.write(address, val, self, timers, joypad),
             0xff00 => joypad.write(val),
-            0xff01..=0xff02 => {} // link cable, NYI
+            0xff01 => {
+                self.serial_debug.push(val);
+                println!("serial: {:?}", self.serial_debug)
+            } // link cable, but used by test roms too!
+            0xff02 => {} // link cable, NYI
             0xff04..=0xff07 => timers.write(address, val),
             0xff0f => self.interrupt_flags = Interrupts::from_bits_retain(val),
             0xff10..=0xff26 => {} // sound, nyi
-            0xff40..=0xff4b => video.write(address, val, &self, timers, joypad),
+            0xff40..=0xff4b => video.write(address, val, self, timers, joypad),
             // Invalid I/O addresses
             0xff7f => {}
             0xff80..=0xfffe => self.hram[address as usize - 0xff80] = val,
-            0xffff => self.enabled_interrupts = Interrupts::from_bits_retain(val),
-            _ => panic!("Unimplemented write to {:x}", address),
+            0xffff => {
+                self.enabled_interrupts = Interrupts::from_bits_retain(val);
+                println!("enabled interrupts: {:?}", self.enabled_interrupts)
+            }
+            _ => {
+                println!("Unimplemented write to {:x}", address)
+            }
         }
     }
 

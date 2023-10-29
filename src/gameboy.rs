@@ -53,7 +53,7 @@ impl Gameboy {
         );
         self.timers.step(cycles, &mut self.mmu);
         self.video.step(cycles, &mut self.mmu);
-        //println!("{:?}", self.cpu);
+        // println!("{:?}", self.cpu);
     }
 
     pub fn rom_info(&self) -> &RomInfo {

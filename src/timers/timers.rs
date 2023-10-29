@@ -89,8 +89,10 @@ impl Timers {
             0xff05 => self.counter = val,
             0xff06 => self.modulo = val,
             0xff07 => {
+                println!("Timer set to {:2x}", val);
                 self.control = Control(val);
                 self.timer = if self.control.enabled() {
+                    println!("Timer enabled for {}", self.control.interval().0);
                     Some(CycleTimer::new(self.control.interval()))
                 } else {
                     None
