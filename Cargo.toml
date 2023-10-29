@@ -11,3 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 bitflags = "2.4.1"
+pixels = "0.13.0"
+rgb = "0.8.36"
+winit = { version = "0.29.3", features = ["rwh_05"] }

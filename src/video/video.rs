@@ -5,6 +5,8 @@ use crate::{
     timers::{cycle_timer::CycleTimer, timers::Timers},
 };
 
+use super::tile::Tile;
+
 pub struct Video {
     lcdc: u8,
     stat: u8,
@@ -23,6 +25,7 @@ pub struct Video {
     window: Window,
 
     state: State,
+    frame_ready: bool,
 }
 
 enum State {
@@ -71,6 +74,8 @@ impl Video {
                 line_timer: CycleTimer::new(Self::LINE_TIME),
                 state: RenderState::OAM,
             },
+
+            frame_ready: false,
         }
     }
 
@@ -149,6 +154,14 @@ impl Video {
         self.dma_transfer_timer.is_some()
     }
 
+    pub fn frame_ready(&self) -> bool {
+        self.frame_ready
+    }
+
+    pub fn take_frame(&mut self) {
+        self.frame_ready = false
+    }
+
     fn vram_accessible(&self) -> bool {
         match &self.state {
             State::VBlank { .. } => true,
@@ -165,6 +178,19 @@ impl Video {
         } else {
             0xff
         }
+    }
+
+    pub fn all_tiles(&self) -> [Tile; 384] {
+        (0..384)
+            .map(|i| self.get_tile(0x8000 + (i * 16)))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap()
+    }
+
+    pub fn get_tile(&self, address: u16) -> Tile {
+        let start = address as usize - 0x8000;
+        Tile::new(self.vram[start..(start + 16)].try_into().unwrap())
     }
 
     fn write_vram(&mut self, address: u16, val: u8) {
@@ -258,7 +284,8 @@ impl Video {
                                         "Entering vblank, enabled interrupts {:?}",
                                         mmu.enabled_interrupts()
                                     );
-                                    mmu.set_interrupt_flag(Interrupts::VBLANK)
+                                    mmu.set_interrupt_flag(Interrupts::VBLANK);
+                                    self.frame_ready = true
                                 } else {
                                     *state = RenderState::OAM;
                                     *line += 1;

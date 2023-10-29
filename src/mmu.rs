@@ -78,9 +78,9 @@ impl Mmu {
     }
 
     pub fn read(&self, address: u16, video: &Video, timers: &Timers, joypad: &Joypad) -> u8 {
-        if video.dma_transfer_in_progess() && !(0xff80..0xfffe).contains(&address) {
-            return 0xff;
-        }
+        // if video.dma_transfer_in_progess() && !(0xff80..0xfffe).contains(&address) {
+        //     return 0xff;
+        // }
 
         match address {
             0x0000..=0x7fff => self.cartridge.read(address),
@@ -112,9 +112,9 @@ impl Mmu {
         timers: &mut Timers,
         joypad: &mut Joypad,
     ) {
-        if video.dma_transfer_in_progess() && !(0xff80..0xfffe).contains(&address) {
-            return;
-        }
+        // if video.dma_transfer_in_progess() && !(0xff80..0xfffe).contains(&address) {
+        //     return;
+        // }
 
         match address {
             0x0000..=0x7fff => self.cartridge.write(address, val),

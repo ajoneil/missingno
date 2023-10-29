@@ -36,17 +36,27 @@ impl Gameboy {
         gb
     }
 
-    pub fn run(&mut self) {
-        loop {
-            let cycles = self.cpu.step(
-                &mut self.mmu,
-                &mut self.video,
-                &mut self.timers,
-                &mut self.joypad,
-            );
-            self.timers.step(cycles, &mut self.mmu);
-            self.video.step(cycles, &mut self.mmu);
-            //println!("{:?}", self.cpu);
-        }
+    pub fn video(&self) -> &Video {
+        &self.video
+    }
+
+    pub fn take_frame(&mut self) {
+        self.video.take_frame()
+    }
+
+    pub fn step(&mut self) {
+        let cycles = self.cpu.step(
+            &mut self.mmu,
+            &mut self.video,
+            &mut self.timers,
+            &mut self.joypad,
+        );
+        self.timers.step(cycles, &mut self.mmu);
+        self.video.step(cycles, &mut self.mmu);
+        //println!("{:?}", self.cpu);
+    }
+
+    pub fn rom_info(&self) -> &RomInfo {
+        &self.info
     }
 }

@@ -49,14 +49,14 @@ impl Timers {
 
     pub fn step(&mut self, cycles: Cycles, mmu: &mut Mmu) {
         self.div_timer.tick(cycles);
-        while self.div_timer.finished() {
+        if self.div_timer.finished() {
             self.div = if self.div == 0xff { 0 } else { self.div + 1 };
             self.div_timer.lap()
         }
 
         if let Some(timer) = &mut self.timer {
             timer.tick(cycles);
-            while timer.finished() {
+            if timer.finished() {
                 if self.counter == 0xff {
                     self.counter = self.modulo;
                     mmu.set_interrupt_flag(Interrupts::TIMER)
