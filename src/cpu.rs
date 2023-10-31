@@ -19,6 +19,8 @@ pub struct Cpu {
     sp: u16,
     pc: u16,
     ime: bool,
+
+    halted: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -95,6 +97,7 @@ impl Cpu {
             sp: 0xfffe,
             pc: 0x0100,
             ime: false,
+            halted: false,
         }
     }
 
@@ -105,27 +108,38 @@ impl Cpu {
         timers: &mut Timers,
         joypad: &mut Joypad,
     ) -> Cycles {
-        if self.ime {
+        if self.ime || self.halted {
             let interrupts = mmu.interrupt_flags().intersection(mmu.enabled_interrupts());
             if !interrupts.is_empty() {
-                self.ime = false;
-                self.sp -= 2;
-                mmu.write_word(self.sp, self.pc, video, timers, joypad);
-
-                if interrupts.contains(Interrupts::VBLANK) {
-                    self.pc = 0x40;
-                    mmu.reset_interrupt_flag(Interrupts::VBLANK);
-                    println!("vblank interrupt!");
-                } else if interrupts.contains(Interrupts::SERIAL) {
-                    self.pc = 0x58;
-                    mmu.reset_interrupt_flag(Interrupts::SERIAL);
-                    println!("serial interrupt!");
-                } else {
-                    panic!("unhandled interrupt {:?}", interrupts)
+                if self.halted {
+                    println!("resuming..");
+                    self.halted = false;
                 }
 
-                return Cycles(20);
+                if self.ime {
+                    self.ime = false;
+                    self.sp -= 2;
+                    mmu.write_word(self.sp, self.pc, video, timers, joypad);
+
+                    if interrupts.contains(Interrupts::VBLANK) {
+                        self.pc = 0x40;
+                        mmu.reset_interrupt_flag(Interrupts::VBLANK);
+                        println!("vblank interrupt!");
+                    } else if interrupts.contains(Interrupts::SERIAL) {
+                        self.pc = 0x58;
+                        mmu.reset_interrupt_flag(Interrupts::SERIAL);
+                        println!("serial interrupt!");
+                    } else {
+                        panic!("unhandled interrupt {:?}", interrupts)
+                    }
+
+                    return Cycles(20);
+                }
             }
+        }
+
+        if self.halted {
+            return Cycles(4);
         }
 
         let mapper = &mut Mapper::new(mmu, video, timers, joypad);
@@ -390,6 +404,11 @@ impl Cpu {
 
             // cpu control
             0x00 => nop(),
+            0x76 => {
+                println!("halted!");
+                self.halted = true;
+                Cycles(4)
+            }
             0xf3 => di(&mut self.ime),
             0xfb => ei(&mut self.ime),
 
@@ -441,6 +460,16 @@ impl Cpu {
             0xcd => {
                 let nn = mapper.read_word_pc(&mut self.pc);
                 call_nn(&mut self.pc, &mut self.sp, nn, mapper)
+            }
+            0xc4 => {
+                let nn = mapper.read_word_pc(&mut self.pc);
+                call_f_nn(
+                    &mut self.pc,
+                    &mut self.sp,
+                    !self.f.contains(Flags::Z),
+                    nn,
+                    mapper,
+                )
             }
             0xc9 => ret(&mut self.pc, &mut self.sp, mapper),
             0xc0 => ret_f(
@@ -496,7 +525,6 @@ impl Cpu {
                             "Unimplemented instruction cb{:2x} at {:4x}",
                             cb_instruction, self.pc
                         );
-                        Cycles(4)
                     }
                 }
             }
@@ -506,7 +534,6 @@ impl Cpu {
                     "Unimplemented instruction {:x} at {:x}",
                     instruction, self.pc
                 );
-                Cycles(4)
             }
         }
     }

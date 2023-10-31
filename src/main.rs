@@ -36,7 +36,7 @@ fn main() {
         .unwrap();
 
     let width = 8 * 16;
-    let height = 8 * 24;
+    let height = 8 * (24 + 20);
 
     let mut pixels = {
         let window_size = window.inner_size();
@@ -73,6 +73,7 @@ fn main() {
                     const FB_SINGLE_TILE_LINE_SIZE: usize = TILE_PIXELS * PIXEL_BYTES;
                     const LINE_MEMORY_SIZE_BYTES: usize = TILES_PER_LINE * FB_SINGLE_TILE_LINE_SIZE;
 
+                    // print tile data in vram
                     for (tile_num, tile) in gb.video().all_tiles().iter().enumerate() {
                         for line_num in 0..TILE_PIXELS {
                             let fb_line_num = (tile_num / TILES_PER_LINE) * TILE_PIXELS + line_num;
@@ -91,6 +92,16 @@ fn main() {
                             }
                         }
                     }
+
+                    // LCD screen
+                    for (y, line) in gb.video().display().iter().enumerate() {
+                        let fb_line_num = (8 * 24) + y;
+                        let fb_lcd_line_start = fb_line_num * LINE_MEMORY_SIZE_BYTES;
+                        for (x, byte) in line.as_bytes().iter().enumerate() {
+                            framebuffer[fb_lcd_line_start + x] = *byte;
+                        }
+                    }
+
                     println!("printing");
                     pixels.render().unwrap();
 

@@ -51,6 +51,15 @@ pub fn call_nn(pc: &mut u16, sp: &mut u16, nn: u16, mapper: &mut Mapper) -> Cycl
     Cycles(24)
 }
 
+pub fn call_f_nn(pc: &mut u16, sp: &mut u16, f: bool, nn: u16, mapper: &mut Mapper) -> Cycles {
+    if f {
+        call(pc, sp, nn, mapper);
+        Cycles(24)
+    } else {
+        Cycles(12)
+    }
+}
+
 pub fn ret(pc: &mut u16, sp: &mut u16, mapper: &Mapper) -> Cycles {
     *pc = mapper.read_word(*sp);
     *sp += 2;

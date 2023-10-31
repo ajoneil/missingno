@@ -88,7 +88,7 @@ pub fn ld_a_hlptr_dec(a: &mut u8, h: &mut u8, l: &mut u8, mapper: &Mapper) -> Cy
 
 fn increment_hl(h: &mut u8, l: &mut u8) {
     if *l == 0xff {
-        *h += 1;
+        *h = if *h == 0xff { 0 } else { *h + 1 };
         *l = 0;
     } else {
         *l += 1;
