@@ -1,4 +1,4 @@
-use crate::{cpu::Cycles, mmu::Mapper};
+use crate::emulation::{cpu::Cycles, mmu::Mapper};
 
 use super::rr;
 

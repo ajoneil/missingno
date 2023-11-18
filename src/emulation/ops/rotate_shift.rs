@@ -1,4 +1,4 @@
-use crate::cpu::{Cycles, Flags};
+use crate::emulation::cpu::{Cycles, Flags};
 
 pub fn rlca(a: &mut u8, f: &mut Flags) -> Cycles {
     let (shifted_a, overflowed) = a.overflowing_shl(1);

@@ -1,6 +1,6 @@
 use crate::{
-    cpu::{Cycles, Interrupts},
-    mmu::Mmu,
+    emulation::cpu::{Cycles, Interrupts},
+    emulation::mmu::Mmu,
 };
 
 use super::cycle_timer::CycleTimer;

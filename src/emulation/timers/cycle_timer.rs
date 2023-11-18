@@ -1,4 +1,4 @@
-use crate::cpu::Cycles;
+use crate::emulation::cpu::Cycles;
 
 pub struct CycleTimer {
     length: Cycles,

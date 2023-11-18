@@ -1,6 +1,6 @@
-use crate::cpu::{Cycles, Flags};
-use crate::mmu::Mapper;
-use crate::ops::rr;
+use crate::emulation::cpu::{Cycles, Flags};
+use crate::emulation::mmu::Mapper;
+use crate::emulation::ops::rr;
 
 pub fn ld_r_r(rw: &mut u8, rr: u8) -> Cycles {
     *rw = rr;

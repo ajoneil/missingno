@@ -1,6 +1,6 @@
-use crate::cpu::{Cycles, Flags};
-use crate::mmu::Mapper;
-use crate::ops::{rr, set_rr};
+use crate::emulation::cpu::{Cycles, Flags};
+use crate::emulation::mmu::Mapper;
+use crate::emulation::ops::{rr, set_rr};
 
 pub fn add_a_r(a: &mut u8, r: u8, f: &mut Flags) -> Cycles {
     let res = *a as u16 + r as u16;

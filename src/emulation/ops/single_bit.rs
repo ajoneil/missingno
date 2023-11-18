@@ -1,4 +1,4 @@
-use crate::cpu::Cycles;
+use crate::emulation::cpu::Cycles;
 
 pub fn set_n_r(n: u8, r: &mut u8) -> Cycles {
     *r |= 1 << n;

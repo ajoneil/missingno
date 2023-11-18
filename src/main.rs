@@ -7,18 +7,9 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::WindowBuilder;
 
-use crate::video::palette::Palette;
+use crate::emulation::video::palette::Palette;
 
-mod cartridge;
-mod cpu;
-mod gameboy;
-mod joypad;
-mod mbc;
-mod mmu;
-mod ops;
-mod rom_info;
-mod timers;
-mod video;
+mod emulation;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -27,7 +18,7 @@ fn main() {
     let mut file = File::open(&path).unwrap();
     let mut rom = Vec::new();
     file.read_to_end(&mut rom).unwrap();
-    let mut gb = gameboy::Gameboy::new(rom);
+    let mut gb = emulation::gameboy::Gameboy::new(rom);
 
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()

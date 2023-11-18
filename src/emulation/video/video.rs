@@ -1,7 +1,5 @@
-use std::thread::current;
-
 use super::{palette::Palette, tile::Tile};
-use crate::{
+use crate::emulation::{
     cpu::{Cycles, Interrupts},
     joypad::Joypad,
     mmu::Mmu,

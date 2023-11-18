@@ -1,8 +1,8 @@
-use crate::cartridge::Cartridge;
-use crate::cpu::Interrupts;
-use crate::joypad::Joypad;
-use crate::timers::timers::Timers;
-use crate::video::Video;
+use super::cartridge::Cartridge;
+use super::cpu::Interrupts;
+use super::joypad::Joypad;
+use super::timers::timers::Timers;
+use super::video::Video;
 
 pub struct Mmu {
     cartridge: Cartridge,

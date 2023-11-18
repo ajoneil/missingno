@@ -1,4 +1,4 @@
-use crate::mbc::Mbc;
+use crate::emulation::mbc::Mbc;
 
 pub struct NoMbc;
 

@@ -1,10 +1,10 @@
-use crate::cartridge::Cartridge;
-use crate::cpu::Cpu;
-use crate::joypad::Joypad;
-use crate::mmu::Mmu;
-use crate::rom_info::RomInfo;
-use crate::timers::timers::Timers;
-use crate::video::Video;
+use super::cartridge::Cartridge;
+use super::cpu::Cpu;
+use super::joypad::Joypad;
+use super::mmu::Mmu;
+use super::rom_info::RomInfo;
+use super::timers::timers::Timers;
+use super::video::Video;
 
 pub struct Gameboy {
     info: RomInfo,

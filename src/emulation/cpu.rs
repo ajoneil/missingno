@@ -1,9 +1,9 @@
-use crate::joypad::Joypad;
-use crate::mmu::Mapper;
-use crate::mmu::Mmu;
-use crate::ops::*;
-use crate::timers::timers::Timers;
-use crate::video::Video;
+use super::joypad::Joypad;
+use super::mmu::Mapper;
+use super::mmu::Mmu;
+use super::ops::*;
+use super::timers::timers::Timers;
+use super::video::Video;
 use bitflags::bitflags;
 use std::fmt;
 

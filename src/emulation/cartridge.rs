@@ -1,6 +1,6 @@
-use crate::mbc::no_mbc::NoMbc;
-use crate::mbc::Mbc;
-use crate::rom_info::MbcType;
+use super::mbc::no_mbc::NoMbc;
+use super::mbc::Mbc;
+use super::rom_info::MbcType;
 
 pub struct Cartridge {
     rom: Vec<u8>,
