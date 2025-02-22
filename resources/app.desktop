@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Missingno
+Comment=Game Boy emulator and debugger
+Type=Application
+Icon=net.andyofniall.MissingNo
+Exec=missingno %F
+Terminal=false
+StartupNotify=true
+Categories=COSMIC
+Keywords=COSMIC
+MimeType=
