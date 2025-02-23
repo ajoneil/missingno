@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MIT
-
 mod app;
 mod config;
 mod i18n;

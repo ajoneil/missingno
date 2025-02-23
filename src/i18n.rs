@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: {{ license }}
-
 //! Provides localization support for this crate.
 
 use std::sync::LazyLock;

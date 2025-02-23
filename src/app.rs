@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: MIT
-
 use crate::config::Config;
 use crate::fl;
 use cosmic::app::{context_drawer, Core, Task};
