@@ -2,9 +2,11 @@ use crate::config::Config;
 use crate::fl;
 use cosmic::app::{context_drawer, Core, Task};
 use cosmic::cosmic_config::{self, CosmicConfigEntry};
+use cosmic::dialog::file_chooser::{self, FileFilter};
 use cosmic::iced::alignment::{Horizontal, Vertical};
 use cosmic::iced::{Alignment, Length, Subscription};
-use cosmic::widget::{self, icon, menu, nav_bar};
+use cosmic::widget::text::title1;
+use cosmic::widget::{self, button, column, container, menu};
 use cosmic::{cosmic_theme, theme, Application, ApplicationExt, Apply, Element};
 use futures_util::SinkExt;
 use std::collections::HashMap;
@@ -19,8 +21,6 @@ pub struct AppModel {
     core: Core,
     /// Display a context drawer with the designated page if defined.
     context_page: ContextPage,
-    /// Contains items assigned to the nav bar panel.
-    nav: nav_bar::Model,
     /// Key bindings for the application's menu bar.
     key_binds: HashMap<menu::KeyBind, MenuAction>,
     // Configuration data that persists between application runs.
@@ -35,6 +35,22 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     UpdateConfig(Config),
     LaunchUrl(String),
+    OpenRom(OpenRomMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum OpenRomMessage {
+    OpenFileChooser,
+    Cancel,
+    ReadRom,
+    RomLoaded,
+    Error,
+}
+
+impl From<OpenRomMessage> for cosmic::app::Message<Message> {
+    fn from(message: OpenRomMessage) -> Self {
+        Message::OpenRom(message).into()
+    }
 }
 
 /// Create a COSMIC application from the app model
@@ -61,30 +77,10 @@ impl Application for AppModel {
 
     /// Initializes the application with any given flags and startup commands.
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
-        // Create a nav bar with three page items.
-        let mut nav = nav_bar::Model::default();
-
-        nav.insert()
-            .text(fl!("page-id", num = 1))
-            .data::<Page>(Page::Page1)
-            .icon(icon::from_name("applications-science-symbolic"))
-            .activate();
-
-        nav.insert()
-            .text(fl!("page-id", num = 2))
-            .data::<Page>(Page::Page2)
-            .icon(icon::from_name("applications-system-symbolic"));
-
-        nav.insert()
-            .text(fl!("page-id", num = 3))
-            .data::<Page>(Page::Page3)
-            .icon(icon::from_name("applications-games-symbolic"));
-
         // Construct the app model with the runtime's core.
         let mut app = AppModel {
             core,
             context_page: ContextPage::default(),
-            nav,
             key_binds: HashMap::new(),
             // Optional configuration file for an application.
             config: cosmic_config::Config::new(Self::APP_ID, Config::VERSION)
@@ -121,9 +117,6 @@ impl Application for AppModel {
     }
 
     /// Enables the COSMIC application to create a nav bar with this model.
-    fn nav_model(&self) -> Option<&nav_bar::Model> {
-        Some(&self.nav)
-    }
 
     /// Display a context drawer if the context page is requested.
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<Self::Message>> {
@@ -145,8 +138,13 @@ impl Application for AppModel {
     /// Application events will be processed through the view. Any messages emitted by
     /// events received by widgets will be passed to the update method.
     fn view(&self) -> Element<Self::Message> {
-        widget::text::title1(fl!("welcome"))
-            .apply(widget::container)
+        column()
+            .push(title1(fl!("welcome")))
+            .push(
+                button::standard(fl!("open-rom"))
+                    .on_press(Message::OpenRom(OpenRomMessage::OpenFileChooser)),
+            )
+            .apply(container)
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Horizontal::Center)
@@ -220,16 +218,30 @@ impl Application for AppModel {
                     eprintln!("failed to open {url:?}: {err}");
                 }
             },
+
+            Message::OpenRom(message) => match message {
+                OpenRomMessage::OpenFileChooser => {
+                    return cosmic::task::future(async move {
+                        let filter = FileFilter::new("Game Boy ROMs").extension("gb");
+
+                        let dialog = file_chooser::open::Dialog::new()
+                            .title("Open game")
+                            .filter(filter);
+
+                        match dialog.open_file().await {
+                            Ok(_) => OpenRomMessage::ReadRom,
+                            Err(_) => OpenRomMessage::Error,
+                        }
+                    });
+                }
+
+                _ => {
+                    todo!()
+                }
+            },
         }
+
         Task::none()
-    }
-
-    /// Called when a nav item is selected.
-    fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<Self::Message> {
-        // Activate the page in the model.
-        self.nav.activate(id);
-
-        self.update_title()
     }
 }
 
@@ -270,12 +282,7 @@ impl AppModel {
 
     /// Updates the header and window titles.
     pub fn update_title(&mut self) -> Task<Message> {
-        let mut window_title = fl!("app-title");
-
-        if let Some(page) = self.nav.text(self.nav.active()) {
-            window_title.push_str(" — ");
-            window_title.push_str(page);
-        }
+        let window_title = fl!("app-title");
 
         if let Some(id) = self.core.main_window_id() {
             self.set_window_title(window_title, id)
@@ -286,11 +293,6 @@ impl AppModel {
 }
 
 /// The page to display in the application.
-pub enum Page {
-    Page1,
-    Page2,
-    Page3,
-}
 
 /// The context page to display in the context drawer.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
