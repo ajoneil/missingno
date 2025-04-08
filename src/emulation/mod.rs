@@ -1,10 +1,12 @@
-pub mod cartridge;
-pub mod cpu;
-pub mod gameboy;
-pub mod joypad;
-pub mod mbc;
-pub mod mmu;
-pub mod ops;
-pub mod rom_info;
-pub mod timers;
-pub mod video;
+mod cartridge;
+mod cpu;
+mod game_boy;
+mod joypad;
+mod mbc;
+mod mmu;
+mod ops;
+mod rom_info;
+mod timers;
+mod video;
+
+pub use game_boy::GameBoy;

@@ -6,7 +6,7 @@ use super::rom_info::RomInfo;
 use super::timers::timers::Timers;
 use super::video::Video;
 
-pub struct Gameboy {
+pub struct GameBoy {
     info: RomInfo,
     cpu: Cpu,
     timers: Timers,
@@ -15,14 +15,14 @@ pub struct Gameboy {
     joypad: Joypad,
 }
 
-impl Gameboy {
-    pub fn new(rom: Vec<u8>) -> Gameboy {
+impl GameBoy {
+    pub fn new(rom: Vec<u8>) -> GameBoy {
         let info = RomInfo::new(rom.as_slice());
         let cartridge = Cartridge::new(rom, info.mbc_type);
         let video = Video::new();
         let mmu = Mmu::new(cartridge);
 
-        let gb = Gameboy {
+        let gb = GameBoy {
             cpu: Cpu::new(info.checksum),
             timers: Timers::new(),
             info: info,

@@ -1,19 +1,85 @@
-use iced::{Element, widget::text};
+use std::path::PathBuf;
+
+use crate::emulation::GameBoy;
+use iced::{
+    Element,
+    Length::Fill,
+    Task, Theme,
+    widget::{button, container, text},
+};
+use rfd::{AsyncFileDialog, FileHandle};
 
 pub fn run() -> iced::Result {
-    iced::application("MissingNo.", App::update, App::view).run()
+    iced::application("MissingNo.", App::update, App::view)
+        .theme(theme)
+        .run()
+}
+
+fn theme(_app: &App) -> Theme {
+    Theme::Dark
 }
 
 #[derive(Default)]
-struct App {}
+struct App {
+    load_state: LoadState,
+}
 
-#[derive(Debug)]
-enum Message {}
+#[derive(Default)]
+enum LoadState {
+    #[default]
+    Unloaded,
+    Loading,
+    Loaded(GameBoy),
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    PickGameRom,
+    GameRomPicked(Option<FileHandle>),
+    GameRomLoaded(Vec<u8>),
+}
 
 impl App {
-    fn update(&mut self, _message: Message) {}
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::PickGameRom => {
+                self.load_state = LoadState::Loading;
+                Task::perform(
+                    AsyncFileDialog::new()
+                        .add_filter("Game Boy ROM", &["gb"])
+                        .pick_file(),
+                    Message::GameRomPicked,
+                )
+            }
+            Message::GameRomPicked(file_handle) => {
+                if let Some(handle) = file_handle {
+                    let file = handle.clone();
+                    Task::perform(async move { file.read().await }, Message::GameRomLoaded)
+                } else {
+                    self.load_state = LoadState::Unloaded;
+                    Task::none()
+                }
+            }
+            Message::GameRomLoaded(rom) => {
+                self.load_state = LoadState::Loaded(GameBoy::new(rom));
+                Task::none()
+            }
+        }
+    }
 
     fn view(&self) -> Element<'_, Message> {
-        text("Hello world").into()
+        container(self.inner()).center_x(Fill).center_y(Fill).into()
+    }
+
+    fn inner(&self) -> Element<'_, Message> {
+        match &self.load_state {
+            LoadState::Unloaded => button("Load game").on_press(Message::PickGameRom).into(),
+            LoadState::Loading => button("Load game").into(),
+            LoadState::Loaded(game_boy) => Self::loaded_view(&game_boy),
+        }
+    }
+
+    fn loaded_view(game_boy: &GameBoy) -> Element<'_, Message> {
+        text(&game_boy.rom_info().title).into()
     }
 }
