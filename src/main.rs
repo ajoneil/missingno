@@ -1,22 +1,16 @@
+use std::{env, path::PathBuf};
+
 mod emulation;
 mod ui;
 
-fn main() {
-    // let args: Vec<String> = std::env::args().collect();
-    // let filename = &args[1];
-    // let path = Path::new(&filename);
-    // let mut file = File::open(&path).unwrap();
-    // let mut rom = Vec::new();
-    // file.read_to_end(&mut rom).unwrap();
-    // let mut gb = emulation::gameboy::Gameboy::new(rom);
+fn main() -> iced::Result {
+    let rom_path = if let Some(path) = env::args().nth(1) {
+        Some(PathBuf::from(path))
+    } else {
+        None
+    };
 
-    ui::run().unwrap();
-
-    // let event_loop = EventLoop::new().unwrap();
-    // let window = WindowBuilder::new()
-    //     .with_title(&gb.rom_info().title)
-    //     .build(&event_loop)
-    //     .unwrap();
+    ui::run(rom_path)
 
     // let width = 8 * 16;
     // let height = 8 * (24 + 20);

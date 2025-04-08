@@ -7,14 +7,15 @@ use iced::{
     widget::{button, container},
 };
 use rfd::{AsyncFileDialog, FileHandle};
+use std::{fs, path::PathBuf};
 
 mod cpu;
 mod emulator;
 
-pub fn run() -> iced::Result {
+pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
         .theme(theme)
-        .run()
+        .run_with(|| (App::new(rom_path), Task::none()))
 }
 
 fn theme(_app: &App) -> Theme {
@@ -42,6 +43,19 @@ enum Message {
 }
 
 impl App {
+    fn new(rom_path: Option<PathBuf>) -> Self {
+        match rom_path {
+            Some(rom_path) => Self {
+                load_state: LoadState::Loaded(GameBoy::new(Cartridge::new(
+                    fs::read(rom_path).unwrap(),
+                ))),
+            },
+            None => Self {
+                load_state: LoadState::Unloaded,
+            },
+        }
+    }
+
     fn title(&self) -> String {
         if let LoadState::Loaded(game_boy) = &self.load_state {
             format!("{} - MissingNo.", game_boy.cartridge().title())
