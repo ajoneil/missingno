@@ -8,7 +8,7 @@ use iced::{
 use rfd::{AsyncFileDialog, FileHandle};
 
 pub fn run() -> iced::Result {
-    iced::application("MissingNo.", App::update, App::view)
+    iced::application(App::title, App::update, App::view)
         .theme(theme)
         .run()
 }
@@ -38,6 +38,13 @@ enum Message {
 }
 
 impl App {
+    fn title(&self) -> String {
+        if let LoadState::Loaded(game_boy) = &self.load_state {
+            format!("{} - MissingNo.", game_boy.cartridge().title())
+        } else {
+            "MissingNo.".into()
+        }
+    }
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PickGameRom => {
