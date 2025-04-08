@@ -1981,7 +1981,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "missingnogmb"
+name = "missingno"
 version = "0.0.1"
 dependencies = [
  "bitflags 2.9.0",

@@ -59,10 +59,10 @@ fn register8(label: &str, value: u8) -> Element<'_, Message> {
 fn register16(label: &str, value: u16) -> Element<'_, Message> {
     row![
         container(label)
-            .align_right(Length::Fixed(40.0))
+            .align_right(Length::Fixed(50.0))
             .padding(Padding::from([5.0, 10.0])),
         text_input(label, &format!("{:04x}", value))
-            .width(Length::Fixed(80.0))
+            .width(Length::Fixed(70.0))
             .align_x(Alignment::Start)
     ]
     .align_y(Vertical::Center)

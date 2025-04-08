@@ -1,12 +1,11 @@
 [package]
-
-name = "missingnogmb"
+name = "missingno"
 version = "0.0.1"
 authors = ["Andrew O'Neil <andy@andyofniall.net>"]
 edition = "2024"
 
 [[bin]]
-name = "missingnogmb"
+name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
