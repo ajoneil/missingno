@@ -1,6 +1,6 @@
 mod cartridge;
 mod cpu;
-mod instructions;
+pub mod instructions;
 // mod joypad;
 // mod mbc;
 // mod mmu;

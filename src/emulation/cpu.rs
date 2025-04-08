@@ -1,4 +1,4 @@
-use crate::emulation::{Cartridge, Instruction};
+use crate::emulation::{Cartridge, Instruction, instructions::JumpAddress};
 use bitflags::bitflags;
 use std::fmt;
 
@@ -117,6 +117,11 @@ impl Cpu {
     fn execute(&mut self, instruction: Instruction) {
         match instruction {
             Instruction::NoOperation => {}
+
+            Instruction::Jump(address) => match address {
+                JumpAddress::Absolute(address) => self.pc = address,
+            },
+
             Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
         }
     }
