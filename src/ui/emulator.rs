@@ -1,20 +1,23 @@
 use crate::{
     emulation::{Cartridge, GameBoy},
-    ui::{Message, cpu::cpu_view},
+    ui::{Message, cpu::cpu, instructions::instructions},
 };
 use iced::{
-    Element,
-    widget::{column, text},
+    Element, Length,
+    widget::{column, container, row, text},
 };
 
-pub fn emulator_view(game_boy: &GameBoy) -> Element<'_, Message> {
-    column![
-        cartridge_view(game_boy.cartridge()),
-        cpu_view(game_boy.cpu())
+pub fn emulator(game_boy: &GameBoy) -> Element<'_, Message> {
+    row![
+        container(instructions(game_boy.cartridge(), game_boy.cpu().pc)).width(Length::Fill),
+        column![cartridge(game_boy.cartridge()), cpu(game_boy.cpu())]
     ]
+    .height(Length::Fill)
+    .spacing(20)
+    .padding(10)
     .into()
 }
 
-fn cartridge_view(cartridge: &Cartridge) -> Element<'_, Message> {
+fn cartridge(cartridge: &Cartridge) -> Element<'_, Message> {
     text(cartridge.title()).into()
 }

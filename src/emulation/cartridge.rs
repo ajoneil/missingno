@@ -25,6 +25,10 @@ impl Cartridge {
         self.rom[0x14d]
     }
 
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
     // pub fn read(&self, address: u16) -> u8 {
     //     self.mbc.read(address, self.rom.as_slice())
     // }

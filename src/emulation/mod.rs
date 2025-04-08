@@ -1,5 +1,6 @@
 mod cartridge;
 mod cpu;
+mod instructions;
 // mod joypad;
 // mod mbc;
 // mod mmu;
@@ -10,6 +11,7 @@ mod cpu;
 pub use cartridge::Cartridge;
 pub use cpu::Cpu;
 pub use cpu::Flags as CpuFlags;
+pub use instructions::Instruction;
 
 pub struct GameBoy {
     cartridge: Cartridge,

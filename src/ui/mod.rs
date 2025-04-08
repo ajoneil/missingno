@@ -1,5 +1,7 @@
-use crate::emulation::{Cartridge, GameBoy};
-use emulator::emulator_view;
+use crate::{
+    emulation::{Cartridge, GameBoy},
+    ui::emulator::emulator,
+};
 use iced::{
     Element,
     Length::Fill,
@@ -11,6 +13,7 @@ use std::{fs, path::PathBuf};
 
 mod cpu;
 mod emulator;
+mod instructions;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
@@ -96,7 +99,7 @@ impl App {
         match &self.load_state {
             LoadState::Unloaded => button("Load game").on_press(Message::PickGameRom).into(),
             LoadState::Loading => button("Load game").into(),
-            LoadState::Loaded(game_boy) => emulator_view(&game_boy),
+            LoadState::Loaded(game_boy) => emulator(&game_boy),
         }
     }
 }

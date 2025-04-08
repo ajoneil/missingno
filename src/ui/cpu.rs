@@ -8,7 +8,7 @@ use iced::{
     widget::{checkbox, column, container, row, text_input},
 };
 
-pub fn cpu_view(cpu: &Cpu) -> Element<'_, Message> {
+pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
     column![
         row![register16("pc", cpu.pc), register16("sp", cpu.sp)],
         row![
