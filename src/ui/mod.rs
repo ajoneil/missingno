@@ -22,14 +22,11 @@ fn theme(_app: &App) -> Theme {
     Theme::Dark
 }
 
-#[derive(Default)]
 struct App {
     load_state: LoadState,
 }
 
-#[derive(Default)]
 enum LoadState {
-    #[default]
     Unloaded,
     Loading,
     Loaded(GameBoy),
