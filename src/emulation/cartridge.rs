@@ -21,6 +21,10 @@ impl Cartridge {
         &self.title
     }
 
+    pub fn header_checksum(&self) -> u8 {
+        self.rom[0x14d]
+    }
+
     // pub fn read(&self, address: u16) -> u8 {
     //     self.mbc.read(address, self.rom.as_slice())
     // }
