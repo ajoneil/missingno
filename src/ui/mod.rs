@@ -14,12 +14,8 @@ mod emulator;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
-        .theme(theme)
+        .theme(App::theme)
         .run_with(|| (App::new(rom_path), Task::none()))
-}
-
-fn theme(_app: &App) -> Theme {
-    Theme::Dark
 }
 
 struct App {
@@ -60,6 +56,11 @@ impl App {
             "MissingNo.".into()
         }
     }
+
+    fn theme(&self) -> Theme {
+        Theme::Dark
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PickGameRom => {
