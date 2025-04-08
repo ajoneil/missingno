@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use crate::emulation::GameBoy;
+use crate::emulation::{Cartridge, GameBoy};
 use iced::{
     Element,
     Length::Fill,
@@ -61,7 +59,7 @@ impl App {
                 }
             }
             Message::GameRomLoaded(rom) => {
-                self.load_state = LoadState::Loaded(GameBoy::new(rom));
+                self.load_state = LoadState::Loaded(GameBoy::new(Cartridge::new(rom)));
                 Task::none()
             }
         }
@@ -80,6 +78,6 @@ impl App {
     }
 
     fn loaded_view(game_boy: &GameBoy) -> Element<'_, Message> {
-        text(&game_boy.rom_info().title).into()
+        text(game_boy.cartridge().title()).into()
     }
 }
