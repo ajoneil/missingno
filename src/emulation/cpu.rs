@@ -1,3 +1,4 @@
+use crate::emulation::{Cartridge, Instruction};
 use bitflags::bitflags;
 use std::fmt;
 
@@ -74,6 +75,17 @@ bitflags! {
     }
 }
 
+struct ProgramCounterIterator<'a>(&'a mut u16, &'a [u8]);
+impl<'a> Iterator for ProgramCounterIterator<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.1[(*self.0) as usize];
+        *self.0 += 1;
+        Some(value)
+    }
+}
+
 impl Cpu {
     pub fn new(checksum: u8) -> Cpu {
         Cpu {
@@ -93,6 +105,19 @@ impl Cpu {
             pc: 0x0100,
             ime: false,
             halted: false,
+        }
+    }
+
+    pub fn step(&mut self, cartridge: &Cartridge) {
+        let pc_iterator = ProgramCounterIterator(&mut self.pc, cartridge.rom());
+        let instruction = Instruction::decode(pc_iterator);
+        self.execute(instruction);
+    }
+
+    fn execute(&mut self, instruction: Instruction) {
+        match instruction {
+            Instruction::NoOperation => {}
+            Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
         }
     }
 

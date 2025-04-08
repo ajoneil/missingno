@@ -46,6 +46,10 @@ impl GameBoy {
         &self.cpu
     }
 
+    pub fn step(&mut self) {
+        self.cpu.step(&self.cartridge);
+    }
+
     // pub fn video(&self) -> &Video {
     //     &self.video
     // }

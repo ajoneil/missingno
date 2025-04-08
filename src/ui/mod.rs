@@ -33,9 +33,21 @@ enum LoadState {
 
 #[derive(Debug, Clone)]
 enum Message {
+    Load(LoadMessage),
+    Emulator(emulator::Message),
+}
+
+#[derive(Debug, Clone)]
+enum LoadMessage {
     PickGameRom,
     GameRomPicked(Option<FileHandle>),
     GameRomLoaded(Vec<u8>),
+}
+
+impl From<LoadMessage> for Message {
+    fn from(value: LoadMessage) -> Self {
+        Self::Load(value)
+    }
 }
 
 impl App {
@@ -66,28 +78,36 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PickGameRom => {
-                self.load_state = LoadState::Loading;
-                Task::perform(
-                    AsyncFileDialog::new()
-                        .add_filter("Game Boy ROM", &["gb"])
-                        .pick_file(),
-                    Message::GameRomPicked,
-                )
-            }
-            Message::GameRomPicked(file_handle) => {
-                if let Some(handle) = file_handle {
-                    let file = handle.clone();
-                    Task::perform(async move { file.read().await }, Message::GameRomLoaded)
-                } else {
-                    self.load_state = LoadState::Unloaded;
+            Message::Load(load_message) => match load_message {
+                LoadMessage::PickGameRom => {
+                    self.load_state = LoadState::Loading;
+                    Task::perform(
+                        AsyncFileDialog::new()
+                            .add_filter("Game Boy ROM", &["gb"])
+                            .pick_file(),
+                        |result| Message::Load(LoadMessage::GameRomPicked(result)),
+                    )
+                }
+                LoadMessage::GameRomPicked(file_handle) => {
+                    if let Some(handle) = file_handle {
+                        let file = handle.clone();
+                        Task::perform(async move { file.read().await }, |result| {
+                            Message::Load(LoadMessage::GameRomLoaded(result))
+                        })
+                    } else {
+                        self.load_state = LoadState::Unloaded;
+                        Task::none()
+                    }
+                }
+                LoadMessage::GameRomLoaded(rom) => {
+                    self.load_state = LoadState::Loaded(GameBoy::new(Cartridge::new(rom)));
                     Task::none()
                 }
-            }
-            Message::GameRomLoaded(rom) => {
-                self.load_state = LoadState::Loaded(GameBoy::new(Cartridge::new(rom)));
-                Task::none()
-            }
+            },
+            Message::Emulator(message) => match &mut self.load_state {
+                LoadState::Loaded(game_boy) => emulator::update(game_boy, message),
+                _ => Task::none(),
+            },
         }
     }
 
@@ -97,7 +117,9 @@ impl App {
 
     fn inner(&self) -> Element<'_, Message> {
         match &self.load_state {
-            LoadState::Unloaded => button("Load game").on_press(Message::PickGameRom).into(),
+            LoadState::Unloaded => button("Load game")
+                .on_press(Message::Load(LoadMessage::PickGameRom))
+                .into(),
             LoadState::Loading => button("Load game").into(),
             LoadState::Loaded(game_boy) => emulator(&game_boy),
         }
