@@ -1,6 +1,6 @@
 use crate::emulation::{Cartridge, Instruction, instructions::JumpAddress};
 use bitflags::bitflags;
-use std::fmt;
+use std::fmt::{self, Display};
 
 pub struct Cpu {
     pub a: u8,
@@ -17,6 +17,34 @@ pub struct Cpu {
 
     pub ime: bool,
     pub halted: bool,
+}
+
+pub enum Register8 {
+    A,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+}
+
+impl Display for Register8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::A => "a",
+                Self::B => "b",
+                Self::C => "c",
+                Self::D => "d",
+                Self::E => "e",
+                Self::H => "h",
+                Self::L => "l",
+            }
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -118,11 +146,31 @@ impl Cpu {
         match instruction {
             Instruction::NoOperation => {}
 
+            Instruction::XorA(register) => {
+                self.a = self.a ^ self.get_register8(register);
+                self.f.set(Flags::Z, self.a == 0);
+                self.f.remove(Flags::N);
+                self.f.remove(Flags::H);
+                self.f.remove(Flags::C);
+            }
+
             Instruction::Jump(address) => match address {
                 JumpAddress::Absolute(address) => self.pc = address,
             },
 
             Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
+        }
+    }
+
+    fn get_register8(&self, register: Register8) -> u8 {
+        match register {
+            Register8::A => self.a,
+            Register8::B => self.b,
+            Register8::C => self.c,
+            Register8::D => self.d,
+            Register8::E => self.e,
+            Register8::H => self.h,
+            Register8::L => self.l,
         }
     }
 
@@ -340,16 +388,6 @@ impl Cpu {
     //         }
     //         0xe6 => and_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
     //         0xa6 => and_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
-    //         0xa8 => xor_r(&mut self.a, self.b, &mut self.f),
-    //         0xa9 => xor_r(&mut self.a, self.c, &mut self.f),
-    //         0xaa => xor_r(&mut self.a, self.d, &mut self.f),
-    //         0xab => xor_r(&mut self.a, self.e, &mut self.f),
-    //         0xac => xor_r(&mut self.a, self.h, &mut self.f),
-    //         0xad => xor_r(&mut self.a, self.l, &mut self.f),
-    //         0xaf => {
-    //             let a = self.a;
-    //             xor_r(&mut self.a, a, &mut self.f)
-    //         }
     //         0xee => xor_n(&mut self.a, mapper.read_pc(&mut self.pc), &mut self.f),
     //         0xae => xor_hlptr(&mut self.a, self.h, self.l, &mut self.f, mapper),
     //         0xb0 => or_r(&mut self.a, self.b, &mut self.f),
@@ -438,10 +476,6 @@ impl Cpu {
     //         0xfb => ei(&mut self.ime),
 
     //         // jump
-    //         0xc3 => {
-    //             let nn = mapper.read_word_pc(&mut self.pc);
-    //             jp_nn(&mut self.pc, nn)
-    //         }
     //         0xe9 => jp_hl(&mut self.pc, self.h, self.l),
 
     //         0xc2 => {
