@@ -2,14 +2,51 @@ use crate::{
     emulation::{Cartridge, Instruction},
     ui::Message,
 };
-use iced::{Element, widget::text};
+use iced::{
+    Alignment, Element,
+    widget::{Column, row, text},
+};
 
-pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
-    instruction(Instruction::decode(
-        cartridge.rom()[pc.into()..].iter().copied(),
-    ))
+struct InstructionsIterator<'a> {
+    address: u16,
+    rom: &'a [u8],
 }
 
-pub fn instruction(instruction: Instruction) -> Element<'static, Message> {
-    text(instruction.to_string()).into()
+impl<'a> Iterator for InstructionsIterator<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let value = self.rom[self.address as usize];
+
+        self.address += 1;
+        // Skip over header as it's data and not opcodes
+        if (0x104..0x14f).contains(&self.address) {
+            self.address = 0x150;
+        }
+
+        Some(value)
+    }
+}
+
+pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
+    let mut iterator = InstructionsIterator {
+        address: pc,
+        rom: cartridge.rom(),
+    };
+
+    Column::from_iter(
+        (0..20).map(|_| instruction(iterator.address, Instruction::decode(&mut iterator))),
+    )
+    .into()
+}
+
+pub fn instruction(address: u16, instruction: Instruction) -> Element<'static, Message> {
+    row![
+        text(format!("{:04x}", address))
+            .width(50)
+            .align_x(Alignment::End),
+        text(instruction.to_string())
+    ]
+    .spacing(5)
+    .into()
 }

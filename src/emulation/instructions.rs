@@ -15,7 +15,7 @@ pub enum JumpAddress {
 }
 
 impl Instruction {
-    pub fn decode(mut ops: impl Iterator<Item = u8>) -> Self {
+    pub fn decode(ops: &mut impl Iterator<Item = u8>) -> Self {
         match ops.next().unwrap() {
             0x00 => Self::NoOperation,
 

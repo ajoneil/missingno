@@ -137,8 +137,8 @@ impl Cpu {
     }
 
     pub fn step(&mut self, cartridge: &Cartridge) {
-        let pc_iterator = ProgramCounterIterator(&mut self.pc, cartridge.rom());
-        let instruction = Instruction::decode(pc_iterator);
+        let mut pc_iterator = ProgramCounterIterator(&mut self.pc, cartridge.rom());
+        let instruction = Instruction::decode(&mut pc_iterator);
         self.execute(instruction);
     }
 
