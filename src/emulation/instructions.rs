@@ -1,4 +1,4 @@
-use crate::emulation::cpu::{Register8, Register16};
+use crate::emulation::cpu::{Pointer, Register8, Register16};
 use std::fmt::{self, Display, Formatter};
 
 pub enum Instruction {
@@ -19,10 +19,12 @@ pub enum JumpAddress {
 
 pub enum Load8Target {
     Register(Register8),
+    Pointer(Pointer),
 }
 
 pub enum Load8Source {
     Constant(u8),
+    Register(Register8),
 }
 
 pub enum Load16Target {
@@ -66,6 +68,15 @@ impl Instruction {
             0x2e => Self::Load8(
                 Load8Target::Register(Register8::L),
                 Load8Source::Constant(ops.next().unwrap()),
+            ),
+
+            0x22 => Self::Load8(
+                Load8Target::Pointer(Pointer::HlIncrement),
+                Load8Source::Register(Register8::A),
+            ),
+            0x32 => Self::Load8(
+                Load8Target::Pointer(Pointer::HlDecrement),
+                Load8Source::Register(Register8::A),
             ),
 
             0x01 => Self::Load16(
@@ -116,10 +127,12 @@ impl Display for Instruction {
                     f,
                     "ld {}, {}",
                     match destination {
-                        Load8Target::Register(register) => register,
+                        Load8Target::Register(register) => register.to_string(),
+                        Load8Target::Pointer(pointer) => pointer.to_string(),
                     },
                     match source {
                         Load8Source::Constant(value) => format!("{:02x}", value),
+                        Load8Source::Register(register) => register.to_string(),
                     }
                 )
             }

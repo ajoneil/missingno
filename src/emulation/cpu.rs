@@ -1,5 +1,5 @@
 use crate::emulation::{
-    Cartridge, Instruction,
+    Instruction, MemoryBus,
     instructions::{JumpAddress, Load8Source, Load8Target, Load16Source, Load16Target},
 };
 use bitflags::bitflags;
@@ -39,6 +39,11 @@ pub enum Register16 {
     Sp,
 }
 
+pub enum Pointer {
+    HlIncrement,
+    HlDecrement,
+}
+
 impl Display for Register8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -67,6 +72,19 @@ impl Display for Register16 {
                 Self::De => "de",
                 Self::Hl => "hl",
                 Self::Sp => "sp",
+            }
+        )
+    }
+}
+
+impl Display for Pointer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}]",
+            match self {
+                Self::HlIncrement => "hl+",
+                Self::HlDecrement => "hl-",
             }
         )
     }
@@ -128,13 +146,17 @@ bitflags! {
     }
 }
 
-struct ProgramCounterIterator<'a>(&'a mut u16, &'a [u8]);
+struct ProgramCounterIterator<'a> {
+    pc: &'a mut u16,
+    memory_bus: &'a MemoryBus,
+}
+
 impl<'a> Iterator for ProgramCounterIterator<'a> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let value = self.1[(*self.0) as usize];
-        *self.0 += 1;
+        let value = self.memory_bus.read(*self.pc);
+        *self.pc += 1;
         Some(value)
     }
 }
@@ -161,13 +183,16 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, cartridge: &Cartridge) {
-        let mut pc_iterator = ProgramCounterIterator(&mut self.pc, cartridge.rom());
+    pub fn step(&mut self, memory_bus: &mut MemoryBus) {
+        let mut pc_iterator = ProgramCounterIterator {
+            pc: &mut self.pc,
+            memory_bus,
+        };
         let instruction = Instruction::decode(&mut pc_iterator);
-        self.execute(instruction);
+        self.execute(instruction, memory_bus);
     }
 
-    fn execute(&mut self, instruction: Instruction) {
+    fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) {
         match instruction {
             Instruction::NoOperation => {}
             Instruction::Jump(address) => match address {
@@ -177,10 +202,23 @@ impl Cpu {
             Instruction::Load8(destination, source) => {
                 let value = match source {
                     Load8Source::Constant(value) => value,
+                    Load8Source::Register(register) => self.get_register8(register),
                 };
 
                 match destination {
                     Load8Target::Register(register) => self.set_register8(register, value),
+                    Load8Target::Pointer(pointer) => match pointer {
+                        Pointer::HlIncrement => {
+                            let hl = self.get_register16(Register16::Hl);
+                            memory_bus.write(hl, value);
+                            self.set_register16(Register16::Hl, hl + 1);
+                        }
+                        Pointer::HlDecrement => {
+                            let hl = self.get_register16(Register16::Hl);
+                            memory_bus.write(hl, value);
+                            self.set_register16(Register16::Hl, hl - 1);
+                        }
+                    },
                 };
             }
 
@@ -227,6 +265,15 @@ impl Cpu {
             Register8::E => self.e = value,
             Register8::H => self.h = value,
             Register8::L => self.l = value,
+        }
+    }
+
+    fn get_register16(&self, register: Register16) -> u16 {
+        match register {
+            Register16::Bc => self.b as u16 * 0x100 + self.c as u16,
+            Register16::De => self.d as u16 * 0x100 + self.d as u16,
+            Register16::Hl => self.h as u16 * 0x100 + self.l as u16,
+            Register16::Sp => self.sp,
         }
     }
 

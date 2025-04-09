@@ -1,9 +1,9 @@
 mod cartridge;
 mod cpu;
 pub mod instructions;
+mod memory;
 // mod joypad;
 // mod mbc;
-// mod mmu;
 // mod ops;
 // mod timers;
 // mod video;
@@ -12,12 +12,12 @@ pub use cartridge::Cartridge;
 pub use cpu::Cpu;
 pub use cpu::Flags as CpuFlags;
 pub use instructions::Instruction;
+pub use memory::MemoryBus;
 
 pub struct GameBoy {
-    cartridge: Cartridge,
     cpu: Cpu,
+    memory_bus: MemoryBus,
     // timers: Timers,
-    // mmu: Mmu,
     // video: Video,
     // joypad: Joypad,
 }
@@ -25,21 +25,20 @@ pub struct GameBoy {
 impl GameBoy {
     pub fn new(cartridge: Cartridge) -> GameBoy {
         let cpu = Cpu::new(cartridge.header_checksum());
+        let memory_bus = MemoryBus::new(cartridge);
         // let video = Video::new();
-        // let mmu = Mmu::new(cartridge);
 
         GameBoy {
-            cartridge,
             cpu,
+            memory_bus,
             // timers: Timers::new(),
-            // mmu: mmu,
             // video: video,
             // joypad: Joypad::new(),
         }
     }
 
     pub fn cartridge(&self) -> &Cartridge {
-        &self.cartridge
+        &self.memory_bus.cartridge()
     }
 
     pub fn cpu(&self) -> &Cpu {
@@ -47,7 +46,7 @@ impl GameBoy {
     }
 
     pub fn step(&mut self) {
-        self.cpu.step(&self.cartridge);
+        self.cpu.step(&mut self.memory_bus);
     }
 
     // pub fn video(&self) -> &Video {
