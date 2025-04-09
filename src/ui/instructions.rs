@@ -3,7 +3,7 @@ use crate::{
     ui::Message,
 };
 use iced::{
-    Alignment, Element,
+    Element, Font,
     widget::{Column, row, text},
 };
 
@@ -42,11 +42,9 @@ pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
 
 pub fn instruction(address: u16, instruction: Instruction) -> Element<'static, Message> {
     row![
-        text(format!("{:04x}", address))
-            .width(50)
-            .align_x(Alignment::End),
-        text(instruction.to_string())
+        text(format!("{:04x}", address)).font(Font::MONOSPACE),
+        text(instruction.to_string()).font(Font::MONOSPACE)
     ]
-    .spacing(5)
+    .spacing(10)
     .into()
 }
