@@ -104,17 +104,6 @@ fn decrement_hl(h: &mut u8, l: &mut u8) {
     }
 }
 
-pub fn ld_rr_nn(r1: &mut u8, r2: &mut u8, nn: u16) -> Cycles {
-    *r1 = ((nn & 0xff00) >> 8) as u8;
-    *r2 = (nn & 0xff) as u8;
-    Cycles(12)
-}
-
-pub fn ld_sp_nn(sp: &mut u16, nn: u16) -> Cycles {
-    *sp = nn;
-    Cycles(12)
-}
-
 pub fn ld_nnptr_sp(nn: u16, sp: u16, mapper: &mut Mapper) -> Cycles {
     mapper.write_word(nn, sp);
     Cycles(20)

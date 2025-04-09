@@ -22,10 +22,10 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         row![
             register8("a", cpu.a),
             register8("b", cpu.b),
-            register8("c", cpu.c),
-            register8("d", cpu.d)
+            register8("c", cpu.c)
         ],
         row![
+            register8("d", cpu.d),
             register8("e", cpu.e),
             register8("h", cpu.h),
             register8("l", cpu.l)

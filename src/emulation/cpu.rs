@@ -1,4 +1,7 @@
-use crate::emulation::{Cartridge, Instruction, instructions::JumpAddress};
+use crate::emulation::{
+    Cartridge, Instruction,
+    instructions::{JumpAddress, Load16Source, Load16Target},
+};
 use bitflags::bitflags;
 use std::fmt::{self, Display};
 
@@ -29,6 +32,13 @@ pub enum Register8 {
     L,
 }
 
+pub enum Register16 {
+    Bc,
+    De,
+    Hl,
+    Sp,
+}
+
 impl Display for Register8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -42,6 +52,21 @@ impl Display for Register8 {
                 Self::E => "e",
                 Self::H => "h",
                 Self::L => "l",
+            }
+        )
+    }
+}
+
+impl Display for Register16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Bc => "bc",
+                Self::De => "de",
+                Self::Hl => "hl",
+                Self::Sp => "sp",
             }
         )
     }
@@ -145,6 +170,19 @@ impl Cpu {
     fn execute(&mut self, instruction: Instruction) {
         match instruction {
             Instruction::NoOperation => {}
+            Instruction::Jump(address) => match address {
+                JumpAddress::Absolute(address) => self.pc = address,
+            },
+
+            Instruction::Load16(destination, source) => {
+                let value = match source {
+                    Load16Source::Constant(constant) => constant,
+                };
+
+                match destination {
+                    Load16Target::Register(register) => self.set_register16(register, value),
+                }
+            }
 
             Instruction::XorA(register) => {
                 self.a = self.a ^ self.get_register8(register);
@@ -153,10 +191,6 @@ impl Cpu {
                 self.f.remove(Flags::H);
                 self.f.remove(Flags::C);
             }
-
-            Instruction::Jump(address) => match address {
-                JumpAddress::Absolute(address) => self.pc = address,
-            },
 
             Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
         }
@@ -171,6 +205,27 @@ impl Cpu {
             Register8::E => self.e,
             Register8::H => self.h,
             Register8::L => self.l,
+        }
+    }
+
+    fn set_register16(&mut self, register: Register16, value: u16) {
+        let high = (value / 0x100) as u8;
+        let low = (value % 0x100) as u8;
+
+        match register {
+            Register16::Bc => {
+                self.b = high;
+                self.c = low;
+            }
+            Register16::De => {
+                self.d = high;
+                self.c = low;
+            }
+            Register16::Hl => {
+                self.h = high;
+                self.l = low;
+            }
+            Register16::Sp => self.sp = value,
         }
     }
 
@@ -312,10 +367,6 @@ impl Cpu {
     //         0x3a => ld_a_hlptr_dec(&mut self.a, &mut self.h, &mut self.l, mapper),
 
     //         // 16-bit load
-    //         0x01 => ld_rr_nn(&mut self.b, &mut self.c, mapper.read_word_pc(&mut self.pc)),
-    //         0x11 => ld_rr_nn(&mut self.d, &mut self.e, mapper.read_word_pc(&mut self.pc)),
-    //         0x21 => ld_rr_nn(&mut self.h, &mut self.l, mapper.read_word_pc(&mut self.pc)),
-    //         0x31 => ld_sp_nn(&mut self.sp, mapper.read_word_pc(&mut self.pc)),
     //         0x08 => ld_nnptr_sp(mapper.read_word_pc(&mut self.pc), self.sp, mapper),
     //         0xf9 => ld_sp_hl(&mut self.sp, self.h, self.l),
     //         0xc5 => push_rr(self.b, self.c, &mut self.sp, mapper),
