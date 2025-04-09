@@ -1,6 +1,6 @@
 use crate::emulation::{
     Cartridge, Instruction,
-    instructions::{JumpAddress, Load16Source, Load16Target},
+    instructions::{JumpAddress, Load8Source, Load8Target, Load16Source, Load16Target},
 };
 use bitflags::bitflags;
 use std::fmt::{self, Display};
@@ -174,9 +174,19 @@ impl Cpu {
                 JumpAddress::Absolute(address) => self.pc = address,
             },
 
+            Instruction::Load8(destination, source) => {
+                let value = match source {
+                    Load8Source::Constant(value) => value,
+                };
+
+                match destination {
+                    Load8Target::Register(register) => self.set_register8(register, value),
+                };
+            }
+
             Instruction::Load16(destination, source) => {
                 let value = match source {
-                    Load16Source::Constant(constant) => constant,
+                    Load16Source::Constant(value) => value,
                 };
 
                 match destination {
@@ -205,6 +215,18 @@ impl Cpu {
             Register8::E => self.e,
             Register8::H => self.h,
             Register8::L => self.l,
+        }
+    }
+
+    fn set_register8(&mut self, register: Register8, value: u8) {
+        match register {
+            Register8::A => self.a = value,
+            Register8::B => self.b = value,
+            Register8::C => self.c = value,
+            Register8::D => self.d = value,
+            Register8::E => self.e = value,
+            Register8::H => self.h = value,
+            Register8::L => self.l = value,
         }
     }
 
@@ -323,13 +345,6 @@ impl Cpu {
     //         0x7c => ld_r_r(&mut self.a, self.h),
     //         0x7d => ld_r_r(&mut self.a, self.l),
     //         0x7f => Cycles(4), // ld a,a
-    //         0x06 => ld_r_n(&mut self.b, mapper.read_pc(&mut self.pc)),
-    //         0x0e => ld_r_n(&mut self.c, mapper.read_pc(&mut self.pc)),
-    //         0x16 => ld_r_n(&mut self.d, mapper.read_pc(&mut self.pc)),
-    //         0x1e => ld_r_n(&mut self.e, mapper.read_pc(&mut self.pc)),
-    //         0x26 => ld_r_n(&mut self.h, mapper.read_pc(&mut self.pc)),
-    //         0x2e => ld_r_n(&mut self.l, mapper.read_pc(&mut self.pc)),
-    //         0x3e => ld_r_n(&mut self.a, mapper.read_pc(&mut self.pc)),
     //         0x46 => ld_r_rrptr(&mut self.b, self.h, self.l, mapper),
     //         0x4e => ld_r_rrptr(&mut self.c, self.h, self.l, mapper),
     //         0x56 => ld_r_rrptr(&mut self.d, self.h, self.l, mapper),

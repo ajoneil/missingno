@@ -7,11 +7,6 @@ pub fn ld_r_r(rw: &mut u8, rr: u8) -> Cycles {
     Cycles(4)
 }
 
-pub fn ld_r_n(r: &mut u8, n: u8) -> Cycles {
-    *r = n;
-    Cycles(8)
-}
-
 pub fn ld_r_rrptr(rw: &mut u8, rr1: u8, rr2: u8, mapper: &Mapper) -> Cycles {
     *rw = mapper.read(rr(rr1, rr2));
     Cycles(8)
