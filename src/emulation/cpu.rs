@@ -38,7 +38,6 @@ pub enum Register16 {
     Bc,
     De,
     Hl,
-    StackPointer,
 }
 
 pub enum Pointer {
@@ -73,7 +72,6 @@ impl Display for Register16 {
                 Self::Bc => "bc",
                 Self::De => "de",
                 Self::Hl => "hl",
-                Self::StackPointer => "sp",
             }
         )
     }
@@ -248,6 +246,7 @@ impl Cpu {
 
                 match destination {
                     Load16Target::Register(register) => self.set_register16(register, value),
+                    Load16Target::StackPointer => self.stack_pointer = value,
                 }
             }
 
@@ -292,7 +291,6 @@ impl Cpu {
             Register16::Bc => self.b as u16 * 0x100 + self.c as u16,
             Register16::De => self.d as u16 * 0x100 + self.d as u16,
             Register16::Hl => self.h as u16 * 0x100 + self.l as u16,
-            Register16::StackPointer => self.stack_pointer,
         }
     }
 
@@ -313,7 +311,6 @@ impl Cpu {
                 self.h = high;
                 self.l = low;
             }
-            Register16::StackPointer => self.stack_pointer = value,
         }
     }
 

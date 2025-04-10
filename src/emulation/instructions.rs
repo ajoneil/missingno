@@ -2,16 +2,33 @@ use crate::emulation::cpu::{Pointer, Register8, Register16};
 use std::fmt::{self, Display, Formatter};
 
 pub enum Instruction {
-    NoOperation,
-    Jump(JumpAddress),
-
+    // Load
     Load8(Load8Target, Load8Source),
     Load16(Load16Target, Load16Source),
 
+    // 8 bit arithmetic
     Decrement8(Register8),
 
+    // 16 bit arithmetic
+
+    // Bitwise logic
     XorA(Register8),
 
+    // Bit flag
+
+    // Bit shift
+
+    // Jumps and subroutines
+    Jump(JumpAddress),
+
+    // Carry flag
+
+    // Stack manipulation
+
+    // Interrupt
+
+    // Misc
+    NoOperation,
     Unknown(u8),
 }
 
@@ -31,6 +48,7 @@ pub enum Load8Source {
 
 pub enum Load16Target {
     Register(Register16),
+    StackPointer,
 }
 
 pub enum Load16Source {
@@ -95,7 +113,7 @@ impl Instruction {
                 Load16Source::Constant(Self::read16(ops)),
             ),
             0x31 => Self::Load16(
-                Load16Target::Register(Register16::StackPointer),
+                Load16Target::StackPointer,
                 Load16Source::Constant(Self::read16(ops)),
             ),
 
@@ -155,7 +173,8 @@ impl Display for Instruction {
                     f,
                     "ld {}, {}",
                     match destination {
-                        Load16Target::Register(register) => register,
+                        Load16Target::Register(register) => register.to_string(),
+                        Load16Target::StackPointer => "sp".to_string(),
                     },
                     match source {
                         Load16Source::Constant(constant) => format!("{:04x}", constant),
