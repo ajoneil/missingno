@@ -23,12 +23,17 @@ pub fn update(game_boy: &mut GameBoy, message: Message) -> Task<ui::Message> {
 
 pub fn emulator(game_boy: &GameBoy) -> Element<'_, ui::Message> {
     row![
-        container(instructions(game_boy.cartridge(), game_boy.cpu().pc)).width(Length::Fill),
+        container(instructions(
+            game_boy.cartridge(),
+            game_boy.cpu().program_counter
+        ))
+        .width(Length::FillPortion(2)),
         column![
             cartridge(game_boy.cartridge()),
             cpu(game_boy.cpu()),
             controls()
         ]
+        .width(Length::FillPortion(1))
         .spacing(10)
     ]
     .height(Length::Fill)

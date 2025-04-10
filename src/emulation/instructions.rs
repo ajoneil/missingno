@@ -8,6 +8,8 @@ pub enum Instruction {
     Load8(Load8Target, Load8Source),
     Load16(Load16Target, Load16Source),
 
+    Decrement8(Register8),
+
     XorA(Register8),
 
     Unknown(u8),
@@ -39,6 +41,7 @@ impl Instruction {
     pub fn decode(ops: &mut impl Iterator<Item = u8>) -> Self {
         match ops.next().unwrap() {
             0x00 => Self::NoOperation,
+
             0xc3 => Self::Jump(JumpAddress::Absolute(Self::read16(ops))),
 
             0x3e => Self::Load8(
@@ -92,9 +95,17 @@ impl Instruction {
                 Load16Source::Constant(Self::read16(ops)),
             ),
             0x31 => Self::Load16(
-                Load16Target::Register(Register16::Sp),
+                Load16Target::Register(Register16::StackPointer),
                 Load16Source::Constant(Self::read16(ops)),
             ),
+
+            0x3d => Self::Decrement8(Register8::A),
+            0x05 => Self::Decrement8(Register8::B),
+            0x0d => Self::Decrement8(Register8::C),
+            0x15 => Self::Decrement8(Register8::D),
+            0x1d => Self::Decrement8(Register8::E),
+            0x25 => Self::Decrement8(Register8::H),
+            0x2d => Self::Decrement8(Register8::L),
 
             0xaf => Self::XorA(Register8::A),
             0xa8 => Self::XorA(Register8::B),
@@ -121,6 +132,8 @@ impl Display for Instruction {
             Self::Jump(address) => match address {
                 JumpAddress::Absolute(address) => write!(f, "jp {:04x}", address),
             },
+
+            Self::Decrement8(register) => write!(f, "dec {}", register),
 
             Self::Load8(destination, source) => {
                 write!(

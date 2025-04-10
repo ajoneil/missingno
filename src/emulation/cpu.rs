@@ -13,15 +13,17 @@ pub struct Cpu {
     pub e: u8,
     pub h: u8,
     pub l: u8,
-    pub sp: u16,
-    pub pc: u16,
 
-    pub f: Flags,
+    pub stack_pointer: u16,
+    pub program_counter: u16,
 
-    pub ime: bool,
+    pub flags: Flags,
+
+    pub interrupt_master_enable: bool,
     pub halted: bool,
 }
 
+#[derive(Clone, Copy)]
 pub enum Register8 {
     A,
     B,
@@ -36,7 +38,7 @@ pub enum Register16 {
     Bc,
     De,
     Hl,
-    Sp,
+    StackPointer,
 }
 
 pub enum Pointer {
@@ -71,7 +73,7 @@ impl Display for Register16 {
                 Self::Bc => "bc",
                 Self::De => "de",
                 Self::Hl => "hl",
-                Self::Sp => "sp",
+                Self::StackPointer => "sp",
             }
         )
     }
@@ -124,10 +126,10 @@ impl std::ops::SubAssign for Cycles {
 bitflags! {
     #[derive(Copy,Clone,Debug)]
     pub struct Flags: u8 {
-        const Z = 0b10000000;
-        const N = 0b01000000;
-        const H = 0b00100000;
-        const C = 0b00010000;
+        const ZERO = 0b10000000;
+        const NEGATIVE = 0b01000000;
+        const HALF_CARRY = 0b00100000;
+        const CARRY = 0b00010000;
 
         const _OTHER = !0;
     }
@@ -165,27 +167,30 @@ impl Cpu {
     pub fn new(checksum: u8) -> Cpu {
         Cpu {
             a: 0x01,
-            f: if checksum == 0 {
-                Flags::Z
-            } else {
-                Flags::Z | Flags::C | Flags::H
-            },
             b: 0x00,
             c: 0x13,
             d: 0x00,
             e: 0xd8,
             h: 0x01,
             l: 0x4d,
-            sp: 0xfffe,
-            pc: 0x0100,
-            ime: false,
+
+            stack_pointer: 0xfffe,
+            program_counter: 0x0100,
+
+            flags: if checksum == 0 {
+                Flags::ZERO
+            } else {
+                Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
+            },
+
+            interrupt_master_enable: false,
             halted: false,
         }
     }
 
     pub fn step(&mut self, memory_bus: &mut MemoryBus) {
         let mut pc_iterator = ProgramCounterIterator {
-            pc: &mut self.pc,
+            pc: &mut self.program_counter,
             memory_bus,
         };
         let instruction = Instruction::decode(&mut pc_iterator);
@@ -195,9 +200,23 @@ impl Cpu {
     fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) {
         match instruction {
             Instruction::NoOperation => {}
+
             Instruction::Jump(address) => match address {
-                JumpAddress::Absolute(address) => self.pc = address,
+                JumpAddress::Absolute(address) => self.program_counter = address,
             },
+
+            Instruction::Decrement8(register) => {
+                let value = self.get_register8(register);
+                let new_value = if value == 0 { 0xff } else { value - 1 };
+                self.set_register8(register, new_value);
+
+                self.flags.set(Flags::ZERO, new_value == 0);
+                self.flags.insert(Flags::NEGATIVE);
+
+                // The half carry flag is set if we carry from bit 4 to 3
+                // i.e. xxx10000 - 1 = xxx01111
+                self.flags.set(Flags::HALF_CARRY, new_value & 0xf == 0xf);
+            }
 
             Instruction::Load8(destination, source) => {
                 let value = match source {
@@ -234,10 +253,10 @@ impl Cpu {
 
             Instruction::XorA(register) => {
                 self.a = self.a ^ self.get_register8(register);
-                self.f.set(Flags::Z, self.a == 0);
-                self.f.remove(Flags::N);
-                self.f.remove(Flags::H);
-                self.f.remove(Flags::C);
+                self.flags.set(Flags::ZERO, self.a == 0);
+                self.flags.remove(Flags::NEGATIVE);
+                self.flags.remove(Flags::HALF_CARRY);
+                self.flags.remove(Flags::CARRY);
             }
 
             Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
@@ -273,7 +292,7 @@ impl Cpu {
             Register16::Bc => self.b as u16 * 0x100 + self.c as u16,
             Register16::De => self.d as u16 * 0x100 + self.d as u16,
             Register16::Hl => self.h as u16 * 0x100 + self.l as u16,
-            Register16::Sp => self.sp,
+            Register16::StackPointer => self.stack_pointer,
         }
     }
 
@@ -294,7 +313,7 @@ impl Cpu {
                 self.h = high;
                 self.l = low;
             }
-            Register16::Sp => self.sp = value,
+            Register16::StackPointer => self.stack_pointer = value,
         }
     }
 
@@ -709,24 +728,4 @@ impl Cpu {
     //         }
     //     }
     // }
-}
-
-impl fmt::Debug for Cpu {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "pc: {:04x} sp: {:04x} af: {:02x}{:02x} bc: {:02x}{:02x} de: {:02x}{:02x} hl: {:02x}{:02x} flags: {:?}",
-            self.pc,
-            self.sp,
-            self.a,
-            self.f,
-            self.b,
-            self.c,
-            self.d,
-            self.e,
-            self.h,
-            self.l,
-            self.f
-        )
-    }
 }
