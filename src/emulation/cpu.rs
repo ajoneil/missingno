@@ -1,7 +1,4 @@
-use crate::emulation::{
-    Instruction, MemoryBus,
-    instructions::{JumpAddress, Load8Source, Load8Target, Load16Source, Load16Target},
-};
+use crate::emulation::{Instruction, MemoryBus};
 use bitflags::bitflags;
 use std::fmt::{self, Display};
 
@@ -38,11 +35,8 @@ pub enum Register16 {
     Bc,
     De,
     Hl,
-}
-
-pub enum Pointer {
-    HlIncrement,
-    HlDecrement,
+    StackPointer,
+    Af,
 }
 
 impl Display for Register8 {
@@ -72,19 +66,8 @@ impl Display for Register16 {
                 Self::Bc => "bc",
                 Self::De => "de",
                 Self::Hl => "hl",
-            }
-        )
-    }
-}
-
-impl Display for Pointer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{}]",
-            match self {
-                Self::HlIncrement => "hl+",
-                Self::HlDecrement => "hl-",
+                Self::StackPointer => "sp",
+                Self::Af => "af",
             }
         )
     }
@@ -118,6 +101,39 @@ impl std::ops::AddAssign for Cycles {
 impl std::ops::SubAssign for Cycles {
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs
+    }
+}
+
+pub enum Flag {
+    Zero,
+    Negative,
+    HalfCarry,
+    Carry,
+}
+
+impl Into<Flags> for Flag {
+    fn into(self) -> Flags {
+        match self {
+            Self::Zero => Flags::ZERO,
+            Self::Negative => Flags::NEGATIVE,
+            Self::HalfCarry => Flags::HALF_CARRY,
+            Self::Carry => Flags::CARRY,
+        }
+    }
+}
+
+impl fmt::Display for Flag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Zero => "z",
+                Self::Negative => "n",
+                Self::HalfCarry => "h",
+                Self::Carry => "c",
+            }
+        )
     }
 }
 
@@ -191,7 +207,7 @@ impl Cpu {
             pc: &mut self.program_counter,
             memory_bus,
         };
-        let instruction = Instruction::decode(&mut pc_iterator);
+        let instruction = Instruction::decode(&mut pc_iterator).unwrap();
         self.execute(instruction, memory_bus);
     }
 
@@ -199,66 +215,66 @@ impl Cpu {
         match instruction {
             Instruction::NoOperation => {}
 
-            Instruction::Jump(address) => match address {
-                JumpAddress::Absolute(address) => self.program_counter = address,
-            },
+            // Instruction::Jump(address) => match address {
+            //     JumpAddress::Absolute(address) => self.program_counter = address,
+            // },
 
-            Instruction::Decrement8(register) => {
-                let value = self.get_register8(register);
-                let new_value = if value == 0 { 0xff } else { value - 1 };
-                self.set_register8(register, new_value);
+            // Instruction::Decrement8(register) => {
+            //     let value = self.get_register8(register);
+            //     let new_value = if value == 0 { 0xff } else { value - 1 };
+            //     self.set_register8(register, new_value);
 
-                self.flags.set(Flags::ZERO, new_value == 0);
-                self.flags.insert(Flags::NEGATIVE);
+            //     self.flags.set(Flags::ZERO, new_value == 0);
+            //     self.flags.insert(Flags::NEGATIVE);
 
-                // The half carry flag is set if we carry from bit 4 to 3
-                // i.e. xxx10000 - 1 = xxx01111
-                self.flags.set(Flags::HALF_CARRY, new_value & 0xf == 0xf);
-            }
+            //     // The half carry flag is set if we carry from bit 4 to 3
+            //     // i.e. xxx10000 - 1 = xxx01111
+            //     self.flags.set(Flags::HALF_CARRY, new_value & 0xf == 0xf);
+            // }
 
-            Instruction::Load8(destination, source) => {
-                let value = match source {
-                    Load8Source::Constant(value) => value,
-                    Load8Source::Register(register) => self.get_register8(register),
-                };
+            // Instruction::Load8(destination, source) => {
+            //     let value = match source {
+            //         Load8Source::Constant(value) => value,
+            //         Load8Source::Register(register) => self.get_register8(register),
+            //     };
 
-                match destination {
-                    Load8Target::Register(register) => self.set_register8(register, value),
-                    Load8Target::Pointer(pointer) => match pointer {
-                        Pointer::HlIncrement => {
-                            let hl = self.get_register16(Register16::Hl);
-                            memory_bus.write(hl, value);
-                            self.set_register16(Register16::Hl, hl + 1);
-                        }
-                        Pointer::HlDecrement => {
-                            let hl = self.get_register16(Register16::Hl);
-                            memory_bus.write(hl, value);
-                            self.set_register16(Register16::Hl, hl - 1);
-                        }
-                    },
-                };
-            }
+            //     match destination {
+            //         Load8Target::Register(register) => self.set_register8(register, value),
+            //         Load8Target::Pointer(pointer) => match pointer {
+            //             Pointer::HlIncrement => {
+            //                 let hl = self.get_register16(Register16::Hl);
+            //                 memory_bus.write(hl, value);
+            //                 self.set_register16(Register16::Hl, hl + 1);
+            //             }
+            //             Pointer::HlDecrement => {
+            //                 let hl = self.get_register16(Register16::Hl);
+            //                 memory_bus.write(hl, value);
+            //                 self.set_register16(Register16::Hl, hl - 1);
+            //             }
+            //         },
+            //     };
+            // }
 
-            Instruction::Load16(destination, source) => {
-                let value = match source {
-                    Load16Source::Constant(value) => value,
-                };
+            // Instruction::Load16(destination, source) => {
+            //     let value = match source {
+            //         Load16Source::Constant(value) => value,
+            //     };
 
-                match destination {
-                    Load16Target::Register(register) => self.set_register16(register, value),
-                    Load16Target::StackPointer => self.stack_pointer = value,
-                }
-            }
+            //     match destination {
+            //         Load16Target::Register(register) => self.set_register16(register, value),
+            //         Load16Target::StackPointer => self.stack_pointer = value,
+            //     }
+            // }
 
-            Instruction::XorA(register) => {
-                self.a = self.a ^ self.get_register8(register);
-                self.flags.set(Flags::ZERO, self.a == 0);
-                self.flags.remove(Flags::NEGATIVE);
-                self.flags.remove(Flags::HALF_CARRY);
-                self.flags.remove(Flags::CARRY);
-            }
-
-            Instruction::Unknown(_) => panic!("Unimplemented instruction {}", instruction),
+            // Instruction::XorA(register) => {
+            //     self.a = self.a ^ self.get_register8(register);
+            //     self.flags.set(Flags::ZERO, self.a == 0);
+            //     self.flags.remove(Flags::NEGATIVE);
+            //     self.flags.remove(Flags::HALF_CARRY);
+            //     self.flags.remove(Flags::CARRY);
+            // }
+            Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
+            _ => todo!("Implement instruction {}", instruction),
         }
     }
 
@@ -288,9 +304,11 @@ impl Cpu {
 
     fn get_register16(&self, register: Register16) -> u16 {
         match register {
-            Register16::Bc => self.b as u16 * 0x100 + self.c as u16,
-            Register16::De => self.d as u16 * 0x100 + self.d as u16,
-            Register16::Hl => self.h as u16 * 0x100 + self.l as u16,
+            Register16::Bc => u16::from_le_bytes([self.b, self.c]),
+            Register16::De => u16::from_le_bytes([self.d, self.e]),
+            Register16::Hl => u16::from_le_bytes([self.h, self.l]),
+            Register16::StackPointer => self.stack_pointer,
+            Register16::Af => u16::from_le_bytes([self.a, self.flags.bits()]),
         }
     }
 
@@ -310,6 +328,11 @@ impl Cpu {
             Register16::Hl => {
                 self.h = high;
                 self.l = low;
+            }
+            Register16::StackPointer => self.stack_pointer = value,
+            Register16::Af => {
+                self.a = high;
+                self.flags = Flags::from_bits_retain(low);
             }
         }
     }

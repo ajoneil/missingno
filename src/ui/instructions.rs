@@ -34,10 +34,17 @@ pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
         rom: cartridge.rom(),
     };
 
-    Column::from_iter(
-        (0..20).map(|_| instruction(iterator.address, Instruction::decode(&mut iterator))),
-    )
-    .into()
+    let mut instructions = Vec::new();
+
+    for _ in 0..20 {
+        if let Some(decoded) = Instruction::decode(&mut iterator) {
+            instructions.push(instruction(iterator.address, decoded));
+        } else {
+            break;
+        }
+    }
+
+    Column::from_vec(instructions).into()
 }
 
 pub fn instruction(address: u16, instruction: Instruction) -> Element<'static, Message> {
