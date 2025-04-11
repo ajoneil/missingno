@@ -1,4 +1,4 @@
-use crate::emulation::instructions::{Source8, Source16, Target8, Target16};
+use super::{Source8, Source16, Target8, Target16};
 use core::fmt;
 
 pub enum Load {

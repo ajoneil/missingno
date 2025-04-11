@@ -1,8 +1,6 @@
-use crate::emulation::{
-    cpu::Register16,
-    instructions::{Source8, Target8},
-};
 use core::fmt;
+
+use super::{Register16, Source8, Target8};
 
 pub enum Arithmetic {
     Arithmetic8(Arithmetic8),

@@ -1,4 +1,4 @@
-use crate::emulation::instructions::{Source16, Target16};
+use super::{Source16, Target16};
 use core::fmt;
 
 pub enum StackPointer {

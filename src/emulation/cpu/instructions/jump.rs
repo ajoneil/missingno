@@ -1,4 +1,5 @@
-use crate::emulation::{cpu::Flag, instructions::Address};
+use super::Address;
+use crate::emulation::cpu::Flag;
 use core::fmt;
 
 pub enum Jump {

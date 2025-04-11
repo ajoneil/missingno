@@ -1,5 +1,6 @@
-use crate::emulation::instructions::Target8;
 use core::fmt;
+
+use super::Target8;
 
 pub enum BitShift {
     RotateA(Direction, Carry), // Register A optimised variants, not within cb prefix

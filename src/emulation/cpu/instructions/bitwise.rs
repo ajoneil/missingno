@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::emulation::instructions::Source8;
+use super::Source8;
 
 pub enum Bitwise {
     AndA(Source8),

@@ -1,5 +1,6 @@
-use crate::emulation::instructions::{Source8, Target8};
 use core::fmt;
+
+use super::{Source8, Target8};
 
 pub enum BitFlag {
     Check(u8, Source8),
