@@ -113,7 +113,7 @@ impl Source16 {
 impl fmt::Display for Source16 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Source16::Constant(value) => value.fmt(f),
+            Source16::Constant(value) => write!(f, "${:04x}", value),
             Source16::Register(register) => register.fmt(f),
             Source16::StackPointerWithOffset(offset) => write!(
                 f,

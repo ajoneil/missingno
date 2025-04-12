@@ -1,16 +1,30 @@
 use super::{
-    Cpu, Instruction, Register16,
+    Cpu, Instruction,
     cycles::Cycles,
-    instructions::{Address, Jump, jump},
+    instructions::{Address, Source8},
 };
 use crate::emulation::MemoryBus;
+
+mod arithemetic;
+mod bitwise;
+mod jump;
 
 impl Cpu {
     pub fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) -> Cycles {
         match instruction {
+            Instruction::Load(load) => todo!(),
+            Instruction::Arithmetic(arithmetic) => self.execute_arithmetic(arithmetic),
+            Instruction::Bitwise(bitwise) => self.execute_bitwise(bitwise, memory_bus),
+            Instruction::BitFlag(bit_flag) => todo!(),
+            Instruction::BitShift(bit_shift) => todo!(),
+            Instruction::Jump(jump) => self.execute_jump(jump),
+            Instruction::CarryFlag(carry_flag) => todo!(),
+            Instruction::StackPointer(stack_pointer) => todo!(),
+            Instruction::Interrupt(interrupt) => todo!(),
+            Instruction::DecimalAdjustAccumulator => todo!(),
             Instruction::NoOperation => Cycles(1),
-            Instruction::Jump(jump) => self.jump(jump),
-
+            Instruction::Stop => todo!(),
+            Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
             // Instruction::Decrement8(register) => {
             //     let value = self.get_register8(register);
             //     let new_value = if value == 0 { 0xff } else { value - 1 };
@@ -57,54 +71,27 @@ impl Cpu {
             //         Load16Target::StackPointer => self.stack_pointer = value,
             //     }
             // }
-
-            // Instruction::XorA(register) => {
-            //     self.a = self.a ^ self.get_register8(register);
-            //     self.flags.set(Flags::ZERO, self.a == 0);
-            //     self.flags.remove(Flags::NEGATIVE);
-            //     self.flags.remove(Flags::HALF_CARRY);
-            //     self.flags.remove(Flags::CARRY);
-            // }
-            Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
-            _ => todo!("Implement instruction {}", instruction),
         }
     }
 
-    fn jump(&mut self, jump: Jump) -> Cycles {
-        match jump {
-            Jump::Jump(condition, location) => {
-                if let Some(condition) = condition {
-                    todo!()
+    fn fetch8(&self, source: Source8, memory_bus: &MemoryBus) -> (u8, Cycles) {
+        match source {
+            Source8::Constant(value) => (value, Cycles(1)),
+            Source8::Register(register) => (self.get_register8(register), Cycles(0)),
+            Source8::Memory(address) => match address {
+                Address::Fixed(_) => todo!(),
+                Address::Relative(_) => todo!(),
+                Address::Hram(_) => todo!(),
+                Address::HramPlusC => todo!(),
+                Address::Dereference(register) => {
+                    let address = self.get_register16(register);
+                    let value = memory_bus.read(address);
+                    (value, Cycles(1))
                 }
-
-                match location {
-                    jump::Location::Address(address) => match address {
-                        Address::Fixed(address) => {
-                            self.program_counter = address;
-                            Cycles(4)
-                        }
-
-                        Address::Relative(offset) => {
-                            self.program_counter = match offset {
-                                0.. => self.program_counter + offset.abs() as u16,
-                                ..0 => self.program_counter - offset.abs() as u16,
-                            };
-                            Cycles(3)
-                        }
-
-                        _ => unreachable!(),
-                    },
-
-                    jump::Location::RegisterHl => {
-                        self.program_counter = self.get_register16(Register16::Hl);
-                        Cycles(1)
-                    }
-                }
-            }
-            Jump::Call(condition, location) => todo!(),
-            Jump::Return(condition) => todo!(),
-            Jump::ReturnAndEnableInterrupts => todo!(),
-            Jump::Restart(_) => todo!(),
+                Address::DereferenceHlAndIncrement => todo!(),
+                Address::DereferenceHlAndDecrement => todo!(),
+                Address::DereferenceFixed(_) => todo!(),
+            },
         }
     }
 }
