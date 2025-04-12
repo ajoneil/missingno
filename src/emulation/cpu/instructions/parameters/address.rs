@@ -1,6 +1,7 @@
-use super::Register16;
+use crate::emulation::cpu::Register16;
 use core::fmt;
 
+#[derive(Copy, Clone)]
 pub enum Address {
     Fixed(u16),
     Relative(i8),

@@ -1,9 +1,12 @@
 use crate::{
-    emulation::{Cpu, CpuFlags},
+    emulation::{
+        Cpu, CpuFlags,
+        cpu::{Register8, Register16},
+    },
     ui::Message,
 };
 use iced::{
-    Element, Font, Length, Padding,
+    Alignment, Element, Font, Length, Padding,
     alignment::Vertical,
     widget::{checkbox, column, container, horizontal_rule, row, text, text_input},
 };
@@ -18,23 +21,39 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         ])
         .align_right(Length::Fill),
         horizontal_rule(1),
-        row![register8("a", cpu.a), column![].width(Length::Fill)],
-        row![register8("b", cpu.b), register8("c", cpu.c)],
-        row![register8("d", cpu.d), register8("e", cpu.e)],
-        row![register8("h", cpu.h), register8("l", cpu.l)],
+        row![register_pair(
+            cpu,
+            Register8::A,
+            Register8::F,
+            Register16::Af
+        )],
+        row![register_pair(
+            cpu,
+            Register8::B,
+            Register8::C,
+            Register16::Bc
+        )],
+        row![register_pair(
+            cpu,
+            Register8::D,
+            Register8::E,
+            Register16::De
+        )],
+        row![register_pair(
+            cpu,
+            Register8::H,
+            Register8::L,
+            Register16::Hl
+        )],
         horizontal_rule(1),
         row![
-            column![].width(Length::Fill),
-            column![
-                text("Flags"),
-                text_input("Flags", &format!("{:02x}", cpu.flags)).font(Font::MONOSPACE),
-            ]
-            .spacing(5),
             column![
                 flag("zero", cpu.flags, CpuFlags::ZERO),
+                flag("carry", cpu.flags, CpuFlags::CARRY)
+            ],
+            column![
                 flag("negative", cpu.flags, CpuFlags::NEGATIVE),
                 flag("half-carry", cpu.flags, CpuFlags::HALF_CARRY),
-                flag("carry", cpu.flags, CpuFlags::CARRY)
             ]
         ]
         .spacing(10),
@@ -43,14 +62,48 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
     .into()
 }
 
-fn register8(label: &str, value: u8) -> Element<'_, Message> {
+fn register_pair(
+    cpu: &Cpu,
+    reg1: Register8,
+    reg2: Register8,
+    pair: Register16,
+) -> Element<'_, Message> {
     row![
-        container(label).align_right(Length::Fill),
-        text_input(label, &format!("{:02x}", value)).font(Font::MONOSPACE),
-        text_input(label, &format!("{:03}", value)).font(Font::MONOSPACE)
+        row![
+            text(reg1.to_string())
+                .align_x(Alignment::End)
+                .font(Font::MONOSPACE),
+            text_input(&reg1.to_string(), &cpu.get_register8(reg1).to_string())
+                .font(Font::MONOSPACE)
+        ]
+        .align_y(Vertical::Center)
+        .width(Length::FillPortion(1))
+        .spacing(5),
+        row![
+            text(reg2.to_string())
+                .align_x(Alignment::End)
+                .font(Font::MONOSPACE),
+            text_input(&reg2.to_string(), &cpu.get_register8(reg2).to_string())
+                .font(Font::MONOSPACE)
+        ]
+        .align_y(Vertical::Center)
+        .width(Length::FillPortion(1))
+        .spacing(5),
+        row![
+            text(pair.to_string())
+                .align_x(Alignment::End)
+                .font(Font::MONOSPACE),
+            text_input(
+                &pair.to_string(),
+                &format!("{:04x}", &cpu.get_register16(pair))
+            )
+            .font(Font::MONOSPACE)
+        ]
+        .align_y(Vertical::Center)
+        .width(Length::FillPortion(2))
+        .spacing(5)
     ]
-    .align_y(Vertical::Center)
-    .spacing(5)
+    .spacing(10)
     .into()
 }
 

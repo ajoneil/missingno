@@ -1,5 +1,5 @@
 mod cartridge;
-mod cpu;
+pub mod cpu;
 mod execute;
 mod memory;
 // mod joypad;

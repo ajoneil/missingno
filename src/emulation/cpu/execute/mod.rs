@@ -1,7 +1,7 @@
 use super::{
-    Cpu, Instruction,
+    Cpu, Instruction, Register16,
     cycles::Cycles,
-    instructions::{Address, Register16, Source8, Source16, Target8, Target16},
+    instructions::{Address, Source8, Source16, Target8, Target16},
 };
 use crate::emulation::MemoryBus;
 
@@ -14,7 +14,9 @@ impl Cpu {
     pub fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) -> Cycles {
         match instruction {
             Instruction::Load(instruction) => self.execute_load(instruction, memory_bus),
-            Instruction::Arithmetic(instruction) => self.execute_arithmetic(instruction),
+            Instruction::Arithmetic(instruction) => {
+                self.execute_arithmetic(instruction, memory_bus)
+            }
             Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory_bus),
             Instruction::BitFlag(bit_flag) => todo!(),
             Instruction::BitShift(bit_shift) => todo!(),

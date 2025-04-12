@@ -1,34 +1,5 @@
-use super::Address;
+use crate::emulation::cpu::{Register8, instructions::Address};
 use core::fmt;
-
-#[derive(Clone, Copy)]
-pub enum Register8 {
-    A,
-    B,
-    C,
-    D,
-    E,
-    H,
-    L,
-}
-
-impl fmt::Display for Register8 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::A => "a",
-                Self::B => "b",
-                Self::C => "c",
-                Self::D => "d",
-                Self::E => "e",
-                Self::H => "h",
-                Self::L => "l",
-            }
-        )
-    }
-}
 
 pub enum Target8 {
     Register(Register8),
@@ -94,6 +65,13 @@ impl Target8 {
 
     pub fn hram_c() -> Self {
         Self::Memory(Address::HramPlusC)
+    }
+
+    pub fn to_source(&self) -> Source8 {
+        match self {
+            Self::Register(register) => Source8::Register(*register),
+            Self::Memory(address) => Source8::Memory(*address),
+        }
     }
 }
 

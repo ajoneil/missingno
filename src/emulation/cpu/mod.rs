@@ -2,9 +2,11 @@ mod cycles;
 mod execute;
 mod flags;
 mod instructions;
+mod registers;
 
 pub use flags::{Flag, Flags};
-pub use instructions::{Instruction, Register8, Register16};
+pub use instructions::Instruction;
+pub use registers::{Register8, Register16};
 
 pub struct Cpu {
     pub a: u8,
@@ -49,9 +51,10 @@ impl Cpu {
         }
     }
 
-    fn get_register8(&self, register: Register8) -> u8 {
+    pub fn get_register8(&self, register: Register8) -> u8 {
         match register {
             Register8::A => self.a,
+            Register8::F => self.flags.bits(),
             Register8::B => self.b,
             Register8::C => self.c,
             Register8::D => self.d,
@@ -64,6 +67,7 @@ impl Cpu {
     fn set_register8(&mut self, register: Register8, value: u8) {
         match register {
             Register8::A => self.a = value,
+            Register8::F => self.flags = Flags::from_bits_retain(value),
             Register8::B => self.b = value,
             Register8::C => self.c = value,
             Register8::D => self.d = value,
@@ -73,13 +77,13 @@ impl Cpu {
         }
     }
 
-    fn get_register16(&self, register: Register16) -> u16 {
+    pub fn get_register16(&self, register: Register16) -> u16 {
         match register {
-            Register16::Bc => u16::from_le_bytes([self.b, self.c]),
-            Register16::De => u16::from_le_bytes([self.d, self.e]),
-            Register16::Hl => u16::from_le_bytes([self.h, self.l]),
+            Register16::Bc => u16::from_be_bytes([self.b, self.c]),
+            Register16::De => u16::from_be_bytes([self.d, self.e]),
+            Register16::Hl => u16::from_be_bytes([self.h, self.l]),
             Register16::StackPointer => self.stack_pointer,
-            Register16::Af => u16::from_le_bytes([self.a, self.flags.bits()]),
+            Register16::Af => u16::from_be_bytes([self.a, self.flags.bits()]),
         }
     }
 

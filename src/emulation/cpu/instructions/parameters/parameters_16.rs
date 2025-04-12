@@ -1,29 +1,6 @@
 use super::Address;
+use crate::emulation::cpu::Register16;
 use core::fmt;
-
-pub enum Register16 {
-    Bc,
-    De,
-    Hl,
-    StackPointer,
-    Af,
-}
-
-impl fmt::Display for Register16 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Bc => "bc",
-                Self::De => "de",
-                Self::Hl => "hl",
-                Self::StackPointer => "sp",
-                Self::Af => "af",
-            }
-        )
-    }
-}
 
 pub enum Target16 {
     Register(Register16),
