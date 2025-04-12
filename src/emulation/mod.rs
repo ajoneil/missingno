@@ -1,5 +1,6 @@
 mod cartridge;
 mod cpu;
+mod execute;
 mod memory;
 // mod joypad;
 // mod mbc;
@@ -40,10 +41,6 @@ impl GameBoy {
 
     pub fn cpu(&self) -> &Cpu {
         &self.cpu
-    }
-
-    pub fn step(&mut self) {
-        self.cpu.step(&mut self.memory_bus);
     }
 
     // pub fn video(&self) -> &Video {

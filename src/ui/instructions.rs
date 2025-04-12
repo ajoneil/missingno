@@ -37,8 +37,9 @@ pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
     let mut instructions = Vec::new();
 
     for _ in 0..20 {
+        let address = iterator.address;
         if let Some(decoded) = Instruction::decode(&mut iterator) {
-            instructions.push(instruction(iterator.address, decoded));
+            instructions.push(instruction(address, decoded));
         } else {
             break;
         }

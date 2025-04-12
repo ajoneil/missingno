@@ -6,22 +6,22 @@ mod bit_shift;
 mod bitwise;
 mod carry_flag;
 mod interrupt;
-mod jump;
+pub mod jump;
 mod load;
 mod parameters;
 mod stack_pointer;
 
 pub use parameters::*;
 
-use arithmetic::Arithmetic;
-use bit_flag::BitFlag;
-use bit_shift::BitShift;
-use bitwise::Bitwise;
-use carry_flag::CarryFlag;
-use interrupt::Interrupt;
-use jump::Jump;
-use load::Load;
-use stack_pointer::StackPointer;
+pub use arithmetic::Arithmetic;
+pub use bit_flag::BitFlag;
+pub use bit_shift::BitShift;
+pub use bitwise::Bitwise;
+pub use carry_flag::CarryFlag;
+pub use interrupt::Interrupt;
+pub use jump::Jump;
+pub use load::Load;
+pub use stack_pointer::StackPointer;
 
 pub enum Instruction {
     Load(Load),
