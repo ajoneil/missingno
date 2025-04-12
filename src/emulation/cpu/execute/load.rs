@@ -4,11 +4,11 @@ use crate::emulation::{
 };
 
 impl Cpu {
-    pub fn execute_load(&mut self, instruction: Load, memory_bus: &MemoryBus) -> Cycles {
+    pub fn execute_load(&mut self, instruction: Load, memory_bus: &mut MemoryBus) -> Cycles {
         match instruction {
             Load::Load8(target, source) => {
                 let (value, fetch_cycles) = self.fetch8(source, memory_bus);
-                let set_cycles = self.set8(target, value);
+                let set_cycles = self.set8(target, value, memory_bus);
 
                 Cycles(1) + fetch_cycles + set_cycles
             }

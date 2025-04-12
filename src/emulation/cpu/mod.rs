@@ -3,7 +3,6 @@ mod execute;
 mod flags;
 mod instructions;
 
-use super::MemoryBus;
 pub use flags::{Flag, Flags};
 pub use instructions::{Instruction, Register8, Register16};
 

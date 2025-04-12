@@ -1,7 +1,7 @@
 use super::{
     Cpu, Instruction,
     cycles::Cycles,
-    instructions::{Address, Source8, Source16, Target8, Target16},
+    instructions::{Address, Register16, Source8, Source16, Target8, Target16},
 };
 use crate::emulation::MemoryBus;
 
@@ -38,44 +38,10 @@ impl Cpu {
             //     // i.e. xxx10000 - 1 = xxx01111
             //     self.flags.set(Flags::HALF_CARRY, new_value & 0xf == 0xf);
             // }
-
-            // Instruction::Load8(destination, source) => {
-            //     let value = match source {
-            //         Load8Source::Constant(value) => value,
-            //         Load8Source::Register(register) => self.get_register8(register),
-            //     };
-
-            //     match destination {
-            //         Load8Target::Register(register) => self.set_register8(register, value),
-            //         Load8Target::Pointer(pointer) => match pointer {
-            //             Pointer::HlIncrement => {
-            //                 let hl = self.get_register16(Register16::Hl);
-            //                 memory_bus.write(hl, value);
-            //                 self.set_register16(Register16::Hl, hl + 1);
-            //             }
-            //             Pointer::HlDecrement => {
-            //                 let hl = self.get_register16(Register16::Hl);
-            //                 memory_bus.write(hl, value);
-            //                 self.set_register16(Register16::Hl, hl - 1);
-            //             }
-            //         },
-            //     };
-            // }
-
-            // Instruction::Load16(destination, source) => {
-            //     let value = match source {
-            //         Load16Source::Constant(value) => value,
-            //     };
-
-            //     match destination {
-            //         Load16Target::Register(register) => self.set_register16(register, value),
-            //         Load16Target::StackPointer => self.stack_pointer = value,
-            //     }
-            // }
         }
     }
 
-    fn fetch8(&self, source: Source8, memory_bus: &MemoryBus) -> (u8, Cycles) {
+    fn fetch8(&mut self, source: Source8, memory_bus: &MemoryBus) -> (u8, Cycles) {
         match source {
             Source8::Constant(value) => (value, Cycles(1)),
             Source8::Register(register) => (self.get_register8(register), Cycles(0)),
@@ -84,25 +50,66 @@ impl Cpu {
                 Address::Relative(_) => todo!(),
                 Address::Hram(_) => todo!(),
                 Address::HramPlusC => todo!(),
+
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);
                     let value = memory_bus.read(address);
                     (value, Cycles(1))
                 }
-                Address::DereferenceHlAndIncrement => todo!(),
-                Address::DereferenceHlAndDecrement => todo!(),
+
+                Address::DereferenceHlAndIncrement => {
+                    let address = self.get_register16(Register16::Hl);
+                    let value = memory_bus.read(address);
+                    self.set_register16(Register16::Hl, address + 1);
+                    (value, Cycles(1))
+                }
+
+                Address::DereferenceHlAndDecrement => {
+                    let address = self.get_register16(Register16::Hl);
+                    let value = memory_bus.read(address);
+                    self.set_register16(Register16::Hl, address - 1);
+                    (value, Cycles(1))
+                }
+
                 Address::DereferenceFixed(_) => todo!(),
             },
         }
     }
 
-    fn set8(&mut self, target: Target8, value: u8) -> Cycles {
+    fn set8(&mut self, target: Target8, value: u8, memory_bus: &mut MemoryBus) -> Cycles {
         match target {
             Target8::Register(register) => {
                 self.set_register8(register, value);
                 Cycles(0)
             }
-            Target8::Memory(address) => todo!(),
+            Target8::Memory(address) => match address {
+                Address::Fixed(_) => todo!(),
+                Address::Relative(_) => todo!(),
+                Address::Hram(_) => todo!(),
+                Address::HramPlusC => todo!(),
+
+                Address::Dereference(register) => {
+                    let address = self.get_register16(register);
+                    memory_bus.write(address, value);
+                    Cycles(1)
+                }
+
+                Address::DereferenceHlAndIncrement => {
+                    let address = self.get_register16(Register16::Hl);
+                    memory_bus.write(address, value);
+                    self.set_register16(Register16::Hl, address + 1);
+                    Cycles(1)
+                }
+
+                Address::DereferenceHlAndDecrement => {
+                    let address = self.get_register16(Register16::Hl);
+                    memory_bus.write(address, value);
+                    self.set_register16(Register16::Hl, address - 1);
+                    Cycles(1)
+                }
+
+                Address::DereferenceFixed(_) => todo!(),
+            },
         }
     }
 
