@@ -2,16 +2,16 @@ mod cartridge;
 pub mod cpu;
 mod execute;
 mod interrupts;
-// mod lcd;
 mod memory;
+mod video;
 // mod joypad;
 // mod mbc;
 // mod timers;
-// mod video;
 
 pub use cartridge::Cartridge;
 pub use cpu::{Cpu, Flags as CpuFlags, Instruction};
 use memory::Ram;
+use video::Video;
 
 // Anything accessible via a memory address is stored in a separate
 // struct to allow borrowing independently of the Cpu
@@ -19,6 +19,7 @@ pub struct MemoryMapped {
     cartridge: Cartridge,
     ram: Ram,
     interrupts: interrupts::Registers,
+    video: Video,
 }
 
 pub struct GameBoy {
@@ -36,6 +37,7 @@ impl GameBoy {
                 cartridge,
                 ram: Ram::new(),
                 interrupts: interrupts::Registers::new(),
+                video: Video::new(),
             },
         }
     }

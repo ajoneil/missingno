@@ -1,6 +1,7 @@
 use super::{
     MemoryMapped,
     interrupts::{self, InterruptFlags},
+    video,
 };
 
 pub struct Ram {
@@ -22,6 +23,7 @@ pub enum MappedAddress {
     WorkRam(u16),
     HighRam(u8),
     InterruptRegister(interrupts::Register),
+    VideoRegister(video::Register),
 }
 
 impl MappedAddress {
@@ -30,6 +32,9 @@ impl MappedAddress {
             0x0000..=0x7fff => Self::Cartridge(address),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
+            0xff41 => Self::VideoRegister(video::Register::Status),
+            0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
+            0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
             _ => todo!("Unimplemented write to {:04x}", address),
@@ -52,6 +57,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(address) => self.cartridge.read(address),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
+            MappedAddress::VideoRegister(register) => self.video.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
                 interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
@@ -74,6 +80,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(_) => todo!(),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
+            MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
                     self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
