@@ -1,9 +1,8 @@
-use bitflags::bitflags;
-
 use super::{
     Instruction,
     cpu::instructions::{Address, jump},
 };
+use bitflags::bitflags;
 
 pub enum Register {
     EnabledInterrupts,
@@ -12,8 +11,8 @@ pub enum Register {
 
 #[derive(Clone, Copy)]
 pub enum Interrupt {
-    VBlank,
-    Lcd,
+    VideoBetweenFrames,
+    VideoStatus,
     Timer,
     Serial,
     Joypad,
@@ -27,8 +26,8 @@ impl Interrupt {
 
     pub fn address(&self) -> Address {
         Address::Fixed(match self {
-            Interrupt::VBlank => 0x40,
-            Interrupt::Lcd => 0x48,
+            Interrupt::VideoBetweenFrames => 0x40,
+            Interrupt::VideoStatus => 0x48,
             Interrupt::Timer => 0x50,
             Interrupt::Serial => 0x58,
             Interrupt::Joypad => 0x60,
@@ -51,14 +50,16 @@ impl Registers {
 
     pub fn triggered(&self) -> Option<Interrupt> {
         Some(
-            if self.enabled.contains(InterruptFlags::VBLANK)
-                && self.requested.contains(InterruptFlags::VBLANK)
+            if self.enabled.contains(InterruptFlags::VIDEO_BETWEEN_FRAMES)
+                && self
+                    .requested
+                    .contains(InterruptFlags::VIDEO_BETWEEN_FRAMES)
             {
-                Interrupt::VBlank
-            } else if self.enabled.contains(InterruptFlags::LCD)
-                && self.requested.contains(InterruptFlags::LCD)
+                Interrupt::VideoBetweenFrames
+            } else if self.enabled.contains(InterruptFlags::VIDEO_STATUS)
+                && self.requested.contains(InterruptFlags::VIDEO_STATUS)
             {
-                Interrupt::Lcd
+                Interrupt::VideoStatus
             } else if self.enabled.contains(InterruptFlags::TIMER)
                 && self.requested.contains(InterruptFlags::TIMER)
             {
@@ -79,8 +80,8 @@ impl Registers {
 
     pub fn clear(&mut self, interrupt: Interrupt) {
         match interrupt {
-            Interrupt::VBlank => self.requested.remove(InterruptFlags::VBLANK),
-            Interrupt::Lcd => self.requested.remove(InterruptFlags::LCD),
+            Interrupt::VideoBetweenFrames => self.requested.remove(InterruptFlags::VIDEO_STATUS),
+            Interrupt::VideoStatus => self.requested.remove(InterruptFlags::VIDEO_BETWEEN_FRAMES),
             Interrupt::Timer => self.requested.remove(InterruptFlags::TIMER),
             Interrupt::Serial => self.requested.remove(InterruptFlags::SERIAL),
             Interrupt::Joypad => self.requested.remove(InterruptFlags::JOYPAD),
@@ -89,13 +90,13 @@ impl Registers {
 }
 
 bitflags! {
-    #[derive(Copy,Clone,Debug)]
+    #[derive(Copy, Clone)]
     pub struct InterruptFlags: u8 {
-        const JOYPAD = 0b00010000;
-        const SERIAL = 0b00001000;
-        const TIMER  = 0b00000100;
-        const LCD    = 0b00000010;
-        const VBLANK = 0b00000001;
+        const JOYPAD               = 0b00010000;
+        const SERIAL               = 0b00001000;
+        const TIMER                = 0b00000100;
+        const VIDEO_STATUS         = 0b00000010;
+        const VIDEO_BETWEEN_FRAMES = 0b00000001;
 
         const _OTHER = !0;
     }

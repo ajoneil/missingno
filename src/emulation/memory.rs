@@ -1,7 +1,7 @@
 use super::{
     MemoryMapped,
     interrupts::{self, InterruptFlags},
-    video,
+    serial_transfer, video,
 };
 
 pub struct Ram {
@@ -24,6 +24,7 @@ pub enum MappedAddress {
     HighRam(u8),
     InterruptRegister(interrupts::Register),
     VideoRegister(video::Register),
+    SerialTransferRegister(serial_transfer::Register),
 }
 
 impl MappedAddress {
@@ -31,6 +32,8 @@ impl MappedAddress {
         match address {
             0x0000..=0x7fff => Self::Cartridge(address),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
+            0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
+            0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
             0xff41 => Self::VideoRegister(video::Register::Status),
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
@@ -62,6 +65,10 @@ impl MemoryMapped {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
                 interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
             },
+            MappedAddress::SerialTransferRegister(register) => match register {
+                serial_transfer::Register::Data => self.serial.data,
+                serial_transfer::Register::Control => self.serial.control.bits(),
+            },
         }
     }
 
@@ -87,6 +94,12 @@ impl MemoryMapped {
                 }
                 interrupts::Register::RequestedInterrupts => {
                     self.interrupts.requested = InterruptFlags::from_bits_retain(value)
+                }
+            },
+            MappedAddress::SerialTransferRegister(register) => match register {
+                serial_transfer::Register::Data => self.serial.data = value,
+                serial_transfer::Register::Control => {
+                    self.serial.control = serial_transfer::Control::from_bits_retain(value)
                 }
             },
         }

@@ -3,6 +3,7 @@ pub mod cpu;
 mod execute;
 mod interrupts;
 mod memory;
+mod serial_transfer;
 mod video;
 // mod joypad;
 // mod mbc;
@@ -18,8 +19,9 @@ use video::Video;
 pub struct MemoryMapped {
     cartridge: Cartridge,
     ram: Ram,
-    interrupts: interrupts::Registers,
     video: Video,
+    interrupts: interrupts::Registers,
+    serial: serial_transfer::Registers,
 }
 
 pub struct GameBoy {
@@ -36,8 +38,9 @@ impl GameBoy {
             mapped: MemoryMapped {
                 cartridge,
                 ram: Ram::new(),
-                interrupts: interrupts::Registers::new(),
                 video: Video::new(),
+                interrupts: interrupts::Registers::new(),
+                serial: serial_transfer::Registers::new(),
             },
         }
     }
