@@ -41,7 +41,7 @@ impl fmt::Display for Location {
     }
 }
 
-pub struct Condition(Flag, bool);
+pub struct Condition(pub Flag, pub bool);
 
 impl Condition {
     pub fn z() -> Option<Self> {
