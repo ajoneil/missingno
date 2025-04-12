@@ -1,23 +1,24 @@
 use super::{
     Cpu, Instruction,
     cycles::Cycles,
-    instructions::{Address, Source8},
+    instructions::{Address, Source8, Source16, Target8, Target16},
 };
 use crate::emulation::MemoryBus;
 
 mod arithemetic;
 mod bitwise;
 mod jump;
+mod load;
 
 impl Cpu {
     pub fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) -> Cycles {
         match instruction {
-            Instruction::Load(load) => todo!(),
-            Instruction::Arithmetic(arithmetic) => self.execute_arithmetic(arithmetic),
-            Instruction::Bitwise(bitwise) => self.execute_bitwise(bitwise, memory_bus),
+            Instruction::Load(instruction) => self.execute_load(instruction, memory_bus),
+            Instruction::Arithmetic(instruction) => self.execute_arithmetic(instruction),
+            Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory_bus),
             Instruction::BitFlag(bit_flag) => todo!(),
             Instruction::BitShift(bit_shift) => todo!(),
-            Instruction::Jump(jump) => self.execute_jump(jump),
+            Instruction::Jump(instruction) => self.execute_jump(instruction),
             Instruction::CarryFlag(carry_flag) => todo!(),
             Instruction::StackPointer(stack_pointer) => todo!(),
             Instruction::Interrupt(interrupt) => todo!(),
@@ -92,6 +93,40 @@ impl Cpu {
                 Address::DereferenceHlAndDecrement => todo!(),
                 Address::DereferenceFixed(_) => todo!(),
             },
+        }
+    }
+
+    fn set8(&mut self, target: Target8, value: u8) -> Cycles {
+        match target {
+            Target8::Register(register) => {
+                self.set_register8(register, value);
+                Cycles(0)
+            }
+            Target8::Memory(address) => todo!(),
+        }
+    }
+
+    fn fetch16(&self, source: Source16) -> (u16, Cycles) {
+        match source {
+            Source16::Constant(value) => (value, Cycles(2)),
+            Source16::Register(register) => (self.get_register16(register), Cycles(1)),
+            Source16::StackPointerWithOffset(offset) => (
+                match offset {
+                    0.. => self.stack_pointer + offset.abs() as u16,
+                    ..0 => self.stack_pointer - offset.abs() as u16,
+                },
+                Cycles(2),
+            ),
+        }
+    }
+
+    fn set16(&mut self, target: Target16, value: u16) -> Cycles {
+        match target {
+            Target16::Register(register) => {
+                self.set_register16(register, value);
+                Cycles(0)
+            }
+            Target16::Memory(address) => todo!(),
         }
     }
 }

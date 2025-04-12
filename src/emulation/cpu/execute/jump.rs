@@ -8,8 +8,8 @@ use crate::emulation::{
 };
 
 impl Cpu {
-    pub fn execute_jump(&mut self, jump: Jump) -> Cycles {
-        match jump {
+    pub fn execute_jump(&mut self, instruction: Jump) -> Cycles {
+        match instruction {
             Jump::Jump(condition, location) => {
                 if let Some(condition) = condition {
                     todo!()

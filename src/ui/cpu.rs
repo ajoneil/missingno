@@ -18,18 +18,10 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         ])
         .align_right(Length::Fill),
         horizontal_rule(1),
-        row![
-            register8("a", cpu.a),
-            register8("b", cpu.b),
-            register8("c", cpu.c),
-            column![].width(Length::Fill),
-        ],
-        row![
-            register8("d", cpu.d),
-            register8("e", cpu.e),
-            register8("h", cpu.h),
-            register8("l", cpu.l)
-        ],
+        row![register8("a", cpu.a), column![].width(Length::Fill)],
+        row![register8("b", cpu.b), register8("c", cpu.c)],
+        row![register8("d", cpu.d), register8("e", cpu.e)],
+        row![register8("h", cpu.h), register8("l", cpu.l)],
         horizontal_rule(1),
         row![
             column![].width(Length::Fill),
@@ -54,7 +46,8 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
 fn register8(label: &str, value: u8) -> Element<'_, Message> {
     row![
         container(label).align_right(Length::Fill),
-        text_input(label, &format!("{:02x}", value)).font(Font::MONOSPACE)
+        text_input(label, &format!("{:02x}", value)).font(Font::MONOSPACE),
+        text_input(label, &format!("{:03}", value)).font(Font::MONOSPACE)
     ]
     .align_y(Vertical::Center)
     .spacing(5)
