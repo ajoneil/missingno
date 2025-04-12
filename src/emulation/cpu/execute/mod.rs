@@ -7,6 +7,7 @@ use crate::emulation::MemoryBus;
 
 mod arithemetic;
 mod bitwise;
+mod interrupt;
 mod jump;
 mod load;
 
@@ -23,7 +24,7 @@ impl Cpu {
             Instruction::Jump(instruction) => self.execute_jump(instruction),
             Instruction::CarryFlag(_) => todo!(),
             Instruction::StackPointer(_) => todo!(),
-            Instruction::Interrupt(_) => todo!(),
+            Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
             Instruction::DecimalAdjustAccumulator => todo!(),
             Instruction::NoOperation => Cycles(1),
             Instruction::Stop => todo!(),
