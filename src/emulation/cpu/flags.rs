@@ -46,16 +46,3 @@ bitflags! {
         const _OTHER = !0;
     }
 }
-
-bitflags! {
-    #[derive(Copy,Clone,Debug)]
-    pub struct Interrupts: u8 {
-        const JOYPAD = 0b00010000;
-        const SERIAL = 0b00001000;
-        const TIMER  = 0b00000100;
-        const LCD    = 0b00000010;
-        const VBLANK = 0b00000001;
-
-        const _OTHER = !0;
-    }
-}

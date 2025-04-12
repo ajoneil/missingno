@@ -1,7 +1,7 @@
 use crate::{
     emulation::{
         Cpu, CpuFlags,
-        cpu::{Register8, Register16},
+        cpu::{InterruptMasterEnable, Register8, Register16},
     },
     ui::Message,
 };
@@ -17,7 +17,10 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         register16("Stack Pointer", cpu.stack_pointer),
         container(column![
             checkbox("Halted", cpu.halted),
-            checkbox("Interrupt master enable", cpu.interrupt_master_enable),
+            checkbox(
+                "Interrupt master enable",
+                cpu.interrupt_master_enable != InterruptMasterEnable::Disabled
+            ),
         ])
         .align_right(Length::Fill),
         horizontal_rule(1),

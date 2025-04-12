@@ -1,4 +1,4 @@
-use super::Address;
+use super::{Address, Instruction};
 use crate::emulation::cpu::Flag;
 use core::fmt;
 
@@ -28,6 +28,7 @@ impl Location {
         Self::RegisterHl
     }
 }
+
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -140,5 +141,11 @@ impl fmt::Display for Jump {
 
             Self::Restart(address) => write!(f, "rst ${:2x}", address),
         }
+    }
+}
+
+impl Into<Instruction> for Jump {
+    fn into(self) -> Instruction {
+        Instruction::Jump(self)
     }
 }

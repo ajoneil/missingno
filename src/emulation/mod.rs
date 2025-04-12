@@ -1,6 +1,7 @@
 mod cartridge;
 pub mod cpu;
 mod execute;
+mod interrupts;
 mod memory;
 // mod joypad;
 // mod mbc;

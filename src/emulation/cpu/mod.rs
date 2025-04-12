@@ -1,12 +1,19 @@
 mod cycles;
 mod execute;
 mod flags;
-mod instructions;
+pub mod instructions;
 mod registers;
 
 pub use flags::{Flag, Flags};
 pub use instructions::Instruction;
 pub use registers::{Register8, Register16};
+
+#[derive(Eq, PartialEq)]
+pub enum InterruptMasterEnable {
+    Disabled,
+    EnableAfterNextInstruction,
+    Enabled,
+}
 
 pub struct Cpu {
     pub a: u8,
@@ -22,7 +29,7 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    pub interrupt_master_enable: bool,
+    pub interrupt_master_enable: InterruptMasterEnable,
     pub halted: bool,
 }
 
@@ -46,7 +53,7 @@ impl Cpu {
                 Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
             },
 
-            interrupt_master_enable: false,
+            interrupt_master_enable: InterruptMasterEnable::Disabled,
             halted: false,
         }
     }
