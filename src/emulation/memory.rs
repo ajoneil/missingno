@@ -1,11 +1,20 @@
-use super::interrupts::{self, InterruptFlags};
-use crate::emulation::Cartridge;
+use super::{
+    MemoryMapped,
+    interrupts::{self, InterruptFlags},
+};
 
-pub struct MemoryBus {
-    cartridge: Cartridge,
-    work_ram: [u8; 0x2000],
-    high_ram: [u8; 0x80],
-    interrupt_registers: interrupts::Registers,
+pub struct Ram {
+    pub work_ram: [u8; 0x2000],
+    pub high_ram: [u8; 0x80],
+}
+
+impl Ram {
+    pub fn new() -> Self {
+        Self {
+            work_ram: [0; 0x2000],
+            high_ram: [0; 0x80],
+        }
+    }
 }
 
 pub enum MappedAddress {
@@ -28,19 +37,12 @@ impl MappedAddress {
     }
 }
 
-impl MemoryBus {
-    pub fn new(cartridge: Cartridge) -> Self {
-        Self {
-            cartridge,
-            work_ram: [0; 0x2000],
-            high_ram: [0; 0x80],
-            interrupt_registers: interrupts::Registers {
-                enabled: InterruptFlags::empty(),
-                requested: InterruptFlags::empty(),
-            },
-        }
-    }
+pub enum MemoryWrite {
+    Write8(MappedAddress, u8),
+    Write16((MappedAddress, u8), (MappedAddress, u8)),
+}
 
+impl MemoryMapped {
     pub fn read(&self, address: u16) -> u8 {
         self.read_mapped(MappedAddress::map(address))
     }
@@ -48,46 +50,38 @@ impl MemoryBus {
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
             MappedAddress::Cartridge(address) => self.cartridge.read(address),
-            MappedAddress::WorkRam(address) => self.work_ram[address as usize],
-            MappedAddress::HighRam(address) => self.high_ram[address as usize],
+            MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
+            MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
             MappedAddress::InterruptRegister(register) => match register {
-                interrupts::Register::EnabledInterrupts => self.interrupt_registers.enabled.bits(),
-                interrupts::Register::RequestedInterrupts => {
-                    self.interrupt_registers.requested.bits()
-                }
+                interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
+                interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
             },
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
-        self.write_mapped(MappedAddress::map(address), value);
+    pub fn write(&mut self, write: MemoryWrite) {
+        match write {
+            MemoryWrite::Write8(address, value) => self.write_mapped(address, value),
+            MemoryWrite::Write16((address1, value1), (address2, value2)) => {
+                self.write_mapped(address1, value1);
+                self.write_mapped(address2, value2);
+            }
+        }
     }
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
             MappedAddress::Cartridge(_) => todo!(),
-            MappedAddress::WorkRam(address) => self.work_ram[address as usize] = value,
-            MappedAddress::HighRam(address) => self.work_ram[address as usize] = value,
+            MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
+            MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
-                    self.interrupt_registers.enabled = InterruptFlags::from_bits_retain(value)
+                    self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
                 }
                 interrupts::Register::RequestedInterrupts => {
-                    self.interrupt_registers.requested = InterruptFlags::from_bits_retain(value)
+                    self.interrupts.requested = InterruptFlags::from_bits_retain(value)
                 }
             },
         }
-    }
-
-    pub fn cartridge(&self) -> &Cartridge {
-        &self.cartridge
-    }
-
-    pub fn interrupt_registers(&self) -> &interrupts::Registers {
-        &self.interrupt_registers
-    }
-
-    pub fn interrupt_registers_mut(&mut self) -> &mut interrupts::Registers {
-        &mut self.interrupt_registers
     }
 }

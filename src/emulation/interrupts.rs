@@ -42,6 +42,13 @@ pub struct Registers {
 }
 
 impl Registers {
+    pub fn new() -> Self {
+        Self {
+            enabled: InterruptFlags::empty(),
+            requested: InterruptFlags::empty(),
+        }
+    }
+
     pub fn triggered(&self) -> Option<Interrupt> {
         Some(
             if self.enabled.contains(InterruptFlags::VBLANK)

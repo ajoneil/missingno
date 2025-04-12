@@ -1,24 +1,25 @@
 use crate::emulation::{
-    Cpu, CpuFlags, MemoryBus,
+    Cpu, CpuFlags, MemoryMapped,
     cpu::{
         cycles::Cycles,
         instructions::{Arithmetic, Arithmetic8},
     },
 };
 
+use super::OpResult;
+
 impl Cpu {
     pub fn execute_arithmetic(
         &mut self,
         instruction: Arithmetic,
-        memory_bus: &mut MemoryBus,
-    ) -> Cycles {
+        memory: &MemoryMapped,
+    ) -> OpResult {
         match instruction {
             Arithmetic::Arithmetic8(instruction) => match instruction {
                 Arithmetic8::Increment(target) => {
-                    let (original_value, fetch_cycles) =
-                        self.fetch8(target.to_source(), memory_bus);
+                    let (original_value, fetch_cycles) = self.fetch8(target.to_source(), memory);
                     let value = original_value.wrapping_add(1);
-                    let set_cycles = self.set8(target, value, memory_bus);
+                    let result = self.set8(target, value);
 
                     self.flags.set(CpuFlags::ZERO, value == 0);
                     self.flags.insert(CpuFlags::NEGATIVE);
@@ -27,14 +28,13 @@ impl Cpu {
                     self.flags
                         .set(CpuFlags::HALF_CARRY, value & 0b1111 == 0b0000);
 
-                    Cycles(1) + fetch_cycles + set_cycles
+                    result.add_cycles(Cycles(1) + fetch_cycles)
                 }
 
                 Arithmetic8::Decrement(target) => {
-                    let (original_value, fetch_cycles) =
-                        self.fetch8(target.to_source(), memory_bus);
+                    let (original_value, fetch_cycles) = self.fetch8(target.to_source(), memory);
                     let value = original_value.wrapping_sub(1);
-                    let set_cycles = self.set8(target, value, memory_bus);
+                    let result = self.set8(target, value);
 
                     self.flags.set(CpuFlags::ZERO, value == 0);
                     self.flags.insert(CpuFlags::NEGATIVE);
@@ -43,7 +43,7 @@ impl Cpu {
                     self.flags
                         .set(CpuFlags::HALF_CARRY, value & 0b1111 == 0b1111);
 
-                    Cycles(1) + fetch_cycles + set_cycles
+                    result.add_cycles(Cycles(1) + fetch_cycles)
                 }
                 Arithmetic8::AddA(_) => todo!(),
                 Arithmetic8::SubtractA(_) => todo!(),

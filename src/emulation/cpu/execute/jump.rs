@@ -7,8 +7,10 @@ use crate::emulation::{
     },
 };
 
+use super::OpResult;
+
 impl Cpu {
-    pub fn execute_jump(&mut self, instruction: Jump) -> Cycles {
+    pub fn execute_jump(&mut self, instruction: Jump) -> OpResult {
         match instruction {
             Jump::Jump(condition, location) => {
                 let (address, address_cycles) = match location {
@@ -35,9 +37,9 @@ impl Cpu {
 
                 if jump {
                     self.program_counter = address;
-                    address_cycles + Cycles(1)
+                    OpResult::cycles(1).add_cycles(address_cycles)
                 } else {
-                    address_cycles
+                    OpResult::cycles(0).add_cycles(address_cycles)
                 }
             }
             Jump::Call(_, _) => todo!(),

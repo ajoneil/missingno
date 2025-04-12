@@ -1,23 +1,22 @@
+use super::OpResult;
 use crate::emulation::{
-    Cpu, MemoryBus,
+    Cpu, MemoryMapped,
     cpu::{cycles::Cycles, instructions::Load},
 };
 
 impl Cpu {
-    pub fn execute_load(&mut self, instruction: Load, memory_bus: &mut MemoryBus) -> Cycles {
+    pub fn execute_load(&mut self, instruction: Load, memory: &MemoryMapped) -> OpResult {
         match instruction {
             Load::Load8(target, source) => {
-                let (value, fetch_cycles) = self.fetch8(source, memory_bus);
-                let set_cycles = self.set8(target, value, memory_bus);
-
-                Cycles(1) + fetch_cycles + set_cycles
+                let (value, fetch_cycles) = self.fetch8(source, memory);
+                self.set8(target, value)
+                    .add_cycles(fetch_cycles + Cycles(1))
             }
 
             Load::Load16(target, source) => {
                 let (value, fetch_cycles) = self.fetch16(source);
-                let set_cycles = self.set16(target, value);
-
-                Cycles(1) + fetch_cycles + set_cycles
+                self.set16(target, value)
+                    .add_cycles(fetch_cycles + Cycles(1))
             }
         }
     }

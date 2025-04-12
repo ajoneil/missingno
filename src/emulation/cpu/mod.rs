@@ -1,5 +1,5 @@
 mod cycles;
-mod execute;
+pub mod execute;
 mod flags;
 pub mod instructions;
 mod registers;

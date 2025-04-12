@@ -1,18 +1,20 @@
 use crate::emulation::{
     Cpu,
-    cpu::{InterruptMasterEnable, cycles::Cycles, instructions::Interrupt},
+    cpu::{InterruptMasterEnable, instructions::Interrupt},
 };
 
+use super::OpResult;
+
 impl Cpu {
-    pub fn execute_interrupt(&mut self, instruction: Interrupt) -> Cycles {
+    pub fn execute_interrupt(&mut self, instruction: Interrupt) -> OpResult {
         match instruction {
             Interrupt::Enable => {
                 self.interrupt_master_enable = InterruptMasterEnable::EnableAfterNextInstruction;
-                Cycles(1)
+                OpResult::cycles(1)
             }
             Interrupt::Disable => {
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
-                Cycles(1)
+                OpResult::cycles(1)
             }
             Interrupt::Await => todo!(),
         }

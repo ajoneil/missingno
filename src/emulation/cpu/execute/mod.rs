@@ -1,9 +1,13 @@
+use crate::emulation::{
+    MemoryMapped,
+    memory::{MappedAddress, MemoryWrite},
+};
+
 use super::{
     Cpu, Instruction, Register16,
     cycles::Cycles,
     instructions::{Address, Source8, Source16, Target8, Target16},
 };
-use crate::emulation::MemoryBus;
 
 mod arithemetic;
 mod bitwise;
@@ -11,14 +15,30 @@ mod interrupt;
 mod jump;
 mod load;
 
+pub struct OpResult(pub Cycles, pub Option<MemoryWrite>);
+impl OpResult {
+    pub fn cycles(cycles: u32) -> Self {
+        OpResult(Cycles(cycles), None)
+    }
+
+    pub fn write8(address: u16, value: u8, cycles: Cycles) -> Self {
+        OpResult(
+            cycles,
+            Some(MemoryWrite::Write8(MappedAddress::map(address), value)),
+        )
+    }
+
+    pub fn add_cycles(self, cycles: Cycles) -> Self {
+        Self(self.0 + cycles, self.1)
+    }
+}
+
 impl Cpu {
-    pub fn execute(&mut self, instruction: Instruction, memory_bus: &mut MemoryBus) -> Cycles {
+    pub fn execute(&mut self, instruction: Instruction, memory: &MemoryMapped) -> OpResult {
         match instruction {
-            Instruction::Load(instruction) => self.execute_load(instruction, memory_bus),
-            Instruction::Arithmetic(instruction) => {
-                self.execute_arithmetic(instruction, memory_bus)
-            }
-            Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory_bus),
+            Instruction::Load(instruction) => self.execute_load(instruction, memory),
+            Instruction::Arithmetic(instruction) => self.execute_arithmetic(instruction, memory),
+            Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory),
             Instruction::BitFlag(_) => todo!(),
             Instruction::BitShift(_) => todo!(),
             Instruction::Jump(instruction) => self.execute_jump(instruction),
@@ -26,13 +46,13 @@ impl Cpu {
             Instruction::StackPointer(_) => todo!(),
             Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
             Instruction::DecimalAdjustAccumulator => todo!(),
-            Instruction::NoOperation => Cycles(1),
+            Instruction::NoOperation => OpResult::cycles(1),
             Instruction::Stop => todo!(),
             Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
         }
     }
 
-    fn fetch8(&mut self, source: Source8, memory_bus: &MemoryBus) -> (u8, Cycles) {
+    fn fetch8(&mut self, source: Source8, memory: &MemoryMapped) -> (u8, Cycles) {
         match source {
             Source8::Constant(value) => (value, Cycles(1)),
             Source8::Register(register) => (self.get_register8(register), Cycles(0)),
@@ -44,20 +64,20 @@ impl Cpu {
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);
-                    let value = memory_bus.read(address);
+                    let value = memory.read(address);
                     (value, Cycles(1))
                 }
 
                 Address::DereferenceHlAndIncrement => {
                     let address = self.get_register16(Register16::Hl);
-                    let value = memory_bus.read(address);
+                    let value = memory.read(address);
                     self.set_register16(Register16::Hl, address + 1);
                     (value, Cycles(1))
                 }
 
                 Address::DereferenceHlAndDecrement => {
                     let address = self.get_register16(Register16::Hl);
-                    let value = memory_bus.read(address);
+                    let value = memory.read(address);
                     self.set_register16(Register16::Hl, address - 1);
                     (value, Cycles(1))
                 }
@@ -67,39 +87,33 @@ impl Cpu {
         }
     }
 
-    fn set8(&mut self, target: Target8, value: u8, memory_bus: &mut MemoryBus) -> Cycles {
+    fn set8(&mut self, target: Target8, value: u8) -> OpResult {
         match target {
             Target8::Register(register) => {
                 self.set_register8(register, value);
-                Cycles(0)
+                OpResult::cycles(0)
             }
             Target8::Memory(address) => match address {
                 Address::Fixed(_) => todo!(),
                 Address::Relative(_) => todo!(),
-                Address::Hram(offset) => {
-                    memory_bus.write(0xff00 + offset as u16, value);
-                    Cycles(2)
-                }
+                Address::Hram(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
                 Address::HramPlusC => todo!(),
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);
-                    memory_bus.write(address, value);
-                    Cycles(1)
+                    OpResult::write8(address, value, Cycles(1))
                 }
 
                 Address::DereferenceHlAndIncrement => {
                     let address = self.get_register16(Register16::Hl);
-                    memory_bus.write(address, value);
                     self.set_register16(Register16::Hl, address + 1);
-                    Cycles(1)
+                    OpResult::write8(address, value, Cycles(1))
                 }
 
                 Address::DereferenceHlAndDecrement => {
                     let address = self.get_register16(Register16::Hl);
-                    memory_bus.write(address, value);
                     self.set_register16(Register16::Hl, address - 1);
-                    Cycles(1)
+                    OpResult::write8(address, value, Cycles(1))
                 }
 
                 Address::DereferenceFixed(_) => todo!(),
@@ -121,11 +135,11 @@ impl Cpu {
         }
     }
 
-    fn set16(&mut self, target: Target16, value: u16) -> Cycles {
+    fn set16(&mut self, target: Target16, value: u16) -> OpResult {
         match target {
             Target16::Register(register) => {
                 self.set_register16(register, value);
-                Cycles(0)
+                OpResult::cycles(0)
             }
             Target16::Memory(_) => todo!(),
         }
