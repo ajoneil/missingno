@@ -76,7 +76,10 @@ impl Cpu {
             Target8::Memory(address) => match address {
                 Address::Fixed(_) => todo!(),
                 Address::Relative(_) => todo!(),
-                Address::Hram(_) => todo!(),
+                Address::Hram(offset) => {
+                    memory_bus.write(0xff00 + offset as u16, value);
+                    Cycles(2)
+                }
                 Address::HramPlusC => todo!(),
 
                 Address::Dereference(register) => {

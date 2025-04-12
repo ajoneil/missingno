@@ -1,6 +1,7 @@
 use crate::emulation::cpu::{Register8, instructions::Address};
 use core::fmt;
 
+#[derive(Copy, Clone)]
 pub enum Target8 {
     Register(Register8),
     Memory(Address),
@@ -88,6 +89,7 @@ impl fmt::Display for Target8 {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum Source8 {
     Constant(u8),
     Register(Register8),
