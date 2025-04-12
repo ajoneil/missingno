@@ -1,11 +1,16 @@
+use std::collections::HashSet;
+
 use crate::{
     emulation::{Cartridge, Instruction},
     ui::Message,
 };
 use iced::{
-    Element, Font,
-    widget::{Column, row, text},
+    Element, Font, Length,
+    alignment::Vertical,
+    widget::{Column, button, row, text},
 };
+
+use super::debugger;
 
 struct InstructionsIterator<'a> {
     address: u16,
@@ -28,7 +33,11 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     }
 }
 
-pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
+pub fn instructions<'a>(
+    cartridge: &'a Cartridge,
+    pc: u16,
+    breakpoints: &HashSet<u16>,
+) -> Element<'a, Message> {
     let mut iterator = InstructionsIterator {
         address: pc,
         rom: cartridge.rom(),
@@ -39,7 +48,11 @@ pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
     for _ in 0..20 {
         let address = iterator.address;
         if let Some(decoded) = Instruction::decode(&mut iterator) {
-            instructions.push(instruction(address, decoded));
+            instructions.push(instruction(
+                address,
+                decoded,
+                breakpoints.contains(&address),
+            ));
         } else {
             break;
         }
@@ -48,11 +61,33 @@ pub fn instructions(cartridge: &Cartridge, pc: u16) -> Element<'_, Message> {
     Column::from_vec(instructions).into()
 }
 
-pub fn instruction(address: u16, instruction: Instruction) -> Element<'static, Message> {
+pub fn instruction(
+    address: u16,
+    instruction: Instruction,
+    is_breakpoint: bool,
+) -> Element<'static, Message> {
     row![
+        breakpoint(address, is_breakpoint),
         text(format!("{:04x}", address)).font(Font::MONOSPACE),
         text(instruction.to_string()).font(Font::MONOSPACE)
     ]
+    .align_y(Vertical::Center)
     .spacing(10)
     .into()
+}
+
+fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
+    button(text(if breakpoint { "🔴" } else { "" }).font(Font::with_name("Noto Color Emoji")))
+        .style(button::text)
+        .width(Length::Fixed(20.0))
+        .padding(3)
+        .on_press(
+            if breakpoint {
+                debugger::Message::ClearBreakpoint(address)
+            } else {
+                debugger::Message::SetBreakpoint(address)
+            }
+            .into(),
+        )
+        .into()
 }

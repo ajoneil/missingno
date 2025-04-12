@@ -40,8 +40,8 @@ impl Cpu {
                     address_cycles
                 }
             }
-            Jump::Call(condition, location) => todo!(),
-            Jump::Return(condition) => todo!(),
+            Jump::Call(_, _) => todo!(),
+            Jump::Return(_) => todo!(),
             Jump::ReturnAndEnableInterrupts => todo!(),
             Jump::Restart(_) => todo!(),
         }

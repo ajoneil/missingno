@@ -1,5 +1,6 @@
 use std::{env, path::PathBuf};
 
+mod debugger;
 mod emulation;
 mod ui;
 

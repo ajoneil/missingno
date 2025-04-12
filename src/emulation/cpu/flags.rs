@@ -1,6 +1,7 @@
 use bitflags::bitflags;
 use core::fmt;
 
+#[allow(dead_code)]
 pub enum Flag {
     Zero,
     Negative,

@@ -18,28 +18,16 @@ impl Cpu {
                 self.execute_arithmetic(instruction, memory_bus)
             }
             Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory_bus),
-            Instruction::BitFlag(bit_flag) => todo!(),
-            Instruction::BitShift(bit_shift) => todo!(),
+            Instruction::BitFlag(_) => todo!(),
+            Instruction::BitShift(_) => todo!(),
             Instruction::Jump(instruction) => self.execute_jump(instruction),
-            Instruction::CarryFlag(carry_flag) => todo!(),
-            Instruction::StackPointer(stack_pointer) => todo!(),
-            Instruction::Interrupt(interrupt) => todo!(),
+            Instruction::CarryFlag(_) => todo!(),
+            Instruction::StackPointer(_) => todo!(),
+            Instruction::Interrupt(_) => todo!(),
             Instruction::DecimalAdjustAccumulator => todo!(),
             Instruction::NoOperation => Cycles(1),
             Instruction::Stop => todo!(),
             Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
-            // Instruction::Decrement8(register) => {
-            //     let value = self.get_register8(register);
-            //     let new_value = if value == 0 { 0xff } else { value - 1 };
-            //     self.set_register8(register, new_value);
-
-            //     self.flags.set(Flags::ZERO, new_value == 0);
-            //     self.flags.insert(Flags::NEGATIVE);
-
-            //     // The half carry flag is set if we carry from bit 4 to 3
-            //     // i.e. xxx10000 - 1 = xxx01111
-            //     self.flags.set(Flags::HALF_CARRY, new_value & 0xf == 0xf);
-            // }
         }
     }
 
@@ -135,7 +123,7 @@ impl Cpu {
                 self.set_register16(register, value);
                 Cycles(0)
             }
-            Target16::Memory(address) => todo!(),
+            Target16::Memory(_) => todo!(),
         }
     }
 }

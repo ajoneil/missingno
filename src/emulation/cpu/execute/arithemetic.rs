@@ -45,13 +45,13 @@ impl Cpu {
 
                     Cycles(1) + fetch_cycles + set_cycles
                 }
-                Arithmetic8::AddA(source8) => todo!(),
-                Arithmetic8::SubtractA(source8) => todo!(),
-                Arithmetic8::AddACarry(source8) => todo!(),
-                Arithmetic8::SubtractACarry(source8) => todo!(),
-                Arithmetic8::CompareA(source8) => todo!(),
+                Arithmetic8::AddA(_) => todo!(),
+                Arithmetic8::SubtractA(_) => todo!(),
+                Arithmetic8::AddACarry(_) => todo!(),
+                Arithmetic8::SubtractACarry(_) => todo!(),
+                Arithmetic8::CompareA(_) => todo!(),
             },
-            Arithmetic::Arithmetic16(instruction) => todo!(),
+            Arithmetic::Arithmetic16(_) => todo!(),
         }
     }
 }

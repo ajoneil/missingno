@@ -1,6 +1,7 @@
 use crate::{
+    debugger::Debugger,
     emulation::{Cartridge, GameBoy},
-    ui::emulator::emulator,
+    ui::debugger::debugger,
 };
 use iced::{
     Element,
@@ -12,7 +13,7 @@ use rfd::{AsyncFileDialog, FileHandle};
 use std::{fs, path::PathBuf};
 
 mod cpu;
-mod emulator;
+mod debugger;
 mod instructions;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
@@ -28,13 +29,13 @@ struct App {
 enum LoadState {
     Unloaded,
     Loading,
-    Loaded(GameBoy),
+    Loaded(Debugger),
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Load(LoadMessage),
-    Emulator(emulator::Message),
+    Debugger(debugger::Message),
 }
 
 #[derive(Debug, Clone)]
@@ -54,9 +55,9 @@ impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
         match rom_path {
             Some(rom_path) => Self {
-                load_state: LoadState::Loaded(GameBoy::new(Cartridge::new(
+                load_state: LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(
                     fs::read(rom_path).unwrap(),
-                ))),
+                )))),
             },
             None => Self {
                 load_state: LoadState::Unloaded,
@@ -65,8 +66,8 @@ impl App {
     }
 
     fn title(&self) -> String {
-        if let LoadState::Loaded(game_boy) = &self.load_state {
-            format!("{} - MissingNo.", game_boy.cartridge().title())
+        if let LoadState::Loaded(debugger) = &self.load_state {
+            format!("{} - MissingNo.", debugger.game_boy().cartridge().title())
         } else {
             "MissingNo.".into()
         }
@@ -100,12 +101,13 @@ impl App {
                     }
                 }
                 LoadMessage::GameRomLoaded(rom) => {
-                    self.load_state = LoadState::Loaded(GameBoy::new(Cartridge::new(rom)));
+                    self.load_state =
+                        LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(rom))));
                     Task::none()
                 }
             },
-            Message::Emulator(message) => match &mut self.load_state {
-                LoadState::Loaded(game_boy) => emulator::update(game_boy, message),
+            Message::Debugger(message) => match &mut self.load_state {
+                LoadState::Loaded(debugger) => debugger::update(debugger, message),
                 _ => Task::none(),
             },
         }
@@ -121,7 +123,7 @@ impl App {
                 .on_press(Message::Load(LoadMessage::PickGameRom))
                 .into(),
             LoadState::Loading => button("Load game").into(),
-            LoadState::Loaded(game_boy) => emulator(&game_boy),
+            LoadState::Loaded(debugger) => debugger::debugger(&debugger),
         }
     }
 }
