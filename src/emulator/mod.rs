@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod cartridge;
 pub mod cpu;
 pub mod execute;
@@ -9,6 +10,7 @@ pub mod video;
 // mod mbc;
 // mod timers;
 
+use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
 use memory::Ram;
@@ -20,6 +22,7 @@ pub struct MemoryMapped {
     cartridge: Cartridge,
     ram: Ram,
     video: Video,
+    audio: Audio,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
 }
@@ -39,6 +42,7 @@ impl GameBoy {
                 cartridge,
                 ram: Ram::new(),
                 video: Video::new(),
+                audio: Audio::new(),
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
             },
@@ -55,6 +59,10 @@ impl GameBoy {
 
     pub fn video(&self) -> &Video {
         &self.mapped.video
+    }
+
+    pub fn audio(&self) -> &Audio {
+        &self.mapped.audio
     }
 
     pub fn interrupts(&self) -> &interrupts::Registers {

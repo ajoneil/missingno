@@ -1,9 +1,11 @@
+mod audio;
 mod cpu;
 mod instructions;
 mod interrupts;
 mod video;
 
 use crate::{debugger::Debugger, emulator::cartridge::Cartridge, ui};
+use audio::audio;
 use cpu::cpu;
 use instructions::instructions;
 use interrupts::interrupts;
@@ -56,7 +58,15 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
         ]
         .width(Length::FillPortion(2))
         .spacing(10),
-        container(video(debugger.game_boy().video())).width(Length::FillPortion(3)),
+        container(
+            column![
+                video(debugger.game_boy().video()),
+                horizontal_rule(3),
+                audio(debugger.game_boy().audio())
+            ]
+            .spacing(20)
+        )
+        .width(Length::FillPortion(3)),
     ]
     .height(Length::Fill)
     .spacing(20)

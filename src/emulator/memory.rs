@@ -1,5 +1,5 @@
 use super::{
-    MemoryMapped,
+    MemoryMapped, audio,
     interrupts::{self, InterruptFlags},
     serial_transfer, video,
 };
@@ -23,6 +23,7 @@ pub enum MappedAddress {
     WorkRam(u16),
     HighRam(u8),
     InterruptRegister(interrupts::Register),
+    AudioRegister(audio::Register),
     VideoRegister(video::Register),
     SerialTransferRegister(serial_transfer::Register),
 }
@@ -35,6 +36,7 @@ impl MappedAddress {
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
+            0xff26 => Self::AudioRegister(audio::Register::Control),
             0xff40 => Self::VideoRegister(video::Register::Control),
             0xff41 => Self::VideoRegister(video::Register::Status),
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
@@ -65,6 +67,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(address) => self.cartridge.read(address),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
+            MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
@@ -92,6 +95,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(_) => todo!(),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
+            MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
