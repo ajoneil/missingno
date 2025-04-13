@@ -7,10 +7,10 @@ pub struct Palette {
 impl Palette {
     pub const MONOCHROME_GREEN: Self = Self {
         colors: [
-            RGB8::new(0, 0x3f, 0),
-            RGB8::new(0x2e, 0x73, 0x20),
-            RGB8::new(0x8c, 0xbf, 0x0a),
-            RGB8::new(0x8c, 0xbf, 0x0a),
+            RGB8::new(0x2f, 0x41, 0x39),
+            RGB8::new(0x39, 0x59, 0x4a),
+            RGB8::new(0x5a, 0x79, 0x42),
+            RGB8::new(0x7b, 0x82, 0x10),
         ],
     };
 
