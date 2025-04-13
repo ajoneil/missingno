@@ -1,12 +1,12 @@
-mod cycles;
+pub mod cycles;
 pub mod execute;
-mod flags;
+pub mod flags;
 pub mod instructions;
-mod registers;
+pub mod registers;
 
-pub use flags::{Flag, Flags};
-pub use instructions::Instruction;
-pub use registers::{Register8, Register16};
+use flags::{Flag, Flags};
+use instructions::Instruction;
+use registers::{Register8, Register16};
 
 #[derive(Eq, PartialEq)]
 pub enum InterruptMasterEnable {

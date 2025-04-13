@@ -1,5 +1,9 @@
 use crate::{
-    emulator::cpu::{self, Cpu, Register8, Register16},
+    emulator::cpu::{
+        Cpu,
+        flags::Flags,
+        registers::{Register8, Register16},
+    },
     ui::Message,
 };
 
@@ -42,12 +46,12 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         horizontal_rule(1),
         row![
             column![
-                flag("zero", cpu.flags, cpu::Flags::ZERO),
-                flag("carry", cpu.flags, cpu::Flags::CARRY)
+                flag("zero", cpu.flags, Flags::ZERO),
+                flag("carry", cpu.flags, Flags::CARRY)
             ],
             column![
-                flag("negative", cpu.flags, cpu::Flags::NEGATIVE),
-                flag("half-carry", cpu.flags, cpu::Flags::HALF_CARRY),
+                flag("negative", cpu.flags, Flags::NEGATIVE),
+                flag("half-carry", cpu.flags, Flags::HALF_CARRY),
             ]
         ]
         .spacing(10),
@@ -112,6 +116,6 @@ fn register16(label: &str, value: u16) -> Element<'_, Message> {
     .into()
 }
 
-fn flag(label: &str, flags: cpu::Flags, flag: cpu::Flags) -> Element<'_, Message> {
+fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'_, Message> {
     container(checkbox(label, flags.contains(flag))).into()
 }

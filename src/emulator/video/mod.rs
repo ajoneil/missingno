@@ -8,6 +8,8 @@ use bitflags::bitflags;
 use control::{Control, ControlFlags};
 use ppu::PixelProcessingUnit;
 
+use super::cpu::cycles::Cycles;
+
 pub enum Register {
     Control,
     Status,
@@ -99,5 +101,9 @@ impl Video {
 
     pub fn control(&self) -> Control {
         self.control
+    }
+
+    pub fn step(&mut self, cycles: Cycles) {
+        self.ppu.step(cycles);
     }
 }

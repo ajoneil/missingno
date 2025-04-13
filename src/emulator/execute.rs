@@ -1,6 +1,6 @@
 use super::{
     GameBoy,
-    cpu::{Instruction, InterruptMasterEnable, execute::OpResult},
+    cpu::{InterruptMasterEnable, execute::OpResult, instructions::Instruction},
     interrupts::Interrupt,
 };
 
@@ -31,10 +31,12 @@ impl GameBoy {
 
         dbg!(format!("{:04x}: {}", pc, instruction));
 
-        let OpResult(_cycles, memory_write) = self.cpu.execute(instruction, &self.mapped);
+        let OpResult(cycles, memory_write) = self.cpu.execute(instruction, &self.mapped);
         if let Some(memory_write) = memory_write {
             self.mapped.write(memory_write);
         }
+
+        self.mapped.video.step(cycles);
 
         // TODO: Cycles/timers
     }

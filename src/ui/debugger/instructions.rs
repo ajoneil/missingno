@@ -1,5 +1,5 @@
 use crate::{
-    emulator::{cartridge::Cartridge, cpu::Instruction},
+    emulator::{cartridge::Cartridge, cpu::instructions::Instruction},
     ui::{Message, debugger},
 };
 

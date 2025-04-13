@@ -1,7 +1,4 @@
-use super::cpu::{
-    Instruction,
-    instructions::{Address, jump},
-};
+use super::cpu::instructions::{Address, Instruction, jump};
 
 use bitflags::bitflags;
 
