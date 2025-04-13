@@ -35,6 +35,8 @@ enum LoadState {
 enum Message {
     Load(LoadMessage),
     Debugger(debugger::Message),
+
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -81,35 +83,39 @@ impl App {
             Message::Load(load_message) => match load_message {
                 LoadMessage::PickGameRom => {
                     self.load_state = LoadState::Loading;
-                    Task::perform(
+                    return Task::perform(
                         AsyncFileDialog::new()
                             .add_filter("Game Boy ROM", &["gb"])
                             .pick_file(),
                         |result| Message::Load(LoadMessage::GameRomPicked(result)),
-                    )
+                    );
                 }
+
                 LoadMessage::GameRomPicked(file_handle) => {
                     if let Some(handle) = file_handle {
                         let file = handle.clone();
-                        Task::perform(async move { file.read().await }, |result| {
+                        return Task::perform(async move { file.read().await }, |result| {
                             Message::Load(LoadMessage::GameRomLoaded(result))
-                        })
+                        });
                     } else {
                         self.load_state = LoadState::Unloaded;
-                        Task::none()
                     }
                 }
+
                 LoadMessage::GameRomLoaded(rom) => {
                     self.load_state =
                         LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(rom))));
-                    Task::none()
                 }
             },
+
             Message::Debugger(message) => match &mut self.load_state {
-                LoadState::Loaded(debugger) => debugger::update(debugger, message),
-                _ => Task::none(),
+                LoadState::Loaded(debugger) => return debugger::update(debugger, message),
+                _ => {}
             },
+            Message::None => {}
         }
+
+        return Task::none();
     }
 
     fn view(&self) -> Element<'_, Message> {

@@ -1,10 +1,23 @@
-#[derive(Clone, Copy)]
+use core::fmt;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Mode {
     BetweenFrames = 1,
     PreparingScanline = 2,
     DrawingPixels = 3,
     FinishingScanline = 0,
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Mode::BetweenFrames => write!(f, "Between Frames"),
+            Mode::PreparingScanline => write!(f, "Preparing Scanline"),
+            Mode::DrawingPixels => write!(f, "Drawing Pixels"),
+            Mode::FinishingScanline => write!(f, "Finishing Scanline"),
+        }
+    }
 }
 
 pub struct PixelProcessingUnit {

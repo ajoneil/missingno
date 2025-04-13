@@ -1,8 +1,11 @@
-mod control;
-mod ppu;
+pub mod control;
+pub mod ppu;
+pub mod sprite;
+pub mod tile;
+pub mod tile_map;
 
 use bitflags::bitflags;
-use control::Control;
+use control::{Control, ControlFlags};
 use ppu::PixelProcessingUnit;
 
 struct BackgroundViewportPosition {
@@ -49,7 +52,7 @@ pub struct Video {
 impl Video {
     pub fn new() -> Self {
         Self {
-            control: Control::new(),
+            control: Control::default(),
             ppu: PixelProcessingUnit::new(),
             interrupts: Interrupts {
                 // The first bit is unused, but is set at boot time
@@ -81,10 +84,18 @@ impl Video {
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
-            Register::Control => self.control = Control::from_bits_retain(value),
+            Register::Control => self.control = Control::new(ControlFlags::from_bits_retain(value)),
             Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
             Register::BackgroundViewportX => self.background_viewport.x = value,
             Register::BackgroundViewportY => self.background_viewport.y = value,
         }
+    }
+
+    pub fn mode(&self) -> ppu::Mode {
+        self.ppu.mode()
+    }
+
+    pub fn control(&self) -> Control {
+        self.control
     }
 }

@@ -53,6 +53,10 @@ impl GameBoy {
         &self.cpu
     }
 
+    pub fn video(&self) -> &Video {
+        &self.mapped.video
+    }
+
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.mapped.interrupts
     }

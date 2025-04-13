@@ -1,11 +1,13 @@
 mod cpu;
 mod instructions;
 mod interrupts;
+mod video;
 
 use crate::{debugger::Debugger, emulator::cartridge::Cartridge, ui};
 use cpu::cpu;
 use instructions::instructions;
 use interrupts::interrupts;
+use video::video;
 
 use iced::{
     Element, Length, Task,
@@ -44,7 +46,8 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
             debugger.game_boy().cpu().program_counter,
             debugger.breakpoints()
         ))
-        .width(Length::FillPortion(2)),
+        .width(Length::FillPortion(1)),
+        container(video(debugger.game_boy().video())).width(Length::FillPortion(2)),
         column![
             cartridge(debugger.game_boy().cartridge()),
             controls(),
