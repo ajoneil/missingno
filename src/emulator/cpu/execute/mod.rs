@@ -59,8 +59,8 @@ impl Cpu {
             Source8::Memory(address) => match address {
                 Address::Fixed(_) => todo!(),
                 Address::Relative(_) => todo!(),
-                Address::Hram(_) => todo!(),
-                Address::HramPlusC => todo!(),
+                Address::High(offset) => (memory.read(0xff00 + offset as u16), Cycles(2)),
+                Address::HighPlusC => todo!(),
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);
@@ -96,8 +96,8 @@ impl Cpu {
             Target8::Memory(address) => match address {
                 Address::Fixed(_) => todo!(),
                 Address::Relative(_) => todo!(),
-                Address::Hram(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
-                Address::HramPlusC => todo!(),
+                Address::High(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
+                Address::HighPlusC => todo!(),
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);

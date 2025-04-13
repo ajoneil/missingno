@@ -8,16 +8,17 @@ use bitflags::bitflags;
 use control::{Control, ControlFlags};
 use ppu::PixelProcessingUnit;
 
-struct BackgroundViewportPosition {
-    x: u8,
-    y: u8,
-}
-
 pub enum Register {
     Control,
     Status,
     BackgroundViewportX,
     BackgroundViewportY,
+    CurrentScanline,
+}
+
+struct BackgroundViewportPosition {
+    x: u8,
+    y: u8,
 }
 
 pub enum Interrupt {
@@ -76,9 +77,9 @@ impl Video {
 
                 self.interrupts.flags.bits() & line_compare & self.ppu.mode() as u8
             }
-
             Register::BackgroundViewportX => self.background_viewport.x,
             Register::BackgroundViewportY => self.background_viewport.y,
+            Register::CurrentScanline => self.ppu.current_line(),
         }
     }
 
@@ -88,6 +89,7 @@ impl Video {
             Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
             Register::BackgroundViewportX => self.background_viewport.x = value,
             Register::BackgroundViewportY => self.background_viewport.y = value,
+            Register::CurrentScanline => unreachable!(),
         }
     }
 

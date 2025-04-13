@@ -6,8 +6,8 @@ use core::fmt;
 pub enum Address {
     Fixed(u16),
     Relative(i8),
-    Hram(u8),
-    HramPlusC,
+    High(u8),
+    HighPlusC,
     Dereference(Register16),
     DereferenceHlAndIncrement,
     DereferenceHlAndDecrement,
@@ -30,8 +30,8 @@ impl Address {
         Some(Self::Relative(i8::from_le_bytes([ops.next()?])))
     }
 
-    pub fn hram(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Hram(ops.next()?))
+    pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
+        Some(Self::High(ops.next()?))
     }
 
     pub fn deref_bc() -> Self {
@@ -65,8 +65,8 @@ impl fmt::Display for Address {
                 if *offset >= 0 { "+" } else { "-" },
                 offset.abs()
             ),
-            Self::Hram(offset) => write!(f, "$hram[{}]", offset),
-            Self::HramPlusC => write!(f, "$hram[c]"),
+            Self::High(offset) => write!(f, "($ff00 + {:02x})", offset),
+            Self::HighPlusC => write!(f, "($ff00 + c)"),
             Self::Dereference(register) => write!(f, "[${}]", register),
             Self::DereferenceHlAndIncrement => write!(f, "[$hl+]"),
             Self::DereferenceHlAndDecrement => write!(f, "[$hl-]"),

@@ -49,7 +49,17 @@ impl Cpu {
                 Arithmetic8::SubtractA(_) => todo!(),
                 Arithmetic8::AddACarry(_) => todo!(),
                 Arithmetic8::SubtractACarry(_) => todo!(),
-                Arithmetic8::CompareA(_) => todo!(),
+                Arithmetic8::CompareA(source) => {
+                    let (compare, fetch_cycles) = self.fetch8(source, memory);
+                    let value = self.a.wrapping_sub(compare);
+                    self.flags.set(cpu::Flags::ZERO, value == 0);
+                    self.flags.insert(cpu::Flags::NEGATIVE);
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, compare & 0xf > self.a & 0xf);
+                    self.flags.set(cpu::Flags::CARRY, compare > self.a);
+
+                    OpResult::cycles(1).add_cycles(fetch_cycles)
+                }
             },
             Arithmetic::Arithmetic16(_) => todo!(),
         }

@@ -39,9 +39,10 @@ impl MappedAddress {
             0xff41 => Self::VideoRegister(video::Register::Status),
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
             0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
+            0xff44 => Self::VideoRegister(video::Register::CurrentScanline),
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
-            _ => todo!("Unimplemented write to {:04x}", address),
+            _ => todo!("Unmapped address {:04x}", address),
         }
     }
 }

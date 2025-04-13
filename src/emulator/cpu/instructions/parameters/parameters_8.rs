@@ -61,12 +61,12 @@ impl Target8 {
         Some(Self::Memory(Address::deref_fixed(ops)?))
     }
 
-    pub fn hram(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::hram(ops)?))
+    pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
+        Some(Self::Memory(Address::high(ops)?))
     }
 
-    pub fn hram_c() -> Self {
-        Self::Memory(Address::HramPlusC)
+    pub fn high_c() -> Self {
+        Self::Memory(Address::HighPlusC)
     }
 
     pub fn to_source(&self) -> Source8 {
@@ -154,12 +154,12 @@ impl Source8 {
         Some(Self::Memory(Address::deref_fixed(ops)?))
     }
 
-    pub fn hram(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::hram(ops)?))
+    pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
+        Some(Self::Memory(Address::high(ops)?))
     }
 
-    pub fn hram_c() -> Self {
-        Self::Memory(Address::HramPlusC)
+    pub fn high_c() -> Self {
+        Self::Memory(Address::HighPlusC)
     }
 }
 
