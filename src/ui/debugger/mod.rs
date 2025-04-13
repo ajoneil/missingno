@@ -46,8 +46,7 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
             debugger.game_boy().cpu().program_counter,
             debugger.breakpoints()
         ))
-        .width(Length::FillPortion(1)),
-        container(video(debugger.game_boy().video())).width(Length::FillPortion(2)),
+        .width(Length::FillPortion(2)),
         column![
             cartridge(debugger.game_boy().cartridge()),
             controls(),
@@ -55,8 +54,9 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
             horizontal_rule(1),
             interrupts(debugger.game_boy()),
         ]
-        .width(Length::FillPortion(1))
-        .spacing(10)
+        .width(Length::FillPortion(2))
+        .spacing(10),
+        container(video(debugger.game_boy().video())).width(Length::FillPortion(3)),
     ]
     .height(Length::Fill)
     .spacing(20)

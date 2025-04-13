@@ -1,4 +1,7 @@
-mod control;
+mod background_and_window;
+mod palette;
+mod sprites;
+mod tile_map;
 
 use crate::{
     emulator::video::{Video, ppu::Mode},
@@ -7,11 +10,14 @@ use crate::{
 
 use iced::{
     Element, Length,
-    widget::{column, horizontal_rule, radio, row},
+    widget::{checkbox, column, horizontal_rule, radio, row},
 };
+use sprites::sprites;
+use tile_map::tile_address_mode;
 
 pub fn video(video: &Video) -> Element<'_, Message> {
     column![
+        row![checkbox("Video Enabled", video.control().video_enabled()),].spacing(10),
         row![
             mode_radio(video.mode(), Mode::BetweenFrames),
             mode_radio(video.mode(), Mode::PreparingScanline)
@@ -20,8 +26,11 @@ pub fn video(video: &Video) -> Element<'_, Message> {
             mode_radio(video.mode(), Mode::DrawingPixels),
             mode_radio(video.mode(), Mode::FinishingScanline),
         ],
+        tile_address_mode(video.control()),
         horizontal_rule(1),
-        control::control(video.control())
+        background_and_window::background_and_window(video),
+        horizontal_rule(1),
+        sprites(video)
     ]
     .spacing(10)
     .into()

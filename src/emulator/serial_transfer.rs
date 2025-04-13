@@ -19,10 +19,10 @@ pub enum Register {
     Control,
 }
 
-pub enum Clock {
-    Internal,
-    External,
-}
+// pub enum Clock {
+//     Internal,
+//     External,
+// }
 
 bitflags! {
     #[derive(Copy, Clone)]
@@ -34,16 +34,16 @@ bitflags! {
     }
 }
 
-impl Control {
-    pub fn enabled(self) -> bool {
-        self.contains(Control::ENABLE)
-    }
+// impl Control {
+//     pub fn enabled(self) -> bool {
+//         self.contains(Control::ENABLE)
+//     }
 
-    pub fn clock(self) -> Clock {
-        if self.contains(Control::INTERNAL_CLOCK) {
-            Clock::Internal
-        } else {
-            Clock::External
-        }
-    }
-}
+//     pub fn clock(self) -> Clock {
+//         if self.contains(Control::INTERNAL_CLOCK) {
+//             Clock::Internal
+//         } else {
+//             Clock::External
+//         }
+//     }
+// }

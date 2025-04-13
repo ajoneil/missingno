@@ -3,7 +3,6 @@ use core::fmt;
 #[derive(Clone, Copy)]
 pub enum Register8 {
     A,
-    F,
     B,
     C,
     D,
@@ -19,7 +18,6 @@ impl fmt::Display for Register8 {
             "{}",
             match self {
                 Self::A => "a",
-                Self::F => "f",
                 Self::B => "b",
                 Self::C => "c",
                 Self::D => "d",

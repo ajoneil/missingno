@@ -40,6 +40,9 @@ impl MappedAddress {
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
             0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
             0xff44 => Self::VideoRegister(video::Register::CurrentScanline),
+            0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
+            0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
+            0xff49 => Self::VideoRegister(video::Register::Sprite1Palette),
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
             _ => todo!("Unmapped address {:04x}", address),
@@ -49,7 +52,7 @@ impl MappedAddress {
 
 pub enum MemoryWrite {
     Write8(MappedAddress, u8),
-    Write16((MappedAddress, u8), (MappedAddress, u8)),
+    //Write16((MappedAddress, u8), (MappedAddress, u8)),
 }
 
 impl MemoryMapped {
@@ -77,10 +80,10 @@ impl MemoryMapped {
     pub fn write(&mut self, write: MemoryWrite) {
         match write {
             MemoryWrite::Write8(address, value) => self.write_mapped(address, value),
-            MemoryWrite::Write16((address1, value1), (address2, value2)) => {
-                self.write_mapped(address1, value1);
-                self.write_mapped(address2, value2);
-            }
+            // MemoryWrite::Write16((address1, value1), (address2, value2)) => {
+            //     self.write_mapped(address1, value1);
+            //     self.write_mapped(address2, value2);
+            // }
         }
     }
 

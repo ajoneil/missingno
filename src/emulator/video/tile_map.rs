@@ -1,4 +1,4 @@
-use core::{fmt, ops::RangeInclusive};
+use core::fmt;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum TileMapRegion {
@@ -6,14 +6,14 @@ pub enum TileMapRegion {
     Map9c00,
 }
 
-impl TileMapRegion {
-    pub fn range(self) -> RangeInclusive<u16> {
-        match self {
-            Self::Map9800 => 0x9800..=0x9bff,
-            Self::Map9c00 => 0x9c00..=0x9fff,
-        }
-    }
-}
+// impl TileMapRegion {
+//     pub fn range(self) -> RangeInclusive<u16> {
+//         match self {
+//             Self::Map9800 => 0x9800..=0x9bff,
+//             Self::Map9c00 => 0x9c00..=0x9fff,
+//         }
+//     }
+// }
 
 impl fmt::Display for TileMapRegion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

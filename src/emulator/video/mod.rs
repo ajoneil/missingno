@@ -1,4 +1,5 @@
 pub mod control;
+pub mod palette;
 pub mod ppu;
 pub mod sprite;
 pub mod tile;
@@ -6,6 +7,7 @@ pub mod tile_map;
 
 use bitflags::bitflags;
 use control::{Control, ControlFlags};
+use palette::{PaletteMap, Palettes};
 use ppu::PixelProcessingUnit;
 
 use super::cpu::cycles::Cycles;
@@ -16,6 +18,9 @@ pub enum Register {
     BackgroundViewportX,
     BackgroundViewportY,
     CurrentScanline,
+    BackgroundPalette,
+    Sprite0Palette,
+    Sprite1Palette,
 }
 
 struct BackgroundViewportPosition {
@@ -23,12 +28,12 @@ struct BackgroundViewportPosition {
     y: u8,
 }
 
-pub enum Interrupt {
-    YCoordinate,
-    PreparingScanline,
-    BetweenFrames,
-    FinishingScanline,
-}
+// pub enum Interrupt {
+//     YCoordinate,
+//     PreparingScanline,
+//     BetweenFrames,
+//     FinishingScanline,
+// }
 
 bitflags! {
     pub struct InterruptFlags: u8 {
@@ -48,8 +53,9 @@ struct Interrupts {
 pub struct Video {
     control: Control,
     ppu: PixelProcessingUnit,
-    background_viewport: BackgroundViewportPosition,
     interrupts: Interrupts,
+    background_viewport: BackgroundViewportPosition,
+    palettes: Palettes,
 }
 
 impl Video {
@@ -63,6 +69,7 @@ impl Video {
                 current_line_compare: 0,
             },
             background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
+            palettes: Palettes::default(),
         }
     }
 
@@ -82,6 +89,9 @@ impl Video {
             Register::BackgroundViewportX => self.background_viewport.x,
             Register::BackgroundViewportY => self.background_viewport.y,
             Register::CurrentScanline => self.ppu.current_line(),
+            Register::BackgroundPalette => self.palettes.background.0,
+            Register::Sprite0Palette => self.palettes.sprite0.0,
+            Register::Sprite1Palette => self.palettes.sprite1.0,
         }
     }
 
@@ -91,6 +101,9 @@ impl Video {
             Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
             Register::BackgroundViewportX => self.background_viewport.x = value,
             Register::BackgroundViewportY => self.background_viewport.y = value,
+            Register::BackgroundPalette => self.palettes.background = PaletteMap(value),
+            Register::Sprite0Palette => self.palettes.sprite0 = PaletteMap(value),
+            Register::Sprite1Palette => self.palettes.sprite1 = PaletteMap(value),
             Register::CurrentScanline => unreachable!(),
         }
     }
@@ -105,5 +118,9 @@ impl Video {
 
     pub fn step(&mut self, cycles: Cycles) {
         self.ppu.step(cycles);
+    }
+
+    pub fn palettes(&self) -> &Palettes {
+        &self.palettes
     }
 }

@@ -61,7 +61,6 @@ impl Cpu {
     pub fn get_register8(&self, register: Register8) -> u8 {
         match register {
             Register8::A => self.a,
-            Register8::F => self.flags.bits(),
             Register8::B => self.b,
             Register8::C => self.c,
             Register8::D => self.d,
@@ -74,7 +73,6 @@ impl Cpu {
     fn set_register8(&mut self, register: Register8, value: u8) {
         match register {
             Register8::A => self.a = value,
-            Register8::F => self.flags = Flags::from_bits_retain(value),
             Register8::B => self.b = value,
             Register8::C => self.c = value,
             Register8::D => self.d = value,
