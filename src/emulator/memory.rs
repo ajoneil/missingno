@@ -94,7 +94,7 @@ impl MemoryMapped {
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
-            MappedAddress::Cartridge(_) => todo!(),
+            MappedAddress::Cartridge(address) => self.cartridge.write(address, value),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),

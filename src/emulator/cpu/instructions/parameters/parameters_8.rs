@@ -36,6 +36,13 @@ impl Target8 {
         Self::Register(Register8::L)
     }
 
+    pub fn address(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
+        Some(Self::Memory(Address::Fixed(u16::from_le_bytes([
+            ops.next()?,
+            ops.next()?,
+        ]))))
+    }
+
     pub fn deref_bc() -> Self {
         Self::Memory(Address::deref_bc())
     }
@@ -54,10 +61,6 @@ impl Target8 {
 
     pub fn deref_hl_dec() -> Self {
         Self::Memory(Address::deref_hl_dec())
-    }
-
-    pub fn deref_fixed(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::deref_fixed(ops)?))
     }
 
     pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
@@ -129,6 +132,13 @@ impl Source8 {
         Self::Register(Register8::L)
     }
 
+    pub fn address(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
+        Some(Self::Memory(Address::Fixed(u16::from_le_bytes([
+            ops.next()?,
+            ops.next()?,
+        ]))))
+    }
+
     pub fn deref_bc() -> Self {
         Self::Memory(Address::deref_bc())
     }
@@ -147,10 +157,6 @@ impl Source8 {
 
     pub fn deref_hl_dec() -> Self {
         Self::Memory(Address::deref_hl_dec())
-    }
-
-    pub fn deref_fixed(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::Memory(Address::deref_fixed(ops)?))
     }
 
     pub fn high(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {

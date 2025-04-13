@@ -81,8 +81,6 @@ impl Cpu {
                     self.set_register16(Register16::Hl, address - 1);
                     (value, Cycles(1))
                 }
-
-                Address::DereferenceFixed(_) => todo!(),
             },
         }
     }
@@ -94,7 +92,7 @@ impl Cpu {
                 OpResult::cycles(0)
             }
             Target8::Memory(address) => match address {
-                Address::Fixed(_) => todo!(),
+                Address::Fixed(address) => OpResult::write8(address, value, Cycles(3)),
                 Address::Relative(_) => todo!(),
                 Address::High(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
                 Address::HighPlusC => todo!(),
@@ -115,8 +113,6 @@ impl Cpu {
                     self.set_register16(Register16::Hl, address - 1);
                     OpResult::write8(address, value, Cycles(1))
                 }
-
-                Address::DereferenceFixed(_) => todo!(),
             },
         }
     }

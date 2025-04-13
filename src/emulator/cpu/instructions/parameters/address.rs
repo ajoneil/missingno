@@ -11,19 +11,11 @@ pub enum Address {
     Dereference(Register16),
     DereferenceHlAndIncrement,
     DereferenceHlAndDecrement,
-    DereferenceFixed(u16),
 }
 
 impl Address {
     pub fn fixed(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
         Some(Self::Fixed(u16::from_le_bytes([ops.next()?, ops.next()?])))
-    }
-
-    pub fn deref_fixed(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
-        Some(Self::DereferenceFixed(u16::from_le_bytes([
-            ops.next()?,
-            ops.next()?,
-        ])))
     }
 
     pub fn relative(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
@@ -70,7 +62,6 @@ impl fmt::Display for Address {
             Self::Dereference(register) => write!(f, "[${}]", register),
             Self::DereferenceHlAndIncrement => write!(f, "[$hl+]"),
             Self::DereferenceHlAndDecrement => write!(f, "[$hl-]"),
-            Self::DereferenceFixed(address) => write!(f, "[${:04x}]", address),
         }
     }
 }

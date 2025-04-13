@@ -33,13 +33,9 @@ impl Cartridge {
         self.rom[address as usize]
     }
 
-    // pub fn read(&self, address: u16) -> u8 {
-    //     self.mbc.read(address, self.rom.as_slice())
-    // }
-
-    // pub fn write(&mut self, address: u16, val: u8) {
-    //     self.mbc.write(address, val)
-    // }
+    pub fn write(&self, _address: u16, _value: u8) {
+        // TODO: MBC
+    }
 }
 
 // impl Header {

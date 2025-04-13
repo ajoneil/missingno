@@ -92,9 +92,8 @@ impl Load {
             0xf0 => Self::Load8(Target8::a(), Source8::high(ops)?),
             0xe2 => Self::Load8(Target8::high_c(), Source8::a()),
             0xf2 => Self::Load8(Target8::a(), Source8::high_c()),
-            0xea => Self::Load8(Target8::deref_fixed(ops)?, Source8::a()),
-            0xfa => Self::Load8(Target8::a(), Source8::deref_fixed(ops)?),
-
+            0xea => Self::Load8(Target8::address(ops)?, Source8::a()),
+            0xfa => Self::Load8(Target8::a(), Source8::address(ops)?),
             0x01 => Self::Load16(Target16::bc(), Source16::constant(ops)?),
             0x11 => Self::Load16(Target16::de(), Source16::constant(ops)?),
             0x21 => Self::Load16(Target16::hl(), Source16::constant(ops)?),
