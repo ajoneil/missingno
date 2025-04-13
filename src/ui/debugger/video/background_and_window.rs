@@ -13,10 +13,10 @@ pub fn background_and_window(video: &Video) -> Element<'static, Message> {
     column![
         row![
             checkbox(
-                "Background & Window Enabled",
+                "Background & Window",
                 video.control().background_and_window_enabled()
             ),
-            checkbox("Window Enabled", video.control().window_enabled()),
+            checkbox("Window", video.control().window_enabled()),
         ]
         .spacing(10),
         row![

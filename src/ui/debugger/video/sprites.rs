@@ -11,15 +11,15 @@ use crate::{
 
 pub fn sprites(video: &Video) -> Element<'static, Message> {
     column![
-        checkbox("Sprites enabled", video.control().sprites_enabled()),
+        checkbox("Sprites", video.control().sprites_enabled()),
         sprite_size(video.control().sprite_size()),
         row![
-            text("Sprite Palette 0"),
+            text("Palette 0"),
             palette3(&video.palettes().sprite0, &Palette::MONOCHROME_GREEN)
         ]
         .spacing(10),
         row![
-            text("Sprite Palette 1"),
+            text("Palette 1"),
             palette3(&video.palettes().sprite1, &Palette::MONOCHROME_GREEN)
         ]
         .spacing(10)
@@ -30,7 +30,7 @@ pub fn sprites(video: &Video) -> Element<'static, Message> {
 
 fn sprite_size(size: SpriteSize) -> Element<'static, Message> {
     row![
-        text("Sprite Size"),
+        text("Size"),
         radio(
             SpriteSize::Single.to_string(),
             SpriteSize::Single,

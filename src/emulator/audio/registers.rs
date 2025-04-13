@@ -1,11 +1,12 @@
 use bitflags::bitflags;
 
-use super::Audio;
+use super::{Audio, volume::Volume};
 
 #[derive(PartialEq, Eq)]
 pub enum Register {
     Control,
     Panning,
+    Volume,
 }
 
 impl Audio {
@@ -73,6 +74,7 @@ impl Audio {
 
                 value.bits()
             }
+            Register::Volume => (self.volume_left.0 << 4) & self.volume_right.0,
         }
     }
 
@@ -103,6 +105,10 @@ impl Audio {
                 self.channels.ch3.channel.output_right = value.contains(PanFlags::CHANNEL_3_RIGHT);
                 self.channels.ch4.channel.output_left = value.contains(PanFlags::CHANNEL_4_LEFT);
                 self.channels.ch4.channel.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
+            }
+            Register::Volume => {
+                self.volume_left = Volume((value >> 4) & 0b111);
+                self.volume_right = Volume(value & 0b111);
             }
         }
     }

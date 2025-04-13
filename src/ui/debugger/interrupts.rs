@@ -7,10 +7,7 @@ use iced::{
 
 pub fn interrupts(game_boy: &GameBoy) -> Element<'_, Message> {
     column![
-        checkbox(
-            "Interrupts Master Enable",
-            game_boy.cpu().interrupts_enabled()
-        ),
+        checkbox("Interrupts", game_boy.cpu().interrupts_enabled()),
         enabled(game_boy),
         requested(game_boy),
     ]

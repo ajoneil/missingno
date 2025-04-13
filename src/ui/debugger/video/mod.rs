@@ -17,7 +17,7 @@ use tile_map::tile_address_mode;
 
 pub fn video(video: &Video) -> Element<'_, Message> {
     column![
-        row![checkbox("Video Enabled", video.control().video_enabled()),].spacing(10),
+        row![checkbox("Video", video.control().video_enabled()),].spacing(10),
         row![
             mode_radio(video.mode(), Mode::BetweenFrames),
             mode_radio(video.mode(), Mode::PreparingScanline)
