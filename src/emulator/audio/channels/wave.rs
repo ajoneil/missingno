@@ -1,19 +1,23 @@
+use super::Channel;
+
 pub struct WaveChannel {
-    enabled: bool,
+    pub channel: Channel,
 }
 
 impl Default for WaveChannel {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            channel: Channel {
+                enabled: false,
+                output_left: true,
+                output_right: false,
+            },
+        }
     }
 }
 
 impl WaveChannel {
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn disable(&mut self) {
-        self.enabled = false;
+    pub fn reset(&mut self) {
+        self.channel = Channel::disabled();
     }
 }

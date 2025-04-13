@@ -1,19 +1,23 @@
+use super::Channel;
+
 pub struct NoiseChannel {
-    enabled: bool,
+    pub channel: Channel,
 }
 
 impl Default for NoiseChannel {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            channel: Channel {
+                enabled: false,
+                output_left: true,
+                output_right: true,
+            },
+        }
     }
 }
 
 impl NoiseChannel {
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn disable(&mut self) {
-        self.enabled = false;
+    pub fn reset(&mut self) {
+        self.channel = Channel::disabled()
     }
 }

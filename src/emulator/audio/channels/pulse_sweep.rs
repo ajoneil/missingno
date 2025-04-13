@@ -1,19 +1,23 @@
+use super::Channel;
+
 pub struct PulseSweepChannel {
-    enabled: bool,
+    pub channel: Channel,
 }
 
 impl Default for PulseSweepChannel {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            channel: Channel {
+                enabled: true,
+                output_left: true,
+                output_right: true,
+            },
+        }
     }
 }
 
 impl PulseSweepChannel {
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn disable(&mut self) {
-        self.enabled = false;
+    pub fn reset(&mut self) {
+        self.channel = Channel::disabled();
     }
 }

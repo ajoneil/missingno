@@ -36,6 +36,7 @@ impl MappedAddress {
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
+            0xff25 => Self::AudioRegister(audio::Register::Panning),
             0xff26 => Self::AudioRegister(audio::Register::Control),
             0xff40 => Self::VideoRegister(video::Register::Control),
             0xff41 => Self::VideoRegister(video::Register::Status),

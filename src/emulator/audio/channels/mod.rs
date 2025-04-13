@@ -14,3 +14,19 @@ pub struct Channels {
     pub ch3: WaveChannel,
     pub ch4: NoiseChannel,
 }
+
+pub struct Channel {
+    pub enabled: bool,
+    pub output_left: bool,
+    pub output_right: bool,
+}
+
+impl Channel {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            output_left: false,
+            output_right: false,
+        }
+    }
+}
