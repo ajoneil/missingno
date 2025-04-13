@@ -1,12 +1,12 @@
-use crate::emulation::{
-    Cpu, CpuFlags, MemoryMapped,
+use super::OpResult;
+use crate::emulator::{
+    Cpu, MemoryMapped,
     cpu::{
+        self,
         cycles::Cycles,
         instructions::{Arithmetic, Arithmetic8},
     },
 };
-
-use super::OpResult;
 
 impl Cpu {
     pub fn execute_arithmetic(
@@ -21,12 +21,12 @@ impl Cpu {
                     let value = original_value.wrapping_add(1);
                     let result = self.set8(target, value);
 
-                    self.flags.set(CpuFlags::ZERO, value == 0);
-                    self.flags.insert(CpuFlags::NEGATIVE);
+                    self.flags.set(cpu::Flags::ZERO, value == 0);
+                    self.flags.insert(cpu::Flags::NEGATIVE);
                     // The half carry flag is set if we carry from bit 3 to 4
                     // i.e. xxxx1111 + 1 = xxxx0000
                     self.flags
-                        .set(CpuFlags::HALF_CARRY, value & 0b1111 == 0b0000);
+                        .set(cpu::Flags::HALF_CARRY, value & 0b1111 == 0b0000);
 
                     result.add_cycles(Cycles(1) + fetch_cycles)
                 }
@@ -36,12 +36,12 @@ impl Cpu {
                     let value = original_value.wrapping_sub(1);
                     let result = self.set8(target, value);
 
-                    self.flags.set(CpuFlags::ZERO, value == 0);
-                    self.flags.insert(CpuFlags::NEGATIVE);
+                    self.flags.set(cpu::Flags::ZERO, value == 0);
+                    self.flags.insert(cpu::Flags::NEGATIVE);
                     // The half carry flag is set if we carry from bit 4 to 3
                     // i.e. xxx10000 - 1 = xxx01111
                     self.flags
-                        .set(CpuFlags::HALF_CARRY, value & 0b1111 == 0b1111);
+                        .set(cpu::Flags::HALF_CARRY, value & 0b1111 == 0b1111);
 
                     result.add_cycles(Cycles(1) + fetch_cycles)
                 }

@@ -1,5 +1,8 @@
 use super::OpResult;
-use crate::emulation::{Cpu, CpuFlags, MemoryMapped, cpu::instructions::Bitwise};
+use crate::emulator::{
+    Cpu, MemoryMapped,
+    cpu::{self, instructions::Bitwise},
+};
 
 impl Cpu {
     pub fn execute_bitwise(&mut self, instruction: Bitwise, memory: &MemoryMapped) -> OpResult {
@@ -9,9 +12,9 @@ impl Cpu {
                 self.a = self.a & value;
 
                 self.flags = if self.a == 0 {
-                    CpuFlags::ZERO & CpuFlags::HALF_CARRY
+                    cpu::Flags::ZERO & cpu::Flags::HALF_CARRY
                 } else {
-                    CpuFlags::HALF_CARRY
+                    cpu::Flags::HALF_CARRY
                 };
 
                 OpResult::cycles(1).add_cycles(fetch_cycles)
@@ -22,9 +25,9 @@ impl Cpu {
                 self.a = self.a | value;
 
                 self.flags = if self.a == 0 {
-                    CpuFlags::ZERO
+                    cpu::Flags::ZERO
                 } else {
-                    CpuFlags::empty()
+                    cpu::Flags::empty()
                 };
 
                 OpResult::cycles(1).add_cycles(fetch_cycles)
@@ -35,9 +38,9 @@ impl Cpu {
                 self.a = self.a ^ value;
 
                 self.flags = if self.a == 0 {
-                    CpuFlags::ZERO
+                    cpu::Flags::ZERO
                 } else {
-                    CpuFlags::empty()
+                    cpu::Flags::empty()
                 };
 
                 OpResult::cycles(1).add_cycles(fetch_cycles)
@@ -45,7 +48,7 @@ impl Cpu {
 
             Bitwise::ComplementA => {
                 self.a = !self.a;
-                self.flags = self.flags & CpuFlags::NEGATIVE & CpuFlags::HALF_CARRY;
+                self.flags = self.flags & cpu::Flags::NEGATIVE & cpu::Flags::HALF_CARRY;
                 OpResult::cycles(1)
             }
         }

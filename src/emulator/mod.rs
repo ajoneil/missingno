@@ -1,16 +1,16 @@
-mod cartridge;
+pub mod cartridge;
 pub mod cpu;
-mod execute;
-mod interrupts;
-mod memory;
-mod serial_transfer;
-mod video;
+pub mod execute;
+pub mod interrupts;
+pub mod memory;
+pub mod serial_transfer;
+pub mod video;
 // mod joypad;
 // mod mbc;
 // mod timers;
 
-pub use cartridge::Cartridge;
-pub use cpu::{Cpu, Flags as CpuFlags, Instruction};
+use cartridge::Cartridge;
+use cpu::Cpu;
 use memory::Ram;
 use video::Video;
 
@@ -51,5 +51,9 @@ impl GameBoy {
 
     pub fn cpu(&self) -> &Cpu {
         &self.cpu
+    }
+
+    pub fn interrupts(&self) -> &interrupts::Registers {
+        &self.mapped.interrupts
     }
 }

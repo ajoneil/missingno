@@ -1,9 +1,8 @@
-use crate::emulation::{
+use super::OpResult;
+use crate::emulator::{
     Cpu,
     cpu::{InterruptMasterEnable, instructions::Interrupt},
 };
-
-use super::OpResult;
 
 impl Cpu {
     pub fn execute_interrupt(&mut self, instruction: Interrupt) -> OpResult {

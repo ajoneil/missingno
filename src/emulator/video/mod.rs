@@ -1,6 +1,8 @@
+mod control;
 mod ppu;
 
 use bitflags::bitflags;
+use control::Control;
 use ppu::PixelProcessingUnit;
 
 struct BackgroundViewportPosition {
@@ -9,9 +11,10 @@ struct BackgroundViewportPosition {
 }
 
 pub enum Register {
+    Control,
+    Status,
     BackgroundViewportX,
     BackgroundViewportY,
-    Status,
 }
 
 pub enum Interrupt {
@@ -37,6 +40,7 @@ struct Interrupts {
 }
 
 pub struct Video {
+    control: Control,
     ppu: PixelProcessingUnit,
     background_viewport: BackgroundViewportPosition,
     interrupts: Interrupts,
@@ -45,6 +49,7 @@ pub struct Video {
 impl Video {
     pub fn new() -> Self {
         Self {
+            control: Control::new(),
             ppu: PixelProcessingUnit::new(),
             interrupts: Interrupts {
                 // The first bit is unused, but is set at boot time
@@ -57,8 +62,7 @@ impl Video {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::BackgroundViewportX => self.background_viewport.x,
-            Register::BackgroundViewportY => self.background_viewport.y,
+            Register::Control => self.control.bits(),
             Register::Status => {
                 let line_compare =
                     if self.interrupts.current_line_compare == self.ppu.current_line() {
@@ -69,14 +73,18 @@ impl Video {
 
                 self.interrupts.flags.bits() & line_compare & self.ppu.mode() as u8
             }
+
+            Register::BackgroundViewportX => self.background_viewport.x,
+            Register::BackgroundViewportY => self.background_viewport.y,
         }
     }
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
+            Register::Control => self.control = Control::from_bits_retain(value),
+            Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
             Register::BackgroundViewportX => self.background_viewport.x = value,
             Register::BackgroundViewportY => self.background_viewport.y = value,
-            Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
         }
     }
 }

@@ -1,10 +1,8 @@
 use crate::{
-    emulation::{
-        Cpu, CpuFlags,
-        cpu::{InterruptMasterEnable, Register8, Register16},
-    },
+    emulator::cpu::{self, Cpu, Register8, Register16},
     ui::Message,
 };
+
 use iced::{
     Alignment, Element, Font, Length, Padding,
     alignment::Vertical,
@@ -15,14 +13,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
     column![
         register16("Program Counter", cpu.program_counter),
         register16("Stack Pointer", cpu.stack_pointer),
-        container(column![
-            checkbox("Halted", cpu.halted),
-            checkbox(
-                "Interrupt master enable",
-                cpu.interrupt_master_enable != InterruptMasterEnable::Disabled
-            ),
-        ])
-        .align_right(Length::Fill),
+        container(column![checkbox("Halted", cpu.halted),]).align_right(Length::Fill),
         horizontal_rule(1),
         row![register_pair(
             cpu,
@@ -51,12 +42,12 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         horizontal_rule(1),
         row![
             column![
-                flag("zero", cpu.flags, CpuFlags::ZERO),
-                flag("carry", cpu.flags, CpuFlags::CARRY)
+                flag("zero", cpu.flags, cpu::Flags::ZERO),
+                flag("carry", cpu.flags, cpu::Flags::CARRY)
             ],
             column![
-                flag("negative", cpu.flags, CpuFlags::NEGATIVE),
-                flag("half-carry", cpu.flags, CpuFlags::HALF_CARRY),
+                flag("negative", cpu.flags, cpu::Flags::NEGATIVE),
+                flag("half-carry", cpu.flags, cpu::Flags::HALF_CARRY),
             ]
         ]
         .spacing(10),
@@ -121,6 +112,6 @@ fn register16(label: &str, value: u16) -> Element<'_, Message> {
     .into()
 }
 
-fn flag(label: &str, flags: CpuFlags, flag: CpuFlags) -> Element<'_, Message> {
+fn flag(label: &str, flags: cpu::Flags, flag: cpu::Flags) -> Element<'_, Message> {
     container(checkbox(label, flags.contains(flag))).into()
 }

@@ -1,4 +1,4 @@
-use crate::emulation::{
+use crate::emulator::{
     MemoryMapped,
     memory::{MappedAddress, MemoryWrite},
 };

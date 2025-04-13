@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 mod debugger;
-mod emulation;
+mod emulator;
 mod ui;
 
 fn main() -> iced::Result {

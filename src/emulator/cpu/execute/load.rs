@@ -1,5 +1,5 @@
 use super::OpResult;
-use crate::emulation::{
+use crate::emulator::{
     Cpu, MemoryMapped,
     cpu::{cycles::Cycles, instructions::Load},
 };

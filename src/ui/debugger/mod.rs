@@ -1,11 +1,15 @@
-use crate::{
-    debugger::Debugger,
-    emulation::Cartridge,
-    ui::{self, cpu::cpu, instructions::instructions},
-};
+mod cpu;
+mod instructions;
+mod interrupts;
+
+use crate::{debugger::Debugger, emulator::cartridge::Cartridge, ui};
+use cpu::cpu;
+use instructions::instructions;
+use interrupts::interrupts;
+
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, text},
+    widget::{button, column, container, horizontal_rule, row, text},
 };
 
 #[derive(Debug, Clone)]
@@ -43,8 +47,10 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
         .width(Length::FillPortion(2)),
         column![
             cartridge(debugger.game_boy().cartridge()),
+            controls(),
             cpu(debugger.game_boy().cpu()),
-            controls()
+            horizontal_rule(1),
+            interrupts(debugger.game_boy()),
         ]
         .width(Length::FillPortion(1))
         .spacing(10)

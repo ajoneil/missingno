@@ -118,4 +118,8 @@ impl Cpu {
             }
         }
     }
+
+    pub fn interrupts_enabled(&self) -> bool {
+        self.interrupt_master_enable != InterruptMasterEnable::Disabled
+    }
 }

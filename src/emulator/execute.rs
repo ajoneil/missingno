@@ -1,6 +1,6 @@
 use super::{
-    GameBoy, Instruction,
-    cpu::{InterruptMasterEnable, execute::OpResult},
+    GameBoy,
+    cpu::{Instruction, InterruptMasterEnable, execute::OpResult},
     interrupts::Interrupt,
 };
 

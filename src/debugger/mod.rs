@@ -1,4 +1,5 @@
-use crate::emulation::GameBoy;
+use crate::emulator::GameBoy;
+
 use std::collections::HashSet;
 
 pub struct Debugger {

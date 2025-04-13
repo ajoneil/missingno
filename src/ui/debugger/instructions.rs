@@ -1,16 +1,14 @@
-use std::collections::HashSet;
-
 use crate::{
-    emulation::{Cartridge, Instruction},
-    ui::Message,
+    emulator::{cartridge::Cartridge, cpu::Instruction},
+    ui::{Message, debugger},
 };
+
 use iced::{
     Element, Font, Length,
     alignment::Vertical,
     widget::{Column, button, row, text},
 };
-
-use super::debugger;
+use std::collections::HashSet;
 
 struct InstructionsIterator<'a> {
     address: u16,

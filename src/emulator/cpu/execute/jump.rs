@@ -1,4 +1,5 @@
-use crate::emulation::{
+use super::OpResult;
+use crate::emulator::{
     Cpu,
     cpu::{
         Register16,
@@ -6,8 +7,6 @@ use crate::emulation::{
         instructions::{Address, Jump, jump},
     },
 };
-
-use super::OpResult;
 
 impl Cpu {
     pub fn execute_jump(&mut self, instruction: Jump) -> OpResult {

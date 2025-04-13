@@ -1,4 +1,5 @@
-use crate::emulation::cpu::Register16;
+use crate::emulator::cpu::Register16;
+
 use core::fmt;
 
 #[derive(Copy, Clone)]

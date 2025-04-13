@@ -1,8 +1,11 @@
+mod debugger;
+
 use crate::{
     debugger::Debugger,
-    emulation::{Cartridge, GameBoy},
+    emulator::{GameBoy, cartridge::Cartridge},
     ui::debugger::debugger,
 };
+
 use iced::{
     Element,
     Length::Fill,
@@ -11,10 +14,6 @@ use iced::{
 };
 use rfd::{AsyncFileDialog, FileHandle};
 use std::{fs, path::PathBuf};
-
-mod cpu;
-mod debugger;
-mod instructions;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
