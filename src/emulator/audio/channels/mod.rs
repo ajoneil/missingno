@@ -8,6 +8,14 @@ use pulse::PulseChannel;
 use pulse_sweep::PulseSweepChannel;
 use wave::WaveChannel;
 
+#[derive(PartialEq, Eq, Debug)]
+pub enum Channel {
+    Channel1,
+    Channel2,
+    Channel3,
+    Channel4,
+}
+
 pub struct Channels {
     pub ch1: PulseSweepChannel,
     pub ch2: PulseChannel,
@@ -15,13 +23,13 @@ pub struct Channels {
     pub ch4: NoiseChannel,
 }
 
-pub struct Channel {
+pub struct Enabled {
     pub enabled: bool,
     pub output_left: bool,
     pub output_right: bool,
 }
 
-impl Channel {
+impl Enabled {
     pub fn disabled() -> Self {
         Self {
             enabled: false,

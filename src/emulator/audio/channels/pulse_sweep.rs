@@ -1,23 +1,27 @@
-use super::Channel;
+use super::Enabled;
+use crate::emulator::audio::registers::VolumeAndEnvelope;
 
 pub struct PulseSweepChannel {
-    pub channel: Channel,
+    pub enabled: Enabled,
+    pub volume_and_envelope: VolumeAndEnvelope,
 }
 
 impl Default for PulseSweepChannel {
     fn default() -> Self {
         Self {
-            channel: Channel {
+            enabled: Enabled {
                 enabled: true,
                 output_left: true,
                 output_right: true,
             },
+            volume_and_envelope: VolumeAndEnvelope(0),
         }
     }
 }
 
 impl PulseSweepChannel {
     pub fn reset(&mut self) {
-        self.channel = Channel::disabled();
+        self.enabled = Enabled::disabled();
+        self.volume_and_envelope = VolumeAndEnvelope(0);
     }
 }

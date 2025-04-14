@@ -1,39 +1,75 @@
 use crate::{
-    emulator::audio::channels::{
-        Channel, noise::NoiseChannel, pulse::PulseChannel, pulse_sweep::PulseSweepChannel,
-        wave::WaveChannel,
+    emulator::audio::{
+        channels::{
+            Enabled, noise::NoiseChannel, pulse::PulseChannel, pulse_sweep::PulseSweepChannel,
+            wave::WaveChannel,
+        },
+        registers::{EnvelopeDirection, VolumeAndEnvelope},
     },
     ui::Message,
 };
 use iced::{
     Element, Length,
-    widget::{checkbox, column, row},
+    widget::{checkbox, column, row, text},
 };
 
 pub fn ch1(channel: &PulseSweepChannel) -> Element<'_, Message> {
-    channel_shared("Channel 1", &channel.channel)
+    column![
+        enabled("Channel 1", &channel.enabled),
+        volume_and_envelope(channel.volume_and_envelope)
+    ]
+    .into()
 }
 
 pub fn ch2(channel: &PulseChannel) -> Element<'_, Message> {
-    channel_shared("Channel 2", &channel.channel)
+    column![
+        enabled("Channel 2", &channel.enabled),
+        volume_and_envelope(channel.volume_and_envelope)
+    ]
+    .into()
 }
 
 pub fn ch3(channel: &WaveChannel) -> Element<'_, Message> {
-    channel_shared("Channel 3", &channel.channel)
+    column![
+        enabled("Channel 3", &channel.enabled),
+        text!("Vol {}%", (channel.volume.volume() * 100.0) as u8)
+    ]
+    .into()
 }
 
 pub fn ch4(channel: &NoiseChannel) -> Element<'_, Message> {
-    channel_shared("Channel 4", &channel.channel)
+    column![
+        enabled("Channel 4", &channel.enabled),
+        volume_and_envelope(channel.volume_and_envelope)
+    ]
+    .into()
 }
 
-pub fn channel_shared(label: &str, channel: &Channel) -> Element<'static, Message> {
+pub fn enabled(label: &str, enabled: &Enabled) -> Element<'static, Message> {
     column![
-        checkbox(label, channel.enabled),
+        checkbox(label, enabled.enabled),
         row![
-            checkbox("Left", channel.output_left).width(Length::Fill),
-            checkbox("Right", channel.output_right).width(Length::Fill)
+            checkbox("Left", enabled.output_left).width(Length::Fill),
+            checkbox("Right", enabled.output_right).width(Length::Fill)
         ]
     ]
     .width(Length::Fill)
+    .into()
+}
+
+fn volume_and_envelope(register: VolumeAndEnvelope) -> Element<'static, Message> {
+    if register.sweep_pace() == 0 {
+        text!("Vol static")
+    } else {
+        text(format!(
+            "Vol {} from {}%@{}Hz",
+            match register.direction() {
+                EnvelopeDirection::Increase => "up",
+                EnvelopeDirection::Decrease => "down",
+            },
+            (register.initial_volume_percent() * 100.0) as u8,
+            64 / register.sweep_pace()
+        ))
+    }
     .into()
 }
