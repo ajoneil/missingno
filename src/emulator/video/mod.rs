@@ -2,7 +2,7 @@ pub mod control;
 pub mod memory;
 pub mod palette;
 pub mod ppu;
-pub mod sprite;
+pub mod sprites;
 pub mod tile_maps;
 pub mod tiles;
 

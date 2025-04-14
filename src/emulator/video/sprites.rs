@@ -1,5 +1,17 @@
 use core::fmt;
 
+#[derive(Clone, Copy)]
+pub struct Sprite(pub [u8; 4]);
+
+impl Sprite {
+    pub fn new() -> Self {
+        Self([0; 4])
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct SpriteId(pub u8);
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum SpriteSize {
     Single,

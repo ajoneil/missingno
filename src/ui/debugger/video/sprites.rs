@@ -5,7 +5,7 @@ use iced::{
 
 use super::palette::palette3;
 use crate::{
-    emulator::video::{Video, palette::Palette, sprite::SpriteSize},
+    emulator::video::{Video, palette::Palette, sprites::SpriteSize},
     ui::Message,
 };
 

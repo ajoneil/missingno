@@ -1,4 +1,5 @@
 use super::{
+    sprites::{Sprite, SpriteId},
     tile_maps::{TileMap, TileMapId},
     tiles::{TileBlock, TileBlockId},
 };
@@ -6,6 +7,7 @@ use super::{
 pub struct VideoMemory {
     tiles: [TileBlock; 3],
     tile_maps: [TileMap; 2],
+    sprites: [Sprite; 40],
 }
 
 impl VideoMemory {
@@ -13,6 +15,7 @@ impl VideoMemory {
         Self {
             tiles: [TileBlock::new(); 3],
             tile_maps: [TileMap::new(); 2],
+            sprites: [Sprite::new(); 40],
         }
     }
 
@@ -23,6 +26,9 @@ impl VideoMemory {
             }
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize]
+            }
+            MappedAddress::Sprite(SpriteAddress { sprite, offset }) => {
+                self.sprites[sprite.0 as usize].0[offset as usize]
             }
         }
     }
@@ -35,6 +41,9 @@ impl VideoMemory {
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize] = value;
             }
+            MappedAddress::Sprite(SpriteAddress { sprite, offset }) => {
+                self.sprites[sprite.0 as usize].0[offset as usize] = value;
+            }
         }
     }
 
@@ -46,6 +55,7 @@ impl VideoMemory {
 pub enum MappedAddress {
     Tile(TileAddress),
     TileMap(TileMapAddress),
+    Sprite(SpriteAddress),
 }
 
 pub struct TileAddress {
@@ -56,6 +66,11 @@ pub struct TileAddress {
 pub struct TileMapAddress {
     map: TileMapId,
     offset: u16,
+}
+
+pub struct SpriteAddress {
+    sprite: SpriteId,
+    offset: u8,
 }
 
 impl MappedAddress {
@@ -80,6 +95,10 @@ impl MappedAddress {
             0x9c00..=0x9fff => Self::TileMap(TileMapAddress {
                 map: TileMapId(1),
                 offset: address - 0x9c00,
+            }),
+            0xfe00..=0xfe9f => Self::Sprite(SpriteAddress {
+                sprite: SpriteId(((address - 0xfe00) / 4) as u8),
+                offset: ((address - 0xfe00) % 4) as u8,
             }),
             _ => unreachable!(),
         }
