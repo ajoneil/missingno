@@ -1,14 +1,17 @@
 pub mod control;
+pub mod memory;
 pub mod palette;
 pub mod ppu;
 pub mod sprite;
-pub mod tile;
-pub mod tile_map;
+pub mod tile_maps;
+pub mod tiles;
 
 use bitflags::bitflags;
 use control::{Control, ControlFlags};
+use memory::VideoMemory;
 use palette::{PaletteMap, Palettes};
 use ppu::PixelProcessingUnit;
+use tiles::{TileBlock, TileBlockId};
 
 use super::cpu::cycles::Cycles;
 
@@ -56,6 +59,7 @@ pub struct Video {
     interrupts: Interrupts,
     background_viewport: BackgroundViewportPosition,
     palettes: Palettes,
+    memory: VideoMemory,
 }
 
 impl Video {
@@ -70,6 +74,7 @@ impl Video {
             },
             background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
             palettes: Palettes::default(),
+            memory: VideoMemory::new(),
         }
     }
 
@@ -108,6 +113,14 @@ impl Video {
         }
     }
 
+    pub fn read_memory(&self, address: memory::MappedAddress) -> u8 {
+        self.memory.read(address)
+    }
+
+    pub fn write_memory(&mut self, address: memory::MappedAddress, value: u8) {
+        self.memory.write(address, value);
+    }
+
     pub fn mode(&self) -> ppu::Mode {
         self.ppu.mode()
     }
@@ -122,5 +135,9 @@ impl Video {
 
     pub fn palettes(&self) -> &Palettes {
         &self.palettes
+    }
+
+    pub fn tile_block(&self, block: TileBlockId) -> &TileBlock {
+        self.memory.tile_block(block)
     }
 }

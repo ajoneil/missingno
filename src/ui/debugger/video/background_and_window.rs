@@ -3,7 +3,7 @@ use iced::{
     widget::{checkbox, column, row, text},
 };
 
-use super::{palette::palette4, tile_map::tile_map_region};
+use super::{palette::palette4, tile_map::tile_map};
 use crate::{
     emulator::video::{Video, palette::Palette},
     ui::Message,
@@ -24,11 +24,8 @@ pub fn background_and_window(video: &Video) -> Element<'static, Message> {
             palette4(&video.palettes().background, &Palette::MONOCHROME_GREEN)
         ]
         .spacing(10),
-        tile_map_region(
-            "Background Tile Map",
-            video.control().background_tile_map_region()
-        ),
-        tile_map_region("Window Tile Map", video.control().window_tile_map_region()),
+        tile_map("Background Tile Map", video.control().background_tile_map()),
+        tile_map("Window Tile Map", video.control().window_tile_map()),
     ]
     .spacing(5)
     .into()

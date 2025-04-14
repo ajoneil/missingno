@@ -4,6 +4,9 @@ pub struct Palette {
     colors: [RGB8; 4],
 }
 
+#[derive(Clone, Copy)]
+pub struct PaletteIndex(pub u8);
+
 impl Palette {
     pub const MONOCHROME_GREEN: Self = Self {
         colors: [
@@ -14,20 +17,20 @@ impl Palette {
         ],
     };
 
-    pub fn color(&self, index: u8) -> RGB8 {
-        self.colors[index as usize]
+    pub fn color(&self, index: PaletteIndex) -> RGB8 {
+        self.colors[index.0 as usize]
     }
 }
 
 pub struct PaletteMap(pub u8);
 
 impl PaletteMap {
-    pub fn get(&self, index: u8, palette: &Palette) -> RGB8 {
+    pub fn color(&self, index: PaletteIndex, palette: &Palette) -> RGB8 {
         palette.color(self.map(index))
     }
 
-    pub fn map(&self, index: u8) -> u8 {
-        (self.0 >> (index * 2)) & 0b11
+    pub fn map(&self, index: PaletteIndex) -> PaletteIndex {
+        PaletteIndex((self.0 >> (index.0 * 2)) & 0b11)
     }
 }
 

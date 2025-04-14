@@ -22,6 +22,7 @@ pub enum MappedAddress {
     Cartridge(u16),
     WorkRam(u16),
     HighRam(u8),
+    VideoRam(video::memory::MappedAddress),
     InterruptRegister(interrupts::Register),
     AudioRegister(audio::Register),
     VideoRegister(video::Register),
@@ -32,6 +33,7 @@ impl MappedAddress {
     pub fn map(address: u16) -> Self {
         match address {
             0x0000..=0x7fff => Self::Cartridge(address),
+            0x8000..=0x9fff => Self::VideoRam(video::memory::MappedAddress::map(address)),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
@@ -69,6 +71,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(address) => self.cartridge.read(address),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
+            MappedAddress::VideoRam(address) => self.video.read_memory(address),
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
@@ -97,6 +100,7 @@ impl MemoryMapped {
             MappedAddress::Cartridge(address) => self.cartridge.write(address, value),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
+            MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
             MappedAddress::InterruptRegister(register) => match register {

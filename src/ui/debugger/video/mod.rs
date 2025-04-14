@@ -2,18 +2,22 @@ mod background_and_window;
 mod palette;
 mod sprites;
 mod tile_map;
+mod tiles;
 
 use crate::{
     emulator::video::{Video, ppu::Mode},
     ui::Message,
 };
 
+use background_and_window::background_and_window;
 use iced::{
-    Element, Length,
+    Color, Element, Length,
     widget::{checkbox, column, horizontal_rule, radio, row},
 };
+use rgb::RGB8;
 use sprites::sprites;
 use tile_map::tile_address_mode;
+use tiles::tile_blocks;
 
 pub fn video(video: &Video) -> Element<'_, Message> {
     column![
@@ -28,9 +32,11 @@ pub fn video(video: &Video) -> Element<'_, Message> {
         ],
         tile_address_mode(video.control()),
         horizontal_rule(1),
-        background_and_window::background_and_window(video),
+        background_and_window(video),
         horizontal_rule(1),
-        sprites(video)
+        sprites(video),
+        horizontal_rule(1),
+        tile_blocks(video)
     ]
     .spacing(10)
     .into()
@@ -42,4 +48,8 @@ fn mode_radio(current_mode: Mode, mode: Mode) -> Element<'static, Message> {
     })
     .width(Length::Fill)
     .into()
+}
+
+fn iced_color(color: RGB8) -> Color {
+    Color::from_rgb8(color.r, color.g, color.b)
 }

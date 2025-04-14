@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::{
-    emulator::video::{control::Control, tile::TileAddressMode, tile_map::TileMapRegion},
+    emulator::video::{control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
     ui::Message,
 };
 
@@ -28,19 +28,19 @@ pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
     .into()
 }
 
-pub fn tile_map_region(label: &str, region: TileMapRegion) -> Element<'_, Message> {
+pub fn tile_map(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
     row![
         text(label),
         radio(
-            TileMapRegion::Map9800.to_string(),
-            TileMapRegion::Map9800,
-            Some(region),
+            TileMapId(0).to_string(),
+            TileMapId(0),
+            Some(tile_map),
             |_| -> Message { Message::None }
         ),
         radio(
-            TileMapRegion::Map9c00.to_string(),
-            TileMapRegion::Map9c00,
-            Some(region),
+            TileMapId(1).to_string(),
+            TileMapId(1),
+            Some(tile_map),
             |_| -> Message { Message::None }
         )
     ]

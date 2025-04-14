@@ -1,4 +1,4 @@
-use super::{sprite::SpriteSize, tile::TileAddressMode, tile_map::TileMapRegion};
+use super::{sprite::SpriteSize, tile_maps::TileMapId, tiles::TileAddressMode};
 
 use bitflags::bitflags;
 
@@ -42,18 +42,6 @@ impl Control {
         self.0.contains(ControlFlags::VIDEO_ENABLE)
     }
 
-    pub fn window_tile_map_region(&self) -> TileMapRegion {
-        if self.0.contains(ControlFlags::WINDOW_TILE_MAP) {
-            TileMapRegion::Map9c00
-        } else {
-            TileMapRegion::Map9800
-        }
-    }
-
-    pub fn window_enabled(&self) -> bool {
-        self.0.contains(ControlFlags::WINDOW_ENABLE)
-    }
-
     pub fn tile_address_mode(&self) -> TileAddressMode {
         if self.0.contains(ControlFlags::TILE_ADDRESS_MODE) {
             TileAddressMode::Block0Block1
@@ -62,12 +50,32 @@ impl Control {
         }
     }
 
-    pub fn background_tile_map_region(&self) -> TileMapRegion {
+    pub fn background_and_window_enabled(&self) -> bool {
+        self.0.contains(ControlFlags::BACKGROUND_AND_WINDOW_ENABLE)
+    }
+
+    pub fn background_tile_map(&self) -> TileMapId {
         if self.0.contains(ControlFlags::BACKGROUND_TILE_MAP) {
-            TileMapRegion::Map9c00
+            TileMapId(1)
         } else {
-            TileMapRegion::Map9800
+            TileMapId(0)
         }
+    }
+
+    pub fn window_enabled(&self) -> bool {
+        self.0.contains(ControlFlags::WINDOW_ENABLE)
+    }
+
+    pub fn window_tile_map(&self) -> TileMapId {
+        if self.0.contains(ControlFlags::WINDOW_TILE_MAP) {
+            TileMapId(1)
+        } else {
+            TileMapId(0)
+        }
+    }
+
+    pub fn sprites_enabled(&self) -> bool {
+        self.0.contains(ControlFlags::SPRITE_ENABLE)
     }
 
     pub fn sprite_size(&self) -> SpriteSize {
@@ -76,13 +84,5 @@ impl Control {
         } else {
             SpriteSize::Single
         }
-    }
-
-    pub fn sprites_enabled(&self) -> bool {
-        self.0.contains(ControlFlags::SPRITE_ENABLE)
-    }
-
-    pub fn background_and_window_enabled(&self) -> bool {
-        self.0.contains(ControlFlags::BACKGROUND_AND_WINDOW_ENABLE)
     }
 }

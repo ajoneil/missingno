@@ -1,22 +1,22 @@
 use crate::{
-    emulator::video::palette::{Palette, PaletteMap},
+    emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
     ui::Message,
 };
 
+use super::iced_color;
 use iced::{
     Border, Color, Element, Length,
     border::Radius,
     widget::{container, row},
 };
-use rgb::RGB8;
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(
         row![
-            color_block(map, 0, palette),
-            color_block(map, 1, palette),
-            color_block(map, 2, palette),
-            color_block(map, 3, palette),
+            color_block(map, PaletteIndex(0), palette),
+            color_block(map, PaletteIndex(1), palette),
+            color_block(map, PaletteIndex(2), palette),
+            color_block(map, PaletteIndex(3), palette),
         ]
         .spacing(5),
     )
@@ -28,9 +28,9 @@ pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
 pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(
         row![
-            color_block(map, 1, palette),
-            color_block(map, 2, palette),
-            color_block(map, 3, palette),
+            color_block(map, PaletteIndex(1), palette),
+            color_block(map, PaletteIndex(2), palette),
+            color_block(map, PaletteIndex(3), palette),
         ]
         .spacing(3),
     )
@@ -38,8 +38,12 @@ pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
     .into()
 }
 
-fn color_block(map: &PaletteMap, index: u8, palette: &Palette) -> Element<'static, Message> {
-    let c = iced_color(map.get(index, &palette));
+fn color_block(
+    map: &PaletteMap,
+    index: PaletteIndex,
+    palette: &Palette,
+) -> Element<'static, Message> {
+    let c = iced_color(map.color(index, &palette));
     container("")
         .style(move |_| {
             container::background(c).border(Border {
@@ -51,8 +55,4 @@ fn color_block(map: &PaletteMap, index: u8, palette: &Palette) -> Element<'stati
         .height(Length::Fill)
         .width(50)
         .into()
-}
-
-fn iced_color(color: RGB8) -> Color {
-    Color::from_rgb8(color.r, color.g, color.b)
 }

@@ -1,5 +1,70 @@
 use core::fmt;
 
+use super::palette::PaletteIndex;
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct TileBlockId(pub u8);
+
+impl fmt::Display for TileBlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Tile Block #{}", self.0)
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct TileBlock {
+    pub data: [u8; 0x800],
+}
+
+impl TileBlock {
+    pub fn new() -> Self {
+        Self { data: [0; 0x800] }
+    }
+
+    pub fn tile(&self, index: u8) -> Tile {
+        let offset = index as usize * 16;
+        Tile {
+            data: self.data[offset..offset + 16].try_into().unwrap(),
+        }
+    }
+}
+
+pub struct Tile {
+    data: [u8; 16],
+}
+
+impl Tile {
+    pub fn pixel(&self, x: u8, y: u8) -> PaletteIndex {
+        PaletteIndex(self.data[(y as usize * 2 + (x >> 3) as usize) & 0xF])
+    }
+
+    pub fn rows(&self) -> [[PaletteIndex; 8]; 8] {
+        [
+            self.row(0),
+            self.row(1),
+            self.row(2),
+            self.row(3),
+            self.row(4),
+            self.row(5),
+            self.row(6),
+            self.row(7),
+        ]
+    }
+
+    pub fn row(&self, row: u8) -> [PaletteIndex; 8] {
+        [
+            self.pixel(0, row),
+            self.pixel(1, row),
+            self.pixel(2, row),
+            self.pixel(3, row),
+            self.pixel(4, row),
+            self.pixel(5, row),
+            self.pixel(6, row),
+            self.pixel(7, row),
+        ]
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TileAddressMode {
     Block2Block1,
