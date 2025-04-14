@@ -29,6 +29,7 @@ impl TileBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Tile {
     data: [u8; 16],
 }
@@ -36,32 +37,6 @@ pub struct Tile {
 impl Tile {
     pub fn pixel(&self, x: u8, y: u8) -> PaletteIndex {
         PaletteIndex(self.data[(y as usize * 2 + (x >> 3) as usize) & 0xF])
-    }
-
-    pub fn rows(&self) -> [[PaletteIndex; 8]; 8] {
-        [
-            self.row(0),
-            self.row(1),
-            self.row(2),
-            self.row(3),
-            self.row(4),
-            self.row(5),
-            self.row(6),
-            self.row(7),
-        ]
-    }
-
-    pub fn row(&self, row: u8) -> [PaletteIndex; 8] {
-        [
-            self.pixel(0, row),
-            self.pixel(1, row),
-            self.pixel(2, row),
-            self.pixel(3, row),
-            self.pixel(4, row),
-            self.pixel(5, row),
-            self.pixel(6, row),
-            self.pixel(7, row),
-        ]
     }
 }
 

@@ -10,6 +10,6 @@ path = "src/main.rs"
 
 [dependencies]
 bitflags = "2.4.1"
-iced = "0.13.1"
+iced = { version = "0.13.1", features = ["canvas"] }
 rfd = "0.15.3"
 rgb = "0.8.36"

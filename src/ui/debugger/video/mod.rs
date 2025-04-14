@@ -2,13 +2,13 @@ mod background_and_window;
 mod palette;
 mod sprites;
 mod tile_map;
+mod tile_widget;
 mod tiles;
 
 use crate::{
     emulator::video::{Video, ppu::Mode},
     ui::Message,
 };
-
 use background_and_window::background_and_window;
 use iced::{
     Color, Element, Length,
