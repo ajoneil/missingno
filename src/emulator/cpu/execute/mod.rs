@@ -14,6 +14,7 @@ mod bitwise;
 mod interrupt;
 mod jump;
 mod load;
+mod stack;
 
 pub struct OpResult(pub Cycles, pub Option<MemoryWrite>);
 impl OpResult {
@@ -25,6 +26,19 @@ impl OpResult {
         OpResult(
             cycles,
             Some(MemoryWrite::Write8(MappedAddress::map(address), value)),
+        )
+    }
+
+    pub fn write16(address: u16, value: u16, cycles: Cycles) -> Self {
+        let high: u8 = (value >> 8) as u8;
+        let low: u8 = (value & 0xff) as u8;
+
+        OpResult(
+            cycles,
+            Some(MemoryWrite::Write16(
+                (MappedAddress::map(address), high),
+                (MappedAddress::map(address + 1), low),
+            )),
         )
     }
 
@@ -43,7 +57,7 @@ impl Cpu {
             Instruction::BitShift(_) => todo!(),
             Instruction::Jump(instruction) => self.execute_jump(instruction),
             Instruction::CarryFlag(_) => todo!(),
-            Instruction::StackPointer(_) => todo!(),
+            Instruction::Stack(_) => todo!(),
             Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
             Instruction::DecimalAdjustAccumulator => todo!(),
             Instruction::NoOperation => OpResult::cycles(1),

@@ -9,7 +9,7 @@ mod interrupt;
 pub mod jump;
 mod load;
 mod parameters;
-mod stack_pointer;
+mod stack;
 
 pub use parameters::*;
 
@@ -21,7 +21,7 @@ pub use carry_flag::CarryFlag;
 pub use interrupt::Interrupt;
 pub use jump::Jump;
 pub use load::Load;
-pub use stack_pointer::StackPointer;
+pub use stack::Stack;
 
 pub enum Instruction {
     Load(Load),
@@ -31,7 +31,7 @@ pub enum Instruction {
     BitShift(BitShift),
     Jump(Jump),
     CarryFlag(CarryFlag),
-    StackPointer(StackPointer),
+    Stack(Stack),
     Interrupt(Interrupt),
     DecimalAdjustAccumulator,
     NoOperation,
@@ -84,8 +84,8 @@ impl Instruction {
                     Self::Bitwise(bitwise)
                 } else if let Some(jump) = Jump::decode(op, ops) {
                     Self::Jump(jump)
-                } else if let Some(stack_pointer) = StackPointer::decode(op, ops) {
-                    Self::StackPointer(stack_pointer)
+                } else if let Some(stack) = Stack::decode(op, ops) {
+                    Self::Stack(stack)
                 } else {
                     Self::Invalid(op)
                 }
@@ -104,7 +104,7 @@ impl fmt::Display for Instruction {
             Self::BitShift(bit_shift) => bit_shift.fmt(f),
             Self::Jump(jump) => jump.fmt(f),
             Self::CarryFlag(carry_flag) => carry_flag.fmt(f),
-            Self::StackPointer(stack_pointer) => stack_pointer.fmt(f),
+            Self::Stack(stack) => stack.fmt(f),
             Self::Interrupt(interrupt) => interrupt.fmt(f),
             Self::DecimalAdjustAccumulator => write!(f, "daa"),
             Self::NoOperation => write!(f, "nop"),

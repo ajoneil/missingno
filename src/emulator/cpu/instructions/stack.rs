@@ -1,13 +1,13 @@
 use super::{Source16, Target16};
 use core::fmt;
 
-pub enum StackPointer {
+pub enum Stack {
     Adjust(i8),
     Push(Source16),
     Pop(Target16),
 }
 
-impl fmt::Display for StackPointer {
+impl fmt::Display for Stack {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::Adjust(offset) => write!(f, "add sp, {}", offset),
@@ -17,7 +17,7 @@ impl fmt::Display for StackPointer {
     }
 }
 
-impl StackPointer {
+impl Stack {
     pub fn decode(op: u8, ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
         Some(match op {
             0xc1 => Self::Pop(Target16::bc()),

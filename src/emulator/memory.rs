@@ -62,7 +62,7 @@ impl MappedAddress {
 
 pub enum MemoryWrite {
     Write8(MappedAddress, u8),
-    //Write16((MappedAddress, u8), (MappedAddress, u8)),
+    Write16((MappedAddress, u8), (MappedAddress, u8)),
 }
 
 impl MemoryMapped {
@@ -93,10 +93,10 @@ impl MemoryMapped {
     pub fn write(&mut self, write: MemoryWrite) {
         match write {
             MemoryWrite::Write8(address, value) => self.write_mapped(address, value),
-            // MemoryWrite::Write16((address1, value1), (address2, value2)) => {
-            //     self.write_mapped(address1, value1);
-            //     self.write_mapped(address2, value2);
-            // }
+            MemoryWrite::Write16((address1, value1), (address2, value2)) => {
+                self.write_mapped(address1, value1);
+                self.write_mapped(address2, value2);
+            }
         }
     }
 

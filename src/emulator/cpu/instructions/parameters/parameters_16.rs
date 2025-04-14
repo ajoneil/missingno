@@ -86,6 +86,10 @@ impl Source16 {
     pub fn af() -> Self {
         Self::Register(Register16::Af)
     }
+
+    pub fn pc() -> Self {
+        Self::Register(Register16::ProgramCounter)
+    }
 }
 
 impl fmt::Display for Source16 {

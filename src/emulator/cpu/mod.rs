@@ -89,6 +89,7 @@ impl Cpu {
             Register16::Hl => u16::from_be_bytes([self.h, self.l]),
             Register16::StackPointer => self.stack_pointer,
             Register16::Af => u16::from_be_bytes([self.a, self.flags.bits()]),
+            Register16::ProgramCounter => self.program_counter,
         }
     }
 
@@ -114,6 +115,7 @@ impl Cpu {
                 self.a = high;
                 self.flags = Flags::from_bits_retain(low);
             }
+            Register16::ProgramCounter => self.program_counter = value,
         }
     }
 
