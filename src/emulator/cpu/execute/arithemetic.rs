@@ -4,7 +4,9 @@ use crate::emulator::{
     cpu::{
         self,
         cycles::Cycles,
-        instructions::{Arithmetic, Arithmetic8},
+        flags::Flags,
+        instructions::{Arithmetic, Arithmetic8, Arithmetic16},
+        registers::Register16,
     },
 };
 
@@ -61,7 +63,33 @@ impl Cpu {
                     OpResult::cycles(1).add_cycles(fetch_cycles)
                 }
             },
-            Arithmetic::Arithmetic16(_) => todo!(),
+
+            Arithmetic::Arithmetic16(instruction) => match instruction {
+                Arithmetic16::Increment(register) => {
+                    self.set_register16(register, self.get_register16(register) + 1);
+                    OpResult::cycles(2)
+                }
+
+                Arithmetic16::Decrement(register) => {
+                    self.set_register16(register, self.get_register16(register) - 1);
+                    OpResult::cycles(2)
+                }
+
+                Arithmetic16::AddHl(register) => {
+                    let value = self.get_register16(register);
+                    let hl = self.get_register16(Register16::Hl);
+
+                    self.flags.remove(Flags::NEGATIVE);
+                    self.flags
+                        .set(Flags::HALF_CARRY, hl & 0xfff + value & 0xfff > 0xfff);
+                    self.flags
+                        .set(Flags::CARRY, hl & 0xff + value & 0xff > 0xff);
+
+                    self.set_register16(Register16::Hl, hl + value);
+
+                    OpResult::cycles(2)
+                }
+            },
         }
     }
 }

@@ -13,7 +13,7 @@ mod stack;
 
 pub use parameters::*;
 
-pub use arithmetic::{Arithmetic, Arithmetic8};
+pub use arithmetic::{Arithmetic, Arithmetic8, Arithmetic16};
 pub use bit_flag::BitFlag;
 pub use bit_shift::BitShift;
 pub use bitwise::Bitwise;
