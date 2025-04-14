@@ -2,7 +2,7 @@ use bitflags::bitflags;
 
 use super::{Audio, volume::Volume};
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum Register {
     Control,
     Panning,

@@ -9,7 +9,7 @@ impl Sprite {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SpriteId(pub u8);
 
 #[derive(Copy, Clone, PartialEq, Eq)]

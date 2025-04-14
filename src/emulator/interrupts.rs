@@ -2,6 +2,7 @@ use super::cpu::instructions::{Address, Instruction, jump};
 
 use bitflags::bitflags;
 
+#[derive(Debug)]
 pub enum Register {
     EnabledInterrupts,
     RequestedInterrupts,

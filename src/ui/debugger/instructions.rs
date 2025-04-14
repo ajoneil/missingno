@@ -19,6 +19,10 @@ impl<'a> Iterator for InstructionsIterator<'a> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.address >= self.rom.len() as u16 {
+            return None;
+        }
+
         let value = self.rom[self.address as usize];
 
         self.address += 1;
@@ -43,7 +47,7 @@ pub fn instructions<'a>(
 
     let mut instructions = Vec::new();
 
-    for _ in 0..20 {
+    for _ in 0..50 {
         let address = iterator.address;
         if let Some(decoded) = Instruction::decode(&mut iterator) {
             instructions.push(instruction(

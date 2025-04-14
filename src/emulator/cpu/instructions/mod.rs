@@ -71,8 +71,8 @@ impl Instruction {
             0xcb => {
                 let op = ops.next()?;
                 match op {
-                    0x00..=0x3f => Self::BitFlag(BitFlag::decode(op)),
-                    _ => Self::BitShift(BitShift::decode(op)),
+                    0x00..=0x3f => Self::BitShift(BitShift::decode(op)),
+                    _ => Self::BitFlag(BitFlag::decode(op)),
                 }
             }
             _ => {

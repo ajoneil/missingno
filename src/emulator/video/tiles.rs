@@ -2,7 +2,7 @@ use core::fmt;
 
 use super::palette::PaletteIndex;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TileBlockId(pub u8);
 
 impl fmt::Display for TileBlockId {

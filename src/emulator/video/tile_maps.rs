@@ -11,7 +11,7 @@ impl TileMap {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TileMapId(pub u8);
 
 impl fmt::Display for TileMapId {

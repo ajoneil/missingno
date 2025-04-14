@@ -25,10 +25,6 @@ impl Target16 {
         Self::Register(Register16::StackPointer)
     }
 
-    pub fn af() -> Self {
-        Self::Register(Register16::Af)
-    }
-
     pub fn memory(ops: &mut impl Iterator<Item = u8>) -> Option<Self> {
         Some(Self::Memory(Address::fixed(ops)?))
     }
@@ -61,14 +57,6 @@ impl Source16 {
         ])))
     }
 
-    pub fn bc() -> Self {
-        Self::Register(Register16::Bc)
-    }
-
-    pub fn de() -> Self {
-        Self::Register(Register16::De)
-    }
-
     pub fn hl() -> Self {
         Self::Register(Register16::Hl)
     }
@@ -81,14 +69,6 @@ impl Source16 {
         Some(Self::StackPointerWithOffset(i8::from_le_bytes([
             ops.next()?
         ])))
-    }
-
-    pub fn af() -> Self {
-        Self::Register(Register16::Af)
-    }
-
-    pub fn pc() -> Self {
-        Self::Register(Register16::ProgramCounter)
     }
 }
 

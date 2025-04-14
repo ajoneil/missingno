@@ -1,15 +1,15 @@
 use super::OpResult;
 use crate::emulator::{
-    Cpu,
+    Cpu, MemoryMapped,
     cpu::{
         Register16,
         cycles::Cycles,
-        instructions::{Address, Jump, Source16, Stack, jump},
+        instructions::{Address, Jump, Stack, jump},
     },
 };
 
 impl Cpu {
-    pub fn execute_jump(&mut self, instruction: Jump) -> OpResult {
+    pub fn execute_jump(&mut self, instruction: Jump, memory: &MemoryMapped) -> OpResult {
         match instruction {
             Jump::Jump(condition, location) => {
                 let (address, address_cycles) = self.fetch_jump_address(location);
@@ -22,17 +22,26 @@ impl Cpu {
                 }
             }
             Jump::Call(condition, location) => {
-                let (address, address_cycles) = self.fetch_jump_address(location);
+                let (address, _) = self.fetch_jump_address(location);
 
                 if self.check_condition(condition) {
-                    self.execute_stack(Stack::Push(Source16::pc()));
+                    let result =
+                        self.execute_stack(Stack::Push(Register16::ProgramCounter), memory);
                     self.program_counter = address;
-                    OpResult::cycles(3).add_cycles(address_cycles)
+                    OpResult(Cycles(6), result.1)
                 } else {
-                    OpResult::cycles(0).add_cycles(address_cycles)
+                    OpResult::cycles(3)
                 }
             }
-            Jump::Return(_) => todo!(),
+
+            Jump::Return(condition) => match condition {
+                Some(_) => todo!(),
+                None => {
+                    self.execute_stack(Stack::Pop(Register16::ProgramCounter), memory);
+                    OpResult::cycles(4)
+                }
+            },
+
             Jump::ReturnAndEnableInterrupts => todo!(),
             Jump::Restart(_) => todo!(),
         }

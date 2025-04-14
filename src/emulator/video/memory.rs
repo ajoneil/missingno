@@ -52,22 +52,26 @@ impl VideoMemory {
     }
 }
 
+#[derive(Debug)]
 pub enum MappedAddress {
     Tile(TileAddress),
     TileMap(TileMapAddress),
     Sprite(SpriteAddress),
 }
 
+#[derive(Debug)]
 pub struct TileAddress {
     block: TileBlockId,
     offset: u16,
 }
 
+#[derive(Debug)]
 pub struct TileMapAddress {
     map: TileMapId,
     offset: u16,
 }
 
+#[derive(Debug)]
 pub struct SpriteAddress {
     sprite: SpriteId,
     offset: u8,

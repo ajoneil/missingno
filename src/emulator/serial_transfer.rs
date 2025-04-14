@@ -14,6 +14,7 @@ impl Registers {
     }
 }
 
+#[derive(Debug)]
 pub enum Register {
     Data,
     Control,

@@ -15,6 +15,7 @@ use tiles::{TileBlock, TileBlockId};
 
 use super::cpu::cycles::Cycles;
 
+#[derive(Debug)]
 pub enum Register {
     Control,
     Status,

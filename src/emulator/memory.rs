@@ -18,6 +18,7 @@ impl Ram {
     }
 }
 
+#[derive(Debug)]
 pub enum MappedAddress {
     Cartridge(u16),
     WorkRam(u16),
@@ -70,6 +71,11 @@ impl MemoryMapped {
         self.read_mapped(MappedAddress::map(address))
     }
 
+    pub fn read16(&self, address: u16) -> u16 {
+        // TODO: Confirm correct endianness here
+        u16::from_le_bytes([self.read(address), self.read(address + 1)])
+    }
+
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
             MappedAddress::Cartridge(address) => self.cartridge.read(address),
@@ -104,7 +110,7 @@ impl MemoryMapped {
         match address {
             MappedAddress::Cartridge(address) => self.cartridge.write(address, value),
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
-            MappedAddress::HighRam(address) => self.ram.work_ram[address as usize] = value,
+            MappedAddress::HighRam(address) => self.ram.high_ram[address as usize] = value,
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),

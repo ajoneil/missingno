@@ -36,8 +36,8 @@ impl OpResult {
         OpResult(
             cycles,
             Some(MemoryWrite::Write16(
-                (MappedAddress::map(address), high),
-                (MappedAddress::map(address + 1), low),
+                (MappedAddress::map(address), low),
+                (MappedAddress::map(address + 1), high),
             )),
         )
     }
@@ -55,9 +55,9 @@ impl Cpu {
             Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory),
             Instruction::BitFlag(_) => todo!(),
             Instruction::BitShift(_) => todo!(),
-            Instruction::Jump(instruction) => self.execute_jump(instruction),
+            Instruction::Jump(instruction) => self.execute_jump(instruction, memory),
             Instruction::CarryFlag(_) => todo!(),
-            Instruction::Stack(_) => todo!(),
+            Instruction::Stack(instruction) => self.execute_stack(instruction, memory),
             Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
             Instruction::DecimalAdjustAccumulator => todo!(),
             Instruction::NoOperation => OpResult::cycles(1),
