@@ -60,7 +60,7 @@ impl Cpu {
                 Address::Fixed(_) => todo!(),
                 Address::Relative(_) => todo!(),
                 Address::High(offset) => (memory.read(0xff00 + offset as u16), Cycles(2)),
-                Address::HighPlusC => todo!(),
+                Address::HighPlusC => (memory.read(0xff00 + self.c as u16), Cycles(1)),
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);
@@ -95,7 +95,7 @@ impl Cpu {
                 Address::Fixed(address) => OpResult::write8(address, value, Cycles(3)),
                 Address::Relative(_) => todo!(),
                 Address::High(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
-                Address::HighPlusC => todo!(),
+                Address::HighPlusC => OpResult::write8(0xff00 + self.c as u16, value, Cycles(1)),
 
                 Address::Dereference(register) => {
                     let address = self.get_register16(register);

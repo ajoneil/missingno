@@ -27,7 +27,7 @@ pub enum MappedAddress {
     AudioRegister(audio::Register),
     VideoRegister(video::Register),
     SerialTransferRegister(serial_transfer::Register),
-    Prohibited,
+    Unmapped,
 }
 
 impl MappedAddress {
@@ -37,7 +37,7 @@ impl MappedAddress {
             0x8000..=0x9fff => Self::VideoRam(video::memory::MappedAddress::map(address)),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xfe00..=0xfe9f => Self::VideoRam(video::memory::MappedAddress::map(address)),
-            0xfea0..=0xfeff => Self::Prohibited,
+            0xfea0..=0xfeff => Self::Unmapped,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
@@ -52,6 +52,7 @@ impl MappedAddress {
             0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
             0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
             0xff49 => Self::VideoRegister(video::Register::Sprite1Palette),
+            0xff4c..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
             _ => todo!("Unmapped address {:04x}", address),
@@ -85,7 +86,7 @@ impl MemoryMapped {
                 serial_transfer::Register::Data => self.serial.data,
                 serial_transfer::Register::Control => self.serial.control.bits(),
             },
-            MappedAddress::Prohibited => 0x00,
+            MappedAddress::Unmapped => 0x00,
         }
     }
 
@@ -121,7 +122,7 @@ impl MemoryMapped {
                     self.serial.control = serial_transfer::Control::from_bits_retain(value)
                 }
             },
-            MappedAddress::Prohibited => {}
+            MappedAddress::Unmapped => {}
         }
     }
 }
