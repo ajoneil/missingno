@@ -1,4 +1,9 @@
+use super::{
+    interrupts::interrupts,
+    panes::{checkbox_title_bar, pane},
+};
 use crate::{
+    debugger::Debugger,
     emulator::cpu::{
         Cpu,
         flags::Flags,
@@ -6,18 +11,29 @@ use crate::{
     },
     ui::Message,
 };
-
 use iced::{
     Alignment, Element, Font, Length,
     alignment::Vertical,
-    widget::{checkbox, column, container, horizontal_rule, row, text, text_input},
+    widget::{
+        button, checkbox, column, container, horizontal_rule, pane_grid, row, text, text_input,
+    },
 };
+
+pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
+    pane(
+        checkbox_title_bar("CPU", !debugger.game_boy().cpu().halted),
+        column![
+            cpu(debugger.game_boy().cpu()),
+            horizontal_rule(1),
+            interrupts(debugger.game_boy()),
+        ]
+        .spacing(5)
+        .into(),
+    )
+}
 
 pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
     column![
-        container(checkbox("Halted", cpu.halted))
-            .width(Length::Fill)
-            .align_x(Alignment::End),
         row![
             text("Program Counter")
                 .align_x(Alignment::End)
@@ -38,6 +54,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
         ]
         .align_y(Vertical::Center)
         .spacing(5),
+        controls(),
         horizontal_rule(1),
         container(flags(cpu.flags)),
         row![
@@ -135,4 +152,16 @@ fn flags(flags: Flags) -> Element<'static, Message> {
 
 fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'_, Message> {
     container(checkbox(label, flags.contains(flag))).into()
+}
+
+fn controls() -> Element<'static, Message> {
+    container(
+        row![
+            button("Step").on_press(super::Message::Step.into()),
+            button("Run").on_press(super::Message::Run.into())
+        ]
+        .spacing(10),
+    )
+    .align_right(Length::Fill)
+    .into()
 }

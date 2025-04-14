@@ -6,9 +6,22 @@ use crate::{
 use iced::{
     Element, Font, Length,
     alignment::Vertical,
-    widget::{Column, button, row, text},
+    widget::{Column, button, pane_grid, row, text},
 };
 use std::collections::HashSet;
+
+use super::panes::{pane, title_bar};
+
+pub fn instructions_pane<'a>(
+    cartridge: &'a Cartridge,
+    pc: u16,
+    breakpoints: &'a HashSet<u16>,
+) -> pane_grid::Content<'a, Message> {
+    pane(
+        title_bar("Instructions"),
+        instructions(cartridge, pc, breakpoints),
+    )
+}
 
 struct InstructionsIterator<'a> {
     address: u16,

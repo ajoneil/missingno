@@ -8,7 +8,7 @@ use crate::{
 use super::iced_color;
 
 pub fn tile(tile: Tile) -> Element<'static, Message> {
-    canvas(tile).width(8).height(8).into()
+    canvas(tile).width(24).height(24).into()
 }
 
 impl<Message> canvas::Program<Message> for Tile {

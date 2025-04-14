@@ -1,11 +1,11 @@
 mod debugger;
 
 use crate::{
-    debugger::Debugger,
     emulator::{GameBoy, cartridge::Cartridge},
     ui::debugger::debugger,
 };
 
+use debugger::DebuggerUi;
 use iced::{
     Element,
     Length::Fill,
@@ -28,7 +28,7 @@ struct App {
 enum LoadState {
     Unloaded,
     Loading,
-    Loaded(Debugger),
+    Loaded(DebuggerUi),
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
         match rom_path {
             Some(rom_path) => Self {
-                load_state: LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(
+                load_state: LoadState::Loaded(DebuggerUi::new(GameBoy::new(Cartridge::new(
                     fs::read(rom_path).unwrap(),
                 )))),
             },
@@ -75,7 +75,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        Theme::Dark
+        Theme::CatppuccinMocha
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -104,7 +104,7 @@ impl App {
 
                 LoadMessage::GameRomLoaded(rom) => {
                     self.load_state =
-                        LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(rom))));
+                        LoadState::Loaded(DebuggerUi::new(GameBoy::new(Cartridge::new(rom))));
                 }
             },
 
