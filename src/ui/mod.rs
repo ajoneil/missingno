@@ -1,11 +1,10 @@
 mod debugger;
+mod styles;
 
 use crate::{
     emulator::{GameBoy, cartridge::Cartridge},
-    ui::debugger::debugger,
+    ui::{debugger::Debugger, styles::fonts},
 };
-
-use debugger::DebuggerUi;
 use iced::{
     Element,
     Length::Fill,
@@ -17,6 +16,10 @@ use std::{fs, path::PathBuf};
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
+        .settings(iced::Settings {
+            default_font: fonts::DEFAULT,
+            ..Default::default()
+        })
         .theme(App::theme)
         .run_with(|| (App::new(rom_path), Task::none()))
 }
@@ -28,7 +31,7 @@ struct App {
 enum LoadState {
     Unloaded,
     Loading,
-    Loaded(DebuggerUi),
+    Loaded(Debugger),
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +59,7 @@ impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
         match rom_path {
             Some(rom_path) => Self {
-                load_state: LoadState::Loaded(DebuggerUi::new(GameBoy::new(Cartridge::new(
+                load_state: LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(
                     fs::read(rom_path).unwrap(),
                 )))),
             },
@@ -104,7 +107,7 @@ impl App {
 
                 LoadMessage::GameRomLoaded(rom) => {
                     self.load_state =
-                        LoadState::Loaded(DebuggerUi::new(GameBoy::new(Cartridge::new(rom))));
+                        LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(rom))));
                 }
             },
 

@@ -5,7 +5,7 @@ mod interrupts;
 mod panes;
 mod video;
 
-use crate::{debugger::Debugger, emulator::GameBoy, ui};
+use crate::{emulator::GameBoy, ui};
 use audio::audio_pane;
 use cpu::cpu_pane;
 use iced::{
@@ -36,12 +36,12 @@ impl Into<super::Message> for Message {
     }
 }
 
-pub struct DebuggerUi {
-    debugger: Debugger,
+pub struct Debugger {
+    debugger: crate::debugger::Debugger,
     panes: pane_grid::State<Pane>,
 }
 
-impl DebuggerUi {
+impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         let (mut panes, instructions_pane) = pane_grid::State::new(Pane::Instructions);
         let (cpu_plane, split) = panes
@@ -53,7 +53,7 @@ impl DebuggerUi {
         panes.split(Axis::Horizontal, cpu_plane, Pane::Audio);
 
         Self {
-            debugger: Debugger::new(game_boy),
+            debugger: crate::debugger::Debugger::new(game_boy),
             panes,
         }
     }
@@ -63,17 +63,18 @@ impl DebuggerUi {
     }
 }
 
-pub fn update(debugger_ui: &mut DebuggerUi, message: Message) -> Task<ui::Message> {
-    let debugger = &mut debugger_ui.debugger;
+pub fn update(debugger: &mut Debugger, message: Message) -> Task<ui::Message> {
+    let Debugger { panes, debugger } = debugger;
+
     match message {
         Message::Step => debugger.step(),
         Message::Run => debugger.run(),
         Message::SetBreakpoint(address) => debugger.set_breakpoint(address),
         Message::ClearBreakpoint(address) => debugger.clear_breakpoint(address),
 
-        Message::ResizePane(resize) => debugger_ui.panes.resize(resize.split, resize.ratio),
+        Message::ResizePane(resize) => panes.resize(resize.split, resize.ratio),
         Message::DragPane(drag) => match drag {
-            pane_grid::DragEvent::Dropped { pane, target } => debugger_ui.panes.drop(pane, target),
+            pane_grid::DragEvent::Dropped { pane, target } => panes.drop(pane, target),
             _ => {}
         },
     }
@@ -81,7 +82,7 @@ pub fn update(debugger_ui: &mut DebuggerUi, message: Message) -> Task<ui::Messag
     Task::none()
 }
 
-pub fn debugger(debugger: &DebuggerUi) -> Element<'_, ui::Message> {
+pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
     container(
         widget::pane_grid(&debugger.panes, |_pane, state, _is_maximized| match state {
             Pane::Instructions => instructions_pane(

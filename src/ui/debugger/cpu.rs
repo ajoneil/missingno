@@ -1,7 +1,3 @@
-use super::{
-    interrupts::interrupts,
-    panes::{checkbox_title_bar, pane},
-};
 use crate::{
     debugger::Debugger,
     emulator::cpu::{
@@ -9,10 +5,17 @@ use crate::{
         flags::Flags,
         registers::{Register8, Register16},
     },
-    ui::Message,
+    ui::{
+        Message,
+        debugger::{
+            interrupts::interrupts,
+            panes::{checkbox_title_bar, pane},
+        },
+        styles::fonts,
+    },
 };
 use iced::{
-    Alignment, Element, Font, Length,
+    Alignment, Element, Length,
     alignment::Vertical,
     widget::{
         button, checkbox, column, container, horizontal_rule, pane_grid, row, text, text_input,
@@ -39,7 +42,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
                 .align_x(Alignment::End)
                 .width(Length::FillPortion(2)),
             text_input("Program Counter", &format!("{:04x}", cpu.program_counter))
-                .font(Font::MONOSPACE)
+                .font(fonts::MONOSPACE)
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
@@ -49,7 +52,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
                 .align_x(Alignment::End)
                 .width(Length::FillPortion(2)),
             text_input("Stack Pointer", &format!("{:04x}", cpu.stack_pointer))
-                .font(Font::MONOSPACE)
+                .font(fonts::MONOSPACE)
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
@@ -106,12 +109,12 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
     row![
         text(register.to_string())
             .align_x(Alignment::End)
-            .font(Font::MONOSPACE),
+            .font(fonts::MONOSPACE),
         text_input(
             &register.to_string(),
             &cpu.get_register8(register).to_string()
         )
-        .font(Font::MONOSPACE)
+        .font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
     .spacing(5)
@@ -120,12 +123,12 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
 
 fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'_, Message> {
     row![
-        text(label).align_x(Alignment::End).font(Font::MONOSPACE),
+        text(label).align_x(Alignment::End).font(fonts::MONOSPACE),
         text_input(
             &register.to_string(),
             &format!("{:04x}", &cpu.get_register16(register))
         )
-        .font(Font::MONOSPACE)
+        .font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
     .spacing(5)

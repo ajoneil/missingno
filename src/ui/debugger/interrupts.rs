@@ -1,5 +1,4 @@
 use crate::{emulator::GameBoy, ui::Message};
-
 use iced::{
     Element, Length,
     widget::{checkbox, column, row, text},

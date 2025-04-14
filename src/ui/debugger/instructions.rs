@@ -1,16 +1,20 @@
 use crate::{
     emulator::{cartridge::Cartridge, cpu::instructions::Instruction},
-    ui::{Message, debugger},
+    ui::{
+        Message,
+        debugger::{
+            self,
+            panes::{pane, title_bar},
+        },
+        styles::fonts,
+    },
 };
-
 use iced::{
-    Element, Font, Length,
+    Element, Length,
     alignment::Vertical,
     widget::{Column, button, pane_grid, row, text},
 };
 use std::collections::HashSet;
-
-use super::panes::{pane, title_bar};
 
 pub fn instructions_pane<'a>(
     cartridge: &'a Cartridge,
@@ -83,8 +87,8 @@ pub fn instruction(
 ) -> Element<'static, Message> {
     row![
         breakpoint(address, is_breakpoint),
-        text(format!("{:04x}", address)).font(Font::MONOSPACE),
-        text(instruction.to_string()).font(Font::MONOSPACE)
+        text(format!("{:04x}", address)).font(fonts::MONOSPACE),
+        text(instruction.to_string()).font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
     .spacing(10)
@@ -92,7 +96,7 @@ pub fn instruction(
 }
 
 fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
-    button(text(if breakpoint { "🔴" } else { "" }).font(Font::with_name("Noto Color Emoji")))
+    button(text(if breakpoint { "🔴" } else { "" }).font(fonts::EMOJI))
         .style(button::text)
         .width(Length::Fixed(20.0))
         .padding(3)
