@@ -14,7 +14,8 @@ use iced::{
 pub fn tile_blocks(video: &Video) -> Element<'_, Message> {
     column![
         tile_block(video, TileBlockId(0)),
-        tile_block(video, TileBlockId(1))
+        tile_block(video, TileBlockId(1)),
+        tile_block(video, TileBlockId(2))
     ]
     .spacing(10)
     .into()
