@@ -21,13 +21,16 @@ impl TileBlock {
         Self { data: [0; 0x800] }
     }
 
-    pub fn tile(&self, index: u8) -> Tile {
-        let offset = index as usize * 16;
+    pub fn tile(&self, index: TileIndex) -> Tile {
+        let offset = index.0 as usize * 16;
         Tile {
             data: self.data[offset..offset + 16].try_into().unwrap(),
         }
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct TileIndex(pub u8);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Tile {

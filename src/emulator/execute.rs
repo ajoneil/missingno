@@ -36,6 +36,13 @@ impl GameBoy {
             self.mapped.write(memory_write);
         }
 
+        if let Some(dma_transfer_cycles) = self.mapped.dma_transfer_cycles {
+            self.mapped.dma_transfer_cycles = if dma_transfer_cycles < cycles {
+                None
+            } else {
+                Some(dma_transfer_cycles - cycles)
+            };
+        }
         self.mapped.video.step(cycles);
 
         // TODO: Cycles/timers

@@ -12,7 +12,7 @@ pub mod video;
 
 use audio::Audio;
 use cartridge::Cartridge;
-use cpu::Cpu;
+use cpu::{Cpu, cycles::Cycles};
 use memory::Ram;
 use video::Video;
 
@@ -25,6 +25,7 @@ pub struct MemoryMapped {
     audio: Audio,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
+    dma_transfer_cycles: Option<Cycles>,
 }
 
 pub struct GameBoy {
@@ -45,8 +46,13 @@ impl GameBoy {
                 audio: Audio::new(),
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
+                dma_transfer_cycles: None,
             },
         }
+    }
+
+    pub fn memory_mapped(&self) -> &MemoryMapped {
+        &self.mapped
     }
 
     pub fn cartridge(&self) -> &Cartridge {

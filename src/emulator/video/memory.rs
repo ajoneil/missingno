@@ -1,7 +1,7 @@
 use super::{
-    sprites::{Sprite, SpriteId},
+    sprites::{self, Sprite, SpriteId},
     tile_maps::{TileMap, TileMapId},
-    tiles::{TileBlock, TileBlockId},
+    tiles::{TileBlock, TileBlockId, TileIndex},
 };
 
 pub struct VideoMemory {
@@ -27,8 +27,14 @@ impl VideoMemory {
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize]
             }
-            MappedAddress::Sprite(SpriteAddress { sprite, offset }) => {
-                self.sprites[sprite.0 as usize].0[offset as usize]
+            MappedAddress::Sprite(SpriteAddress { sprite, byte }) => {
+                let sprite = &self.sprites[sprite.0 as usize];
+                match byte {
+                    SpriteByte::PositionY => sprite.position.y,
+                    SpriteByte::PositionX => sprite.position.x,
+                    SpriteByte::Tile => sprite.tile.0,
+                    SpriteByte::Attributes => sprite.attributes.0,
+                }
             }
         }
     }
@@ -41,9 +47,14 @@ impl VideoMemory {
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize] = value;
             }
-            MappedAddress::Sprite(SpriteAddress { sprite, offset }) => {
-                self.sprites[sprite.0 as usize].0[offset as usize] = value;
-            }
+            MappedAddress::Sprite(SpriteAddress { sprite, byte }) => match byte {
+                SpriteByte::PositionY => self.sprites[sprite.0 as usize].position.y = value,
+                SpriteByte::PositionX => self.sprites[sprite.0 as usize].position.x = value,
+                SpriteByte::Tile => self.sprites[sprite.0 as usize].tile = TileIndex(value),
+                SpriteByte::Attributes => {
+                    self.sprites[sprite.0 as usize].attributes = sprites::Attributes(value)
+                }
+            },
         }
     }
 
@@ -72,9 +83,17 @@ pub struct TileMapAddress {
 }
 
 #[derive(Debug)]
+enum SpriteByte {
+    PositionX,
+    PositionY,
+    Tile,
+    Attributes,
+}
+
+#[derive(Debug)]
 pub struct SpriteAddress {
     sprite: SpriteId,
-    offset: u8,
+    byte: SpriteByte,
 }
 
 impl MappedAddress {
@@ -102,7 +121,13 @@ impl MappedAddress {
             }),
             0xfe00..=0xfe9f => Self::Sprite(SpriteAddress {
                 sprite: SpriteId(((address - 0xfe00) / 4) as u8),
-                offset: ((address - 0xfe00) % 4) as u8,
+                byte: match (address - 0xfe00) % 4 {
+                    0 => SpriteByte::PositionY,
+                    1 => SpriteByte::PositionX,
+                    2 => SpriteByte::Tile,
+                    3 => SpriteByte::Attributes,
+                    _ => unreachable!(),
+                },
             }),
             _ => unreachable!(),
         }

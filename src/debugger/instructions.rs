@@ -1,24 +1,28 @@
+use crate::emulator::MemoryMapped;
+
 pub struct InstructionsIterator<'a> {
-    pub address: u16,
-    pub rom: &'a [u8],
+    pub address: Option<u16>,
+    pub memory: &'a MemoryMapped,
+}
+
+impl<'a> InstructionsIterator<'a> {
+    pub fn new(address: u16, memory: &'a MemoryMapped) -> Self {
+        InstructionsIterator {
+            address: Some(address),
+            memory,
+        }
+    }
 }
 
 impl<'a> Iterator for InstructionsIterator<'a> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.address >= self.rom.len() as u16 {
-            return None;
+        if let Some(address) = self.address {
+            self.address = Some(address + 1);
+            Some(self.memory.read(address))
+        } else {
+            None
         }
-
-        let value = self.rom[self.address as usize];
-
-        self.address += 1;
-        // Skip over header as it's data and not opcodes
-        if (0x104..0x14f).contains(&self.address) {
-            self.address = 0x150;
-        }
-
-        Some(value)
     }
 }

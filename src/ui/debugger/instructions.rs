@@ -1,6 +1,6 @@
 use crate::{
     debugger::instructions::InstructionsIterator,
-    emulator::{cartridge::Cartridge, cpu::instructions::Instruction},
+    emulator::{MemoryMapped, cpu::instructions::Instruction},
     ui::{
         Message,
         debugger::{
@@ -18,38 +18,36 @@ use iced::{
 use std::collections::HashSet;
 
 pub fn instructions_pane<'a>(
-    cartridge: &'a Cartridge,
+    memory: &'a MemoryMapped,
     pc: u16,
     breakpoints: &'a HashSet<u16>,
 ) -> pane_grid::Content<'a, Message> {
     pane(
         title_bar("Instructions"),
-        instructions(cartridge, pc, breakpoints),
+        instructions(memory, pc, breakpoints),
     )
 }
 
 pub fn instructions<'a>(
-    cartridge: &'a Cartridge,
+    memory: &'a MemoryMapped,
     pc: u16,
     breakpoints: &HashSet<u16>,
 ) -> Element<'a, Message> {
-    let mut iterator = InstructionsIterator {
-        address: pc,
-        rom: cartridge.rom(),
-    };
+    let mut iterator = InstructionsIterator::new(pc, memory);
 
     let mut instructions = Vec::new();
 
     for _ in 0..50 {
-        let address = iterator.address;
-        if let Some(decoded) = Instruction::decode(&mut iterator) {
-            instructions.push(instruction(
-                address,
-                decoded,
-                breakpoints.contains(&address),
-            ));
-        } else {
-            break;
+        if let Some(address) = iterator.address {
+            if let Some(decoded) = Instruction::decode(&mut iterator) {
+                instructions.push(instruction(
+                    address,
+                    decoded,
+                    breakpoints.contains(&address),
+                ));
+            } else {
+                break;
+            }
         }
     }
 

@@ -88,7 +88,7 @@ pub fn debugger(debugger: &Debugger) -> Element<'_, ui::Message> {
     container(
         widget::pane_grid(&debugger.panes, |_pane, state, _is_maximized| match state {
             Pane::Instructions => instructions_pane(
-                debugger.game_boy().cartridge(),
+                debugger.game_boy().memory_mapped(),
                 debugger.game_boy().cpu().program_counter,
                 debugger.debugger.breakpoints(),
             ),

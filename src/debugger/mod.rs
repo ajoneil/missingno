@@ -27,12 +27,12 @@ impl Debugger {
     }
 
     pub fn step_over(&mut self) {
-        let mut it = InstructionsIterator {
-            address: self.game_boy.cpu().program_counter,
-            rom: self.game_boy.cartridge().rom(),
-        };
+        let mut it = InstructionsIterator::new(
+            self.game_boy.cpu().program_counter,
+            self.game_boy.memory_mapped(),
+        );
         Instruction::decode(&mut it);
-        let next_address = it.address;
+        let next_address = it.address.unwrap();
 
         if self.breakpoints.contains(&next_address) {
             self.run();

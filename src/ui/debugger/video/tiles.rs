@@ -2,7 +2,7 @@ use super::tile_widget::tile;
 use crate::{
     emulator::video::{
         Video,
-        tiles::{TileBlock, TileBlockId},
+        tiles::{TileBlock, TileBlockId, TileIndex},
     },
     ui::Message,
 };
@@ -30,5 +30,5 @@ fn tiles(block: &TileBlock) -> Element<'_, Message> {
 }
 
 fn row_of_tiles(block: &TileBlock, row: u8) -> Element<'_, Message> {
-    Row::from_iter((0..16).map(|col| tile(block.tile(row * 8 + col)))).into()
+    Row::from_iter((0..16).map(|col| tile(block.tile(TileIndex(row * 8 + col))))).into()
 }

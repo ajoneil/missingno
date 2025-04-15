@@ -1,5 +1,6 @@
 use super::{
     MemoryMapped, audio,
+    cpu::cycles::Cycles,
     interrupts::{self, InterruptFlags},
     serial_transfer, video,
 };
@@ -29,6 +30,7 @@ pub enum MappedAddress {
     VideoRegister(video::Register),
     SerialTransferRegister(serial_transfer::Register),
     Unmapped,
+    BeginDmaTransfer,
 }
 
 impl MappedAddress {
@@ -48,6 +50,7 @@ impl MappedAddress {
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
             0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
             0xff44 => Self::VideoRegister(video::Register::CurrentScanline),
+            0xff46 => Self::BeginDmaTransfer,
             0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
             0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
             0xff49 => Self::VideoRegister(video::Register::Sprite1Palette),
@@ -82,6 +85,7 @@ impl MemoryMapped {
             MappedAddress::VideoRam(address) => self.video.read_memory(address),
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
+            MappedAddress::BeginDmaTransfer => 0xff,
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
                 interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
@@ -112,6 +116,7 @@ impl MemoryMapped {
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
+            MappedAddress::BeginDmaTransfer => self.begin_dma_transfer(value),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
                     self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
@@ -128,5 +133,16 @@ impl MemoryMapped {
             },
             MappedAddress::Unmapped => {}
         }
+    }
+
+    fn begin_dma_transfer(&mut self, source: u8) {
+        let start_address = source as u16 * 0x100;
+        for byte in 0..=0x9f {
+            self.video.write_memory(
+                video::memory::MappedAddress::map(0xfe00 + byte),
+                self.read(start_address + byte),
+            );
+        }
+        self.dma_transfer_cycles = Some(Cycles(160));
     }
 }
