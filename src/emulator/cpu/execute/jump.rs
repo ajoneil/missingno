@@ -2,7 +2,7 @@ use super::OpResult;
 use crate::emulator::{
     Cpu, MemoryMapped,
     cpu::{
-        Register16,
+        InterruptMasterEnable, Register16,
         cycles::Cycles,
         instructions::{Address, Jump, Stack, jump},
     },
@@ -50,7 +50,12 @@ impl Cpu {
                 }
             },
 
-            Jump::ReturnAndEnableInterrupts => todo!(),
+            Jump::ReturnAndEnableInterrupts => {
+                self.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                self.execute_stack(Stack::Pop(Register16::ProgramCounter), memory);
+                OpResult::cycles(4)
+            }
+
             Jump::Restart(_) => todo!(),
         }
     }
