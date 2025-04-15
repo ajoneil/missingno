@@ -1,20 +1,19 @@
-use instructions::InstructionsIterator;
-
 use crate::emulator::{GameBoy, cpu::instructions::Instruction};
-use std::collections::HashSet;
+use instructions::InstructionsIterator;
+use std::collections::BTreeSet;
 
 pub mod instructions;
 
 pub struct Debugger {
     game_boy: GameBoy,
-    breakpoints: HashSet<u16>,
+    breakpoints: BTreeSet<u16>,
 }
 
 impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
             game_boy,
-            breakpoints: HashSet::new(),
+            breakpoints: BTreeSet::new(),
         }
     }
 
@@ -52,7 +51,7 @@ impl Debugger {
         }
     }
 
-    pub fn breakpoints(&self) -> &HashSet<u16> {
+    pub fn breakpoints(&self) -> &BTreeSet<u16> {
         &self.breakpoints
     }
 

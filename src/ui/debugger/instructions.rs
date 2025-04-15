@@ -15,12 +15,12 @@ use iced::{
     alignment::Vertical,
     widget::{Column, button, pane_grid, row, text},
 };
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 pub fn instructions_pane<'a>(
     memory: &'a MemoryMapped,
     pc: u16,
-    breakpoints: &'a HashSet<u16>,
+    breakpoints: &'a BTreeSet<u16>,
 ) -> pane_grid::Content<'a, Message> {
     pane(
         title_bar("Instructions"),
@@ -31,7 +31,7 @@ pub fn instructions_pane<'a>(
 pub fn instructions<'a>(
     memory: &'a MemoryMapped,
     pc: u16,
-    breakpoints: &HashSet<u16>,
+    breakpoints: &BTreeSet<u16>,
 ) -> Element<'a, Message> {
     let mut iterator = InstructionsIterator::new(pc, memory);
 

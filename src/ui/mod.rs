@@ -3,7 +3,7 @@ mod styles;
 
 use crate::{
     emulator::{GameBoy, cartridge::Cartridge},
-    ui::{debugger::Debugger, styles::fonts},
+    ui::styles::fonts,
 };
 use iced::{
     Element,
@@ -31,7 +31,7 @@ struct App {
 enum LoadState {
     Unloaded,
     Loading,
-    Loaded(Debugger),
+    Loaded(debugger::State),
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
         match rom_path {
             Some(rom_path) => Self {
-                load_state: LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(
+                load_state: LoadState::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(
                     fs::read(rom_path).unwrap(),
                 )))),
             },
@@ -107,7 +107,7 @@ impl App {
 
                 LoadMessage::GameRomLoaded(rom) => {
                     self.load_state =
-                        LoadState::Loaded(Debugger::new(GameBoy::new(Cartridge::new(rom))));
+                        LoadState::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(rom))));
                 }
             },
 

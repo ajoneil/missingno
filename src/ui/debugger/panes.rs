@@ -1,11 +1,13 @@
+use super::breakpoints;
 use crate::ui::{Message, styles::fonts};
 use iced::{
     Border, Element, Theme,
     widget::{checkbox, container, pane_grid, text},
 };
 
-pub enum Pane {
+pub enum PaneState {
     Instructions,
+    Breakpoints(breakpoints::State),
     Cpu,
     Video,
     Audio,
