@@ -11,5 +11,6 @@ path = "src/main.rs"
 [dependencies]
 bitflags = "2.4.1"
 iced = { version = "0.13.1", features = ["canvas"] }
+iced_aw = { version = "0.12.2", default-features = false, features = ["wrap"] }
 rfd = "0.15.3"
 rgb = "0.8.36"

@@ -8,7 +8,7 @@ mod tiles;
 use super::panes::{checkbox_title_bar, pane};
 use crate::{
     emulator::video::{Video, ppu::Mode},
-    ui::Message,
+    ui::{Message, styles::spacing},
 };
 use background_and_window::background_and_window;
 use iced::{
@@ -40,7 +40,7 @@ pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
             horizontal_rule(1),
             tile_blocks(video)
         ]
-        .spacing(10)
+        .spacing(spacing::m())
         .into(),
     )
 }

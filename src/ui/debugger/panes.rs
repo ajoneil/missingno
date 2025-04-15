@@ -1,5 +1,8 @@
 use super::breakpoints;
-use crate::ui::{Message, styles::fonts};
+use crate::ui::{
+    Message,
+    styles::{fonts, spacing},
+};
 use iced::{
     Border, Element, Theme,
     widget::{checkbox, container, pane_grid, text},
@@ -17,7 +20,7 @@ pub fn pane<'a>(
     title: pane_grid::TitleBar<'a, Message>,
     content: Element<'a, Message>,
 ) -> pane_grid::Content<'a, Message> {
-    pane_grid::Content::new(container(content).padding(10))
+    pane_grid::Content::new(container(content).padding(spacing::m()))
         .title_bar(title)
         .style(pane_style)
 }
@@ -49,11 +52,11 @@ pub fn title_style(theme: &Theme) -> container::Style {
 pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, Message> {
     pane_grid::TitleBar::new(text(label).font(fonts::TITLE))
         .style(title_style)
-        .padding(10)
+        .padding(spacing::s())
 }
 
 pub fn checkbox_title_bar(label: &str, checked: bool) -> pane_grid::TitleBar<'_, Message> {
     pane_grid::TitleBar::new(checkbox(label, checked).font(fonts::TITLE))
         .style(title_style)
-        .padding(10)
+        .padding(spacing::s())
 }

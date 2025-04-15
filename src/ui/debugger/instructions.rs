@@ -7,7 +7,7 @@ use crate::{
             self,
             panes::{pane, title_bar},
         },
-        styles::fonts,
+        styles::{fonts, spacing},
     },
 };
 use iced::{
@@ -65,7 +65,7 @@ pub fn instruction(
         text(instruction.to_string()).font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
-    .spacing(10)
+    .spacing(spacing::s())
     .into()
 }
 
@@ -73,7 +73,7 @@ fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
     button(text(if breakpoint { "🔴" } else { "" }).font(fonts::EMOJI))
         .style(button::text)
         .width(Length::Fixed(20.0))
-        .padding(3)
+        .padding(spacing::xs())
         .on_press(
             if breakpoint {
                 debugger::Message::ClearBreakpoint(address)

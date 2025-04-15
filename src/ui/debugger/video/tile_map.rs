@@ -5,7 +5,7 @@ use iced::{
 
 use crate::{
     emulator::video::{control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
-    ui::Message,
+    ui::{Message, styles::spacing},
 };
 
 pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
@@ -24,7 +24,7 @@ pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
             |_| -> Message { Message::None }
         )
     ]
-    .spacing(10)
+    .spacing(spacing::m())
     .into()
 }
 
@@ -44,6 +44,6 @@ pub fn tile_map(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
             |_| -> Message { Message::None }
         )
     ]
-    .spacing(10)
+    .spacing(spacing::m())
     .into()
 }

@@ -1,7 +1,10 @@
 use super::panes::{pane, title_bar};
 use crate::{
     debugger::Debugger,
-    ui::{self, styles::fonts},
+    ui::{
+        self,
+        styles::{fonts, spacing},
+    },
 };
 use iced::{
     Length,
@@ -73,7 +76,7 @@ fn breakpoints(debugger: &Debugger) -> iced::Element<'_, ui::Message> {
         .width(Length::Fill),
     )
     .style(container::bordered_box)
-    .padding(5)
+    .padding(spacing::s())
     .into()
 }
 

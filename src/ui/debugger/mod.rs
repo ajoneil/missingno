@@ -21,6 +21,8 @@ use instructions::instructions_pane;
 use panes::PaneState;
 use video::video_pane;
 
+use super::styles::spacing;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Step,
@@ -134,8 +136,8 @@ pub fn debugger(state: &State) -> Element<'_, ui::Message> {
         )
         .on_resize(10.0, |resize| Message::ResizePane(resize).into())
         .on_drag(|drag| Message::DragPane(drag).into())
-        .spacing(10),
+        .spacing(spacing::m()),
     )
-    .padding(10)
+    .padding(spacing::m())
     .into()
 }

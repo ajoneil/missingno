@@ -11,7 +11,7 @@ use crate::{
             interrupts::interrupts,
             panes::{checkbox_title_bar, pane},
         },
-        styles::fonts,
+        styles::{fonts, spacing},
     },
 };
 use iced::{
@@ -21,6 +21,7 @@ use iced::{
         button, checkbox, column, container, horizontal_rule, pane_grid, row, text, text_input,
     },
 };
+use iced_aw::wrap_horizontal;
 
 pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
     pane(
@@ -30,7 +31,7 @@ pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
             horizontal_rule(1),
             interrupts(debugger.game_boy()),
         ]
-        .spacing(5)
+        .spacing(spacing::s())
         .into(),
     )
 }
@@ -46,7 +47,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
-        .spacing(5),
+        .spacing(spacing::s()),
         row![
             text("Stack Pointer")
                 .align_x(Alignment::End)
@@ -56,7 +57,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
-        .spacing(5),
+        .spacing(spacing::s()),
         controls(),
         horizontal_rule(1),
         container(flags(cpu.flags)),
@@ -66,7 +67,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
             container(register16(cpu, Register16::Af, Register16::Af.to_string()))
                 .width(Length::FillPortion(2))
         ]
-        .spacing(10),
+        .spacing(spacing::m()),
         row![register_pair(
             cpu,
             Register8::B,
@@ -86,7 +87,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
             Register16::Hl
         )],
     ]
-    .spacing(5)
+    .spacing(spacing::s())
     .into()
 }
 
@@ -101,7 +102,7 @@ fn register_pair(
         container(register8(cpu, reg2)).width(Length::FillPortion(1)),
         container(register16(cpu, pair, pair.to_string())).width(Length::FillPortion(2))
     ]
-    .spacing(10)
+    .spacing(spacing::m())
     .into()
 }
 
@@ -117,7 +118,7 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
         .font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
-    .spacing(5)
+    .spacing(spacing::s())
     .into()
 }
 
@@ -131,7 +132,7 @@ fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'_, Mes
         .font(fonts::MONOSPACE)
     ]
     .align_y(Vertical::Center)
-    .spacing(5)
+    .spacing(spacing::s())
     .into()
 }
 
@@ -147,7 +148,7 @@ fn flags(flags: Flags) -> Element<'static, Message> {
                 flag("half-carry", flags, Flags::HALF_CARRY),
             ]
         ]
-        .spacing(10),
+        .spacing(spacing::s()),
     )
     .align_right(Length::Fill)
     .into()
@@ -158,15 +159,13 @@ fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'_, Message> {
 }
 
 fn controls() -> Element<'static, Message> {
-    container(
-        row![
-            button("Step").on_press(super::Message::Step.into()),
-            button("Step Over").on_press(super::Message::StepOver.into()),
-            button("Step Frame").on_press(super::Message::StepFrame.into()),
-            button("Run").on_press(super::Message::Run.into())
-        ]
-        .spacing(10),
-    )
-    .align_right(Length::Fill)
+    wrap_horizontal![
+        button("Step").on_press(super::Message::Step.into()),
+        button("Step Over").on_press(super::Message::StepOver.into()),
+        button("Step Frame").on_press(super::Message::StepFrame.into()),
+        button("Run").on_press(super::Message::Run.into())
+    ]
+    .spacing(spacing::s())
+    .line_spacing(spacing::xs())
     .into()
 }

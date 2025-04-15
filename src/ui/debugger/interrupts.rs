@@ -1,4 +1,7 @@
-use crate::{emulator::GameBoy, ui::Message};
+use crate::{
+    emulator::GameBoy,
+    ui::{Message, styles::spacing},
+};
 use iced::{
     Element, Length,
     widget::{checkbox, column, row, text},
@@ -10,7 +13,7 @@ pub fn interrupts(game_boy: &GameBoy) -> Element<'_, Message> {
         enabled(game_boy),
         requested(game_boy),
     ]
-    .spacing(10)
+    .spacing(spacing::m())
     .into()
 }
 
@@ -57,7 +60,7 @@ fn enabled(game_boy: &GameBoy) -> Element<'_, Message> {
             .width(Length::FillPortion(4)),
         ],
     ]
-    .spacing(3)
+    .spacing(spacing::s())
     .into()
 }
 
@@ -104,6 +107,6 @@ fn requested(game_boy: &GameBoy) -> Element<'_, Message> {
             .width(Length::FillPortion(4)),
         ],
     ]
-    .spacing(3)
+    .spacing(spacing::xs())
     .into()
 }

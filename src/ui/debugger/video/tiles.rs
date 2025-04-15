@@ -4,7 +4,7 @@ use crate::{
         Video,
         tiles::{TileBlock, TileBlockId, TileIndex},
     },
-    ui::Message,
+    ui::{Message, styles::spacing},
 };
 use iced::{
     Element,
@@ -17,7 +17,7 @@ pub fn tile_blocks(video: &Video) -> Element<'_, Message> {
         tile_block(video, TileBlockId(1)),
         tile_block(video, TileBlockId(2))
     ]
-    .spacing(10)
+    .spacing(spacing::m())
     .into()
 }
 

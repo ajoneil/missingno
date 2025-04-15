@@ -1,6 +1,6 @@
 use crate::{
     emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
-    ui::Message,
+    ui::{Message, styles::spacing},
 };
 
 use super::iced_color;
@@ -18,7 +18,7 @@ pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(5),
+        .spacing(spacing::m()),
     )
     .height(20)
     .into()
@@ -32,7 +32,7 @@ pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(3),
+        .spacing(spacing::m()),
     )
     .height(20)
     .into()

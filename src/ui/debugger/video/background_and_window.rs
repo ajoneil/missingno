@@ -6,7 +6,7 @@ use iced::{
 use super::{palette::palette4, tile_map::tile_map};
 use crate::{
     emulator::video::{Video, palette::Palette},
-    ui::Message,
+    ui::{Message, styles::spacing},
 };
 
 pub fn background_and_window(video: &Video) -> Element<'static, Message> {
@@ -18,15 +18,15 @@ pub fn background_and_window(video: &Video) -> Element<'static, Message> {
             ),
             checkbox("Window", video.control().window_enabled()),
         ]
-        .spacing(10),
+        .spacing(spacing::m()),
         row![
             text("Palette"),
             palette4(&video.palettes().background, &Palette::MONOCHROME_GREEN)
         ]
-        .spacing(10),
+        .spacing(spacing::m()),
         tile_map("Background Tile Map", video.control().background_tile_map()),
         tile_map("Window Tile Map", video.control().window_tile_map()),
     ]
-    .spacing(5)
+    .spacing(spacing::s())
     .into()
 }
