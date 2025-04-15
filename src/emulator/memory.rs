@@ -2,7 +2,7 @@ use super::{
     MemoryMapped, audio,
     cpu::cycles::Cycles,
     interrupts::{self, InterruptFlags},
-    serial_transfer, video,
+    serial_transfer, timers, video,
 };
 
 pub struct Ram {
@@ -25,12 +25,13 @@ pub enum MappedAddress {
     WorkRam(u16),
     HighRam(u8),
     VideoRam(video::memory::MappedAddress),
+    SerialTransferRegister(serial_transfer::Register),
+    TimerRegister(timers::Register),
     InterruptRegister(interrupts::Register),
     AudioRegister(audio::Register),
     VideoRegister(video::Register),
-    SerialTransferRegister(serial_transfer::Register),
-    Unmapped,
     BeginDmaTransfer,
+    Unmapped,
 }
 
 impl MappedAddress {
@@ -44,6 +45,10 @@ impl MappedAddress {
             0xfea0..=0xfeff => Self::Unmapped,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
+            0xff04 => Self::TimerRegister(timers::Register::Divider),
+            0xff05 => Self::TimerRegister(timers::Register::Counter),
+            0xff06 => Self::TimerRegister(timers::Register::Modulo),
+            0xff07 => Self::TimerRegister(timers::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
             0xff10..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
             0xff40 => Self::VideoRegister(video::Register::Control),
@@ -86,17 +91,19 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
             MappedAddress::VideoRam(address) => self.video.read_memory(address),
-            MappedAddress::AudioRegister(register) => self.audio.read_register(register),
-            MappedAddress::VideoRegister(register) => self.video.read_register(register),
-            MappedAddress::BeginDmaTransfer => 0xff,
-            MappedAddress::InterruptRegister(register) => match register {
-                interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
-                interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
-            },
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data,
                 serial_transfer::Register::Control => self.serial.control.bits(),
             },
+            MappedAddress::TimerRegister(register) => self.timers.read_register(register),
+            MappedAddress::InterruptRegister(register) => match register {
+                interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
+                interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
+            },
+            MappedAddress::AudioRegister(register) => self.audio.read_register(register),
+            MappedAddress::VideoRegister(register) => self.video.read_register(register),
+            MappedAddress::BeginDmaTransfer => 0xff,
+
             MappedAddress::Unmapped => 0x00,
         }
     }
@@ -117,6 +124,13 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize] = value,
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
+            MappedAddress::SerialTransferRegister(register) => match register {
+                serial_transfer::Register::Data => self.serial.data = value,
+                serial_transfer::Register::Control => {
+                    self.serial.control = serial_transfer::Control::from_bits_retain(value)
+                }
+            },
+            MappedAddress::TimerRegister(register) => self.timers.write_register(register, value),
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
             MappedAddress::BeginDmaTransfer => self.begin_dma_transfer(value),
@@ -128,12 +142,7 @@ impl MemoryMapped {
                     self.interrupts.requested = InterruptFlags::from_bits_retain(value)
                 }
             },
-            MappedAddress::SerialTransferRegister(register) => match register {
-                serial_transfer::Register::Data => self.serial.data = value,
-                serial_transfer::Register::Control => {
-                    self.serial.control = serial_transfer::Control::from_bits_retain(value)
-                }
-            },
+
             MappedAddress::Unmapped => {}
         }
     }

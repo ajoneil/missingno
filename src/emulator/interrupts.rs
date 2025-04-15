@@ -100,6 +100,10 @@ impl Registers {
         None
     }
 
+    pub fn request(&mut self, interrupt: Interrupt) {
+        self.requested.insert(interrupt.into());
+    }
+
     pub fn clear(&mut self, interrupt: Interrupt) {
         self.requested.remove(interrupt.into());
     }

@@ -43,9 +43,13 @@ impl GameBoy {
                 Some(dma_transfer_cycles - cycles)
             };
         }
+
+        // TODO: Video interrupts
         self.mapped.video.step(cycles);
 
-        // TODO: Cycles/timers
+        if let Some(interrupt) = self.mapped.timers.step(cycles) {
+            self.mapped.interrupts.request(interrupt);
+        }
     }
 
     fn check_for_interrupt(&mut self) -> Option<Interrupt> {

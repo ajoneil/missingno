@@ -5,10 +5,10 @@ pub mod execute;
 pub mod interrupts;
 pub mod memory;
 pub mod serial_transfer;
+pub mod timers;
 pub mod video;
 // mod joypad;
 // mod mbc;
-// mod timers;
 
 use audio::Audio;
 use cartridge::Cartridge;
@@ -25,6 +25,7 @@ pub struct MemoryMapped {
     audio: Audio,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
+    timers: timers::Timers,
     dma_transfer_cycles: Option<Cycles>,
 }
 
@@ -46,6 +47,7 @@ impl GameBoy {
                 audio: Audio::new(),
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
+                timers: timers::Timers::new(),
                 dma_transfer_cycles: None,
             },
         }
