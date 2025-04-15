@@ -1,6 +1,5 @@
 use super::{
-    MemoryMapped,
-    audio::{self, channels::Channel},
+    MemoryMapped, audio,
     interrupts::{self, InterruptFlags},
     serial_transfer, video,
 };
@@ -42,14 +41,8 @@ impl MappedAddress {
             0xfea0..=0xfeff => Self::Unmapped,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
-            0xff12 => Self::AudioRegister(audio::Register::VolumeAndEnvelope(Channel::Channel1)),
-            0xff17 => Self::AudioRegister(audio::Register::VolumeAndEnvelope(Channel::Channel2)),
-            0xff1c => Self::AudioRegister(audio::Register::VolumeAndEnvelope(Channel::Channel3)),
-            0xff21 => Self::AudioRegister(audio::Register::VolumeAndEnvelope(Channel::Channel4)),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
-            0xff24 => Self::AudioRegister(audio::Register::Volume),
-            0xff25 => Self::AudioRegister(audio::Register::Panning),
-            0xff26 => Self::AudioRegister(audio::Register::Control),
+            0xff10..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
             0xff40 => Self::VideoRegister(video::Register::Control),
             0xff41 => Self::VideoRegister(video::Register::Status),
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),

@@ -1,17 +1,45 @@
-use bitflags::bitflags;
-
 use super::{
     Audio,
-    channels::{Channel, wave},
+    channels::{noise, pulse, pulse_sweep, wave},
     volume::Volume,
 };
+use bitflags::bitflags;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Register {
     Control,
     Panning,
     Volume,
-    VolumeAndEnvelope(Channel),
+    Channel1(pulse_sweep::Register),
+    Channel2(pulse::Register),
+    Channel3(wave::Register),
+    Channel4(noise::Register),
+}
+
+impl Register {
+    pub fn map(address: u16) -> Self {
+        match address {
+            0xff10 => Self::Channel1(pulse_sweep::Register::Sweep),
+            0xff12 => Self::Channel1(pulse_sweep::Register::VolumeAndEnvelope),
+            0xff13 => Self::Channel1(pulse_sweep::Register::PeriodLow),
+            0xff14 => Self::Channel1(pulse_sweep::Register::PeriodHighAndControl),
+
+            0xff17 => Self::Channel2(pulse::Register::VolumeAndEnvelope),
+            0xff18 => Self::Channel2(pulse::Register::PeriodLow),
+            0xff19 => Self::Channel2(pulse::Register::PeriodHighAndControl),
+
+            0xff1a => Self::Channel3(wave::Register::DacEnabled),
+            0xff1c => Self::Channel3(wave::Register::Volume),
+
+            0xff21 => Self::Channel4(noise::Register::VolumeAndEnvelope),
+            0xff23 => Self::Channel4(noise::Register::Control),
+
+            0xff24 => Self::Volume,
+            0xff25 => Self::Panning,
+            0xff26 => Self::Control,
+            _ => todo!("unmapped audio register {:04x}", address),
+        }
+    }
 }
 
 impl Audio {
@@ -82,13 +110,10 @@ impl Audio {
             }
 
             Register::Volume => (self.volume_left.0 << 4) & self.volume_right.0,
-
-            Register::VolumeAndEnvelope(channel) => match channel {
-                Channel::Channel1 => self.channels.ch1.volume_and_envelope.0,
-                Channel::Channel2 => self.channels.ch2.volume_and_envelope.0,
-                Channel::Channel3 => self.channels.ch3.volume.0,
-                Channel::Channel4 => self.channels.ch4.volume_and_envelope.0,
-            },
+            Register::Channel1(register) => self.channels.ch1.read_register(register),
+            Register::Channel2(register) => self.channels.ch2.read_register(register),
+            Register::Channel3(register) => self.channels.ch3.read_register(register),
+            Register::Channel4(register) => self.channels.ch4.read_register(register),
         }
     }
 
@@ -109,7 +134,6 @@ impl Audio {
                     self.channels.ch4.reset();
                 }
             }
-
             Register::Panning => {
                 let value = PanFlags::from_bits_truncate(value);
                 self.channels.ch1.enabled.output_left = value.contains(PanFlags::CHANNEL_1_LEFT);
@@ -121,24 +145,14 @@ impl Audio {
                 self.channels.ch4.enabled.output_left = value.contains(PanFlags::CHANNEL_4_LEFT);
                 self.channels.ch4.enabled.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
             }
-
             Register::Volume => {
                 self.volume_left = Volume((value >> 4) & 0b111);
                 self.volume_right = Volume(value & 0b111);
             }
-
-            Register::VolumeAndEnvelope(channel) => match channel {
-                Channel::Channel1 => {
-                    self.channels.ch1.volume_and_envelope = VolumeAndEnvelope(value)
-                }
-                Channel::Channel2 => {
-                    self.channels.ch2.volume_and_envelope = VolumeAndEnvelope(value)
-                }
-                Channel::Channel3 => self.channels.ch3.volume = wave::Volume(value),
-                Channel::Channel4 => {
-                    self.channels.ch4.volume_and_envelope = VolumeAndEnvelope(value)
-                }
-            },
+            Register::Channel1(register) => self.channels.ch1.write_register(register, value),
+            Register::Channel2(register) => self.channels.ch2.write_register(register, value),
+            Register::Channel3(register) => self.channels.ch3.write_register(register, value),
+            Register::Channel4(register) => self.channels.ch4.write_register(register, value),
         }
     }
 }
@@ -163,34 +177,5 @@ bitflags! {
         const CHANNEL_3_RIGHT = 0b0000_0100;
         const CHANNEL_2_RIGHT = 0b0000_0010;
         const CHANNEL_1_RIGHT = 0b0000_0001;
-    }
-}
-
-pub enum EnvelopeDirection {
-    Decrease,
-    Increase,
-}
-#[derive(Copy, Clone)]
-pub struct VolumeAndEnvelope(pub u8);
-
-impl VolumeAndEnvelope {
-    pub fn initial_volume(&self) -> u8 {
-        self.0 >> 4
-    }
-
-    pub fn initial_volume_percent(&self) -> f32 {
-        self.initial_volume() as f32 / 15.0
-    }
-
-    pub fn direction(&self) -> EnvelopeDirection {
-        if self.0 & 0b1000 != 0 {
-            EnvelopeDirection::Increase
-        } else {
-            EnvelopeDirection::Decrease
-        }
-    }
-
-    pub fn sweep_pace(&self) -> u8 {
-        self.0 & 0b111
     }
 }

@@ -1,20 +1,13 @@
 pub mod noise;
 pub mod pulse;
 pub mod pulse_sweep;
+pub mod registers;
 pub mod wave;
 
 use noise::NoiseChannel;
 use pulse::PulseChannel;
 use pulse_sweep::PulseSweepChannel;
 use wave::WaveChannel;
-
-#[derive(PartialEq, Eq, Debug)]
-pub enum Channel {
-    Channel1,
-    Channel2,
-    Channel3,
-    Channel4,
-}
 
 pub struct Channels {
     pub ch1: PulseSweepChannel,

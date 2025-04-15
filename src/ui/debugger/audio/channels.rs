@@ -1,10 +1,11 @@
 use crate::{
-    emulator::audio::{
-        channels::{
-            Enabled, noise::NoiseChannel, pulse::PulseChannel, pulse_sweep::PulseSweepChannel,
-            wave::WaveChannel,
-        },
+    emulator::audio::channels::{
+        Enabled,
+        noise::NoiseChannel,
+        pulse::PulseChannel,
+        pulse_sweep::PulseSweepChannel,
         registers::{EnvelopeDirection, VolumeAndEnvelope},
+        wave::WaveChannel,
     },
     ui::Message,
 };
