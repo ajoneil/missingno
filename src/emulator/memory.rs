@@ -38,6 +38,7 @@ impl MappedAddress {
         match address {
             0x0000..=0x7fff => Self::Cartridge(address),
             0x8000..=0x9fff => Self::VideoRam(video::memory::MappedAddress::map(address)),
+            0xa000..=0xbfff => Self::Cartridge(address),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xfe00..=0xfe9f => Self::VideoRam(video::memory::MappedAddress::map(address)),
             0xfea0..=0xfeff => Self::Unmapped,

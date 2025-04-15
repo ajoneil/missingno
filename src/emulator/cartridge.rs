@@ -26,7 +26,10 @@ impl Cartridge {
     }
 
     pub fn read(&self, address: u16) -> u8 {
-        self.rom[address as usize]
+        match address {
+            0x0000..=0x7fff => self.rom[address as usize],
+            _ => 0xff,
+        }
     }
 
     pub fn write(&self, _address: u16, _value: u8) {
