@@ -12,7 +12,7 @@ impl Cpu {
                 self.a = self.a & value;
 
                 self.flags = if self.a == 0 {
-                    cpu::Flags::ZERO & cpu::Flags::HALF_CARRY
+                    cpu::Flags::ZERO | cpu::Flags::HALF_CARRY
                 } else {
                     cpu::Flags::HALF_CARRY
                 };
@@ -48,7 +48,7 @@ impl Cpu {
 
             Bitwise::ComplementA => {
                 self.a = !self.a;
-                self.flags = self.flags & cpu::Flags::NEGATIVE & cpu::Flags::HALF_CARRY;
+                self.flags = self.flags | cpu::Flags::NEGATIVE | cpu::Flags::HALF_CARRY;
                 OpResult::cycles(1)
             }
         }

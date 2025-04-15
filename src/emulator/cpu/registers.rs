@@ -1,6 +1,6 @@
 use core::fmt;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Register8 {
     A,
     B,
@@ -29,7 +29,7 @@ impl fmt::Display for Register8 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Register16 {
     Bc,
     De,

@@ -92,7 +92,7 @@ impl fmt::Display for Target8 {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Source8 {
     Constant(u8),
     Register(Register8),

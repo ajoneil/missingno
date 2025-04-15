@@ -2,7 +2,7 @@ use crate::emulator::cpu::Register16;
 
 use core::fmt;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Address {
     Fixed(u16),
     Relative(i8),
