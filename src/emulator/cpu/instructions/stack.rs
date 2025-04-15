@@ -1,6 +1,7 @@
 use crate::emulator::cpu::registers::Register16;
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Stack {
     Adjust(i8),
     Push(Register16),

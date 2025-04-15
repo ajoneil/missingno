@@ -23,6 +23,7 @@ pub use jump::Jump;
 pub use load::Load;
 pub use stack::Stack;
 
+#[derive(Clone)]
 pub enum Instruction {
     Load(Load),
     Arithmetic(Arithmetic),

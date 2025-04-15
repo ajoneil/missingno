@@ -2,6 +2,7 @@ use core::fmt;
 
 use super::{Source8, Target8};
 
+#[derive(Clone)]
 pub enum BitFlag {
     Check(u8, Source8),
     Set(u8, Target8),

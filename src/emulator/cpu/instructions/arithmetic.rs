@@ -3,11 +3,13 @@ use crate::emulator::cpu::Register16;
 
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Arithmetic {
     Arithmetic8(Arithmetic8),
     Arithmetic16(Arithmetic16),
 }
 
+#[derive(Clone)]
 pub enum Arithmetic8 {
     Increment(Target8),
     Decrement(Target8),
@@ -54,6 +56,7 @@ impl Arithmetic8 {
     }
 }
 
+#[derive(Clone)]
 pub enum Arithmetic16 {
     Increment(Register16),
     Decrement(Register16),

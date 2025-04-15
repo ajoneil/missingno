@@ -1,6 +1,7 @@
 use super::{Source8, Source16, Target8, Target16};
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Load {
     Load8(Target8, Source8),
     Load16(Target16, Source16),

@@ -1,5 +1,6 @@
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Interrupt {
     Enable,
     Disable,

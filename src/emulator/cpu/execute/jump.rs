@@ -21,6 +21,7 @@ impl Cpu {
                     OpResult::cycles(0).add_cycles(address_cycles)
                 }
             }
+
             Jump::Call(condition, location) => {
                 let (address, _) = self.fetch_jump_address(location);
 
@@ -56,7 +57,12 @@ impl Cpu {
                 OpResult::cycles(4)
             }
 
-            Jump::Restart(_) => todo!(),
+            Jump::Restart(address) => {
+                let result = self.execute_stack(Stack::Push(Register16::ProgramCounter), memory);
+
+                self.program_counter = address as u16;
+                OpResult(Cycles(6), result.1)
+            }
         }
     }
 

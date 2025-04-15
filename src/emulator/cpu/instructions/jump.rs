@@ -3,6 +3,7 @@ use crate::emulator::cpu::Flag;
 
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Jump {
     Jump(Option<Condition>, Location),
     Call(Option<Condition>, Location),
@@ -11,6 +12,7 @@ pub enum Jump {
     Restart(u8),
 }
 
+#[derive(Clone)]
 pub enum Location {
     Address(Address),
     RegisterHl,
@@ -43,6 +45,7 @@ impl fmt::Display for Location {
     }
 }
 
+#[derive(Clone)]
 pub struct Condition(pub Flag, pub bool);
 
 impl Condition {

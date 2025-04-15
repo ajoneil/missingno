@@ -2,6 +2,7 @@ use core::fmt;
 
 use super::Source8;
 
+#[derive(Clone)]
 pub enum Bitwise {
     AndA(Source8),
     OrA(Source8),

@@ -11,6 +11,7 @@ use super::{
 
 mod arithemetic;
 mod bit_flag;
+mod bit_shift;
 mod bitwise;
 mod interrupt;
 mod jump;
@@ -55,7 +56,7 @@ impl Cpu {
             Instruction::Arithmetic(instruction) => self.execute_arithmetic(instruction, memory),
             Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory),
             Instruction::BitFlag(instruction) => self.execute_bit_flag(instruction, memory),
-            Instruction::BitShift(_) => todo!(),
+            Instruction::BitShift(instruction) => self.execute_bit_shift(instruction, memory),
             Instruction::Jump(instruction) => self.execute_jump(instruction, memory),
             Instruction::CarryFlag(_) => todo!(),
             Instruction::Stack(instruction) => self.execute_stack(instruction, memory),

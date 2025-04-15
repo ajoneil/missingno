@@ -42,6 +42,10 @@ impl Debugger {
         }
     }
 
+    pub fn step_frame(&mut self) {
+        while !self.game_boy.step() {}
+    }
+
     pub fn run(&mut self) {
         while !self
             .breakpoints

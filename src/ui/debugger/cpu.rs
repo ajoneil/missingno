@@ -162,6 +162,7 @@ fn controls() -> Element<'static, Message> {
         row![
             button("Step").on_press(super::Message::Step.into()),
             button("Step Over").on_press(super::Message::StepOver.into()),
+            button("Step Frame").on_press(super::Message::StepFrame.into()),
             button("Run").on_press(super::Message::Run.into())
         ]
         .spacing(10),

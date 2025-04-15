@@ -2,6 +2,7 @@ use core::fmt;
 
 use super::Target8;
 
+#[derive(Clone)]
 pub enum BitShift {
     RotateA(Direction, Carry), // Register A optimised variants, not within cb prefix
     Rotate(Direction, Carry, Target8),
@@ -10,6 +11,7 @@ pub enum BitShift {
     Swap(Target8),
 }
 
+#[derive(Clone)]
 pub enum Direction {
     Left,
     Right,
@@ -24,6 +26,7 @@ impl fmt::Display for Direction {
     }
 }
 
+#[derive(Clone)]
 pub enum Carry {
     Through,
     SetOnly,

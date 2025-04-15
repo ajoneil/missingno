@@ -3,6 +3,7 @@ use crate::emulator::cpu::Register16;
 
 use core::fmt;
 
+#[derive(Clone)]
 pub enum Target16 {
     Register(Register16),
     Memory(Address),
@@ -43,6 +44,7 @@ impl fmt::Display for Target16 {
     }
 }
 
+#[derive(Clone)]
 pub enum Source16 {
     Constant(u16),
     Register(Register16),

@@ -143,8 +143,8 @@ impl Video {
         self.control
     }
 
-    pub fn step(&mut self, cycles: Cycles) {
-        self.ppu.step(cycles);
+    pub fn step(&mut self, cycles: Cycles) -> Option<super::interrupts::Interrupt> {
+        self.ppu.step(cycles)
     }
 
     pub fn palettes(&self) -> &Palettes {

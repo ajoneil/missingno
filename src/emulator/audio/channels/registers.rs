@@ -87,7 +87,7 @@ impl From<i16> for Signed11 {
     fn from(value: i16) -> Self {
         match value {
             0..=Self::MAX => Self(value as u16),
-            Self::MIN..0 => Self(Self::SIGN & (value.abs() as u16)),
+            Self::MIN..0 => Self(Self::SIGN | (value.abs() as u16)),
             _ => unreachable!(),
         }
     }

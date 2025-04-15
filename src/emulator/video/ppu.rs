@@ -1,4 +1,4 @@
-use crate::emulator::cpu::cycles::Cycles;
+use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
 
 use core::fmt;
 
@@ -24,20 +24,20 @@ impl fmt::Display for Mode {
 
 pub struct PixelProcessingUnit {
     current_line: u32,
-    current_line_dots: u32,
+    current_line_cycles: Cycles,
 }
 
 impl PixelProcessingUnit {
     const NUM_SCANLINES: u32 = 144;
     const NUM_SCANLINES_BETWEEN: u32 = 10;
-    const SCANLINE_TOTAL_DOTS: u32 = 456;
-    const PREPARING_SCANLINE_DOTS: u32 = 80;
-    const DRAWING_PIXELS_MIN_DOTS: u32 = 172;
+    const SCANLINE_TOTAL_CYCLES: Cycles = Cycles(456 * 4);
+    const PREPARING_SCANLINE_CYCLES: Cycles = Cycles(80 * 4);
+    const DRAWING_PIXELS_MIN_CYCLES: Cycles = Cycles(172 * 4);
 
     pub fn new() -> Self {
         Self {
             current_line: 0,
-            current_line_dots: 0,
+            current_line_cycles: Cycles(0),
         }
     }
 
@@ -49,10 +49,10 @@ impl PixelProcessingUnit {
         if self.current_line > Self::NUM_SCANLINES {
             Mode::BetweenFrames
         } else {
-            if self.current_line_dots < Self::PREPARING_SCANLINE_DOTS {
+            if self.current_line_cycles < Self::PREPARING_SCANLINE_CYCLES {
                 Mode::PreparingScanline
-            } else if self.current_line_dots
-                < (Self::PREPARING_SCANLINE_DOTS + Self::DRAWING_PIXELS_MIN_DOTS)
+            } else if self.current_line_cycles
+                < (Self::PREPARING_SCANLINE_CYCLES + Self::DRAWING_PIXELS_MIN_CYCLES)
             {
                 Mode::DrawingPixels
             } else {
@@ -61,20 +61,27 @@ impl PixelProcessingUnit {
         }
     }
 
-    pub fn step(&mut self, cycles: Cycles) {
-        let mut remaining_dots = cycles.0 * 4;
-        while remaining_dots > 0 {
-            self.current_line_dots += remaining_dots;
-            if self.current_line_dots > Self::SCANLINE_TOTAL_DOTS {
-                remaining_dots = self.current_line_dots - Self::SCANLINE_TOTAL_DOTS;
-                self.current_line_dots = 0;
+    pub fn step(&mut self, cycles: Cycles) -> Option<Interrupt> {
+        let mut interrupt = None;
+
+        let mut remaining = cycles;
+        while remaining > Cycles(0) {
+            self.current_line_cycles += remaining;
+            if self.current_line_cycles > Self::SCANLINE_TOTAL_CYCLES {
+                remaining = self.current_line_cycles - Self::SCANLINE_TOTAL_CYCLES;
+                self.current_line_cycles = Cycles(0);
                 self.current_line += 1;
+
                 if self.current_line > Self::NUM_SCANLINES + Self::NUM_SCANLINES_BETWEEN {
                     self.current_line = 0;
+                } else if self.current_line == Self::NUM_SCANLINES {
+                    interrupt = Some(Interrupt::VideoBetweenFrames);
                 }
             } else {
-                remaining_dots = 0;
+                remaining = Cycles(0);
             }
         }
+
+        interrupt
     }
 }
