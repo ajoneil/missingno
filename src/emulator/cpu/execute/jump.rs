@@ -35,10 +35,18 @@ impl Cpu {
             }
 
             Jump::Return(condition) => match condition {
-                Some(_) => todo!(),
                 None => {
                     self.execute_stack(Stack::Pop(Register16::ProgramCounter), memory);
                     OpResult::cycles(4)
+                }
+
+                condition => {
+                    if self.check_condition(condition) {
+                        self.execute_stack(Stack::Pop(Register16::ProgramCounter), memory);
+                        OpResult::cycles(5)
+                    } else {
+                        OpResult::cycles(2)
+                    }
                 }
             },
 

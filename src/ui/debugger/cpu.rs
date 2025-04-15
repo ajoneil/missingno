@@ -161,6 +161,7 @@ fn controls() -> Element<'static, Message> {
     container(
         row![
             button("Step").on_press(super::Message::Step.into()),
+            button("Step Over").on_press(super::Message::StepOver.into()),
             button("Run").on_press(super::Message::Run.into())
         ]
         .spacing(10),

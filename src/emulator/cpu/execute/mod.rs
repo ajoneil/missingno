@@ -71,7 +71,7 @@ impl Cpu {
             Source8::Constant(value) => (value, Cycles(1)),
             Source8::Register(register) => (self.get_register8(register), Cycles(0)),
             Source8::Memory(address) => match address {
-                Address::Fixed(_) => todo!(),
+                Address::Fixed(address) => (memory.read(address), Cycles(3)),
                 Address::Relative(_) => todo!(),
                 Address::High(offset) => (memory.read(0xff00 + offset as u16), Cycles(2)),
                 Address::HighPlusC => (memory.read(0xff00 + self.c as u16), Cycles(1)),

@@ -16,7 +16,7 @@ impl Iterator for GameBoy {
 
 impl GameBoy {
     pub fn step(&mut self) {
-        let pc = self.cpu.program_counter;
+        // let pc = self.cpu.program_counter;
         let instruction = if let Some(interrupt) = self.check_for_interrupt() {
             self.cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.mapped.interrupts.clear(interrupt);
@@ -29,7 +29,7 @@ impl GameBoy {
             Instruction::decode(self).unwrap()
         };
 
-        dbg!(format!("{:04x}: {}", pc, instruction));
+        // dbg!(format!("{:04x}: {}", pc, instruction));
 
         let OpResult(cycles, memory_write) = self.cpu.execute(instruction, &self.mapped);
         if let Some(memory_write) = memory_write {

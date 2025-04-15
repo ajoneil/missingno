@@ -22,6 +22,7 @@ use video::video_pane;
 #[derive(Debug, Clone)]
 pub enum Message {
     Step,
+    StepOver,
     Run,
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
@@ -68,6 +69,7 @@ pub fn update(debugger: &mut Debugger, message: Message) -> Task<ui::Message> {
 
     match message {
         Message::Step => debugger.step(),
+        Message::StepOver => debugger.step_over(),
         Message::Run => debugger.run(),
         Message::SetBreakpoint(address) => debugger.set_breakpoint(address),
         Message::ClearBreakpoint(address) => debugger.clear_breakpoint(address),
