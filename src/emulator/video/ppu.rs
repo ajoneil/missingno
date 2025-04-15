@@ -30,9 +30,9 @@ pub struct PixelProcessingUnit {
 impl PixelProcessingUnit {
     const NUM_SCANLINES: u32 = 144;
     const NUM_SCANLINES_BETWEEN: u32 = 10;
-    const SCANLINE_TOTAL_CYCLES: Cycles = Cycles(456 * 4);
-    const PREPARING_SCANLINE_CYCLES: Cycles = Cycles(80 * 4);
-    const DRAWING_PIXELS_MIN_CYCLES: Cycles = Cycles(172 * 4);
+    const SCANLINE_TOTAL_CYCLES: Cycles = Cycles(456 / 4);
+    const PREPARING_SCANLINE_CYCLES: Cycles = Cycles(80 / 4);
+    const DRAWING_PIXELS_MIN_CYCLES: Cycles = Cycles(172 / 4);
 
     pub fn new() -> Self {
         Self {

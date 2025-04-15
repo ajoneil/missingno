@@ -1,5 +1,3 @@
-use crate::emulator::memory::{MappedAddress, MemoryWrite};
-
 use super::{
     GameBoy,
     cpu::{InterruptMasterEnable, execute::OpResult, instructions::Instruction},
@@ -18,7 +16,7 @@ impl Iterator for GameBoy {
 
 impl GameBoy {
     pub fn step(&mut self) -> bool {
-        let pc = self.cpu.program_counter;
+        //let pc = self.cpu.program_counter;
         let instruction = if let Some(interrupt) = self.check_for_interrupt() {
             self.cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.mapped.interrupts.clear(interrupt);

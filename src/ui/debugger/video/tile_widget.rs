@@ -26,8 +26,8 @@ impl<Message> canvas::Program<Message> for Tile {
         let pixel_size = Size::new(widget_size.width / 8.0, widget_size.height / 8.0);
         let mut frame = canvas::Frame::new(renderer, widget_size);
 
-        for x in 0..=8 {
-            for y in 0..=8 {
+        for x in 0..8 {
+            for y in 0..8 {
                 frame.fill_rectangle(
                     Point::new(
                         x as f32 * widget_size.width / 8.0,

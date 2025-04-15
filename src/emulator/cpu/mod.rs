@@ -104,7 +104,7 @@ impl Cpu {
             }
             Register16::De => {
                 self.d = high;
-                self.c = low;
+                self.e = low;
             }
             Register16::Hl => {
                 self.h = high;
