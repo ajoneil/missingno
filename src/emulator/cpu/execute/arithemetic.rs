@@ -47,7 +47,22 @@ impl Cpu {
 
                     result.add_cycles(Cycles(1) + fetch_cycles)
                 }
-                Arithmetic8::AddA(_) => todo!(),
+
+                Arithmetic8::AddA(source) => {
+                    let (value, fetch_cycles) = self.fetch8(source, memory);
+                    let result = self.a.wrapping_add(value);
+
+                    self.flags.set(cpu::Flags::ZERO, result == 0);
+                    self.flags.remove(cpu::Flags::NEGATIVE);
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf + value & 0xf > 0xf);
+                    self.flags
+                        .set(cpu::Flags::CARRY, self.a as u16 + value as u16 > 0xff);
+
+                    self.a = result;
+                    OpResult::cycles(1).add_cycles(fetch_cycles)
+                }
+
                 Arithmetic8::SubtractA(_) => todo!(),
                 Arithmetic8::AddACarry(_) => todo!(),
                 Arithmetic8::SubtractACarry(_) => todo!(),

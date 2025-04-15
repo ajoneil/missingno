@@ -10,6 +10,7 @@ use super::{
 };
 
 mod arithemetic;
+mod bit_flag;
 mod bitwise;
 mod interrupt;
 mod jump;
@@ -53,7 +54,7 @@ impl Cpu {
             Instruction::Load(instruction) => self.execute_load(instruction, memory),
             Instruction::Arithmetic(instruction) => self.execute_arithmetic(instruction, memory),
             Instruction::Bitwise(instruction) => self.execute_bitwise(instruction, memory),
-            Instruction::BitFlag(_) => todo!(),
+            Instruction::BitFlag(instruction) => self.execute_bit_flag(instruction, memory),
             Instruction::BitShift(_) => todo!(),
             Instruction::Jump(instruction) => self.execute_jump(instruction, memory),
             Instruction::CarryFlag(_) => todo!(),
