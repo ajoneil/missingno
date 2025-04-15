@@ -3,16 +3,17 @@ pub mod cartridge;
 pub mod cpu;
 pub mod execute;
 pub mod interrupts;
+pub mod joypad;
 pub mod memory;
 pub mod serial_transfer;
 pub mod timers;
 pub mod video;
-// mod joypad;
 // mod mbc;
 
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::{Cpu, cycles::Cycles};
+use joypad::Joypad;
 use memory::Ram;
 use video::Video;
 
@@ -23,6 +24,7 @@ pub struct MemoryMapped {
     ram: Ram,
     video: Video,
     audio: Audio,
+    joypad: Joypad,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
     timers: timers::Timers,
@@ -45,6 +47,7 @@ impl GameBoy {
                 ram: Ram::new(),
                 video: Video::new(),
                 audio: Audio::new(),
+                joypad: Joypad::new(),
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
                 timers: timers::Timers::new(),

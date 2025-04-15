@@ -1,48 +1,37 @@
 pub struct Joypad {
-    control_bits: u8,
-}
-
-enum Enabled {
-    Buttons,
-    Dpad,
-    Neither,
+    read_buttons: bool,
+    read_dpad: bool,
 }
 
 impl Joypad {
+    const UNUSED: u8 = 0b1100_0000;
+    const READ_BUTTONS: u8 = 0b0010_0000;
+    const READ_DPAD: u8 = 0b0001_0000;
+
     pub fn new() -> Self {
-        Self { control_bits: 0 }
-    }
-
-    pub fn read(&self) -> u8 {
-        // 0b11000000
-        //     & self.control_bits << 4
-        //     & match self.enabled() {
-        //         Enabled::Buttons => self.button_bits(),
-        //         Enabled::Dpad => self.dpad_bits(),
-        //         Enabled::Neither => 0b1111,
-        //     }
-        0xef
-    }
-
-    pub fn write(&mut self, val: u8) {
-        self.control_bits = (val >> 4) & 0b11;
-    }
-
-    fn enabled(&self) -> Enabled {
-        if self.control_bits & 0b10 != 0 {
-            Enabled::Buttons
-        } else if self.control_bits & 0b1 != 0 {
-            Enabled::Dpad
-        } else {
-            Enabled::Neither
+        Self {
+            read_buttons: false,
+            read_dpad: false,
         }
     }
 
-    fn button_bits(&self) -> u8 {
-        0b1111
+    pub fn read_register(&self) -> u8 {
+        let mut value = Self::UNUSED;
+
+        // Bits are weirdly inverted for joypad
+        if !self.read_buttons {
+            value |= Self::READ_BUTTONS;
+        }
+        if !self.read_dpad {
+            value |= Self::READ_DPAD;
+        }
+
+        // Nothing pressed
+        value | 0xf
     }
 
-    fn dpad_bits(&self) -> u8 {
-        0b1111
+    pub fn write_register(&mut self, value: u8) {
+        self.read_buttons = value & Self::READ_BUTTONS == 0;
+        self.read_dpad = value & Self::READ_DPAD == 0;
     }
 }

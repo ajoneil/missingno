@@ -25,6 +25,7 @@ pub enum MappedAddress {
     WorkRam(u16),
     HighRam(u8),
     VideoRam(video::memory::MappedAddress),
+    JoypadRegister,
     SerialTransferRegister(serial_transfer::Register),
     TimerRegister(timers::Register),
     InterruptRegister(interrupts::Register),
@@ -43,6 +44,7 @@ impl MappedAddress {
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xfe00..=0xfe9f => Self::VideoRam(video::memory::MappedAddress::map(address)),
             0xfea0..=0xfeff => Self::Unmapped,
+            0xff00 => Self::JoypadRegister,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
             0xff04 => Self::TimerRegister(timers::Register::Divider),
@@ -91,6 +93,7 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
             MappedAddress::VideoRam(address) => self.video.read_memory(address),
+            MappedAddress::JoypadRegister => self.joypad.read_register(),
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data,
                 serial_transfer::Register::Control => self.serial.control.bits(),
@@ -124,6 +127,7 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize] = value,
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
+            MappedAddress::JoypadRegister => self.joypad.write_register(value),
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data = value,
                 serial_transfer::Register::Control => {
