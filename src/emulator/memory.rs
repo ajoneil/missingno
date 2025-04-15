@@ -55,6 +55,8 @@ impl MappedAddress {
             0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
             0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
             0xff49 => Self::VideoRegister(video::Register::Sprite1Palette),
+            0xff4a => Self::VideoRegister(video::Register::WindowY),
+            0xff4b => Self::VideoRegister(video::Register::WindowX),
             0xff4c..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),

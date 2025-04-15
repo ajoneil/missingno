@@ -19,8 +19,10 @@ use super::cpu::cycles::Cycles;
 pub enum Register {
     Control,
     Status,
-    BackgroundViewportX,
     BackgroundViewportY,
+    BackgroundViewportX,
+    WindowY,
+    WindowX,
     CurrentScanline,
     BackgroundPalette,
     Sprite0Palette,
@@ -59,8 +61,14 @@ pub struct Video {
     ppu: PixelProcessingUnit,
     interrupts: Interrupts,
     background_viewport: BackgroundViewportPosition,
+    window: Window,
     palettes: Palettes,
     memory: VideoMemory,
+}
+
+pub struct Window {
+    y: u8,
+    x_plus_7: u8,
 }
 
 impl Video {
@@ -74,6 +82,7 @@ impl Video {
                 current_line_compare: 0,
             },
             background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
+            window: Window { y: 0, x_plus_7: 0 },
             palettes: Palettes::default(),
             memory: VideoMemory::new(),
         }
@@ -92,8 +101,10 @@ impl Video {
 
                 self.interrupts.flags.bits() & line_compare & self.ppu.mode() as u8
             }
-            Register::BackgroundViewportX => self.background_viewport.x,
             Register::BackgroundViewportY => self.background_viewport.y,
+            Register::BackgroundViewportX => self.background_viewport.x,
+            Register::WindowY => self.window.y,
+            Register::WindowX => self.window.x_plus_7 - 7,
             Register::CurrentScanline => self.ppu.current_line(),
             Register::BackgroundPalette => self.palettes.background.0,
             Register::Sprite0Palette => self.palettes.sprite0.0,
@@ -105,8 +116,10 @@ impl Video {
         match register {
             Register::Control => self.control = Control::new(ControlFlags::from_bits_retain(value)),
             Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
-            Register::BackgroundViewportX => self.background_viewport.x = value,
             Register::BackgroundViewportY => self.background_viewport.y = value,
+            Register::BackgroundViewportX => self.background_viewport.x = value,
+            Register::WindowY => self.window.y = value,
+            Register::WindowX => self.window.x_plus_7 = value,
             Register::BackgroundPalette => self.palettes.background = PaletteMap(value),
             Register::Sprite0Palette => self.palettes.sprite0 = PaletteMap(value),
             Register::Sprite1Palette => self.palettes.sprite1 = PaletteMap(value),
