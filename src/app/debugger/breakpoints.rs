@@ -8,7 +8,10 @@ use crate::{
     app::{
         self,
         core::{emoji, fonts, sizes::s},
-        debugger::panes::{pane, title_bar},
+        debugger::{
+            self,
+            panes::{self, AvailablePanes, pane, title_bar},
+        },
     },
     debugger::Debugger,
 };
@@ -25,7 +28,7 @@ pub enum Message {
 
 impl Into<app::Message> for Message {
     fn into(self) -> app::Message {
-        app::Message::Debugger(app::debugger::Message::BreakpointPane(self))
+        app::Message::Debugger(debugger::Message::Pane(panes::Message::Breakpoint(self)))
     }
 }
 
@@ -56,16 +59,16 @@ impl State {
 }
 
 pub fn breakpoints_pane<'a>(
-    debugger: &'a Debugger,
-    state: &'a State,
+    debugger: &Debugger,
+    state: &State,
 ) -> pane_grid::Content<'a, app::Message> {
     pane(
-        title_bar("Breakpoints"),
+        title_bar("Breakpoints", Some(AvailablePanes::Breakpoints)),
         column![breakpoints(debugger), add_breakpoint(state)].into(),
     )
 }
 
-fn breakpoints(debugger: &Debugger) -> iced::Element<'_, app::Message> {
+fn breakpoints<'a>(debugger: &Debugger) -> iced::Element<'a, app::Message> {
     container(
         scrollable(Column::from_iter(
             debugger
@@ -94,7 +97,7 @@ fn breakpoint(address: u16) -> iced::Element<'static, app::Message> {
     .into()
 }
 
-fn add_breakpoint(state: &State) -> iced::Element<'_, app::Message> {
+fn add_breakpoint(state: &State) -> iced::Element<'static, app::Message> {
     text_input("Add breakpoint...", &state.breakpoint_input)
         .font(fonts::monospace())
         .on_input(|value| Message::BreakpointInputChanged(value).into())

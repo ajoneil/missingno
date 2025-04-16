@@ -4,7 +4,7 @@ use crate::{
     app::{
         Message,
         core::sizes::{l, s},
-        debugger::panes::{checkbox_title_bar, pane},
+        debugger::panes::{AvailablePanes, checkbox_title_bar, pane},
     },
     emulator::audio::Audio,
 };
@@ -13,7 +13,7 @@ mod channels;
 
 pub fn audio_pane(audio: &Audio) -> pane_grid::Content<'_, Message> {
     pane(
-        checkbox_title_bar("Audio", audio.enabled()),
+        checkbox_title_bar("Audio", audio.enabled(), Some(AvailablePanes::Audio)),
         column![
             row![
                 column![

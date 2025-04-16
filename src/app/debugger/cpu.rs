@@ -9,14 +9,14 @@ use iced::{
 
 use crate::{
     app::{
-        Message,
+        self,
         core::{
             fonts,
             sizes::{m, s},
         },
         debugger::{
             interrupts::interrupts,
-            panes::{checkbox_title_bar, pane},
+            panes::{AvailablePanes, checkbox_title_bar, pane},
         },
     },
     debugger::Debugger,
@@ -27,9 +27,13 @@ use crate::{
     },
 };
 
-pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
+pub fn cpu_pane<'a>(debugger: &Debugger) -> pane_grid::Content<'a, app::Message> {
     pane(
-        checkbox_title_bar("CPU", !debugger.game_boy().cpu().halted),
+        checkbox_title_bar(
+            "CPU",
+            !debugger.game_boy().cpu().halted,
+            Some(AvailablePanes::Cpu),
+        ),
         column![
             cpu(debugger.game_boy().cpu()),
             horizontal_rule(1),
@@ -40,7 +44,7 @@ pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
     )
 }
 
-pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
+pub fn cpu(cpu: &Cpu) -> Element<'static, app::Message> {
     column![
         row![
             text("Program Counter")
@@ -100,7 +104,7 @@ fn register_pair(
     reg1: Register8,
     reg2: Register8,
     pair: Register16,
-) -> Element<'_, Message> {
+) -> Element<'static, app::Message> {
     row![
         container(register8(cpu, reg1)).width(Length::FillPortion(1)),
         container(register8(cpu, reg2)).width(Length::FillPortion(1)),
@@ -110,7 +114,7 @@ fn register_pair(
     .into()
 }
 
-fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
+fn register8(cpu: &Cpu, register: Register8) -> Element<'static, app::Message> {
     row![
         text(register.to_string())
             .align_x(Alignment::End)
@@ -126,7 +130,7 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
     .into()
 }
 
-fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'_, Message> {
+fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'static, app::Message> {
     row![
         text(label).align_x(Alignment::End).font(fonts::monospace()),
         text_input(
@@ -140,7 +144,7 @@ fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'_, Mes
     .into()
 }
 
-fn flags(flags: Flags) -> Element<'static, Message> {
+fn flags(flags: Flags) -> Element<'static, app::Message> {
     container(
         row![
             column![
@@ -158,11 +162,11 @@ fn flags(flags: Flags) -> Element<'static, Message> {
     .into()
 }
 
-fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'_, Message> {
+fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'static, app::Message> {
     container(checkbox(label, flags.contains(flag))).into()
 }
 
-fn controls() -> Element<'static, Message> {
+fn controls() -> Element<'static, app::Message> {
     container(
         row![
             button("Step").on_press(super::Message::Step.into()),

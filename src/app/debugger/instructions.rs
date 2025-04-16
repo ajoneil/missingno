@@ -15,7 +15,7 @@ use crate::{
         },
         debugger::{
             self,
-            panes::{pane, title_bar},
+            panes::{AvailablePanes, pane, title_bar},
         },
     },
     debugger::instructions::InstructionsIterator,
@@ -23,18 +23,18 @@ use crate::{
 };
 
 pub fn instructions_pane<'a>(
-    memory: &'a MemoryMapped,
+    memory: &MemoryMapped,
     pc: u16,
-    breakpoints: &'a BTreeSet<u16>,
+    breakpoints: &BTreeSet<u16>,
 ) -> pane_grid::Content<'a, Message> {
     pane(
-        title_bar("Instructions"),
+        title_bar("Instructions", Some(AvailablePanes::Instructions)),
         instructions(memory, pc, breakpoints),
     )
 }
 
 pub fn instructions<'a>(
-    memory: &'a MemoryMapped,
+    memory: &MemoryMapped,
     pc: u16,
     breakpoints: &BTreeSet<u16>,
 ) -> Element<'a, Message> {

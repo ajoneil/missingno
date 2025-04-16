@@ -9,7 +9,7 @@ use iced::{
 };
 
 use crate::emulator::{GameBoy, cartridge::Cartridge};
-use action_bar::action_bar;
+use action_bar::ActionBar;
 use core::{emoji, fonts, horizontal_rule, sizes::l, text};
 
 mod action_bar;
@@ -29,33 +29,37 @@ pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
 
 struct App {
     game: Game,
+    action_bar: ActionBar,
 }
 
 enum Game {
     Unloaded,
     Loading,
-    Loaded(debugger::State),
+    Loaded(debugger::Debugger),
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Load(load::Message),
     Debugger(debugger::Message),
+    ActionBar(action_bar::Message),
 
     None,
 }
 
 impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
-        match rom_path {
-            Some(rom_path) => Self {
-                game: Game::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(
-                    fs::read(rom_path).unwrap(),
-                )))),
-            },
-            None => Self {
-                game: Game::Unloaded,
-            },
+        let game = match rom_path {
+            Some(rom_path) => Game::Loaded(debugger::Debugger::new(GameBoy::new(Cartridge::new(
+                fs::read(rom_path).unwrap(),
+            )))),
+
+            None => Game::Unloaded,
+        };
+
+        Self {
+            game,
+            action_bar: ActionBar::new(),
         }
     }
 
@@ -76,9 +80,11 @@ impl App {
             Message::Load(message) => return load::update(message, &mut self.game),
 
             Message::Debugger(message) => match &mut self.game {
-                Game::Loaded(debugger) => return debugger::update(debugger, message),
+                Game::Loaded(debugger) => return debugger.update(message),
                 _ => {}
             },
+
+            Message::ActionBar(message) => return self.action_bar.update(message),
 
             Message::None => {}
         }
@@ -88,7 +94,7 @@ impl App {
 
     fn view(&self) -> Element<'_, Message> {
         column![
-            action_bar(self),
+            self.action_bar.view(self),
             horizontal_rule(),
             container(self.inner()).center(Fill)
         ]
@@ -97,7 +103,7 @@ impl App {
 
     fn inner(&self) -> Element<'_, Message> {
         match &self.game {
-            Game::Loaded(debugger) => debugger::debugger(&debugger),
+            Game::Loaded(debugger) => debugger.view(),
             _ => column![text::xl("Welcome to MissingNo.!"), emoji::xxl("👾")]
                 .align_x(Center)
                 .spacing(l())

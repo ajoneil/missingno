@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-pub fn ch1(channel: &PulseSweepChannel) -> Element<'_, Message> {
+pub fn ch1(channel: &PulseSweepChannel) -> Element<'static, Message> {
     column![
         enabled("Channel 1", &channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
@@ -23,7 +23,7 @@ pub fn ch1(channel: &PulseSweepChannel) -> Element<'_, Message> {
     .into()
 }
 
-pub fn ch2(channel: &PulseChannel) -> Element<'_, Message> {
+pub fn ch2(channel: &PulseChannel) -> Element<'static, Message> {
     column![
         enabled("Channel 2", &channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
@@ -31,7 +31,7 @@ pub fn ch2(channel: &PulseChannel) -> Element<'_, Message> {
     .into()
 }
 
-pub fn ch3(channel: &WaveChannel) -> Element<'_, Message> {
+pub fn ch3(channel: &WaveChannel) -> Element<'static, Message> {
     column![
         enabled("Channel 3", &channel.enabled),
         text!("Vol {}%", (channel.volume.volume() * 100.0) as u8)
@@ -39,7 +39,7 @@ pub fn ch3(channel: &WaveChannel) -> Element<'_, Message> {
     .into()
 }
 
-pub fn ch4(channel: &NoiseChannel) -> Element<'_, Message> {
+pub fn ch4(channel: &NoiseChannel) -> Element<'static, Message> {
     column![
         enabled("Channel 4", &channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)

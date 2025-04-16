@@ -11,7 +11,7 @@ use crate::{
     emulator::GameBoy,
 };
 
-pub fn interrupts(game_boy: &GameBoy) -> Element<'_, Message> {
+pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
         checkbox("Interrupts", game_boy.cpu().interrupts_enabled()),
         enabled(game_boy),
@@ -21,7 +21,7 @@ pub fn interrupts(game_boy: &GameBoy) -> Element<'_, Message> {
     .into()
 }
 
-fn enabled(game_boy: &GameBoy) -> Element<'_, Message> {
+fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
         text("Enabled"),
         row![
@@ -68,7 +68,7 @@ fn enabled(game_boy: &GameBoy) -> Element<'_, Message> {
     .into()
 }
 
-fn requested(game_boy: &GameBoy) -> Element<'_, Message> {
+fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
         text("Requested"),
         row![

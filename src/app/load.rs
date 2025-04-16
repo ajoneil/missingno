@@ -43,7 +43,9 @@ pub fn update(message: Message, game: &mut Game) -> Task<app::Message> {
         }
 
         Message::Loaded(rom) => {
-            *game = Game::Loaded(app::debugger::State::new(GameBoy::new(Cartridge::new(rom))));
+            *game = Game::Loaded(app::debugger::Debugger::new(GameBoy::new(Cartridge::new(
+                rom,
+            ))));
         }
     }
 
