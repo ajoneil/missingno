@@ -1,5 +1,6 @@
-use bitflags::bitflags;
 use core::fmt;
+
+use bitflags::bitflags;
 
 #[derive(Clone)]
 #[allow(dead_code)]

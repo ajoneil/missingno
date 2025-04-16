@@ -1,4 +1,4 @@
-use super::{
+use crate::emulator::{
     MemoryMapped, audio,
     cpu::cycles::Cycles,
     interrupts::{self, InterruptFlags},

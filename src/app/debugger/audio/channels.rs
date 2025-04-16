@@ -1,4 +1,10 @@
+use iced::{
+    Element, Length,
+    widget::{checkbox, column, row, text},
+};
+
 use crate::{
+    app::Message,
     emulator::audio::channels::{
         Enabled,
         noise::NoiseChannel,
@@ -7,11 +13,6 @@ use crate::{
         registers::{EnvelopeDirection, VolumeAndEnvelope},
         wave::WaveChannel,
     },
-    ui::Message,
-};
-use iced::{
-    Element, Length,
-    widget::{checkbox, column, row, text},
 };
 
 pub fn ch1(channel: &PulseSweepChannel) -> Element<'_, Message> {

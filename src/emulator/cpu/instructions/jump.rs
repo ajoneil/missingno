@@ -1,7 +1,9 @@
-use super::{Address, Instruction};
-use crate::emulator::cpu::Flag;
-
 use core::fmt;
+
+use crate::emulator::cpu::{
+    Flag,
+    instructions::{Address, Instruction},
+};
 
 #[derive(Clone)]
 pub enum Jump {

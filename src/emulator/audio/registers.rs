@@ -1,20 +1,10 @@
-use super::{
-    Audio,
+use bitflags::bitflags;
+
+use crate::emulator::audio::{
+    Audio, Register,
     channels::{noise, pulse, pulse_sweep, wave},
     volume::Volume,
 };
-use bitflags::bitflags;
-
-#[derive(PartialEq, Eq, Debug)]
-pub enum Register {
-    Control,
-    Panning,
-    Volume,
-    Channel1(pulse_sweep::Register),
-    Channel2(pulse::Register),
-    Channel3(wave::Register),
-    Channel4(noise::Register),
-}
 
 impl Register {
     pub fn map(address: u16) -> Self {

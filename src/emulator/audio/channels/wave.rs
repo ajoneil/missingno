@@ -1,4 +1,4 @@
-use super::Enabled;
+use crate::emulator::audio::channels::Enabled;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {

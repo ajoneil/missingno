@@ -1,6 +1,6 @@
-use super::cpu::instructions::{Address, Instruction, jump};
-
 use bitflags::bitflags;
+
+use crate::emulator::cpu::instructions::{Address, Instruction, jump};
 
 #[derive(Debug)]
 pub enum Register {

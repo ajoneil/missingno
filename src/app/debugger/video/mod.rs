@@ -1,24 +1,29 @@
+use iced::{
+    Color, Element, Length,
+    widget::{column, horizontal_rule, pane_grid, radio, row},
+};
+use rgb::RGB8;
+
+use crate::{
+    app::{
+        Message,
+        core::sizes::m,
+        debugger::panes::{checkbox_title_bar, pane},
+    },
+    emulator::video::{Video, ppu::Mode},
+};
+
+use background_and_window::background_and_window;
+use sprites::sprites;
+use tile_map::tile_address_mode;
+use tiles::tile_blocks;
+
 mod background_and_window;
 mod palette;
 mod sprites;
 mod tile_map;
 mod tile_widget;
 mod tiles;
-
-use super::panes::{checkbox_title_bar, pane};
-use crate::{
-    emulator::video::{Video, ppu::Mode},
-    ui::{Message, styles::spacing},
-};
-use background_and_window::background_and_window;
-use iced::{
-    Color, Element, Length,
-    widget::{column, horizontal_rule, pane_grid, radio, row},
-};
-use rgb::RGB8;
-use sprites::sprites;
-use tile_map::tile_address_mode;
-use tiles::tile_blocks;
 
 pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
     pane(
@@ -40,7 +45,7 @@ pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
             horizontal_rule(1),
             tile_blocks(video)
         ]
-        .spacing(spacing::m())
+        .spacing(m())
         .into(),
     )
 }

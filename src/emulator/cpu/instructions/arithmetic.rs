@@ -1,7 +1,9 @@
-use super::{Source8, Target8};
-use crate::emulator::cpu::Register16;
-
 use core::fmt;
+
+use crate::emulator::cpu::{
+    Register16,
+    instructions::{Source8, Target8},
+};
 
 #[derive(Clone)]
 pub enum Arithmetic {

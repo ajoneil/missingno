@@ -1,5 +1,6 @@
-use crate::emulator::cpu::registers::Register16;
 use core::fmt;
+
+use crate::emulator::cpu::registers::Register16;
 
 #[derive(Clone)]
 pub enum Stack {

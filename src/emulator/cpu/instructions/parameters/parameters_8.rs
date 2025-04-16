@@ -1,6 +1,6 @@
-use crate::emulator::cpu::{Register8, instructions::Address};
-
 use core::fmt;
+
+use crate::emulator::cpu::{Register8, instructions::Address};
 
 #[derive(Clone)]
 pub enum Target8 {

@@ -1,13 +1,12 @@
-use crate::{
-    emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
-    ui::{Message, styles::spacing},
-};
-
-use super::iced_color;
 use iced::{
     Border, Color, Element, Length,
     border::Radius,
     widget::{container, row},
+};
+
+use crate::{
+    app::{Message, core::sizes::m, debugger::video::iced_color},
+    emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
 };
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
@@ -18,7 +17,7 @@ pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(spacing::m()),
+        .spacing(m()),
     )
     .height(20)
     .into()
@@ -32,7 +31,7 @@ pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(spacing::m()),
+        .spacing(m()),
     )
     .height(20)
     .into()

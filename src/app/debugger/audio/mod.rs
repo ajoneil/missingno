@@ -1,11 +1,15 @@
-mod channels;
-
-use super::panes::{checkbox_title_bar, pane};
-use crate::{
-    emulator::audio::Audio,
-    ui::{Message, styles::spacing},
-};
 use iced::widget::{column, pane_grid, row, slider, text, vertical_rule};
+
+use crate::{
+    app::{
+        Message,
+        core::sizes::{l, s},
+        debugger::panes::{checkbox_title_bar, pane},
+    },
+    emulator::audio::Audio,
+};
+
+mod channels;
 
 pub fn audio_pane(audio: &Audio) -> pane_grid::Content<'_, Message> {
     pane(
@@ -25,7 +29,7 @@ pub fn audio_pane(audio: &Audio) -> pane_grid::Content<'_, Message> {
                     })
                 ]
             ]
-            .spacing(spacing::l()),
+            .spacing(l()),
             row![
                 channels::ch1(&audio.channels().ch1),
                 vertical_rule(1),
@@ -35,9 +39,9 @@ pub fn audio_pane(audio: &Audio) -> pane_grid::Content<'_, Message> {
                 vertical_rule(1),
                 channels::ch4(&audio.channels().ch4),
             ]
-            .spacing(spacing::s())
+            .spacing(s())
         ]
-        .spacing(spacing::s())
+        .spacing(s())
         .into(),
     )
 }

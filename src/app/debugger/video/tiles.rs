@@ -1,14 +1,14 @@
-use super::tile_widget::tile;
+use iced::{
+    Element,
+    widget::{Column, Row, column, text},
+};
+
 use crate::{
+    app::{Message, core::sizes::m, debugger::video::tile_widget::tile},
     emulator::video::{
         Video,
         tiles::{TileBlock, TileBlockId, TileIndex},
     },
-    ui::{Message, styles::spacing},
-};
-use iced::{
-    Element,
-    widget::{Column, Row, column, text},
 };
 
 pub fn tile_blocks(video: &Video) -> Element<'_, Message> {
@@ -17,7 +17,7 @@ pub fn tile_blocks(video: &Video) -> Element<'_, Message> {
         tile_block(video, TileBlockId(1)),
         tile_block(video, TileBlockId(2))
     ]
-    .spacing(spacing::m())
+    .spacing(m())
     .into()
 }
 

@@ -1,19 +1,3 @@
-use crate::{
-    debugger::Debugger,
-    emulator::cpu::{
-        Cpu,
-        flags::Flags,
-        registers::{Register8, Register16},
-    },
-    ui::{
-        Message,
-        debugger::{
-            interrupts::interrupts,
-            panes::{checkbox_title_bar, pane},
-        },
-        styles::{fonts, spacing},
-    },
-};
 use iced::{
     Alignment, Element, Length,
     alignment::Vertical,
@@ -23,6 +7,26 @@ use iced::{
 };
 use iced_aw::wrap_horizontal;
 
+use crate::{
+    app::{
+        Message,
+        core::{
+            fonts,
+            sizes::{m, s, xs},
+        },
+        debugger::{
+            interrupts::interrupts,
+            panes::{checkbox_title_bar, pane},
+        },
+    },
+    debugger::Debugger,
+    emulator::cpu::{
+        Cpu,
+        flags::Flags,
+        registers::{Register8, Register16},
+    },
+};
+
 pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
     pane(
         checkbox_title_bar("CPU", !debugger.game_boy().cpu().halted),
@@ -31,7 +35,7 @@ pub fn cpu_pane(debugger: &Debugger) -> pane_grid::Content<'_, Message> {
             horizontal_rule(1),
             interrupts(debugger.game_boy()),
         ]
-        .spacing(spacing::s())
+        .spacing(s())
         .into(),
     )
 }
@@ -43,21 +47,21 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
                 .align_x(Alignment::End)
                 .width(Length::FillPortion(2)),
             text_input("Program Counter", &format!("{:04x}", cpu.program_counter))
-                .font(fonts::MONOSPACE)
+                .font(fonts::monospace())
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
-        .spacing(spacing::s()),
+        .spacing(s()),
         row![
             text("Stack Pointer")
                 .align_x(Alignment::End)
                 .width(Length::FillPortion(2)),
             text_input("Stack Pointer", &format!("{:04x}", cpu.stack_pointer))
-                .font(fonts::MONOSPACE)
+                .font(fonts::monospace())
                 .width(Length::FillPortion(1))
         ]
         .align_y(Vertical::Center)
-        .spacing(spacing::s()),
+        .spacing(s()),
         controls(),
         horizontal_rule(1),
         container(flags(cpu.flags)),
@@ -67,7 +71,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
             container(register16(cpu, Register16::Af, Register16::Af.to_string()))
                 .width(Length::FillPortion(2))
         ]
-        .spacing(spacing::m()),
+        .spacing(m()),
         row![register_pair(
             cpu,
             Register8::B,
@@ -87,7 +91,7 @@ pub fn cpu(cpu: &Cpu) -> Element<'_, Message> {
             Register16::Hl
         )],
     ]
-    .spacing(spacing::s())
+    .spacing(s())
     .into()
 }
 
@@ -102,7 +106,7 @@ fn register_pair(
         container(register8(cpu, reg2)).width(Length::FillPortion(1)),
         container(register16(cpu, pair, pair.to_string())).width(Length::FillPortion(2))
     ]
-    .spacing(spacing::m())
+    .spacing(m())
     .into()
 }
 
@@ -110,29 +114,29 @@ fn register8(cpu: &Cpu, register: Register8) -> Element<'static, Message> {
     row![
         text(register.to_string())
             .align_x(Alignment::End)
-            .font(fonts::MONOSPACE),
+            .font(fonts::monospace()),
         text_input(
             &register.to_string(),
             &cpu.get_register8(register).to_string()
         )
-        .font(fonts::MONOSPACE)
+        .font(fonts::monospace())
     ]
     .align_y(Vertical::Center)
-    .spacing(spacing::s())
+    .spacing(s())
     .into()
 }
 
 fn register16(cpu: &Cpu, register: Register16, label: String) -> Element<'_, Message> {
     row![
-        text(label).align_x(Alignment::End).font(fonts::MONOSPACE),
+        text(label).align_x(Alignment::End).font(fonts::monospace()),
         text_input(
             &register.to_string(),
             &format!("{:04x}", &cpu.get_register16(register))
         )
-        .font(fonts::MONOSPACE)
+        .font(fonts::monospace())
     ]
     .align_y(Vertical::Center)
-    .spacing(spacing::s())
+    .spacing(s())
     .into()
 }
 
@@ -148,7 +152,7 @@ fn flags(flags: Flags) -> Element<'static, Message> {
                 flag("half-carry", flags, Flags::HALF_CARRY),
             ]
         ]
-        .spacing(spacing::s()),
+        .spacing(s()),
     )
     .align_right(Length::Fill)
     .into()
@@ -165,7 +169,7 @@ fn controls() -> Element<'static, Message> {
         button("Step Frame").on_press(super::Message::StepFrame.into()),
         button("Run").on_press(super::Message::Run.into())
     ]
-    .spacing(spacing::s())
-    .line_spacing(spacing::xs())
+    .spacing(s())
+    .line_spacing(xs())
     .into()
 }

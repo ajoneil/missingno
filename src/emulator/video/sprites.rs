@@ -1,6 +1,8 @@
-use super::tiles::TileIndex;
-use bitflags::bitflags;
 use core::fmt;
+
+use bitflags::bitflags;
+
+use crate::emulator::video::tiles::TileIndex;
 
 #[derive(Clone, Copy)]
 pub struct Sprite {

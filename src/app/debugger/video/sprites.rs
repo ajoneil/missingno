@@ -3,10 +3,13 @@ use iced::{
     widget::{checkbox, column, radio, row, text},
 };
 
-use super::palette::palette3;
 use crate::{
+    app::{
+        Message,
+        core::sizes::{m, s},
+        debugger::video::palette::palette3,
+    },
     emulator::video::{Video, palette::Palette, sprites::SpriteSize},
-    ui::{Message, styles::spacing},
 };
 
 pub fn sprites(video: &Video) -> Element<'static, Message> {
@@ -17,14 +20,14 @@ pub fn sprites(video: &Video) -> Element<'static, Message> {
             text("Palette 0"),
             palette3(&video.palettes().sprite0, &Palette::MONOCHROME_GREEN)
         ]
-        .spacing(spacing::m()),
+        .spacing(m()),
         row![
             text("Palette 1"),
             palette3(&video.palettes().sprite1, &Palette::MONOCHROME_GREEN)
         ]
-        .spacing(spacing::m())
+        .spacing(m())
     ]
-    .spacing(spacing::s())
+    .spacing(s())
     .into()
 }
 
@@ -44,6 +47,6 @@ fn sprite_size(size: SpriteSize) -> Element<'static, Message> {
             |_| -> Message { Message::None }
         )
     ]
-    .spacing(spacing::m())
+    .spacing(m())
     .into()
 }

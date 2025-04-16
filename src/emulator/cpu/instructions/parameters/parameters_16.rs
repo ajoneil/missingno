@@ -1,7 +1,6 @@
-use super::Address;
-use crate::emulator::cpu::Register16;
-
 use core::fmt;
+
+use crate::emulator::cpu::{Register16, instructions::Address};
 
 #[derive(Clone)]
 pub enum Target16 {

@@ -1,15 +1,16 @@
-use super::panes::{pane, title_bar};
-use crate::{
-    debugger::Debugger,
-    ui::{
-        self,
-        styles::{fonts, spacing},
-    },
-};
 use iced::{
     Length,
     alignment::Vertical,
     widget::{Column, button, column, container, pane_grid, row, scrollable, text, text_input},
+};
+
+use crate::{
+    app::{
+        self,
+        core::{fonts, sizes::s},
+        debugger::panes::{pane, title_bar},
+    },
+    debugger::Debugger,
 };
 
 pub struct State {
@@ -22,9 +23,9 @@ pub enum Message {
     AddBreakpoint,
 }
 
-impl Into<ui::Message> for Message {
-    fn into(self) -> ui::Message {
-        ui::Message::Debugger(ui::debugger::Message::BreakpointPane(self))
+impl Into<app::Message> for Message {
+    fn into(self) -> app::Message {
+        app::Message::Debugger(app::debugger::Message::BreakpointPane(self))
     }
 }
 
@@ -57,14 +58,14 @@ impl State {
 pub fn breakpoints_pane<'a>(
     debugger: &'a Debugger,
     state: &'a State,
-) -> pane_grid::Content<'a, ui::Message> {
+) -> pane_grid::Content<'a, app::Message> {
     pane(
         title_bar("Breakpoints"),
         column![breakpoints(debugger), add_breakpoint(state)].into(),
     )
 }
 
-fn breakpoints(debugger: &Debugger) -> iced::Element<'_, ui::Message> {
+fn breakpoints(debugger: &Debugger) -> iced::Element<'_, app::Message> {
     container(
         scrollable(Column::from_iter(
             debugger
@@ -76,26 +77,26 @@ fn breakpoints(debugger: &Debugger) -> iced::Element<'_, ui::Message> {
         .width(Length::Fill),
     )
     .style(container::bordered_box)
-    .padding(spacing::s())
+    .padding(s())
     .into()
 }
 
-fn breakpoint(address: u16) -> iced::Element<'static, ui::Message> {
+fn breakpoint(address: u16) -> iced::Element<'static, app::Message> {
     container(
         row![
-            button(text("🔴").font(fonts::EMOJI))
-                .on_press(ui::debugger::Message::ClearBreakpoint(address).into())
+            button(text("🔴").font(fonts::emoji()))
+                .on_press(app::debugger::Message::ClearBreakpoint(address).into())
                 .style(button::text),
-            text(format!("{:04x}", address)).font(fonts::MONOSPACE)
+            text(format!("{:04x}", address)).font(fonts::monospace())
         ]
         .align_y(Vertical::Center),
     )
     .into()
 }
 
-fn add_breakpoint(state: &State) -> iced::Element<'_, ui::Message> {
+fn add_breakpoint(state: &State) -> iced::Element<'_, app::Message> {
     text_input("Add breakpoint...", &state.breakpoint_input)
-        .font(fonts::MONOSPACE)
+        .font(fonts::monospace())
         .on_input(|value| Message::BreakpointInputChanged(value).into())
         .on_submit(Message::AddBreakpoint.into())
         .into()

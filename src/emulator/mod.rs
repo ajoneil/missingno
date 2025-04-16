@@ -1,3 +1,10 @@
+use audio::Audio;
+use cartridge::Cartridge;
+use cpu::{Cpu, cycles::Cycles};
+use joypad::Joypad;
+use memory::Ram;
+use video::Video;
+
 pub mod audio;
 pub mod cartridge;
 pub mod cpu;
@@ -8,14 +15,6 @@ pub mod memory;
 pub mod serial_transfer;
 pub mod timers;
 pub mod video;
-// mod mbc;
-
-use audio::Audio;
-use cartridge::Cartridge;
-use cpu::{Cpu, cycles::Cycles};
-use joypad::Joypad;
-use memory::Ram;
-use video::Video;
 
 // Anything accessible via a memory address is stored in a separate
 // struct to allow borrowing independently of the Cpu

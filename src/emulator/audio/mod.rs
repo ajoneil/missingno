@@ -1,13 +1,26 @@
+use channels::{
+    Channels,
+    noise::{self, NoiseChannel},
+    pulse::{self, PulseChannel},
+    pulse_sweep::{self, PulseSweepChannel},
+    wave::{self, WaveChannel},
+};
+use volume::Volume;
+
 pub mod channels;
 pub mod registers;
 pub mod volume;
 
-use channels::{
-    Channels, noise::NoiseChannel, pulse::PulseChannel, pulse_sweep::PulseSweepChannel,
-    wave::WaveChannel,
-};
-pub use registers::Register;
-use volume::Volume;
+#[derive(PartialEq, Eq, Debug)]
+pub enum Register {
+    Control,
+    Panning,
+    Volume,
+    Channel1(pulse_sweep::Register),
+    Channel2(pulse::Register),
+    Channel3(wave::Register),
+    Channel4(noise::Register),
+}
 
 pub struct Audio {
     enabled: bool,

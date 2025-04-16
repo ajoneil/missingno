@@ -1,15 +1,3 @@
-mod audio;
-mod breakpoints;
-mod cpu;
-mod instructions;
-mod interrupts;
-mod panes;
-mod video;
-
-use crate::{emulator::GameBoy, ui};
-use audio::audio_pane;
-use breakpoints::breakpoints_pane;
-use cpu::cpu_pane;
 use iced::{
     Element, Task,
     widget::{
@@ -17,11 +5,26 @@ use iced::{
         pane_grid::{self, Axis},
     },
 };
+
+use crate::{
+    app::{self, core::sizes::m},
+    emulator::GameBoy,
+};
+
+use audio::audio_pane;
+use breakpoints::breakpoints_pane;
+use cpu::cpu_pane;
 use instructions::instructions_pane;
 use panes::PaneState;
 use video::video_pane;
 
-use super::styles::spacing;
+mod audio;
+mod breakpoints;
+mod cpu;
+mod instructions;
+mod interrupts;
+mod panes;
+mod video;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -85,7 +88,7 @@ impl State {
     }
 }
 
-pub fn update(state: &mut State, message: Message) -> Task<ui::Message> {
+pub fn update(state: &mut State, message: Message) -> Task<app::Message> {
     let State {
         panes, debugger, ..
     } = state;
@@ -116,7 +119,7 @@ pub fn update(state: &mut State, message: Message) -> Task<ui::Message> {
     Task::none()
 }
 
-pub fn debugger(state: &State) -> Element<'_, ui::Message> {
+pub fn debugger(state: &State) -> Element<'_, app::Message> {
     container(
         widget::pane_grid(
             &state.panes,
@@ -136,8 +139,8 @@ pub fn debugger(state: &State) -> Element<'_, ui::Message> {
         )
         .on_resize(10.0, |resize| Message::ResizePane(resize).into())
         .on_drag(|drag| Message::DragPane(drag).into())
-        .spacing(spacing::m()),
+        .spacing(m()),
     )
-    .padding(spacing::m())
+    .padding(m())
     .into()
 }

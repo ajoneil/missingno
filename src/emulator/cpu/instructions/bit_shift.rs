@@ -1,6 +1,6 @@
 use core::fmt;
 
-use super::Target8;
+use crate::emulator::cpu::instructions::Target8;
 
 #[derive(Clone)]
 pub enum BitShift {

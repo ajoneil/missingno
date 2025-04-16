@@ -1,10 +1,5 @@
-mod debugger;
-mod styles;
+use std::{fs, path::PathBuf};
 
-use crate::{
-    emulator::{GameBoy, cartridge::Cartridge},
-    ui::styles::fonts,
-};
 use iced::{
     Element,
     Length::Fill,
@@ -12,12 +7,17 @@ use iced::{
     widget::{button, container},
 };
 use rfd::{AsyncFileDialog, FileHandle};
-use std::{fs, path::PathBuf};
+
+use crate::emulator::{GameBoy, cartridge::Cartridge};
+use core::fonts;
+
+mod core;
+mod debugger;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
         .settings(iced::Settings {
-            default_font: fonts::DEFAULT,
+            default_font: fonts::default(),
             ..Default::default()
         })
         .theme(App::theme)
@@ -25,10 +25,10 @@ pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
 }
 
 struct App {
-    load_state: LoadState,
+    game: Game,
 }
 
-enum LoadState {
+enum Game {
     Unloaded,
     Loading,
     Loaded(debugger::State),
@@ -59,18 +59,18 @@ impl App {
     fn new(rom_path: Option<PathBuf>) -> Self {
         match rom_path {
             Some(rom_path) => Self {
-                load_state: LoadState::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(
+                game: Game::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(
                     fs::read(rom_path).unwrap(),
                 )))),
             },
             None => Self {
-                load_state: LoadState::Unloaded,
+                game: Game::Unloaded,
             },
         }
     }
 
     fn title(&self) -> String {
-        if let LoadState::Loaded(debugger) = &self.load_state {
+        if let Game::Loaded(debugger) = &self.game {
             format!("{} - MissingNo.", debugger.game_boy().cartridge().title())
         } else {
             "MissingNo.".into()
@@ -85,7 +85,7 @@ impl App {
         match message {
             Message::Load(load_message) => match load_message {
                 LoadMessage::PickGameRom => {
-                    self.load_state = LoadState::Loading;
+                    self.game = Game::Loading;
                     return Task::perform(
                         AsyncFileDialog::new()
                             .add_filter("Game Boy ROM", &["gb"])
@@ -101,18 +101,18 @@ impl App {
                             Message::Load(LoadMessage::GameRomLoaded(result))
                         });
                     } else {
-                        self.load_state = LoadState::Unloaded;
+                        self.game = Game::Unloaded;
                     }
                 }
 
                 LoadMessage::GameRomLoaded(rom) => {
-                    self.load_state =
-                        LoadState::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(rom))));
+                    self.game =
+                        Game::Loaded(debugger::State::new(GameBoy::new(Cartridge::new(rom))));
                 }
             },
 
-            Message::Debugger(message) => match &mut self.load_state {
-                LoadState::Loaded(debugger) => return debugger::update(debugger, message),
+            Message::Debugger(message) => match &mut self.game {
+                Game::Loaded(debugger) => return debugger::update(debugger, message),
                 _ => {}
             },
             Message::None => {}
@@ -126,12 +126,12 @@ impl App {
     }
 
     fn inner(&self) -> Element<'_, Message> {
-        match &self.load_state {
-            LoadState::Unloaded => button("Load game")
+        match &self.game {
+            Game::Unloaded => button("Load game")
                 .on_press(Message::Load(LoadMessage::PickGameRom))
                 .into(),
-            LoadState::Loading => button("Load game").into(),
-            LoadState::Loaded(debugger) => debugger::debugger(&debugger),
+            Game::Loading => button("Load game").into(),
+            Game::Loaded(debugger) => debugger::debugger(&debugger),
         }
     }
 }

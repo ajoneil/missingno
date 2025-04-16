@@ -1,10 +1,10 @@
-pub mod cycle_timer;
-pub mod registers;
-
-use super::{cpu::cycles::Cycles, interrupts::Interrupt};
+use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
 use cycle_timer::CycleTimer;
 use registers::Control;
 pub use registers::Register;
+
+pub mod cycle_timer;
+pub mod registers;
 
 pub struct Timers {
     divider: u8,

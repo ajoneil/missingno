@@ -1,5 +1,6 @@
-use super::{Source8, Source16, Target8, Target16};
 use core::fmt;
+
+use crate::emulator::cpu::instructions::{Source8, Source16, Target8, Target16};
 
 #[derive(Clone)]
 pub enum Load {

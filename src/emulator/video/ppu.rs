@@ -1,6 +1,6 @@
-use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
-
 use core::fmt;
+
+use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

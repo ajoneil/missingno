@@ -1,3 +1,12 @@
+use bitflags::bitflags;
+
+use crate::emulator::cpu::cycles::Cycles;
+use control::{Control, ControlFlags};
+use memory::VideoMemory;
+use palette::{PaletteMap, Palettes};
+use ppu::PixelProcessingUnit;
+use tiles::{TileBlock, TileBlockId};
+
 pub mod control;
 pub mod memory;
 pub mod palette;
@@ -5,15 +14,6 @@ pub mod ppu;
 pub mod sprites;
 pub mod tile_maps;
 pub mod tiles;
-
-use bitflags::bitflags;
-use control::{Control, ControlFlags};
-use memory::VideoMemory;
-use palette::{PaletteMap, Palettes};
-use ppu::PixelProcessingUnit;
-use tiles::{TileBlock, TileBlockId};
-
-use super::cpu::cycles::Cycles;
 
 #[derive(Debug)]
 pub enum Register {

@@ -1,21 +1,26 @@
-use crate::{
-    debugger::instructions::InstructionsIterator,
-    emulator::{MemoryMapped, cpu::instructions::Instruction},
-    ui::{
-        Message,
-        debugger::{
-            self,
-            panes::{pane, title_bar},
-        },
-        styles::{fonts, spacing},
-    },
-};
+use std::collections::BTreeSet;
+
 use iced::{
     Element, Length,
     alignment::Vertical,
     widget::{Column, button, pane_grid, row, text},
 };
-use std::collections::BTreeSet;
+
+use crate::{
+    app::{
+        Message,
+        core::{
+            fonts,
+            sizes::{s, xs},
+        },
+        debugger::{
+            self,
+            panes::{pane, title_bar},
+        },
+    },
+    debugger::instructions::InstructionsIterator,
+    emulator::{MemoryMapped, cpu::instructions::Instruction},
+};
 
 pub fn instructions_pane<'a>(
     memory: &'a MemoryMapped,
@@ -61,19 +66,19 @@ pub fn instruction(
 ) -> Element<'static, Message> {
     row![
         breakpoint(address, is_breakpoint),
-        text(format!("{:04x}", address)).font(fonts::MONOSPACE),
-        text(instruction.to_string()).font(fonts::MONOSPACE)
+        text(format!("{:04x}", address)).font(fonts::monospace()),
+        text(instruction.to_string()).font(fonts::monospace())
     ]
     .align_y(Vertical::Center)
-    .spacing(spacing::s())
+    .spacing(s())
     .into()
 }
 
 fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
-    button(text(if breakpoint { "🔴" } else { "" }).font(fonts::EMOJI))
+    button(text(if breakpoint { "🔴" } else { "" }).font(fonts::emoji()))
         .style(button::text)
         .width(Length::Fixed(20.0))
-        .padding(spacing::xs())
+        .padding(xs())
         .on_press(
             if breakpoint {
                 debugger::Message::ClearBreakpoint(address)

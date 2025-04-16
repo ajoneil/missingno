@@ -1,5 +1,16 @@
 use core::fmt;
 
+pub use arithmetic::{Arithmetic, Arithmetic8, Arithmetic16};
+pub use bit_flag::BitFlag;
+pub use bit_shift::BitShift;
+pub use bitwise::Bitwise;
+pub use carry_flag::CarryFlag;
+pub use interrupt::Interrupt;
+pub use jump::Jump;
+pub use load::Load;
+pub use parameters::*;
+pub use stack::Stack;
+
 mod arithmetic;
 mod bit_flag;
 mod bit_shift;
@@ -10,18 +21,6 @@ pub mod jump;
 mod load;
 mod parameters;
 mod stack;
-
-pub use parameters::*;
-
-pub use arithmetic::{Arithmetic, Arithmetic8, Arithmetic16};
-pub use bit_flag::BitFlag;
-pub use bit_shift::BitShift;
-pub use bitwise::Bitwise;
-pub use carry_flag::CarryFlag;
-pub use interrupt::Interrupt;
-pub use jump::Jump;
-pub use load::Load;
-pub use stack::Stack;
 
 #[derive(Clone)]
 pub enum Instruction {

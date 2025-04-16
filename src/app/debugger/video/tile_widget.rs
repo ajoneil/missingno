@@ -1,11 +1,9 @@
 use iced::{Element, Point, Renderer, Size, Theme, mouse, widget::canvas};
 
 use crate::{
+    app::{Message, debugger::video::iced_color},
     emulator::video::{palette::Palette, tiles::Tile},
-    ui::Message,
 };
-
-use super::iced_color;
 
 pub fn tile(tile: Tile) -> Element<'static, Message> {
     canvas(tile).width(24).height(24).into()

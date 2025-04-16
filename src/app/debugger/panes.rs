@@ -1,11 +1,15 @@
-use super::breakpoints;
-use crate::ui::{
-    Message,
-    styles::{fonts, spacing},
-};
 use iced::{
     Border, Element, Theme,
     widget::{checkbox, container, pane_grid, text},
+};
+
+use crate::app::{
+    Message,
+    core::{
+        fonts,
+        sizes::{m, s},
+    },
+    debugger::breakpoints,
 };
 
 pub enum PaneState {
@@ -20,7 +24,7 @@ pub fn pane<'a>(
     title: pane_grid::TitleBar<'a, Message>,
     content: Element<'a, Message>,
 ) -> pane_grid::Content<'a, Message> {
-    pane_grid::Content::new(container(content).padding(spacing::m()))
+    pane_grid::Content::new(container(content).padding(m()))
         .title_bar(title)
         .style(pane_style)
 }
@@ -50,13 +54,13 @@ pub fn title_style(theme: &Theme) -> container::Style {
 }
 
 pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, Message> {
-    pane_grid::TitleBar::new(text(label).font(fonts::TITLE))
+    pane_grid::TitleBar::new(text(label).font(fonts::title()))
         .style(title_style)
-        .padding(spacing::s())
+        .padding(s())
 }
 
 pub fn checkbox_title_bar(label: &str, checked: bool) -> pane_grid::TitleBar<'_, Message> {
-    pane_grid::TitleBar::new(checkbox(label, checked).font(fonts::TITLE))
+    pane_grid::TitleBar::new(checkbox(label, checked).font(fonts::title()))
         .style(title_style)
-        .padding(spacing::s())
+        .padding(s())
 }

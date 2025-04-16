@@ -4,8 +4,8 @@ use iced::{
 };
 
 use crate::{
+    app::{Message, core::sizes::m},
     emulator::video::{control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
-    ui::{Message, styles::spacing},
 };
 
 pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
@@ -24,7 +24,7 @@ pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
             |_| -> Message { Message::None }
         )
     ]
-    .spacing(spacing::m())
+    .spacing(m())
     .into()
 }
 
@@ -44,6 +44,6 @@ pub fn tile_map(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
             |_| -> Message { Message::None }
         )
     ]
-    .spacing(spacing::m())
+    .spacing(m())
     .into()
 }

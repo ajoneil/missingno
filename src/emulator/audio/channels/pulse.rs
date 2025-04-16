@@ -1,8 +1,7 @@
-use super::{
+use crate::emulator::audio::channels::{
     Enabled,
-    registers::{PeriodHighAndControl, Signed11},
+    registers::{PeriodHighAndControl, Signed11, VolumeAndEnvelope},
 };
-use crate::emulator::audio::channels::registers::VolumeAndEnvelope;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {

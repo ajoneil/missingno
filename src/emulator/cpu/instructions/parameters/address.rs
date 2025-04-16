@@ -1,6 +1,6 @@
-use crate::emulator::cpu::Register16;
-
 use core::fmt;
+
+use crate::emulator::cpu::Register16;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Address {

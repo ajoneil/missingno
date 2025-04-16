@@ -1,6 +1,6 @@
 use core::fmt;
 
-use super::Source8;
+use crate::emulator::cpu::instructions::Source8;
 
 #[derive(Clone)]
 pub enum Bitwise {
