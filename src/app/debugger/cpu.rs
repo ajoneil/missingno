@@ -1,18 +1,18 @@
 use iced::{
-    Alignment, Element, Length,
+    Alignment, Element,
+    Length::{self, Fill},
     alignment::Vertical,
     widget::{
         button, checkbox, column, container, horizontal_rule, pane_grid, row, text, text_input,
     },
 };
-use iced_aw::wrap_horizontal;
 
 use crate::{
     app::{
         Message,
         core::{
             fonts,
-            sizes::{m, s, xs},
+            sizes::{m, s},
         },
         debugger::{
             interrupts::interrupts,
@@ -163,13 +163,14 @@ fn flag(label: &str, flags: Flags, flag: Flags) -> Element<'_, Message> {
 }
 
 fn controls() -> Element<'static, Message> {
-    wrap_horizontal![
-        button("Step").on_press(super::Message::Step.into()),
-        button("Step Over").on_press(super::Message::StepOver.into()),
-        button("Step Frame").on_press(super::Message::StepFrame.into()),
-        button("Run").on_press(super::Message::Run.into())
-    ]
-    .spacing(s())
-    .line_spacing(xs())
+    container(
+        row![
+            button("Step").on_press(super::Message::Step.into()),
+            button("Step Over").on_press(super::Message::StepOver.into()),
+        ]
+        .spacing(s())
+        .wrap(),
+    )
+    .align_right(Fill)
     .into()
 }

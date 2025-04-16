@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use iced::{
+    Alignment::Center,
     Element,
     Length::Fill,
     Task, Theme,
@@ -9,7 +10,7 @@ use iced::{
 
 use crate::emulator::{GameBoy, cartridge::Cartridge};
 use action_bar::action_bar;
-use core::{fonts, horizontal_rule, text};
+use core::{emoji, fonts, horizontal_rule, sizes::l, text};
 
 mod action_bar;
 mod core;
@@ -97,7 +98,10 @@ impl App {
     fn inner(&self) -> Element<'_, Message> {
         match &self.game {
             Game::Loaded(debugger) => debugger::debugger(&debugger),
-            _ => text::l("Welcome to MissingNo.!").into(),
+            _ => column![text::xl("Welcome to MissingNo.!"), emoji::xxl("👾")]
+                .align_x(Center)
+                .spacing(l())
+                .into(),
         }
     }
 }

@@ -10,7 +10,7 @@ use crate::{
     app::{
         Message,
         core::{
-            fonts,
+            emoji, fonts,
             sizes::{s, xs},
         },
         debugger::{
@@ -75,7 +75,7 @@ pub fn instruction(
 }
 
 fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
-    button(text(if breakpoint { "🔴" } else { "" }).font(fonts::emoji()))
+    button(emoji::m(if breakpoint { "🔴" } else { "" }))
         .style(button::text)
         .width(Length::Fixed(20.0))
         .padding(xs())

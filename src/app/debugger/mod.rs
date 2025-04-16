@@ -32,6 +32,9 @@ pub enum Message {
     StepOver,
     StepFrame,
     Run,
+    Pause,
+    Reset,
+
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
 
@@ -98,6 +101,9 @@ pub fn update(state: &mut State, message: Message) -> Task<app::Message> {
         Message::StepOver => debugger.step_over(),
         Message::StepFrame => debugger.step_frame(),
         Message::Run => debugger.run(),
+        Message::Pause => todo!(),
+        Message::Reset => debugger.reset(),
+
         Message::SetBreakpoint(address) => debugger.set_breakpoint(address),
         Message::ClearBreakpoint(address) => debugger.clear_breakpoint(address),
 

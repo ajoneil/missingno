@@ -55,6 +55,18 @@ impl GameBoy {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.cpu = Cpu::new(self.mapped.cartridge.header_checksum());
+        self.mapped.ram = Ram::new();
+        self.mapped.video = Video::new();
+        self.mapped.audio = Audio::new();
+        self.mapped.joypad = Joypad::new();
+        self.mapped.interrupts = interrupts::Registers::new();
+        self.mapped.serial = serial_transfer::Registers::new();
+        self.mapped.timers = timers::Timers::new();
+        self.mapped.dma_transfer_cycles = None;
+    }
+
     pub fn memory_mapped(&self) -> &MemoryMapped {
         &self.mapped
     }

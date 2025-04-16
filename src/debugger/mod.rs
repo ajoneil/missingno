@@ -56,6 +56,10 @@ impl Debugger {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.game_boy.reset();
+    }
+
     pub fn breakpoints(&self) -> &BTreeSet<u16> {
         &self.breakpoints
     }
