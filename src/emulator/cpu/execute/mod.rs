@@ -6,6 +6,7 @@ use crate::emulator::{
 use super::{
     Cpu, Instruction, Register16,
     cycles::Cycles,
+    flags::Flags,
     instructions::{Address, Source8, Source16, Target8, Target16},
 };
 
@@ -61,7 +62,37 @@ impl Cpu {
             Instruction::CarryFlag(_) => todo!(),
             Instruction::Stack(instruction) => self.execute_stack(instruction, memory),
             Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
-            Instruction::DecimalAdjustAccumulator => todo!(),
+
+            Instruction::DecimalAdjustAccumulator => {
+                let value = if self.flags.contains(Flags::NEGATIVE) {
+                    let mut adjustment = 0;
+                    if self.flags.contains(Flags::HALF_CARRY) {
+                        adjustment += 0x6;
+                    }
+                    if self.flags.contains(Flags::CARRY) {
+                        adjustment += 0x60;
+                    }
+
+                    self.a.wrapping_sub(adjustment)
+                } else {
+                    let mut adjustment = 0;
+                    if self.flags.contains(Flags::HALF_CARRY) || self.a & 0xf > 0x9 {
+                        adjustment += 0x6;
+                    }
+                    if self.flags.contains(Flags::CARRY) || self.a > 0x99 {
+                        adjustment += 0x60;
+                        self.flags.insert(Flags::CARRY);
+                    }
+
+                    self.a.wrapping_add(adjustment)
+                };
+
+                self.flags.set(Flags::ZERO, value == 0);
+                self.a = value;
+
+                OpResult::cycles(1)
+            }
+
             Instruction::NoOperation => OpResult::cycles(1),
             Instruction::Stop => todo!(),
             Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),

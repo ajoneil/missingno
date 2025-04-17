@@ -63,8 +63,38 @@ impl Cpu {
                     OpResult::cycles(1).add_cycles(fetch_cycles)
                 }
 
-                Arithmetic8::SubtractA(_) => todo!(),
-                Arithmetic8::AddACarry(_) => todo!(),
+                Arithmetic8::SubtractA(source) => {
+                    let (value, fetch_cycles) = self.fetch8(source, memory);
+                    let result = self.a.wrapping_sub(value);
+
+                    self.flags.set(cpu::Flags::ZERO, result == 0);
+                    self.flags.insert(cpu::Flags::NEGATIVE);
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf0 < value & 0xf0);
+                    self.flags.set(cpu::Flags::CARRY, self.a < value);
+
+                    self.a = result;
+                    OpResult::cycles(1).add_cycles(fetch_cycles)
+                }
+
+                Arithmetic8::AddACarry(source) => {
+                    let (mut value, fetch_cycles) = self.fetch8(source, memory);
+                    if self.flags.contains(Flags::CARRY) {
+                        value += 1
+                    };
+                    let result = self.a.wrapping_add(value);
+
+                    self.flags.set(cpu::Flags::ZERO, result == 0);
+                    self.flags.remove(cpu::Flags::NEGATIVE);
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf + value & 0xf > 0xf);
+                    self.flags
+                        .set(cpu::Flags::CARRY, self.a as u16 + value as u16 > 0xff);
+
+                    self.a = result;
+                    OpResult::cycles(1).add_cycles(fetch_cycles)
+                }
+
                 Arithmetic8::SubtractACarry(_) => todo!(),
                 Arithmetic8::CompareA(source) => {
                     let (compare, fetch_cycles) = self.fetch8(source, memory);
@@ -95,12 +125,16 @@ impl Cpu {
                     let hl = self.get_register16(Register16::Hl);
 
                     self.flags.remove(Flags::NEGATIVE);
-                    self.flags
-                        .set(Flags::HALF_CARRY, hl & 0xfff + value & 0xfff > 0xfff);
-                    self.flags
-                        .set(Flags::CARRY, hl & 0xff + value & 0xff > 0xff);
+                    self.flags.set(
+                        Flags::HALF_CARRY,
+                        (hl & 0xfff) as u32 + (value & 0xfff) as u32 > 0xfff,
+                    );
+                    self.flags.set(
+                        Flags::CARRY,
+                        (hl & 0xff) as u32 + (value & 0xff) as u32 > 0xff,
+                    );
 
-                    self.set_register16(Register16::Hl, hl + value);
+                    self.set_register16(Register16::Hl, hl.wrapping_add(value));
 
                     OpResult::cycles(2)
                 }
