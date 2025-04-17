@@ -7,7 +7,7 @@ use crate::{
     app::{
         Message,
         core::sizes::{m, s},
-        debugger::video::{palette::palette4, tile_map::tile_map_choice},
+        debugger::video::{palette::palette4, tile_maps::tile_map_choice},
     },
     emulator::video::{Video, palette::Palette},
 };

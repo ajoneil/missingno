@@ -54,7 +54,7 @@ impl InstructionsPane {
         }
 
         pane(
-            title_bar("Instructions", Some(DebuggerPane::Instructions)),
+            title_bar("Instructions", DebuggerPane::Instructions),
             Column::from_vec(instructions).into(),
         )
     }

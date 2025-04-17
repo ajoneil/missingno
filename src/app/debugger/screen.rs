@@ -1,6 +1,6 @@
 use iced::{
-    Length::Fill,
-    widget::{canvas, pane_grid},
+    Length::{self, Fill},
+    widget::{canvas, container, pane_grid, responsive},
 };
 
 use crate::{
@@ -44,8 +44,19 @@ impl ScreenPane {
 
     pub fn content(&self) -> pane_grid::Content<'_, app::Message> {
         pane(
-            title_bar("Screen", Some(DebuggerPane::Screen)),
-            canvas(self.screen).width(Fill).height(Fill).into(),
+            title_bar("Screen", DebuggerPane::Screen),
+            responsive(|size| {
+                let shortest = size.width.min(size.height);
+
+                container(
+                    canvas(self.screen)
+                        .width(Length::Fixed(shortest))
+                        .height(Length::Fixed(shortest)),
+                )
+                .center(Fill)
+                .into()
+            })
+            .into(),
         )
     }
 }

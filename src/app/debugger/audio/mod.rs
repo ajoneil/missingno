@@ -20,7 +20,7 @@ impl AudioPane {
 
     pub fn content(&self, audio: &Audio) -> pane_grid::Content<'_, Message> {
         pane(
-            checkbox_title_bar("Audio", audio.enabled(), Some(DebuggerPane::Audio)),
+            checkbox_title_bar("Audio", audio.enabled(), DebuggerPane::Audio),
             column![
                 row![
                     column![

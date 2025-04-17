@@ -14,15 +14,14 @@ use crate::{
 
 use background_and_window::background_and_window;
 use sprites::sprites;
-use tile_map::{tile_address_mode, tile_maps};
-use tiles::tile_blocks;
+use tile_maps::tile_address_mode;
 
 mod background_and_window;
 mod palette;
 mod sprites;
-mod tile_map;
+pub mod tile_maps;
 mod tile_widget;
-mod tiles;
+pub mod tiles;
 
 pub struct VideoPane;
 
@@ -36,7 +35,7 @@ impl VideoPane {
             checkbox_title_bar(
                 "Video",
                 video.control().video_enabled(),
-                Some(DebuggerPane::Video),
+                DebuggerPane::Video,
             ),
             scrollable(
                 column![
@@ -53,12 +52,9 @@ impl VideoPane {
                     background_and_window(video),
                     horizontal_rule(1),
                     sprites(video),
-                    horizontal_rule(1),
-                    tile_blocks(video),
-                    horizontal_rule(1),
-                    tile_maps(video),
                 ]
-                .spacing(m()),
+                .spacing(m())
+                .padding(m()),
             )
             .into(),
         )

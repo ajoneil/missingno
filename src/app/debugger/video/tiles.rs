@@ -1,25 +1,48 @@
 use iced::{
     Element,
-    widget::{Column, Row, column, row, text},
+    Length::Fill,
+    widget::{Column, Row, column, pane_grid, row, scrollable, text},
 };
 
 use crate::{
-    app::{Message, core::sizes::m, debugger::video::tile_widget::tile},
+    app::{
+        Message,
+        core::sizes::m,
+        debugger::{
+            panes::{DebuggerPane, pane, title_bar},
+            video::tile_widget::tile,
+        },
+    },
     emulator::video::{
         Video,
         tiles::{TileBlock, TileBlockId, TileIndex},
     },
 };
 
-pub fn tile_blocks(video: &Video) -> Element<'static, Message> {
-    row![
-        tile_block(video, TileBlockId(0)),
-        tile_block(video, TileBlockId(1)),
-        tile_block(video, TileBlockId(2))
-    ]
-    .spacing(m())
-    .wrap()
-    .into()
+pub struct TilesPane;
+
+impl TilesPane {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
+        pane(
+            title_bar("Tiles", DebuggerPane::Tiles),
+            scrollable(
+                row![
+                    tile_block(video, TileBlockId(0)),
+                    tile_block(video, TileBlockId(1)),
+                    tile_block(video, TileBlockId(2))
+                ]
+                .spacing(m())
+                .padding(m())
+                .width(Fill)
+                .wrap(),
+            )
+            .into(),
+        )
+    }
 }
 
 fn tile_block(video: &Video, block: TileBlockId) -> Element<'static, Message> {

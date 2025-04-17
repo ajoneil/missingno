@@ -61,7 +61,7 @@ impl BreakpointsPane {
 
     pub fn content(&self, debugger: &Debugger) -> pane_grid::Content<'_, app::Message> {
         pane(
-            title_bar("Breakpoints", Some(DebuggerPane::Breakpoints)),
+            title_bar("Breakpoints", DebuggerPane::Breakpoints),
             column![self.breakpoints(debugger), self.add_breakpoint()].into(),
         )
     }

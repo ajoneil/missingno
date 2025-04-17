@@ -3,7 +3,8 @@ use iced::{
     Length::{self, Fill},
     alignment::Vertical,
     widget::{
-        button, checkbox, column, container, horizontal_rule, pane_grid, row, text, text_input,
+        button, checkbox, column, container, horizontal_rule, pane_grid, row, scrollable, text,
+        text_input,
     },
 };
 
@@ -36,17 +37,16 @@ impl CpuPane {
 
     pub fn content(&self, debugger: &Debugger) -> pane_grid::Content<'_, app::Message> {
         pane(
-            checkbox_title_bar(
-                "CPU",
-                !debugger.game_boy().cpu().halted,
-                Some(DebuggerPane::Cpu),
-            ),
-            column![
-                self.cpu(debugger.game_boy().cpu()),
-                horizontal_rule(1),
-                interrupts(debugger.game_boy()),
-            ]
-            .spacing(s())
+            checkbox_title_bar("CPU", !debugger.game_boy().cpu().halted, DebuggerPane::Cpu),
+            scrollable(
+                column![
+                    self.cpu(debugger.game_boy().cpu()),
+                    horizontal_rule(1),
+                    interrupts(debugger.game_boy()),
+                ]
+                .spacing(s())
+                .padding(m()),
+            )
             .into(),
         )
     }

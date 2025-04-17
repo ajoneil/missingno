@@ -2,14 +2,10 @@ use core::fmt;
 use std::collections::HashMap;
 
 use iced::{
-    Alignment::Center,
-    Border, Color, Element,
-    Length::Fill,
-    Theme,
+    Border, Color, Element, Length, Theme,
     widget::{
         checkbox, container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
-        row,
     },
 };
 
@@ -17,7 +13,7 @@ use crate::{
     app::{
         self,
         core::{
-            buttons, fonts,
+            buttons, fonts, icons,
             sizes::{m, s},
             text,
         },
@@ -28,10 +24,11 @@ use crate::{
             cpu::CpuPane,
             instructions::InstructionsPane,
             screen::{self, ScreenPane},
-            video::VideoPane,
+            video::{VideoPane, tile_maps::TileMapPane, tiles::TilesPane},
         },
     },
     debugger::Debugger,
+    emulator::video::tile_maps::TileMapId,
 };
 
 #[derive(Debug, Clone)]
@@ -64,6 +61,8 @@ pub enum DebuggerPane {
     Breakpoints,
     Cpu,
     Video,
+    Tiles,
+    TileMap(TileMapId),
     Audio,
 }
 
@@ -73,6 +72,8 @@ enum PaneInstance {
     Breakpoints(BreakpointsPane),
     Cpu(CpuPane),
     Video(VideoPane),
+    Tiles(TilesPane),
+    TileMap(TileMapPane),
     Audio(AudioPane),
 }
 
@@ -80,14 +81,14 @@ impl DebuggerPanes {
     pub fn new() -> Self {
         let mut handles = HashMap::new();
 
-        let (mut panes, instructions_handle) =
-            pane_grid::State::new(Self::construct_pane(DebuggerPane::Instructions));
-        handles.insert(DebuggerPane::Instructions, instructions_handle);
+        let (mut panes, cpu_handle) =
+            pane_grid::State::new(Self::construct_pane(DebuggerPane::Cpu));
+        handles.insert(DebuggerPane::Cpu, cpu_handle);
 
         let (screen_handle, split) = panes
             .split(
                 Vertical,
-                instructions_handle,
+                cpu_handle,
                 Self::construct_pane(DebuggerPane::Screen),
             )
             .unwrap();
@@ -96,23 +97,23 @@ impl DebuggerPanes {
 
         let (video_handle, split) = panes
             .split(
-                Vertical,
+                Horizontal,
                 screen_handle,
                 Self::construct_pane(DebuggerPane::Video),
             )
             .unwrap();
         handles.insert(DebuggerPane::Video, video_handle);
-        panes.resize(split, 1.0 / 3.0);
+        panes.resize(split, 3.0 / 4.0);
 
-        let (cpu_handle, split) = panes
+        let (instructions_handle, split) = panes
             .split(
                 Horizontal,
-                screen_handle,
-                Self::construct_pane(DebuggerPane::Cpu),
+                cpu_handle,
+                Self::construct_pane(DebuggerPane::Instructions),
             )
             .unwrap();
-        panes.resize(split, 3.0 / 4.0);
-        handles.insert(DebuggerPane::Cpu, cpu_handle);
+        panes.resize(split, 1.0 / 4.0);
+        handles.insert(DebuggerPane::Instructions, instructions_handle);
 
         let (breakpoints_handle, split) = panes
             .split(
@@ -134,6 +135,8 @@ impl DebuggerPanes {
             DebuggerPane::Breakpoints => PaneInstance::Breakpoints(BreakpointsPane::new()),
             DebuggerPane::Cpu => PaneInstance::Cpu(CpuPane::new()),
             DebuggerPane::Video => PaneInstance::Video(VideoPane::new()),
+            DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
+            DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
             DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
         }
     }
@@ -207,6 +210,8 @@ impl DebuggerPanes {
                 PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
                 PaneInstance::Cpu(cpu) => cpu.content(debugger),
                 PaneInstance::Video(video) => video.content(debugger.game_boy().video()),
+                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().video()),
+                PaneInstance::TileMap(tile_map) => tile_map.content(debugger.game_boy().video()),
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
             },
         )
@@ -227,6 +232,9 @@ impl DebuggerPanes {
             DebuggerPane::Breakpoints,
             DebuggerPane::Cpu,
             DebuggerPane::Video,
+            DebuggerPane::Tiles,
+            DebuggerPane::TileMap(TileMapId(0)),
+            DebuggerPane::TileMap(TileMapId(1)),
             DebuggerPane::Audio,
         ]
     }
@@ -248,6 +256,8 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::Breakpoints => write!(f, "Breakpoints"),
             DebuggerPane::Cpu => write!(f, "CPU"),
             DebuggerPane::Video => write!(f, "Video"),
+            DebuggerPane::Tiles => write!(f, "Tiles"),
+            DebuggerPane::TileMap(map) => write!(f, "{}", map),
             DebuggerPane::Audio => write!(f, "Audio"),
         }
     }
@@ -257,7 +267,7 @@ pub fn pane<'a>(
     title: pane_grid::TitleBar<'a, app::Message>,
     content: Element<'a, app::Message>,
 ) -> pane_grid::Content<'a, app::Message> {
-    pane_grid::Content::new(container(content).padding(m()))
+    pane_grid::Content::new(container(content).padding([2.0, 2.0]))
         .title_bar(title)
         .style(pane_style)
 }
@@ -286,42 +296,29 @@ pub fn title_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn title_bar(
-    label: &str,
-    closable: Option<DebuggerPane>,
-) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(text::m(label).font(fonts::title()).into(), closable)
+pub fn title_bar(label: &str, pane: DebuggerPane) -> pane_grid::TitleBar<'_, app::Message> {
+    tbar(text::m(label).font(fonts::title()).into(), pane)
 }
 
 pub fn checkbox_title_bar(
     label: &str,
     checked: bool,
-    closable: Option<DebuggerPane>,
+    pane: DebuggerPane,
 ) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(
-        checkbox(label, checked).font(fonts::title()).into(),
-        closable,
-    )
+    tbar(checkbox(label, checked).font(fonts::title()).into(), pane)
 }
 
 fn tbar(
     content: Element<'_, app::Message>,
-    close_pane: Option<DebuggerPane>,
+    pane: DebuggerPane,
 ) -> pane_grid::TitleBar<'_, app::Message> {
-    pane_grid::TitleBar::new(if let Some(pane) = close_pane {
-        row![
-            content,
+    pane_grid::TitleBar::new(container(content).padding(s()))
+        .style(title_style)
+        .controls(pane_grid::Controls::new(
             container(
-                buttons::text(text::m("x").font(fonts::title()).color(Color::BLACK))
-                    .on_press(Message::ClosePane(pane).into())
+                buttons::text(icons::close().size(m()).color(Color::BLACK))
+                    .on_press(Message::ClosePane(pane).into()),
             )
-            .align_right(Fill)
-        ]
-        .align_y(Center)
-        .into()
-    } else {
-        content
-    })
-    .style(title_style)
-    .padding(s())
+            .center_y(Length::Fixed(m() + 2.0 * s())),
+        ))
 }
