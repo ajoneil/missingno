@@ -107,4 +107,8 @@ impl Debugger {
             Subscription::none()
         }
     }
+
+    pub fn running(&self) -> bool {
+        self.running
+    }
 }

@@ -49,7 +49,7 @@ impl ActionBar {
             Game::Unloaded | Game::Loading => row![load(&app.game)],
             Game::Loaded(debugger) => row![
                 load(&app.game),
-                controls(false),
+                controls(debugger.running()),
                 container(self.panes(&debugger.panes().unshown_panes())).align_right(Fill)
             ],
         }
