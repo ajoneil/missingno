@@ -13,7 +13,7 @@ pub use stack::Stack;
 
 mod arithmetic;
 mod bit_flag;
-mod bit_shift;
+pub mod bit_shift;
 mod bitwise;
 mod carry_flag;
 mod interrupt;
