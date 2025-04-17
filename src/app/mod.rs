@@ -4,7 +4,7 @@ use iced::{
     Alignment::Center,
     Element,
     Length::Fill,
-    Task, Theme,
+    Subscription, Task, Theme,
     widget::{column, container},
 };
 
@@ -20,6 +20,7 @@ mod screen;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)
+        .subscription(App::subscription)
         .settings(iced::Settings {
             default_font: fonts::default(),
             ..Default::default()
@@ -109,6 +110,13 @@ impl App {
                 .align_x(Center)
                 .spacing(l())
                 .into(),
+        }
+    }
+    pub fn subscription(&self) -> Subscription<Message> {
+        if let Game::Loaded(debugger) = &self.game {
+            debugger.subscription()
+        } else {
+            Subscription::none()
         }
     }
 }

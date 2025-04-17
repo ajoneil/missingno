@@ -1,4 +1,6 @@
-use iced::{Element, Task, widget::container};
+use std::time::Duration;
+
+use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
     app::{self, core::sizes::m},
@@ -39,6 +41,7 @@ impl Into<super::Message> for Message {
 pub struct Debugger {
     debugger: crate::debugger::Debugger,
     panes: DebuggerPanes,
+    running: bool,
 }
 
 impl Debugger {
@@ -46,6 +49,7 @@ impl Debugger {
         Self {
             debugger: crate::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::new(),
+            running: false,
         }
     }
 
@@ -73,10 +77,13 @@ impl Debugger {
                 return Task::done(screen::Message::Update(self.debugger.step_frame()).into());
             }
 
-            Message::Run => todo!(), //self.debugger.run(),
+            Message::Run => self.running = true,
 
-            Message::Pause => todo!(),
-            Message::Reset => self.debugger.reset(),
+            Message::Pause => self.running = false,
+            Message::Reset => {
+                self.running = false;
+                self.debugger.reset();
+            }
 
             Message::SetBreakpoint(address) => self.debugger.set_breakpoint(address),
             Message::ClearBreakpoint(address) => self.debugger.clear_breakpoint(address),
@@ -91,5 +98,13 @@ impl Debugger {
         container(self.panes.view(&self.debugger))
             .padding(m())
             .into()
+    }
+
+    pub fn subscription(&self) -> Subscription<app::Message> {
+        if self.running {
+            time::every(Duration::from_micros(16740)).map(|_| Message::StepFrame.into())
+        } else {
+            Subscription::none()
+        }
     }
 }

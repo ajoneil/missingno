@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 bitflags = "2.4.1"
-iced = { version = "0.13.1", features = ["canvas", "advanced", "lazy"] }
+iced = { version = "0.13.1", features = ["canvas", "advanced", "lazy", "smol"] }
 iced_aw = { version = "0.12.2", default-features = false, features = [
     "drop_down",
 ] }
