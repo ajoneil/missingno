@@ -4,6 +4,18 @@ pub enum EnvelopeDirection {
 }
 
 #[derive(Copy, Clone)]
+pub struct LengthTimerAndDuty(pub u8);
+impl LengthTimerAndDuty {
+    // pub fn wave_duty(&self) -> u8 {
+    //     self.0 >> 6
+    // }
+
+    // pub fn initial_length(&self) -> u8 {
+    //     self.0 & 0b0011_1111
+    // }
+}
+
+#[derive(Copy, Clone)]
 pub struct VolumeAndEnvelope(pub u8);
 
 impl VolumeAndEnvelope {

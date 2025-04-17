@@ -30,6 +30,7 @@ pub enum MappedAddress {
     TimerRegister(timers::Register),
     InterruptRegister(interrupts::Register),
     AudioRegister(audio::Register),
+    AudioWaveRam(u8),
     VideoRegister(video::Register),
     BeginDmaTransfer,
     Unmapped,
@@ -53,6 +54,7 @@ impl MappedAddress {
             0xff07 => Self::TimerRegister(timers::Register::Control),
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
             0xff10..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
+            0xff30..=0xff3f => Self::AudioWaveRam((address - 0xff30) as u8),
             0xff40 => Self::VideoRegister(video::Register::Control),
             0xff41 => Self::VideoRegister(video::Register::Status),
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
@@ -104,6 +106,7 @@ impl MemoryMapped {
                 interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
+            MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
             MappedAddress::BeginDmaTransfer => 0xff,
 
@@ -136,6 +139,7 @@ impl MemoryMapped {
             },
             MappedAddress::TimerRegister(register) => self.timers.write_register(register, value),
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
+            MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
             MappedAddress::BeginDmaTransfer => self.begin_dma_transfer(value),
             MappedAddress::InterruptRegister(register) => match register {

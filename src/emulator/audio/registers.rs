@@ -10,18 +10,25 @@ impl Register {
     pub fn map(address: u16) -> Self {
         match address {
             0xff10 => Self::Channel1(pulse_sweep::Register::Sweep),
+            0xff11 => Self::Channel1(pulse_sweep::Register::LengthTimerAndDuty),
             0xff12 => Self::Channel1(pulse_sweep::Register::VolumeAndEnvelope),
             0xff13 => Self::Channel1(pulse_sweep::Register::PeriodLow),
             0xff14 => Self::Channel1(pulse_sweep::Register::PeriodHighAndControl),
 
+            0xff16 => Self::Channel2(pulse::Register::LengthTimerAndDuty),
             0xff17 => Self::Channel2(pulse::Register::VolumeAndEnvelope),
             0xff18 => Self::Channel2(pulse::Register::PeriodLow),
             0xff19 => Self::Channel2(pulse::Register::PeriodHighAndControl),
 
             0xff1a => Self::Channel3(wave::Register::DacEnabled),
+            0xff1b => Self::Channel3(wave::Register::Length),
             0xff1c => Self::Channel3(wave::Register::Volume),
+            0xff1d => Self::Channel3(wave::Register::PeriodLow),
+            0xff1e => Self::Channel3(wave::Register::PeriodHighAndControl),
 
+            0xff20 => Self::Channel4(noise::Register::LengthTimer),
             0xff21 => Self::Channel4(noise::Register::VolumeAndEnvelope),
+            0xff22 => Self::Channel4(noise::Register::FrequencyAndRandomness),
             0xff23 => Self::Channel4(noise::Register::Control),
 
             0xff24 => Self::Volume,

@@ -1,10 +1,11 @@
 use crate::emulator::audio::channels::{
     Enabled,
-    registers::{PeriodHighAndControl, Signed11, VolumeAndEnvelope},
+    registers::{LengthTimerAndDuty, PeriodHighAndControl, Signed11, VolumeAndEnvelope},
 };
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
+    LengthTimerAndDuty,
     VolumeAndEnvelope,
     Sweep,
     PeriodLow,
@@ -14,6 +15,7 @@ pub enum Register {
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
     pub sweep: Sweep,
+    pub length_timer_and_duty: LengthTimerAndDuty,
     pub volume_and_envelope: VolumeAndEnvelope,
     pub length_enabled: bool,
     pub period: Signed11,
@@ -28,6 +30,7 @@ impl Default for PulseSweepChannel {
                 output_right: true,
             },
             sweep: Sweep(0x80),
+            length_timer_and_duty: LengthTimerAndDuty(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
             period: (-1).into(),
@@ -40,6 +43,7 @@ impl PulseSweepChannel {
         *self = Self {
             enabled: Enabled::disabled(),
             sweep: Sweep(0),
+            length_timer_and_duty: LengthTimerAndDuty(0),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
             period: (0).into(),
@@ -48,6 +52,7 @@ impl PulseSweepChannel {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
+            Register::LengthTimerAndDuty => self.length_timer_and_duty.0,
             Register::VolumeAndEnvelope => self.volume_and_envelope.0,
             Register::Sweep => self.sweep.0,
             Register::PeriodLow => 0xff,
@@ -57,6 +62,7 @@ impl PulseSweepChannel {
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
+            Register::LengthTimerAndDuty => self.length_timer_and_duty = LengthTimerAndDuty(value),
             Register::VolumeAndEnvelope => self.volume_and_envelope = VolumeAndEnvelope(value),
             Register::Sweep => self.sweep.0 = value,
             Register::PeriodLow => self.period.set_low8(value),
