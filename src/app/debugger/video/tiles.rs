@@ -54,5 +54,5 @@ fn tiles(block: &TileBlock) -> Element<'static, Message> {
 }
 
 fn row_of_tiles(block: &TileBlock, row: u8) -> Element<'static, Message> {
-    Row::from_iter((0..16).map(|col| tile(block.tile(TileIndex(row * 8 + col))))).into()
+    Row::from_iter((0..16).map(|col| tile(block.tile(TileIndex(row * 16 + col))))).into()
 }
