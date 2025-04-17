@@ -15,7 +15,7 @@ use crate::app::{
     },
     debugger::{
         self,
-        panes::{self, AvailablePanes},
+        panes::{self, DebuggerPane},
     },
     load,
 };
@@ -24,7 +24,7 @@ use crate::app::{
 pub enum Message {
     ShowPaneDropdown,
     DismissPaneDropdown,
-    ShowPane(AvailablePanes),
+    ShowPane(DebuggerPane),
 }
 
 impl Into<app::Message> for Message {
@@ -71,7 +71,7 @@ impl ActionBar {
         Task::none()
     }
 
-    fn panes(&self, unshown_panes: &[AvailablePanes]) -> Element<'_, app::Message> {
+    fn panes(&self, unshown_panes: &[DebuggerPane]) -> Element<'_, app::Message> {
         if unshown_panes.is_empty() {
             buttons::standard("Add panes").into()
         } else {
@@ -86,7 +86,7 @@ impl ActionBar {
         }
     }
 
-    fn pane_selection(&self, unshown_panes: &[AvailablePanes]) -> Element<'_, app::Message> {
+    fn pane_selection(&self, unshown_panes: &[DebuggerPane]) -> Element<'_, app::Message> {
         container(Column::with_children(unshown_panes.iter().map(|pane| {
             buttons::text(text::m(pane.to_string()))
                 .on_press(Message::ShowPane(*pane).into())

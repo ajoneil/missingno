@@ -7,7 +7,7 @@ use iced::{
 use crate::{
     app::{
         Message,
-        core::sizes::{m, phi, s, xs},
+        core::sizes::{m, s, xs},
         screen::iced_color,
     },
     emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
@@ -56,6 +56,6 @@ fn color_block(
             })
         })
         .height(Length::Fill)
-        .width(m() * phi())
+        .width(m() * 3.0)
         .into()
 }

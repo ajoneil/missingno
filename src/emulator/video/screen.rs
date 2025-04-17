@@ -3,7 +3,7 @@ use super::palette::PaletteIndex;
 pub const NUM_SCANLINES: u8 = 144;
 pub const PIXELS_PER_LINE: u8 = 160;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Screen {
     lines: [Line; NUM_SCANLINES as usize],
 }
@@ -24,7 +24,7 @@ impl Screen {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Line {
     pixels: [PaletteIndex; PIXELS_PER_LINE as usize],
 }

@@ -4,7 +4,7 @@ pub struct Palette {
     colors: [RGB8; 4],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PaletteIndex(pub u8);
 
 impl Palette {

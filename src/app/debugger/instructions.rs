@@ -8,84 +8,86 @@ use iced::{
 
 use crate::{
     app::{
-        Message,
+        self,
         core::{
             emoji, fonts,
             sizes::{s, xs},
         },
         debugger::{
             self,
-            panes::{AvailablePanes, pane, title_bar},
+            panes::{DebuggerPane, pane, title_bar},
         },
     },
     debugger::instructions::InstructionsIterator,
     emulator::{MemoryMapped, cpu::instructions::Instruction},
 };
 
-pub fn instructions_pane<'a>(
-    memory: &MemoryMapped,
-    pc: u16,
-    breakpoints: &BTreeSet<u16>,
-) -> pane_grid::Content<'a, Message> {
-    pane(
-        title_bar("Instructions", Some(AvailablePanes::Instructions)),
-        instructions(memory, pc, breakpoints),
-    )
-}
+pub struct InstructionsPane;
 
-pub fn instructions<'a>(
-    memory: &MemoryMapped,
-    pc: u16,
-    breakpoints: &BTreeSet<u16>,
-) -> Element<'a, Message> {
-    let mut iterator = InstructionsIterator::new(pc, memory);
-
-    let mut instructions = Vec::new();
-
-    for _ in 0..50 {
-        if let Some(address) = iterator.address {
-            if let Some(decoded) = Instruction::decode(&mut iterator) {
-                instructions.push(instruction(
-                    address,
-                    decoded,
-                    breakpoints.contains(&address),
-                ));
-            } else {
-                break;
-            }
-        }
+impl InstructionsPane {
+    pub fn new() -> Self {
+        Self
     }
 
-    Column::from_vec(instructions).into()
-}
+    pub fn content(
+        &self,
+        memory: &MemoryMapped,
+        pc: u16,
+        breakpoints: &BTreeSet<u16>,
+    ) -> pane_grid::Content<'_, app::Message> {
+        let mut iterator = InstructionsIterator::new(pc, memory);
 
-pub fn instruction(
-    address: u16,
-    instruction: Instruction,
-    is_breakpoint: bool,
-) -> Element<'static, Message> {
-    row![
-        breakpoint(address, is_breakpoint),
-        text(format!("{:04x}", address)).font(fonts::monospace()),
-        text(instruction.to_string()).font(fonts::monospace())
-    ]
-    .align_y(Vertical::Center)
-    .spacing(s())
-    .into()
-}
+        let mut instructions = Vec::new();
 
-fn breakpoint(address: u16, breakpoint: bool) -> Element<'static, Message> {
-    button(emoji::m(if breakpoint { "🔴" } else { "" }))
-        .style(button::text)
-        .width(Length::Fixed(20.0))
-        .padding(xs())
-        .on_press(
-            if breakpoint {
-                debugger::Message::ClearBreakpoint(address)
-            } else {
-                debugger::Message::SetBreakpoint(address)
+        for _ in 0..50 {
+            if let Some(address) = iterator.address {
+                if let Some(decoded) = Instruction::decode(&mut iterator) {
+                    instructions.push(self.instruction(
+                        address,
+                        decoded,
+                        breakpoints.contains(&address),
+                    ));
+                } else {
+                    break;
+                }
             }
-            .into(),
+        }
+
+        pane(
+            title_bar("Instructions", Some(DebuggerPane::Instructions)),
+            Column::from_vec(instructions).into(),
         )
+    }
+
+    fn instruction(
+        &self,
+        address: u16,
+        instruction: Instruction,
+        is_breakpoint: bool,
+    ) -> Element<'_, app::Message> {
+        row![
+            self.breakpoint(address, is_breakpoint),
+            text(format!("{:04x}", address)).font(fonts::monospace()),
+            text(instruction.to_string()).font(fonts::monospace())
+        ]
+        .align_y(Vertical::Center)
+        .spacing(s())
         .into()
+    }
+
+    fn breakpoint(&self, address: u16, breakpoint: bool) -> Element<'_, app::Message> {
+        button(emoji::m(if breakpoint { "🔴" } else { "" }))
+            .style(button::text)
+            .width(Length::Fixed(20.0))
+            .padding(xs())
+            .on_press(
+                if breakpoint {
+                    debugger::Message::ClearBreakpoint(address)
+                } else {
+                    debugger::Message::SetBreakpoint(address)
+                }
+                .into(),
+            )
+            .into()
+    }
 }

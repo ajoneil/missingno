@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::HashMap;
 
 use iced::{
     Alignment::Center,
@@ -22,27 +23,27 @@ use crate::{
         },
         debugger::{
             self,
-            audio::audio_pane,
-            breakpoints::{self, breakpoints_pane},
-            cpu::cpu_pane,
-            instructions::instructions_pane,
-            screen::screen_pane,
-            video::video_pane,
+            audio::AudioPane,
+            breakpoints::{self, BreakpointsPane},
+            cpu::CpuPane,
+            instructions::InstructionsPane,
+            screen::{self, ScreenPane},
+            video::VideoPane,
         },
     },
     debugger::Debugger,
-    emulator::video::screen::Screen,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowPane(AvailablePanes),
-    ClosePane(AvailablePanes),
+    ShowPane(DebuggerPane),
+    ClosePane(DebuggerPane),
 
     ResizePane(pane_grid::ResizeEvent),
     DragPane(pane_grid::DragEvent),
 
-    Breakpoint(breakpoints::Message),
+    BreakpointsPane(breakpoints::Message),
+    ScreenPane(screen::Message),
 }
 
 impl Into<app::Message> for Message {
@@ -51,209 +52,13 @@ impl Into<app::Message> for Message {
     }
 }
 
-pub struct Panes {
-    state: pane_grid::State<PaneState>,
-    screen: Option<pane_grid::Pane>,
-    instructions: Option<pane_grid::Pane>,
-    breakpoints: Option<pane_grid::Pane>,
-    cpu: Option<pane_grid::Pane>,
-    video: Option<pane_grid::Pane>,
-    audio: Option<pane_grid::Pane>,
+pub struct DebuggerPanes {
+    panes: pane_grid::State<PaneInstance>,
+    handles: HashMap<DebuggerPane, pane_grid::Pane>,
 }
 
-impl Panes {
-    pub fn new() -> Self {
-        let (mut state, instructions) = pane_grid::State::new(PaneState::Instructions);
-        let (screen, split) = state
-            .split(Vertical, instructions, PaneState::Screen(Screen::new()))
-            .unwrap();
-        state.resize(split, 1.0 / 4.0);
-
-        let (video, split) = state.split(Vertical, screen, PaneState::Video).unwrap();
-        state.resize(split, 1.0 / 3.0);
-
-        let (cpu, split) = state.split(Horizontal, screen, PaneState::Cpu).unwrap();
-        state.resize(split, 3.0 / 4.0);
-
-        let (breakpoint, split) = state
-            .split(
-                Horizontal,
-                instructions,
-                PaneState::Breakpoints(breakpoints::State::new()),
-            )
-            .unwrap();
-        state.resize(split, 3.0 / 4.0);
-
-        Self {
-            state,
-            screen: Some(screen),
-            instructions: Some(instructions),
-            breakpoints: Some(breakpoint),
-            cpu: Some(cpu),
-            video: Some(video),
-            audio: None,
-        }
-    }
-
-    pub fn update(&mut self, message: Message, debugger: &mut Debugger) {
-        match message {
-            Message::Breakpoint(message) => {
-                if let Some(PaneState::Breakpoints(breakpoints_state)) =
-                    self.state.get_mut(self.breakpoints.unwrap())
-                {
-                    breakpoints_state.update(message, debugger);
-                }
-            }
-
-            Message::ShowPane(pane) => {
-                if let Some((last_pane, _)) = self.state.iter().last() {
-                    match pane {
-                        AvailablePanes::Screen => {
-                            let (screen, _) = self
-                                .state
-                                .split(Horizontal, *last_pane, PaneState::Screen(Screen::new()))
-                                .unwrap();
-                            self.screen = Some(screen);
-                        }
-                        AvailablePanes::Instructions => {
-                            let (instructions, _) = self
-                                .state
-                                .split(Horizontal, *last_pane, PaneState::Instructions)
-                                .unwrap();
-                            self.instructions = Some(instructions);
-                        }
-                        AvailablePanes::Breakpoints => {
-                            let (breakpoints, _) = self
-                                .state
-                                .split(
-                                    Horizontal,
-                                    *last_pane,
-                                    PaneState::Breakpoints(breakpoints::State::new()),
-                                )
-                                .unwrap();
-                            self.breakpoints = Some(breakpoints);
-                        }
-                        AvailablePanes::Cpu => {
-                            let (cpu, _) = self
-                                .state
-                                .split(Horizontal, *last_pane, PaneState::Cpu)
-                                .unwrap();
-                            self.cpu = Some(cpu)
-                        }
-                        AvailablePanes::Video => {
-                            let (video, _) = self
-                                .state
-                                .split(Horizontal, *last_pane, PaneState::Video)
-                                .unwrap();
-                            self.video = Some(video)
-                        }
-                        AvailablePanes::Audio => {
-                            let (audio, _) = self
-                                .state
-                                .split(Horizontal, *last_pane, PaneState::Audio)
-                                .unwrap();
-                            self.audio = Some(audio)
-                        }
-                    };
-                }
-            }
-
-            Message::ClosePane(pane) => {
-                if self.state.len() > 1 {
-                    match pane {
-                        AvailablePanes::Screen => {
-                            self.state.close(self.screen.unwrap());
-                            self.screen = None;
-                        }
-                        AvailablePanes::Instructions => {
-                            self.state.close(self.instructions.unwrap());
-                            self.instructions = None;
-                        }
-                        AvailablePanes::Breakpoints => {
-                            self.state.close(self.breakpoints.unwrap());
-                            self.breakpoints = None;
-                        }
-                        AvailablePanes::Cpu => {
-                            self.state.close(self.cpu.unwrap());
-                            self.cpu = None;
-                        }
-                        AvailablePanes::Video => {
-                            self.state.close(self.video.unwrap());
-                            self.video = None;
-                        }
-                        AvailablePanes::Audio => {
-                            self.state.close(self.audio.unwrap());
-                            self.audio = None;
-                        }
-                    }
-                }
-            }
-
-            Message::ResizePane(resize) => self.state.resize(resize.split, resize.ratio),
-            Message::DragPane(drag) => match drag {
-                pane_grid::DragEvent::Dropped { pane, target } => self.state.drop(pane, target),
-                _ => {}
-            },
-        }
-    }
-
-    pub fn view<'a>(&'a self, debugger: &'a Debugger) -> Element<'a, app::Message> {
-        pane_grid(
-            &self.state,
-            |_pane, pane_state, _is_maximized| match pane_state {
-                PaneState::Screen(screen) => screen_pane(screen),
-                PaneState::Instructions => instructions_pane(
-                    debugger.game_boy().memory_mapped(),
-                    debugger.game_boy().cpu().program_counter,
-                    debugger.breakpoints(),
-                ),
-                PaneState::Breakpoints(breakpoint_state) => {
-                    breakpoints_pane(debugger, breakpoint_state)
-                }
-                PaneState::Cpu => cpu_pane(debugger),
-                PaneState::Video => video_pane(debugger.game_boy().video()),
-                PaneState::Audio => audio_pane(debugger.game_boy().audio()),
-            },
-        )
-        .on_resize(10.0, |resize| Message::ResizePane(resize).into())
-        .on_drag(|drag| Message::DragPane(drag).into())
-        .spacing(m())
-        .into()
-    }
-
-    pub fn plane_shown(&self, plane: AvailablePanes) -> bool {
-        match plane {
-            AvailablePanes::Screen => self.screen.is_some(),
-            AvailablePanes::Instructions => self.instructions.is_some(),
-            AvailablePanes::Breakpoints => self.breakpoints.is_some(),
-            AvailablePanes::Cpu => self.cpu.is_some(),
-            AvailablePanes::Video => self.video.is_some(),
-            AvailablePanes::Audio => self.audio.is_some(),
-        }
-    }
-
-    pub fn available_panes(&self) -> &[AvailablePanes] {
-        &[
-            AvailablePanes::Screen,
-            AvailablePanes::Instructions,
-            AvailablePanes::Breakpoints,
-            AvailablePanes::Cpu,
-            AvailablePanes::Video,
-            AvailablePanes::Audio,
-        ]
-    }
-
-    pub fn unshown_panes(&self) -> Vec<AvailablePanes> {
-        self.available_panes()
-            .into_iter()
-            .filter(|&pane| !self.plane_shown(*pane))
-            .cloned()
-            .collect()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AvailablePanes {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DebuggerPane {
     Screen,
     Instructions,
     Breakpoints,
@@ -262,26 +67,190 @@ pub enum AvailablePanes {
     Audio,
 }
 
-impl fmt::Display for AvailablePanes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AvailablePanes::Screen => write!(f, "Screen"),
-            AvailablePanes::Instructions => write!(f, "Instructions"),
-            AvailablePanes::Breakpoints => write!(f, "Breakpoints"),
-            AvailablePanes::Cpu => write!(f, "CPU"),
-            AvailablePanes::Video => write!(f, "Video"),
-            AvailablePanes::Audio => write!(f, "Audio"),
+enum PaneInstance {
+    Screen(ScreenPane),
+    Instructions(InstructionsPane),
+    Breakpoints(BreakpointsPane),
+    Cpu(CpuPane),
+    Video(VideoPane),
+    Audio(AudioPane),
+}
+
+impl DebuggerPanes {
+    pub fn new() -> Self {
+        let mut handles = HashMap::new();
+
+        let (mut panes, instructions_handle) =
+            pane_grid::State::new(Self::construct_pane(DebuggerPane::Instructions));
+        handles.insert(DebuggerPane::Instructions, instructions_handle);
+
+        let (screen_handle, split) = panes
+            .split(
+                Vertical,
+                instructions_handle,
+                Self::construct_pane(DebuggerPane::Screen),
+            )
+            .unwrap();
+        handles.insert(DebuggerPane::Screen, screen_handle);
+        panes.resize(split, 1.0 / 4.0);
+
+        let (video_handle, split) = panes
+            .split(
+                Vertical,
+                screen_handle,
+                Self::construct_pane(DebuggerPane::Video),
+            )
+            .unwrap();
+        handles.insert(DebuggerPane::Video, video_handle);
+        panes.resize(split, 1.0 / 3.0);
+
+        let (cpu_handle, split) = panes
+            .split(
+                Horizontal,
+                screen_handle,
+                Self::construct_pane(DebuggerPane::Cpu),
+            )
+            .unwrap();
+        panes.resize(split, 3.0 / 4.0);
+        handles.insert(DebuggerPane::Cpu, cpu_handle);
+
+        let (breakpoints_handle, split) = panes
+            .split(
+                Horizontal,
+                instructions_handle,
+                Self::construct_pane(DebuggerPane::Breakpoints),
+            )
+            .unwrap();
+        handles.insert(DebuggerPane::Breakpoints, breakpoints_handle);
+        panes.resize(split, 3.0 / 4.0);
+
+        Self { panes, handles }
+    }
+
+    fn construct_pane(pane: DebuggerPane) -> PaneInstance {
+        match pane {
+            DebuggerPane::Screen => PaneInstance::Screen(ScreenPane::new()),
+            DebuggerPane::Instructions => PaneInstance::Instructions(InstructionsPane::new()),
+            DebuggerPane::Breakpoints => PaneInstance::Breakpoints(BreakpointsPane::new()),
+            DebuggerPane::Cpu => PaneInstance::Cpu(CpuPane::new()),
+            DebuggerPane::Video => PaneInstance::Video(VideoPane::new()),
+            DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
         }
+    }
+
+    pub fn update(&mut self, message: Message, debugger: &mut Debugger) {
+        match message {
+            Message::ShowPane(pane) => {
+                if self.handles.get(&pane).is_none() {
+                    let pane_instance = Self::construct_pane(pane);
+
+                    if self.panes.is_empty() {
+                        let (panes, handle) = pane_grid::State::new(pane_instance);
+                        self.handles.insert(pane, handle);
+                        self.panes = panes;
+                    } else {
+                        let (last_pane, _) = self.panes.iter().last().unwrap();
+                        let (handle, _) = self
+                            .panes
+                            .split(Horizontal, *last_pane, pane_instance)
+                            .unwrap();
+                        self.handles.insert(pane, handle);
+                    }
+                }
+            }
+            Message::ClosePane(pane) => {
+                if let Some(handle) = self.handles.remove(&pane) {
+                    self.panes.close(handle);
+                }
+            }
+
+            Message::ResizePane(resize) => self.panes.resize(resize.split, resize.ratio),
+            Message::DragPane(drag) => match drag {
+                pane_grid::DragEvent::Dropped { pane, target } => self.panes.drop(pane, target),
+                _ => {}
+            },
+
+            Message::BreakpointsPane(message) => {
+                if let Some(breakpoints_handle) = self.handles.get(&DebuggerPane::Breakpoints) {
+                    match self.panes.get_mut(*breakpoints_handle) {
+                        Some(PaneInstance::Breakpoints(breakpoints_pane)) => {
+                            breakpoints_pane.update(message, debugger);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            Message::ScreenPane(message) => {
+                if let Some(handle) = self.handles.get(&DebuggerPane::Screen) {
+                    match self.panes.get_mut(*handle) {
+                        Some(PaneInstance::Screen(screen_pane)) => {
+                            screen_pane.update(message);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn view(&self, debugger: &Debugger) -> Element<'_, app::Message> {
+        pane_grid(
+            &self.panes,
+            |_handle, instance, _is_maximized| match instance {
+                PaneInstance::Screen(screen) => screen.content(),
+                PaneInstance::Instructions(instructions) => instructions.content(
+                    debugger.game_boy().memory_mapped(),
+                    debugger.game_boy().cpu().program_counter,
+                    debugger.breakpoints(),
+                ),
+                PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
+                PaneInstance::Cpu(cpu) => cpu.content(debugger),
+                PaneInstance::Video(video) => video.content(debugger.game_boy().video()),
+                PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
+            },
+        )
+        .on_resize(10.0, |resize| Message::ResizePane(resize).into())
+        .on_drag(|drag| Message::DragPane(drag).into())
+        .spacing(m())
+        .into()
+    }
+
+    pub fn plane_shown(&self, plane: DebuggerPane) -> bool {
+        self.handles.contains_key(&plane)
+    }
+
+    pub fn available_panes(&self) -> &[DebuggerPane] {
+        &[
+            DebuggerPane::Screen,
+            DebuggerPane::Instructions,
+            DebuggerPane::Breakpoints,
+            DebuggerPane::Cpu,
+            DebuggerPane::Video,
+            DebuggerPane::Audio,
+        ]
+    }
+
+    pub fn unshown_panes(&self) -> Vec<DebuggerPane> {
+        self.available_panes()
+            .into_iter()
+            .filter(|&pane| !self.plane_shown(*pane))
+            .cloned()
+            .collect()
     }
 }
 
-pub enum PaneState {
-    Screen(Screen),
-    Instructions,
-    Breakpoints(breakpoints::State),
-    Cpu,
-    Video,
-    Audio,
+impl fmt::Display for DebuggerPane {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DebuggerPane::Screen => write!(f, "Screen"),
+            DebuggerPane::Instructions => write!(f, "Instructions"),
+            DebuggerPane::Breakpoints => write!(f, "Breakpoints"),
+            DebuggerPane::Cpu => write!(f, "CPU"),
+            DebuggerPane::Video => write!(f, "Video"),
+            DebuggerPane::Audio => write!(f, "Audio"),
+        }
+    }
 }
 
 pub fn pane<'a>(
@@ -319,7 +288,7 @@ pub fn title_style(theme: &Theme) -> container::Style {
 
 pub fn title_bar(
     label: &str,
-    closable: Option<AvailablePanes>,
+    closable: Option<DebuggerPane>,
 ) -> pane_grid::TitleBar<'_, app::Message> {
     tbar(text::m(label).font(fonts::title()).into(), closable)
 }
@@ -327,7 +296,7 @@ pub fn title_bar(
 pub fn checkbox_title_bar(
     label: &str,
     checked: bool,
-    closable: Option<AvailablePanes>,
+    closable: Option<DebuggerPane>,
 ) -> pane_grid::TitleBar<'_, app::Message> {
     tbar(
         checkbox(label, checked).font(fonts::title()).into(),
@@ -337,7 +306,7 @@ pub fn checkbox_title_bar(
 
 fn tbar(
     content: Element<'_, app::Message>,
-    close_pane: Option<AvailablePanes>,
+    close_pane: Option<DebuggerPane>,
 ) -> pane_grid::TitleBar<'_, app::Message> {
     pane_grid::TitleBar::new(if let Some(pane) = close_pane {
         row![

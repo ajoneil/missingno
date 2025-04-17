@@ -4,7 +4,7 @@ use crate::{
     app::{self, core::sizes::m},
     emulator::GameBoy,
 };
-use panes::Panes;
+use panes::DebuggerPanes;
 
 mod audio;
 mod breakpoints;
@@ -38,14 +38,14 @@ impl Into<super::Message> for Message {
 
 pub struct Debugger {
     debugger: crate::debugger::Debugger,
-    panes: Panes,
+    panes: DebuggerPanes,
 }
 
 impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
             debugger: crate::debugger::Debugger::new(game_boy),
-            panes: Panes::new(),
+            panes: DebuggerPanes::new(),
         }
     }
 
@@ -53,16 +53,28 @@ impl Debugger {
         self.debugger.game_boy()
     }
 
-    pub fn panes(&self) -> &Panes {
+    pub fn panes(&self) -> &DebuggerPanes {
         &self.panes
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
-            Message::Step => self.debugger.step(),
-            Message::StepOver => self.debugger.step_over(),
-            Message::StepFrame => self.debugger.step_frame(),
-            Message::Run => self.debugger.run(),
+            Message::Step => {
+                if let Some(screen) = self.debugger.step() {
+                    return Task::done(screen::Message::Update(screen).into());
+                }
+            }
+            Message::StepOver => {
+                if let Some(screen) = self.debugger.step_over() {
+                    return Task::done(screen::Message::Update(screen).into());
+                }
+            }
+            Message::StepFrame => {
+                return Task::done(screen::Message::Update(self.debugger.step_frame()).into());
+            }
+
+            Message::Run => todo!(), //self.debugger.run(),
+
             Message::Pause => todo!(),
             Message::Reset => self.debugger.reset(),
 

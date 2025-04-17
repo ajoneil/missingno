@@ -7,7 +7,7 @@ use crate::{
     app::{
         Message,
         core::sizes::m,
-        debugger::panes::{AvailablePanes, checkbox_title_bar, pane},
+        debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
     },
     emulator::video::{Video, ppu::Mode},
 };
@@ -24,43 +24,51 @@ mod tile_map;
 mod tile_widget;
 mod tiles;
 
-pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
-    pane(
-        checkbox_title_bar(
-            "Video",
-            video.control().video_enabled(),
-            Some(AvailablePanes::Video),
-        ),
-        scrollable(
-            column![
-                row![
-                    mode_radio(video.mode(), Mode::BetweenFrames),
-                    mode_radio(video.mode(), Mode::PreparingScanline)
-                ],
-                row![
-                    mode_radio(video.mode(), Mode::DrawingPixels),
-                    mode_radio(video.mode(), Mode::BetweenLines),
-                ],
-                tile_address_mode(video.control()),
-                horizontal_rule(1),
-                background_and_window(video),
-                horizontal_rule(1),
-                sprites(video),
-                horizontal_rule(1),
-                tile_blocks(video),
-                horizontal_rule(1),
-                tile_maps(video),
-            ]
-            .spacing(m()),
-        )
-        .into(),
-    )
-}
+pub struct VideoPane;
 
-fn mode_radio(current_mode: Mode, mode: Mode) -> Element<'static, Message> {
-    radio(mode.to_string(), mode, Some(current_mode), |_| -> Message {
-        Message::None
-    })
-    .width(Length::Fill)
-    .into()
+impl VideoPane {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
+        pane(
+            checkbox_title_bar(
+                "Video",
+                video.control().video_enabled(),
+                Some(DebuggerPane::Video),
+            ),
+            scrollable(
+                column![
+                    row![
+                        self.mode_radio(video.mode(), Mode::BetweenFrames),
+                        self.mode_radio(video.mode(), Mode::PreparingScanline)
+                    ],
+                    row![
+                        self.mode_radio(video.mode(), Mode::DrawingPixels),
+                        self.mode_radio(video.mode(), Mode::BetweenLines),
+                    ],
+                    tile_address_mode(video.control()),
+                    horizontal_rule(1),
+                    background_and_window(video),
+                    horizontal_rule(1),
+                    sprites(video),
+                    horizontal_rule(1),
+                    tile_blocks(video),
+                    horizontal_rule(1),
+                    tile_maps(video),
+                ]
+                .spacing(m()),
+            )
+            .into(),
+        )
+    }
+
+    fn mode_radio(&self, current_mode: Mode, mode: Mode) -> Element<'_, Message> {
+        radio(mode.to_string(), mode, Some(current_mode), |_| -> Message {
+            Message::None
+        })
+        .width(Length::Fill)
+        .into()
+    }
 }

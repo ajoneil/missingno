@@ -90,6 +90,10 @@ impl GameBoy {
         &self.mapped.audio
     }
 
+    pub fn screen(&self) -> &Screen {
+        &self.screen
+    }
+
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.mapped.interrupts
     }

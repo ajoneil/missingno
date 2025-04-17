@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::emulator::{GameBoy, cpu::instructions::Instruction};
+use crate::emulator::{GameBoy, cpu::instructions::Instruction, video::screen::Screen};
 use instructions::InstructionsIterator;
 
 pub mod instructions;
@@ -22,11 +22,15 @@ impl Debugger {
         &self.game_boy
     }
 
-    pub fn step(&mut self) {
-        self.game_boy.step();
+    pub fn step(&mut self) -> Option<Screen> {
+        if self.game_boy.step() {
+            Some(self.game_boy.screen().clone())
+        } else {
+            None
+        }
     }
 
-    pub fn step_over(&mut self) {
+    pub fn step_over(&mut self) -> Option<Screen> {
         let mut it = InstructionsIterator::new(
             self.game_boy.cpu().program_counter,
             self.game_boy.memory_mapped(),
@@ -35,25 +39,33 @@ impl Debugger {
         let next_address = it.address.unwrap();
 
         if self.breakpoints.contains(&next_address) {
-            self.run();
+            self.run()
         } else {
             self.breakpoints.insert(next_address);
-            self.run();
+            let screen = self.run();
             self.breakpoints.remove(&next_address);
+            screen
         }
     }
 
-    pub fn step_frame(&mut self) {
+    pub fn step_frame(&mut self) -> Screen {
         while !self.game_boy.step() {}
+        self.game_boy.screen().clone()
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> Option<Screen> {
+        let mut screen = None;
+
         while !self
             .breakpoints
             .contains(&self.game_boy.cpu().program_counter)
         {
-            self.step();
+            if let Some(new_screen) = self.step() {
+                screen = Some(new_screen);
+            }
         }
+
+        screen
     }
 
     pub fn reset(&mut self) {
