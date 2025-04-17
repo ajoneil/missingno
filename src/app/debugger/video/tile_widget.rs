@@ -1,7 +1,7 @@
 use iced::{Element, Point, Renderer, Size, Theme, mouse, widget::canvas};
 
 use crate::{
-    app::{Message, debugger::video::iced_color},
+    app::{Message, screen::iced_color},
     emulator::video::{palette::Palette, tiles::Tile},
 };
 

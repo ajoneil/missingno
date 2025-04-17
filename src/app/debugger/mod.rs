@@ -12,6 +12,7 @@ mod cpu;
 mod instructions;
 mod interrupts;
 pub mod panes;
+mod screen;
 mod video;
 
 #[derive(Debug, Clone)]

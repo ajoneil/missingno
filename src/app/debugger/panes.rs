@@ -26,10 +26,12 @@ use crate::{
             breakpoints::{self, breakpoints_pane},
             cpu::cpu_pane,
             instructions::instructions_pane,
+            screen::screen_pane,
             video::video_pane,
         },
     },
     debugger::Debugger,
+    emulator::video::screen::Screen,
 };
 
 #[derive(Debug, Clone)]
@@ -51,6 +53,7 @@ impl Into<app::Message> for Message {
 
 pub struct Panes {
     state: pane_grid::State<PaneState>,
+    screen: Option<pane_grid::Pane>,
     instructions: Option<pane_grid::Pane>,
     breakpoints: Option<pane_grid::Pane>,
     cpu: Option<pane_grid::Pane>,
@@ -61,8 +64,16 @@ pub struct Panes {
 impl Panes {
     pub fn new() -> Self {
         let (mut state, instructions) = pane_grid::State::new(PaneState::Instructions);
-        let (cpu, split) = state.split(Vertical, instructions, PaneState::Cpu).unwrap();
+        let (screen, split) = state
+            .split(Vertical, instructions, PaneState::Screen(Screen::new()))
+            .unwrap();
         state.resize(split, 1.0 / 4.0);
+
+        let (video, split) = state.split(Vertical, screen, PaneState::Video).unwrap();
+        state.resize(split, 1.0 / 3.0);
+
+        let (cpu, split) = state.split(Horizontal, screen, PaneState::Cpu).unwrap();
+        state.resize(split, 3.0 / 4.0);
 
         let (breakpoint, split) = state
             .split(
@@ -73,11 +84,9 @@ impl Panes {
             .unwrap();
         state.resize(split, 3.0 / 4.0);
 
-        let (video, split) = state.split(Vertical, cpu, PaneState::Video).unwrap();
-        state.resize(split, 1.0 / 3.0);
-
         Self {
             state,
+            screen: Some(screen),
             instructions: Some(instructions),
             breakpoints: Some(breakpoint),
             cpu: Some(cpu),
@@ -99,6 +108,13 @@ impl Panes {
             Message::ShowPane(pane) => {
                 if let Some((last_pane, _)) = self.state.iter().last() {
                     match pane {
+                        AvailablePanes::Screen => {
+                            let (screen, _) = self
+                                .state
+                                .split(Horizontal, *last_pane, PaneState::Screen(Screen::new()))
+                                .unwrap();
+                            self.screen = Some(screen);
+                        }
                         AvailablePanes::Instructions => {
                             let (instructions, _) = self
                                 .state
@@ -145,6 +161,10 @@ impl Panes {
             Message::ClosePane(pane) => {
                 if self.state.len() > 1 {
                     match pane {
+                        AvailablePanes::Screen => {
+                            self.state.close(self.screen.unwrap());
+                            self.screen = None;
+                        }
                         AvailablePanes::Instructions => {
                             self.state.close(self.instructions.unwrap());
                             self.instructions = None;
@@ -181,6 +201,7 @@ impl Panes {
         pane_grid(
             &self.state,
             |_pane, pane_state, _is_maximized| match pane_state {
+                PaneState::Screen(screen) => screen_pane(screen),
                 PaneState::Instructions => instructions_pane(
                     debugger.game_boy().memory_mapped(),
                     debugger.game_boy().cpu().program_counter,
@@ -202,6 +223,7 @@ impl Panes {
 
     pub fn plane_shown(&self, plane: AvailablePanes) -> bool {
         match plane {
+            AvailablePanes::Screen => self.screen.is_some(),
             AvailablePanes::Instructions => self.instructions.is_some(),
             AvailablePanes::Breakpoints => self.breakpoints.is_some(),
             AvailablePanes::Cpu => self.cpu.is_some(),
@@ -212,6 +234,7 @@ impl Panes {
 
     pub fn available_panes(&self) -> &[AvailablePanes] {
         &[
+            AvailablePanes::Screen,
             AvailablePanes::Instructions,
             AvailablePanes::Breakpoints,
             AvailablePanes::Cpu,
@@ -231,6 +254,7 @@ impl Panes {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AvailablePanes {
+    Screen,
     Instructions,
     Breakpoints,
     Cpu,
@@ -241,6 +265,7 @@ pub enum AvailablePanes {
 impl fmt::Display for AvailablePanes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AvailablePanes::Screen => write!(f, "Screen"),
             AvailablePanes::Instructions => write!(f, "Instructions"),
             AvailablePanes::Breakpoints => write!(f, "Breakpoints"),
             AvailablePanes::Cpu => write!(f, "CPU"),
@@ -251,6 +276,7 @@ impl fmt::Display for AvailablePanes {
 }
 
 pub enum PaneState {
+    Screen(Screen),
     Instructions,
     Breakpoints(breakpoints::State),
     Cpu,

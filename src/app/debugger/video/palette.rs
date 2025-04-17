@@ -5,7 +5,11 @@ use iced::{
 };
 
 use crate::{
-    app::{Message, core::sizes::m, debugger::video::iced_color},
+    app::{
+        Message,
+        core::sizes::{m, phi, s, xs},
+        screen::iced_color,
+    },
     emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
 };
 
@@ -17,7 +21,7 @@ pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(m()),
+        .spacing(xs()),
     )
     .height(20)
     .into()
@@ -31,7 +35,7 @@ pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message
             color_block(map, PaletteIndex(2), palette),
             color_block(map, PaletteIndex(3), palette),
         ]
-        .spacing(m()),
+        .spacing(xs()),
     )
     .height(20)
     .into()
@@ -48,10 +52,10 @@ fn color_block(
             container::background(c).border(Border {
                 color: Color::BLACK,
                 width: 1.0,
-                radius: Radius::new(5.0),
+                radius: Radius::new(s()),
             })
         })
         .height(Length::Fill)
-        .width(50)
+        .width(m() * phi())
         .into()
 }

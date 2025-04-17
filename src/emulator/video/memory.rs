@@ -25,7 +25,7 @@ impl VideoMemory {
                 self.tiles[block.0 as usize].data[offset as usize]
             }
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
-                self.tile_maps[map.0 as usize].data[offset as usize]
+                self.tile_maps[map.0 as usize].data[offset as usize].0
             }
             MappedAddress::Sprite(SpriteAddress { sprite, byte }) => {
                 let sprite = &self.sprites[sprite.0 as usize];
@@ -45,7 +45,7 @@ impl VideoMemory {
                 self.tiles[block.0 as usize].data[offset as usize] = value;
             }
             MappedAddress::TileMap(TileMapAddress { map, offset }) => {
-                self.tile_maps[map.0 as usize].data[offset as usize] = value;
+                self.tile_maps[map.0 as usize].data[offset as usize] = TileIndex(value);
             }
             MappedAddress::Sprite(SpriteAddress { sprite, byte }) => match byte {
                 SpriteByte::PositionY => self.sprites[sprite.0 as usize].position.y = value,
@@ -60,6 +60,10 @@ impl VideoMemory {
 
     pub fn tile_block(&self, block: TileBlockId) -> &TileBlock {
         &self.tiles[block.0 as usize]
+    }
+
+    pub fn tile_map(&self, id: TileMapId) -> &TileMap {
+        &self.tile_maps[id.0 as usize]
     }
 }
 

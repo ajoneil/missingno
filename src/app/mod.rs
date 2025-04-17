@@ -16,6 +16,7 @@ mod action_bar;
 mod core;
 mod debugger;
 mod load;
+mod screen;
 
 pub fn run(rom_path: Option<PathBuf>) -> iced::Result {
     iced::application(App::title, App::update, App::view)

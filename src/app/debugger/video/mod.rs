@@ -1,8 +1,7 @@
 use iced::{
-    Color, Element, Length,
+    Element, Length,
     widget::{column, horizontal_rule, pane_grid, radio, row, scrollable},
 };
-use rgb::RGB8;
 
 use crate::{
     app::{
@@ -15,7 +14,7 @@ use crate::{
 
 use background_and_window::background_and_window;
 use sprites::sprites;
-use tile_map::tile_address_mode;
+use tile_map::{tile_address_mode, tile_maps};
 use tiles::tile_blocks;
 
 mod background_and_window;
@@ -40,7 +39,7 @@ pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
                 ],
                 row![
                     mode_radio(video.mode(), Mode::DrawingPixels),
-                    mode_radio(video.mode(), Mode::FinishingScanline),
+                    mode_radio(video.mode(), Mode::BetweenLines),
                 ],
                 tile_address_mode(video.control()),
                 horizontal_rule(1),
@@ -48,7 +47,9 @@ pub fn video_pane(video: &Video) -> pane_grid::Content<'_, Message> {
                 horizontal_rule(1),
                 sprites(video),
                 horizontal_rule(1),
-                tile_blocks(video)
+                tile_blocks(video),
+                horizontal_rule(1),
+                tile_maps(video),
             ]
             .spacing(m()),
         )
@@ -62,8 +63,4 @@ fn mode_radio(current_mode: Mode, mode: Mode) -> Element<'static, Message> {
     })
     .width(Length::Fill)
     .into()
-}
-
-fn iced_color(color: RGB8) -> Color {
-    Color::from_rgb8(color.r, color.g, color.b)
 }

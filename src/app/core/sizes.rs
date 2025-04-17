@@ -21,3 +21,7 @@ pub fn xl() -> f32 {
 pub fn xxl() -> f32 {
     m() * 6.0
 }
+
+pub fn phi() -> f32 {
+    1.618
+}

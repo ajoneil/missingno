@@ -53,6 +53,19 @@ pub enum TileAddressMode {
     Block0Block1,
 }
 
+impl TileAddressMode {
+    pub fn tile(&self, index: TileIndex) -> (TileBlockId, TileIndex) {
+        if index.0 > 127 {
+            (TileBlockId(1), TileIndex(index.0 - 127))
+        } else {
+            match self {
+                TileAddressMode::Block2Block1 => (TileBlockId(2), index),
+                TileAddressMode::Block0Block1 => (TileBlockId(0), index),
+            }
+        }
+    }
+}
+
 impl fmt::Display for TileAddressMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

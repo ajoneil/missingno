@@ -1,13 +1,21 @@
 use core::fmt;
 
+use crate::emulator::video::tiles::TileIndex;
+
 #[derive(Copy, Clone)]
 pub struct TileMap {
-    pub data: [u8; 0x400],
+    pub data: [TileIndex; 0x400],
 }
 
 impl TileMap {
     pub fn new() -> Self {
-        Self { data: [0; 0x400] }
+        Self {
+            data: [TileIndex(0); 0x400],
+        }
+    }
+
+    pub fn get_tile(&self, x: u8, y: u8) -> TileIndex {
+        self.data[y as usize * 32 + x as usize]
     }
 }
 

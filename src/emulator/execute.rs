@@ -44,8 +44,11 @@ impl GameBoy {
             self.mapped.interrupts.request(interrupt);
         }
 
-        if let Some(interrupt) = self.mapped.video.step(cycles) {
-            self.mapped.interrupts.request(interrupt);
+        if let Some(screen) = self.mapped.video.step(cycles) {
+            self.mapped
+                .interrupts
+                .request(Interrupt::VideoBetweenFrames);
+            self.screen = screen;
             true
         } else {
             false

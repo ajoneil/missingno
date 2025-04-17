@@ -3,7 +3,7 @@ use cartridge::Cartridge;
 use cpu::{Cpu, cycles::Cycles};
 use joypad::Joypad;
 use memory::Ram;
-use video::Video;
+use video::{Video, screen::Screen};
 
 pub mod audio;
 pub mod cartridge;
@@ -32,6 +32,7 @@ pub struct MemoryMapped {
 
 pub struct GameBoy {
     cpu: Cpu,
+    screen: Screen,
     mapped: MemoryMapped,
 }
 
@@ -41,6 +42,7 @@ impl GameBoy {
 
         GameBoy {
             cpu,
+            screen: Screen::new(),
             mapped: MemoryMapped {
                 cartridge,
                 ram: Ram::new(),
@@ -57,6 +59,7 @@ impl GameBoy {
 
     pub fn reset(&mut self) {
         self.cpu = Cpu::new(self.mapped.cartridge.header_checksum());
+        self.screen = Screen::new();
         self.mapped.ram = Ram::new();
         self.mapped.video = Video::new();
         self.mapped.audio = Audio::new();

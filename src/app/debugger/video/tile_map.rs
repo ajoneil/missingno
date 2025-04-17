@@ -1,12 +1,19 @@
 use iced::{
     Element,
-    widget::{radio, row, text},
+    widget::{Column, Row, column, radio, row, text},
 };
 
 use crate::{
     app::{Message, core::sizes::m},
-    emulator::video::{control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
+    emulator::video::{
+        Video,
+        control::Control,
+        tile_maps::{TileMap, TileMapId},
+        tiles::TileAddressMode,
+    },
 };
+
+use super::tile_widget::tile;
 
 pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
     row![
@@ -28,7 +35,7 @@ pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
     .into()
 }
 
-pub fn tile_map(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
+pub fn tile_map_choice(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
     row![
         text(label),
         radio(
@@ -45,5 +52,29 @@ pub fn tile_map(label: &str, tile_map: TileMapId) -> Element<'_, Message> {
         )
     ]
     .spacing(m())
+    .into()
+}
+
+pub fn tile_maps(video: &Video) -> Element<'_, Message> {
+    row![tile_map(video, TileMapId(0)), tile_map(video, TileMapId(1))]
+        .spacing(m())
+        .wrap()
+        .into()
+}
+
+fn tile_map(video: &Video, map: TileMapId) -> Element<'_, Message> {
+    column![text(map.to_string()), tiles(video, video.tile_map(map))].into()
+}
+
+fn tiles<'a>(video: &'a Video, map: &'a TileMap) -> Element<'a, Message> {
+    Column::from_iter((0..32).map(|row: u8| row_of_tiles(video, map, row))).into()
+}
+
+fn row_of_tiles<'a>(video: &'a Video, map: &'a TileMap, row: u8) -> Element<'a, Message> {
+    Row::from_iter((0..32).map(|col| {
+        let map_tile_index = map.get_tile(col, row);
+        let (block, mapped_index) = video.control().tile_address_mode().tile(map_tile_index);
+        tile(video.tile_block(block).tile(mapped_index))
+    }))
     .into()
 }
