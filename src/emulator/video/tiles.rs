@@ -55,8 +55,8 @@ pub enum TileAddressMode {
 
 impl TileAddressMode {
     pub fn tile(&self, index: TileIndex) -> (TileBlockId, TileIndex) {
-        if index.0 > 127 {
-            (TileBlockId(1), TileIndex(index.0 - 127))
+        if index.0 >= 128 {
+            (TileBlockId(1), TileIndex(index.0 - 128))
         } else {
             match self {
                 TileAddressMode::Block2Block1 => (TileBlockId(2), index),

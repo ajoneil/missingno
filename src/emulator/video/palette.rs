@@ -10,10 +10,10 @@ pub struct PaletteIndex(pub u8);
 impl Palette {
     pub const MONOCHROME_GREEN: Self = Self {
         colors: [
-            RGB8::new(0x2f, 0x41, 0x39),
-            RGB8::new(0x39, 0x59, 0x4a),
-            RGB8::new(0x5a, 0x79, 0x42),
             RGB8::new(0x7b, 0x82, 0x10),
+            RGB8::new(0x5a, 0x79, 0x42),
+            RGB8::new(0x39, 0x59, 0x4a),
+            RGB8::new(0x2f, 0x41, 0x39),
         ],
     };
 

@@ -38,34 +38,46 @@ impl Debugger {
         Instruction::decode(&mut it);
         let next_address = it.address.unwrap();
 
-        if self.breakpoints.contains(&next_address) {
-            self.run()
+        let temp_breakpoint = if self.breakpoints.contains(&next_address) {
+            None
         } else {
-            self.breakpoints.insert(next_address);
-            let screen = self.run();
-            self.breakpoints.remove(&next_address);
-            screen
-        }
-    }
+            Some(next_address)
+        };
 
-    pub fn step_frame(&mut self) -> Screen {
-        while !self.game_boy.step() {}
-        self.game_boy.screen().clone()
-    }
+        let mut last_screen = None;
 
-    pub fn run(&mut self) -> Option<Screen> {
-        let mut screen = None;
-
-        while !self
-            .breakpoints
-            .contains(&self.game_boy.cpu().program_counter)
-        {
-            if let Some(new_screen) = self.step() {
-                screen = Some(new_screen);
+        loop {
+            let screen = self.step_frame();
+            match screen {
+                Some(screen) => {
+                    last_screen = Some(screen);
+                }
+                None => {
+                    break;
+                }
             }
         }
 
-        screen
+        if let Some(temp_breakpoint) = temp_breakpoint {
+            self.breakpoints.remove(&temp_breakpoint);
+        }
+
+        last_screen
+    }
+
+    pub fn step_frame(&mut self) -> Option<Screen> {
+        loop {
+            let screen = self.step();
+
+            if screen.is_some() || self.breakpoint_triggered() {
+                return screen;
+            }
+        }
+    }
+
+    fn breakpoint_triggered(&self) -> bool {
+        self.breakpoints
+            .contains(&self.game_boy.cpu().program_counter)
     }
 
     pub fn reset(&mut self) {

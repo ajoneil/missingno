@@ -74,7 +74,11 @@ impl Debugger {
                 }
             }
             Message::StepFrame => {
-                return Task::done(screen::Message::Update(self.debugger.step_frame()).into());
+                if let Some(screen) = self.debugger.step_frame() {
+                    return Task::done(screen::Message::Update(screen).into());
+                } else {
+                    self.running = false
+                }
             }
 
             Message::Run => self.running = true,
