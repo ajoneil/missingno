@@ -1,7 +1,7 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::{Cpu, cycles::Cycles};
-use joypad::Joypad;
+use joypad::{Button, Joypad};
 use memory::Ram;
 use video::{Video, screen::Screen};
 
@@ -92,6 +92,14 @@ impl GameBoy {
 
     pub fn screen(&self) -> &Screen {
         &self.screen
+    }
+
+    pub fn press_button(&mut self, button: Button) {
+        self.mapped.joypad.press_button(button);
+    }
+
+    pub fn release_button(&mut self, button: Button) {
+        self.mapped.joypad.release_button(button);
     }
 
     pub fn interrupts(&self) -> &interrupts::Registers {

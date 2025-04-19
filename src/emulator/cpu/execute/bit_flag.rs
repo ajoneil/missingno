@@ -16,7 +16,15 @@ impl Cpu {
 
                 OpResult::cycles(2).add_cycles(fetch_cycles)
             }
-            BitFlag::Set(_, _) => todo!(),
+
+            BitFlag::Set(bit, target) => {
+                let (value, fetch_cycles) = self.fetch8(target.to_source(), memory);
+                let new_value = value | (1 << bit);
+
+                self.set8(target, new_value)
+                    .add_cycles(fetch_cycles)
+                    .add_cycles(Cycles(2))
+            }
 
             BitFlag::Unset(bit, target) => {
                 let (value, fetch_cycles) = self.fetch8(target.to_source(), memory);
