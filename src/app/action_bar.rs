@@ -106,7 +106,7 @@ fn load(game: &Game) -> Button<'static, app::Message> {
 }
 
 fn controls(running: bool) -> Element<'static, app::Message> {
-    row![play_pause(running), step_frame(), reset()]
+    row![play_pause(running), step_frame(running), reset()]
         .spacing(s())
         .wrap()
         .into()
@@ -120,8 +120,14 @@ fn play_pause(running: bool) -> Button<'static, app::Message> {
     }
 }
 
-fn step_frame() -> Button<'static, app::Message> {
-    buttons::standard("Step Frame").on_press(debugger::Message::StepFrame.into())
+fn step_frame(running: bool) -> Button<'static, app::Message> {
+    let button = buttons::standard("Step Frame");
+
+    if running {
+        button
+    } else {
+        button.on_press(debugger::Message::StepFrame.into())
+    }
 }
 
 fn reset() -> Button<'static, app::Message> {

@@ -84,10 +84,7 @@ impl Debugger {
             Message::Run => self.running = true,
 
             Message::Pause => self.running = false,
-            Message::Reset => {
-                self.running = false;
-                self.debugger.reset();
-            }
+            Message::Reset => self.debugger.reset(),
 
             Message::SetBreakpoint(address) => self.debugger.set_breakpoint(address),
             Message::ClearBreakpoint(address) => self.debugger.clear_breakpoint(address),
