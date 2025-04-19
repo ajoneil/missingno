@@ -30,8 +30,8 @@ impl VideoMemory {
             MappedAddress::Sprite(SpriteAddress { sprite, byte }) => {
                 let sprite = &self.sprites[sprite.0 as usize];
                 match byte {
-                    SpriteByte::PositionY => sprite.position.y,
-                    SpriteByte::PositionX => sprite.position.x,
+                    SpriteByte::PositionY => sprite.position.y_plus_16,
+                    SpriteByte::PositionX => sprite.position.x_plus_8,
                     SpriteByte::Tile => sprite.tile.0,
                     SpriteByte::Attributes => sprite.attributes.0,
                 }
@@ -48,8 +48,8 @@ impl VideoMemory {
                 self.tile_maps[map.0 as usize].data[offset as usize] = TileIndex(value);
             }
             MappedAddress::Sprite(SpriteAddress { sprite, byte }) => match byte {
-                SpriteByte::PositionY => self.sprites[sprite.0 as usize].position.y = value,
-                SpriteByte::PositionX => self.sprites[sprite.0 as usize].position.x = value,
+                SpriteByte::PositionY => self.sprites[sprite.0 as usize].position.y_plus_16 = value,
+                SpriteByte::PositionX => self.sprites[sprite.0 as usize].position.x_plus_8 = value,
                 SpriteByte::Tile => self.sprites[sprite.0 as usize].tile = TileIndex(value),
                 SpriteByte::Attributes => {
                     self.sprites[sprite.0 as usize].attributes = sprites::Attributes(value)
@@ -64,6 +64,14 @@ impl VideoMemory {
 
     pub fn tile_map(&self, id: TileMapId) -> &TileMap {
         &self.tile_maps[id.0 as usize]
+    }
+
+    pub fn sprites(&self) -> &[Sprite] {
+        &self.sprites
+    }
+
+    pub fn sprite(&self, id: SpriteId) -> &Sprite {
+        &self.sprites[id.0 as usize]
     }
 }
 

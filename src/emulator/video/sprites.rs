@@ -14,7 +14,10 @@ pub struct Sprite {
 impl Sprite {
     pub fn new() -> Self {
         Self {
-            position: Position { x: 0, y: 0 },
+            position: Position {
+                x_plus_8: 0,
+                y_plus_16: 0,
+            },
             tile: TileIndex(0),
             attributes: Attributes::empty(),
         }
@@ -23,8 +26,30 @@ impl Sprite {
 
 #[derive(Clone, Copy)]
 pub struct Position {
-    pub x: u8,
-    pub y: u8,
+    pub x_plus_8: u8,
+    pub y_plus_16: u8,
+}
+
+impl Position {
+    pub fn on_screen_x(&self) -> bool {
+        (1..168).contains(&self.x_plus_8)
+    }
+
+    pub fn on_screen_y(&self, size: SpriteSize) -> bool {
+        let min = match size {
+            SpriteSize::Single => 9,
+            SpriteSize::Double => 1,
+        };
+
+        (min..160).contains(&self.y_plus_16)
+    }
+
+    pub fn on_line(&self, line: u8, size: SpriteSize) -> bool {
+        let first_line = self.y_plus_16 as i16 - 16;
+        let line_after = first_line + size.height() as i16;
+
+        (first_line..line_after).contains(&(line as i16))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -40,6 +65,7 @@ bitflags! {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub enum Priority {
     Sprite,
     BackgroundAndWindow,
@@ -85,6 +111,15 @@ pub struct SpriteId(pub u8);
 pub enum SpriteSize {
     Single,
     Double,
+}
+
+impl SpriteSize {
+    pub fn height(&self) -> u8 {
+        match self {
+            SpriteSize::Single => 8,
+            SpriteSize::Double => 16,
+        }
+    }
 }
 
 impl fmt::Display for SpriteSize {

@@ -13,12 +13,11 @@ use crate::{
 };
 
 use background_and_window::background_and_window;
-use sprites::sprites;
 use tile_maps::tile_address_mode;
 
 mod background_and_window;
 mod palette;
-mod sprites;
+pub mod sprites;
 pub mod tile_maps;
 mod tile_widget;
 pub mod tiles;
@@ -50,8 +49,6 @@ impl VideoPane {
                     tile_address_mode(video.control()),
                     horizontal_rule(1),
                     background_and_window(video),
-                    horizontal_rule(1),
-                    sprites(video),
                 ]
                 .spacing(m())
                 .padding(m()),

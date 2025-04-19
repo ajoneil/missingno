@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 use screen::Screen;
+use sprites::{Sprite, SpriteId};
 use tile_maps::{TileMap, TileMapId};
 
 use crate::emulator::cpu::cycles::Cycles;
@@ -171,5 +172,9 @@ impl Video {
 
     pub fn tile_map(&self, map: TileMapId) -> &TileMap {
         self.ppu_accessible.memory.tile_map(map)
+    }
+
+    pub fn sprite(&self, sprite: SpriteId) -> &Sprite {
+        self.ppu_accessible.memory.sprite(sprite)
     }
 }

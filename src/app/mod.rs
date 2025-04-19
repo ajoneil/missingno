@@ -10,7 +10,11 @@ use iced::{
 
 use crate::emulator::{GameBoy, cartridge::Cartridge};
 use action_bar::ActionBar;
-use core::{emoji, fonts, horizontal_rule, sizes::l, text};
+use core::{
+    emoji, fonts, horizontal_rule,
+    sizes::{l, xl},
+    text,
+};
 
 mod action_bar;
 mod core;
@@ -106,10 +110,13 @@ impl App {
     fn inner(&self) -> Element<'_, Message> {
         match &self.game {
             Game::Loaded(debugger) => debugger.view(),
-            _ => column![text::xl("Welcome to MissingNo.!"), emoji::xxl("👾")]
-                .align_x(Center)
-                .spacing(l())
-                .into(),
+            _ => column![
+                text::xl("Welcome to MissingNo.!"),
+                emoji::xl("👾").size(xl())
+            ]
+            .align_x(Center)
+            .spacing(l())
+            .into(),
         }
     }
     pub fn subscription(&self) -> Subscription<Message> {

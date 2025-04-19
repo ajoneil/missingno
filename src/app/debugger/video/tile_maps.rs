@@ -89,7 +89,7 @@ impl TileMapPane {
         Row::from_iter((0..32).map(|col| {
             let map_tile_index = map.get_tile(col, row);
             let (block, mapped_index) = video.control().tile_address_mode().tile(map_tile_index);
-            tile(video.tile_block(block).tile(mapped_index))
+            tile(video.tile_block(block).tile(mapped_index)).into()
         }))
         .into()
     }

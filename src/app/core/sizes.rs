@@ -17,11 +17,3 @@ pub fn l() -> f32 {
 pub fn xl() -> f32 {
     m() * 3.0
 }
-
-pub fn xxl() -> f32 {
-    m() * 6.0
-}
-
-// pub fn phi() -> f32 {
-//     1.618
-// }

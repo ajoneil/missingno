@@ -24,7 +24,7 @@ use crate::{
             cpu::CpuPane,
             instructions::InstructionsPane,
             screen::{self, ScreenPane},
-            video::{VideoPane, tile_maps::TileMapPane, tiles::TilesPane},
+            video::{VideoPane, sprites::SpritesPane, tile_maps::TileMapPane, tiles::TilesPane},
         },
     },
     debugger::Debugger,
@@ -63,6 +63,7 @@ pub enum DebuggerPane {
     Video,
     Tiles,
     TileMap(TileMapId),
+    Sprites,
     Audio,
 }
 
@@ -74,6 +75,7 @@ enum PaneInstance {
     Video(VideoPane),
     Tiles(TilesPane),
     TileMap(TileMapPane),
+    Sprites(SpritesPane),
     Audio(AudioPane),
 }
 
@@ -137,6 +139,7 @@ impl DebuggerPanes {
             DebuggerPane::Video => PaneInstance::Video(VideoPane::new()),
             DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
+            DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
             DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
         }
     }
@@ -212,6 +215,7 @@ impl DebuggerPanes {
                 PaneInstance::Video(video) => video.content(debugger.game_boy().video()),
                 PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().video()),
                 PaneInstance::TileMap(tile_map) => tile_map.content(debugger.game_boy().video()),
+                PaneInstance::Sprites(sprites) => sprites.content(debugger.game_boy().video()),
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
             },
         )
@@ -235,6 +239,7 @@ impl DebuggerPanes {
             DebuggerPane::Tiles,
             DebuggerPane::TileMap(TileMapId(0)),
             DebuggerPane::TileMap(TileMapId(1)),
+            DebuggerPane::Sprites,
             DebuggerPane::Audio,
         ]
     }
@@ -258,6 +263,7 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::Video => write!(f, "Video"),
             DebuggerPane::Tiles => write!(f, "Tiles"),
             DebuggerPane::TileMap(map) => write!(f, "{}", map),
+            DebuggerPane::Sprites => write!(f, "Sprites"),
             DebuggerPane::Audio => write!(f, "Audio"),
         }
     }
