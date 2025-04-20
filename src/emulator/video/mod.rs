@@ -69,7 +69,7 @@ pub struct PpuAccessible {
 }
 
 pub struct Video {
-    ppu: PixelProcessingUnit,
+    ppu: Option<PixelProcessingUnit>,
     ppu_accessible: PpuAccessible,
     interrupts: Interrupts,
 }
@@ -90,7 +90,7 @@ impl Video {
                 memory: VideoMemory::new(),
             },
 
-            ppu: PixelProcessingUnit::new(),
+            ppu: Some(PixelProcessingUnit::new()),
             interrupts: Interrupts {
                 // The first bit is unused, but is set at boot time
                 flags: InterruptFlags::DUMMY,
@@ -103,20 +103,29 @@ impl Video {
         match register {
             Register::Control => self.ppu_accessible.control.bits(),
             Register::Status => {
-                let line_compare =
-                    if self.interrupts.current_line_compare == self.ppu.current_line() {
+                if let Some(ppu) = &self.ppu {
+                    let line_compare = if self.interrupts.current_line_compare == ppu.current_line()
+                    {
                         0b00000100
                     } else {
                         0
                     };
-
-                self.interrupts.flags.bits() & line_compare & self.ppu.mode() as u8
+                    self.interrupts.flags.bits() & line_compare & ppu.mode() as u8
+                } else {
+                    self.interrupts.flags.bits() & ppu::Mode::BetweenFrames as u8
+                }
             }
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
             Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x,
             Register::WindowY => self.ppu_accessible.window.y,
             Register::WindowX => self.ppu_accessible.window.x_plus_7 - 7,
-            Register::CurrentScanline => self.ppu.current_line(),
+            Register::CurrentScanline => {
+                if let Some(ppu) = &self.ppu {
+                    ppu.current_line()
+                } else {
+                    0
+                }
+            }
             Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
             Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
             Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
@@ -151,7 +160,11 @@ impl Video {
     }
 
     pub fn mode(&self) -> ppu::Mode {
-        self.ppu.mode()
+        if let Some(ppu) = &self.ppu {
+            ppu.mode()
+        } else {
+            ppu::Mode::BetweenFrames
+        }
     }
 
     pub fn control(&self) -> Control {
@@ -159,7 +172,24 @@ impl Video {
     }
 
     pub fn step(&mut self, cycles: Cycles) -> Option<Screen> {
-        self.ppu.step(cycles, &self.ppu_accessible)
+        if self.control().video_enabled() {
+            if self.ppu.is_none() {
+                let ppu = PixelProcessingUnit::new();
+                self.ppu = Some(ppu);
+            }
+
+            self.ppu
+                .as_mut()
+                .unwrap()
+                .step(cycles, &self.ppu_accessible)
+        } else {
+            if self.ppu.is_some() {
+                self.ppu = None;
+                Some(Screen::new())
+            } else {
+                None
+            }
+        }
     }
 
     pub fn palettes(&self) -> &Palettes {
