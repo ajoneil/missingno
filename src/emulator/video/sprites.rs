@@ -68,7 +68,7 @@ bitflags! {
 #[derive(PartialEq, Eq)]
 pub enum Priority {
     Sprite,
-    BackgroundAndWindow,
+    Background,
 }
 
 #[allow(dead_code)]
@@ -81,7 +81,7 @@ pub enum Palette {
 impl Attributes {
     pub fn priority(&self) -> Priority {
         if self.contains(Attributes::PRIORITY) {
-            Priority::BackgroundAndWindow
+            Priority::Background
         } else {
             Priority::Sprite
         }

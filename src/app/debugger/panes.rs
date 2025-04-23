@@ -6,6 +6,7 @@ use iced::{
     widget::{
         checkbox, container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
+        svg,
     },
 };
 
@@ -13,7 +14,8 @@ use crate::{
     app::{
         self,
         core::{
-            buttons, fonts, icons,
+            buttons, fonts,
+            icons::{Icon, icon},
             sizes::{m, s},
             text,
         },
@@ -322,8 +324,10 @@ fn tbar(
         .style(title_style)
         .controls(pane_grid::Controls::new(
             container(
-                buttons::text(icons::close().size(m()).color(Color::BLACK))
-                    .on_press(Message::ClosePane(pane).into()),
+                buttons::standard(icon(Icon::Close).style(|_, _| svg::Style {
+                    color: Some(Color::BLACK),
+                }))
+                .on_press(Message::ClosePane(pane).into()),
             )
             .center_y(Length::Fixed(m() + 2.0 * s())),
         ))

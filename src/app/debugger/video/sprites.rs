@@ -2,13 +2,14 @@ use iced::{
     Element,
     Length::Fill,
     Theme,
-    widget::{Row, checkbox, column, pane_grid, radio, rich_text, row, scrollable, span},
+    widget::{Row, column, pane_grid, radio, rich_text, row, scrollable, span},
 };
 
 use crate::{
     app::{
         Message,
         core::{
+            icons::{Icon, icon},
             sizes::{l, m, s, xs},
             text,
         },
@@ -94,7 +95,7 @@ impl SpritesPane {
         let sprite = video.sprite(id);
 
         row![
-            checkbox("", sprite.attributes.priority() == Priority::Sprite),
+            self.priority(sprite.attributes.priority()),
             column![
                 self.tiles(sprite, video),
                 self.position(&sprite.position, video.control().sprite_size())
@@ -102,6 +103,7 @@ impl SpritesPane {
             .spacing(xs())
             .width(70)
         ]
+        .spacing(s())
         .into()
     }
 
@@ -165,6 +167,14 @@ impl SpritesPane {
                 offscreen
             }),
         ])
+        .into()
+    }
+
+    fn priority(&self, priority: Priority) -> Element<'_, Message> {
+        icon(match priority {
+            Priority::Sprite => Icon::Front,
+            Priority::Background => Icon::Back,
+        })
         .into()
     }
 }
