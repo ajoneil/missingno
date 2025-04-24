@@ -28,8 +28,8 @@ pub enum Message {
 
 impl Into<app::Message> for Message {
     fn into(self) -> app::Message {
-        app::Message::Debugger(debugger::Message::Pane(panes::Message::BreakpointsPane(
-            self,
+        app::Message::Debugger(debugger::Message::Pane(panes::Message::Pane(
+            panes::PaneMessage::Breakpoints(self),
         )))
     }
 }
@@ -41,7 +41,7 @@ impl BreakpointsPane {
         }
     }
 
-    pub fn update(&mut self, message: Message, debugger: &mut Debugger) {
+    pub fn update(&mut self, message: &Message, debugger: &mut Debugger) {
         match message {
             Message::BreakpointInputChanged(input) => {
                 self.breakpoint_input = input

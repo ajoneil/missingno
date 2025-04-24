@@ -25,7 +25,9 @@ pub enum Message {
 
 impl Into<app::Message> for Message {
     fn into(self) -> app::Message {
-        app::Message::Debugger(debugger::Message::Pane(panes::Message::ScreenPane(self)))
+        app::Message::Debugger(debugger::Message::Pane(panes::Message::Pane(
+            panes::PaneMessage::Screen(self),
+        )))
     }
 }
 

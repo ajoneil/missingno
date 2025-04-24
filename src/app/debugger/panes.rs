@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use iced::{
     Border, Color, Element, Length, Theme,
     widget::{
-        checkbox, container, pane_grid,
+        container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
-        svg,
+        svg, toggler,
     },
 };
 
@@ -26,7 +26,12 @@ use crate::{
             cpu::CpuPane,
             instructions::InstructionsPane,
             screen::{self, ScreenPane},
-            video::{VideoPane, sprites::SpritesPane, tile_maps::TileMapPane, tiles::TilesPane},
+            video::{
+                VideoPane,
+                sprites::{self, SpritesPane},
+                tile_maps::TileMapPane,
+                tiles::TilesPane,
+            },
         },
     },
     debugger::Debugger,
@@ -41,8 +46,14 @@ pub enum Message {
     ResizePane(pane_grid::ResizeEvent),
     DragPane(pane_grid::DragEvent),
 
-    BreakpointsPane(breakpoints::Message),
-    ScreenPane(screen::Message),
+    Pane(PaneMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum PaneMessage {
+    Breakpoints(breakpoints::Message),
+    Screen(screen::Message),
+    Sprites(sprites::Message),
 }
 
 impl Into<app::Message> for Message {
@@ -178,27 +189,29 @@ impl DebuggerPanes {
                 _ => {}
             },
 
-            Message::BreakpointsPane(message) => {
-                if let Some(breakpoints_handle) = self.handles.get(&DebuggerPane::Breakpoints) {
-                    match self.panes.get_mut(*breakpoints_handle) {
-                        Some(PaneInstance::Breakpoints(breakpoints_pane)) => {
+            Message::Pane(pane_message) => match &pane_message {
+                PaneMessage::Breakpoints(message) => {
+                    self.panes.iter_mut().for_each(|(_, pane)| {
+                        if let PaneInstance::Breakpoints(breakpoints_pane) = pane {
                             breakpoints_pane.update(message, debugger);
                         }
-                        _ => {}
-                    }
+                    });
                 }
-            }
-
-            Message::ScreenPane(message) => {
-                if let Some(handle) = self.handles.get(&DebuggerPane::Screen) {
-                    match self.panes.get_mut(*handle) {
-                        Some(PaneInstance::Screen(screen_pane)) => {
-                            screen_pane.update(message);
+                PaneMessage::Screen(message) => {
+                    self.panes.iter_mut().for_each(|(_, pane)| {
+                        if let PaneInstance::Screen(screen_pane) = pane {
+                            screen_pane.update(*message);
                         }
-                        _ => {}
-                    }
+                    });
                 }
-            }
+                PaneMessage::Sprites(message) => {
+                    self.panes.iter_mut().for_each(|(_, pane)| {
+                        if let PaneInstance::Sprites(sprites_pane) = pane {
+                            sprites_pane.update(*message);
+                        }
+                    });
+                }
+            },
         }
     }
 
@@ -313,7 +326,10 @@ pub fn checkbox_title_bar(
     checked: bool,
     pane: DebuggerPane,
 ) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(checkbox(label, checked).font(fonts::title()).into(), pane)
+    tbar(
+        toggler(checked).label(label).font(fonts::title()).into(),
+        pane,
+    )
 }
 
 fn tbar(
