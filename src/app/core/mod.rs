@@ -3,7 +3,6 @@ use iced::Element;
 use crate::app::Message;
 
 pub mod buttons;
-pub mod emoji;
 pub mod fonts;
 pub mod icons;
 pub mod sizes;

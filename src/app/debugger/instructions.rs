@@ -3,15 +3,15 @@ use std::collections::BTreeSet;
 use iced::{
     Element, Length,
     alignment::Vertical,
-    widget::{Column, button, pane_grid, row, text},
+    widget::{Column, button, container, pane_grid, row, text},
 };
 
 use crate::{
     app::{
         self,
         core::{
-            emoji, fonts,
-            sizes::{s, xs},
+            fonts, icons,
+            sizes::{m, s},
         },
         debugger::{
             self,
@@ -76,10 +76,17 @@ impl InstructionsPane {
     }
 
     fn breakpoint(&self, address: u16, breakpoint: bool) -> Element<'_, app::Message> {
-        button(emoji::m(if breakpoint { "🔴" } else { "" }))
+        let icon: Element<app::Message> = if breakpoint {
+            icons::breakpoint_enabled().into()
+        } else {
+            container("")
+                .width(Length::Fixed(m()))
+                .height(Length::Fixed(m()))
+                .into()
+        };
+
+        button(icon)
             .style(button::text)
-            .width(Length::Fixed(20.0))
-            .padding(xs())
             .on_press(
                 if breakpoint {
                     debugger::Message::ClearBreakpoint(address)

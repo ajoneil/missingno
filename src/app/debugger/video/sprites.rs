@@ -9,7 +9,7 @@ use crate::{
     app::{
         self,
         core::{
-            icons::{Icon, icon},
+            icons::{self, Icon},
             sizes::{l, m, s, xs},
             text,
         },
@@ -208,7 +208,7 @@ impl SpritesPane {
     }
 
     fn priority(&self, priority: Priority) -> Element<'_, app::Message> {
-        icon(match priority {
+        icons::m(match priority {
             Priority::Sprite => Icon::Front,
             Priority::Background => Icon::Back,
         })

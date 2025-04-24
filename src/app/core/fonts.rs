@@ -14,7 +14,3 @@ pub fn title() -> Font {
 pub fn monospace() -> Font {
     Font::with_name("Noto Sans Mono")
 }
-
-pub fn emoji() -> Font {
-    Font::with_name("Noto Color Emoji")
-}

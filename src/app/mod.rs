@@ -5,14 +5,15 @@ use iced::{
     Element,
     Length::Fill,
     Subscription, Task, Theme,
-    widget::{column, container},
+    widget::{column, container, svg},
 };
 
 use crate::emulator::{GameBoy, cartridge::Cartridge};
 use action_bar::ActionBar;
 use core::{
-    emoji, fonts, horizontal_rule,
-    sizes::{l, xl},
+    fonts, horizontal_rule,
+    icons::{self, Icon},
+    sizes::l,
     text,
 };
 
@@ -112,7 +113,14 @@ impl App {
             Game::Loaded(debugger) => debugger.view(),
             _ => column![
                 text::xl("Welcome to MissingNo.!"),
-                emoji::xl("👾").size(xl())
+                icons::xl(Icon::GameBoy)
+                    .width(200)
+                    .height(200)
+                    .style(|theme, _| {
+                        svg::Style {
+                            color: Some(theme.extended_palette().success.strong.color),
+                        }
+                    })
             ]
             .align_x(Center)
             .spacing(l())

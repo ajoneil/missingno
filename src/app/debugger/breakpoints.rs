@@ -7,7 +7,11 @@ use iced::{
 use crate::{
     app::{
         self,
-        core::{emoji, fonts, sizes::s},
+        core::{
+            fonts,
+            icons::{self},
+            sizes::s,
+        },
         debugger::{
             self,
             panes::{self, DebuggerPane, pane, title_bar},
@@ -85,7 +89,7 @@ impl BreakpointsPane {
     fn breakpoint(&self, address: u16) -> iced::Element<'_, app::Message> {
         container(
             row![
-                button(emoji::m("🔴"))
+                button(icons::breakpoint_enabled())
                     .on_press(app::debugger::Message::ClearBreakpoint(address).into())
                     .style(button::text),
                 text(format!("{:04x}", address)).font(fonts::monospace())

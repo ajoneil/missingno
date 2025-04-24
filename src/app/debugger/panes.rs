@@ -15,7 +15,7 @@ use crate::{
         self,
         core::{
             buttons, fonts,
-            icons::{Icon, icon},
+            icons::{self, Icon},
             sizes::{m, s},
             text,
         },
@@ -340,7 +340,7 @@ fn tbar(
         .style(title_style)
         .controls(pane_grid::Controls::new(
             container(
-                buttons::standard(icon(Icon::Close).style(|_, _| svg::Style {
+                buttons::standard(icons::m(Icon::Close).style(|_, _| svg::Style {
                     color: Some(Color::BLACK),
                 }))
                 .on_press(Message::ClosePane(pane).into()),

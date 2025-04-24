@@ -1,6 +1,6 @@
 use iced::widget::{Text, text, text::IntoFragment};
 
-mod sizes {
+pub mod sizes {
     use crate::app::core::sizes;
 
     // pub fn s() -> f32 {
