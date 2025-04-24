@@ -2,7 +2,7 @@ use crate::emulator::cpu::cycles::Cycles;
 
 pub struct CycleTimer {
     length: Cycles,
-    counted: Cycles,
+    pub counted: Cycles,
 }
 
 impl CycleTimer {

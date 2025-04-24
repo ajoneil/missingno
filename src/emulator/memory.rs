@@ -137,7 +137,9 @@ impl MemoryMapped {
                     self.serial.control = serial_transfer::Control::from_bits_retain(value)
                 }
             },
-            MappedAddress::TimerRegister(register) => self.timers.write_register(register, value),
+            MappedAddress::TimerRegister(register) => {
+                self.timers.write_register(register, value, &mut self.audio)
+            }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),

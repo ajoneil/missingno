@@ -1,39 +1,46 @@
-use crate::emulator::audio::channels::{
-    Enabled,
-    registers::{LengthTimerAndDuty, PeriodHighAndControl, Signed11, VolumeAndEnvelope},
+use crate::emulator::audio::{
+    channels::{Enabled, registers::PeriodHighAndControl},
+    length_timer::LengthTimer,
+    period_sweep::PeriodSweep,
+    volume::{EnvelopeDirection, Volume},
+    waveforms::Waveform,
 };
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
-    LengthTimerAndDuty,
-    VolumeAndEnvelope,
-    Sweep,
+    WaveformAndInitialLength,
+    Volume,
+    PeriodSweep,
     PeriodLow,
     PeriodHighAndControl,
 }
 
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
-    pub sweep: Sweep,
-    pub length_timer_and_duty: LengthTimerAndDuty,
-    pub volume_and_envelope: VolumeAndEnvelope,
-    pub length_enabled: bool,
-    pub period: Signed11,
+    period_sweep: PeriodSweep,
+    length_timer: LengthTimer,
+    waveform: Waveform,
+
+    volume: Volume,
+
+    pub period: u16,
+    current_period: u16,
 }
 
 impl Default for PulseSweepChannel {
     fn default() -> Self {
         Self {
             enabled: Enabled {
-                enabled: true,
+                enabled: false,
                 output_left: true,
                 output_right: true,
             },
-            sweep: Sweep(0x80),
-            length_timer_and_duty: LengthTimerAndDuty(0xbf),
-            volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
-            period: (-1).into(),
+            period_sweep: PeriodSweep::new(0x80),
+            length_timer: LengthTimer::new(),
+            volume: Volume::new(0xf, EnvelopeDirection::Decrease, 3),
+            period: 0x7ff,
+            current_period: 0x7ff,
+            waveform: Waveform::new(2),
         }
     }
 }
@@ -42,34 +49,51 @@ impl PulseSweepChannel {
     pub fn reset(&mut self) {
         *self = Self {
             enabled: Enabled::disabled(),
-            sweep: Sweep(0),
-            length_timer_and_duty: LengthTimerAndDuty(0),
-            volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: false,
-            period: (0).into(),
+            period_sweep: PeriodSweep::new(0),
+            length_timer: LengthTimer::new(),
+            waveform: Waveform::new(2),
+            volume: Volume::new(0, EnvelopeDirection::Decrease, 0),
+            period: 0,
+            current_period: 0,
         }
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::LengthTimerAndDuty => self.length_timer_and_duty.0,
-            Register::VolumeAndEnvelope => self.volume_and_envelope.0,
-            Register::Sweep => self.sweep.0,
+            Register::WaveformAndInitialLength => self.waveform.waveform() << 6 | 0x3f,
+            Register::Volume => self.volume.read_register(),
+            Register::PeriodSweep => self.period_sweep.read_register(),
             Register::PeriodLow => 0xff,
-            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
+            Register::PeriodHighAndControl => {
+                PeriodHighAndControl::read(self.length_timer.enabled())
+            }
         }
     }
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
-            Register::LengthTimerAndDuty => self.length_timer_and_duty = LengthTimerAndDuty(value),
-            Register::VolumeAndEnvelope => self.volume_and_envelope = VolumeAndEnvelope(value),
-            Register::Sweep => self.sweep.0 = value,
-            Register::PeriodLow => self.period.set_low8(value),
+            Register::WaveformAndInitialLength => {
+                self.waveform.set_waveform(value >> 6);
+                self.length_timer.set_initial_length(value & 0x3f);
+            }
+
+            Register::Volume => {
+                self.volume.write_register(value);
+                if !self.dac_enabled() {
+                    self.enabled.enabled = false;
+                }
+            }
+            Register::PeriodSweep => self.period_sweep.write_register(value),
+            Register::PeriodLow => self.period = (self.period ^ 0xff) | value as u16,
             Register::PeriodHighAndControl => {
                 let value = PeriodHighAndControl(value);
-                self.period.set_high3(value.period_high());
-                self.length_enabled = value.enable_length();
+                self.period = (self.period & 0xff) | ((value.period_high() as u16) << 8);
+
+                if value.enable_length() {
+                    self.length_timer.enable();
+                } else {
+                    self.length_timer.disable();
+                }
 
                 if value.trigger() {
                     self.trigger();
@@ -78,33 +102,36 @@ impl PulseSweepChannel {
         }
     }
 
+    pub fn dac_enabled(&self) -> bool {
+        self.volume.initial_volume() > 0 || self.volume.direction() == EnvelopeDirection::Increase
+    }
+
     pub fn trigger(&mut self) {
-        // TODO audio
-    }
-}
-
-#[allow(dead_code)]
-pub enum SweepDirection {
-    Increasing,
-    Decreasing,
-}
-
-pub struct Sweep(pub u8);
-#[allow(dead_code)]
-impl Sweep {
-    pub fn pace(self) -> u8 {
-        (self.0 & 0b0111_0000) >> 4
+        self.enabled.enabled = true;
+        self.current_period = self.period;
+        self.volume.trigger();
+        self.period_sweep.trigger(self.period);
+        self.waveform.trigger(self.period);
+        self.length_timer.trigger();
     }
 
-    pub fn direction(self) -> SweepDirection {
-        if self.0 & 0b1000 != 0 {
-            SweepDirection::Increasing
+    pub fn step(&mut self, audio_timer_tick: bool) -> u8 {
+        if self.enabled.enabled {
+            if audio_timer_tick {
+                self.volume.tick();
+                if let Some(new_period) = self.period_sweep.tick(self.current_period) {
+                    self.current_period = new_period;
+                }
+
+                if self.length_timer.tick() {
+                    self.enabled.enabled = false;
+                }
+            }
+
+            self.waveform
+                .tick(self.current_period, self.volume.current_volume())
         } else {
-            SweepDirection::Decreasing
+            0
         }
-    }
-
-    pub fn step(self) -> u8 {
-        self.0 & 0b111
     }
 }

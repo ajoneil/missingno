@@ -9,13 +9,13 @@ use crate::emulator::audio::{
 impl Register {
     pub fn map(address: u16) -> Self {
         match address {
-            0xff10 => Self::Channel1(pulse_sweep::Register::Sweep),
-            0xff11 => Self::Channel1(pulse_sweep::Register::LengthTimerAndDuty),
-            0xff12 => Self::Channel1(pulse_sweep::Register::VolumeAndEnvelope),
+            0xff10 => Self::Channel1(pulse_sweep::Register::PeriodSweep),
+            0xff11 => Self::Channel1(pulse_sweep::Register::WaveformAndInitialLength),
+            0xff12 => Self::Channel1(pulse_sweep::Register::Volume),
             0xff13 => Self::Channel1(pulse_sweep::Register::PeriodLow),
             0xff14 => Self::Channel1(pulse_sweep::Register::PeriodHighAndControl),
 
-            0xff16 => Self::Channel2(pulse::Register::LengthTimerAndDuty),
+            0xff16 => Self::Channel2(pulse::Register::WaveformAndInitialLength),
             0xff17 => Self::Channel2(pulse::Register::VolumeAndEnvelope),
             0xff18 => Self::Channel2(pulse::Register::PeriodLow),
             0xff19 => Self::Channel2(pulse::Register::PeriodHighAndControl),
@@ -106,7 +106,7 @@ impl Audio {
                 value.bits()
             }
 
-            Register::Volume => (self.volume_left.0 << 4) & self.volume_right.0,
+            Register::Volume => 0xff, //(self.volume_left.0 << 4) & self.volume_right.0,
             Register::Channel1(register) => self.channels.ch1.read_register(register),
             Register::Channel2(register) => self.channels.ch2.read_register(register),
             Register::Channel3(register) => self.channels.ch3.read_register(register),
@@ -143,8 +143,8 @@ impl Audio {
                 self.channels.ch4.enabled.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
             }
             Register::Volume => {
-                self.volume_left = Volume((value >> 4) & 0b111);
-                self.volume_right = Volume(value & 0b111);
+                // self.volume_left = Volume((value >> 4) & 0b111);
+                // self.volume_right = Volume(value & 0b111);
             }
             Register::Channel1(register) => self.channels.ch1.write_register(register, value),
             Register::Channel2(register) => self.channels.ch2.write_register(register, value),

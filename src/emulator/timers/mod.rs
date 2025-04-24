@@ -1,4 +1,4 @@
-use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
+use crate::emulator::{audio::Audio, cpu::cycles::Cycles, interrupts::Interrupt};
 use cycle_timer::CycleTimer;
 use registers::Control;
 pub use registers::Register;
@@ -12,13 +12,13 @@ pub struct Timers {
     modulo: u8,
     control: Control,
 
-    divider_timer: CycleTimer,
+    system_timer: u16,
     timer: Option<CycleTimer>,
 }
 
-impl Timers {
-    const DIV_INCREMENT_TIME: Cycles = Cycles(1024);
+const AUDIO_DIVIDER_WATCH_BIT: u8 = 0b0001_0000;
 
+impl Timers {
     pub fn new() -> Self {
         Self {
             divider: 0xab,
@@ -26,16 +26,16 @@ impl Timers {
             modulo: 0,
             control: Control(0xf8),
 
-            divider_timer: CycleTimer::new(Self::DIV_INCREMENT_TIME),
+            system_timer: 0,
             timer: None,
         }
     }
 
-    pub fn step(&mut self, cycles: Cycles) -> Option<Interrupt> {
-        self.divider_timer.tick(cycles);
-        if self.divider_timer.finished() {
-            self.divider = self.divider.wrapping_add(1);
-            self.divider_timer.lap()
+    pub fn step(&mut self, cycles: Cycles, audio: &mut Audio) -> Option<Interrupt> {
+        for c in 0..cycles.0 {
+            if self.update_system_timer_check_audio(self.system_timer.wrapping_add(1)) {
+                audio.trigger_audio_timer(Cycles(c));
+            }
         }
 
         if let Some(timer) = &mut self.timer {
@@ -51,7 +51,6 @@ impl Timers {
                 }
             }
         }
-
         None
     }
 
@@ -64,9 +63,14 @@ impl Timers {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, audio: &mut Audio) {
         match register {
-            Register::Divider => self.divider = 0,
+            Register::Divider => {
+                if self.update_system_timer_check_audio(0) {
+                    dbg!("tick");
+                    audio.trigger_audio_timer(Cycles(0));
+                }
+            }
             Register::Counter => self.counter = value,
             Register::Modulo => self.modulo = value,
             Register::Control => {
@@ -78,5 +82,15 @@ impl Timers {
                 }
             }
         }
+    }
+
+    fn update_system_timer_check_audio(&mut self, value: u16) -> bool {
+        let before = self.divider();
+        self.system_timer = value;
+        before & AUDIO_DIVIDER_WATCH_BIT != 0 && self.divider() & AUDIO_DIVIDER_WATCH_BIT == 0
+    }
+
+    fn divider(&self) -> u8 {
+        ((self.system_timer >> 6) & 0xff) as u8
     }
 }

@@ -6,7 +6,7 @@ use crate::{
     app::{self, core::sizes::m, emulator::Emulator},
     emulator::{GameBoy, joypad::Button},
 };
-use panes::DebuggerPanes;
+use panes::{DebuggerPane, DebuggerPanes};
 
 mod audio;
 mod breakpoints;
@@ -76,7 +76,23 @@ impl Debugger {
             }
             Message::StepFrame => {
                 if let Some(screen) = self.debugger.step_frame() {
-                    return Task::done(screen::Message::Update(screen).into());
+                    let mut tasks = vec![Task::done(screen::Message::Update(screen).into())];
+                    if self.panes.plane_shown(DebuggerPane::Audio) {
+                        tasks.push(Task::done(
+                            audio::Message::UpdateCharts(Vec::from_iter(
+                                self.debugger
+                                    .game_boy()
+                                    .audio()
+                                    .buffers()
+                                    .ch1
+                                    .iter()
+                                    .cloned(),
+                            ))
+                            .into(),
+                        ))
+                    }
+
+                    return Task::batch(tasks);
                 } else {
                     self.running = false
                 }

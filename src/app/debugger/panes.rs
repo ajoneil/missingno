@@ -21,7 +21,7 @@ use crate::{
         },
         debugger::{
             self,
-            audio::AudioPane,
+            audio::{self, AudioPane},
             breakpoints::{self, BreakpointsPane},
             cpu::CpuPane,
             instructions::InstructionsPane,
@@ -49,16 +49,23 @@ pub enum Message {
     Pane(PaneMessage),
 }
 
+impl Into<app::Message> for Message {
+    fn into(self) -> app::Message {
+        app::Message::Debugger(debugger::Message::Pane(self))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
     Breakpoints(breakpoints::Message),
     Screen(screen::Message),
     Sprites(sprites::Message),
+    Audio(audio::Message),
 }
 
-impl Into<app::Message> for Message {
+impl Into<app::Message> for PaneMessage {
     fn into(self) -> app::Message {
-        app::Message::Debugger(debugger::Message::Pane(self))
+        Message::Pane(self).into()
     }
 }
 
@@ -204,10 +211,19 @@ impl DebuggerPanes {
                         }
                     });
                 }
+
                 PaneMessage::Sprites(message) => {
                     self.panes.iter_mut().for_each(|(_, pane)| {
                         if let PaneInstance::Sprites(sprites_pane) = pane {
                             sprites_pane.update(*message);
+                        }
+                    });
+                }
+
+                PaneMessage::Audio(message) => {
+                    self.panes.iter_mut().for_each(|(_, pane)| {
+                        if let PaneInstance::Audio(audio_pane) = pane {
+                            audio_pane.update(message);
                         }
                     });
                 }

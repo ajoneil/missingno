@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub struct Cycles(pub u32);
 
 impl std::ops::Add for Cycles {

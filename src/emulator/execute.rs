@@ -1,4 +1,4 @@
-use super::{
+use crate::emulator::{
     GameBoy,
     cpu::{InterruptMasterEnable, execute::OpResult, instructions::Instruction},
     interrupts::Interrupt,
@@ -40,9 +40,12 @@ impl GameBoy {
                 Some(dma_transfer_cycles - cycles)
             };
         }
-        if let Some(interrupt) = self.mapped.timers.step(cycles) {
+
+        if let Some(interrupt) = self.mapped.timers.step(cycles, &mut self.mapped.audio) {
             self.mapped.interrupts.request(interrupt);
         }
+
+        self.mapped.audio.step(cycles);
 
         if let Some(screen) = self.mapped.video.step(cycles) {
             self.mapped

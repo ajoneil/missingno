@@ -1,4 +1,7 @@
-use crate::emulator::audio::channels::{Enabled, registers::VolumeAndEnvelope};
+use crate::emulator::audio::channels::{
+    Enabled,
+    registers::{EnvelopeDirection, VolumeAndEnvelope},
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
@@ -65,6 +68,11 @@ impl NoiseChannel {
                 }
             }
         }
+    }
+
+    pub fn dac_enabled(&self) -> bool {
+        self.volume_and_envelope.initial_volume() > 0
+            || self.volume_and_envelope.direction() == EnvelopeDirection::Increase
     }
 
     pub fn trigger(&mut self) {

@@ -52,7 +52,7 @@ impl WaveChannel {
             length: 0,
             length_enabled: false,
             period: 0.into(),
-            ram: [0; 16],
+            ram: self.ram,
         };
     }
 
@@ -90,6 +90,10 @@ impl WaveChannel {
                 }
             }
         }
+    }
+
+    pub fn dac_enabled(&self) -> bool {
+        self.dac_enabled
     }
 
     pub fn trigger(&mut self) {
