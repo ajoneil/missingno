@@ -2,7 +2,7 @@ use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::{
-    app::{self, Game},
+    app::{self, App, Game, LoadedGame},
     emulator::{GameBoy, cartridge::Cartridge},
 };
 
@@ -19,10 +19,10 @@ impl From<Message> for app::Message {
     }
 }
 
-pub fn update(message: Message, game: &mut Game) -> Task<app::Message> {
+pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     match message {
         Message::Pick => {
-            *game = Game::Loading;
+            app.game = Game::Loading;
             return Task::perform(
                 AsyncFileDialog::new()
                     .add_filter("Game Boy ROM", &["gb"])
@@ -38,14 +38,19 @@ pub fn update(message: Message, game: &mut Game) -> Task<app::Message> {
                     Message::Loaded(data).into()
                 });
             } else {
-                *game = Game::Unloaded;
+                app.game = Game::Unloaded;
             }
         }
 
         Message::Loaded(rom) => {
-            *game = Game::Loaded(app::debugger::Debugger::new(GameBoy::new(Cartridge::new(
-                rom,
-            ))));
+            let game_boy = GameBoy::new(Cartridge::new(rom));
+            app.game = Game::Loaded(if app.debugger_enabled {
+                LoadedGame::Debugger(app::debugger::Debugger::new(game_boy))
+            } else {
+                let mut emu = app::emulator::Emulator::new(game_boy);
+                emu.run();
+                LoadedGame::Emulator(emu)
+            });
         }
     }
 

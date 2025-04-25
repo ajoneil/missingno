@@ -26,6 +26,10 @@ impl Debugger {
         &mut self.game_boy
     }
 
+    pub fn game_boy_take(self) -> GameBoy {
+        self.game_boy
+    }
+
     pub fn step(&mut self) -> Option<Screen> {
         if self.game_boy.step() {
             Some(self.game_boy.screen().clone())

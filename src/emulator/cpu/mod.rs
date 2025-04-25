@@ -8,13 +8,14 @@ pub mod flags;
 pub mod instructions;
 pub mod registers;
 
-#[derive(Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InterruptMasterEnable {
     Disabled,
     EnableAfterNextInstruction,
     Enabled,
 }
 
+#[derive(Clone)]
 pub struct Cpu {
     pub a: u8,
     pub b: u8,

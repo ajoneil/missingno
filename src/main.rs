@@ -1,15 +1,20 @@
-use std::{env, path::PathBuf};
+use std::path::PathBuf;
+
+use clap::Parser;
 
 mod app;
 mod debugger;
 mod emulator;
 
-fn main() -> iced::Result {
-    let rom_path = if let Some(path) = env::args().nth(1) {
-        Some(PathBuf::from(path))
-    } else {
-        None
-    };
+#[derive(Parser)]
+struct Args {
+    rom_file: Option<PathBuf>,
 
-    app::run(rom_path)
+    #[arg(short, long)]
+    debugger: bool,
+}
+
+fn main() -> iced::Result {
+    let args = Args::parse();
+    app::run(args.rom_file, args.debugger)
 }

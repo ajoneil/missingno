@@ -1,15 +1,17 @@
 use iced::{
+    Alignment::Center,
     Element,
     Length::Fill,
     Task,
-    widget::{Button, Column, container, row},
+    widget::{Button, Column, container, row, toggler},
 };
 use iced_aw::DropDown;
 
 use crate::app::{
-    self, App, Game,
+    self, App, Game, LoadedGame,
     core::{
-        buttons,
+        buttons::{self, icon_label},
+        icons::Icon,
         sizes::{m, s, xl},
         text,
     },
@@ -46,11 +48,11 @@ impl ActionBar {
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
         match &app.game {
-            Game::Unloaded | Game::Loading => row![load(&app.game)],
-            Game::Loaded(debugger) => row![
+            Game::Unloaded | Game::Loading => row![load(&app.game), self.settings(app)],
+            Game::Loaded(_) => row![
                 load(&app.game),
-                controls(debugger.running()),
-                container(self.panes(&debugger.panes().unshown_panes())).align_right(Fill)
+                controls(app.running(), app.debugger_enabled),
+                self.settings(app)
             ],
         }
         .spacing(xl())
@@ -95,6 +97,33 @@ impl ActionBar {
         .style(container::bordered_box)
         .into()
     }
+
+    fn settings(&self, app: &App) -> Element<'_, app::Message> {
+        let row = match &app.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                row![self.panes(&debugger.panes().unshown_panes())]
+            }
+            _ => row![],
+        };
+
+        container(
+            row.push(
+                toggler(app.debugger_enabled)
+                    .label("Debugger")
+                    .on_toggle(|enable| app::Message::ToggleDebugger(enable))
+                    .size(m()),
+            )
+            .push(
+                buttons::standard(icon_label(Icon::Settings, "Settings"))
+                    .on_press(app::Message::ShowSettings),
+            )
+            .spacing(m())
+            .align_y(Center),
+        )
+        .align_right(Fill)
+        .align_y(Center)
+        .into()
+    }
 }
 
 fn load(game: &Game) -> Button<'static, app::Message> {
@@ -105,18 +134,23 @@ fn load(game: &Game) -> Button<'static, app::Message> {
     }
 }
 
-fn controls(running: bool) -> Element<'static, app::Message> {
-    row![play_pause(running), step_frame(running), reset()]
-        .spacing(s())
-        .wrap()
-        .into()
+fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
+    let row = row![play_pause(running)];
+
+    let row = row.push_maybe(if debugger {
+        Some(step_frame(running))
+    } else {
+        None
+    });
+
+    row.push(reset()).spacing(s()).wrap().into()
 }
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {
     if running {
-        buttons::success("Pause").on_press(debugger::Message::Pause.into())
+        buttons::success("Pause").on_press(app::Message::Pause.into())
     } else {
-        buttons::success("Play").on_press(debugger::Message::Run.into())
+        buttons::success("Play").on_press(app::Message::Run.into())
     }
 }
 
@@ -131,5 +165,5 @@ fn step_frame(running: bool) -> Button<'static, app::Message> {
 }
 
 fn reset() -> Button<'static, app::Message> {
-    buttons::danger("Reset").on_press(debugger::Message::Reset.into())
+    buttons::danger("Reset").on_press(app::Message::Reset.into())
 }

@@ -1,15 +1,10 @@
 use std::time::Duration;
 
-use iced::{
-    Element, Event, Subscription, Task, event,
-    keyboard::{self, Key, key},
-    time,
-    widget::container,
-};
+use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
-    app::{self, core::sizes::m},
-    emulator::{GameBoy, joypad},
+    app::{self, core::sizes::m, emulator::Emulator},
+    emulator::{GameBoy, joypad::Button},
 };
 use panes::DebuggerPanes;
 
@@ -27,12 +22,6 @@ pub enum Message {
     Step,
     StepOver,
     StepFrame,
-    Run,
-    Pause,
-    Reset,
-
-    PressButton(joypad::Button),
-    ReleaseButton(joypad::Button),
 
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
@@ -65,6 +54,10 @@ impl Debugger {
         self.debugger.game_boy()
     }
 
+    pub fn disable_debugger(self) -> Emulator {
+        app::emulator::Emulator::new(self.debugger.game_boy_take())
+    }
+
     pub fn panes(&self) -> &DebuggerPanes {
         &self.panes
     }
@@ -89,13 +82,6 @@ impl Debugger {
                 }
             }
 
-            Message::Run => self.running = true,
-            Message::Pause => self.running = false,
-            Message::Reset => self.debugger.reset(),
-
-            Message::PressButton(button) => self.debugger.game_boy_mut().press_button(button),
-            Message::ReleaseButton(button) => self.debugger.game_boy_mut().release_button(button),
-
             Message::SetBreakpoint(address) => self.debugger.set_breakpoint(address),
             Message::ClearBreakpoint(address) => self.debugger.clear_breakpoint(address),
 
@@ -114,74 +100,34 @@ impl Debugger {
     pub fn subscription(&self) -> Subscription<app::Message> {
         if self.running {
             Subscription::batch([
-                time::every(Duration::from_micros(16740)).map(|_| Message::StepFrame.into()),
-                event::listen_with(|event, _status, _id| match event {
-                    Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-                        if let Some(button) = Self::map_key(key) {
-                            Some(Message::PressButton(button).into())
-                        } else {
-                            None
-                        }
-                    }
-                    Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
-                        if let Some(button) = Self::map_key(key) {
-                            Some(Message::ReleaseButton(button).into())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }),
+                time::every(Duration::from_micros(16740)).map(|_| Message::StepFrame.into())
             ])
         } else {
             Subscription::none()
         }
     }
 
-    fn map_key(key: Key) -> Option<joypad::Button> {
-        Some(match key.as_ref() {
-            Key::Named(key::Named::ArrowUp) => {
-                joypad::Button::DirectionalPad(joypad::DirectionalPad::Up)
-            }
-            Key::Named(key::Named::ArrowDown) => {
-                joypad::Button::DirectionalPad(joypad::DirectionalPad::Down)
-            }
-            Key::Named(key::Named::ArrowLeft) => {
-                joypad::Button::DirectionalPad(joypad::DirectionalPad::Left)
-            }
-            Key::Named(key::Named::ArrowRight) => {
-                joypad::Button::DirectionalPad(joypad::DirectionalPad::Right)
-            }
-            Key::Named(key::Named::Enter) => joypad::Button::Start,
-            Key::Named(key::Named::Shift) => joypad::Button::Select,
-            Key::Character("x") => joypad::Button::A,
-            Key::Character("z") => joypad::Button::B,
-
-            _ => return None,
-        })
-
-        // let up: joypad::Button = joypad::Button::DirectionalPad(joypad::DirectionalPad::Up);
-        // let m = match key {
-        //     Key::Named(key::Named::ArrowUp) => {
-        //         joypad::Button::DirectionalPad(joypad::DirectionalPad::Up)
-        //     }
-        //     _ => {}
-        // };
-
-        // None
-        // Some(match key {
-        //     Key::Named(key::Named::ArrowUp) => {
-        //         joypad::Button::DirectionalPad(joypad::DirectionalPad::Up)
-        //     }
-
-        //     // key::Named::ArrowDown => Button::DirectionalPad(DirectionalPad::Down),
-        //     // key::Named::ArrowLeft => Button::DirectionalPad(DirectionalPad::Left),
-        //     // key::Named::ArrowRight => Button::DirectionalPad(DirectionalPad::Right),
-        //     _ => return None,
-        // })
-    }
-
     pub fn running(&self) -> bool {
         self.running
+    }
+
+    pub fn run(&mut self) {
+        self.running = true;
+    }
+
+    pub fn pause(&mut self) {
+        self.running = false;
+    }
+
+    pub fn reset(&mut self) {
+        self.debugger.reset();
+    }
+
+    pub fn press_button(&mut self, button: Button) {
+        self.debugger.game_boy_mut().press_button(button);
+    }
+
+    pub fn release_button(&mut self, button: Button) {
+        self.debugger.game_boy_mut().release_button(button);
     }
 }

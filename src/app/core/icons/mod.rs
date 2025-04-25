@@ -7,6 +7,7 @@ use crate::app::core::text;
 
 pub enum Icon {
     Close,
+    Settings,
     Front,
     Back,
     GameBoy,
@@ -17,6 +18,7 @@ pub enum Icon {
 fn icon_data(icon: Icon) -> Handle {
     match icon {
         Icon::Close => Handle::from_memory(include_bytes!("bootstrap/x-square-fill.svg")),
+        Icon::Settings => Handle::from_memory(include_bytes!("bootstrap/gear-fill.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("bootstrap/front.svg")),
         Icon::Back => Handle::from_memory(include_bytes!("bootstrap/back.svg")),
         Icon::GameBoy => Handle::from_memory(include_bytes!(
