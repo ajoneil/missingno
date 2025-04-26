@@ -1,14 +1,11 @@
 use core::fmt;
 use std::cmp::min;
 
-use crate::emulator::{
-    cpu::cycles::Cycles,
-    video::{
-        PpuAccessible,
-        palette::PaletteIndex,
-        screen::{self, Screen},
-        sprites::Sprite,
-    },
+use crate::emulator::video::{
+    PpuAccessible,
+    palette::PaletteIndex,
+    screen::{self, Screen},
+    sprites::Sprite,
 };
 
 use super::{
@@ -99,10 +96,10 @@ impl Rendering {
         }
     }
 
-    fn render(&mut self, dots: u32, data: &PpuAccessible) -> Option<u32> {
-        let mut remaining_dots = dots;
+    fn render(&mut self, data: &PpuAccessible) -> bool {
+        let mut remaining_dots = 4;
 
-        while remaining_dots > 0 {
+        for _ in 0..4 {
             if self.line.dots == 0 {
                 self.line.find_sprites(data)
             }
@@ -132,13 +129,13 @@ impl Rendering {
                     self.line = Line::new(self.line.number + 1);
 
                     if self.line.number == screen::NUM_SCANLINES {
-                        return Some(remaining_dots);
+                        return true;
                     }
                 }
             }
         }
 
-        None
+        false
     }
 
     fn draw_pixel(&mut self, data: &PpuAccessible) {
@@ -239,33 +236,23 @@ impl PixelProcessingUnit {
         }
     }
 
-    pub fn step(&mut self, cycles: Cycles, data: &PpuAccessible) -> Option<Screen> {
-        let mut remaining_dots: u32 = cycles.0 * 4;
+    pub fn tick(&mut self, data: &PpuAccessible) -> Option<Screen> {
         let mut screen = None;
 
-        while remaining_dots > 0 {
-            match self {
-                PixelProcessingUnit::Rendering(rendering) => {
-                    if let Some(remainder) = rendering.render(remaining_dots, data) {
-                        screen = Some(rendering.screen.clone());
-                        remaining_dots = remainder;
-                        *self = PixelProcessingUnit::BetweenFrames(0);
-                    } else {
-                        remaining_dots = 0;
-                    }
+        match self {
+            PixelProcessingUnit::Rendering(rendering) => {
+                if rendering.render(data) {
+                    screen = Some(rendering.screen.clone());
+                    *self = PixelProcessingUnit::BetweenFrames(0);
                 }
-                PixelProcessingUnit::BetweenFrames(dots) => {
-                    let total = *dots + remaining_dots;
-                    if total < BETWEEN_FRAMES_DOTS {
-                        *dots = total;
-                        remaining_dots = 0;
-                    } else {
-                        remaining_dots = total - BETWEEN_FRAMES_DOTS;
-                        *self = PixelProcessingUnit::Rendering(Rendering::new());
-                    }
+            }
+            PixelProcessingUnit::BetweenFrames(dots) => {
+                *dots += 4;
+                if *dots >= BETWEEN_FRAMES_DOTS {
+                    *self = PixelProcessingUnit::Rendering(Rendering::new());
                 }
-            };
-        }
+            }
+        };
 
         screen
     }

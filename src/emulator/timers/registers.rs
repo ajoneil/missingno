@@ -1,5 +1,3 @@
-use crate::emulator::cpu::cycles::Cycles;
-
 #[derive(Debug)]
 pub enum Register {
     Divider,
@@ -15,12 +13,12 @@ impl Control {
         self.0 & 0b100 != 0
     }
 
-    pub fn interval(&self) -> Cycles {
+    pub fn cycle_interval(&self) -> u32 {
         match self.0 & 0b11 {
-            0b00 => Cycles(1024),
-            0b01 => Cycles(16),
-            0b10 => Cycles(64),
-            0b11.. => Cycles(256),
+            0b00 => 1024,
+            0b01 => 16,
+            0b10 => 64,
+            0b11.. => 256,
         }
     }
 }

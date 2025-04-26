@@ -1,28 +1,23 @@
-use crate::emulator::cpu::cycles::Cycles;
-
 pub struct CycleTimer {
-    length: Cycles,
-    counted: Cycles,
+    cycles: u32,
+    counted: u32,
 }
 
 impl CycleTimer {
-    pub fn new(length: Cycles) -> Self {
-        Self {
-            length,
-            counted: Cycles(0),
-        }
+    pub fn new(cycles: u32) -> Self {
+        Self { cycles, counted: 0 }
     }
 
-    pub fn tick(&mut self, delta: Cycles) {
-        self.counted += delta;
+    pub fn tick(&mut self) {
+        self.counted += 1;
     }
 
     pub fn finished(&self) -> bool {
-        self.counted >= self.length
+        self.counted >= self.cycles
     }
 
     pub fn lap(&mut self) {
         assert!(self.finished());
-        self.counted -= self.length
+        self.counted -= self.cycles
     }
 }

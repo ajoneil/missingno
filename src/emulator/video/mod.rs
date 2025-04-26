@@ -3,7 +3,6 @@ use screen::Screen;
 use sprites::{Sprite, SpriteId};
 use tile_maps::{TileMap, TileMapId};
 
-use crate::emulator::cpu::cycles::Cycles;
 use control::{Control, ControlFlags};
 use memory::VideoMemory;
 use palette::{PaletteMap, Palettes};
@@ -158,8 +157,8 @@ impl Video {
         self.ppu_accessible.control
     }
 
-    pub fn step(&mut self, cycles: Cycles) -> Option<Screen> {
-        self.ppu.step(cycles, &self.ppu_accessible)
+    pub fn tick(&mut self) -> Option<Screen> {
+        self.ppu.tick(&self.ppu_accessible)
     }
 
     pub fn palettes(&self) -> &Palettes {

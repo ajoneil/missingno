@@ -1,4 +1,4 @@
-use crate::emulator::{cpu::cycles::Cycles, interrupts::Interrupt};
+use crate::emulator::interrupts::Interrupt;
 use cycle_timer::CycleTimer;
 use registers::Control;
 pub use registers::Register;
@@ -17,7 +17,7 @@ pub struct Timers {
 }
 
 impl Timers {
-    const DIV_INCREMENT_TIME: Cycles = Cycles(1024);
+    const DIV_INCREMENT_CYCLES: u32 = 1024;
 
     pub fn new() -> Self {
         Self {
@@ -26,20 +26,20 @@ impl Timers {
             modulo: 0,
             control: Control(0xf8),
 
-            divider_timer: CycleTimer::new(Self::DIV_INCREMENT_TIME),
+            divider_timer: CycleTimer::new(Self::DIV_INCREMENT_CYCLES),
             timer: None,
         }
     }
 
-    pub fn step(&mut self, cycles: Cycles) -> Option<Interrupt> {
-        self.divider_timer.tick(cycles);
+    pub fn tick(&mut self) -> Option<Interrupt> {
+        self.divider_timer.tick();
         if self.divider_timer.finished() {
             self.divider = self.divider.wrapping_add(1);
             self.divider_timer.lap()
         }
 
         if let Some(timer) = &mut self.timer {
-            timer.tick(cycles);
+            timer.tick();
             if timer.finished() {
                 timer.lap();
 
@@ -72,7 +72,7 @@ impl Timers {
             Register::Control => {
                 self.control = Control(value);
                 if self.control.enabled() {
-                    self.timer = Some(CycleTimer::new(self.control.interval()));
+                    self.timer = Some(CycleTimer::new(self.control.cycle_interval()));
                 } else {
                     self.timer = None;
                 }

@@ -40,19 +40,24 @@ impl GameBoy {
                 Some(dma_transfer_cycles - cycles)
             };
         }
-        if let Some(interrupt) = self.mapped.timers.step(cycles) {
-            self.mapped.interrupts.request(interrupt);
+
+        let mut new_screen = false;
+
+        for _ in 0..cycles.0 {
+            if let Some(interrupt) = self.mapped.timers.tick() {
+                self.mapped.interrupts.request(interrupt);
+            }
+
+            if let Some(screen) = self.mapped.video.tick() {
+                self.mapped
+                    .interrupts
+                    .request(Interrupt::VideoBetweenFrames);
+                self.screen = screen;
+                new_screen = true;
+            }
         }
 
-        if let Some(screen) = self.mapped.video.step(cycles) {
-            self.mapped
-                .interrupts
-                .request(Interrupt::VideoBetweenFrames);
-            self.screen = screen;
-            true
-        } else {
-            false
-        }
+        new_screen
     }
 
     fn check_for_interrupt(&mut self) -> Option<Interrupt> {
