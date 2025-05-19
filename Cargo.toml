@@ -10,8 +10,8 @@ name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
-bitflags = "2.4.1"
-clap = { version = "4.5.37", features = ["derive"] }
+bitflags = "2.9.1"
+clap = { version = "4.5.38", features = ["derive"] }
 iced = { version = "0.13.1", features = [
     "canvas",
     "advanced",
@@ -24,4 +24,4 @@ iced_aw = { version = "0.12.2", default-features = false, features = [
 ] }
 replace_with = "0.1.7"
 rfd = "0.15.3"
-rgb = "0.8.36"
+rgb = "0.8.50"
