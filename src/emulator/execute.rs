@@ -19,13 +19,18 @@ impl GameBoy {
         let instruction = if let Some(interrupt) = self.check_for_interrupt() {
             self.cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.mapped.interrupts.clear(interrupt);
+            self.cpu.halted = false;
 
             // pandocs specify interrupts take 5 cycles to execute, but happen after
             // the next (unexecuted) opcode has been fetched. I _think_ this means
             // it'll take 6 cycles total, aligning nicely with the call instruction.
             interrupt.call_instruction()
         } else {
-            Instruction::decode(self).unwrap()
+            if self.cpu.halted {
+                Instruction::NoOperation
+            } else {
+                Instruction::decode(self).unwrap()
+            }
         };
 
         let OpResult(cycles, memory_write) = self.cpu.execute(instruction.clone(), &self.mapped);
