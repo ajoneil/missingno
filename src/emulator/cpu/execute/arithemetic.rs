@@ -54,8 +54,10 @@ impl Cpu {
 
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.remove(cpu::Flags::NEGATIVE);
-                    self.flags
-                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf + value & 0xf > 0xf);
+                    self.flags.set(
+                        cpu::Flags::HALF_CARRY,
+                        self.a as u16 & 0xf + value as u16 & 0xf > 0xf,
+                    );
                     self.flags
                         .set(cpu::Flags::CARRY, self.a as u16 + value as u16 > 0xff);
 
@@ -78,24 +80,45 @@ impl Cpu {
                 }
 
                 Arithmetic8::AddACarry(source) => {
-                    let (mut value, fetch_cycles) = self.fetch8(source, memory);
-                    if self.flags.contains(Flags::CARRY) {
-                        value += 1
+                    let (value, fetch_cycles) = self.fetch8(source, memory);
+
+                    let (result, val16) = if self.flags.contains(Flags::CARRY) {
+                        (self.a.wrapping_add(value).wrapping_add(1), value as u16 + 1)
+                    } else {
+                        (self.a.wrapping_add(value), value as u16)
                     };
-                    let result = self.a.wrapping_add(value);
 
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.remove(cpu::Flags::NEGATIVE);
+                    self.flags.set(
+                        cpu::Flags::HALF_CARRY,
+                        self.a as u16 & 0xf + val16 & 0xf > 0xf,
+                    );
                     self.flags
-                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf + value & 0xf > 0xf);
-                    self.flags
-                        .set(cpu::Flags::CARRY, self.a as u16 + value as u16 > 0xff);
+                        .set(cpu::Flags::CARRY, self.a as u16 + val16 > 0xff);
 
                     self.a = result;
                     OpResult::cycles(1).add_cycles(fetch_cycles)
                 }
 
-                Arithmetic8::SubtractACarry(_) => todo!(),
+                Arithmetic8::SubtractACarry(source) => {
+                    let (value, fetch_cycles) = self.fetch8(source, memory);
+                    let (result, val16) = if self.flags.contains(Flags::CARRY) {
+                        (self.a.wrapping_sub(value).wrapping_sub(1), value as u16 + 1)
+                    } else {
+                        (self.a.wrapping_sub(value), value as u16)
+                    };
+
+                    self.flags.set(cpu::Flags::ZERO, result == 0);
+                    self.flags.insert(cpu::Flags::NEGATIVE);
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, self.a as u16 & 0xf0 < val16 & 0xf0);
+                    self.flags.set(cpu::Flags::CARRY, self.a < value);
+
+                    self.a = result;
+                    OpResult::cycles(1).add_cycles(fetch_cycles)
+                }
+
                 Arithmetic8::CompareA(source) => {
                     let (compare, fetch_cycles) = self.fetch8(source, memory);
                     let value = self.a.wrapping_sub(compare);
