@@ -14,6 +14,7 @@ mod arithemetic;
 mod bit_flag;
 mod bit_shift;
 mod bitwise;
+mod carry_flag;
 mod interrupt;
 mod jump;
 mod load;
@@ -59,7 +60,7 @@ impl Cpu {
             Instruction::BitFlag(instruction) => self.execute_bit_flag(instruction, memory),
             Instruction::BitShift(instruction) => self.execute_bit_shift(instruction, memory),
             Instruction::Jump(instruction) => self.execute_jump(instruction, memory),
-            Instruction::CarryFlag(_) => todo!(),
+            Instruction::CarryFlag(instruction) => self.execute_carry_flag(instruction),
             Instruction::Stack(instruction) => self.execute_stack(instruction, memory),
             Instruction::Interrupt(instruction) => self.execute_interrupt(instruction),
 
