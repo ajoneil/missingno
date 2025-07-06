@@ -1,6 +1,10 @@
+mod mbc;
+
+use mbc::{MemoryBankController, mbc1::Mbc1, mbc3::Mbc3, no_mbc::NoMbc};
+
 pub struct Cartridge {
-    rom: Vec<u8>,
     title: String,
+    mbc: Box<dyn MemoryBankController>,
 }
 
 impl Cartridge {
@@ -14,7 +18,15 @@ impl Cartridge {
             title.push(*character as char)
         }
 
-        Cartridge { rom, title }
+        let mbc: Box<dyn MemoryBankController> = match rom[0x147] {
+            0x00 | 0x08 | 0x09 => Box::new(NoMbc::new(rom)),
+            0x01..=0x03 => Box::new(Mbc1::new(rom)),
+            0x0f..=0x13 => Box::new(Mbc3::new(rom)),
+
+            _ => panic!("nyi: mbc {:2x}", rom[0x147]),
+        };
+
+        Cartridge { title, mbc }
     }
 
     pub fn title(&self) -> &str {
@@ -22,18 +34,15 @@ impl Cartridge {
     }
 
     pub fn header_checksum(&self) -> u8 {
-        self.rom[0x14d]
+        self.mbc.rom()[0x14d]
     }
 
     pub fn read(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x7fff => self.rom[address as usize],
-            _ => 0xff,
-        }
+        self.mbc.read(address)
     }
 
-    pub fn write(&self, _address: u16, _value: u8) {
-        // TODO: MBC
+    pub fn write(&mut self, address: u16, value: u8) {
+        self.mbc.write(address, value);
     }
 }
 
