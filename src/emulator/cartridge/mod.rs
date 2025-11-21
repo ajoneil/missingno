@@ -1,6 +1,6 @@
 mod mbc;
 
-use mbc::{MemoryBankController, mbc1::Mbc1, mbc3::Mbc3, no_mbc::NoMbc};
+use mbc::{MemoryBankController, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3, no_mbc::NoMbc};
 
 pub struct Cartridge {
     title: String,
@@ -21,6 +21,7 @@ impl Cartridge {
         let mbc: Box<dyn MemoryBankController> = match rom[0x147] {
             0x00 | 0x08 | 0x09 => Box::new(NoMbc::new(rom)),
             0x01..=0x03 => Box::new(Mbc1::new(rom)),
+            0x05 | 0x06 => Box::new(Mbc2::new(rom)),
             0x0f..=0x13 => Box::new(Mbc3::new(rom)),
 
             _ => panic!("nyi: mbc {:2x}", rom[0x147]),
