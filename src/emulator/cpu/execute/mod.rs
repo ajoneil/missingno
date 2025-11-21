@@ -185,7 +185,15 @@ impl Cpu {
                 self.set_register16(register, value);
                 OpResult::cycles(0)
             }
-            Target16::Memory(_) => todo!(),
+            Target16::Memory(address) => match address {
+                Address::Fixed(address) => OpResult::write16(address, value, Cycles(2)),
+                Address::Relative(_) => todo!(),
+                Address::High(_) => todo!(),
+                Address::HighPlusC => todo!(),
+                Address::Dereference(register16) => todo!(),
+                Address::DereferenceHlAndIncrement => todo!(),
+                Address::DereferenceHlAndDecrement => todo!(),
+            },
         }
     }
 }

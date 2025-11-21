@@ -13,12 +13,12 @@ impl Mbc2 {
             rom,
             ram: [0; 512],
             ram_enabled: false,
-            bank: 0,
+            bank: 1,
         }
     }
 
     fn current_bank(&self) -> u8 {
-        (self.bank & 0xf).max(1)
+        (self.bank & (self.rom.len() / 0x4000) as u8).max(1)
     }
 }
 
