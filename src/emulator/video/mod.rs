@@ -27,6 +27,7 @@ pub enum Register {
     WindowY,
     WindowX,
     CurrentScanline,
+    InterruptOnScanline,
     BackgroundPalette,
     Sprite0Palette,
     Sprite1Palette,
@@ -125,6 +126,7 @@ impl Video {
                     0
                 }
             }
+            Register::InterruptOnScanline => self.interrupts.current_line_compare,
             Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
             Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
             Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
@@ -141,6 +143,7 @@ impl Video {
             Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x = value,
             Register::WindowY => self.ppu_accessible.window.y = value,
             Register::WindowX => self.ppu_accessible.window.x_plus_7 = value,
+            Register::InterruptOnScanline => self.interrupts.current_line_compare = value,
             Register::BackgroundPalette => {
                 self.ppu_accessible.palettes.background = PaletteMap(value)
             }

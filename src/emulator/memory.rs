@@ -60,6 +60,7 @@ impl MappedAddress {
             0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
             0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
             0xff44 => Self::VideoRegister(video::Register::CurrentScanline),
+            0xff45 => Self::VideoRegister(video::Register::InterruptOnScanline),
             0xff46 => Self::BeginDmaTransfer,
             0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
             0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
