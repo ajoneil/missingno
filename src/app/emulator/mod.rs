@@ -9,7 +9,7 @@ use iced::{
 
 use crate::{
     app,
-    emulator::{GameBoy, joypad::Button, video::screen::Screen},
+    game_boy::{GameBoy, joypad::Button, video::screen::Screen},
 };
 
 pub struct Emulator {

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::emulator::{GameBoy, cpu::instructions::Instruction, video::screen::Screen};
+use crate::game_boy::{GameBoy, cpu::instructions::Instruction, video::screen::Screen};
 use instructions::InstructionsIterator;
 
 pub mod instructions;

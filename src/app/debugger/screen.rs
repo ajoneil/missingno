@@ -11,7 +11,7 @@ use crate::{
             panes::{self, DebuggerPane, pane, title_bar},
         },
     },
-    emulator::video::screen::Screen,
+    game_boy::video::screen::Screen,
 };
 
 pub struct ScreenPane {

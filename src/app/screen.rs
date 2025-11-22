@@ -1,7 +1,7 @@
 use iced::{Color, Point, Renderer, Size, Theme, advanced::mouse, widget::canvas};
 use rgb::RGB8;
 
-use crate::emulator::video::{
+use crate::game_boy::video::{
     palette::Palette,
     screen::{self, Screen},
 };

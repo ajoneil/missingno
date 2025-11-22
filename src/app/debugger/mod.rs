@@ -4,7 +4,7 @@ use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
     app::{self, core::sizes::m, emulator::Emulator},
-    emulator::{GameBoy, joypad::Button},
+    game_boy::{GameBoy, joypad::Button},
 };
 use panes::DebuggerPanes;
 

@@ -3,7 +3,7 @@ use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::{
     app::{self, App, Game, LoadedGame},
-    emulator::{GameBoy, cartridge::Cartridge},
+    game_boy::{GameBoy, cartridge::Cartridge},
 };
 
 #[derive(Debug, Clone)]

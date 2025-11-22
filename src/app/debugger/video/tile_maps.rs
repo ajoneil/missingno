@@ -10,7 +10,7 @@ use crate::{
         core::sizes::m,
         debugger::panes::{DebuggerPane, pane, title_bar},
     },
-    emulator::video::{
+    game_boy::video::{
         Video,
         control::Control,
         tile_maps::{TileMap, TileMapId},

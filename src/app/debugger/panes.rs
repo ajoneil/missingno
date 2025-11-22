@@ -35,7 +35,7 @@ use crate::{
         },
     },
     debugger::Debugger,
-    emulator::video::tile_maps::TileMapId,
+    game_boy::video::tile_maps::TileMapId,
 };
 
 #[derive(Debug, Clone)]

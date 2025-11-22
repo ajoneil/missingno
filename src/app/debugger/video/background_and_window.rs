@@ -9,7 +9,7 @@ use crate::{
         core::sizes::{m, s},
         debugger::video::{palette::palette4, tile_maps::tile_map_choice},
     },
-    emulator::video::{Video, palette::Palette},
+    game_boy::video::{Video, palette::Palette},
 };
 
 pub fn background_and_window(video: &Video) -> Element<'static, Message> {

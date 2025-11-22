@@ -21,7 +21,7 @@ use crate::{
         },
     },
     debugger::Debugger,
-    emulator::cpu::{
+    game_boy::cpu::{
         Cpu,
         flags::Flags,
         registers::{Register8, Register16},

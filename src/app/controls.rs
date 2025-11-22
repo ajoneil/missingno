@@ -3,7 +3,7 @@ use iced::{
     keyboard::{self, Key, key},
 };
 
-use crate::{app, emulator::joypad};
+use crate::{app, game_boy::joypad};
 
 pub fn event_handler(
     event: Event,

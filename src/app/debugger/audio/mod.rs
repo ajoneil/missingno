@@ -6,7 +6,7 @@ use crate::{
         core::sizes::{l, s},
         debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
     },
-    emulator::audio::Audio,
+    game_boy::audio::Audio,
 };
 
 mod channels;

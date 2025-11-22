@@ -10,7 +10,7 @@ use crate::{
         core::sizes::{m, s, xs},
         screen::iced_color,
     },
-    emulator::video::palette::{Palette, PaletteIndex, PaletteMap},
+    game_boy::video::palette::{Palette, PaletteIndex, PaletteMap},
 };
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {

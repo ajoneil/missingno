@@ -19,7 +19,7 @@ use crate::{
         },
     },
     debugger::instructions::InstructionsIterator,
-    emulator::{MemoryMapped, cpu::instructions::Instruction},
+    game_boy::{MemoryMapped, cpu::instructions::Instruction},
 };
 
 pub struct InstructionsPane;

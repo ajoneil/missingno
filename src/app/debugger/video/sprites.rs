@@ -18,7 +18,7 @@ use crate::{
             video::{palette::palette3, tile_widget::tile_flip},
         },
     },
-    emulator::video::{
+    game_boy::video::{
         Video,
         palette::Palette,
         sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},

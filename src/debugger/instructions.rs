@@ -1,4 +1,4 @@
-use crate::emulator::MemoryMapped;
+use crate::game_boy::MemoryMapped;
 
 pub struct InstructionsIterator<'a> {
     pub address: Option<u16>,

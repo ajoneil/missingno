@@ -8,7 +8,7 @@ use crate::{
         Message,
         core::sizes::{m, s, xs},
     },
-    emulator::GameBoy,
+    game_boy::GameBoy,
 };
 
 pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
@@ -29,21 +29,21 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
                 "Joypad",
                 game_boy
                     .interrupts()
-                    .enabled(crate::emulator::interrupts::Interrupt::Joypad)
+                    .enabled(crate::game_boy::interrupts::Interrupt::Joypad)
             )
             .width(Length::FillPortion(3)),
             checkbox(
                 "Serial",
                 game_boy
                     .interrupts()
-                    .enabled(crate::emulator::interrupts::Interrupt::Serial)
+                    .enabled(crate::game_boy::interrupts::Interrupt::Serial)
             )
             .width(Length::FillPortion(2)),
             checkbox(
                 "Timer",
                 game_boy
                     .interrupts()
-                    .enabled(crate::emulator::interrupts::Interrupt::Timer)
+                    .enabled(crate::game_boy::interrupts::Interrupt::Timer)
             )
             .width(Length::FillPortion(2)),
         ],
@@ -52,14 +52,14 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
                 "Video Status",
                 game_boy
                     .interrupts()
-                    .enabled(crate::emulator::interrupts::Interrupt::VideoStatus)
+                    .enabled(crate::game_boy::interrupts::Interrupt::VideoStatus)
             )
             .width(Length::FillPortion(3)),
             checkbox(
                 "Between Frames",
                 game_boy
                     .interrupts()
-                    .enabled(crate::emulator::interrupts::Interrupt::VideoBetweenFrames)
+                    .enabled(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
             .width(Length::FillPortion(4)),
         ],
@@ -76,21 +76,21 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
                 "Joypad",
                 game_boy
                     .interrupts()
-                    .requested(crate::emulator::interrupts::Interrupt::Joypad)
+                    .requested(crate::game_boy::interrupts::Interrupt::Joypad)
             )
             .width(Length::FillPortion(3)),
             checkbox(
                 "Serial",
                 game_boy
                     .interrupts()
-                    .requested(crate::emulator::interrupts::Interrupt::Serial)
+                    .requested(crate::game_boy::interrupts::Interrupt::Serial)
             )
             .width(Length::FillPortion(2)),
             checkbox(
                 "Timer",
                 game_boy
                     .interrupts()
-                    .requested(crate::emulator::interrupts::Interrupt::Timer)
+                    .requested(crate::game_boy::interrupts::Interrupt::Timer)
             )
             .width(Length::FillPortion(2)),
         ],
@@ -99,14 +99,14 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
                 "Video Status",
                 game_boy
                     .interrupts()
-                    .requested(crate::emulator::interrupts::Interrupt::VideoStatus)
+                    .requested(crate::game_boy::interrupts::Interrupt::VideoStatus)
             )
             .width(Length::FillPortion(3)),
             checkbox(
                 "Between Frames",
                 game_boy
                     .interrupts()
-                    .requested(crate::emulator::interrupts::Interrupt::VideoBetweenFrames)
+                    .requested(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
             .width(Length::FillPortion(4)),
         ],

@@ -9,7 +9,7 @@ use iced::{
 };
 use replace_with::replace_with_or_abort;
 
-use crate::emulator::{
+use crate::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},

@@ -5,7 +5,7 @@ use iced::{
 
 use crate::{
     app::Message,
-    emulator::audio::channels::{
+    game_boy::audio::channels::{
         Enabled,
         noise::NoiseChannel,
         pulse::PulseChannel,

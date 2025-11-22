@@ -13,7 +13,7 @@ use crate::{
             video::tile_widget::tile,
         },
     },
-    emulator::video::{
+    game_boy::video::{
         Video,
         tiles::{TileBlock, TileBlockId, TileIndex},
     },

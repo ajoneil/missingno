@@ -5,7 +5,7 @@ use iced::{
 
 use crate::{
     app::{Message, screen::iced_color},
-    emulator::video::{palette::Palette, tiles::Tile},
+    game_boy::video::{palette::Palette, tiles::Tile},
 };
 
 pub fn tile(tile: Tile) -> Canvas<RenderTile, Message> {

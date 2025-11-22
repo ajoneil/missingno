@@ -9,7 +9,7 @@ use crate::{
         core::sizes::m,
         debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
     },
-    emulator::video::{Video, ppu::Mode},
+    game_boy::video::{Video, ppu::Mode},
 };
 
 use background_and_window::background_and_window;

@@ -4,7 +4,7 @@ use clap::Parser;
 
 mod app;
 mod debugger;
-mod emulator;
+mod game_boy;
 
 #[derive(Parser)]
 struct Args {
