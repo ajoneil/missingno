@@ -190,7 +190,7 @@ impl Cpu {
                 Address::Relative(_) => todo!(),
                 Address::High(_) => todo!(),
                 Address::HighPlusC => todo!(),
-                Address::Dereference(register16) => todo!(),
+                Address::Dereference(_register16) => todo!(),
                 Address::DereferenceHlAndIncrement => todo!(),
                 Address::DereferenceHlAndDecrement => todo!(),
             },

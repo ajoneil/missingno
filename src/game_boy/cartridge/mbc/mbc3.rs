@@ -5,6 +5,7 @@ enum Mapped {
     Clock(ClockRegister),
 }
 
+#[derive(Clone, Copy)]
 enum ClockRegister {
     Seconds,
     Minutes,
@@ -17,8 +18,20 @@ struct Clock {
     seconds: u8,
     minutes: u8,
     hours: u8,
-    day_lower: u8,
-    day_upper: u8,
+    days_lower: u8,
+    days_upper: u8,
+}
+
+impl Clock {
+    pub fn get_register(&self, register: ClockRegister) -> u8 {
+        match register {
+            ClockRegister::Seconds => self.seconds,
+            ClockRegister::Minutes => self.minutes,
+            ClockRegister::Hours => self.hours,
+            ClockRegister::DayLower => self.days_lower,
+            ClockRegister::DayUpper => self.days_upper,
+        }
+    }
 }
 
 pub struct Mbc3 {
@@ -43,8 +56,8 @@ impl Mbc3 {
                 seconds: 0,
                 minutes: 0,
                 hours: 0,
-                day_lower: 0,
-                day_upper: 0,
+                days_lower: 0,
+                days_upper: 0,
             }),
             _ => None,
         };
@@ -73,10 +86,7 @@ impl MemoryBankController for Mbc3 {
             }
             0xa000..=0xbfff => match self.mapped {
                 Mapped::Ram(ram_bank) => self.ram[ram_bank as usize][(address - 0xa000) as usize],
-                _ => {
-                    println!("nyi: rtc");
-                    0x00
-                }
+                Mapped::Clock(register) => self.clock.as_ref().unwrap().get_register(register),
             },
             _ => 0xff,
         }
@@ -91,10 +101,11 @@ impl MemoryBankController for Mbc3 {
             0x4000..=0x5fff => {
                 self.mapped = match value & 0xf {
                     0x00..=0x07 => Mapped::Ram(value),
-                    0x08..=0x0c => {
-                        println!("nyi: rtc");
-                        Mapped::Clock(ClockRegister::Seconds)
-                    }
+                    0x08 => Mapped::Clock(ClockRegister::Seconds),
+                    0x09 => Mapped::Clock(ClockRegister::Minutes),
+                    0x0a => Mapped::Clock(ClockRegister::Hours),
+                    0x0b => Mapped::Clock(ClockRegister::DayLower),
+                    0x0c => Mapped::Clock(ClockRegister::DayUpper),
                     _ => panic!("Invalid bank select {:2x}", value),
                 };
             }
