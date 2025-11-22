@@ -134,12 +134,12 @@ impl Cpu {
 
             Arithmetic::Arithmetic16(instruction) => match instruction {
                 Arithmetic16::Increment(register) => {
-                    self.set_register16(register, self.get_register16(register) + 1);
+                    self.set_register16(register, self.get_register16(register).wrapping_add(1));
                     OpResult::cycles(2)
                 }
 
                 Arithmetic16::Decrement(register) => {
-                    self.set_register16(register, self.get_register16(register) - 1);
+                    self.set_register16(register, self.get_register16(register).wrapping_sub(1));
                     OpResult::cycles(2)
                 }
 
