@@ -3,8 +3,7 @@ use iced::{
     Length::{self, Fill},
     alignment::Vertical,
     widget::{
-        button, checkbox, column, container, horizontal_rule, pane_grid, row, scrollable, text,
-        text_input,
+        button, checkbox, column, container, pane_grid, row, rule, scrollable, text, text_input,
     },
 };
 
@@ -41,7 +40,7 @@ impl CpuPane {
             scrollable(
                 column![
                     self.cpu(debugger.game_boy().cpu()),
-                    horizontal_rule(1),
+                    rule::horizontal(1),
                     interrupts(debugger.game_boy()),
                 ]
                 .spacing(s())
@@ -74,7 +73,7 @@ impl CpuPane {
             .align_y(Vertical::Center)
             .spacing(s()),
             self.controls(),
-            horizontal_rule(1),
+            rule::horizontal(1),
             container(self.flags(cpu.flags)),
             row![
                 container(self.register8(cpu, Register8::A)).width(Length::FillPortion(1)),
@@ -160,8 +159,8 @@ impl CpuPane {
         .into()
     }
 
-    fn flag(&self, label: &str, flags: Flags, flag: Flags) -> Element<'_, app::Message> {
-        container(checkbox(label, flags.contains(flag))).into()
+    fn flag(&self, label: &'static str, flags: Flags, flag: Flags) -> Element<'_, app::Message> {
+        container(checkbox(flags.contains(flag)).label(label)).into()
     }
 
     fn controls(&self) -> Element<'_, app::Message> {

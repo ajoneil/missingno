@@ -16,6 +16,7 @@ pub struct Channels {
     pub ch4: NoiseChannel,
 }
 
+#[derive(Copy, Clone)]
 pub struct Enabled {
     pub enabled: bool,
     pub output_left: bool,

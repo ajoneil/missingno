@@ -1,7 +1,7 @@
 use iced::{
     Element,
     Length::Fill,
-    Theme,
+    Theme, never,
     widget::{Row, column, pane_grid, radio, rich_text, row, scrollable, span, toggler},
 };
 
@@ -191,7 +191,7 @@ impl SpritesPane {
         let visible = Theme::CatppuccinMocha.palette().success;
         let offscreen = Theme::CatppuccinMocha.palette().danger;
 
-        rich_text([
+        rich_text![
             span(position.x_plus_8 as i16 - 8).color(if position.on_screen_x() {
                 visible
             } else {
@@ -203,7 +203,8 @@ impl SpritesPane {
             } else {
                 offscreen
             }),
-        ])
+        ]
+        .on_link_click(never)
         .into()
     }
 

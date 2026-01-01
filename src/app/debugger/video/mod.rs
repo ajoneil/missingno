@@ -1,6 +1,6 @@
 use iced::{
     Element, Length,
-    widget::{column, horizontal_rule, pane_grid, radio, row, scrollable},
+    widget::{column, pane_grid, radio, row, rule, scrollable},
 };
 
 use crate::{
@@ -47,7 +47,7 @@ impl VideoPane {
                         self.mode_radio(video.mode(), Mode::BetweenLines),
                     ],
                     tile_address_mode(video.control()),
-                    horizontal_rule(1),
+                    rule::horizontal(1),
                     background_and_window(video),
                 ]
                 .spacing(m())

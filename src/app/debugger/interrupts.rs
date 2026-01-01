@@ -13,7 +13,7 @@ use crate::{
 
 pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
-        checkbox("Interrupts", game_boy.cpu().interrupts_enabled()),
+        checkbox(game_boy.cpu().interrupts_enabled()).label("Interrupts"),
         enabled(game_boy),
         requested(game_boy),
     ]
@@ -26,41 +26,41 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
         text("Enabled"),
         row![
             checkbox(
-                "Joypad",
                 game_boy
                     .interrupts()
                     .enabled(crate::game_boy::interrupts::Interrupt::Joypad)
             )
+            .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
-                "Serial",
                 game_boy
                     .interrupts()
                     .enabled(crate::game_boy::interrupts::Interrupt::Serial)
             )
+            .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
-                "Timer",
                 game_boy
                     .interrupts()
                     .enabled(crate::game_boy::interrupts::Interrupt::Timer)
             )
+            .label("Timer")
             .width(Length::FillPortion(2)),
         ],
         row![
             checkbox(
-                "Video Status",
                 game_boy
                     .interrupts()
                     .enabled(crate::game_boy::interrupts::Interrupt::VideoStatus)
             )
+            .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
-                "Between Frames",
                 game_boy
                     .interrupts()
                     .enabled(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
+            .label("Between Frames")
             .width(Length::FillPortion(4)),
         ],
     ]
@@ -73,41 +73,41 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
         text("Requested"),
         row![
             checkbox(
-                "Joypad",
                 game_boy
                     .interrupts()
                     .requested(crate::game_boy::interrupts::Interrupt::Joypad)
             )
+            .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
-                "Serial",
                 game_boy
                     .interrupts()
                     .requested(crate::game_boy::interrupts::Interrupt::Serial)
             )
+            .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
-                "Timer",
                 game_boy
                     .interrupts()
                     .requested(crate::game_boy::interrupts::Interrupt::Timer)
             )
+            .label("Timer")
             .width(Length::FillPortion(2)),
         ],
         row![
             checkbox(
-                "Video Status",
                 game_boy
                     .interrupts()
                     .requested(crate::game_boy::interrupts::Interrupt::VideoStatus)
             )
+            .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
-                "Between Frames",
                 game_boy
                     .interrupts()
                     .requested(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
+            .label("Between Frames")
             .width(Length::FillPortion(4)),
         ],
     ]

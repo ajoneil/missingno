@@ -1,4 +1,4 @@
-use iced::widget::{column, pane_grid, row, slider, text, vertical_rule};
+use iced::widget::{column, pane_grid, row, rule, slider, text};
 
 use crate::{
     app::{
@@ -39,11 +39,11 @@ impl AudioPane {
                 .spacing(l()),
                 row![
                     channels::ch1(&audio.channels().ch1),
-                    vertical_rule(1),
+                    rule::vertical(1),
                     channels::ch2(&audio.channels().ch2),
-                    vertical_rule(1),
+                    rule::vertical(1),
                     channels::ch3(&audio.channels().ch3),
-                    vertical_rule(1),
+                    rule::vertical(1),
                     channels::ch4(&audio.channels().ch4),
                 ]
                 .spacing(s())

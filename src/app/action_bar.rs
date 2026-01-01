@@ -137,11 +137,11 @@ fn load(game: &Game) -> Button<'static, app::Message> {
 fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
     let row = row![play_pause(running)];
 
-    let row = row.push_maybe(if debugger {
-        Some(step_frame(running))
+    let row = if debugger {
+        row.push(step_frame(running))
     } else {
-        None
-    });
+        row
+    };
 
     row.push(reset()).spacing(s()).wrap().into()
 }

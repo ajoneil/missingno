@@ -9,5 +9,5 @@ pub mod sizes;
 pub mod text;
 
 pub fn horizontal_rule() -> Element<'static, Message> {
-    iced::widget::horizontal_rule(1).into()
+    iced::widget::rule::horizontal(1).into()
 }

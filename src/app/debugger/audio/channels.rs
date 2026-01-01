@@ -17,7 +17,7 @@ use crate::{
 
 pub fn ch1(channel: &PulseSweepChannel) -> Element<'static, Message> {
     column![
-        enabled("Channel 1", &channel.enabled),
+        enabled("Channel 1", channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
     ]
     .into()
@@ -25,7 +25,7 @@ pub fn ch1(channel: &PulseSweepChannel) -> Element<'static, Message> {
 
 pub fn ch2(channel: &PulseChannel) -> Element<'static, Message> {
     column![
-        enabled("Channel 2", &channel.enabled),
+        enabled("Channel 2", channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
     ]
     .into()
@@ -33,7 +33,7 @@ pub fn ch2(channel: &PulseChannel) -> Element<'static, Message> {
 
 pub fn ch3(channel: &WaveChannel) -> Element<'static, Message> {
     column![
-        enabled("Channel 3", &channel.enabled),
+        enabled("Channel 3", channel.enabled),
         text!("Vol {}%", (channel.volume.volume() * 100.0) as u8)
     ]
     .into()
@@ -41,18 +41,22 @@ pub fn ch3(channel: &WaveChannel) -> Element<'static, Message> {
 
 pub fn ch4(channel: &NoiseChannel) -> Element<'static, Message> {
     column![
-        enabled("Channel 4", &channel.enabled),
+        enabled("Channel 4", channel.enabled),
         volume_and_envelope(channel.volume_and_envelope)
     ]
     .into()
 }
 
-pub fn enabled(label: &str, enabled: &Enabled) -> Element<'static, Message> {
+pub fn enabled(label: &'static str, enabled: Enabled) -> Element<'static, Message> {
     column![
-        checkbox(label, enabled.enabled),
+        checkbox(enabled.enabled).label(label),
         row![
-            checkbox("Left", enabled.output_left).width(Length::Fill),
-            checkbox("Right", enabled.output_right).width(Length::Fill)
+            checkbox(enabled.output_left)
+                .label("Left")
+                .width(Length::Fill),
+            checkbox(enabled.output_right)
+                .label("Right")
+                .width(Length::Fill)
         ]
     ]
     .width(Length::Fill)

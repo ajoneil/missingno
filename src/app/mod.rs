@@ -31,14 +31,19 @@ mod load;
 mod screen;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
-    iced::application(App::title, App::update, App::view)
-        .subscription(App::subscription)
-        .settings(iced::Settings {
-            default_font: fonts::default(),
-            ..Default::default()
-        })
-        .theme(App::theme)
-        .run_with(move || (App::new(rom_path, debugger), Task::none()))
+    iced::application(
+        move || App::new(rom_path.clone(), debugger),
+        App::update,
+        App::view,
+    )
+    .title(App::title)
+    .subscription(App::subscription)
+    .settings(iced::Settings {
+        default_font: fonts::default(),
+        ..Default::default()
+    })
+    .theme(App::theme)
+    .run()
 }
 
 struct App {

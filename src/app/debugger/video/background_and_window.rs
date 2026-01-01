@@ -15,11 +15,8 @@ use crate::{
 pub fn background_and_window(video: &Video) -> Element<'static, Message> {
     column![
         row![
-            checkbox(
-                "Background & Window",
-                video.control().background_and_window_enabled()
-            ),
-            checkbox("Window", video.control().window_enabled()),
+            checkbox(video.control().background_and_window_enabled()).label("Background & Window"),
+            checkbox(video.control().window_enabled()).label("Window"),
         ]
         .spacing(m()),
         row![
