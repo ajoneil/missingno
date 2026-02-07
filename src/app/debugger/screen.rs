@@ -1,6 +1,6 @@
 use iced::{
     Length::{self, Fill},
-    widget::{canvas, container, pane_grid, responsive},
+    widget::{container, pane_grid, responsive, shader},
 };
 
 use crate::{
@@ -51,7 +51,7 @@ impl ScreenPane {
                 let shortest = size.width.min(size.height);
 
                 container(
-                    canvas(self.screen)
+                    shader(&self.screen)
                         .width(Length::Fixed(shortest))
                         .height(Length::Fixed(shortest)),
                 )

@@ -4,7 +4,7 @@ use iced::{
     Element,
     Length::{self, Fill},
     Subscription, Task, time,
-    widget::{canvas, container, responsive},
+    widget::{container, responsive, shader},
 };
 
 use crate::{
@@ -62,7 +62,7 @@ impl Emulator {
             let shortest = size.width.min(size.height);
 
             container(
-                canvas(self.screen)
+                shader(&self.screen)
                     .width(Length::Fixed(shortest))
                     .height(Length::Fixed(shortest)),
             )
