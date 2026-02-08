@@ -301,6 +301,11 @@ impl App {
             } else {
                 Subscription::none()
             },
+            if self.running() {
+                controls::gamepad_subscription()
+            } else {
+                Subscription::none()
+            },
             match &self.game {
                 Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.subscription(),
                 Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.subscription(),
