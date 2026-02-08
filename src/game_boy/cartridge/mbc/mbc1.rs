@@ -76,10 +76,8 @@ impl MemoryBankController for Mbc1 {
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1ff => {
-                if value & 0xf == 0xa {
-                    self.ram_enabled = true
-                }
+            0x0000..=0x1fff => {
+                self.ram_enabled = value & 0xf == 0xa;
             }
             0x2000..=0x3fff => {
                 self.bank = value & 0x1f;

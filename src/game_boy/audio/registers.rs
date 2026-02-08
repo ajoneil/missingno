@@ -116,7 +116,7 @@ impl Audio {
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         if !self.enabled && register != Register::Control {
-            panic!("Can't write to audio register when audio is disabled");
+            return;
         }
 
         match register {
