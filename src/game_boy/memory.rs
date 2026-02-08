@@ -142,7 +142,8 @@ impl MemoryMapped {
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data = value,
                 serial_transfer::Register::Control => {
-                    self.serial.control = serial_transfer::Control::from_bits_retain(value)
+                    self.serial.control = serial_transfer::Control::from_bits_retain(value);
+                    self.serial.start_transfer();
                 }
             },
             MappedAddress::TimerRegister(register) => self.timers.write_register(register, value),

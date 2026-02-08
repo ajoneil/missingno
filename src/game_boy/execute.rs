@@ -50,6 +50,10 @@ impl GameBoy {
                 self.mapped.interrupts.request(interrupt);
             }
 
+            if let Some(interrupt) = self.mapped.serial.tick() {
+                self.mapped.interrupts.request(interrupt);
+            }
+
             let video_result = self.mapped.video.tick();
             if video_result.request_vblank {
                 self.mapped
