@@ -45,7 +45,10 @@ impl Instruction {
 
         Some(match op {
             0x00 => Self::NoOperation,
-            0x10 => Self::Stop,
+            0x10 => {
+                ops.next()?;
+                Self::Stop
+            }
             0x07 => Self::BitShift(BitShift::RotateA(
                 bit_shift::Direction::Left,
                 bit_shift::Carry::SetOnly,

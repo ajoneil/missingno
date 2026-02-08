@@ -96,7 +96,10 @@ impl Cpu {
             }
 
             Instruction::NoOperation => OpResult::cycles(1),
-            Instruction::Stop => todo!(),
+            Instruction::Stop => {
+                self.halted = true;
+                OpResult::cycles(0)
+            }
             Instruction::Invalid(_) => panic!("Invalid instruction {}", instruction),
         }
     }
@@ -107,7 +110,7 @@ impl Cpu {
             Source8::Register(register) => (self.get_register8(register), Cycles(0)),
             Source8::Memory(address) => match address {
                 Address::Fixed(address) => (memory.read(address), Cycles(3)),
-                Address::Relative(_) => todo!(),
+                Address::Relative(_) => unreachable!(),
                 Address::High(offset) => (memory.read(0xff00 + offset as u16), Cycles(2)),
                 Address::HighPlusC => (memory.read(0xff00 + self.c as u16), Cycles(1)),
 
@@ -142,7 +145,7 @@ impl Cpu {
             }
             Target8::Memory(address) => match address {
                 Address::Fixed(address) => OpResult::write8(address, value, Cycles(3)),
-                Address::Relative(_) => todo!(),
+                Address::Relative(_) => unreachable!(),
                 Address::High(offset) => OpResult::write8(0xff00 + offset as u16, value, Cycles(2)),
                 Address::HighPlusC => OpResult::write8(0xff00 + self.c as u16, value, Cycles(1)),
 
@@ -197,12 +200,7 @@ impl Cpu {
             }
             Target16::Memory(address) => match address {
                 Address::Fixed(address) => OpResult::write16(address, value, Cycles(2)),
-                Address::Relative(_) => todo!(),
-                Address::High(_) => todo!(),
-                Address::HighPlusC => todo!(),
-                Address::Dereference(_register16) => todo!(),
-                Address::DereferenceHlAndIncrement => todo!(),
-                Address::DereferenceHlAndDecrement => todo!(),
+                _ => unreachable!(),
             },
         }
     }
