@@ -8,7 +8,7 @@ pub mod flags;
 pub mod instructions;
 pub mod registers;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum InterruptMasterEnable {
     Disabled,
     EnableAfterNextInstruction,

@@ -28,7 +28,7 @@ impl Cpu {
 
             BitFlag::Unset(bit, target) => {
                 let (value, fetch_cycles) = self.fetch8(target.to_source(), memory);
-                let new_value = value ^ (1 << bit);
+                let new_value = value & !(1 << bit);
 
                 self.set8(target, new_value)
                     .add_cycles(fetch_cycles)

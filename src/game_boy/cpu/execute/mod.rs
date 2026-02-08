@@ -89,6 +89,7 @@ impl Cpu {
                 };
 
                 self.flags.set(Flags::ZERO, value == 0);
+                self.flags.remove(Flags::HALF_CARRY);
                 self.a = value;
 
                 OpResult::cycles(1)
@@ -165,17 +166,26 @@ impl Cpu {
         }
     }
 
-    fn fetch16(&self, source: Source16) -> (u16, Cycles) {
+    fn fetch16(&mut self, source: Source16) -> (u16, Cycles) {
         match source {
             Source16::Constant(value) => (value, Cycles(2)),
             Source16::Register(register) => (self.get_register16(register), Cycles(1)),
-            Source16::StackPointerWithOffset(offset) => (
-                match offset {
-                    0.. => self.stack_pointer + offset.abs() as u16,
-                    ..0 => self.stack_pointer - offset.abs() as u16,
-                },
-                Cycles(2),
-            ),
+            Source16::StackPointerWithOffset(offset) => {
+                let sp = self.stack_pointer;
+                let offset_u8 = offset as u8;
+                let result = sp.wrapping_add(offset as i16 as u16);
+
+                self.flags.remove(Flags::ZERO);
+                self.flags.remove(Flags::NEGATIVE);
+                self.flags.set(
+                    Flags::HALF_CARRY,
+                    (sp & 0xf) + (offset_u8 as u16 & 0xf) > 0xf,
+                );
+                self.flags
+                    .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
+
+                (result, Cycles(2))
+            }
         }
     }
 

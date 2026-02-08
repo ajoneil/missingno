@@ -116,6 +116,7 @@ impl Rendering {
                         self.draw_pixel(data);
                     }
 
+                    self.line.dots += 1;
                     remaining_dots -= 1;
                 }
 

@@ -15,14 +15,10 @@ impl Cpu {
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 OpResult::cycles(1)
             }
-            Interrupt::Await => match self.interrupt_master_enable {
-                InterruptMasterEnable::Disabled => panic!("nyi"),
-                InterruptMasterEnable::Enabled
-                | InterruptMasterEnable::EnableAfterNextInstruction => {
-                    self.halted = true;
-                    OpResult::cycles(0)
-                }
-            },
+            Interrupt::Await => {
+                self.halted = true;
+                OpResult::cycles(0)
+            }
         }
     }
 }

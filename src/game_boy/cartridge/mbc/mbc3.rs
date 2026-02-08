@@ -67,7 +67,7 @@ impl Mbc3 {
             ram,
             clock,
             ram_and_clock_enabled: false,
-            bank: 0,
+            bank: 1,
             mapped: Mapped::Ram(0),
         }
     }
@@ -82,25 +82,34 @@ impl MemoryBankController for Mbc3 {
         match address {
             0x0000..=0x3fff => self.rom[address as usize],
             0x4000..=0x7fff => {
-                self.rom[(self.bank as usize * 0x4000) + (address - 0x4000) as usize]
+                let bank = if self.bank == 0 { 1 } else { self.bank } as usize;
+                self.rom[bank * 0x4000 + (address - 0x4000) as usize]
             }
-            0xa000..=0xbfff => match self.mapped {
-                Mapped::Ram(ram_bank) => self.ram[ram_bank as usize][(address - 0xa000) as usize],
-                Mapped::Clock(register) => self.clock.as_ref().unwrap().get_register(register),
-            },
+            0xa000..=0xbfff => {
+                if !self.ram_and_clock_enabled || self.ram.is_empty() {
+                    return 0xff;
+                }
+                match self.mapped {
+                    Mapped::Ram(ram_bank) => {
+                        self.ram[ram_bank as usize][(address - 0xa000) as usize]
+                    }
+                    Mapped::Clock(register) => self.clock.as_ref().unwrap().get_register(register),
+                }
+            }
             _ => 0xff,
         }
     }
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1ff => self.ram_and_clock_enabled = value & 0xf == 0xa,
+            0x0000..=0x1fff => self.ram_and_clock_enabled = value & 0xf == 0xa,
             0x2000..=0x3fff => {
-                self.bank = value & 0x7f;
+                let bank = value & 0x7f;
+                self.bank = if bank == 0 { 1 } else { bank };
             }
             0x4000..=0x5fff => {
                 self.mapped = match value & 0xf {
-                    0x00..=0x07 => Mapped::Ram(value),
+                    0x00..=0x07 => Mapped::Ram(value & 0x07),
                     0x08 => Mapped::Clock(ClockRegister::Seconds),
                     0x09 => Mapped::Clock(ClockRegister::Minutes),
                     0x0a => Mapped::Clock(ClockRegister::Hours),
@@ -113,6 +122,19 @@ impl MemoryBankController for Mbc3 {
                 println!("todo: rtc latch")
             }
 
+            0xa000..=0xbfff => {
+                if !self.ram_and_clock_enabled || self.ram.is_empty() {
+                    return;
+                }
+                match self.mapped {
+                    Mapped::Ram(ram_bank) => {
+                        self.ram[ram_bank as usize][(address - 0xa000) as usize] = value;
+                    }
+                    Mapped::Clock(_register) => {
+                        // TODO: RTC register writes
+                    }
+                }
+            }
             _ => {}
         }
     }

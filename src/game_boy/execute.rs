@@ -21,9 +21,6 @@ impl GameBoy {
             self.mapped.interrupts.clear(interrupt);
             self.cpu.halted = false;
 
-            // pandocs specify interrupts take 5 cycles to execute, but happen after
-            // the next (unexecuted) opcode has been fetched. I _think_ this means
-            // it'll take 6 cycles total, aligning nicely with the call instruction.
             interrupt.call_instruction()
         } else {
             if self.cpu.halted {
@@ -53,10 +50,16 @@ impl GameBoy {
                 self.mapped.interrupts.request(interrupt);
             }
 
-            if let Some(screen) = self.mapped.video.tick() {
+            let video_result = self.mapped.video.tick();
+            if video_result.request_vblank {
                 self.mapped
                     .interrupts
                     .request(Interrupt::VideoBetweenFrames);
+            }
+            if video_result.request_stat {
+                self.mapped.interrupts.request(Interrupt::VideoStatus);
+            }
+            if let Some(screen) = video_result.screen {
                 self.screen = screen;
                 new_screen = true;
             }
@@ -74,7 +77,12 @@ impl GameBoy {
                 None
             }
             InterruptMasterEnable::Enabled => self.mapped.interrupts.triggered(),
-            InterruptMasterEnable::Disabled => None,
+            InterruptMasterEnable::Disabled => {
+                if self.cpu.halted && self.mapped.interrupts.triggered().is_some() {
+                    self.cpu.halted = false;
+                }
+                None
+            }
         }
     }
 }

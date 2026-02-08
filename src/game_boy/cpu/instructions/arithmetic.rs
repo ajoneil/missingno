@@ -146,7 +146,7 @@ impl Arithmetic {
             0xbf => Arithmetic8::cp_a(Source8::a()),
             0xc6 => Arithmetic8::add_a(Source8::constant(ops)?),
             0xd6 => Arithmetic8::sub_a(Source8::constant(ops)?),
-            0xce => Arithmetic8::add_a(Source8::constant(ops)?),
+            0xce => Arithmetic8::adc_a(Source8::constant(ops)?),
             0xde => Arithmetic8::sbc_a(Source8::constant(ops)?),
             0xfe => Arithmetic8::cp_a(Source8::constant(ops)?),
 

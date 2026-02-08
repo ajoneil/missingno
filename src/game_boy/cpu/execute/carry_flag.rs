@@ -7,8 +7,7 @@ impl Cpu {
             CarryFlag::Complement => {
                 self.flags.remove(Flags::NEGATIVE);
                 self.flags.remove(Flags::HALF_CARRY);
-                self.flags
-                    .set(Flags::CARRY, self.flags.contains(Flags::CARRY));
+                self.flags.toggle(Flags::CARRY);
                 OpResult::cycles(1)
             }
 

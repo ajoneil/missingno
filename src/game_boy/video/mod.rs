@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use ppu::Mode;
 use screen::Screen;
 use sprites::{Sprite, SpriteId};
 use tile_maps::{TileMap, TileMapId};
@@ -8,6 +9,12 @@ use memory::VideoMemory;
 use palette::{PaletteMap, Palettes};
 use ppu::PixelProcessingUnit;
 use tiles::{TileBlock, TileBlockId};
+
+pub struct VideoTickResult {
+    pub screen: Option<Screen>,
+    pub request_vblank: bool,
+    pub request_stat: bool,
+}
 
 pub mod control;
 pub mod memory;
@@ -38,13 +45,6 @@ struct BackgroundViewportPosition {
     y: u8,
 }
 
-// pub enum Interrupt {
-//     YCoordinate,
-//     PreparingScanline,
-//     BetweenFrames,
-//     FinishingScanline,
-// }
-
 bitflags! {
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
@@ -72,6 +72,7 @@ pub struct Video {
     ppu: Option<PixelProcessingUnit>,
     ppu_accessible: PpuAccessible,
     interrupts: Interrupts,
+    stat_line_was_high: bool,
 }
 
 pub struct Window {
@@ -96,6 +97,7 @@ impl Video {
                 flags: InterruptFlags::DUMMY,
                 current_line_compare: 0,
             },
+            stat_line_was_high: false,
         }
     }
 
@@ -110,9 +112,9 @@ impl Video {
                     } else {
                         0
                     };
-                    self.interrupts.flags.bits() & line_compare & ppu.mode() as u8
+                    (self.interrupts.flags.bits() & 0b01111000) | line_compare | ppu.mode() as u8
                 } else {
-                    self.interrupts.flags.bits() & ppu::Mode::BetweenFrames as u8
+                    (self.interrupts.flags.bits() & 0b01111000) | ppu::Mode::BetweenFrames as u8
                 }
             }
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
@@ -173,22 +175,72 @@ impl Video {
         self.ppu_accessible.control
     }
 
-    pub fn tick(&mut self) -> Option<Screen> {
+    fn stat_line_active(&self) -> bool {
+        let ppu = match &self.ppu {
+            Some(ppu) => ppu,
+            None => return false,
+        };
+
+        let mode = ppu.mode();
+        let ly_eq_lyc = ppu.current_line() == self.interrupts.current_line_compare;
+
+        (self
+            .interrupts
+            .flags
+            .contains(InterruptFlags::FINISHING_SCANLINE)
+            && mode == Mode::BetweenLines)
+            || (self
+                .interrupts
+                .flags
+                .contains(InterruptFlags::BETWEEN_FRAMES)
+                && mode == Mode::BetweenFrames)
+            || (self
+                .interrupts
+                .flags
+                .contains(InterruptFlags::PREPARING_SCANLINE)
+                && mode == Mode::PreparingScanline)
+            || (self
+                .interrupts
+                .flags
+                .contains(InterruptFlags::CURRENT_LINE_COMPARE)
+                && ly_eq_lyc)
+    }
+
+    pub fn tick(&mut self) -> VideoTickResult {
+        let mut result = VideoTickResult {
+            screen: None,
+            request_vblank: false,
+            request_stat: false,
+        };
+
         if self.control().video_enabled() {
             if self.ppu.is_none() {
                 let ppu = PixelProcessingUnit::new();
                 self.ppu = Some(ppu);
+                self.stat_line_was_high = false;
             }
 
-            self.ppu.as_mut().unwrap().tick(&self.ppu_accessible)
+            if let Some(screen) = self.ppu.as_mut().unwrap().tick(&self.ppu_accessible) {
+                result.screen = Some(screen);
+                result.request_vblank = true;
+            }
         } else {
             if self.ppu.is_some() {
                 self.ppu = None;
-                Some(Screen::new())
-            } else {
-                None
+                self.stat_line_was_high = false;
+                result.screen = Some(Screen::new());
             }
+            return result;
         }
+
+        // Detect rising edge of STAT interrupt line
+        let stat_line_high = self.stat_line_active();
+        if stat_line_high && !self.stat_line_was_high {
+            result.request_stat = true;
+        }
+        self.stat_line_was_high = stat_line_high;
+
+        result
     }
 
     pub fn palettes(&self) -> &Palettes {

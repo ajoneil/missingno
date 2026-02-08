@@ -108,7 +108,7 @@ impl Cpu {
 
             Direction::Right => {
                 let mut new_value = value >> 1;
-                let new_carry = value & 0b1000_0000 != 0;
+                let new_carry = value & 0b0000_0001 != 0;
 
                 if match carry {
                     Carry::Through => self.flags.contains(Flags::CARRY),

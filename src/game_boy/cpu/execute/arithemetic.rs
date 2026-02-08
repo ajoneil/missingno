@@ -24,7 +24,7 @@ impl Cpu {
                     let result = self.set8(target, value);
 
                     self.flags.set(cpu::Flags::ZERO, value == 0);
-                    self.flags.insert(cpu::Flags::NEGATIVE);
+                    self.flags.remove(cpu::Flags::NEGATIVE);
                     // The half carry flag is set if we carry from bit 3 to 4
                     // i.e. xxxx1111 + 1 = xxxx0000
                     self.flags
@@ -54,10 +54,8 @@ impl Cpu {
 
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.remove(cpu::Flags::NEGATIVE);
-                    self.flags.set(
-                        cpu::Flags::HALF_CARRY,
-                        self.a as u16 & 0xf + value as u16 & 0xf > 0xf,
-                    );
+                    self.flags
+                        .set(cpu::Flags::HALF_CARRY, (self.a & 0xf) + (value & 0xf) > 0xf);
                     self.flags
                         .set(cpu::Flags::CARRY, self.a as u16 + value as u16 > 0xff);
 
@@ -72,7 +70,7 @@ impl Cpu {
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.insert(cpu::Flags::NEGATIVE);
                     self.flags
-                        .set(cpu::Flags::HALF_CARRY, self.a & 0xf0 < value & 0xf0);
+                        .set(cpu::Flags::HALF_CARRY, (value & 0xf) > (self.a & 0xf));
                     self.flags.set(cpu::Flags::CARRY, self.a < value);
 
                     self.a = result;
@@ -82,20 +80,23 @@ impl Cpu {
                 Arithmetic8::AddACarry(source) => {
                     let (value, fetch_cycles) = self.fetch8(source, memory);
 
-                    let (result, val16) = if self.flags.contains(Flags::CARRY) {
-                        (self.a.wrapping_add(value).wrapping_add(1), value as u16 + 1)
+                    let carry: u8 = if self.flags.contains(Flags::CARRY) {
+                        1
                     } else {
-                        (self.a.wrapping_add(value), value as u16)
+                        0
                     };
+                    let result = self.a.wrapping_add(value).wrapping_add(carry);
 
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.remove(cpu::Flags::NEGATIVE);
                     self.flags.set(
                         cpu::Flags::HALF_CARRY,
-                        self.a as u16 & 0xf + val16 & 0xf > 0xf,
+                        (self.a & 0xf) + (value & 0xf) + carry > 0xf,
                     );
-                    self.flags
-                        .set(cpu::Flags::CARRY, self.a as u16 + val16 > 0xff);
+                    self.flags.set(
+                        cpu::Flags::CARRY,
+                        self.a as u16 + value as u16 + carry as u16 > 0xff,
+                    );
 
                     self.a = result;
                     OpResult::cycles(1).add_cycles(fetch_cycles)
@@ -103,17 +104,23 @@ impl Cpu {
 
                 Arithmetic8::SubtractACarry(source) => {
                     let (value, fetch_cycles) = self.fetch8(source, memory);
-                    let (result, val16) = if self.flags.contains(Flags::CARRY) {
-                        (self.a.wrapping_sub(value).wrapping_sub(1), value as u16 + 1)
+                    let carry: u8 = if self.flags.contains(Flags::CARRY) {
+                        1
                     } else {
-                        (self.a.wrapping_sub(value), value as u16)
+                        0
                     };
+                    let result = self.a.wrapping_sub(value).wrapping_sub(carry);
 
                     self.flags.set(cpu::Flags::ZERO, result == 0);
                     self.flags.insert(cpu::Flags::NEGATIVE);
-                    self.flags
-                        .set(cpu::Flags::HALF_CARRY, self.a as u16 & 0xf0 < val16 & 0xf0);
-                    self.flags.set(cpu::Flags::CARRY, self.a < value);
+                    self.flags.set(
+                        cpu::Flags::HALF_CARRY,
+                        (value & 0xf) + carry > (self.a & 0xf),
+                    );
+                    self.flags.set(
+                        cpu::Flags::CARRY,
+                        value as u16 + carry as u16 > self.a as u16,
+                    );
 
                     self.a = result;
                     OpResult::cycles(1).add_cycles(fetch_cycles)
@@ -152,10 +159,8 @@ impl Cpu {
                         Flags::HALF_CARRY,
                         (hl & 0xfff) as u32 + (value & 0xfff) as u32 > 0xfff,
                     );
-                    self.flags.set(
-                        Flags::CARRY,
-                        (hl & 0xff) as u32 + (value & 0xff) as u32 > 0xff,
-                    );
+                    self.flags
+                        .set(Flags::CARRY, hl as u32 + value as u32 > 0xffff);
 
                     self.set_register16(Register16::Hl, hl.wrapping_add(value));
 
