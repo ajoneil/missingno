@@ -1,5 +1,6 @@
 target
 *.gb
+*.sav
 .vscode
 .claude
 .flatpak-builder
