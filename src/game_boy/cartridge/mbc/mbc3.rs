@@ -44,10 +44,29 @@ pub struct Mbc3 {
 }
 
 impl Mbc3 {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
         let ram = match rom[0x149] {
-            2 => vec![[0; 8 * 1024]; 1],
-            3 => vec![[0; 8 * 1024]; 4],
+            2 => {
+                let mut banks = vec![[0u8; 8 * 1024]; 1];
+                if let Some(data) = &save_data {
+                    let len = data.len().min(8 * 1024);
+                    banks[0][..len].copy_from_slice(&data[..len]);
+                }
+                banks
+            }
+            3 => {
+                let mut banks = vec![[0u8; 8 * 1024]; 4];
+                if let Some(data) = &save_data {
+                    for (bank_idx, bank) in banks.iter_mut().enumerate() {
+                        let offset = bank_idx * 8 * 1024;
+                        if offset < data.len() {
+                            let len = (data.len() - offset).min(bank.len());
+                            bank[..len].copy_from_slice(&data[offset..offset + len]);
+                        }
+                    }
+                }
+                banks
+            }
             _ => vec![],
         };
 
@@ -76,6 +95,14 @@ impl Mbc3 {
 impl MemoryBankController for Mbc3 {
     fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    fn ram(&self) -> Option<Vec<u8>> {
+        if self.ram.is_empty() {
+            None
+        } else {
+            Some(self.ram.iter().flatten().copied().collect())
+        }
     }
 
     fn read(&self, address: u16) -> u8 {

@@ -6,6 +6,7 @@ use iced::{
     Length::Fill,
     Subscription, Task, Theme, event,
     widget::{column, container, svg},
+    window,
 };
 use replace_with::replace_with_or_abort;
 
@@ -46,6 +47,7 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
         ..Default::default()
     })
     .theme(App::theme)
+    .exit_on_close_request(false)
     .run()
 }
 
@@ -54,6 +56,7 @@ struct App {
     debugger_enabled: bool,
     action_bar: ActionBar,
     audio_output: Option<AudioOutput>,
+    save_path: Option<PathBuf>,
 }
 
 enum Game {
@@ -81,6 +84,8 @@ enum Message {
     ToggleDebugger(bool),
     ShowSettings,
 
+    CloseRequested,
+
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
@@ -90,19 +95,23 @@ enum Message {
 
 impl App {
     fn new(rom_path: Option<PathBuf>, debugger: bool) -> Self {
-        let game = match rom_path {
+        let (game, save_path) = match rom_path {
             Some(rom_path) => {
-                let game_boy = GameBoy::new(Cartridge::new(fs::read(rom_path).unwrap()));
-                Game::Loaded(if debugger {
+                let sav_path = load::save_path(&rom_path);
+                let save_data = fs::read(&sav_path).ok();
+                let game_boy =
+                    GameBoy::new(Cartridge::new(fs::read(&rom_path).unwrap(), save_data));
+                let game = Game::Loaded(if debugger {
                     LoadedGame::Debugger(debugger::Debugger::new(game_boy))
                 } else {
                     let mut emu = emulator::Emulator::new(game_boy);
                     emu.run();
                     LoadedGame::Emulator(emu)
-                })
+                });
+                (game, Some(sav_path))
             }
 
-            None => Game::Unloaded,
+            None => (Game::Unloaded, None),
         };
 
         Self {
@@ -110,6 +119,7 @@ impl App {
             debugger_enabled: debugger,
             action_bar: ActionBar::new(),
             audio_output: AudioOutput::new(),
+            save_path,
         }
     }
 
@@ -138,7 +148,15 @@ impl App {
 
             Message::Run => self.run(),
             Message::Pause => self.pause(),
-            Message::Reset => self.reset(),
+            Message::Reset => {
+                self.save();
+                self.reset();
+            }
+
+            Message::CloseRequested => {
+                self.save();
+                return window::latest().and_then(window::close);
+            }
 
             Message::PressButton(button) => self.press_button(button),
             Message::ReleaseButton(button) => self.release_button(button),
@@ -294,6 +312,23 @@ impl App {
         }
     }
 
+    fn save(&self) {
+        let Some(save_path) = &self.save_path else {
+            return;
+        };
+        let cartridge = match &self.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.game_boy().cartridge(),
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.game_boy().cartridge(),
+            _ => return,
+        };
+        if !cartridge.has_battery() {
+            return;
+        }
+        if let Some(ram) = cartridge.ram() {
+            let _ = fs::write(save_path, ram);
+        }
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             if self.running() {
@@ -306,6 +341,10 @@ impl App {
             } else {
                 Subscription::none()
             },
+            event::listen_with(|event, _, _| match event {
+                iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
+                _ => None,
+            }),
             match &self.game {
                 Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.subscription(),
                 Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.subscription(),

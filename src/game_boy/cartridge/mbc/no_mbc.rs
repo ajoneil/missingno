@@ -6,9 +6,14 @@ pub struct NoMbc {
 }
 
 impl NoMbc {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
         let ram = if rom[0x149] == 2 {
-            Some([0; 8 * 1024])
+            let mut ram = [0; 8 * 1024];
+            if let Some(data) = save_data {
+                let len = data.len().min(ram.len());
+                ram[..len].copy_from_slice(&data[..len]);
+            }
+            Some(ram)
         } else {
             None
         };
@@ -20,6 +25,10 @@ impl NoMbc {
 impl MemoryBankController for NoMbc {
     fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    fn ram(&self) -> Option<Vec<u8>> {
+        self.ram.map(|ram| ram.to_vec())
     }
 
     fn read(&self, address: u16) -> u8 {

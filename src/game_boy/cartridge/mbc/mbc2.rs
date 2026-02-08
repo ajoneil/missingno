@@ -8,10 +8,16 @@ pub struct Mbc2 {
 }
 
 impl Mbc2 {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+        let mut ram = [0; 512];
+        if let Some(data) = save_data {
+            let len = data.len().min(ram.len());
+            ram[..len].copy_from_slice(&data[..len]);
+        }
+
         Self {
             rom,
-            ram: [0; 512],
+            ram,
             ram_enabled: false,
             bank: 1,
         }
@@ -25,6 +31,10 @@ impl Mbc2 {
 impl MemoryBankController for Mbc2 {
     fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    fn ram(&self) -> Option<Vec<u8>> {
+        Some(self.ram.to_vec())
     }
 
     fn read(&self, address: u16) -> u8 {

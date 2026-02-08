@@ -21,10 +21,29 @@ pub struct Mbc1 {
 }
 
 impl Mbc1 {
-    pub fn new(rom: Vec<u8>) -> Self {
+    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
         let ram = match rom[0x149] {
-            2 => Ram::Unbanked([0; 8 * 1024]),
-            3 => Ram::Banked([[0; 8 * 1024]; 4]),
+            2 => {
+                let mut ram = [0; 8 * 1024];
+                if let Some(data) = &save_data {
+                    let len = data.len().min(ram.len());
+                    ram[..len].copy_from_slice(&data[..len]);
+                }
+                Ram::Unbanked(ram)
+            }
+            3 => {
+                let mut ram = [[0; 8 * 1024]; 4];
+                if let Some(data) = &save_data {
+                    for (bank_idx, bank) in ram.iter_mut().enumerate() {
+                        let offset = bank_idx * 8 * 1024;
+                        if offset < data.len() {
+                            let len = (data.len() - offset).min(bank.len());
+                            bank[..len].copy_from_slice(&data[offset..offset + len]);
+                        }
+                    }
+                }
+                Ram::Banked(ram)
+            }
             _ => Ram::None,
         };
 
@@ -50,6 +69,14 @@ impl Mbc1 {
 impl MemoryBankController for Mbc1 {
     fn rom(&self) -> &[u8] {
         &self.rom
+    }
+
+    fn ram(&self) -> Option<Vec<u8>> {
+        match &self.ram {
+            Ram::None => None,
+            Ram::Unbanked(ram) => Some(ram.to_vec()),
+            Ram::Banked(ram) => Some(ram.iter().flatten().copied().collect()),
+        }
     }
 
     fn read(&self, address: u16) -> u8 {
