@@ -49,12 +49,19 @@ impl MappedAddress {
             0xff00 => Self::JoypadRegister,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
+            0xff03 => Self::Unmapped,
             0xff04 => Self::TimerRegister(timers::Register::Divider),
             0xff05 => Self::TimerRegister(timers::Register::Counter),
             0xff06 => Self::TimerRegister(timers::Register::Modulo),
             0xff07 => Self::TimerRegister(timers::Register::Control),
+            0xff08..=0xff0e => Self::Unmapped,
             0xff0f => Self::InterruptRegister(interrupts::Register::RequestedInterrupts),
-            0xff10..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
+            0xff10..=0xff14 => Self::AudioRegister(audio::Register::map(address)),
+            0xff15 => Self::Unmapped,
+            0xff16..=0xff1e => Self::AudioRegister(audio::Register::map(address)),
+            0xff1f => Self::Unmapped,
+            0xff20..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
+            0xff27..=0xff2f => Self::Unmapped,
             0xff30..=0xff3f => Self::AudioWaveRam((address - 0xff30) as u8),
             0xff40 => Self::VideoRegister(video::Register::Control),
             0xff41 => Self::VideoRegister(video::Register::Status),
@@ -71,7 +78,6 @@ impl MappedAddress {
             0xff4c..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
-            _ => todo!("Unmapped address {:04x}", address),
         }
     }
 }
