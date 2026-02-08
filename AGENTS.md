@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-MissingNo. is a Game Boy emulator and debugger written in Rust. Only Tetris is known to be fully playable.
+MissingNo. is a Game Boy emulator and debugger written in Rust.
 
 ## Build and Run Commands
 
@@ -20,27 +20,18 @@ cargo fmt                                    # Format
 
 ## Architecture
 
-Three layers with strict separation:
+Three layers with strict separation — core emulation has no UI dependencies:
 
-- **`src/game_boy/`** — Core emulation (UI-independent). Contains CPU, memory, video (PPU), audio (APU), cartridge/MBC, joypad, interrupts, and timers. `GameBoy` struct owns a `Cpu` and `MemoryMapped` (aggregates all hardware subsystems). The `step()` method executes one instruction and ticks all hardware, returning `bool` for whether a new video frame was produced.
-
-- **`src/debugger/`** — Debugging backend (UI-independent). Breakpoint management, stepping logic, and instruction disassembly. Wraps `GameBoy`.
-
-- **`src/app/`** — Iced 0.14 GUI using Elm architecture (Message enum → `update()` → `view()`). Contains emulator mode, debugger mode (with panes for CPU state, disassembly, breakpoints, audio/video inspection), wgpu shader-based rendering, and audio output via cpal. `App` owns the `AudioOutput` and drains audio samples from the `GameBoy` after each emulator/debugger update.
+- **`src/game_boy/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction, ticks all hardware for the instruction's cycle count, and returns `bool` for whether a new video frame was produced.
+- **`src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, and disassembly.
+- **`src/app/`** — Iced 0.14 GUI. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer.
 
 ### Key Patterns
 
-- **Memory-mapped I/O**: `MemoryMapped` struct routes `read()`/`write()` to hardware subsystems by address, allowing independent borrowing.
-- **Iterator-based instruction decoding**: `GameBoy` implements `Iterator<Item=u8>` so `Instruction::decode()` consumes bytes naturally.
-- **State machine for UI modes**: `Game` enum (`Unloaded | Loading | Loaded`) and `LoadedGame` enum (`Debugger | Emulator`) manage application state transitions.
-- **Trait-based MBC dispatch**: `MemoryBankController` trait with implementations for NoMbc, MBC1, MBC2, MBC3, selected at runtime from cartridge header byte 0x147.
-- **Cycle-accurate simulation**: Timers, video, and audio tick based on instruction cycle counts; interrupts checked after each instruction.
-- **Audio pipeline**: APU ticks once per M-cycle in the step loop, generating samples at 44100 Hz into an internal buffer. The app layer drains this buffer and pushes samples through a lock-free ring buffer (rtrb) to a cpal output stream running on a separate thread.
+- **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently. CPU instructions return `OpResult(cycles, Option<MemoryWrite>)` rather than writing directly.
+- **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
+- **Iterator-based instruction decoding**: `GameBoy` implements `Iterator<Item=u8>` (reading bytes at PC), so `Instruction::decode()` consumes opcode bytes naturally.
+- **Trait-based MBC dispatch**: `MemoryBankController` trait with implementations for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147.
+- **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
+- **Post-boot register initialization**: The emulator skips the boot ROM. Initial hardware state must match DMG post-boot values (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`).
 
-### Iced 0.14 API Notes
-
-- `window::latest()` returns `Task<Option<Id>>`; `.and_then()` unwraps the `Option`, so the closure receives `Id` directly.
-- `event::listen_with` for global keyboard/window event handling (close, F11, Escape).
-- `mouse_area` provides `on_enter`, `on_exit`, `on_move`, and `interaction` (use `mouse::Interaction::None` to hide cursor).
-- `iced::time::every` for periodic timer subscriptions.
-- Screen rendering uses `widget::shader` with a wgpu pipeline (`src/app/texture_renderer.rs`).
