@@ -2,3 +2,5 @@ target
 *.gb
 .vscode
 .claude
+.flatpak-builder
+build-dir

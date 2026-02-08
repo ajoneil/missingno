@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ajoneil.MissingNo</id>
+
+  <name>MissingNo.</name>
+  <summary>Game Boy emulator and debugger</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="io.github.ajoneil">
+    <name>Andrew O'Neil</name>
+  </developer>
+
+  <description>
+    <p>
+      MissingNo. is a Game Boy emulator with an integrated debugger. Play Game Boy
+      games with keyboard or controller support, fullscreen mode, and save RAM
+      persistence.
+    </p>
+    <p>
+      The built-in debugger provides code disassembly with breakpoints, CPU state
+      inspection, VRAM visualization, audio channel inspection, and an interrupt
+      viewer.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.ajoneil.MissingNo.desktop</launchable>
+
+  <url type="homepage">https://github.com/ajoneil/missingno</url>
+  <url type="bugtracker">https://github.com/ajoneil/missingno/issues</url>
+  <url type="vcs-browser">https://github.com/ajoneil/missingno</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshot.png</image>
+      <caption>The integrated debugger showing CPU state, disassembly, and VRAM</caption>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#a6e3a1</color>
+    <color type="primary" scheme_preference="dark">#1e1e2e</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.0.1" date="2026-02-08">
+      <description>
+        <p>Initial release with core emulation, debugger, controller support, save RAM, and fullscreen mode.</p>
+      </description>
+    </release>
+  </releases>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">640</display_length>
+  </requires>
+</component>
