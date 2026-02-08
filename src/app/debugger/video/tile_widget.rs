@@ -1,71 +1,39 @@
-use iced::{
-    Point, Renderer, Size, Theme, mouse,
-    widget::{Canvas, canvas},
-};
+use iced::widget::shader;
 
 use crate::{
-    app::{Message, screen::iced_color},
+    app::{Message, texture_renderer::TextureRenderer},
     game_boy::video::{palette::Palette, tiles::Tile},
 };
 
-pub fn tile(tile: Tile) -> Canvas<RenderTile, Message> {
-    canvas(RenderTile {
-        tile,
-        flip_x: false,
-        flip_y: false,
-    })
-    .width(24)
-    .height(24)
+pub fn tile(tile: Tile) -> iced::widget::Shader<Message, TextureRenderer> {
+    tile_with_flip(tile, false, false)
 }
 
-pub fn tile_flip(tile: Tile, flip_x: bool, flip_y: bool) -> Canvas<RenderTile, Message> {
-    canvas(RenderTile {
-        tile,
-        flip_x,
-        flip_y,
-    })
-    .width(24)
-    .height(24)
-}
-
-pub struct RenderTile {
+pub fn tile_flip(
     tile: Tile,
     flip_x: bool,
     flip_y: bool,
+) -> iced::widget::Shader<Message, TextureRenderer> {
+    tile_with_flip(tile, flip_x, flip_y)
 }
 
-impl<Message> canvas::Program<Message> for RenderTile {
-    type State = ();
+fn tile_with_flip(
+    tile: Tile,
+    flip_x: bool,
+    flip_y: bool,
+) -> iced::widget::Shader<Message, TextureRenderer> {
+    let mut pixels = Vec::with_capacity(8 * 8 * 4);
 
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: iced::Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry<Renderer>> {
-        let widget_size = bounds.size();
-        let pixel_size = Size::new(widget_size.width / 8.0, widget_size.height / 8.0);
-        let mut frame = canvas::Frame::new(renderer, widget_size);
-        frame.scale_nonuniform([
-            if self.flip_x { -1.0 } else { 1.0 },
-            if self.flip_y { -1.0 } else { 1.0 },
-        ]);
-
+    for y in 0..8 {
         for x in 0..8 {
-            for y in 0..8 {
-                frame.fill_rectangle(
-                    Point::new(
-                        x as f32 * widget_size.width / 8.0,
-                        y as f32 * widget_size.height / 8.0,
-                    ),
-                    pixel_size,
-                    iced_color(Palette::MONOCHROME_GREEN.color(self.tile.pixel(x, y))),
-                );
-            }
-        }
+            let read_x = if flip_x { 7 - x } else { x };
+            let read_y = if flip_y { 7 - y } else { y };
 
-        vec![frame.into_geometry()]
+            let color = Palette::MONOCHROME_GREEN.color(tile.pixel(read_x, read_y));
+            pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
+        }
     }
+
+    let renderer = TextureRenderer::with_pixels(8, 8, pixels);
+    shader(renderer).width(24).height(24)
 }

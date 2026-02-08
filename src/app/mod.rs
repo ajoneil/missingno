@@ -29,6 +29,7 @@ mod debugger;
 mod emulator;
 mod load;
 mod screen;
+mod texture_renderer;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
     iced::application(
