@@ -10,6 +10,7 @@ pub enum Icon {
     Settings,
     Front,
     Back,
+    Fullscreen,
     GameBoy,
     BreakpointEnabled,
     // BreakpointDisabled,
@@ -21,6 +22,7 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Settings => Handle::from_memory(include_bytes!("bootstrap/gear-fill.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("bootstrap/front.svg")),
         Icon::Back => Handle::from_memory(include_bytes!("bootstrap/back.svg")),
+        Icon::Fullscreen => Handle::from_memory(include_bytes!("bootstrap/fullscreen.svg")),
         Icon::GameBoy => Handle::from_memory(include_bytes!(
             "material-design-icons/nintendo-game-boy.svg"
         )),

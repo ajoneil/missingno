@@ -4,11 +4,14 @@ use iced::{
     Element,
     Length::{self, Fill},
     Subscription, Task, time,
-    widget::{container, responsive, shader},
+    widget::{button, container, mouse_area, responsive, shader, stack, svg},
 };
 
 use crate::{
-    app,
+    app::{
+        self,
+        core::icons::{self, Icon},
+    },
     game_boy::{GameBoy, joypad::Button, video::screen::Screen},
 };
 
@@ -16,11 +19,14 @@ pub struct Emulator {
     game_boy: GameBoy,
     screen: Screen,
     running: bool,
+    screen_hovered: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     EmulateFrame,
+    ScreenHovered,
+    ScreenUnhovered,
 }
 
 impl Into<app::Message> for Message {
@@ -35,6 +41,7 @@ impl Emulator {
             game_boy,
             screen: Screen::new(),
             running: false,
+            screen_hovered: false,
         }
     }
 
@@ -56,13 +63,15 @@ impl Emulator {
                 while !self.game_boy.step() {}
                 self.screen = self.game_boy.screen().clone();
             }
+            Message::ScreenHovered => self.screen_hovered = true,
+            Message::ScreenUnhovered => self.screen_hovered = false,
         }
 
         Task::none()
     }
 
-    pub fn view(&self) -> Element<'_, app::Message> {
-        responsive(|size| {
+    pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
+        let screen: Element<'_, app::Message> = responsive(|size| {
             let shortest = size.width.min(size.height);
 
             container(
@@ -73,7 +82,34 @@ impl Emulator {
             .center(Fill)
             .into()
         })
-        .into()
+        .into();
+
+        if fullscreen {
+            screen
+        } else {
+            let screen_stack = if self.screen_hovered {
+                stack![
+                    screen,
+                    container(
+                        button(icons::m(Icon::Fullscreen).style(|_, _| svg::Style {
+                            color: Some(iced::Color::WHITE),
+                        }))
+                        .style(button::text)
+                        .on_press(app::Message::ToggleFullscreen)
+                    )
+                    .align_right(Fill)
+                    .padding(8)
+                ]
+                .into()
+            } else {
+                screen
+            };
+
+            mouse_area(screen_stack)
+                .on_enter(Message::ScreenHovered.into())
+                .on_exit(Message::ScreenUnhovered.into())
+                .into()
+        }
     }
 
     pub fn running(&self) -> bool {

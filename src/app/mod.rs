@@ -1,11 +1,11 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Instant};
 
 use iced::{
     Alignment::Center,
     Element,
     Length::Fill,
-    Subscription, Task, Theme, event,
-    widget::{column, container, svg},
+    Subscription, Task, Theme, event, mouse, time,
+    widget::{column, container, mouse_area, svg},
     window,
 };
 use replace_with::replace_with_or_abort;
@@ -54,9 +54,18 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
 struct App {
     game: Game,
     debugger_enabled: bool,
+    fullscreen: Fullscreen,
     action_bar: ActionBar,
     audio_output: Option<AudioOutput>,
     save_path: Option<PathBuf>,
+}
+
+enum Fullscreen {
+    Windowed,
+    Active {
+        cursor_hidden: bool,
+        last_mouse_move: Instant,
+    },
 }
 
 enum Game {
@@ -84,6 +93,10 @@ enum Message {
     ToggleDebugger(bool),
     ShowSettings,
 
+    ToggleFullscreen,
+    ExitFullscreen,
+    MouseMoved,
+    HideCursorTick,
     CloseRequested,
 
     ActionBar(action_bar::Message),
@@ -117,6 +130,7 @@ impl App {
         Self {
             game,
             debugger_enabled: debugger,
+            fullscreen: Fullscreen::Windowed,
             action_bar: ActionBar::new(),
             audio_output: AudioOutput::new(),
             save_path,
@@ -151,6 +165,50 @@ impl App {
             Message::Reset => {
                 self.save();
                 self.reset();
+            }
+
+            Message::ToggleFullscreen => {
+                let (new_fullscreen, mode) = match self.fullscreen {
+                    Fullscreen::Windowed => (
+                        Fullscreen::Active {
+                            cursor_hidden: false,
+                            last_mouse_move: Instant::now(),
+                        },
+                        window::Mode::Fullscreen,
+                    ),
+                    Fullscreen::Active { .. } => (Fullscreen::Windowed, window::Mode::Windowed),
+                };
+                self.fullscreen = new_fullscreen;
+                return window::latest().and_then(move |id| window::set_mode(id, mode));
+            }
+
+            Message::ExitFullscreen => {
+                if matches!(self.fullscreen, Fullscreen::Active { .. }) {
+                    self.fullscreen = Fullscreen::Windowed;
+                    return window::latest()
+                        .and_then(|id| window::set_mode(id, window::Mode::Windowed));
+                }
+            }
+
+            Message::MouseMoved => {
+                if let Fullscreen::Active {
+                    cursor_hidden,
+                    last_mouse_move,
+                } = &mut self.fullscreen
+                {
+                    *last_mouse_move = Instant::now();
+                    *cursor_hidden = false;
+                }
+            }
+            Message::HideCursorTick => {
+                if let Fullscreen::Active {
+                    cursor_hidden,
+                    last_mouse_move,
+                } = &mut self.fullscreen
+                    && last_mouse_move.elapsed().as_secs() >= 2
+                {
+                    *cursor_hidden = true;
+                }
             }
 
             Message::CloseRequested => {
@@ -209,19 +267,35 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        column![
-            self.action_bar.view(self),
-            horizontal_rule(),
-            container(self.inner()).center(Fill)
-        ]
-        .into()
+        if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
+            let content = container(self.inner())
+                .center(Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Color::BLACK.into()),
+                    ..Default::default()
+                });
+
+            let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
+            if cursor_hidden {
+                area = area.interaction(mouse::Interaction::None);
+            }
+            area.into()
+        } else {
+            column![
+                self.action_bar.view(self),
+                horizontal_rule(),
+                container(self.inner()).center(Fill)
+            ]
+            .into()
+        }
     }
 
     fn inner(&self) -> Element<'_, Message> {
+        let fullscreen = matches!(self.fullscreen, Fullscreen::Active { .. });
         match &self.game {
             Game::Loaded(game) => match game {
                 LoadedGame::Debugger(debugger) => debugger.view(),
-                LoadedGame::Emulator(emulator) => emulator.view(),
+                LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
             },
             _ => column![
                 text::xl("Welcome to MissingNo.!"),
@@ -341,8 +415,21 @@ impl App {
             } else {
                 Subscription::none()
             },
+            if matches!(self.fullscreen, Fullscreen::Active { .. }) {
+                time::every(std::time::Duration::from_millis(500)).map(|_| Message::HideCursorTick)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|event, _, _| match event {
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F11),
+                    ..
+                }) => Some(Message::ToggleFullscreen),
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                }) => Some(Message::ExitFullscreen),
                 _ => None,
             }),
             match &self.game {
