@@ -9,7 +9,7 @@ use crate::game_boy::video::{
 };
 
 use super::{
-    sprites::Priority,
+    sprites::{self, Priority},
     tiles::{TileAddressMode, TileIndex},
 };
 
@@ -41,6 +41,7 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 pub struct Rendering {
     screen: Screen,
     line: Line,
+    window_line_counter: u8,
 }
 
 struct Line {
@@ -49,6 +50,7 @@ struct Line {
     penalty: u32,
     pixels_drawn: u8,
     sprites: Vec<Sprite>,
+    window_rendered: bool,
 }
 
 impl Line {
@@ -59,6 +61,7 @@ impl Line {
             penalty: 12,
             pixels_drawn: 0,
             sprites: Vec::new(),
+            window_rendered: false,
         }
     }
 
@@ -83,6 +86,7 @@ impl Rendering {
         Rendering {
             screen: Screen::new(),
             line: Line::new(0),
+            window_line_counter: 0,
         }
     }
 
@@ -127,6 +131,9 @@ impl Rendering {
                 }
 
                 if self.line.dots == SCANLINE_TOTAL_DOTS {
+                    if self.line.window_rendered {
+                        self.window_line_counter += 1;
+                    }
                     self.line = Line::new(self.line.number + 1);
 
                     if self.line.number == screen::NUM_SCANLINES {
@@ -146,16 +153,31 @@ impl Rendering {
         let mut pixel = PaletteIndex(0);
 
         if data.control.background_and_window_enabled() {
-            // TODO Window
-            let map = data.memory.tile_map(data.control.background_tile_map());
-            let map_x = x + data.background_viewport.x % 0xff;
-            let map_y = y + data.background_viewport.y % 0xff;
-            let tile_index = map.get_tile(map_x / 8, map_y / 8);
+            let window_x = data.window.x_plus_7.wrapping_sub(7);
+            let in_window = data.control.window_enabled() && y >= data.window.y && x >= window_x;
 
-            let (tile_block, mapped_index) = data.control.tile_address_mode().tile(tile_index);
+            if in_window {
+                let map = data.memory.tile_map(data.control.window_tile_map());
+                let map_x = x - window_x;
+                let map_y = self.window_line_counter;
+                let tile_index = map.get_tile(map_x / 8, map_y / 8);
 
-            let tile = data.memory.tile_block(tile_block).tile(mapped_index);
-            pixel = tile.pixel(map_x % 8, map_y % 8);
+                let (tile_block, mapped_index) = data.control.tile_address_mode().tile(tile_index);
+
+                let tile = data.memory.tile_block(tile_block).tile(mapped_index);
+                pixel = tile.pixel(map_x % 8, map_y % 8);
+                self.line.window_rendered = true;
+            } else {
+                let map = data.memory.tile_map(data.control.background_tile_map());
+                let map_x = x.wrapping_add(data.background_viewport.x);
+                let map_y = y.wrapping_add(data.background_viewport.y);
+                let tile_index = map.get_tile(map_x / 8, map_y / 8);
+
+                let (tile_block, mapped_index) = data.control.tile_address_mode().tile(tile_index);
+
+                let tile = data.memory.tile_block(tile_block).tile(mapped_index);
+                pixel = tile.pixel(map_x % 8, map_y % 8);
+            }
         };
 
         if data.control.sprites_enabled() {
@@ -176,7 +198,7 @@ impl Rendering {
                         sprite_y as u8
                     };
 
-                    let pixel = if flipped_y < 8 {
+                    let sprite_pixel = if flipped_y < 8 {
                         data.memory
                             .tile_block(tile_block_id)
                             .tile(tile_id)
@@ -187,21 +209,35 @@ impl Rendering {
                             .tile(TileIndex(tile_id.0 + 1))
                             .pixel(flipped_x, flipped_y - 8)
                     };
-                    Some((pixel, sprite.attributes.priority()))
+                    if sprite_pixel.0 > 0 {
+                        Some((
+                            sprite_pixel,
+                            sprite.attributes.priority(),
+                            sprite.attributes.palette(),
+                        ))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             });
 
-            if let Some((sprite_pixel, priority)) = sprite_pixel {
-                if sprite_pixel.0 > 0 {
-                    if priority == Priority::Sprite || pixel.0 == 0 {
-                        pixel = sprite_pixel;
-                    }
+            if let Some((sprite_pixel, priority, palette)) = sprite_pixel {
+                if priority == Priority::Sprite || pixel.0 == 0 {
+                    let sprite_palette = match palette {
+                        sprites::Palette::Palette0 => &data.palettes.sprite0,
+                        sprites::Palette::Palette1 => &data.palettes.sprite1,
+                    };
+                    pixel = sprite_palette.map(sprite_pixel);
+                    self.screen.set_pixel(x, y, pixel);
+                    self.line.pixels_drawn += 1;
+                    return;
                 }
             }
         }
 
+        pixel = data.palettes.background.map(pixel);
         self.screen.set_pixel(x, y, pixel);
 
         self.line.pixels_drawn += 1;

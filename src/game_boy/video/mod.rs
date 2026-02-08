@@ -120,7 +120,7 @@ impl Video {
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
             Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x,
             Register::WindowY => self.ppu_accessible.window.y,
-            Register::WindowX => self.ppu_accessible.window.x_plus_7 - 7,
+            Register::WindowX => self.ppu_accessible.window.x_plus_7,
             Register::CurrentScanline => {
                 if let Some(ppu) = &self.ppu {
                     ppu.current_line()
