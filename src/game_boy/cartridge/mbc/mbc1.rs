@@ -60,7 +60,7 @@ impl MemoryBankController for Mbc1 {
             },
             0x4000..=0x7fff => match self.banking_mode {
                 BankingMode::Simple => {
-                    self.rom[(self.current_bank() as usize * 0x4000) + address as usize]
+                    self.rom[(self.current_bank() as usize * 0x4000) + (address as usize - 0x4000)]
                 }
                 BankingMode::Advanced => panic!("nyi"),
             },

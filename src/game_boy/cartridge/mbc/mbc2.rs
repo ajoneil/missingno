@@ -30,7 +30,9 @@ impl MemoryBankController for Mbc2 {
     fn read(&self, address: u16) -> u8 {
         match address {
             0x0000..=0x3fff => self.rom[address as usize],
-            0x4000..=0x7fff => self.rom[(self.current_bank() as usize * 0x4000) + address as usize],
+            0x4000..=0x7fff => {
+                self.rom[(self.current_bank() as usize * 0x4000) + (address as usize - 0x4000)]
+            }
             0xa000..=0xbfff => self.ram[((address - 0xa000) % 0x200) as usize],
             _ => {
                 unreachable!()
