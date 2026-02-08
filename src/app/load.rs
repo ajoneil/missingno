@@ -12,6 +12,7 @@ use crate::{
 pub enum Message {
     Pick,
     Picked(Option<FileHandle>),
+    LoadPath(PathBuf),
     Loaded(PathBuf, Vec<u8>),
 }
 
@@ -29,13 +30,22 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     match message {
         Message::Pick => {
             app.game = Game::Loading;
-            return Task::perform(
-                AsyncFileDialog::new()
-                    .add_filter("Game Boy ROM", &["gb"])
-                    .pick_file(),
-                |file_handle| Message::Picked(file_handle).into(),
-            );
+            let mut dialog = AsyncFileDialog::new().add_filter("Game Boy ROM", &["gb"]);
+            if let Some(dir) = app.recent_games.most_recent_dir() {
+                dialog = dialog.set_directory(dir);
+            }
+            return Task::perform(dialog.pick_file(), |file_handle| {
+                Message::Picked(file_handle).into()
+            });
         }
+
+        Message::LoadPath(rom_path) => match std::fs::read(&rom_path) {
+            Ok(rom) => return Task::done(Message::Loaded(rom_path, rom).into()),
+            Err(_) => {
+                app.recent_games.remove(&rom_path);
+                app.recent_games.save();
+            }
+        },
 
         Message::Picked(file_handle) => {
             if let Some(handle) = file_handle {
@@ -51,8 +61,12 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
         Message::Loaded(rom_path, rom) => {
             let sav_path = save_path(&rom_path);
             let save_data = std::fs::read(&sav_path).ok();
-            let game_boy = GameBoy::new(Cartridge::new(rom, save_data));
+            let cartridge = Cartridge::new(rom, save_data);
+            let title = cartridge.title().to_string();
+            let game_boy = GameBoy::new(cartridge);
             app.save_path = Some(sav_path);
+            app.recent_games.add(rom_path.clone(), title);
+            app.recent_games.save();
             app.game = Game::Loaded(if app.debugger_enabled {
                 LoadedGame::Debugger(app::debugger::Debugger::new(game_boy))
             } else {

@@ -31,3 +31,6 @@ rfd = "0.17.2"
 rgb = "0.8.52"
 gilrs = "0.11"
 smol = "2"
+serde = { version = "1", features = ["derive"] }
+ron = "0.9"
+dirs = "6"

@@ -31,6 +31,7 @@ mod core;
 mod debugger;
 mod emulator;
 mod load;
+mod recent;
 mod screen;
 mod texture_renderer;
 
@@ -58,6 +59,7 @@ struct App {
     action_bar: ActionBar,
     audio_output: Option<AudioOutput>,
     save_path: Option<PathBuf>,
+    recent_games: recent::RecentGames,
 }
 
 enum Fullscreen {
@@ -108,12 +110,16 @@ enum Message {
 
 impl App {
     fn new(rom_path: Option<PathBuf>, debugger: bool) -> Self {
+        let mut recent_games = recent::RecentGames::load();
+
         let (game, save_path) = match rom_path {
             Some(rom_path) => {
                 let sav_path = load::save_path(&rom_path);
                 let save_data = fs::read(&sav_path).ok();
-                let game_boy =
-                    GameBoy::new(Cartridge::new(fs::read(&rom_path).unwrap(), save_data));
+                let cartridge = Cartridge::new(fs::read(&rom_path).unwrap(), save_data);
+                recent_games.add(rom_path, cartridge.title().to_string());
+                recent_games.save();
+                let game_boy = GameBoy::new(cartridge);
                 let game = Game::Loaded(if debugger {
                     LoadedGame::Debugger(debugger::Debugger::new(game_boy))
                 } else {
@@ -134,6 +140,7 @@ impl App {
             action_bar: ActionBar::new(),
             audio_output: AudioOutput::new(),
             save_path,
+            recent_games,
         }
     }
 
@@ -297,20 +304,27 @@ impl App {
                 LoadedGame::Debugger(debugger) => debugger.view(),
                 LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
             },
-            _ => column![
-                text::xl("Welcome to MissingNo.!"),
-                icons::xl(Icon::GameBoy)
-                    .width(200)
-                    .height(200)
-                    .style(|theme, _| {
-                        svg::Style {
-                            color: Some(theme.extended_palette().success.strong.color),
-                        }
-                    })
-            ]
-            .align_x(Center)
-            .spacing(l())
-            .into(),
+            _ => {
+                let mut col = column![
+                    text::xl("Welcome to MissingNo.!"),
+                    icons::xl(Icon::GameBoy)
+                        .width(200)
+                        .height(200)
+                        .style(|theme, _| {
+                            svg::Style {
+                                color: Some(theme.extended_palette().success.strong.color),
+                            }
+                        })
+                ]
+                .align_x(Center)
+                .spacing(l());
+
+                if !self.recent_games.is_empty() {
+                    col = col.push(self.recent_games.view());
+                }
+
+                col.into()
+            }
         }
     }
 
