@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-MissingNo. is a Game Boy emulator and debugger written in Rust. Only Tetris is known to be fully playable. Audio exists in the emulation layer but is not rendered/played.
+MissingNo. is a Game Boy emulator and debugger written in Rust. Only Tetris is known to be fully playable.
 
 ## Build and Run Commands
 
@@ -26,7 +26,7 @@ Three layers with strict separation:
 
 - **`src/debugger/`** — Debugging backend (UI-independent). Breakpoint management, stepping logic, and instruction disassembly. Wraps `GameBoy`.
 
-- **`src/app/`** — Iced 0.14 GUI using Elm architecture (Message enum → `update()` → `view()`). Contains emulator mode, debugger mode (with panes for CPU state, disassembly, breakpoints, audio/video inspection), and wgpu shader-based rendering.
+- **`src/app/`** — Iced 0.14 GUI using Elm architecture (Message enum → `update()` → `view()`). Contains emulator mode, debugger mode (with panes for CPU state, disassembly, breakpoints, audio/video inspection), wgpu shader-based rendering, and audio output via cpal. `App` owns the `AudioOutput` and drains audio samples from the `GameBoy` after each emulator/debugger update.
 
 ### Key Patterns
 
@@ -35,3 +35,4 @@ Three layers with strict separation:
 - **State machine for UI modes**: `Game` enum (`Unloaded | Loading | Loaded`) and `LoadedGame` enum (`Debugger | Emulator`) manage application state transitions.
 - **Trait-based MBC dispatch**: `MemoryBankController` trait with implementations for NoMbc, MBC1, MBC2, MBC3, selected at runtime from cartridge header byte 0x147.
 - **Cycle-accurate simulation**: Timers, video, and audio tick based on instruction cycle counts; interrupts checked after each instruction.
+- **Audio pipeline**: APU ticks once per M-cycle in the step loop, generating samples at 44100 Hz into an internal buffer. The app layer drains this buffer and pushes samples through a lock-free ring buffer (rtrb) to a cpal output stream running on a separate thread.

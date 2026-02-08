@@ -54,6 +54,10 @@ impl Debugger {
         self.debugger.game_boy()
     }
 
+    pub fn game_boy_mut(&mut self) -> &mut GameBoy {
+        self.debugger.game_boy_mut()
+    }
+
     pub fn disable_debugger(self) -> Emulator {
         app::emulator::Emulator::new(self.debugger.game_boy_take())
     }
@@ -63,32 +67,39 @@ impl Debugger {
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
-        match message {
+        let task = match message {
             Message::Step => {
-                if let Some(screen) = self.debugger.step() {
-                    return Task::done(screen::Message::Update(screen).into());
-                }
+                let screen = self.debugger.step();
+                screen.map(|s| Task::done(screen::Message::Update(s).into()))
             }
             Message::StepOver => {
-                if let Some(screen) = self.debugger.step_over() {
-                    return Task::done(screen::Message::Update(screen).into());
-                }
+                let screen = self.debugger.step_over();
+                screen.map(|s| Task::done(screen::Message::Update(s).into()))
             }
             Message::StepFrame => {
-                if let Some(screen) = self.debugger.step_frame() {
-                    return Task::done(screen::Message::Update(screen).into());
-                } else {
-                    self.running = false
+                let screen = self.debugger.step_frame();
+                if screen.is_none() {
+                    self.running = false;
                 }
+                screen.map(|s| Task::done(screen::Message::Update(s).into()))
             }
 
-            Message::SetBreakpoint(address) => self.debugger.set_breakpoint(address),
-            Message::ClearBreakpoint(address) => self.debugger.clear_breakpoint(address),
+            Message::SetBreakpoint(address) => {
+                self.debugger.set_breakpoint(address);
+                None
+            }
+            Message::ClearBreakpoint(address) => {
+                self.debugger.clear_breakpoint(address);
+                None
+            }
 
-            Message::Pane(message) => self.panes.update(message, &mut self.debugger),
-        }
+            Message::Pane(message) => {
+                self.panes.update(message, &mut self.debugger);
+                None
+            }
+        };
 
-        Task::none()
+        task.unwrap_or(Task::none())
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {

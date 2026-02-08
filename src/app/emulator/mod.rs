@@ -42,6 +42,10 @@ impl Emulator {
         &self.game_boy
     }
 
+    pub fn game_boy_mut(&mut self) -> &mut GameBoy {
+        &mut self.game_boy
+    }
+
     pub fn enable_debugger(self) -> app::debugger::Debugger {
         app::debugger::Debugger::new(self.game_boy)
     }

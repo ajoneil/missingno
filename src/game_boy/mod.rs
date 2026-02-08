@@ -94,6 +94,10 @@ impl GameBoy {
         &self.screen
     }
 
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.mapped.audio.drain_samples()
+    }
+
     pub fn press_button(&mut self, button: Button) {
         self.mapped.joypad.press_button(button);
     }

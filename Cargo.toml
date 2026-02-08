@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 bitflags = "2.10.0"
+cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
 iced = { version = "0.14.0", features = [
@@ -25,5 +26,6 @@ iced_aw = { version = "0.13.0", default-features = false, features = [
     "drop_down",
 ] }
 replace_with = "0.1.8"
+rtrb = "0.3"
 rfd = "0.17.2"
 rgb = "0.8.52"

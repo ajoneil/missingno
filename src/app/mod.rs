@@ -15,6 +15,7 @@ use crate::game_boy::{
     joypad::{self, Button},
 };
 use action_bar::ActionBar;
+use audio_output::AudioOutput;
 use core::{
     fonts, horizontal_rule,
     icons::{self, Icon},
@@ -23,6 +24,7 @@ use core::{
 };
 
 mod action_bar;
+mod audio_output;
 mod controls;
 mod core;
 mod debugger;
@@ -51,6 +53,7 @@ struct App {
     game: Game,
     debugger_enabled: bool,
     action_bar: ActionBar,
+    audio_output: Option<AudioOutput>,
 }
 
 enum Game {
@@ -106,6 +109,7 @@ impl App {
             game,
             debugger_enabled: debugger,
             action_bar: ActionBar::new(),
+            audio_output: AudioOutput::new(),
         }
     }
 
@@ -164,15 +168,21 @@ impl App {
             Message::ShowSettings => {}
 
             Message::ActionBar(message) => return self.action_bar.update(message),
-            Message::Emulator(message) => match &mut self.game {
-                Game::Loaded(LoadedGame::Emulator(emulator)) => return emulator.update(message),
-                _ => {}
-            },
+            Message::Emulator(message) => {
+                if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
+                    let task = emulator.update(message);
+                    self.drain_audio();
+                    return task;
+                }
+            }
 
-            Message::Debugger(message) => match &mut self.game {
-                Game::Loaded(LoadedGame::Debugger(debugger)) => return debugger.update(message),
-                _ => {}
-            },
+            Message::Debugger(message) => {
+                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
+                    let task = debugger.update(message);
+                    self.drain_audio();
+                    return task;
+                }
+            }
 
             Message::None => {}
         }
@@ -209,6 +219,18 @@ impl App {
             .align_x(Center)
             .spacing(l())
             .into(),
+        }
+    }
+
+    fn drain_audio(&mut self) {
+        let game_boy = match &mut self.game {
+            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.game_boy_mut(),
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.game_boy_mut(),
+            _ => return,
+        };
+        let samples = game_boy.drain_audio_samples();
+        if let Some(audio) = &mut self.audio_output {
+            audio.push_samples(&samples);
         }
     }
 

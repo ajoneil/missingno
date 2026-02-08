@@ -60,6 +60,8 @@ impl GameBoy {
                 self.screen = screen;
                 new_screen = true;
             }
+
+            self.mapped.audio.tick();
         }
 
         new_screen
