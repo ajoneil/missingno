@@ -11,7 +11,7 @@
     "--socket=fallback-x11",
     "--device=dri",
     "--socket=pulseaudio",
-    "--device=all"
+    "--device=input"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
