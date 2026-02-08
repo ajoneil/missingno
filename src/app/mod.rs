@@ -294,7 +294,7 @@ impl App {
 
             let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
             if cursor_hidden {
-                area = area.interaction(mouse::Interaction::None);
+                area = area.interaction(mouse::Interaction::Hidden);
             }
             area.into()
         } else {
