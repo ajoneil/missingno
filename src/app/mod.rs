@@ -310,11 +310,7 @@ impl App {
                     icons::xl(Icon::GameBoy)
                         .width(200)
                         .height(200)
-                        .style(|theme, _| {
-                            svg::Style {
-                                color: Some(theme.extended_palette().success.strong.color),
-                            }
-                        })
+                        .style(|_, _| svg::Style { color: None })
                 ]
                 .align_x(Center)
                 .spacing(l());

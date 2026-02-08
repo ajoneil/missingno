@@ -23,9 +23,7 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Front => Handle::from_memory(include_bytes!("bootstrap/front.svg")),
         Icon::Back => Handle::from_memory(include_bytes!("bootstrap/back.svg")),
         Icon::Fullscreen => Handle::from_memory(include_bytes!("bootstrap/fullscreen.svg")),
-        Icon::GameBoy => Handle::from_memory(include_bytes!(
-            "material-design-icons/nintendo-game-boy.svg"
-        )),
+        Icon::GameBoy => Handle::from_memory(include_bytes!("missingno.svg")),
         Icon::BreakpointEnabled => {
             Handle::from_memory(include_bytes!("bootstrap/exclamation-octagon-fill.svg"))
         } // Icon::BreakpointDisabled => {
