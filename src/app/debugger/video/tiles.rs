@@ -1,7 +1,7 @@
 use iced::{
     Element,
     Length::Fill,
-    widget::{Column, Row, column, pane_grid, row, scrollable, text},
+    widget::{column, pane_grid, row, scrollable, text},
 };
 
 use crate::{
@@ -10,13 +10,10 @@ use crate::{
         core::sizes::m,
         debugger::{
             panes::{DebuggerPane, pane, title_bar},
-            video::tile_widget::tile,
+            video::tile_atlas::tile_block_atlas,
         },
     },
-    game_boy::video::{
-        Video,
-        tiles::{TileBlock, TileBlockId, TileIndex},
-    },
+    game_boy::video::{Video, tiles::TileBlockId},
 };
 
 pub struct TilesPane;
@@ -46,13 +43,9 @@ impl TilesPane {
 }
 
 fn tile_block(video: &Video, block: TileBlockId) -> Element<'static, Message> {
-    column![text(block.to_string()), tiles(video.tile_block(block))].into()
-}
-
-fn tiles(block: &TileBlock) -> Element<'static, Message> {
-    Column::from_iter((0..8).map(|row: u8| row_of_tiles(block, row))).into()
-}
-
-fn row_of_tiles(block: &TileBlock, row: u8) -> Element<'static, Message> {
-    Row::from_iter((0..16).map(|col| tile(block.tile(TileIndex(row * 16 + col))).into())).into()
+    column![
+        text(block.to_string()),
+        tile_block_atlas(video.tile_block(block))
+    ]
+    .into()
 }

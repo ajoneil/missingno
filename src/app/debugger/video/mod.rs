@@ -18,6 +18,7 @@ use tile_maps::tile_address_mode;
 mod background_and_window;
 mod palette;
 pub mod sprites;
+mod tile_atlas;
 pub mod tile_maps;
 mod tile_widget;
 pub mod tiles;

@@ -1,7 +1,7 @@
 use iced::{
     Element,
     Length::Fill,
-    widget::{Column, Row, container, pane_grid, radio, row, scrollable, text},
+    widget::{container, pane_grid, radio, row, scrollable, text},
 };
 
 use crate::{
@@ -10,15 +10,10 @@ use crate::{
         core::sizes::m,
         debugger::panes::{DebuggerPane, pane, title_bar},
     },
-    game_boy::video::{
-        Video,
-        control::Control,
-        tile_maps::{TileMap, TileMapId},
-        tiles::TileAddressMode,
-    },
+    game_boy::video::{Video, control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
 };
 
-use super::tile_widget::tile;
+use super::tile_atlas::tile_map_atlas;
 
 pub fn tile_address_mode(control: Control) -> Element<'static, Message> {
     row![
@@ -76,21 +71,10 @@ impl TileMapPane {
     pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
         pane(
             title_bar(&self.title, DebuggerPane::TileMap(self.tile_map)),
-            scrollable(container(self.tiles(video, video.tile_map(self.tile_map))).center_x(Fill))
-                .into(),
+            scrollable(
+                container(tile_map_atlas(video.tile_map(self.tile_map), video)).center_x(Fill),
+            )
+            .into(),
         )
-    }
-
-    fn tiles(&self, video: &Video, map: &TileMap) -> Element<'_, Message> {
-        Column::from_iter((0..32).map(|row: u8| self.row_of_tiles(video, map, row))).into()
-    }
-
-    fn row_of_tiles(&self, video: &Video, map: &TileMap, row: u8) -> Element<'_, Message> {
-        Row::from_iter((0..32).map(|col| {
-            let map_tile_index = map.get_tile(col, row);
-            let (block, mapped_index) = video.control().tile_address_mode().tile(map_tile_index);
-            tile(video.tile_block(block).tile(mapped_index)).into()
-        }))
-        .into()
     }
 }

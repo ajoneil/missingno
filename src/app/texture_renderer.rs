@@ -77,7 +77,7 @@ impl shader::Primitive for TexturePrimitive {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         bounds: &Rectangle,
-        _viewport: &shader::Viewport,
+        viewport: &shader::Viewport,
     ) {
         let mut state = self.state.lock().unwrap();
 
@@ -121,7 +121,7 @@ impl shader::Primitive for TexturePrimitive {
                 );
 
                 drop(textures);
-                pipeline.update_vertices(queue, bounds);
+                pipeline.update_vertices(queue, self.id, bounds, viewport);
 
                 *state = PrimitiveState::Prepared {
                     width,
@@ -137,7 +137,7 @@ impl shader::Primitive for TexturePrimitive {
                 pipeline.ensure_texture(device, self.id, width, height);
 
                 if &old_bounds != bounds {
-                    pipeline.update_vertices(queue, *bounds);
+                    pipeline.update_vertices(queue, self.id, *bounds, viewport);
                 }
                 *state = PrimitiveState::Prepared {
                     width,
@@ -176,18 +176,10 @@ impl shader::Primitive for TexturePrimitive {
             occlusion_query_set: None,
         });
 
-        render_pass.set_viewport(
-            viewport.x as f32,
-            viewport.y as f32,
-            viewport.width as f32,
-            viewport.height as f32,
-            0.0,
-            1.0,
-        );
         render_pass.set_scissor_rect(viewport.x, viewport.y, viewport.width, viewport.height);
         render_pass.set_pipeline(&pipeline.render_pipeline);
         render_pass.set_bind_group(0, &texture_data.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, pipeline.vertex_buffer.slice(..));
+        render_pass.set_vertex_buffer(0, texture_data.vertex_buffer.slice(..));
         render_pass.draw(0..6, 0..1);
     }
 }
@@ -195,6 +187,7 @@ impl shader::Primitive for TexturePrimitive {
 struct TextureData {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    vertex_buffer: wgpu::Buffer,
     width: u32,
     height: u32,
 }
@@ -203,7 +196,6 @@ pub struct TexturePipeline {
     render_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    vertex_buffer: wgpu::Buffer,
     textures: Arc<Mutex<HashMap<u64, TextureData>>>,
 }
 
@@ -289,18 +281,10 @@ impl shader::Pipeline for TexturePipeline {
             cache: None,
         });
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("texture_renderer_vertex_buffer"),
-            size: std::mem::size_of::<[Vertex; 6]>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             render_pipeline,
             bind_group_layout,
             sampler,
-            vertex_buffer,
             textures: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -347,11 +331,19 @@ impl TexturePipeline {
                 ],
             });
 
+            let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("texture_renderer_vertex_buffer"),
+                size: std::mem::size_of::<[Vertex; 6]>() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
             textures.insert(
                 id,
                 TextureData {
                     texture,
                     bind_group,
+                    vertex_buffer,
                     width,
                     height,
                 },
@@ -359,8 +351,63 @@ impl TexturePipeline {
         }
     }
 
-    fn update_vertices(&self, queue: &wgpu::Queue, _bounds: Rectangle) {
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&QUAD_VERTICES));
+    fn update_vertices(
+        &self,
+        queue: &wgpu::Queue,
+        id: u64,
+        bounds: Rectangle,
+        viewport: &shader::Viewport,
+    ) {
+        // Transform bounds to NDC space based on viewport
+        let scale_x = viewport.scale_factor();
+        let scale_y = viewport.scale_factor();
+
+        let viewport_width = viewport.physical_width() as f32 / scale_x;
+        let viewport_height = viewport.physical_height() as f32 / scale_y;
+
+        // Convert widget bounds to NDC coordinates
+        // X: 0..width maps to -1..1
+        // Y: 0..height maps to 1..-1 (inverted in NDC)
+        let left = (bounds.x / viewport_width) * 2.0 - 1.0;
+        let right = ((bounds.x + bounds.width) / viewport_width) * 2.0 - 1.0;
+        let top = -((bounds.y / viewport_height) * 2.0 - 1.0);
+        let bottom = -(((bounds.y + bounds.height) / viewport_height) * 2.0 - 1.0);
+
+        let vertices = [
+            Vertex {
+                position: [left, top],
+                tex_coords: [0.0, 0.0],
+            },
+            Vertex {
+                position: [right, top],
+                tex_coords: [1.0, 0.0],
+            },
+            Vertex {
+                position: [left, bottom],
+                tex_coords: [0.0, 1.0],
+            },
+            Vertex {
+                position: [left, bottom],
+                tex_coords: [0.0, 1.0],
+            },
+            Vertex {
+                position: [right, top],
+                tex_coords: [1.0, 0.0],
+            },
+            Vertex {
+                position: [right, bottom],
+                tex_coords: [1.0, 1.0],
+            },
+        ];
+
+        let textures = self.textures.lock().unwrap();
+        if let Some(texture_data) = textures.get(&id) {
+            queue.write_buffer(
+                &texture_data.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&vertices),
+            );
+        }
     }
 }
 
@@ -370,33 +417,6 @@ struct Vertex {
     position: [f32; 2],
     tex_coords: [f32; 2],
 }
-
-const QUAD_VERTICES: [Vertex; 6] = [
-    Vertex {
-        position: [-1.0, -1.0],
-        tex_coords: [0.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, -1.0],
-        tex_coords: [1.0, 1.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0],
-        tex_coords: [0.0, 0.0],
-    },
-    Vertex {
-        position: [-1.0, 1.0],
-        tex_coords: [0.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, -1.0],
-        tex_coords: [1.0, 1.0],
-    },
-    Vertex {
-        position: [1.0, 1.0],
-        tex_coords: [1.0, 0.0],
-    },
-];
 
 const SHADER_SOURCE: &str = r#"
 struct VertexInput {

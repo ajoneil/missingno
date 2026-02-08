@@ -5,10 +5,6 @@ use crate::{
     game_boy::video::{palette::Palette, tiles::Tile},
 };
 
-pub fn tile(tile: Tile) -> iced::widget::Shader<Message, TextureRenderer> {
-    tile_with_flip(tile, false, false)
-}
-
 pub fn tile_flip(
     tile: Tile,
     flip_x: bool,
