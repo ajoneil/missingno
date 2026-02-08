@@ -34,3 +34,4 @@ smol = "2"
 serde = { version = "1", features = ["derive"] }
 ron = "0.9"
 dirs = "6"
+open = "5"

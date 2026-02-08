@@ -10,8 +10,7 @@ use iced_aw::DropDown;
 use crate::app::{
     self, App, Game, LoadedGame,
     core::{
-        buttons::{self, icon_label},
-        icons::Icon,
+        buttons,
         sizes::{m, s, xl},
         text,
     },
@@ -113,10 +112,7 @@ impl ActionBar {
                     .on_toggle(|enable| app::Message::ToggleDebugger(enable))
                     .size(m()),
             )
-            .push(
-                buttons::standard(icon_label(Icon::Settings, "Settings"))
-                    .on_press(app::Message::ShowSettings),
-            )
+            .push(buttons::standard("About").on_press(app::Message::ShowAbout))
             .spacing(m())
             .align_y(Center),
         )

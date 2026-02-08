@@ -5,7 +5,9 @@ use iced::{
     Element,
     Length::Fill,
     Subscription, Task, Theme, event, mouse, time,
-    widget::{column, container, mouse_area, svg},
+    widget::{
+        Stack, button, center, column, container, mouse_area, opaque, row, svg, text as iced_text,
+    },
     window,
 };
 use replace_with::replace_with_or_abort;
@@ -20,7 +22,7 @@ use audio_output::AudioOutput;
 use core::{
     fonts, horizontal_rule,
     icons::{self, Icon},
-    sizes::l,
+    sizes::{l, s, xl},
     text,
 };
 
@@ -60,6 +62,7 @@ struct App {
     audio_output: Option<AudioOutput>,
     save_path: Option<PathBuf>,
     recent_games: recent::RecentGames,
+    about_shown: bool,
 }
 
 enum Fullscreen {
@@ -93,7 +96,9 @@ enum Message {
     ReleaseButton(joypad::Button),
 
     ToggleDebugger(bool),
-    ShowSettings,
+    ShowAbout,
+    DismissAbout,
+    OpenUrl(&'static str),
 
     ToggleFullscreen,
     ExitFullscreen,
@@ -141,6 +146,7 @@ impl App {
             audio_output: AudioOutput::new(),
             save_path,
             recent_games,
+            about_shown: false,
         }
     }
 
@@ -248,7 +254,11 @@ impl App {
                     });
                 }
             }
-            Message::ShowSettings => {}
+            Message::ShowAbout => self.about_shown = true,
+            Message::DismissAbout => self.about_shown = false,
+            Message::OpenUrl(url) => {
+                let _ = open::that(url);
+            }
 
             Message::ActionBar(message) => return self.action_bar.update(message),
             Message::Emulator(message) => {
@@ -288,12 +298,69 @@ impl App {
             }
             area.into()
         } else {
-            column![
+            let main = column![
                 self.action_bar.view(self),
                 horizontal_rule(),
                 container(self.inner()).center(Fill)
-            ]
-            .into()
+            ];
+
+            if self.about_shown {
+                Stack::new()
+                    .push(main)
+                    .push(opaque(
+                        mouse_area(
+                            center(
+                                container(
+                                    column![
+                                        icons::xl(Icon::GameBoy)
+                                            .width(80)
+                                            .height(80)
+                                            .style(|_, _| svg::Style { color: None }),
+                                        text::xl("MissingNo."),
+                                        iced_text(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                                        iced_text("A Game Boy emulator and debugger"),
+                                        iced_text("by Andrew O'Neil"),
+                                        mouse_area(
+                                            row![
+                                                icons::m(Icon::Globe),
+                                                iced_text("andyofniall.net"),
+                                            ]
+                                            .spacing(s())
+                                            .align_y(Center),
+                                        )
+                                        .on_press(Message::OpenUrl("https://andyofniall.net/"))
+                                        .interaction(mouse::Interaction::Pointer),
+                                        mouse_area(
+                                            row![
+                                                icons::m(Icon::GitHub),
+                                                iced_text("github.com/ajoneil/missingno"),
+                                            ]
+                                            .spacing(s())
+                                            .align_y(Center),
+                                        )
+                                        .on_press(Message::OpenUrl(
+                                            "https://github.com/ajoneil/missingno",
+                                        ))
+                                        .interaction(mouse::Interaction::Pointer),
+                                        button("Close").on_press(Message::DismissAbout),
+                                    ]
+                                    .spacing(l())
+                                    .align_x(Center),
+                                )
+                                .padding(xl())
+                                .style(container::bordered_box),
+                            )
+                            .style(|_| container::Style {
+                                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                                ..Default::default()
+                            }),
+                        )
+                        .on_press(Message::DismissAbout),
+                    ))
+                    .into()
+            } else {
+                main.into()
+            }
         }
     }
 
