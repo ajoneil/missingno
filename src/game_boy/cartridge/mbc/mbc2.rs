@@ -18,7 +18,7 @@ impl Mbc2 {
     }
 
     fn current_bank(&self) -> u8 {
-        (self.bank & (self.rom.len() / 0x4000) as u8).max(1)
+        (self.bank & ((self.rom.len() / 0x4000) as u8 - 1)).max(1)
     }
 }
 
