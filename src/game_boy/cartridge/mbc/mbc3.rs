@@ -14,7 +14,8 @@ enum ClockRegister {
     DayUpper,
 }
 
-struct Clock {
+#[derive(Clone, Copy, Default)]
+struct ClockRegisters {
     seconds: u8,
     minutes: u8,
     hours: u8,
@@ -22,8 +23,8 @@ struct Clock {
     days_upper: u8,
 }
 
-impl Clock {
-    pub fn get_register(&self, register: ClockRegister) -> u8 {
+impl ClockRegisters {
+    fn get(&self, register: ClockRegister) -> u8 {
         match register {
             ClockRegister::Seconds => self.seconds,
             ClockRegister::Minutes => self.minutes,
@@ -31,6 +32,36 @@ impl Clock {
             ClockRegister::DayLower => self.days_lower,
             ClockRegister::DayUpper => self.days_upper,
         }
+    }
+
+    fn set(&mut self, register: ClockRegister, value: u8) {
+        match register {
+            ClockRegister::Seconds => self.seconds = value & 0x3f,
+            ClockRegister::Minutes => self.minutes = value & 0x3f,
+            ClockRegister::Hours => self.hours = value & 0x1f,
+            ClockRegister::DayLower => self.days_lower = value,
+            ClockRegister::DayUpper => self.days_upper = value & 0xc1,
+        }
+    }
+}
+
+struct Clock {
+    registers: ClockRegisters,
+    latched: ClockRegisters,
+    latch_ready: bool,
+}
+
+impl Clock {
+    pub fn get_register(&self, register: ClockRegister) -> u8 {
+        self.latched.get(register)
+    }
+
+    pub fn set_register(&mut self, register: ClockRegister, value: u8) {
+        self.registers.set(register, value);
+    }
+
+    pub fn latch(&mut self) {
+        self.latched = self.registers;
     }
 }
 
@@ -72,11 +103,9 @@ impl Mbc3 {
 
         let clock = match rom[0x147] {
             0x0f | 0x10 => Some(Clock {
-                seconds: 0,
-                minutes: 0,
-                hours: 0,
-                days_lower: 0,
-                days_upper: 0,
+                registers: ClockRegisters::default(),
+                latched: ClockRegisters::default(),
+                latch_ready: false,
             }),
             _ => None,
         };
@@ -112,17 +141,13 @@ impl MemoryBankController for Mbc3 {
                 let bank = if self.bank == 0 { 1 } else { self.bank } as usize;
                 self.rom[bank * 0x4000 + (address - 0x4000) as usize]
             }
-            0xa000..=0xbfff => {
-                if !self.ram_and_clock_enabled || self.ram.is_empty() {
-                    return 0xff;
+            0xa000..=0xbfff if self.ram_and_clock_enabled => match self.mapped {
+                Mapped::Ram(ram_bank) if (ram_bank as usize) < self.ram.len() => {
+                    self.ram[ram_bank as usize][(address - 0xa000) as usize]
                 }
-                match self.mapped {
-                    Mapped::Ram(ram_bank) => {
-                        self.ram[ram_bank as usize][(address - 0xa000) as usize]
-                    }
-                    Mapped::Clock(register) => self.clock.as_ref().unwrap().get_register(register),
-                }
-            }
+                Mapped::Clock(register) => self.clock.as_ref().unwrap().get_register(register),
+                _ => 0xff,
+            },
             _ => 0xff,
         }
     }
@@ -146,22 +171,27 @@ impl MemoryBankController for Mbc3 {
                 };
             }
             0x6000..=0x7fff => {
-                println!("todo: rtc latch")
+                if let Some(clock) = &mut self.clock {
+                    if value & 1 == 0 {
+                        clock.latch_ready = true;
+                    } else if clock.latch_ready {
+                        clock.latch();
+                        clock.latch_ready = false;
+                    }
+                }
             }
 
-            0xa000..=0xbfff => {
-                if !self.ram_and_clock_enabled || self.ram.is_empty() {
-                    return;
+            0xa000..=0xbfff if self.ram_and_clock_enabled => match self.mapped {
+                Mapped::Ram(ram_bank) if (ram_bank as usize) < self.ram.len() => {
+                    self.ram[ram_bank as usize][(address - 0xa000) as usize] = value;
                 }
-                match self.mapped {
-                    Mapped::Ram(ram_bank) => {
-                        self.ram[ram_bank as usize][(address - 0xa000) as usize] = value;
-                    }
-                    Mapped::Clock(_register) => {
-                        // TODO: RTC register writes
+                Mapped::Clock(register) => {
+                    if let Some(clock) = &mut self.clock {
+                        clock.set_register(register, value);
                     }
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
     }
