@@ -23,8 +23,8 @@ impl Default for Control {
     fn default() -> Self {
         Self::new(
             ControlFlags::VIDEO_ENABLE
-                & ControlFlags::TILE_ADDRESS_MODE
-                & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE,
+                | ControlFlags::TILE_ADDRESS_MODE
+                | ControlFlags::BACKGROUND_AND_WINDOW_ENABLE,
         )
     }
 }
