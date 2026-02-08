@@ -9,13 +9,13 @@ use crate::game_boy::audio::{
 impl Register {
     pub fn map(address: u16) -> Self {
         match address {
-            0xff10 => Self::Channel1(pulse_sweep::Register::Sweep),
-            0xff11 => Self::Channel1(pulse_sweep::Register::LengthTimerAndDuty),
-            0xff12 => Self::Channel1(pulse_sweep::Register::VolumeAndEnvelope),
+            0xff10 => Self::Channel1(pulse_sweep::Register::PeriodSweep),
+            0xff11 => Self::Channel1(pulse_sweep::Register::WaveformAndInitialLength),
+            0xff12 => Self::Channel1(pulse_sweep::Register::Volume),
             0xff13 => Self::Channel1(pulse_sweep::Register::PeriodLow),
             0xff14 => Self::Channel1(pulse_sweep::Register::PeriodHighAndControl),
 
-            0xff16 => Self::Channel2(pulse::Register::LengthTimerAndDuty),
+            0xff16 => Self::Channel2(pulse::Register::WaveformAndInitialLength),
             0xff17 => Self::Channel2(pulse::Register::VolumeAndEnvelope),
             0xff18 => Self::Channel2(pulse::Register::PeriodLow),
             0xff19 => Self::Channel2(pulse::Register::PeriodHighAndControl),

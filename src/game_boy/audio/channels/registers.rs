@@ -1,12 +1,13 @@
+#[derive(PartialEq, Eq)]
 pub enum EnvelopeDirection {
     Decrease,
     Increase,
 }
 
 #[derive(Copy, Clone)]
-pub struct LengthTimerAndDuty(pub u8);
-impl LengthTimerAndDuty {
-    pub fn wave_duty(&self) -> u8 {
+pub struct WaveformAndInitialLength(pub u8);
+impl WaveformAndInitialLength {
+    pub fn waveform(&self) -> u8 {
         self.0 >> 6
     }
 
@@ -67,7 +68,9 @@ impl PeriodHighAndControl {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Signed11(pub u16);
+
 impl Signed11 {
     const HIGH: u16 = 0b111_0000_0000;
     const LOW: u16 = 0b000_1111_1111;

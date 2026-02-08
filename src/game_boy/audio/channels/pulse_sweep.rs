@@ -1,7 +1,8 @@
 use crate::game_boy::audio::channels::{
     Enabled,
     registers::{
-        EnvelopeDirection, LengthTimerAndDuty, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
+        EnvelopeDirection, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
+        WaveformAndInitialLength,
     },
 };
 
@@ -14,9 +15,9 @@ const DUTY_TABLE: [[u8; 8]; 4] = [
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
-    LengthTimerAndDuty,
-    VolumeAndEnvelope,
-    Sweep,
+    WaveformAndInitialLength,
+    Volume,
+    PeriodSweep,
     PeriodLow,
     PeriodHighAndControl,
 }
@@ -24,7 +25,7 @@ pub enum Register {
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
     pub sweep: Sweep,
-    pub length_timer_and_duty: LengthTimerAndDuty,
+    pub waveform_and_initial_length: WaveformAndInitialLength,
     pub volume_and_envelope: VolumeAndEnvelope,
     pub length_enabled: bool,
     pub period: Signed11,
@@ -48,7 +49,7 @@ impl Default for PulseSweepChannel {
                 output_right: true,
             },
             sweep: Sweep(0x80),
-            length_timer_and_duty: LengthTimerAndDuty(0xbf),
+            waveform_and_initial_length: WaveformAndInitialLength(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
             period: (-1).into(),
@@ -70,7 +71,7 @@ impl PulseSweepChannel {
         *self = Self {
             enabled: Enabled::disabled(),
             sweep: Sweep(0),
-            length_timer_and_duty: LengthTimerAndDuty(0),
+            waveform_and_initial_length: WaveformAndInitialLength(0),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
             period: (0).into(),
@@ -88,9 +89,9 @@ impl PulseSweepChannel {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::LengthTimerAndDuty => self.length_timer_and_duty.0,
-            Register::VolumeAndEnvelope => self.volume_and_envelope.0,
-            Register::Sweep => self.sweep.0,
+            Register::WaveformAndInitialLength => self.waveform_and_initial_length.0,
+            Register::Volume => self.volume_and_envelope.0,
+            Register::PeriodSweep => self.sweep.0,
             Register::PeriodLow => 0xff,
             Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
         }
@@ -98,12 +99,12 @@ impl PulseSweepChannel {
 
     pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
-            Register::LengthTimerAndDuty => {
-                self.length_timer_and_duty = LengthTimerAndDuty(value);
-                self.length_counter = 64 - self.length_timer_and_duty.initial_length() as u16;
+            Register::WaveformAndInitialLength => {
+                self.waveform_and_initial_length = WaveformAndInitialLength(value);
+                self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
             }
-            Register::VolumeAndEnvelope => self.volume_and_envelope = VolumeAndEnvelope(value),
-            Register::Sweep => self.sweep.0 = value,
+            Register::Volume => self.volume_and_envelope = VolumeAndEnvelope(value),
+            Register::PeriodSweep => self.sweep.0 = value,
             Register::PeriodLow => self.period.set_low8(value),
             Register::PeriodHighAndControl => {
                 let value = PeriodHighAndControl(value);
@@ -229,7 +230,7 @@ impl PulseSweepChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        let duty = self.length_timer_and_duty.wave_duty() as usize;
+        let duty = self.waveform_and_initial_length.waveform() as usize;
         let output = DUTY_TABLE[duty][self.wave_duty_position as usize];
         output as f32 * self.current_volume as f32 / 15.0
     }
