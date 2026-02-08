@@ -1,6 +1,9 @@
 mod mbc;
 
-use mbc::{MemoryBankController, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3, no_mbc::NoMbc};
+use mbc::{
+    MemoryBankController, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3, mbc5::Mbc5,
+    mbc6::Mbc6, mbc7::Mbc7, no_mbc::NoMbc,
+};
 
 pub struct Cartridge {
     title: String,
@@ -20,7 +23,10 @@ impl Cartridge {
         }
 
         let cartridge_type = rom[0x147];
-        let has_battery = matches!(cartridge_type, 0x03 | 0x06 | 0x09 | 0x10 | 0x13);
+        let has_battery = matches!(
+            cartridge_type,
+            0x03 | 0x06 | 0x09 | 0x10 | 0x13 | 0x1b | 0x1e | 0x22 | 0xfe | 0xff
+        );
         let save = if has_battery { save_data } else { None };
 
         let mbc: Box<dyn MemoryBankController> = match cartridge_type {
@@ -28,6 +34,12 @@ impl Cartridge {
             0x01..=0x03 => Box::new(Mbc1::new(rom, save)),
             0x05 | 0x06 => Box::new(Mbc2::new(rom, save)),
             0x0f..=0x13 => Box::new(Mbc3::new(rom, save)),
+            0x19..=0x1b => Box::new(Mbc5::new(rom, save)),
+            0x1c..=0x1e => Box::new(Mbc5::new_rumble(rom, save)),
+            0x20 => Box::new(Mbc6::new(rom, save)),
+            0x22 => Box::new(Mbc7::new(rom, save)),
+            0xfe => Box::new(Huc3::new(rom, save)),
+            0xff => Box::new(Huc1::new(rom, save)),
 
             _ => panic!("nyi: mbc {:2x}", cartridge_type),
         };

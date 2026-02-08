@@ -1,0 +1,109 @@
+use crate::game_boy::cartridge::MemoryBankController;
+
+pub struct Mbc5 {
+    rom: Vec<u8>,
+    ram: Vec<[u8; 8 * 1024]>,
+    ram_enabled: bool,
+    rom_bank: u16,
+    ram_bank: u8,
+    rumble: bool,
+}
+
+impl Mbc5 {
+    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+        Self::create(rom, save_data, false)
+    }
+
+    pub fn new_rumble(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+        Self::create(rom, save_data, true)
+    }
+
+    fn create(rom: Vec<u8>, save_data: Option<Vec<u8>>, rumble: bool) -> Self {
+        let num_ram_banks = match rom[0x149] {
+            2 => 1,
+            3 => 4,
+            4 => 16,
+            5 => 8,
+            _ => 0,
+        };
+
+        let mut ram = vec![[0u8; 8 * 1024]; num_ram_banks];
+        if let Some(data) = &save_data {
+            for (bank_idx, bank) in ram.iter_mut().enumerate() {
+                let offset = bank_idx * 8 * 1024;
+                if offset < data.len() {
+                    let len = (data.len() - offset).min(bank.len());
+                    bank[..len].copy_from_slice(&data[offset..offset + len]);
+                }
+            }
+        }
+
+        Self {
+            rom,
+            ram,
+            ram_enabled: false,
+            rom_bank: 1,
+            ram_bank: 0,
+            rumble,
+        }
+    }
+}
+
+impl MemoryBankController for Mbc5 {
+    fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
+    fn ram(&self) -> Option<Vec<u8>> {
+        if self.ram.is_empty() {
+            None
+        } else {
+            Some(self.ram.iter().flatten().copied().collect())
+        }
+    }
+
+    fn read(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x3fff => self.rom[address as usize],
+            0x4000..=0x7fff => {
+                let addr = self.rom_bank as usize * 0x4000 + (address - 0x4000) as usize;
+                self.rom[addr % self.rom.len()]
+            }
+            0xa000..=0xbfff if self.ram_enabled => {
+                let bank = self.ram_bank as usize;
+                if bank < self.ram.len() {
+                    self.ram[bank][(address - 0xa000) as usize]
+                } else {
+                    0xff
+                }
+            }
+            _ => 0xff,
+        }
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match address {
+            0x0000..=0x1fff => self.ram_enabled = value & 0x0f == 0x0a,
+            0x2000..=0x2fff => {
+                self.rom_bank = (self.rom_bank & 0x100) | value as u16;
+            }
+            0x3000..=0x3fff => {
+                self.rom_bank = (self.rom_bank & 0xff) | ((value as u16 & 0x01) << 8);
+            }
+            0x4000..=0x5fff => {
+                self.ram_bank = if self.rumble {
+                    value & 0x07
+                } else {
+                    value & 0x0f
+                };
+            }
+            0xa000..=0xbfff if self.ram_enabled => {
+                let bank = self.ram_bank as usize;
+                if bank < self.ram.len() {
+                    self.ram[bank][(address - 0xa000) as usize] = value;
+                }
+            }
+            _ => {}
+        }
+    }
+}
