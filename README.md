@@ -1,9 +1,14 @@
 # MissingNo.
-MissingNo. is a Game Boy emulator and debugger in early development - only Tetris is known to be fully playable.
+MissingNo. is a Game Boy emulator and debugger written in Rust. Most games are now playable.
 
 ![Debugger screenshot](screenshot.png)
 
-## Debugger Features
+## Features
+  - Keyboard and controller support
+  - Save RAM support for battery-backed cartridges
+  - Fullscreen mode (F11)
+
+## Debugger
   - Code disassembly and breakpoints
   - View emulated hardware state
   - View video memory - tiles, tilemaps, and sprites

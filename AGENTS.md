@@ -36,3 +36,11 @@ Three layers with strict separation:
 - **Trait-based MBC dispatch**: `MemoryBankController` trait with implementations for NoMbc, MBC1, MBC2, MBC3, selected at runtime from cartridge header byte 0x147.
 - **Cycle-accurate simulation**: Timers, video, and audio tick based on instruction cycle counts; interrupts checked after each instruction.
 - **Audio pipeline**: APU ticks once per M-cycle in the step loop, generating samples at 44100 Hz into an internal buffer. The app layer drains this buffer and pushes samples through a lock-free ring buffer (rtrb) to a cpal output stream running on a separate thread.
+
+### Iced 0.14 API Notes
+
+- `window::latest()` returns `Task<Option<Id>>`; `.and_then()` unwraps the `Option`, so the closure receives `Id` directly.
+- `event::listen_with` for global keyboard/window event handling (close, F11, Escape).
+- `mouse_area` provides `on_enter`, `on_exit`, `on_move`, and `interaction` (use `mouse::Interaction::None` to hide cursor).
+- `iced::time::every` for periodic timer subscriptions.
+- Screen rendering uses `widget::shader` with a wgpu pipeline (`src/app/texture_renderer.rs`).
