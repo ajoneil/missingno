@@ -33,19 +33,19 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.2/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.2/screenshots/debugger.png</image>
       <caption>The integrated debugger showing CPU state, disassembly, and VRAM</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/sgb.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.2/screenshots/sgb.png</image>
       <caption>Playing a game with Super Game Boy colors</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/welcome.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.2/screenshots/welcome.png</image>
       <caption>The welcome screen</caption>
     </screenshot>
   </screenshots>
