@@ -9,9 +9,8 @@
     "--share=ipc",
     "--socket=wayland",
     "--socket=fallback-x11",
-    "--device=dri",
-    "--socket=pulseaudio",
-    "--device=input"
+    "--device=all",
+    "--socket=pulseaudio"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
