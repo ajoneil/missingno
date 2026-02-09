@@ -54,7 +54,11 @@ impl SpritesPane {
         }
     }
 
-    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, app::Message> {
+    pub fn content<'a>(
+        &'a self,
+        video: &'a Video,
+        palette: &Palette,
+    ) -> pane_grid::Content<'a, app::Message> {
         pane(
             checkbox_title_bar(
                 "Sprites",
@@ -66,18 +70,18 @@ impl SpritesPane {
                     self.sprite_size(video.control().sprite_size()),
                     row![
                         text::m("Palette 0"),
-                        palette3(&video.palettes().sprite0, &Palette::MONOCHROME_GREEN)
+                        palette3(&video.palettes().sprite0, palette)
                     ]
                     .spacing(m()),
                     row![
                         text::m("Palette 1"),
-                        palette3(&video.palettes().sprite1, &Palette::MONOCHROME_GREEN)
+                        palette3(&video.palettes().sprite1, palette)
                     ]
                     .spacing(m()),
                     toggler(self.on_screen_only)
                         .label("Show on-screen only")
                         .on_toggle(|on| Message::ToggleOnScreenOnly(on).into()),
-                    self.sprites(video)
+                    self.sprites(video, palette)
                 ]
                 .width(Fill)
                 .spacing(s())
@@ -107,7 +111,7 @@ impl SpritesPane {
         .into()
     }
 
-    fn sprites(&self, video: &Video) -> Element<'_, app::Message> {
+    fn sprites<'a>(&'a self, video: &'a Video, palette: &Palette) -> Element<'a, app::Message> {
         let mut sprites = (0..40)
             .map(|i| video.sprite(SpriteId(i)))
             .filter(|s| {
@@ -123,18 +127,23 @@ impl SpritesPane {
         if sprites.peek().is_none() {
             text::m("No on-screen sprites").into()
         } else {
-            Row::with_children(sprites.map(|s| self.sprite(video, s)))
+            Row::with_children(sprites.map(|s| self.sprite(video, s, palette)))
                 .spacing(l())
                 .wrap()
                 .into()
         }
     }
 
-    fn sprite(&self, video: &Video, sprite: &Sprite) -> Element<'_, app::Message> {
+    fn sprite<'a>(
+        &'a self,
+        video: &'a Video,
+        sprite: &Sprite,
+        palette: &Palette,
+    ) -> Element<'a, app::Message> {
         row![
             self.priority(sprite.attributes.priority()),
             column![
-                self.tiles(sprite, video),
+                self.tiles(sprite, video, palette),
                 self.position(&sprite.position, video.control().sprite_size())
             ]
             .spacing(xs())
@@ -144,7 +153,12 @@ impl SpritesPane {
         .into()
     }
 
-    fn tiles(&self, sprite: &Sprite, video: &Video) -> Element<'_, app::Message> {
+    fn tiles(
+        &self,
+        sprite: &Sprite,
+        video: &Video,
+        palette: &Palette,
+    ) -> Element<'_, app::Message> {
         let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);
         let flip_x = sprite.attributes.flip_x();
         let flip_y = sprite.attributes.flip_y();
@@ -154,6 +168,7 @@ impl SpritesPane {
                 video.tile_block(tile_block_id).tile(tile_id),
                 flip_x,
                 flip_y,
+                palette,
             )
             .width(48)
             .height(48)
@@ -163,6 +178,7 @@ impl SpritesPane {
                     video.tile_block(tile_block_id).tile(tile_id),
                     flip_x,
                     flip_y,
+                    palette,
                 )
                 .width(48)
                 .height(48);
@@ -173,6 +189,7 @@ impl SpritesPane {
                         .tile(TileIndex(tile_id.0 + 1)),
                     flip_x,
                     flip_y,
+                    palette,
                 )
                 .width(48)
                 .height(48);

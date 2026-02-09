@@ -16,6 +16,7 @@ use crate::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},
+    video::palette::PaletteChoice,
 };
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
@@ -35,6 +36,7 @@ mod emulator;
 mod load;
 mod recent;
 mod screen;
+pub mod settings;
 mod texture_renderer;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
@@ -62,6 +64,7 @@ struct App {
     audio_output: Option<AudioOutput>,
     save_path: Option<PathBuf>,
     recent_games: recent::RecentGames,
+    settings: settings::Settings,
     about_shown: bool,
 }
 
@@ -96,6 +99,7 @@ enum Message {
     ReleaseButton(joypad::Button),
 
     ToggleDebugger(bool),
+    SelectPalette(PaletteChoice),
     ShowAbout,
     DismissAbout,
     OpenUrl(&'static str),
@@ -115,6 +119,7 @@ enum Message {
 
 impl App {
     fn new(rom_path: Option<PathBuf>, debugger: bool) -> Self {
+        let settings = settings::Settings::load();
         let mut recent_games = recent::RecentGames::load();
 
         let (game, save_path) = match rom_path {
@@ -126,9 +131,12 @@ impl App {
                 recent_games.save();
                 let game_boy = GameBoy::new(cartridge);
                 let game = Game::Loaded(if debugger {
-                    LoadedGame::Debugger(debugger::Debugger::new(game_boy))
+                    let mut dbg = debugger::Debugger::new(game_boy);
+                    dbg.set_palette(settings.palette);
+                    LoadedGame::Debugger(dbg)
                 } else {
                     let mut emu = emulator::Emulator::new(game_boy);
+                    emu.set_palette(settings.palette);
                     emu.run();
                     LoadedGame::Emulator(emu)
                 });
@@ -146,6 +154,7 @@ impl App {
             audio_output: AudioOutput::new(),
             save_path,
             recent_games,
+            settings,
             about_shown: false,
         }
     }
@@ -236,22 +245,40 @@ impl App {
                 self.debugger_enabled = debugger_enabled;
 
                 if let Game::Loaded(game) = &mut self.game {
+                    let palette = self.settings.palette;
                     replace_with_or_abort(game, |game| match game {
                         LoadedGame::Debugger(debugger) => {
                             if debugger_enabled {
                                 LoadedGame::Debugger(debugger)
                             } else {
-                                LoadedGame::Emulator(debugger.disable_debugger())
+                                let mut emu = debugger.disable_debugger();
+                                emu.set_palette(palette);
+                                LoadedGame::Emulator(emu)
                             }
                         }
                         LoadedGame::Emulator(emulator) => {
                             if debugger_enabled {
-                                LoadedGame::Debugger(emulator.enable_debugger())
+                                let mut dbg = emulator.enable_debugger();
+                                dbg.set_palette(palette);
+                                LoadedGame::Debugger(dbg)
                             } else {
                                 LoadedGame::Emulator(emulator)
                             }
                         }
                     });
+                }
+            }
+            Message::SelectPalette(palette) => {
+                self.settings.palette = palette;
+                self.settings.save();
+                match &mut self.game {
+                    Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                        emulator.set_palette(palette);
+                    }
+                    Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                        debugger.set_palette(palette);
+                    }
+                    _ => {}
                 }
             }
             Message::ShowAbout => self.about_shown = true,

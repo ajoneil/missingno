@@ -35,7 +35,7 @@ use crate::{
         },
     },
     debugger::Debugger,
-    game_boy::video::tile_maps::TileMapId,
+    game_boy::video::{palette::PaletteChoice, tile_maps::TileMapId},
 };
 
 #[derive(Debug, Clone)]
@@ -65,6 +65,7 @@ impl Into<app::Message> for Message {
 pub struct DebuggerPanes {
     panes: pane_grid::State<PaneInstance>,
     handles: HashMap<DebuggerPane, pane_grid::Pane>,
+    palette: PaletteChoice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -140,7 +141,11 @@ impl DebuggerPanes {
         handles.insert(DebuggerPane::Breakpoints, breakpoints_handle);
         panes.resize(split, 3.0 / 4.0);
 
-        Self { panes, handles }
+        Self {
+            panes,
+            handles,
+            palette: PaletteChoice::default(),
+        }
     }
 
     fn construct_pane(pane: DebuggerPane) -> PaneInstance {
@@ -215,7 +220,17 @@ impl DebuggerPanes {
         }
     }
 
-    pub fn view(&self, debugger: &Debugger) -> Element<'_, app::Message> {
+    pub fn set_palette(&mut self, palette: PaletteChoice) {
+        self.palette = palette;
+        self.panes.iter_mut().for_each(|(_, pane)| {
+            if let PaneInstance::Screen(screen_pane) = pane {
+                screen_pane.set_palette(palette);
+            }
+        });
+    }
+
+    pub fn view<'a>(&'a self, debugger: &'a Debugger) -> Element<'a, app::Message> {
+        let pal = self.palette.palette();
         pane_grid(
             &self.panes,
             |_handle, instance, _is_maximized| match instance {
@@ -227,10 +242,12 @@ impl DebuggerPanes {
                 ),
                 PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
                 PaneInstance::Cpu(cpu) => cpu.content(debugger),
-                PaneInstance::Video(video) => video.content(debugger.game_boy().video()),
-                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().video()),
-                PaneInstance::TileMap(tile_map) => tile_map.content(debugger.game_boy().video()),
-                PaneInstance::Sprites(sprites) => sprites.content(debugger.game_boy().video()),
+                PaneInstance::Video(video) => video.content(debugger.game_boy().video(), pal),
+                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().video(), pal),
+                PaneInstance::TileMap(tile_map) => {
+                    tile_map.content(debugger.game_boy().video(), pal)
+                }
+                PaneInstance::Sprites(sprites) => sprites.content(debugger.game_boy().video(), pal),
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
             },
         )

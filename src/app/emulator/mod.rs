@@ -11,13 +11,14 @@ use crate::{
     app::{
         self,
         core::icons::{self, Icon},
+        screen::ScreenView,
     },
-    game_boy::{GameBoy, joypad::Button, video::screen::Screen},
+    game_boy::{GameBoy, joypad::Button, video::palette::PaletteChoice},
 };
 
 pub struct Emulator {
     game_boy: GameBoy,
-    screen: Screen,
+    screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
 }
@@ -39,7 +40,7 @@ impl Emulator {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
             game_boy,
-            screen: Screen::new(),
+            screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
         }
@@ -61,7 +62,7 @@ impl Emulator {
         match message {
             Message::EmulateFrame => {
                 while !self.game_boy.step() {}
-                self.screen = self.game_boy.screen().clone();
+                self.screen_view.screen = self.game_boy.screen().clone();
             }
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,
@@ -70,12 +71,16 @@ impl Emulator {
         Task::none()
     }
 
+    pub fn set_palette(&mut self, palette: PaletteChoice) {
+        self.screen_view.palette = palette;
+    }
+
     pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
             let shortest = size.width.min(size.height);
 
             container(
-                shader(&self.screen)
+                shader(&self.screen_view)
                     .width(Length::Fixed(shortest))
                     .height(Length::Fixed(shortest)),
             )

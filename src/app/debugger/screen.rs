@@ -10,12 +10,13 @@ use crate::{
             self,
             panes::{self, DebuggerPane, pane, title_bar},
         },
+        screen::ScreenView,
     },
-    game_boy::video::screen::Screen,
+    game_boy::video::{palette::PaletteChoice, screen::Screen},
 };
 
 pub struct ScreenPane {
-    screen: Screen,
+    screen_view: ScreenView,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -34,14 +35,18 @@ impl Into<app::Message> for Message {
 impl ScreenPane {
     pub fn new() -> Self {
         Self {
-            screen: Screen::new(),
+            screen_view: ScreenView::new(),
         }
     }
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Update(screen) => self.screen = screen,
+            Message::Update(screen) => self.screen_view.screen = screen,
         }
+    }
+
+    pub fn set_palette(&mut self, palette: PaletteChoice) {
+        self.screen_view.palette = palette;
     }
 
     pub fn content(&self) -> pane_grid::Content<'_, app::Message> {
@@ -51,7 +56,7 @@ impl ScreenPane {
                 let shortest = size.width.min(size.height);
 
                 container(
-                    shader(&self.screen)
+                    shader(&self.screen_view)
                         .width(Length::Fixed(shortest))
                         .height(Length::Fixed(shortest)),
                 )

@@ -9,7 +9,7 @@ use crate::{
         core::sizes::m,
         debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
     },
-    game_boy::video::{Video, ppu::Mode},
+    game_boy::video::{Video, palette::Palette, ppu::Mode},
 };
 
 use background_and_window::background_and_window;
@@ -30,7 +30,7 @@ impl VideoPane {
         Self
     }
 
-    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, video: &Video, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
             checkbox_title_bar(
                 "Video",
@@ -49,7 +49,7 @@ impl VideoPane {
                     ],
                     tile_address_mode(video.control()),
                     rule::horizontal(1),
-                    background_and_window(video),
+                    background_and_window(video, palette),
                 ]
                 .spacing(m())
                 .padding(m()),

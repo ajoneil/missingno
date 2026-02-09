@@ -10,7 +10,9 @@ use crate::{
         core::sizes::m,
         debugger::panes::{DebuggerPane, pane, title_bar},
     },
-    game_boy::video::{Video, control::Control, tile_maps::TileMapId, tiles::TileAddressMode},
+    game_boy::video::{
+        Video, control::Control, palette::Palette, tile_maps::TileMapId, tiles::TileAddressMode,
+    },
 };
 
 use super::tile_atlas::tile_map_atlas;
@@ -68,11 +70,16 @@ impl TileMapPane {
         }
     }
 
-    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, video: &Video, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
             title_bar(&self.title, DebuggerPane::TileMap(self.tile_map)),
             scrollable(
-                container(tile_map_atlas(video.tile_map(self.tile_map), video)).center_x(Fill),
+                container(tile_map_atlas(
+                    video.tile_map(self.tile_map),
+                    video,
+                    palette,
+                ))
+                .center_x(Fill),
             )
             .into(),
         )

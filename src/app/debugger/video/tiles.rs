@@ -13,7 +13,7 @@ use crate::{
             video::tile_atlas::tile_block_atlas,
         },
     },
-    game_boy::video::{Video, tiles::TileBlockId},
+    game_boy::video::{Video, palette::Palette, tiles::TileBlockId},
 };
 
 pub struct TilesPane;
@@ -23,14 +23,14 @@ impl TilesPane {
         Self
     }
 
-    pub fn content(&self, video: &Video) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, video: &Video, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
             title_bar("Tiles", DebuggerPane::Tiles),
             scrollable(
                 row![
-                    tile_block(video, TileBlockId(0)),
-                    tile_block(video, TileBlockId(1)),
-                    tile_block(video, TileBlockId(2))
+                    tile_block(video, TileBlockId(0), palette),
+                    tile_block(video, TileBlockId(1), palette),
+                    tile_block(video, TileBlockId(2), palette)
                 ]
                 .spacing(m())
                 .padding(m())
@@ -42,10 +42,10 @@ impl TilesPane {
     }
 }
 
-fn tile_block(video: &Video, block: TileBlockId) -> Element<'static, Message> {
+fn tile_block(video: &Video, block: TileBlockId, palette: &Palette) -> Element<'static, Message> {
     column![
         text(block.to_string()),
-        tile_block_atlas(video.tile_block(block))
+        tile_block_atlas(video.tile_block(block), palette)
     ]
     .into()
 }

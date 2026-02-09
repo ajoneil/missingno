@@ -12,7 +12,7 @@ use crate::{
     game_boy::video::{Video, palette::Palette},
 };
 
-pub fn background_and_window(video: &Video) -> Element<'static, Message> {
+pub fn background_and_window(video: &Video, palette: &Palette) -> Element<'static, Message> {
     column![
         row![
             checkbox(video.control().background_and_window_enabled()).label("Background & Window"),
@@ -21,7 +21,7 @@ pub fn background_and_window(video: &Video) -> Element<'static, Message> {
         .spacing(m()),
         row![
             text("Palette"),
-            palette4(&video.palettes().background, &Palette::MONOCHROME_GREEN)
+            palette4(&video.palettes().background, palette)
         ]
         .spacing(m()),
         tile_map_choice("Background Tile Map", video.control().background_tile_map()),

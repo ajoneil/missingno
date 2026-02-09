@@ -9,14 +9,7 @@ pub fn tile_flip(
     tile: Tile,
     flip_x: bool,
     flip_y: bool,
-) -> iced::widget::Shader<Message, TextureRenderer> {
-    tile_with_flip(tile, flip_x, flip_y)
-}
-
-fn tile_with_flip(
-    tile: Tile,
-    flip_x: bool,
-    flip_y: bool,
+    palette: &Palette,
 ) -> iced::widget::Shader<Message, TextureRenderer> {
     let mut pixels = Vec::with_capacity(8 * 8 * 4);
 
@@ -25,7 +18,7 @@ fn tile_with_flip(
             let read_x = if flip_x { 7 - x } else { x };
             let read_y = if flip_y { 7 - y } else { y };
 
-            let color = Palette::MONOCHROME_GREEN.color(tile.pixel(read_x, read_y));
+            let color = palette.color(tile.pixel(read_x, read_y));
             pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
         }
     }

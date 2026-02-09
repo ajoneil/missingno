@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Renders a grid of tiles as a single texture atlas
-pub fn tile_block_atlas(block: &TileBlock) -> Element<'static, Message> {
+pub fn tile_block_atlas(block: &TileBlock, palette: &Palette) -> Element<'static, Message> {
     // 16 tiles wide × 8 tiles tall = 128 tiles total
     // Each tile is 8×8 pixels
     const ATLAS_WIDTH: u32 = 16 * 8; // 128 pixels
@@ -29,7 +29,7 @@ pub fn tile_block_atlas(block: &TileBlock) -> Element<'static, Message> {
 
                 // For each pixel in this tile's row
                 for pixel_x in 0..8 {
-                    let color = Palette::MONOCHROME_GREEN.color(tile.pixel(pixel_x, pixel_y));
+                    let color = palette.color(tile.pixel(pixel_x, pixel_y));
                     pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
                 }
             }
@@ -47,6 +47,7 @@ pub fn tile_block_atlas(block: &TileBlock) -> Element<'static, Message> {
 pub fn tile_map_atlas(
     tile_map: &crate::game_boy::video::tile_maps::TileMap,
     video: &crate::game_boy::video::Video,
+    palette: &Palette,
 ) -> Element<'static, Message> {
     // 32 tiles wide × 32 tiles tall
     // Each tile is 8×8 pixels
@@ -69,7 +70,7 @@ pub fn tile_map_atlas(
 
                 // For each pixel in this tile's row
                 for pixel_x in 0..8 {
-                    let color = Palette::MONOCHROME_GREEN.color(tile.pixel(pixel_x, pixel_y));
+                    let color = palette.color(tile.pixel(pixel_x, pixel_y));
                     pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
                 }
             }

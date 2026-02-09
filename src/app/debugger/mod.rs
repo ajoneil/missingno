@@ -4,7 +4,7 @@ use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
     app::{self, core::sizes::m, emulator::Emulator},
-    game_boy::{GameBoy, joypad::Button},
+    game_boy::{GameBoy, joypad::Button, video::palette::PaletteChoice},
 };
 use panes::DebuggerPanes;
 
@@ -100,6 +100,10 @@ impl Debugger {
         };
 
         task.unwrap_or(Task::none())
+    }
+
+    pub fn set_palette(&mut self, palette: PaletteChoice) {
+        self.panes.set_palette(palette);
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {

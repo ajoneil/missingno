@@ -7,18 +7,22 @@ use iced::{
 };
 use iced_aw::DropDown;
 
-use crate::app::{
-    self, App, Game, LoadedGame,
-    core::{
-        buttons,
-        sizes::{m, s, xl},
-        text,
+use crate::{
+    app::{
+        self, App, Game, LoadedGame,
+        core::{
+            buttons,
+            sizes::{m, s, xl},
+            text,
+        },
+        debugger::{
+            self,
+            panes::{self, DebuggerPane},
+        },
+        load,
+        screen::palette_swatch,
     },
-    debugger::{
-        self,
-        panes::{self, DebuggerPane},
-    },
-    load,
+    game_boy::video::palette::PaletteChoice,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +30,9 @@ pub enum Message {
     ShowPaneDropdown,
     DismissPaneDropdown,
     ShowPane(DebuggerPane),
+    ShowPaletteDropdown,
+    DismissPaletteDropdown,
+    SelectPalette(PaletteChoice),
 }
 
 impl Into<app::Message> for Message {
@@ -36,12 +43,14 @@ impl Into<app::Message> for Message {
 
 pub struct ActionBar {
     pane_dropdown_shown: bool,
+    palette_dropdown_shown: bool,
 }
 
 impl ActionBar {
     pub fn new() -> Self {
         Self {
             pane_dropdown_shown: false,
+            palette_dropdown_shown: false,
         }
     }
 
@@ -66,6 +75,12 @@ impl ActionBar {
             Message::ShowPane(pane) => {
                 self.pane_dropdown_shown = false;
                 return Task::done(panes::Message::ShowPane(pane).into());
+            }
+            Message::ShowPaletteDropdown => self.palette_dropdown_shown = true,
+            Message::DismissPaletteDropdown => self.palette_dropdown_shown = false,
+            Message::SelectPalette(palette) => {
+                self.palette_dropdown_shown = false;
+                return Task::done(app::Message::SelectPalette(palette));
             }
         }
 
@@ -97,6 +112,25 @@ impl ActionBar {
         .into()
     }
 
+    fn palette_selector(&self, current: PaletteChoice) -> Element<'_, app::Message> {
+        DropDown::new(
+            buttons::standard(palette_swatch(current.palette()))
+                .on_press(Message::ShowPaletteDropdown.into()),
+            container(Column::with_children(PaletteChoice::ALL.iter().map(
+                |&choice| {
+                    buttons::text(palette_swatch(choice.palette()))
+                        .on_press(Message::SelectPalette(choice).into())
+                        .into()
+                },
+            )))
+            .style(container::bordered_box),
+            self.palette_dropdown_shown,
+        )
+        .width(Fill)
+        .on_dismiss(Message::DismissPaletteDropdown.into())
+        .into()
+    }
+
     fn settings(&self, app: &App) -> Element<'_, app::Message> {
         let row = match &app.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
@@ -106,15 +140,16 @@ impl ActionBar {
         };
 
         container(
-            row.push(
-                toggler(app.debugger_enabled)
-                    .label("Debugger")
-                    .on_toggle(|enable| app::Message::ToggleDebugger(enable))
-                    .size(m()),
-            )
-            .push(buttons::standard("About").on_press(app::Message::ShowAbout))
-            .spacing(m())
-            .align_y(Center),
+            row.push(self.palette_selector(app.settings.palette))
+                .push(
+                    toggler(app.debugger_enabled)
+                        .label("Debugger")
+                        .on_toggle(|enable| app::Message::ToggleDebugger(enable))
+                        .size(m()),
+                )
+                .push(buttons::standard("About").on_press(app::Message::ShowAbout))
+                .spacing(m())
+                .align_y(Center),
         )
         .align_right(Fill)
         .align_y(Center)

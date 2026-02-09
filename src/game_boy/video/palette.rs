@@ -1,4 +1,7 @@
+use std::fmt;
+
 use rgb::RGB8;
+use serde::{Deserialize, Serialize};
 
 pub struct Palette {
     colors: [RGB8; 4],
@@ -17,8 +20,56 @@ impl Palette {
         ],
     };
 
+    pub const POCKET: Self = Self {
+        colors: [
+            RGB8::new(0xc4, 0xcf, 0xa1),
+            RGB8::new(0x8b, 0x95, 0x6d),
+            RGB8::new(0x4d, 0x53, 0x3c),
+            RGB8::new(0x1b, 0x1b, 0x1b),
+        ],
+    };
+
+    pub const CLASSIC: Self = Self {
+        colors: [
+            RGB8::new(0xff, 0xff, 0xff),
+            RGB8::new(0xaa, 0xaa, 0xaa),
+            RGB8::new(0x55, 0x55, 0x55),
+            RGB8::new(0x00, 0x00, 0x00),
+        ],
+    };
+
     pub fn color(&self, index: PaletteIndex) -> RGB8 {
         self.colors[index.0 as usize]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+pub enum PaletteChoice {
+    #[default]
+    Green,
+    Pocket,
+    Classic,
+}
+
+impl PaletteChoice {
+    pub const ALL: &[Self] = &[Self::Green, Self::Pocket, Self::Classic];
+
+    pub fn palette(&self) -> &Palette {
+        match self {
+            Self::Green => &Palette::MONOCHROME_GREEN,
+            Self::Pocket => &Palette::POCKET,
+            Self::Classic => &Palette::CLASSIC,
+        }
+    }
+}
+
+impl fmt::Display for PaletteChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Green => write!(f, "Original"),
+            Self::Pocket => write!(f, "Pocket"),
+            Self::Classic => write!(f, "Greyscale"),
+        }
     }
 }
 
