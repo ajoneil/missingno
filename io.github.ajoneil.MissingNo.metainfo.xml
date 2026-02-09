@@ -33,8 +33,16 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/gameplay.png</image>
+      <caption>Playing a Game Boy game</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/debugger.png</image>
       <caption>The integrated debugger showing CPU state, disassembly, and VRAM</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/main/screenshots/welcome.png</image>
+      <caption>The welcome screen</caption>
     </screenshot>
   </screenshots>
 

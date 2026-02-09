@@ -1,7 +1,7 @@
 # MissingNo.
 MissingNo. is a Game Boy emulator and debugger written in Rust.
 
-![Debugger screenshot](screenshot.png)
+![Debugger screenshot](screenshots/debugger.png)
 
 ## Features
   - Keyboard and controller support
