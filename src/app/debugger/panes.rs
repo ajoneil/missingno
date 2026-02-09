@@ -35,7 +35,10 @@ use crate::{
         },
     },
     debugger::Debugger,
-    game_boy::video::{palette::PaletteChoice, tile_maps::TileMapId},
+    game_boy::video::{
+        palette::{Palette, PaletteChoice},
+        tile_maps::TileMapId,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -230,7 +233,11 @@ impl DebuggerPanes {
     }
 
     pub fn view<'a>(&'a self, debugger: &'a Debugger) -> Element<'a, app::Message> {
-        let pal = self.palette.palette();
+        let pal = if debugger.game_boy().sgb().is_some() {
+            &Palette::CLASSIC
+        } else {
+            self.palette.palette()
+        };
         pane_grid(
             &self.panes,
             |_handle, instance, _is_maximized| match instance {
