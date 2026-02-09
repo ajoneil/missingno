@@ -1,6 +1,6 @@
 [package]
 name = "missingno"
-version = "0.0.1"
+version = "26.2.0"
 authors = ["Andrew O'Neil <andy@andyofniall.net>"]
 edition = "2024"
 license = "MIT"

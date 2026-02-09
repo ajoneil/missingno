@@ -344,7 +344,10 @@ impl App {
                                             .height(80)
                                             .style(|_, _| svg::Style { color: None }),
                                         text::xl("MissingNo."),
-                                        iced_text(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                                        iced_text(format!(
+                                            "Version {}",
+                                            env!("CARGO_PKG_VERSION").trim_end_matches(".0")
+                                        )),
                                         iced_text("A Game Boy emulator and debugger"),
                                         iced_text("by Andrew O'Neil"),
                                         mouse_area(
