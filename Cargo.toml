@@ -32,6 +32,6 @@ rgb = "0.8.52"
 gilrs = "0.11"
 smol = "2"
 serde = { version = "1", features = ["derive"] }
-ron = "0.9"
+ron = "0.12"
 dirs = "6"
 open = "5"
