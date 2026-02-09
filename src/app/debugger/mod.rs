@@ -66,22 +66,31 @@ impl Debugger {
         &self.panes
     }
 
+    fn screen_update_task(
+        &self,
+        screen: Option<crate::game_boy::video::screen::Screen>,
+    ) -> Option<Task<app::Message>> {
+        let screen = screen?;
+        let sgb_data = self.debugger.game_boy().sgb().map(|sgb| sgb.render_data());
+        Some(Task::done(screen::Message::Update(screen, sgb_data).into()))
+    }
+
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         let task = match message {
             Message::Step => {
                 let screen = self.debugger.step();
-                screen.map(|s| Task::done(screen::Message::Update(s).into()))
+                self.screen_update_task(screen)
             }
             Message::StepOver => {
                 let screen = self.debugger.step_over();
-                screen.map(|s| Task::done(screen::Message::Update(s).into()))
+                self.screen_update_task(screen)
             }
             Message::StepFrame => {
                 let screen = self.debugger.step_frame();
                 if screen.is_none() {
                     self.running = false;
                 }
-                screen.map(|s| Task::done(screen::Message::Update(s).into()))
+                self.screen_update_task(screen)
             }
 
             Message::SetBreakpoint(address) => {

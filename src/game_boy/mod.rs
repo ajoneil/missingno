@@ -13,6 +13,7 @@ pub mod interrupts;
 pub mod joypad;
 pub mod memory;
 pub mod serial_transfer;
+pub mod sgb;
 pub mod timers;
 pub mod video;
 
@@ -28,6 +29,7 @@ pub struct MemoryMapped {
     serial: serial_transfer::Registers,
     timers: timers::Timers,
     dma_transfer_cycles: Option<Cycles>,
+    sgb: Option<sgb::Sgb>,
 }
 
 pub struct GameBoy {
@@ -39,6 +41,11 @@ pub struct GameBoy {
 impl GameBoy {
     pub fn new(cartridge: Cartridge) -> GameBoy {
         let cpu = Cpu::new(cartridge.header_checksum());
+        let sgb = if cartridge.supports_sgb() {
+            Some(sgb::Sgb::new())
+        } else {
+            None
+        };
 
         GameBoy {
             cpu,
@@ -53,6 +60,7 @@ impl GameBoy {
                 serial: serial_transfer::Registers::new(),
                 timers: timers::Timers::new(),
                 dma_transfer_cycles: None,
+                sgb,
             },
         }
     }
@@ -68,6 +76,11 @@ impl GameBoy {
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
         self.mapped.dma_transfer_cycles = None;
+        self.mapped.sgb = if self.mapped.cartridge.supports_sgb() {
+            Some(sgb::Sgb::new())
+        } else {
+            None
+        };
     }
 
     pub fn memory_mapped(&self) -> &MemoryMapped {
@@ -108,5 +121,9 @@ impl GameBoy {
 
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.mapped.interrupts
+    }
+
+    pub fn sgb(&self) -> Option<&sgb::Sgb> {
+        self.mapped.sgb.as_ref()
     }
 }

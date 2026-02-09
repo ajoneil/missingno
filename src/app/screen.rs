@@ -1,9 +1,12 @@
 use iced::widget::shader;
 use rgb::RGB8;
 
-use crate::game_boy::video::{
-    palette::{Palette, PaletteChoice, PaletteIndex},
-    screen::{self, Screen},
+use crate::game_boy::{
+    sgb::SgbRenderData,
+    video::{
+        palette::{Palette, PaletteChoice, PaletteIndex},
+        screen::{self, Screen},
+    },
 };
 
 use super::texture_renderer::TextureRenderer;
@@ -11,6 +14,7 @@ use super::texture_renderer::TextureRenderer;
 pub struct ScreenView {
     pub screen: Screen,
     pub palette: PaletteChoice,
+    pub sgb_render_data: Option<SgbRenderData>,
 }
 
 impl ScreenView {
@@ -18,6 +22,7 @@ impl ScreenView {
         Self {
             screen: Screen::new(),
             palette: PaletteChoice::default(),
+            sgb_render_data: None,
         }
     }
 }
@@ -32,7 +37,11 @@ impl<Message> shader::Program<Message> for ScreenView {
         cursor: iced::mouse::Cursor,
         bounds: iced::Rectangle,
     ) -> Self::Primitive {
-        let pixels = screen_to_pixels(&self.screen, self.palette.palette());
+        let pixels = screen_to_pixels(
+            &self.screen,
+            self.palette.palette(),
+            self.sgb_render_data.as_ref(),
+        );
         let renderer = TextureRenderer::with_pixels(
             screen::PIXELS_PER_LINE as u32,
             screen::NUM_SCANLINES as u32,
@@ -43,13 +52,33 @@ impl<Message> shader::Program<Message> for ScreenView {
     }
 }
 
-pub fn screen_to_pixels(screen: &Screen, palette: &Palette) -> Vec<u8> {
+pub fn screen_to_pixels(
+    screen: &Screen,
+    palette: &Palette,
+    sgb: Option<&SgbRenderData>,
+) -> Vec<u8> {
+    use crate::game_boy::sgb::MaskMode;
+
     let mut pixels =
         Vec::with_capacity(screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4);
 
     for y in 0..screen::NUM_SCANLINES {
         for x in 0..screen::PIXELS_PER_LINE {
-            let color = palette.color(screen.pixel(x, y));
+            let palette_index = screen.pixel(x, y);
+            let color = if let Some(sgb_data) = sgb {
+                match sgb_data.mask_mode {
+                    MaskMode::Black => RGB8::new(0, 0, 0),
+                    MaskMode::BackdropColor => sgb_data.palettes[0].colors[0].to_rgb8(),
+                    MaskMode::Disabled | MaskMode::Freeze => {
+                        let cell_x = x as usize / 8;
+                        let cell_y = y as usize / 8;
+                        let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
+                        sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
+                    }
+                }
+            } else {
+                palette.color(palette_index)
+            };
             pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
         }
     }

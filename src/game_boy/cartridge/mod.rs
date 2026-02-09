@@ -8,6 +8,7 @@ use mbc::{
 pub struct Cartridge {
     title: String,
     has_battery: bool,
+    sgb_flag: bool,
     mbc: Box<dyn MemoryBankController>,
 }
 
@@ -22,6 +23,7 @@ impl Cartridge {
             title.push(*character as char)
         }
 
+        let sgb_flag = rom[0x146] == 0x03;
         let cartridge_type = rom[0x147];
         let has_battery = matches!(
             cartridge_type,
@@ -47,6 +49,7 @@ impl Cartridge {
         Cartridge {
             title,
             has_battery,
+            sgb_flag,
             mbc,
         }
     }
@@ -57,6 +60,10 @@ impl Cartridge {
 
     pub fn has_battery(&self) -> bool {
         self.has_battery
+    }
+
+    pub fn supports_sgb(&self) -> bool {
+        self.sgb_flag
     }
 
     pub fn ram(&self) -> Option<Vec<u8>> {

@@ -64,6 +64,9 @@ impl GameBoy {
                 self.mapped.interrupts.request(Interrupt::VideoStatus);
             }
             if let Some(screen) = video_result.screen {
+                if let Some(sgb) = &mut self.mapped.sgb {
+                    sgb.update_screen(&screen);
+                }
                 self.screen = screen;
                 new_screen = true;
             }

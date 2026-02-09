@@ -440,6 +440,19 @@ impl App {
         }
     }
 
+    pub fn sgb_active(&self) -> bool {
+        match &self.game {
+            Game::Loaded(game) => {
+                let gb = match game {
+                    LoadedGame::Debugger(debugger) => debugger.game_boy(),
+                    LoadedGame::Emulator(emulator) => emulator.game_boy(),
+                };
+                gb.sgb().is_some()
+            }
+            _ => false,
+        }
+    }
+
     fn run(&mut self) {
         match &mut self.game {
             Game::Loaded(game) => match game {

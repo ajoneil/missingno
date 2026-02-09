@@ -13,7 +13,7 @@ use crate::{
         core::icons::{self, Icon},
         screen::ScreenView,
     },
-    game_boy::{GameBoy, joypad::Button, video::palette::PaletteChoice},
+    game_boy::{GameBoy, joypad::Button, sgb::MaskMode, video::palette::PaletteChoice},
 };
 
 pub struct Emulator {
@@ -62,7 +62,15 @@ impl Emulator {
         match message {
             Message::EmulateFrame => {
                 while !self.game_boy.step() {}
-                self.screen_view.screen = self.game_boy.screen().clone();
+                let freeze = self
+                    .game_boy
+                    .sgb()
+                    .map(|sgb| sgb.mask_mode == MaskMode::Freeze)
+                    .unwrap_or(false);
+                if !freeze {
+                    self.screen_view.screen = *self.game_boy.screen();
+                }
+                self.screen_view.sgb_render_data = self.game_boy.sgb().map(|sgb| sgb.render_data());
             }
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,

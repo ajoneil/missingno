@@ -103,7 +103,19 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
             MappedAddress::VideoRam(address) => self.video.read_memory(address),
-            MappedAddress::JoypadRegister => self.joypad.read_register(),
+            MappedAddress::JoypadRegister => {
+                let mut value = self.joypad.read_register();
+                if let Some(sgb) = &self.sgb {
+                    if sgb.player_count > 1 {
+                        let p14_selected = value & 0x10 == 0;
+                        let p15_selected = value & 0x20 == 0;
+                        if !p14_selected && !p15_selected {
+                            value = (value & 0xF0) | (0x0F - sgb.current_player);
+                        }
+                    }
+                }
+                value
+            }
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data,
                 serial_transfer::Register::Control => self.serial.control.bits(),
@@ -138,7 +150,12 @@ impl MemoryMapped {
             MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
             MappedAddress::HighRam(address) => self.ram.high_ram[address as usize] = value,
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
-            MappedAddress::JoypadRegister => self.joypad.write_register(value),
+            MappedAddress::JoypadRegister => {
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.write_joypad(value);
+                }
+                self.joypad.write_register(value);
+            }
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data = value,
                 serial_transfer::Register::Control => {

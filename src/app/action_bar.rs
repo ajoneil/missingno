@@ -139,17 +139,22 @@ impl ActionBar {
             _ => row![],
         };
 
-        container(
+        let row = if app.sgb_active() {
+            row
+        } else {
             row.push(self.palette_selector(app.settings.palette))
-                .push(
-                    toggler(app.debugger_enabled)
-                        .label("Debugger")
-                        .on_toggle(|enable| app::Message::ToggleDebugger(enable))
-                        .size(m()),
-                )
-                .push(buttons::standard("About").on_press(app::Message::ShowAbout))
-                .spacing(m())
-                .align_y(Center),
+        };
+
+        container(
+            row.push(
+                toggler(app.debugger_enabled)
+                    .label("Debugger")
+                    .on_toggle(|enable| app::Message::ToggleDebugger(enable))
+                    .size(m()),
+            )
+            .push(buttons::standard("About").on_press(app::Message::ShowAbout))
+            .spacing(m())
+            .align_y(Center),
         )
         .align_right(Fill)
         .align_y(Center)
