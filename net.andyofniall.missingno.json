@@ -1,5 +1,5 @@
 {
-  "app-id": "net.andyofniall.MissingNo",
+  "app-id": "net.andyofniall.missingno",
   "runtime": "org.freedesktop.Platform",
   "runtime-version": "25.08",
   "sdk": "org.freedesktop.Sdk",
@@ -27,9 +27,9 @@
         "cargo --offline fetch --manifest-path Cargo.toml --verbose",
         "cargo --offline build --release --verbose",
         "install -Dm755 target/release/missingno /app/bin/missingno",
-        "install -Dm644 net.andyofniall.MissingNo.desktop /app/share/applications/net.andyofniall.MissingNo.desktop",
-        "install -Dm644 net.andyofniall.MissingNo.metainfo.xml /app/share/metainfo/net.andyofniall.MissingNo.metainfo.xml",
-        "install -Dm644 net.andyofniall.MissingNo.svg /app/share/icons/hicolor/scalable/apps/net.andyofniall.MissingNo.svg"
+        "install -Dm644 net.andyofniall.missingno.desktop /app/share/applications/net.andyofniall.missingno.desktop",
+        "install -Dm644 net.andyofniall.missingno.metainfo.xml /app/share/metainfo/net.andyofniall.missingno.metainfo.xml",
+        "install -Dm644 net.andyofniall.missingno.svg /app/share/icons/hicolor/scalable/apps/net.andyofniall.missingno.svg"
       ],
       "sources": [
         {

@@ -2,7 +2,7 @@
 Name=MissingNo.
 Comment=Game Boy emulator and debugger
 Exec=missingno %f
-Icon=net.andyofniall.MissingNo
+Icon=net.andyofniall.missingno
 Terminal=false
 Type=Application
 Categories=Game;Emulator;
