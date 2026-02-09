@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.ajoneil.MissingNo</id>
+  <id>net.andyofniall.MissingNo</id>
 
   <name>MissingNo.</name>
   <summary>Game Boy emulator and debugger</summary>
@@ -8,7 +8,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
 
-  <developer id="io.github.ajoneil">
+  <developer id="net.andyofniall">
     <name>Andrew O'Neil</name>
   </developer>
 
@@ -25,7 +25,7 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">io.github.ajoneil.MissingNo.desktop</launchable>
+  <launchable type="desktop-id">net.andyofniall.MissingNo.desktop</launchable>
 
   <url type="homepage">https://github.com/ajoneil/missingno</url>
   <url type="bugtracker">https://github.com/ajoneil/missingno/issues</url>
