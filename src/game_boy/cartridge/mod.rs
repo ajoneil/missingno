@@ -12,23 +12,32 @@ pub struct Cartridge {
     mbc: Mbc,
 }
 
+fn parse_title(rom: &[u8]) -> String {
+    let mut title = String::new();
+    for character in rom[0x134..0x144].iter() {
+        if *character == 0u8 {
+            break;
+        }
+        title.push(*character as char)
+    }
+    title
+}
+
+fn parse_header(rom: &[u8]) -> (String, bool, bool) {
+    let title = parse_title(rom);
+    let sgb_flag = rom[0x146] == 0x03;
+    let cartridge_type = rom[0x147];
+    let has_battery = matches!(
+        cartridge_type,
+        0x03 | 0x06 | 0x09 | 0x10 | 0x13 | 0x1b | 0x1e | 0x22 | 0xfe | 0xff
+    );
+    (title, sgb_flag, has_battery)
+}
+
 impl Cartridge {
     pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Cartridge {
-        let mut title = String::new();
-        for character in rom[0x134..0x144].iter() {
-            if *character == 0u8 {
-                break;
-            }
-
-            title.push(*character as char)
-        }
-
-        let sgb_flag = rom[0x146] == 0x03;
+        let (title, sgb_flag, has_battery) = parse_header(&rom);
         let cartridge_type = rom[0x147];
-        let has_battery = matches!(
-            cartridge_type,
-            0x03 | 0x06 | 0x09 | 0x10 | 0x13 | 0x1b | 0x1e | 0x22 | 0xfe | 0xff
-        );
         let save = if has_battery { save_data } else { None };
 
         let mbc = match cartridge_type {
@@ -80,11 +89,30 @@ impl Cartridge {
         (hi << 8) | lo
     }
 
+    pub fn rom(&self) -> &[u8] {
+        self.mbc.rom()
+    }
+
     pub fn read(&self, address: u16) -> u8 {
         self.mbc.read(address)
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
         self.mbc.write(address, value);
+    }
+
+    pub(crate) fn save_mbc_state(&self) -> super::save_state::MbcState {
+        self.mbc.save_state()
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, mbc_state: super::save_state::MbcState) -> Self {
+        let (title, sgb_flag, has_battery) = parse_header(&rom);
+        let mbc = Mbc::from_state(rom, mbc_state);
+        Cartridge {
+            title,
+            has_battery,
+            sgb_flag,
+            mbc,
+        }
     }
 }

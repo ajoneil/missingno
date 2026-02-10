@@ -27,15 +27,18 @@ const M_CYCLES_PER_SECOND: f32 = 1_048_576.0;
 const M_CYCLES_PER_SAMPLE: f32 = M_CYCLES_PER_SECOND / SAMPLE_RATE;
 const FRAME_SEQUENCER_PERIOD: u16 = 2048; // M-cycles per frame sequencer tick (8192 T-cycles / 4)
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct Audio {
-    enabled: bool,
-    channels: Channels,
-    volume_left: Volume,
-    volume_right: Volume,
+    pub enabled: bool,
+    pub channels: Channels,
+    pub volume_left: Volume,
+    pub volume_right: Volume,
 
-    frame_sequencer_counter: u16,
-    frame_sequencer_step: u8,
+    pub frame_sequencer_counter: u16,
+    pub frame_sequencer_step: u8,
+    #[nserde(skip)]
     sample_counter: f32,
+    #[nserde(skip)]
     sample_buffer: Vec<(f32, f32)>,
 }
 

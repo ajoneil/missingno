@@ -1,4 +1,5 @@
 use crate::game_boy::cartridge::MemoryBankController;
+use crate::game_boy::save_state::Base64Bytes;
 
 enum EepromState {
     Idle,
@@ -227,6 +228,45 @@ impl Mbc7 {
 
     fn ram_accessible(&self) -> bool {
         self.ram_enabled_1 && self.ram_enabled_2
+    }
+
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
+        crate::game_boy::save_state::MbcState::Mbc7 {
+            eeprom_data: Base64Bytes(self.eeprom.to_vec()),
+            eeprom_write_enabled: self.eeprom.write_enabled,
+            ram_enabled_1: self.ram_enabled_1,
+            ram_enabled_2: self.ram_enabled_2,
+            rom_bank: self.rom_bank,
+            accel_x: self.accel_x,
+            accel_y: self.accel_y,
+        }
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+        let crate::game_boy::save_state::MbcState::Mbc7 {
+            eeprom_data,
+            eeprom_write_enabled,
+            ram_enabled_1,
+            ram_enabled_2,
+            rom_bank,
+            accel_x,
+            accel_y,
+        } = state
+        else {
+            unreachable!();
+        };
+        let mut eeprom = Eeprom::new(Some(&eeprom_data.0));
+        eeprom.write_enabled = eeprom_write_enabled;
+        Self {
+            rom,
+            eeprom,
+            ram_enabled_1,
+            ram_enabled_2,
+            rom_bank,
+            accel_x,
+            accel_y,
+            latch_state: LatchState::Idle,
+        }
     }
 }
 

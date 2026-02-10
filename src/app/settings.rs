@@ -1,10 +1,10 @@
 use std::{fs, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
+use nanoserde::{DeRon, SerRon};
 
 use crate::game_boy::video::palette::PaletteChoice;
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(SerRon, DeRon, Default)]
 pub struct Settings {
     pub palette: PaletteChoice,
 }
@@ -13,7 +13,7 @@ impl Settings {
     pub fn load() -> Self {
         settings_path()
             .and_then(|path| fs::read_to_string(path).ok())
-            .and_then(|data| ron::from_str::<Settings>(&data).ok())
+            .and_then(|data| Self::deserialize_ron(&data).ok())
             .unwrap_or_default()
     }
 
@@ -24,7 +24,7 @@ impl Settings {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let _ = ron::to_string(self).ok().map(|data| fs::write(path, data));
+        let _ = fs::write(path, self.serialize_ron());
     }
 }
 

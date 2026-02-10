@@ -1,15 +1,14 @@
-use std::collections::HashSet;
+use nanoserde::{DeRon, SerRon};
 
-use serde::{Deserialize, Serialize};
-
+#[derive(Clone, SerRon, DeRon)]
 pub struct Joypad {
     read_buttons: bool,
     read_dpad: bool,
 
-    pressed_buttons: HashSet<Button>,
+    pressed_buttons: Vec<Button>,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, SerRon, DeRon)]
 pub enum Button {
     Start,
     Select,
@@ -18,7 +17,7 @@ pub enum Button {
     DirectionalPad(DirectionalPad),
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, SerRon, DeRon)]
 pub enum DirectionalPad {
     Up,
     Down,
@@ -40,7 +39,7 @@ impl Joypad {
         Self {
             read_buttons: false,
             read_dpad: false,
-            pressed_buttons: HashSet::new(),
+            pressed_buttons: Vec::new(),
         }
     }
 
@@ -103,10 +102,12 @@ impl Joypad {
     }
 
     pub fn press_button(&mut self, button: Button) {
-        self.pressed_buttons.insert(button);
+        if !self.pressed_buttons.contains(&button) {
+            self.pressed_buttons.push(button);
+        }
     }
 
     pub fn release_button(&mut self, button: Button) {
-        self.pressed_buttons.remove(&button);
+        self.pressed_buttons.retain(|b| b != &button);
     }
 }

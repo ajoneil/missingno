@@ -1,4 +1,5 @@
 use crate::game_boy::cartridge::MemoryBankController;
+use crate::game_boy::save_state::Base64Bytes;
 
 enum Ram {
     None,
@@ -100,6 +101,60 @@ impl Mbc1 {
             (self.bank & 0x1f).max(1)
         } else {
             ((self.ram_bank << 5) | (self.bank & 0x1f)).max(1)
+        }
+    }
+
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
+        crate::game_boy::save_state::MbcState::Mbc1 {
+            ram: self.ram.to_vec().map(Base64Bytes),
+            advanced: self.ram.is_advanced(),
+            ram_enabled: self.ram_enabled,
+            bank: self.bank,
+            ram_bank: self.ram_bank,
+        }
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+        let crate::game_boy::save_state::MbcState::Mbc1 {
+            ram: ram_data,
+            advanced,
+            ram_enabled,
+            bank,
+            ram_bank,
+        } = state
+        else {
+            unreachable!();
+        };
+        let ram = match &ram_data {
+            None => Ram::None,
+            Some(data) if data.len() <= 8 * 1024 => {
+                let mut arr = [0u8; 8 * 1024];
+                let len = data.len().min(arr.len());
+                arr[..len].copy_from_slice(&data[..len]);
+                Ram::Unbanked { data: arr }
+            }
+            Some(data) => {
+                let mut banks = [[0u8; 8 * 1024]; 4];
+                for (i, bank) in banks.iter_mut().enumerate() {
+                    let offset = i * 8 * 1024;
+                    if offset < data.len() {
+                        let len = (data.len() - offset).min(bank.len());
+                        bank[..len].copy_from_slice(&data[offset..offset + len]);
+                    }
+                }
+                if advanced {
+                    Ram::AdvancedBanked { data: banks }
+                } else {
+                    Ram::SimpleBanked { data: banks }
+                }
+            }
+        };
+        Self {
+            rom,
+            ram,
+            ram_enabled,
+            bank,
+            ram_bank,
         }
     }
 }

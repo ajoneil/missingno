@@ -273,6 +273,52 @@ impl PixelProcessingUnit {
         }
     }
 
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::PpuState {
+        use crate::game_boy::save_state::{PpuState, ScreenState};
+
+        match self {
+            PixelProcessingUnit::Rendering(rendering) => PpuState::Rendering {
+                screen: ScreenState::from_screen(&rendering.screen),
+                line_number: rendering.line.number,
+                line_dots: rendering.line.dots,
+                line_penalty: rendering.line.penalty,
+                line_pixels_drawn: rendering.line.pixels_drawn,
+                line_window_rendered: rendering.line.window_rendered,
+                window_line_counter: rendering.window_line_counter,
+            },
+            PixelProcessingUnit::BetweenFrames(dots) => PpuState::BetweenFrames { dots: *dots },
+        }
+    }
+
+    pub(crate) fn from_state(state: crate::game_boy::save_state::PpuState) -> Self {
+        use crate::game_boy::save_state::PpuState;
+
+        match state {
+            PpuState::Rendering {
+                screen: screen_state,
+                line_number,
+                line_dots,
+                line_penalty,
+                line_pixels_drawn,
+                line_window_rendered,
+                window_line_counter,
+            } => PixelProcessingUnit::Rendering(Rendering {
+                screen: screen_state.to_screen(),
+                line: Line {
+                    number: line_number,
+                    dots: line_dots,
+                    penalty: line_penalty,
+                    pixels_drawn: line_pixels_drawn,
+                    sprites: Vec::new(),
+                    window_rendered: line_window_rendered,
+                },
+                window_line_counter,
+            }),
+            PpuState::BetweenFrames { dots } => PixelProcessingUnit::BetweenFrames(dots),
+            PpuState::Off => PixelProcessingUnit::Rendering(Rendering::new()),
+        }
+    }
+
     pub fn tick(&mut self, data: &PpuAccessible) -> Option<Screen> {
         let mut screen = None;
 

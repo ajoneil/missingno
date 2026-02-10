@@ -1,4 +1,5 @@
 use crate::game_boy::cartridge::MemoryBankController;
+use crate::game_boy::save_state::Base64Bytes;
 
 pub struct Mbc6 {
     rom: Vec<u8>,
@@ -59,6 +60,52 @@ impl Mbc6 {
             } else {
                 0xff
             }
+        }
+    }
+
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
+        crate::game_boy::save_state::MbcState::Mbc6 {
+            ram: Base64Bytes::from_banks(&self.ram),
+            flash: Base64Bytes(self.flash.clone()),
+            ram_enabled: self.ram_enabled,
+            flash_enabled: self.flash_enabled,
+            rom_bank_a: self.rom_bank_a,
+            rom_bank_a_flash: self.rom_bank_a_flash,
+            rom_bank_b: self.rom_bank_b,
+            rom_bank_b_flash: self.rom_bank_b_flash,
+            ram_bank_a: self.ram_bank_a,
+            ram_bank_b: self.ram_bank_b,
+        }
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+        let crate::game_boy::save_state::MbcState::Mbc6 {
+            ram: ram_data,
+            flash,
+            ram_enabled,
+            flash_enabled,
+            rom_bank_a,
+            rom_bank_a_flash,
+            rom_bank_b,
+            rom_bank_b_flash,
+            ram_bank_a,
+            ram_bank_b,
+        } = state
+        else {
+            unreachable!();
+        };
+        Self {
+            rom,
+            flash: flash.0,
+            ram: ram_data.into_banks(8),
+            ram_enabled,
+            flash_enabled,
+            rom_bank_a,
+            rom_bank_a_flash,
+            rom_bank_b,
+            rom_bank_b_flash,
+            ram_bank_a,
+            ram_bank_b,
         }
     }
 }

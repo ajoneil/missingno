@@ -22,6 +22,7 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
     pub sweep: Sweep,
@@ -30,14 +31,14 @@ pub struct PulseSweepChannel {
     pub length_enabled: bool,
     pub period: Signed11,
 
-    frequency_timer: u16,
-    wave_duty_position: u8,
-    current_volume: u8,
-    envelope_timer: u8,
-    length_counter: u16,
-    shadow_frequency: u16,
-    sweep_timer: u8,
-    sweep_enabled: bool,
+    pub frequency_timer: u16,
+    pub wave_duty_position: u8,
+    pub current_volume: u8,
+    pub envelope_timer: u8,
+    pub length_counter: u16,
+    pub shadow_frequency: u16,
+    pub sweep_timer: u8,
+    pub sweep_enabled: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -241,6 +242,7 @@ pub enum SweepDirection {
     Decreasing,
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct Sweep(pub u8);
 
 impl Sweep {

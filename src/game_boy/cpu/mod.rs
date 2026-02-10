@@ -1,3 +1,5 @@
+use nanoserde::{DeRon, SerRon};
+
 use flags::{Flag, Flags};
 use instructions::Instruction;
 use registers::{Register8, Register16};
@@ -8,14 +10,14 @@ pub mod flags;
 pub mod instructions;
 pub mod registers;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, SerRon, DeRon)]
 pub enum InterruptMasterEnable {
     Disabled,
     EnableAfterNextInstruction,
     Enabled,
 }
 
-#[derive(Clone)]
+#[derive(Clone, SerRon, DeRon)]
 pub struct Cpu {
     pub a: u8,
     pub b: u8,

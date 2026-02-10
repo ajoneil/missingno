@@ -384,9 +384,6 @@ name = "bitflags"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "block"
@@ -2093,6 +2090,7 @@ dependencies = [
 name = "missingno"
 version = "26.2.0"
 dependencies = [
+ "base64",
  "bitflags 2.10.0",
  "bytemuck",
  "clap",
@@ -2101,13 +2099,12 @@ dependencies = [
  "gilrs",
  "iced",
  "jiff",
+ "nanoserde",
  "open",
  "replace_with",
  "rfd",
  "rgb",
- "ron",
  "rtrb",
- "serde",
  "smol",
 ]
 
@@ -2161,6 +2158,21 @@ dependencies = [
  "thiserror 2.0.18",
  "unicode-ident",
 ]
+
+[[package]]
+name = "nanoserde"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a36fb3a748a4c9736ed7aeb5f2dfc99665247f1ce306abbddb2bf0ba2ac530a4"
+dependencies = [
+ "nanoserde-derive",
+]
+
+[[package]]
+name = "nanoserde-derive"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a846cbc04412cf509efcd8f3694b114fc700a035fb5a37f21517f9fb019f1ebc"
 
 [[package]]
 name = "ndk"
@@ -3124,20 +3136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ron"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd490c5b18261893f14449cbd28cb9c0b637aebf161cd77900bfdedaff21ec32"
-dependencies = [
- "bitflags 2.10.0",
- "once_cell",
- "serde",
- "serde_derive",
- "typeid",
- "unicode-ident",
-]
-
-[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3743,12 +3741,6 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
 ]
-
-[[package]]
-name = "typeid"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "uds_windows"

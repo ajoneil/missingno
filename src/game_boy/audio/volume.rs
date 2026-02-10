@@ -1,4 +1,4 @@
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct Volume(pub u8);
 
 impl Volume {

@@ -1,3 +1,6 @@
+use nanoserde::{DeRon, SerRon};
+
+#[derive(Clone, SerRon, DeRon)]
 pub struct CycleTimer {
     cycles: u32,
     counted: u32,

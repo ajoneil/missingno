@@ -11,17 +11,18 @@ pub enum Register {
     Control,
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct NoiseChannel {
     pub enabled: Enabled,
     pub volume_and_envelope: VolumeAndEnvelope,
     pub length_enabled: bool,
     pub frequency_and_randomness: FrequencyAndRandomness,
 
-    frequency_timer: u16,
-    lfsr: u16,
-    current_volume: u8,
-    envelope_timer: u8,
-    length_counter: u16,
+    pub frequency_timer: u16,
+    pub lfsr: u16,
+    pub current_volume: u8,
+    pub envelope_timer: u8,
+    pub length_counter: u16,
 }
 
 impl Default for NoiseChannel {
@@ -190,6 +191,7 @@ impl Control {
     }
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct FrequencyAndRandomness(pub u8);
 
 impl FrequencyAndRandomness {

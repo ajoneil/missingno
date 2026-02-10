@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
 use crate::game_boy::cpu::instructions::{Address, Instruction, jump};
 
@@ -17,9 +18,9 @@ pub enum Interrupt {
     Joypad,
 }
 
-impl Into<InterruptFlags> for Interrupt {
-    fn into(self) -> InterruptFlags {
-        match self {
+impl From<Interrupt> for InterruptFlags {
+    fn from(interrupt: Interrupt) -> Self {
+        match interrupt {
             Interrupt::VideoBetweenFrames => InterruptFlags::VIDEO_BETWEEN_FRAMES,
             Interrupt::VideoStatus => InterruptFlags::VIDEO_STATUS,
             Interrupt::Timer => InterruptFlags::TIMER,
@@ -39,6 +40,18 @@ bitflags! {
         const VIDEO_BETWEEN_FRAMES = 0b00000001;
 
         const _OTHER = !0;
+    }
+}
+
+impl SerRon for InterruptFlags {
+    fn ser_ron(&self, _indent_level: usize, state: &mut SerRonState) {
+        self.bits().ser_ron(_indent_level, state);
+    }
+}
+
+impl DeRon for InterruptFlags {
+    fn de_ron(state: &mut DeRonState, input: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
+        Ok(Self::from_bits_retain(u8::de_ron(state, input)?))
     }
 }
 
@@ -69,6 +82,7 @@ impl Interrupt {
     }
 }
 
+#[derive(Clone, SerRon, DeRon)]
 pub struct Registers {
     pub enabled: InterruptFlags,
     pub requested: InterruptFlags,

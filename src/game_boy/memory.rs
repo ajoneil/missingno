@@ -5,9 +5,49 @@ use crate::game_boy::{
     serial_transfer, timers, video,
 };
 
+use super::save_state::Base64Array;
+use nanoserde::{DeRon, DeRonErr, DeRonState, DeRonTok, SerRon, SerRonState};
+
+#[derive(Clone)]
 pub struct Ram {
     pub work_ram: [u8; 0x2000],
     pub high_ram: [u8; 0x80],
+}
+
+impl SerRon for Ram {
+    fn ser_ron(&self, d: usize, s: &mut SerRonState) {
+        s.st_pre();
+        s.field(d + 1, "work_ram");
+        Base64Array(self.work_ram).ser_ron(d + 1, s);
+        s.conl();
+        s.field(d + 1, "high_ram");
+        Base64Array(self.high_ram).ser_ron(d + 1, s);
+        s.conl();
+        s.st_post(d);
+    }
+}
+
+impl DeRon for Ram {
+    fn de_ron(s: &mut DeRonState, i: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
+        s.paren_open(i)?;
+        let mut work_ram = None;
+        let mut high_ram = None;
+        while s.tok != DeRonTok::ParenClose {
+            let field = s.identbuf.clone();
+            s.next_colon(i)?;
+            match field.as_str() {
+                "work_ram" => work_ram = Some(Base64Array::<0x2000>::de_ron(s, i)?.0),
+                "high_ram" => high_ram = Some(Base64Array::<0x80>::de_ron(s, i)?.0),
+                _ => return Err(s.err_parse("unknown field")),
+            }
+            s.eat_comma_paren(i)?;
+        }
+        s.paren_close(i)?;
+        Ok(Self {
+            work_ram: work_ram.ok_or_else(|| s.err_parse("missing work_ram"))?,
+            high_ram: high_ram.ok_or_else(|| s.err_parse("missing high_ram"))?,
+        })
+    }
 }
 
 impl Ram {

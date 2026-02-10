@@ -15,6 +15,7 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct WaveChannel {
     pub enabled: Enabled,
     pub dac_enabled: bool,
@@ -23,9 +24,9 @@ pub struct WaveChannel {
     pub period: Signed11,
     pub ram: [u8; 16],
 
-    frequency_timer: u16,
-    wave_position: u8,
-    length_counter: u16,
+    pub frequency_timer: u16,
+    pub wave_position: u8,
+    pub length_counter: u16,
 }
 
 impl Default for WaveChannel {
@@ -156,6 +157,7 @@ impl WaveChannel {
     }
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct Volume(pub u8);
 impl Volume {
     pub fn volume(&self) -> f32 {

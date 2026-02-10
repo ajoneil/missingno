@@ -3,3 +3,4 @@ target
 .claude
 .flatpak-builder
 build-dir
+CLAUDE.md

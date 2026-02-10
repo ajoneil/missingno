@@ -13,6 +13,7 @@ pub mod interrupts;
 pub mod joypad;
 pub mod memory;
 pub mod recording;
+pub mod save_state;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;

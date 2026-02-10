@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22"
-bitflags = { version = "2.10.0", features = ["serde"] }
+bitflags = "2.10.0"
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
@@ -29,11 +29,10 @@ rfd = "0.17.2"
 rgb = "0.8.52"
 gilrs = "0.11"
 smol = "2"
-serde = { version = "1", features = ["derive"] }
-ron = "0.12"
+nanoserde = { version = "0.2", default-features = false, features = ["ron"] }
 jiff = "0.2"
 dirs = "6"
 open = "5"
 
 [profile.dev]
-opt-level = 2
+opt-level = 0

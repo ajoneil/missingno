@@ -1,3 +1,4 @@
+use super::save_state::Base64Bytes;
 use bitflags::bitflags;
 use ppu::Mode;
 use screen::Screen;
@@ -241,6 +242,90 @@ impl Video {
         self.stat_line_was_high = stat_line_high;
 
         result
+    }
+
+    pub(crate) fn save_state(&self) -> super::save_state::VideoState {
+        use super::save_state::{PpuState, VideoState};
+
+        // Serialize video memory as flat byte arrays
+        let mut tiles = Vec::with_capacity(3 * 0x800);
+        for block in self.ppu_accessible.memory.tile_blocks() {
+            tiles.extend_from_slice(&block.data);
+        }
+
+        let mut tile_maps = Vec::with_capacity(2 * 0x400);
+        for map in self.ppu_accessible.memory.tile_map_data() {
+            for idx in &map.data {
+                tile_maps.push(idx.0);
+            }
+        }
+
+        let mut sprites_data = Vec::with_capacity(40 * 4);
+        for sprite in self.ppu_accessible.memory.sprites() {
+            sprites_data.push(sprite.position.y_plus_16);
+            sprites_data.push(sprite.position.x_plus_8);
+            sprites_data.push(sprite.tile.0);
+            sprites_data.push(sprite.attributes.0);
+        }
+
+        let ppu = match &self.ppu {
+            None => PpuState::Off,
+            Some(ppu) => ppu.save_state(),
+        };
+
+        VideoState {
+            control: self.ppu_accessible.control.bits(),
+            background_viewport_x: self.ppu_accessible.background_viewport.x,
+            background_viewport_y: self.ppu_accessible.background_viewport.y,
+            window_y: self.ppu_accessible.window.y,
+            window_x_plus_7: self.ppu_accessible.window.x_plus_7,
+            background_palette: self.ppu_accessible.palettes.background.0,
+            sprite0_palette: self.ppu_accessible.palettes.sprite0.0,
+            sprite1_palette: self.ppu_accessible.palettes.sprite1.0,
+            interrupt_flags: self.interrupts.flags.bits(),
+            current_line_compare: self.interrupts.current_line_compare,
+            stat_line_was_high: self.stat_line_was_high,
+            tiles: Base64Bytes(tiles),
+            tile_maps: Base64Bytes(tile_maps),
+            sprites: Base64Bytes(sprites_data),
+            ppu,
+        }
+    }
+
+    pub(crate) fn from_state(state: super::save_state::VideoState) -> Self {
+        use super::save_state::PpuState;
+
+        let mut memory = VideoMemory::new();
+        memory.load_state(&state.tiles, &state.tile_maps, &state.sprites);
+
+        Self {
+            ppu_accessible: PpuAccessible {
+                control: Control::new(ControlFlags::from_bits_retain(state.control)),
+                background_viewport: BackgroundViewportPosition {
+                    x: state.background_viewport_x,
+                    y: state.background_viewport_y,
+                },
+                window: Window {
+                    y: state.window_y,
+                    x_plus_7: state.window_x_plus_7,
+                },
+                palettes: Palettes {
+                    background: PaletteMap(state.background_palette),
+                    sprite0: PaletteMap(state.sprite0_palette),
+                    sprite1: PaletteMap(state.sprite1_palette),
+                },
+                memory,
+            },
+            ppu: match state.ppu {
+                PpuState::Off => None,
+                _ => Some(PixelProcessingUnit::from_state(state.ppu)),
+            },
+            interrupts: Interrupts {
+                flags: InterruptFlags::from_bits_truncate(state.interrupt_flags),
+                current_line_compare: state.current_line_compare,
+            },
+            stat_line_was_high: state.stat_line_was_high,
+        }
     }
 
     pub fn palettes(&self) -> &Palettes {

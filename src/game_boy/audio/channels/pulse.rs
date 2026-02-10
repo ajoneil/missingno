@@ -21,6 +21,7 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
+#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
 pub struct PulseChannel {
     pub enabled: Enabled,
     pub waveform_and_initial_length: WaveformAndInitialLength,
@@ -28,11 +29,11 @@ pub struct PulseChannel {
     pub length_enabled: bool,
     pub period: Signed11,
 
-    frequency_timer: u16,
-    wave_duty_position: u8,
-    current_volume: u8,
-    envelope_timer: u8,
-    length_counter: u16,
+    pub frequency_timer: u16,
+    pub wave_duty_position: u8,
+    pub current_volume: u8,
+    pub envelope_timer: u8,
+    pub length_counter: u16,
 }
 
 impl Default for PulseChannel {

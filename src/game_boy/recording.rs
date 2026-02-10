@@ -1,34 +1,34 @@
 use std::{fs, path::Path};
 
-use serde::{Deserialize, Serialize};
+use nanoserde::{DeRon, SerRon};
 
 use super::joypad::Button;
 
-#[derive(Serialize, Deserialize)]
+#[derive(SerRon, DeRon)]
 pub struct Recording {
     rom: Rom,
     initial_state: InitialState,
     input: Vec<InputEvent>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(SerRon, DeRon)]
 struct Rom {
     title: String,
     checksum: u16,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(SerRon, DeRon)]
 pub enum InitialState {
     FreshBoot,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(SerRon, DeRon, Clone)]
 pub struct InputEvent {
     frame: u64,
     input: Input,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(SerRon, DeRon, Clone)]
 pub enum Input {
     Press(Button),
     Release(Button),
@@ -45,7 +45,7 @@ impl Recording {
 
     pub fn load(path: &Path) -> Result<Self, String> {
         let data = fs::read_to_string(path).map_err(|e| e.to_string())?;
-        ron::from_str(&data).map_err(|e| e.to_string())
+        Self::deserialize_ron(&data).map_err(|e| e.to_string())
     }
 
     pub fn rom_title(&self) -> &str {
@@ -65,10 +65,8 @@ impl Recording {
     }
 
     pub fn save(&self, path: &Path) {
-        let config = ron::ser::PrettyConfig::default();
-        if let Ok(data) = ron::ser::to_string_pretty(self, config) {
-            let _ = fs::write(path, data);
-        }
+        let data = self.serialize_ron();
+        let _ = fs::write(path, data);
     }
 }
 

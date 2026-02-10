@@ -1,4 +1,5 @@
 use crate::game_boy::cartridge::MemoryBankController;
+use crate::game_boy::save_state::Base64Bytes;
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -102,6 +103,73 @@ impl Huc3 {
                 }
             }
             _ => {}
+        }
+    }
+
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
+        let mode = match self.mode {
+            Mode::Rom => 0,
+            Mode::Ram => 1,
+            Mode::RtcCommand => 2,
+            Mode::RtcResponse => 3,
+            Mode::RtcSemaphore => 4,
+            Mode::Ir => 5,
+        };
+        crate::game_boy::save_state::MbcState::Huc3 {
+            ram: Base64Bytes::from_banks(&self.ram),
+            rom_bank: self.rom_bank,
+            ram_bank: self.ram_bank,
+            mode,
+            rtc_memory: Base64Bytes(self.rtc_memory.to_vec()),
+            rtc_address: self.rtc_address,
+            rtc_last_command: self.rtc_last_command,
+            rtc_response: self.rtc_response,
+            rtc_semaphore: self.rtc_semaphore,
+        }
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+        let crate::game_boy::save_state::MbcState::Huc3 {
+            ram: ram_data,
+            rom_bank,
+            ram_bank,
+            mode: mode_val,
+            rtc_memory: rtc_memory_data,
+            rtc_address,
+            rtc_last_command,
+            rtc_response,
+            rtc_semaphore,
+        } = state
+        else {
+            unreachable!();
+        };
+        let num_ram_banks = match rom[0x149] {
+            2 => 1,
+            3 => 4,
+            _ => 0,
+        };
+        let mode = match mode_val {
+            0 => Mode::Rom,
+            1 => Mode::Ram,
+            2 => Mode::RtcCommand,
+            3 => Mode::RtcResponse,
+            4 => Mode::RtcSemaphore,
+            _ => Mode::Ir,
+        };
+        let mut rtc_memory = [0u8; 256];
+        let len = rtc_memory_data.len().min(256);
+        rtc_memory[..len].copy_from_slice(&rtc_memory_data[..len]);
+        Self {
+            rom,
+            ram: ram_data.into_banks(num_ram_banks),
+            rom_bank,
+            ram_bank,
+            mode,
+            rtc_memory,
+            rtc_address,
+            rtc_last_command,
+            rtc_response,
+            rtc_semaphore,
         }
     }
 }

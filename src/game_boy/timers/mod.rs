@@ -1,3 +1,5 @@
+use nanoserde::{DeRon, SerRon};
+
 use crate::game_boy::interrupts::Interrupt;
 use cycle_timer::CycleTimer;
 use registers::Control;
@@ -6,6 +8,7 @@ pub use registers::Register;
 pub mod cycle_timer;
 pub mod registers;
 
+#[derive(Clone, SerRon, DeRon)]
 pub struct Timers {
     divider: u8,
     counter: u8,

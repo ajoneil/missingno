@@ -1,6 +1,7 @@
 use core::fmt;
 
 use bitflags::bitflags;
+use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -11,13 +12,13 @@ pub enum Flag {
     Carry,
 }
 
-impl Into<Flags> for Flag {
-    fn into(self) -> Flags {
-        match self {
-            Self::Zero => Flags::ZERO,
-            Self::Negative => Flags::NEGATIVE,
-            Self::HalfCarry => Flags::HALF_CARRY,
-            Self::Carry => Flags::CARRY,
+impl From<Flag> for Flags {
+    fn from(flag: Flag) -> Self {
+        match flag {
+            Flag::Zero => Flags::ZERO,
+            Flag::Negative => Flags::NEGATIVE,
+            Flag::HalfCarry => Flags::HALF_CARRY,
+            Flag::Carry => Flags::CARRY,
         }
     }
 }
@@ -46,5 +47,17 @@ bitflags! {
         const CARRY = 0b00010000;
 
         const _OTHER = !0;
+    }
+}
+
+impl SerRon for Flags {
+    fn ser_ron(&self, _indent_level: usize, state: &mut SerRonState) {
+        self.bits().ser_ron(_indent_level, state);
+    }
+}
+
+impl DeRon for Flags {
+    fn de_ron(state: &mut DeRonState, input: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
+        Ok(Self::from_bits_retain(u8::de_ron(state, input)?))
     }
 }

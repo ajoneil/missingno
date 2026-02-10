@@ -1,9 +1,11 @@
 use bitflags::bitflags;
+use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
 use crate::game_boy::interrupts::Interrupt;
 
 const TRANSFER_CYCLES: u16 = 512;
 
+#[derive(Clone, SerRon, DeRon)]
 pub struct Registers {
     pub data: u8,
     pub control: Control,
@@ -51,11 +53,23 @@ pub enum Register {
 }
 
 bitflags! {
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, Debug)]
     pub struct Control: u8 {
         const ENABLE         = 0b10000000;
         const INTERNAL_CLOCK = 0b00000001;
 
         const _OTHER = !0;
+    }
+}
+
+impl SerRon for Control {
+    fn ser_ron(&self, _indent_level: usize, state: &mut SerRonState) {
+        self.bits().ser_ron(_indent_level, state);
+    }
+}
+
+impl DeRon for Control {
+    fn de_ron(state: &mut DeRonState, input: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
+        Ok(Self::from_bits_retain(u8::de_ron(state, input)?))
     }
 }

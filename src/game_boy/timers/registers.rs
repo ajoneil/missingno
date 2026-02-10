@@ -6,6 +6,9 @@ pub enum Register {
     Control,
 }
 
+use nanoserde::{DeRon, SerRon};
+
+#[derive(Clone, SerRon, DeRon)]
 pub struct Control(pub u8);
 
 impl Control {

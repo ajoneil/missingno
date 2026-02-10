@@ -1,4 +1,5 @@
 use crate::game_boy::cartridge::MemoryBankController;
+use crate::game_boy::save_state::Base64Bytes;
 
 pub struct NoMbc {
     rom: Vec<u8>,
@@ -18,6 +19,25 @@ impl NoMbc {
             None
         };
 
+        Self { rom, ram }
+    }
+
+    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
+        crate::game_boy::save_state::MbcState::NoMbc {
+            ram: self.ram.map(|r| Base64Bytes(r.to_vec())),
+        }
+    }
+
+    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+        let crate::game_boy::save_state::MbcState::NoMbc { ram } = state else {
+            unreachable!();
+        };
+        let ram = ram.map(|data| {
+            let mut arr = [0u8; 8 * 1024];
+            let len = data.len().min(arr.len());
+            arr[..len].copy_from_slice(&data[..len]);
+            arr
+        });
         Self { rom, ram }
     }
 }
