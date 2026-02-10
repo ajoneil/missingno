@@ -4,7 +4,7 @@ use rgb::RGB8;
 use crate::game_boy::{
     sgb::SgbRenderData,
     video::{
-        palette::{Palette, PaletteChoice, PaletteIndex},
+        palette::{Palette, PaletteChoice},
         screen::{self, Screen},
     },
 };
@@ -92,29 +92,4 @@ pub fn screen_to_pixels(
 
 pub fn iced_color(color: RGB8) -> iced::Color {
     iced::Color::from_rgb8(color.r, color.g, color.b)
-}
-
-pub fn palette_swatch<Message: 'static>(palette: &Palette) -> iced::Element<'static, Message> {
-    use super::core::sizes::{s, xs};
-    use iced::{Border, Color, Length, border::Radius, widget::container};
-
-    let mut row = iced::widget::Row::new().spacing(xs());
-
-    for i in 0..4 {
-        let c = iced_color(palette.color(PaletteIndex(i)));
-        row = row.push(
-            container("")
-                .style(move |_| {
-                    container::background(c).border(Border {
-                        color: Color::BLACK,
-                        width: 1.0,
-                        radius: Radius::new(s()),
-                    })
-                })
-                .height(Length::Fill)
-                .width(16.0),
-        );
-    }
-
-    container(row).height(16).into()
 }

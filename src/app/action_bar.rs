@@ -3,9 +3,8 @@ use iced::{
     Element,
     Length::Fill,
     Task,
-    widget::{Button, Column, container, row, toggler},
+    widget::{Button, container, pick_list, row, toggler},
 };
-use iced_aw::DropDown;
 
 use crate::{
     app::{
@@ -13,25 +12,19 @@ use crate::{
         core::{
             buttons,
             sizes::{m, s, xl},
-            text,
         },
         debugger::{
             self,
             panes::{self, DebuggerPane},
         },
         load,
-        screen::palette_swatch,
     },
     game_boy::video::palette::PaletteChoice,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowPaneDropdown,
-    DismissPaneDropdown,
     ShowPane(DebuggerPane),
-    ShowPaletteDropdown,
-    DismissPaletteDropdown,
     SelectPalette(PaletteChoice),
 }
 
@@ -41,17 +34,11 @@ impl Into<app::Message> for Message {
     }
 }
 
-pub struct ActionBar {
-    pane_dropdown_shown: bool,
-    palette_dropdown_shown: bool,
-}
+pub struct ActionBar;
 
 impl ActionBar {
     pub fn new() -> Self {
-        Self {
-            pane_dropdown_shown: false,
-            palette_dropdown_shown: false,
-        }
+        Self
     }
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
@@ -70,71 +57,34 @@ impl ActionBar {
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
-            Message::ShowPaneDropdown => self.pane_dropdown_shown = true,
-            Message::DismissPaneDropdown => self.pane_dropdown_shown = false,
             Message::ShowPane(pane) => {
-                self.pane_dropdown_shown = false;
                 return Task::done(panes::Message::ShowPane(pane).into());
             }
-            Message::ShowPaletteDropdown => self.palette_dropdown_shown = true,
-            Message::DismissPaletteDropdown => self.palette_dropdown_shown = false,
             Message::SelectPalette(palette) => {
-                self.palette_dropdown_shown = false;
                 return Task::done(app::Message::SelectPalette(palette));
             }
         }
-
-        Task::none()
     }
 
-    fn panes(&self, unshown_panes: &[DebuggerPane]) -> Element<'_, app::Message> {
-        if unshown_panes.is_empty() {
-            buttons::standard("Add panes").into()
-        } else {
-            DropDown::new(
-                buttons::standard("Add panes").on_press(Message::ShowPaneDropdown.into()),
-                self.pane_selection(unshown_panes),
-                self.pane_dropdown_shown,
-            )
-            .width(Fill)
-            .on_dismiss(Message::DismissPaneDropdown.into())
-            .into()
-        }
-    }
-
-    fn pane_selection(&self, unshown_panes: &[DebuggerPane]) -> Element<'_, app::Message> {
-        container(Column::with_children(unshown_panes.iter().map(|pane| {
-            buttons::text(text::m(pane.to_string()))
-                .on_press(Message::ShowPane(*pane).into())
-                .into()
-        })))
-        .style(container::bordered_box)
+    fn panes(&self, unshown_panes: Vec<DebuggerPane>) -> Element<'_, app::Message> {
+        pick_list(unshown_panes, None::<DebuggerPane>, |pane| {
+            Message::ShowPane(pane).into()
+        })
+        .placeholder("Add pane...")
         .into()
     }
 
     fn palette_selector(&self, current: PaletteChoice) -> Element<'_, app::Message> {
-        DropDown::new(
-            buttons::standard(palette_swatch(current.palette()))
-                .on_press(Message::ShowPaletteDropdown.into()),
-            container(Column::with_children(PaletteChoice::ALL.iter().map(
-                |&choice| {
-                    buttons::text(palette_swatch(choice.palette()))
-                        .on_press(Message::SelectPalette(choice).into())
-                        .into()
-                },
-            )))
-            .style(container::bordered_box),
-            self.palette_dropdown_shown,
-        )
-        .width(Fill)
-        .on_dismiss(Message::DismissPaletteDropdown.into())
+        pick_list(PaletteChoice::ALL, Some(current), |choice| {
+            Message::SelectPalette(choice).into()
+        })
         .into()
     }
 
     fn settings(&self, app: &App) -> Element<'_, app::Message> {
         let row = match &app.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                row![self.panes(&debugger.panes().unshown_panes())]
+                row![self.panes(debugger.panes().unshown_panes())]
             }
             _ => row![],
         };

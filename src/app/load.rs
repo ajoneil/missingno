@@ -68,16 +68,17 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             app.recent_games.add(rom_path.clone(), title);
             app.recent_games.save();
             let palette = app.settings.palette;
-            app.game = Game::Loaded(if app.debugger_enabled {
+            if app.debugger_enabled {
                 let mut debugger = app::debugger::Debugger::new(game_boy);
                 debugger.set_palette(palette);
-                LoadedGame::Debugger(debugger)
+                app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+                return Task::done(app::Message::ScanRecordings);
             } else {
                 let mut emu = app::emulator::Emulator::new(game_boy);
                 emu.set_palette(palette);
                 emu.run();
-                LoadedGame::Emulator(emu)
-            });
+                app.game = Game::Loaded(LoadedGame::Emulator(emu));
+            }
         }
     }
 

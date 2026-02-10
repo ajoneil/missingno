@@ -16,6 +16,7 @@ use crate::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},
+    recording::Recording,
     video::palette::PaletteChoice,
 };
 use action_bar::ActionBar;
@@ -112,6 +113,8 @@ enum Message {
 
     StartRecording,
     StopRecording,
+    ScanRecordings,
+    StartPlayback(PathBuf),
 
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
@@ -121,7 +124,7 @@ enum Message {
 }
 
 impl App {
-    fn new(rom_path: Option<PathBuf>, debugger: bool) -> Self {
+    fn new(rom_path: Option<PathBuf>, debugger: bool) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
         let mut recent_games = recent::RecentGames::load();
 
@@ -149,17 +152,26 @@ impl App {
             None => (Game::Unloaded, None),
         };
 
-        Self {
-            game,
-            debugger_enabled: debugger,
-            fullscreen: Fullscreen::Windowed,
-            action_bar: ActionBar::new(),
-            audio_output: AudioOutput::new(),
-            save_path,
-            recent_games,
-            settings,
-            about_shown: false,
-        }
+        let task = if debugger {
+            Task::done(Message::ScanRecordings)
+        } else {
+            Task::none()
+        };
+
+        (
+            Self {
+                game,
+                debugger_enabled: debugger,
+                fullscreen: Fullscreen::Windowed,
+                action_bar: ActionBar::new(),
+                audio_output: AudioOutput::new(),
+                save_path,
+                recent_games,
+                settings,
+                about_shown: false,
+            },
+            task,
+        )
     }
 
     fn title(&self) -> String {
@@ -270,6 +282,10 @@ impl App {
                         }
                     });
                 }
+
+                if debugger_enabled {
+                    return Task::done(Message::ScanRecordings);
+                }
             }
             Message::SelectPalette(palette) => {
                 self.settings.palette = palette;
@@ -303,10 +319,64 @@ impl App {
             }
             Message::StopRecording => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    if let Some(filename) = debugger.stop_recording() {
+                    if let Some((path, last_frame)) = debugger.stop_recording() {
+                        let recording_file =
+                            debugger::playback::RecordingFile::new(path, last_frame);
                         return Task::done(
-                            debugger::playback::Message::RecordingSaved(filename).into(),
+                            debugger::playback::Message::RecordingSaved(recording_file).into(),
                         );
+                    }
+                }
+            }
+
+            Message::ScanRecordings => {
+                if let (Game::Loaded(LoadedGame::Debugger(debugger)), Some(save_path)) =
+                    (&self.game, &self.save_path)
+                {
+                    let rom_title = debugger.game_boy().cartridge().title().to_string();
+                    let rom_checksum = debugger.game_boy().cartridge().global_checksum();
+                    let dir = save_path
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| std::env::current_dir().unwrap());
+                    let mut recordings = Vec::new();
+                    if let Ok(entries) = fs::read_dir(&dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().is_some_and(|ext| ext == "mnrec") {
+                                match Recording::load(&path) {
+                                    Ok(recording) => {
+                                        if recording.rom_title() == rom_title
+                                            && recording.rom_checksum() == rom_checksum
+                                        {
+                                            let last_frame = recording
+                                                .events()
+                                                .last()
+                                                .map(|e| e.frame())
+                                                .unwrap_or(0);
+                                            recordings.push(
+                                                debugger::playback::RecordingFile::new(
+                                                    path, last_frame,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    Err(_) => {}
+                                }
+                            }
+                        }
+                    }
+                    return Task::done(
+                        debugger::playback::Message::RecordingsScanned(recordings).into(),
+                    );
+                }
+            }
+            Message::StartPlayback(path) => {
+                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
+                    match Recording::load(&path) {
+                        Ok(recording) => debugger.start_playback(recording),
+                        Err(e) => eprintln!("Failed to load recording: {e}"),
                     }
                 }
             }
