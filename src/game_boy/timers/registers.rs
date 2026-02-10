@@ -16,12 +16,12 @@ impl Control {
         self.0 & 0b100 != 0
     }
 
-    pub fn cycle_interval(&self) -> u32 {
+    pub fn selected_bit(&self) -> u16 {
         match self.0 & 0b11 {
-            0b00 => 1024,
-            0b01 => 16,
-            0b10 => 64,
-            0b11.. => 256,
+            0b00 => 1 << 9,
+            0b01 => 1 << 3,
+            0b10 => 1 << 5,
+            0b11.. => 1 << 7,
         }
     }
 }

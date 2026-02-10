@@ -203,7 +203,11 @@ impl MemoryMapped {
                     self.serial.start_transfer();
                 }
             },
-            MappedAddress::TimerRegister(register) => self.timers.write_register(register, value),
+            MappedAddress::TimerRegister(register) => {
+                if let Some(interrupt) = self.timers.write_register(register, value) {
+                    self.interrupts.request(interrupt);
+                }
+            }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),

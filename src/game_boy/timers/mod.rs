@@ -1,58 +1,50 @@
 use nanoserde::{DeRon, SerRon};
 
 use crate::game_boy::interrupts::Interrupt;
-use cycle_timer::CycleTimer;
 use registers::Control;
 pub use registers::Register;
 
-pub mod cycle_timer;
 pub mod registers;
 
 #[derive(Clone, SerRon, DeRon)]
 pub struct Timers {
-    divider: u8,
+    internal_counter: u16,
     counter: u8,
     modulo: u8,
     control: Control,
-
-    divider_timer: CycleTimer,
-    timer: Option<CycleTimer>,
 }
 
 impl Timers {
-    const DIV_INCREMENT_CYCLES: u32 = 1024;
-
     pub fn new() -> Self {
         Self {
-            divider: 0xab,
+            internal_counter: 0xAB00,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
+        }
+    }
 
-            divider_timer: CycleTimer::new(Self::DIV_INCREMENT_CYCLES),
-            timer: None,
+    fn selected_bit_set(&self) -> bool {
+        self.control.enabled() && (self.internal_counter & self.control.selected_bit()) != 0
+    }
+
+    fn increment_tima(&mut self) -> Option<Interrupt> {
+        if self.counter == 0xFF {
+            self.counter = self.modulo;
+            Some(Interrupt::Timer)
+        } else {
+            self.counter += 1;
+            None
         }
     }
 
     pub fn tick(&mut self) -> Option<Interrupt> {
-        self.divider_timer.tick();
-        if self.divider_timer.finished() {
-            self.divider = self.divider.wrapping_add(1);
-            self.divider_timer.lap()
-        }
+        let was_set = self.selected_bit_set();
+        self.internal_counter = self.internal_counter.wrapping_add(4);
+        let is_set = self.selected_bit_set();
 
-        if let Some(timer) = &mut self.timer {
-            timer.tick();
-            if timer.finished() {
-                timer.lap();
-
-                if self.counter == 0xff {
-                    self.counter = self.modulo;
-                    return Some(Interrupt::Timer);
-                } else {
-                    self.counter += 1;
-                }
-            }
+        if was_set && !is_set {
+            return self.increment_tima();
         }
 
         None
@@ -60,26 +52,33 @@ impl Timers {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::Divider => self.divider,
+            Register::Divider => (self.internal_counter >> 8) as u8,
             Register::Counter => self.counter,
             Register::Modulo => self.modulo,
             Register::Control => self.control.0,
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8) -> Option<Interrupt> {
         match register {
-            Register::Divider => self.divider = 0,
+            Register::Divider => {
+                let was_set = self.selected_bit_set();
+                self.internal_counter = 0;
+                if was_set {
+                    return self.increment_tima();
+                }
+            }
             Register::Counter => self.counter = value,
             Register::Modulo => self.modulo = value,
             Register::Control => {
+                let was_set = self.selected_bit_set();
                 self.control = Control(value);
-                if self.control.enabled() {
-                    self.timer = Some(CycleTimer::new(self.control.cycle_interval()));
-                } else {
-                    self.timer = None;
+                let is_set = self.selected_bit_set();
+                if was_set && !is_set {
+                    return self.increment_tima();
                 }
             }
         }
+        None
     }
 }

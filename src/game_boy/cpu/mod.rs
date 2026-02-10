@@ -116,7 +116,7 @@ impl Cpu {
             Register16::StackPointer => self.stack_pointer = value,
             Register16::Af => {
                 self.a = high;
-                self.flags = Flags::from_bits_retain(low);
+                self.flags = Flags::from_bits_retain(low & 0xF0);
             }
             Register16::ProgramCounter => self.program_counter = value,
         }
