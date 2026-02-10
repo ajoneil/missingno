@@ -16,9 +16,7 @@ cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
 iced = { version = "0.14.0", features = [
-    "canvas",
     "advanced",
-    "lazy",
     "smol",
     "svg",
     "wgpu",
@@ -36,3 +34,6 @@ open = "5"
 
 [profile.dev]
 opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
