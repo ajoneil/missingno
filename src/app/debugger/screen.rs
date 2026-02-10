@@ -24,7 +24,7 @@ pub struct ScreenPane {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Message {
-    Update(Screen, Option<SgbRenderData>),
+    Update(Option<Screen>, Option<SgbRenderData>),
 }
 
 impl Into<app::Message> for Message {
@@ -42,10 +42,20 @@ impl ScreenPane {
         }
     }
 
+    pub fn with_screen(screen_view: ScreenView) -> Self {
+        Self { screen_view }
+    }
+
+    pub fn screen_view(&self) -> &ScreenView {
+        &self.screen_view
+    }
+
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Update(screen, sgb_render_data) => {
-                self.screen_view.screen = screen;
+                if let Some(screen) = screen {
+                    self.screen_view.screen = screen;
+                }
                 self.screen_view.sgb_render_data = sgb_render_data;
             }
         }

@@ -46,6 +46,15 @@ impl Emulator {
         }
     }
 
+    pub fn from_debugger(game_boy: GameBoy, screen_view: ScreenView) -> Self {
+        Self {
+            game_boy,
+            screen_view,
+            running: false,
+            screen_hovered: false,
+        }
+    }
+
     pub fn game_boy(&self) -> &GameBoy {
         &self.game_boy
     }
@@ -55,7 +64,7 @@ impl Emulator {
     }
 
     pub fn enable_debugger(self) -> app::debugger::Debugger {
-        app::debugger::Debugger::new(self.game_boy)
+        app::debugger::Debugger::from_emulator(self.game_boy, self.screen_view)
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {

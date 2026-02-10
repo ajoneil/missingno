@@ -34,6 +34,7 @@ use crate::{
                 tiles::TilesPane,
             },
         },
+        screen::ScreenView,
     },
     debugger::Debugger,
     game_boy::video::{
@@ -102,6 +103,28 @@ enum PaneInstance {
 
 impl DebuggerPanes {
     pub fn new() -> Self {
+        Self::build(ScreenPane::new())
+    }
+
+    pub fn with_screen(screen_view: ScreenView) -> Self {
+        Self::build(ScreenPane::with_screen(screen_view))
+    }
+
+    pub fn take_screen_view(self) -> ScreenView {
+        for (_, pane) in self.panes.iter() {
+            if let PaneInstance::Screen(screen_pane) = pane {
+                let view = screen_pane.screen_view();
+                return ScreenView {
+                    screen: view.screen,
+                    palette: view.palette,
+                    sgb_render_data: view.sgb_render_data,
+                };
+            }
+        }
+        ScreenView::new()
+    }
+
+    fn build(screen_pane: ScreenPane) -> Self {
         let mut handles = HashMap::new();
 
         let (mut panes, cpu_handle) =
@@ -109,11 +132,7 @@ impl DebuggerPanes {
         handles.insert(DebuggerPane::Cpu, cpu_handle);
 
         let (screen_handle, split) = panes
-            .split(
-                Vertical,
-                cpu_handle,
-                Self::construct_pane(DebuggerPane::Screen),
-            )
+            .split(Vertical, cpu_handle, PaneInstance::Screen(screen_pane))
             .unwrap();
         handles.insert(DebuggerPane::Screen, screen_handle);
         panes.resize(split, 1.0 / 4.0);

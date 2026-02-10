@@ -3,11 +3,12 @@ use std::{path::PathBuf, time::Duration};
 use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
-    app::{self, core::sizes::m, emulator::Emulator},
+    app::{self, core::sizes::m, emulator::Emulator, screen::ScreenView},
     game_boy::{
         GameBoy,
         joypad::Button,
         recording::{Input, Recording},
+        sgb::MaskMode,
         video::palette::PaletteChoice,
     },
 };
@@ -72,6 +73,17 @@ impl Debugger {
         }
     }
 
+    pub fn from_emulator(game_boy: GameBoy, screen_view: ScreenView) -> Self {
+        Self {
+            debugger: crate::debugger::Debugger::new(game_boy),
+            panes: DebuggerPanes::with_screen(screen_view),
+            running: false,
+            frame: 0,
+            active_recording: None,
+            active_playback: None,
+        }
+    }
+
     pub fn game_boy(&self) -> &GameBoy {
         self.debugger.game_boy()
     }
@@ -81,7 +93,8 @@ impl Debugger {
     }
 
     pub fn disable_debugger(self) -> Emulator {
-        app::emulator::Emulator::new(self.debugger.game_boy_take())
+        let screen_view = self.panes.take_screen_view();
+        Emulator::from_debugger(self.debugger.game_boy_take(), screen_view)
     }
 
     pub fn panes(&self) -> &DebuggerPanes {
@@ -91,19 +104,24 @@ impl Debugger {
     fn screen_update_task(
         &self,
         screen: Option<crate::game_boy::video::screen::Screen>,
-    ) -> Option<Task<app::Message>> {
-        let screen = screen?;
+    ) -> Task<app::Message> {
+        let freeze = self
+            .debugger
+            .game_boy()
+            .sgb()
+            .is_some_and(|sgb| sgb.mask_mode == MaskMode::Freeze);
+        let screen = if freeze { None } else { screen };
         let video_enabled = self.debugger.game_boy().video().control().video_enabled();
         let sgb_data = self
             .debugger
             .game_boy()
             .sgb()
             .map(|sgb| sgb.render_data(video_enabled));
-        Some(Task::done(screen::Message::Update(screen, sgb_data).into()))
+        Task::done(screen::Message::Update(screen, sgb_data).into())
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
-        let task = match message {
+        match message {
             Message::Step => {
                 let screen = self.debugger.step();
                 self.screen_update_task(screen)
@@ -124,11 +142,11 @@ impl Debugger {
 
             Message::SetBreakpoint(address) => {
                 self.debugger.set_breakpoint(address);
-                None
+                Task::none()
             }
             Message::ClearBreakpoint(address) => {
                 self.debugger.clear_breakpoint(address);
-                None
+                Task::none()
             }
 
             Message::Pane(message) => {
@@ -138,14 +156,12 @@ impl Debugger {
                 );
                 self.panes.update(message, &mut self.debugger);
                 if scan {
-                    Some(Task::done(app::Message::ScanRecordings))
+                    Task::done(app::Message::ScanRecordings)
                 } else {
-                    None
+                    Task::none()
                 }
             }
-        };
-
-        task.unwrap_or(Task::none())
+        }
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
