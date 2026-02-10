@@ -1,5 +1,3 @@
-use crate::game_boy::cartridge::MemoryBankController;
-
 enum Mapped {
     Ram(u8),
     Clock(ClockRegister),
@@ -66,7 +64,6 @@ impl Clock {
 }
 
 pub struct Mbc3 {
-    rom: Vec<u8>,
     ram: Vec<[u8; 8 * 1024]>,
     clock: Option<Clock>,
     ram_and_clock_enabled: bool,
@@ -75,7 +72,7 @@ pub struct Mbc3 {
 }
 
 impl Mbc3 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         let ram = match rom[0x149] {
             2 => {
                 let mut banks = vec![[0u8; 8 * 1024]; 1];
@@ -111,7 +108,6 @@ impl Mbc3 {
         };
 
         Self {
-            rom,
             ram,
             clock,
             ram_and_clock_enabled: false,
@@ -154,7 +150,7 @@ impl Mbc3 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
         use crate::game_boy::save_state::Mbc3MappedState;
         let crate::game_boy::save_state::MbcState::Mbc3 {
             ram: ram_data,
@@ -199,7 +195,6 @@ impl Mbc3 {
             latch_ready: c.latch_ready,
         });
         Self {
-            rom,
             ram: ram_data.into_banks(num_ram_banks),
             clock,
             ram_and_clock_enabled,
@@ -207,14 +202,8 @@ impl Mbc3 {
             mapped: mapped_internal,
         }
     }
-}
 
-impl MemoryBankController for Mbc3 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         if self.ram.is_empty() {
             None
         } else {
@@ -222,12 +211,12 @@ impl MemoryBankController for Mbc3 {
         }
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
-            0x0000..=0x3fff => self.rom[address as usize],
+            0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
                 let bank = if self.bank == 0 { 1 } else { self.bank } as usize;
-                self.rom[bank * 0x4000 + (address - 0x4000) as usize]
+                rom[bank * 0x4000 + (address - 0x4000) as usize]
             }
             0xa000..=0xbfff if self.ram_and_clock_enabled => match self.mapped {
                 Mapped::Ram(ram_bank) if (ram_bank as usize) < self.ram.len() => {
@@ -240,7 +229,7 @@ impl MemoryBankController for Mbc3 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.ram_and_clock_enabled = value & 0xf == 0xa,
             0x2000..=0x3fff => {

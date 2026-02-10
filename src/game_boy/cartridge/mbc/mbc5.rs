@@ -1,8 +1,6 @@
-use crate::game_boy::cartridge::MemoryBankController;
 use crate::game_boy::save_state::Base64Bytes;
 
 pub struct Mbc5 {
-    rom: Vec<u8>,
     ram: Vec<[u8; 8 * 1024]>,
     ram_enabled: bool,
     rom_bank: u16,
@@ -11,15 +9,15 @@ pub struct Mbc5 {
 }
 
 impl Mbc5 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         Self::create(rom, save_data, false)
     }
 
-    pub fn new_rumble(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new_rumble(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         Self::create(rom, save_data, true)
     }
 
-    fn create(rom: Vec<u8>, save_data: Option<Vec<u8>>, rumble: bool) -> Self {
+    fn create(rom: &[u8], save_data: Option<Vec<u8>>, rumble: bool) -> Self {
         let num_ram_banks = match rom[0x149] {
             2 => 1,
             3 => 4,
@@ -40,7 +38,6 @@ impl Mbc5 {
         }
 
         Self {
-            rom,
             ram,
             ram_enabled: false,
             rom_bank: 1,
@@ -58,7 +55,7 @@ impl Mbc5 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
         let crate::game_boy::save_state::MbcState::Mbc5 {
             ram: ram_data,
             ram_enabled,
@@ -77,7 +74,6 @@ impl Mbc5 {
             _ => 0,
         };
         Self {
-            rom,
             ram: ram_data.into_banks(num_ram_banks),
             ram_enabled,
             rom_bank,
@@ -85,14 +81,8 @@ impl Mbc5 {
             rumble,
         }
     }
-}
 
-impl MemoryBankController for Mbc5 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         if self.ram.is_empty() {
             None
         } else {
@@ -100,12 +90,12 @@ impl MemoryBankController for Mbc5 {
         }
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
-            0x0000..=0x3fff => self.rom[address as usize],
+            0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
                 let addr = self.rom_bank as usize * 0x4000 + (address - 0x4000) as usize;
-                self.rom[addr % self.rom.len()]
+                rom[addr % rom.len()]
             }
             0xa000..=0xbfff if self.ram_enabled => {
                 let bank = self.ram_bank as usize;
@@ -119,7 +109,7 @@ impl MemoryBankController for Mbc5 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.ram_enabled = value & 0x0f == 0x0a,
             0x2000..=0x2fff => {

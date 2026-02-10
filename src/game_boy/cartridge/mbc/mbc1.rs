@@ -1,4 +1,3 @@
-use crate::game_boy::cartridge::MemoryBankController;
 use crate::game_boy::save_state::Base64Bytes;
 
 enum Ram {
@@ -53,7 +52,6 @@ impl Ram {
 }
 
 pub struct Mbc1 {
-    rom: Vec<u8>,
     ram: Ram,
     ram_enabled: bool,
     bank: u8,
@@ -61,7 +59,7 @@ pub struct Mbc1 {
 }
 
 impl Mbc1 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         let ram = match rom[0x149] {
             2 => {
                 let mut data = [0; 8 * 1024];
@@ -88,7 +86,6 @@ impl Mbc1 {
         };
 
         Self {
-            rom,
             ram,
             ram_enabled: false,
             bank: 0,
@@ -96,8 +93,8 @@ impl Mbc1 {
         }
     }
 
-    fn current_bank(&self) -> u8 {
-        if self.rom.len() <= 512 * 1024 {
+    fn current_bank(&self, rom_len: usize) -> u8 {
+        if rom_len <= 512 * 1024 {
             (self.bank & 0x1f).max(1)
         } else {
             ((self.ram_bank << 5) | (self.bank & 0x1f)).max(1)
@@ -114,7 +111,7 @@ impl Mbc1 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(state: crate::game_boy::save_state::MbcState) -> Self {
         let crate::game_boy::save_state::MbcState::Mbc1 {
             ram: ram_data,
             advanced,
@@ -150,43 +147,36 @@ impl Mbc1 {
             }
         };
         Self {
-            rom,
             ram,
             ram_enabled,
             bank,
             ram_bank,
         }
     }
-}
 
-impl MemoryBankController for Mbc1 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         self.ram.to_vec()
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
             0x0000..=0x3fff if self.ram.is_advanced() => {
                 let bank = (self.ram_bank << 5) as usize;
-                let addr = (bank * 0x4000 + address as usize) % self.rom.len();
-                self.rom[addr]
+                let addr = (bank * 0x4000 + address as usize) % rom.len();
+                rom[addr]
             }
-            0x0000..=0x3fff => self.rom[address as usize],
+            0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
-                let bank = self.current_bank() as usize;
-                let addr = (bank * 0x4000 + (address as usize - 0x4000)) % self.rom.len();
-                self.rom[addr]
+                let bank = self.current_bank(rom.len()) as usize;
+                let addr = (bank * 0x4000 + (address as usize - 0x4000)) % rom.len();
+                rom[addr]
             }
             0xa000..=0xbfff if self.ram_enabled => self.ram.read(address, self.ram_bank),
             _ => 0xff,
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => {
                 self.ram_enabled = value & 0xf == 0xa;

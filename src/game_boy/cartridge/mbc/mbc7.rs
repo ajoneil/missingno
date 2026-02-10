@@ -1,4 +1,3 @@
-use crate::game_boy::cartridge::MemoryBankController;
 use crate::game_boy::save_state::Base64Bytes;
 
 enum EepromState {
@@ -202,7 +201,6 @@ enum LatchState {
 }
 
 pub struct Mbc7 {
-    rom: Vec<u8>,
     eeprom: Eeprom,
     ram_enabled_1: bool,
     ram_enabled_2: bool,
@@ -213,10 +211,9 @@ pub struct Mbc7 {
 }
 
 impl Mbc7 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         Self {
             eeprom: Eeprom::new(save_data.as_ref()),
-            rom,
             ram_enabled_1: false,
             ram_enabled_2: false,
             rom_bank: 1,
@@ -242,7 +239,7 @@ impl Mbc7 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(state: crate::game_boy::save_state::MbcState) -> Self {
         let crate::game_boy::save_state::MbcState::Mbc7 {
             eeprom_data,
             eeprom_write_enabled,
@@ -258,7 +255,6 @@ impl Mbc7 {
         let mut eeprom = Eeprom::new(Some(&eeprom_data.0));
         eeprom.write_enabled = eeprom_write_enabled;
         Self {
-            rom,
             eeprom,
             ram_enabled_1,
             ram_enabled_2,
@@ -268,28 +264,18 @@ impl Mbc7 {
             latch_state: LatchState::Idle,
         }
     }
-}
 
-impl MemoryBankController for Mbc7 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         Some(self.eeprom.to_vec())
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
-            0x0000..=0x3fff => self.rom[address as usize],
+            0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
                 let bank = self.rom_bank.max(1) as usize;
                 let addr = bank * 0x4000 + (address - 0x4000) as usize;
-                if addr < self.rom.len() {
-                    self.rom[addr]
-                } else {
-                    0xff
-                }
+                if addr < rom.len() { rom[addr] } else { 0xff }
             }
             0xa000..=0xafff if self.ram_accessible() => {
                 let register = (address >> 4) & 0x0f;
@@ -309,7 +295,7 @@ impl MemoryBankController for Mbc7 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => self.ram_enabled_1 = value & 0x0f == 0x0a,
             0x2000..=0x3fff => self.rom_bank = value & 0x7f,

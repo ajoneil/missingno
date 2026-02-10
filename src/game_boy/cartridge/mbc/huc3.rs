@@ -1,4 +1,3 @@
-use crate::game_boy::cartridge::MemoryBankController;
 use crate::game_boy::save_state::Base64Bytes;
 
 #[derive(Clone, Copy)]
@@ -12,7 +11,6 @@ enum Mode {
 }
 
 pub struct Huc3 {
-    rom: Vec<u8>,
     ram: Vec<[u8; 8 * 1024]>,
     rom_bank: u8,
     ram_bank: u8,
@@ -25,7 +23,7 @@ pub struct Huc3 {
 }
 
 impl Huc3 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         let num_ram_banks = match rom[0x149] {
             2 => 1,
             3 => 4,
@@ -44,7 +42,6 @@ impl Huc3 {
         }
 
         Self {
-            rom,
             ram,
             rom_bank: 1,
             ram_bank: 0,
@@ -128,7 +125,7 @@ impl Huc3 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
         let crate::game_boy::save_state::MbcState::Huc3 {
             ram: ram_data,
             rom_bank,
@@ -160,7 +157,6 @@ impl Huc3 {
         let len = rtc_memory_data.len().min(256);
         rtc_memory[..len].copy_from_slice(&rtc_memory_data[..len]);
         Self {
-            rom,
             ram: ram_data.into_banks(num_ram_banks),
             rom_bank,
             ram_bank,
@@ -172,14 +168,8 @@ impl Huc3 {
             rtc_semaphore,
         }
     }
-}
 
-impl MemoryBankController for Huc3 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         if self.ram.is_empty() {
             None
         } else {
@@ -187,13 +177,13 @@ impl MemoryBankController for Huc3 {
         }
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
-            0x0000..=0x3fff => self.rom[address as usize],
+            0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
                 let bank = self.rom_bank.max(1) as usize;
                 let addr = bank * 0x4000 + (address - 0x4000) as usize;
-                self.rom[addr % self.rom.len()]
+                rom[addr % rom.len()]
             }
             0xa000..=0xbfff => match self.mode {
                 Mode::Ram => {
@@ -218,7 +208,7 @@ impl MemoryBankController for Huc3 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x1fff => {
                 self.mode = match value & 0x0f {

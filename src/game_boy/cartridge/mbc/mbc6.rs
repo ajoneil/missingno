@@ -1,8 +1,6 @@
-use crate::game_boy::cartridge::MemoryBankController;
 use crate::game_boy::save_state::Base64Bytes;
 
 pub struct Mbc6 {
-    rom: Vec<u8>,
     flash: Vec<u8>,
     ram: Vec<[u8; 4 * 1024]>,
     ram_enabled: bool,
@@ -16,7 +14,7 @@ pub struct Mbc6 {
 }
 
 impl Mbc6 {
-    pub fn new(rom: Vec<u8>, save_data: Option<Vec<u8>>) -> Self {
+    pub fn new(_rom: &[u8], save_data: Option<Vec<u8>>) -> Self {
         let mut ram = vec![[0u8; 4 * 1024]; 8];
         if let Some(data) = &save_data {
             for (bank_idx, bank) in ram.iter_mut().enumerate() {
@@ -31,7 +29,6 @@ impl Mbc6 {
         let flash = vec![0xff; 1024 * 1024];
 
         Self {
-            rom,
             flash,
             ram,
             ram_enabled: false,
@@ -45,7 +42,7 @@ impl Mbc6 {
         }
     }
 
-    fn read_rom_or_flash(&self, bank: u8, is_flash: bool, offset: usize) -> u8 {
+    fn read_rom_or_flash(&self, rom: &[u8], bank: u8, is_flash: bool, offset: usize) -> u8 {
         if is_flash && self.flash_enabled {
             let addr = bank as usize * 0x2000 + offset;
             if addr < self.flash.len() {
@@ -55,11 +52,7 @@ impl Mbc6 {
             }
         } else {
             let addr = bank as usize * 0x2000 + offset;
-            if addr < self.rom.len() {
-                self.rom[addr]
-            } else {
-                0xff
-            }
+            if addr < rom.len() { rom[addr] } else { 0xff }
         }
     }
 
@@ -78,7 +71,7 @@ impl Mbc6 {
         }
     }
 
-    pub(crate) fn from_state(rom: Vec<u8>, state: crate::game_boy::save_state::MbcState) -> Self {
+    pub(crate) fn from_state(state: crate::game_boy::save_state::MbcState) -> Self {
         let crate::game_boy::save_state::MbcState::Mbc6 {
             ram: ram_data,
             flash,
@@ -95,7 +88,6 @@ impl Mbc6 {
             unreachable!();
         };
         Self {
-            rom,
             flash: flash.0,
             ram: ram_data.into_banks(8),
             ram_enabled,
@@ -108,32 +100,28 @@ impl Mbc6 {
             ram_bank_b,
         }
     }
-}
 
-impl MemoryBankController for Mbc6 {
-    fn rom(&self) -> &[u8] {
-        &self.rom
-    }
-
-    fn ram(&self) -> Option<Vec<u8>> {
+    pub fn ram(&self) -> Option<Vec<u8>> {
         Some(self.ram.iter().flatten().copied().collect())
     }
 
-    fn read(&self, address: u16) -> u8 {
+    pub fn read(&self, rom: &[u8], address: u16) -> u8 {
         match address {
             0x0000..=0x3fff => {
-                if (address as usize) < self.rom.len() {
-                    self.rom[address as usize]
+                if (address as usize) < rom.len() {
+                    rom[address as usize]
                 } else {
                     0xff
                 }
             }
             0x4000..=0x5fff => self.read_rom_or_flash(
+                rom,
                 self.rom_bank_a,
                 self.rom_bank_a_flash,
                 (address - 0x4000) as usize,
             ),
             0x6000..=0x7fff => self.read_rom_or_flash(
+                rom,
                 self.rom_bank_b,
                 self.rom_bank_b_flash,
                 (address - 0x6000) as usize,
@@ -158,7 +146,7 @@ impl MemoryBankController for Mbc6 {
         }
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x03ff => self.ram_enabled = value & 0x0f == 0x0a,
             0x0400..=0x07ff => self.ram_bank_a = value & 0x07,
