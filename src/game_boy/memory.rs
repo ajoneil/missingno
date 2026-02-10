@@ -163,7 +163,9 @@ impl MemoryMapped {
             MappedAddress::TimerRegister(register) => self.timers.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => self.interrupts.enabled.bits(),
-                interrupts::Register::RequestedInterrupts => self.interrupts.requested.bits(),
+                interrupts::Register::RequestedInterrupts => {
+                    self.interrupts.requested.bits() | 0xE0
+                }
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
