@@ -10,7 +10,8 @@ name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
-bitflags = "2.10.0"
+base64 = "0.22"
+bitflags = { version = "2.10.0", features = ["serde"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
@@ -33,3 +34,6 @@ ron = "0.12"
 jiff = "0.2"
 dirs = "6"
 open = "5"
+
+[profile.dev]
+opt-level = 2
