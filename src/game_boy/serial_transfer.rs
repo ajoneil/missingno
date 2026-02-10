@@ -10,6 +10,8 @@ pub struct Registers {
     pub data: u8,
     pub control: Control,
     cycles_remaining: u16,
+    #[nserde(skip)]
+    pub output: Vec<u8>,
 }
 
 impl Registers {
@@ -18,6 +20,7 @@ impl Registers {
             data: 0,
             control: Control::from_bits_retain(0x7e),
             cycles_remaining: 0,
+            output: Vec::new(),
         }
     }
 
@@ -26,6 +29,7 @@ impl Registers {
             .control
             .contains(Control::ENABLE | Control::INTERNAL_CLOCK)
         {
+            self.output.push(self.data);
             self.cycles_remaining = TRANSFER_CYCLES;
         }
     }

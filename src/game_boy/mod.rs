@@ -128,4 +128,8 @@ impl GameBoy {
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
         self.mapped.sgb.as_ref()
     }
+
+    pub fn drain_serial_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.mapped.serial.output)
+    }
 }

@@ -2028,6 +2028,7 @@ dependencies = [
  "jiff",
  "nanoserde",
  "open",
+ "png",
  "replace_with",
  "rfd",
  "rgb",

@@ -32,6 +32,9 @@ jiff = "0.2"
 dirs = "6"
 open = "5"
 
+[dev-dependencies]
+png = "0.17"
+
 [profile.dev]
 opt-level = 0
 

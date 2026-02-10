@@ -1,0 +1,190 @@
+use crate::common;
+
+const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
+
+fn run_mooneye_test(rom_path: &str) {
+    let mut gb = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut gb, TIMEOUT_FRAMES);
+    assert!(
+        found_loop,
+        "Mooneye test {rom_path} timed out without reaching infinite loop"
+    );
+    let cpu = gb.cpu();
+    assert!(
+        common::check_mooneye_pass(cpu),
+        "Mooneye test {rom_path} failed. Registers: {}",
+        common::format_registers(cpu)
+    );
+}
+
+macro_rules! mooneye_test {
+    ($name:ident, $path:literal) => {
+        #[test]
+        fn $name() {
+            run_mooneye_test($path);
+        }
+    };
+}
+
+// acceptance/ — root level
+mooneye_test!(add_sp_e_timing, "mooneye/acceptance/add_sp_e_timing.gb");
+mooneye_test!(
+    boot_div_dmg_abc_mgb,
+    "mooneye/acceptance/boot_div-dmgABCmgb.gb"
+);
+mooneye_test!(
+    boot_hwio_dmg_abc_mgb,
+    "mooneye/acceptance/boot_hwio-dmgABCmgb.gb"
+);
+mooneye_test!(boot_regs_dmg_abc, "mooneye/acceptance/boot_regs-dmgABC.gb");
+mooneye_test!(call_cc_timing, "mooneye/acceptance/call_cc_timing.gb");
+mooneye_test!(call_cc_timing2, "mooneye/acceptance/call_cc_timing2.gb");
+mooneye_test!(call_timing, "mooneye/acceptance/call_timing.gb");
+mooneye_test!(call_timing2, "mooneye/acceptance/call_timing2.gb");
+mooneye_test!(di_timing_gs, "mooneye/acceptance/di_timing-GS.gb");
+mooneye_test!(div_timing, "mooneye/acceptance/div_timing.gb");
+mooneye_test!(ei_sequence, "mooneye/acceptance/ei_sequence.gb");
+mooneye_test!(ei_timing, "mooneye/acceptance/ei_timing.gb");
+mooneye_test!(halt_ime0_ei, "mooneye/acceptance/halt_ime0_ei.gb");
+mooneye_test!(
+    halt_ime0_nointr_timing,
+    "mooneye/acceptance/halt_ime0_nointr_timing.gb"
+);
+mooneye_test!(halt_ime1_timing, "mooneye/acceptance/halt_ime1_timing.gb");
+mooneye_test!(
+    halt_ime1_timing2_gs,
+    "mooneye/acceptance/halt_ime1_timing2-GS.gb"
+);
+mooneye_test!(if_ie_registers, "mooneye/acceptance/if_ie_registers.gb");
+mooneye_test!(intr_timing, "mooneye/acceptance/intr_timing.gb");
+mooneye_test!(jp_cc_timing, "mooneye/acceptance/jp_cc_timing.gb");
+mooneye_test!(jp_timing, "mooneye/acceptance/jp_timing.gb");
+mooneye_test!(ld_hl_sp_e_timing, "mooneye/acceptance/ld_hl_sp_e_timing.gb");
+mooneye_test!(oam_dma_restart, "mooneye/acceptance/oam_dma_restart.gb");
+mooneye_test!(oam_dma_start, "mooneye/acceptance/oam_dma_start.gb");
+mooneye_test!(oam_dma_timing, "mooneye/acceptance/oam_dma_timing.gb");
+mooneye_test!(pop_timing, "mooneye/acceptance/pop_timing.gb");
+mooneye_test!(push_timing, "mooneye/acceptance/push_timing.gb");
+mooneye_test!(rapid_di_ei, "mooneye/acceptance/rapid_di_ei.gb");
+mooneye_test!(ret_cc_timing, "mooneye/acceptance/ret_cc_timing.gb");
+mooneye_test!(ret_timing, "mooneye/acceptance/ret_timing.gb");
+mooneye_test!(reti_intr_timing, "mooneye/acceptance/reti_intr_timing.gb");
+mooneye_test!(reti_timing, "mooneye/acceptance/reti_timing.gb");
+mooneye_test!(rst_timing, "mooneye/acceptance/rst_timing.gb");
+
+// acceptance/bits/
+mooneye_test!(bits_mem_oam, "mooneye/acceptance/bits/mem_oam.gb");
+mooneye_test!(bits_reg_f, "mooneye/acceptance/bits/reg_f.gb");
+mooneye_test!(
+    bits_unused_hwio_gs,
+    "mooneye/acceptance/bits/unused_hwio-GS.gb"
+);
+
+// acceptance/instr/
+mooneye_test!(instr_daa, "mooneye/acceptance/instr/daa.gb");
+
+// acceptance/interrupts/
+mooneye_test!(
+    interrupts_ie_push,
+    "mooneye/acceptance/interrupts/ie_push.gb"
+);
+
+// acceptance/oam_dma/
+mooneye_test!(oam_dma_basic, "mooneye/acceptance/oam_dma/basic.gb");
+mooneye_test!(oam_dma_reg_read, "mooneye/acceptance/oam_dma/reg_read.gb");
+mooneye_test!(
+    oam_dma_sources_gs,
+    "mooneye/acceptance/oam_dma/sources-GS.gb"
+);
+
+// acceptance/ppu/
+mooneye_test!(
+    ppu_hblank_ly_scx_timing_gs,
+    "mooneye/acceptance/ppu/hblank_ly_scx_timing-GS.gb"
+);
+mooneye_test!(
+    ppu_intr_1_2_timing_gs,
+    "mooneye/acceptance/ppu/intr_1_2_timing-GS.gb"
+);
+mooneye_test!(
+    ppu_intr_2_0_timing,
+    "mooneye/acceptance/ppu/intr_2_0_timing.gb"
+);
+mooneye_test!(
+    ppu_intr_2_mode0_timing,
+    "mooneye/acceptance/ppu/intr_2_mode0_timing.gb"
+);
+mooneye_test!(
+    ppu_intr_2_mode0_timing_sprites,
+    "mooneye/acceptance/ppu/intr_2_mode0_timing_sprites.gb"
+);
+mooneye_test!(
+    ppu_intr_2_mode3_timing,
+    "mooneye/acceptance/ppu/intr_2_mode3_timing.gb"
+);
+mooneye_test!(
+    ppu_intr_2_oam_ok_timing,
+    "mooneye/acceptance/ppu/intr_2_oam_ok_timing.gb"
+);
+mooneye_test!(
+    ppu_lcdon_timing_gs,
+    "mooneye/acceptance/ppu/lcdon_timing-GS.gb"
+);
+mooneye_test!(
+    ppu_lcdon_write_timing_gs,
+    "mooneye/acceptance/ppu/lcdon_write_timing-GS.gb"
+);
+mooneye_test!(
+    ppu_stat_irq_blocking,
+    "mooneye/acceptance/ppu/stat_irq_blocking.gb"
+);
+mooneye_test!(
+    ppu_stat_lyc_onoff,
+    "mooneye/acceptance/ppu/stat_lyc_onoff.gb"
+);
+mooneye_test!(
+    ppu_vblank_stat_intr_gs,
+    "mooneye/acceptance/ppu/vblank_stat_intr-GS.gb"
+);
+
+// acceptance/serial/
+mooneye_test!(
+    serial_boot_sclk_align_dmg,
+    "mooneye/acceptance/serial/boot_sclk_align-dmgABCmgb.gb"
+);
+
+// acceptance/timer/
+mooneye_test!(timer_div_write, "mooneye/acceptance/timer/div_write.gb");
+mooneye_test!(
+    timer_rapid_toggle,
+    "mooneye/acceptance/timer/rapid_toggle.gb"
+);
+mooneye_test!(timer_tim00, "mooneye/acceptance/timer/tim00.gb");
+mooneye_test!(
+    timer_tim00_div_trigger,
+    "mooneye/acceptance/timer/tim00_div_trigger.gb"
+);
+mooneye_test!(timer_tim01, "mooneye/acceptance/timer/tim01.gb");
+mooneye_test!(
+    timer_tim01_div_trigger,
+    "mooneye/acceptance/timer/tim01_div_trigger.gb"
+);
+mooneye_test!(timer_tim10, "mooneye/acceptance/timer/tim10.gb");
+mooneye_test!(
+    timer_tim10_div_trigger,
+    "mooneye/acceptance/timer/tim10_div_trigger.gb"
+);
+mooneye_test!(timer_tim11, "mooneye/acceptance/timer/tim11.gb");
+mooneye_test!(
+    timer_tim11_div_trigger,
+    "mooneye/acceptance/timer/tim11_div_trigger.gb"
+);
+mooneye_test!(timer_tima_reload, "mooneye/acceptance/timer/tima_reload.gb");
+mooneye_test!(
+    timer_tima_write_reloading,
+    "mooneye/acceptance/timer/tima_write_reloading.gb"
+);
+mooneye_test!(
+    timer_tma_write_reloading,
+    "mooneye/acceptance/timer/tma_write_reloading.gb"
+);
