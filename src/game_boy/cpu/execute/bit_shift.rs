@@ -59,7 +59,9 @@ impl Cpu {
                 self.flags.remove(Flags::HALF_CARRY);
                 self.flags.set(Flags::ZERO, new_value == 0);
 
-                self.set8(target, new_value).add_cycles(fetch_cycles)
+                self.set8(target, new_value)
+                    .add_cycles(fetch_cycles)
+                    .add_cycles(Cycles(2))
             }
 
             BitShift::ShiftRightLogical(target) => {
@@ -72,7 +74,9 @@ impl Cpu {
                 self.flags.remove(Flags::HALF_CARRY);
                 self.flags.set(Flags::ZERO, new_value == 0);
 
-                self.set8(target, new_value).add_cycles(fetch_cycles)
+                self.set8(target, new_value)
+                    .add_cycles(fetch_cycles)
+                    .add_cycles(Cycles(2))
             }
 
             BitShift::Swap(target) => {
@@ -85,7 +89,9 @@ impl Cpu {
                     Flags::empty()
                 };
 
-                self.set8(target, new_value).add_cycles(fetch_cycles)
+                self.set8(target, new_value)
+                    .add_cycles(fetch_cycles)
+                    .add_cycles(Cycles(2))
             }
         }
     }

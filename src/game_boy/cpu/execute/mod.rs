@@ -199,7 +199,7 @@ impl Cpu {
                 OpResult::cycles(0)
             }
             Target16::Memory(address) => match address {
-                Address::Fixed(address) => OpResult::write16(address, value, Cycles(2)),
+                Address::Fixed(address) => OpResult::write16(address, value, Cycles(3)),
                 _ => unreachable!(),
             },
         }

@@ -61,7 +61,7 @@ impl Cpu {
                 let result = self.execute_stack(Stack::Push(Register16::ProgramCounter), memory);
 
                 self.program_counter = address as u16;
-                OpResult(Cycles(6), result.1)
+                OpResult(Cycles(4), result.1)
             }
         }
     }
