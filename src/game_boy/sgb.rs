@@ -118,6 +118,7 @@ pub struct SgbRenderData {
     pub palettes: [SgbPalette; 4],
     pub attribute_map: AttributeMap,
     pub mask_mode: MaskMode,
+    pub video_enabled: bool,
 }
 
 enum CommandState {
@@ -187,11 +188,12 @@ impl Sgb {
         }
     }
 
-    pub fn render_data(&self) -> SgbRenderData {
+    pub fn render_data(&self, video_enabled: bool) -> SgbRenderData {
         SgbRenderData {
             palettes: self.palettes,
             attribute_map: self.attribute_map,
             mask_mode: self.mask_mode,
+            video_enabled,
         }
     }
 

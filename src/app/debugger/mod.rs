@@ -71,7 +71,12 @@ impl Debugger {
         screen: Option<crate::game_boy::video::screen::Screen>,
     ) -> Option<Task<app::Message>> {
         let screen = screen?;
-        let sgb_data = self.debugger.game_boy().sgb().map(|sgb| sgb.render_data());
+        let video_enabled = self.debugger.game_boy().video().control().video_enabled();
+        let sgb_data = self
+            .debugger
+            .game_boy()
+            .sgb()
+            .map(|sgb| sgb.render_data(video_enabled));
         Some(Task::done(screen::Message::Update(screen, sgb_data).into()))
     }
 

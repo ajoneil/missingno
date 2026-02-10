@@ -66,14 +66,18 @@ pub fn screen_to_pixels(
         for x in 0..screen::PIXELS_PER_LINE {
             let palette_index = screen.pixel(x, y);
             let color = if let Some(sgb_data) = sgb {
-                match sgb_data.mask_mode {
-                    MaskMode::Black => RGB8::new(0, 0, 0),
-                    MaskMode::BackdropColor => sgb_data.palettes[0].colors[0].to_rgb8(),
-                    MaskMode::Disabled | MaskMode::Freeze => {
-                        let cell_x = x as usize / 8;
-                        let cell_y = y as usize / 8;
-                        let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                        sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
+                if !sgb_data.video_enabled {
+                    RGB8::new(255, 255, 255)
+                } else {
+                    match sgb_data.mask_mode {
+                        MaskMode::Black => RGB8::new(0, 0, 0),
+                        MaskMode::BackdropColor => sgb_data.palettes[0].colors[0].to_rgb8(),
+                        MaskMode::Disabled | MaskMode::Freeze => {
+                            let cell_x = x as usize / 8;
+                            let cell_y = y as usize / 8;
+                            let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
+                            sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
+                        }
                     }
                 }
             } else {
