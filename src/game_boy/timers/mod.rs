@@ -12,6 +12,7 @@ pub struct Timers {
     counter: u8,
     modulo: u8,
     control: Control,
+    overflow_pending: bool,
 }
 
 impl Timers {
@@ -21,6 +22,7 @@ impl Timers {
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
+            overflow_pending: false,
         }
     }
 
@@ -28,26 +30,34 @@ impl Timers {
         self.control.enabled() && (self.internal_counter & self.control.selected_bit()) != 0
     }
 
-    fn increment_tima(&mut self) -> Option<Interrupt> {
+    fn increment_tima(&mut self) {
         if self.counter == 0xFF {
-            self.counter = self.modulo;
-            Some(Interrupt::Timer)
+            self.counter = 0;
+            self.overflow_pending = true;
         } else {
             self.counter += 1;
-            None
         }
     }
 
     pub fn tick(&mut self) -> Option<Interrupt> {
+        // Handle delayed reload from previous tick's overflow
+        let interrupt = if self.overflow_pending {
+            self.overflow_pending = false;
+            self.counter = self.modulo;
+            Some(Interrupt::Timer)
+        } else {
+            None
+        };
+
         let was_set = self.selected_bit_set();
         self.internal_counter = self.internal_counter.wrapping_add(4);
         let is_set = self.selected_bit_set();
 
         if was_set && !is_set {
-            return self.increment_tima();
+            self.increment_tima();
         }
 
-        None
+        interrupt
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
@@ -65,17 +75,21 @@ impl Timers {
                 let was_set = self.selected_bit_set();
                 self.internal_counter = 0;
                 if was_set {
-                    return self.increment_tima();
+                    self.increment_tima();
                 }
             }
-            Register::Counter => self.counter = value,
+            Register::Counter => {
+                // Writing to TIMA during the overflow delay cancels the reload and interrupt
+                self.overflow_pending = false;
+                self.counter = value;
+            }
             Register::Modulo => self.modulo = value,
             Register::Control => {
                 let was_set = self.selected_bit_set();
                 self.control = Control(value);
                 let is_set = self.selected_bit_set();
                 if was_set && !is_set {
-                    return self.increment_tima();
+                    self.increment_tima();
                 }
             }
         }
