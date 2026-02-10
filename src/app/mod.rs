@@ -110,6 +110,9 @@ enum Message {
     HideCursorTick,
     CloseRequested,
 
+    StartRecording,
+    StopRecording,
+
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
@@ -285,6 +288,27 @@ impl App {
             Message::DismissAbout => self.about_shown = false,
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
+            }
+
+            Message::StartRecording => {
+                if let (Game::Loaded(LoadedGame::Debugger(debugger)), Some(save_path)) =
+                    (&mut self.game, &self.save_path)
+                {
+                    let timestamp = jiff::Zoned::now().strftime("%Y-%m-%d-%H%M%S");
+                    let stem = save_path.file_stem().unwrap().to_string_lossy();
+                    let recording_path =
+                        save_path.with_file_name(format!("{stem}-{timestamp}.mnrec"));
+                    debugger.start_recording(recording_path);
+                }
+            }
+            Message::StopRecording => {
+                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
+                    if let Some(filename) = debugger.stop_recording() {
+                        return Task::done(
+                            debugger::playback::Message::RecordingSaved(filename).into(),
+                        );
+                    }
+                }
             }
 
             Message::ActionBar(message) => return self.action_bar.update(message),

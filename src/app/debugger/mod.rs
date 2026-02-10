@@ -1,10 +1,15 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
     app::{self, core::sizes::m, emulator::Emulator},
-    game_boy::{GameBoy, joypad::Button, video::palette::PaletteChoice},
+    game_boy::{
+        GameBoy,
+        joypad::Button,
+        recording::{Input, Recording},
+        video::palette::PaletteChoice,
+    },
 };
 use panes::DebuggerPanes;
 
@@ -14,6 +19,7 @@ mod cpu;
 mod instructions;
 mod interrupts;
 pub mod panes;
+pub mod playback;
 mod screen;
 mod video;
 
@@ -35,10 +41,17 @@ impl Into<super::Message> for Message {
     }
 }
 
+struct ActiveRecording {
+    recording: Recording,
+    path: PathBuf,
+}
+
 pub struct Debugger {
     debugger: crate::debugger::Debugger,
     panes: DebuggerPanes,
     running: bool,
+    frame: u64,
+    active_recording: Option<ActiveRecording>,
 }
 
 impl Debugger {
@@ -47,6 +60,8 @@ impl Debugger {
             debugger: crate::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::new(),
             running: false,
+            frame: 0,
+            active_recording: None,
         }
     }
 
@@ -91,6 +106,7 @@ impl Debugger {
                 self.screen_update_task(screen)
             }
             Message::StepFrame => {
+                self.frame += 1;
                 let screen = self.debugger.step_frame();
                 if screen.is_none() {
                     self.running = false;
@@ -121,7 +137,7 @@ impl Debugger {
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {
-        container(self.panes.view(&self.debugger))
+        container(self.panes.view(&self.debugger, self))
             .padding(m())
             .into()
     }
@@ -150,13 +166,51 @@ impl Debugger {
 
     pub fn reset(&mut self) {
         self.debugger.reset();
+        self.frame = 0;
+        self.active_recording = None;
     }
 
     pub fn press_button(&mut self, button: Button) {
+        if let Some(active) = &mut self.active_recording {
+            active.recording.record(self.frame, Input::Press(button));
+        }
         self.debugger.game_boy_mut().press_button(button);
     }
 
     pub fn release_button(&mut self, button: Button) {
+        if let Some(active) = &mut self.active_recording {
+            active.recording.record(self.frame, Input::Release(button));
+        }
         self.debugger.game_boy_mut().release_button(button);
+    }
+
+    pub fn start_recording(&mut self, path: PathBuf) {
+        self.debugger.reset();
+        self.frame = 0;
+        let game_boy = self.debugger.game_boy();
+        let title = game_boy.cartridge().title().to_string();
+        let checksum = game_boy.cartridge().global_checksum();
+        self.active_recording = Some(ActiveRecording {
+            recording: Recording::new(title, checksum),
+            path,
+        });
+        self.running = true;
+    }
+
+    pub fn stop_recording(&mut self) -> Option<String> {
+        let active = self.active_recording.take()?;
+        active.recording.save(&active.path);
+        active
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.active_recording.is_some()
+    }
+
+    pub fn frame(&self) -> u64 {
+        self.frame
     }
 }

@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 pub struct Joypad {
     read_buttons: bool,
     read_dpad: bool,
@@ -7,7 +9,7 @@ pub struct Joypad {
     pressed_buttons: HashSet<Button>,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Button {
     Start,
     Select,
@@ -16,7 +18,7 @@ pub enum Button {
     DirectionalPad(DirectionalPad),
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DirectionalPad {
     Up,
     Down,

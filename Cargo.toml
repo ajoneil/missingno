@@ -33,5 +33,6 @@ gilrs = "0.11"
 smol = "2"
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
+jiff = "0.2"
 dirs = "6"
 open = "5"

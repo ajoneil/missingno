@@ -74,6 +74,12 @@ impl Cartridge {
         self.mbc.rom()[0x14d]
     }
 
+    pub fn global_checksum(&self) -> u16 {
+        let hi = self.mbc.rom()[0x14e] as u16;
+        let lo = self.mbc.rom()[0x14f] as u16;
+        (hi << 8) | lo
+    }
+
     pub fn read(&self, address: u16) -> u8 {
         self.mbc.read(address)
     }

@@ -25,6 +25,7 @@ use crate::{
             breakpoints::{self, BreakpointsPane},
             cpu::CpuPane,
             instructions::InstructionsPane,
+            playback::{self, PlaybackPane},
             screen::{self, ScreenPane},
             video::{
                 VideoPane,
@@ -55,6 +56,7 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
     Breakpoints(breakpoints::Message),
+    Playback(playback::Message),
     Screen(screen::Message),
     Sprites(sprites::Message),
 }
@@ -82,6 +84,7 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
+    Playback,
 }
 
 enum PaneInstance {
@@ -94,6 +97,7 @@ enum PaneInstance {
     TileMap(TileMapPane),
     Sprites(SpritesPane),
     Audio(AudioPane),
+    Playback(PlaybackPane),
 }
 
 impl DebuggerPanes {
@@ -162,6 +166,7 @@ impl DebuggerPanes {
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
             DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
             DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
+            DebuggerPane::Playback => PaneInstance::Playback(PlaybackPane::new()),
         }
     }
 
@@ -205,6 +210,13 @@ impl DebuggerPanes {
                         }
                     });
                 }
+                PaneMessage::Playback(message) => {
+                    self.panes.iter_mut().for_each(|(_, pane)| {
+                        if let PaneInstance::Playback(playback_pane) = pane {
+                            playback_pane.update(message);
+                        }
+                    });
+                }
                 PaneMessage::Screen(message) => {
                     self.panes.iter_mut().for_each(|(_, pane)| {
                         if let PaneInstance::Screen(screen_pane) = pane {
@@ -232,7 +244,11 @@ impl DebuggerPanes {
         });
     }
 
-    pub fn view<'a>(&'a self, debugger: &'a Debugger) -> Element<'a, app::Message> {
+    pub fn view<'a>(
+        &'a self,
+        debugger: &'a Debugger,
+        app_debugger: &'a super::Debugger,
+    ) -> Element<'a, app::Message> {
         let pal = if debugger.game_boy().sgb().is_some() {
             &Palette::CLASSIC
         } else {
@@ -256,6 +272,7 @@ impl DebuggerPanes {
                 }
                 PaneInstance::Sprites(sprites) => sprites.content(debugger.game_boy().video(), pal),
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
+                PaneInstance::Playback(playback) => playback.content(app_debugger),
             },
         )
         .on_resize(10.0, |resize| Message::ResizePane(resize).into())
@@ -280,6 +297,7 @@ impl DebuggerPanes {
             DebuggerPane::TileMap(TileMapId(1)),
             DebuggerPane::Sprites,
             DebuggerPane::Audio,
+            DebuggerPane::Playback,
         ]
     }
 
@@ -304,6 +322,7 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::TileMap(map) => write!(f, "{}", map),
             DebuggerPane::Sprites => write!(f, "Sprites"),
             DebuggerPane::Audio => write!(f, "Audio"),
+            DebuggerPane::Playback => write!(f, "Playback"),
         }
     }
 }
