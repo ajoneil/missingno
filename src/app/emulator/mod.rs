@@ -11,7 +11,7 @@ use crate::{
     app::{
         self,
         core::icons::{self, Icon},
-        screen::ScreenView,
+        screen::{GameBoyScreen, ScreenView, SgbScreen},
     },
     game_boy::{GameBoy, joypad::Button, sgb::MaskMode, video::palette::PaletteChoice},
 };
@@ -71,19 +71,21 @@ impl Emulator {
         match message {
             Message::EmulateFrame => {
                 while !self.game_boy.step() {}
-                let freeze = self
-                    .game_boy
-                    .sgb()
-                    .map(|sgb| sgb.mask_mode == MaskMode::Freeze)
-                    .unwrap_or(false);
-                if !freeze {
-                    self.screen_view.screen = *self.game_boy.screen();
-                }
+                let screen = *self.game_boy.screen();
                 let video_enabled = self.game_boy.video().control().video_enabled();
-                self.screen_view.sgb_render_data = self
-                    .game_boy
-                    .sgb()
-                    .map(|sgb| sgb.render_data(video_enabled));
+                let display = if let Some(sgb) = self.game_boy.sgb() {
+                    let render_data = sgb.render_data(video_enabled);
+                    if sgb.mask_mode == MaskMode::Freeze {
+                        SgbScreen::Freeze(render_data).into()
+                    } else {
+                        SgbScreen::Display(screen, render_data).into()
+                    }
+                } else if !video_enabled {
+                    GameBoyScreen::Off.into()
+                } else {
+                    GameBoyScreen::Display(screen).into()
+                };
+                self.screen_view.apply(display);
             }
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,

@@ -10,12 +10,9 @@ use crate::{
             self,
             panes::{self, DebuggerPane, pane, title_bar},
         },
-        screen::ScreenView,
+        screen::{ScreenDisplay, ScreenView},
     },
-    game_boy::{
-        sgb::SgbRenderData,
-        video::{palette::PaletteChoice, screen::Screen},
-    },
+    game_boy::video::palette::PaletteChoice,
 };
 
 pub struct ScreenPane {
@@ -24,7 +21,7 @@ pub struct ScreenPane {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Message {
-    Update(Option<Screen>, Option<SgbRenderData>),
+    Update(ScreenDisplay),
 }
 
 impl Into<app::Message> for Message {
@@ -52,11 +49,8 @@ impl ScreenPane {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Update(screen, sgb_render_data) => {
-                if let Some(screen) = screen {
-                    self.screen_view.screen = screen;
-                }
-                self.screen_view.sgb_render_data = sgb_render_data;
+            Message::Update(display) => {
+                self.screen_view.apply(display);
             }
         }
     }

@@ -3,7 +3,12 @@ use std::{path::PathBuf, time::Duration};
 use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::{
-    app::{self, core::sizes::m, emulator::Emulator, screen::ScreenView},
+    app::{
+        self,
+        core::sizes::m,
+        emulator::Emulator,
+        screen::{GameBoyScreen, ScreenView, SgbScreen},
+    },
     game_boy::{
         GameBoy,
         joypad::Button,
@@ -105,19 +110,24 @@ impl Debugger {
         &self,
         screen: Option<crate::game_boy::video::screen::Screen>,
     ) -> Task<app::Message> {
-        let freeze = self
-            .debugger
-            .game_boy()
-            .sgb()
-            .is_some_and(|sgb| sgb.mask_mode == MaskMode::Freeze);
-        let screen = if freeze { None } else { screen };
         let video_enabled = self.debugger.game_boy().video().control().video_enabled();
-        let sgb_data = self
-            .debugger
-            .game_boy()
-            .sgb()
-            .map(|sgb| sgb.render_data(video_enabled));
-        Task::done(screen::Message::Update(screen, sgb_data).into())
+        let display = if let Some(sgb) = self.debugger.game_boy().sgb() {
+            let render_data = sgb.render_data(video_enabled);
+            if sgb.mask_mode == MaskMode::Freeze {
+                SgbScreen::Freeze(render_data).into()
+            } else if let Some(screen) = screen {
+                SgbScreen::Display(screen, render_data).into()
+            } else {
+                return Task::none();
+            }
+        } else if !video_enabled {
+            GameBoyScreen::Off.into()
+        } else if let Some(screen) = screen {
+            GameBoyScreen::Display(screen).into()
+        } else {
+            return Task::none();
+        };
+        Task::done(screen::Message::Update(display).into())
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {

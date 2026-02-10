@@ -11,6 +11,36 @@ use crate::game_boy::{
 
 use super::texture_renderer::TextureRenderer;
 
+#[derive(Copy, Clone, Debug)]
+pub enum ScreenDisplay {
+    GameBoy(GameBoyScreen),
+    Sgb(SgbScreen),
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum GameBoyScreen {
+    Display(Screen),
+    Off,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum SgbScreen {
+    Display(Screen, SgbRenderData),
+    Freeze(SgbRenderData),
+}
+
+impl From<GameBoyScreen> for ScreenDisplay {
+    fn from(screen: GameBoyScreen) -> Self {
+        ScreenDisplay::GameBoy(screen)
+    }
+}
+
+impl From<SgbScreen> for ScreenDisplay {
+    fn from(screen: SgbScreen) -> Self {
+        ScreenDisplay::Sgb(screen)
+    }
+}
+
 pub struct ScreenView {
     pub screen: Screen,
     pub palette: PaletteChoice,
@@ -23,6 +53,28 @@ impl ScreenView {
             screen: Screen::new(),
             palette: PaletteChoice::default(),
             sgb_render_data: None,
+        }
+    }
+
+    pub fn apply(&mut self, display: ScreenDisplay) {
+        match display {
+            ScreenDisplay::GameBoy(GameBoyScreen::Display(screen)) => {
+                self.screen = screen;
+                self.sgb_render_data = None;
+            }
+            ScreenDisplay::GameBoy(GameBoyScreen::Off) => {
+                // NOTE: On real hardware, LCD off produces a different shade than
+                // palette index 0. We currently render both the same way.
+                self.screen = Screen::new();
+                self.sgb_render_data = None;
+            }
+            ScreenDisplay::Sgb(SgbScreen::Display(screen, sgb_data)) => {
+                self.screen = screen;
+                self.sgb_render_data = Some(sgb_data);
+            }
+            ScreenDisplay::Sgb(SgbScreen::Freeze(sgb_data)) => {
+                self.sgb_render_data = Some(sgb_data);
+            }
         }
     }
 }
