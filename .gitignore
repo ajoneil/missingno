@@ -1,8 +1,5 @@
 target
-*.gb
-*.sav
 .vscode
 .claude
 .flatpak-builder
 build-dir
-*.mnrec
