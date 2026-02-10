@@ -5,3 +5,4 @@ target
 .claude
 .flatpak-builder
 build-dir
+*.mnrec
