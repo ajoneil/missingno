@@ -9,7 +9,7 @@ use crate::game_boy::video::{
 };
 
 use super::{
-    sprites::{self, Priority},
+    sprites::{self, Priority, SpriteSize},
     tiles::{TileAddressMode, TileIndex},
 };
 
@@ -78,6 +78,9 @@ impl Line {
             .take(MAX_SPRITES_PER_LINE)
             .cloned()
             .collect();
+
+        // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
+        self.sprites.sort_by_key(|sprite| sprite.position.x_plus_8);
     }
 }
 
@@ -184,7 +187,12 @@ impl Rendering {
             let sprite_pixel = self.line.sprites.iter().find_map(|sprite| {
                 let sprite_x = x as i16 + 8 - sprite.position.x_plus_8 as i16;
                 if (0..8).contains(&sprite_x) {
-                    let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);
+                    let tile_index = if data.control.sprite_size() == SpriteSize::Double {
+                        TileIndex(sprite.tile.0 & 0xFE)
+                    } else {
+                        sprite.tile
+                    };
+                    let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(tile_index);
 
                     let flipped_x = if sprite.attributes.flip_x() {
                         7 - sprite_x as u8
