@@ -3,7 +3,7 @@ use super::{
     cpu::{
         InterruptMasterEnable,
         instructions::Instruction,
-        mcycle::{BusAction, InstructionStepper},
+        mcycle::{BusAction, Processor},
     },
     interrupts::Interrupt,
 };
@@ -46,10 +46,10 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let mut stepper = if let Some(interrupt) = self.check_for_interrupt() {
-            InstructionStepper::interrupt(&mut self.cpu, interrupt, &mut self.mapped)
+        let mut processor = if let Some(interrupt) = self.check_for_interrupt() {
+            Processor::interrupt(&mut self.cpu, interrupt, &mut self.mapped)
         } else if self.cpu.halted {
-            InstructionStepper::halted_nop(self.cpu.program_counter)
+            Processor::halted_nop(self.cpu.program_counter)
         } else {
             // Read opcode byte and tick hardware
             let opcode = self.mapped.read(self.cpu.program_counter);
@@ -68,12 +68,12 @@ impl GameBoy {
             // Decode from buffered bytes
             let mut iter = bytes[..1 + op_count as usize].iter().copied();
             let instruction = Instruction::decode(&mut iter).unwrap();
-            InstructionStepper::new(instruction, &mut self.cpu)
+            Processor::new(instruction, &mut self.cpu)
         };
 
         // Run post-decode M-cycles
         let mut read_value: u8 = 0;
-        while let Some(action) = stepper.next(read_value, &mut self.cpu) {
+        while let Some(action) = processor.next(read_value, &mut self.cpu) {
             match action {
                 BusAction::Read { address } => {
                     read_value = self.mapped.read(address);

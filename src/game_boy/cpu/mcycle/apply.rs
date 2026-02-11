@@ -5,9 +5,9 @@ use super::super::{
     instructions::{CarryFlag, Interrupt as InterruptInstruction},
     registers::Register16,
 };
-use super::{AluOp, InstructionStepper, PopAction, ReadAction, RmwOp};
+use super::{AluOp, PopAction, Processor, ReadAction, RmwOp};
 
-impl InstructionStepper {
+impl Processor {
     pub(super) fn apply_daa(cpu: &mut Cpu) {
         let value = if cpu.flags.contains(Flags::NEGATIVE) {
             let mut adj = 0u8;

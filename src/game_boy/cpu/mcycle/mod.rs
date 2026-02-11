@@ -77,7 +77,7 @@ enum RmwOp {
 // ── Phase enum ──────────────────────────────────────────────────────────
 
 /// Post-fetch behavior for an instruction. Fetch M-cycles are handled by
-/// `GameBoy::step()` (which ticks hardware per byte read). The stepper
+/// `GameBoy::step()` (which ticks hardware per byte read). The processor
 /// only emits the remaining post-fetch M-cycles.
 #[derive(Debug)]
 enum Phase {
@@ -134,10 +134,10 @@ enum Phase {
     Empty,
 }
 
-// ── InstructionStepper ──────────────────────────────────────────────────
+// ── Processor ──────────────────────────────────────────────────
 
 /// Lazy state machine that yields one `BusAction` per M-cycle.
-pub struct InstructionStepper {
+pub struct Processor {
     /// The decoded instruction, preserved for debugger display.
     #[allow(dead_code)]
     pub instruction: Instruction,
@@ -148,8 +148,8 @@ pub struct InstructionStepper {
     scratch: u8,
 }
 
-impl InstructionStepper {
-    /// Create a stepper for a halted NOP (CPU is halted, ticks once).
+impl Processor {
+    /// Create a processor for a halted NOP (CPU is halted, ticks once).
     pub fn halted_nop(pc: u16) -> Self {
         Self {
             instruction: Instruction::NoOperation,
@@ -159,7 +159,7 @@ impl InstructionStepper {
         }
     }
 
-    /// Create a stepper for hardware interrupt dispatch.
+    /// Create a processor for hardware interrupt dispatch.
     pub fn interrupt(cpu: &mut Cpu, interrupt: Interrupt, mapped: &mut MemoryMapped) -> Self {
         cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
         mapped.interrupts.clear(interrupt);
@@ -183,7 +183,7 @@ impl InstructionStepper {
         }
     }
 
-    /// Create a stepper for a decoded instruction.
+    /// Create a processor for a decoded instruction.
     pub fn new(instruction: Instruction, cpu: &mut Cpu) -> Self {
         let phase = match &instruction {
             Instruction::Interrupt(InterruptInstruction::Await) => {

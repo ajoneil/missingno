@@ -7,9 +7,9 @@ use super::super::{
     },
     registers::Register16,
 };
-use super::{AluOp, InstructionStepper, Phase, PopAction, ReadAction, RmwOp};
+use super::{AluOp, Phase, PopAction, Processor, ReadAction, RmwOp};
 
-impl InstructionStepper {
+impl Processor {
     fn resolve_address(cpu: &Cpu, address: &Address) -> u16 {
         match address {
             Address::Fixed(addr) => *addr,
