@@ -158,7 +158,7 @@ impl MemoryMapped {
             }
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data,
-                serial_transfer::Register::Control => self.serial.control.bits(),
+                serial_transfer::Register::Control => self.serial.control.bits() | 0x7E,
             },
             MappedAddress::TimerRegister(register) => self.timers.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
@@ -172,7 +172,7 @@ impl MemoryMapped {
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
             MappedAddress::BeginDmaTransfer => 0xff,
 
-            MappedAddress::Unmapped => 0x00,
+            MappedAddress::Unmapped => 0xFF,
         }
     }
 

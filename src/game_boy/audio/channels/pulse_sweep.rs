@@ -90,9 +90,9 @@ impl PulseSweepChannel {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::WaveformAndInitialLength => self.waveform_and_initial_length.0,
+            Register::WaveformAndInitialLength => self.waveform_and_initial_length.0 | 0x3F,
             Register::Volume => self.volume_and_envelope.0,
-            Register::PeriodSweep => self.sweep.0,
+            Register::PeriodSweep => self.sweep.0 | 0x80,
             Register::PeriodLow => 0xff,
             Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
         }

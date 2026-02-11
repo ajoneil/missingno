@@ -62,9 +62,9 @@ impl Audio {
                         self.channels.ch4.enabled.enabled,
                     );
 
-                    value.bits()
+                    value.bits() | 0x70
                 } else {
-                    0x00
+                    0x70
                 }
             }
 
@@ -106,7 +106,7 @@ impl Audio {
                 value.bits()
             }
 
-            Register::Volume => (self.volume_left.0 << 4) & self.volume_right.0,
+            Register::Volume => (self.volume_left.0 << 4) | self.volume_right.0,
             Register::Channel1(register) => self.channels.ch1.read_register(register),
             Register::Channel2(register) => self.channels.ch2.read_register(register),
             Register::Channel3(register) => self.channels.ch3.read_register(register),

@@ -68,7 +68,7 @@ impl WaveChannel {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::Volume => self.volume.0,
+            Register::Volume => self.volume.0 | 0x9F,
             Register::Length => 0xff,
             Register::DacEnabled => {
                 if self.dac_enabled {

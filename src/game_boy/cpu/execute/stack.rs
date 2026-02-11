@@ -25,13 +25,13 @@ impl Cpu {
             }
 
             Stack::Push(register) => {
-                self.stack_pointer -= 2;
+                self.stack_pointer = self.stack_pointer.wrapping_sub(2);
                 OpResult::write16(self.stack_pointer, self.get_register16(register), Cycles(4))
             }
 
             Stack::Pop(register) => {
                 self.set_register16(register, memory.read16(self.stack_pointer));
-                self.stack_pointer += 2;
+                self.stack_pointer = self.stack_pointer.wrapping_add(2);
 
                 OpResult::cycles(3)
             }

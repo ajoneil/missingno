@@ -13,6 +13,9 @@ pub struct Timers {
     modulo: u8,
     control: Control,
     overflow_pending: bool,
+    /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
+    /// Writes to TIMA during this cycle are ignored.
+    reloading: bool,
 }
 
 impl Timers {
@@ -23,6 +26,7 @@ impl Timers {
             modulo: 0,
             control: Control(0xf8),
             overflow_pending: false,
+            reloading: false,
         }
     }
 
@@ -40,9 +44,12 @@ impl Timers {
     }
 
     pub fn tick(&mut self) -> Option<Interrupt> {
+        self.reloading = false;
+
         // Handle delayed reload from previous tick's overflow
         let interrupt = if self.overflow_pending {
             self.overflow_pending = false;
+            self.reloading = true;
             self.counter = self.modulo;
             Some(Interrupt::Timer)
         } else {
@@ -65,7 +72,7 @@ impl Timers {
             Register::Divider => (self.internal_counter >> 8) as u8,
             Register::Counter => self.counter,
             Register::Modulo => self.modulo,
-            Register::Control => self.control.0,
+            Register::Control => self.control.0 | 0xF8,
         }
     }
 
@@ -79,11 +86,21 @@ impl Timers {
                 }
             }
             Register::Counter => {
-                // Writing to TIMA during the overflow delay cancels the reload and interrupt
-                self.overflow_pending = false;
-                self.counter = value;
+                if self.reloading {
+                    // Writing to TIMA during the reload cycle is ignored (TMA wins)
+                } else {
+                    // Writing to TIMA during the overflow delay cancels the reload and interrupt
+                    self.overflow_pending = false;
+                    self.counter = value;
+                }
             }
-            Register::Modulo => self.modulo = value,
+            Register::Modulo => {
+                self.modulo = value;
+                // Writing to TMA during the reload cycle also updates TIMA
+                if self.reloading {
+                    self.counter = value;
+                }
+            }
             Register::Control => {
                 let was_set = self.selected_bit_set();
                 self.control = Control(value);

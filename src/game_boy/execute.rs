@@ -1,6 +1,11 @@
 use super::{
     GameBoy,
-    cpu::{InterruptMasterEnable, execute::OpResult, instructions::Instruction},
+    cpu::{
+        InterruptMasterEnable,
+        execute::OpResult,
+        instructions::{Instruction, Stack},
+        registers::Register16,
+    },
     interrupts::Interrupt,
 };
 
@@ -16,21 +21,25 @@ impl Iterator for GameBoy {
 
 impl GameBoy {
     pub fn step(&mut self) -> bool {
-        let instruction = if let Some(interrupt) = self.check_for_interrupt() {
+        let OpResult(cycles, memory_write) = if let Some(interrupt) = self.check_for_interrupt() {
             self.cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.mapped.interrupts.clear(interrupt);
             self.cpu.halted = false;
 
-            interrupt.call_instruction()
+            // Interrupt dispatch: 5 M-cycles (2 wait + 2 push + 1 jump)
+            let result = self
+                .cpu
+                .execute_stack(Stack::Push(Register16::ProgramCounter), &self.mapped);
+            self.cpu.program_counter = interrupt.vector();
+            OpResult(super::cpu::cycles::Cycles(5), result.1)
         } else {
-            if self.cpu.halted {
+            let instruction = if self.cpu.halted {
                 Instruction::NoOperation
             } else {
                 Instruction::decode(self).unwrap()
-            }
+            };
+            self.cpu.execute(instruction, &self.mapped)
         };
-
-        let OpResult(cycles, memory_write) = self.cpu.execute(instruction.clone(), &self.mapped);
         if let Some(memory_write) = memory_write {
             self.mapped.write(memory_write);
         }

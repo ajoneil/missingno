@@ -113,9 +113,12 @@ impl Video {
                     } else {
                         0
                     };
-                    (self.interrupts.flags.bits() & 0b01111000) | line_compare | ppu.mode() as u8
+                    0x80 | (self.interrupts.flags.bits() & 0b01111000)
+                        | line_compare
+                        | ppu.mode() as u8
                 } else {
-                    (self.interrupts.flags.bits() & 0b01111000) | ppu::Mode::BetweenFrames as u8
+                    0x80 | (self.interrupts.flags.bits() & 0b01111000)
+                        | ppu::Mode::BetweenFrames as u8
                 }
             }
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,

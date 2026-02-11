@@ -1,8 +1,6 @@
 use bitflags::bitflags;
 use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
-use crate::game_boy::cpu::instructions::{Address, Instruction, jump};
-
 #[derive(Debug)]
 pub enum Register {
     EnabledInterrupts,
@@ -56,19 +54,14 @@ impl DeRon for InterruptFlags {
 }
 
 impl Interrupt {
-    pub fn call_instruction(&self) -> Instruction {
-        let call = jump::Jump::Call(None, jump::Location::Address(self.address()));
-        call.into()
-    }
-
-    pub fn address(&self) -> Address {
-        Address::Fixed(match self {
+    pub fn vector(&self) -> u16 {
+        match self {
             Interrupt::VideoBetweenFrames => 0x40,
             Interrupt::VideoStatus => 0x48,
             Interrupt::Timer => 0x50,
             Interrupt::Serial => 0x58,
             Interrupt::Joypad => 0x60,
-        })
+        }
     }
 
     pub fn priority_order() -> &'static [Self] {
