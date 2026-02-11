@@ -2,6 +2,7 @@ use super::{
     GameBoy,
     cpu::{
         InterruptMasterEnable,
+        cycles::Cycles,
         execute::OpResult,
         instructions::{Instruction, Stack},
         registers::Register16,
@@ -31,7 +32,7 @@ impl GameBoy {
                 .cpu
                 .execute_stack(Stack::Push(Register16::ProgramCounter), &self.mapped);
             self.cpu.program_counter = interrupt.vector();
-            OpResult(super::cpu::cycles::Cycles(5), result.1)
+            OpResult(Cycles(5), result.1)
         } else {
             let instruction = if self.cpu.halted {
                 Instruction::NoOperation

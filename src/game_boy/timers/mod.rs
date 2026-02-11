@@ -76,7 +76,7 @@ impl Timers {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) -> Option<Interrupt> {
+    pub fn write_register(&mut self, register: Register, value: u8) {
         match register {
             Register::Divider => {
                 let was_set = self.selected_bit_set();
@@ -86,13 +86,12 @@ impl Timers {
                 }
             }
             Register::Counter => {
-                if self.reloading {
-                    // Writing to TIMA during the reload cycle is ignored (TMA wins)
-                } else {
+                if !self.reloading {
                     // Writing to TIMA during the overflow delay cancels the reload and interrupt
                     self.overflow_pending = false;
                     self.counter = value;
                 }
+                // Writing to TIMA during the reload cycle is ignored (TMA wins)
             }
             Register::Modulo => {
                 self.modulo = value;
@@ -110,6 +109,5 @@ impl Timers {
                 }
             }
         }
-        None
     }
 }

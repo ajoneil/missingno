@@ -206,9 +206,7 @@ impl MemoryMapped {
                 }
             },
             MappedAddress::TimerRegister(register) => {
-                if let Some(interrupt) = self.timers.write_register(register, value) {
-                    self.interrupts.request(interrupt);
-                }
+                self.timers.write_register(register, value);
             }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
