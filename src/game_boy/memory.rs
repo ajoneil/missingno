@@ -126,13 +126,25 @@ impl MemoryMapped {
         // During active DMA (past startup), CPU reads outside HRAM/IO
         // return the byte currently being transferred.
         if let Some(dma) = &self.dma {
-            if dma.startup_delay == 0 {
+            if !matches!(dma.delay, Some(super::DmaDelay::Startup(_))) {
                 match address {
                     0xff80..=0xffff => {} // HRAM + IE — always accessible
                     0xff00..=0xff7f => {} // IO registers — always accessible
+                    // OAM is being written to by DMA, so CPU reads return $FF
+                    0xfe00..=0xfe9f => return 0xFF,
                     _ => {
-                        let src = dma.source + dma.byte_index as u16;
-                        return self.read_bypassing_dma(src);
+                        // Bus conflict only if the CPU read is on the same bus
+                        // as the DMA source. The Game Boy has two buses:
+                        //   External: ROM (0000-7FFF), SRAM (A000-BFFF), WRAM (C000-FDFF)
+                        //   VRAM:     8000-9FFF
+                        // If DMA reads from VRAM, CPU can still access the external bus
+                        // and vice versa.
+                        let dma_on_vram = (0x8000..=0x9FFF).contains(&dma.source);
+                        let read_on_vram = (0x8000..=0x9FFF).contains(&address);
+                        if dma_on_vram == read_on_vram {
+                            let src = dma.source + dma.byte_index as u16;
+                            return self.read_bypassing_dma(src);
+                        }
                     }
                 }
             }
@@ -140,10 +152,23 @@ impl MemoryMapped {
         self.read_mapped(MappedAddress::map(address))
     }
 
-    /// Read a byte without DMA bus conflict checks. Used by the DMA
-    /// transfer itself and for returning the conflicted byte value.
+    /// Read a byte without DMA bus conflict checks. Used for returning
+    /// the conflicted byte value during DMA.
     pub fn read_bypassing_dma(&self, address: u16) -> u8 {
         self.read_mapped(MappedAddress::map(address))
+    }
+
+    /// Read a byte as the DMA controller would. The DMA uses the external
+    /// bus, so addresses $FE00+ (OAM, IO, HRAM) are not directly accessible —
+    /// the external bus maps them to WRAM echo instead.
+    pub fn read_dma_source(&self, address: u16) -> u8 {
+        let mapped = if address >= 0xFE00 {
+            // External bus maps $FE00+ as WRAM echo
+            MappedAddress::WorkRam(address.wrapping_sub(0xE000))
+        } else {
+            MappedAddress::map(address)
+        };
+        self.read_mapped(mapped)
     }
 
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
@@ -188,7 +213,7 @@ impl MemoryMapped {
     pub fn write_byte(&mut self, address: u16, value: u8) {
         // During active DMA (past startup), CPU writes outside HRAM/IO are ignored.
         if let Some(dma) = &self.dma {
-            if dma.startup_delay == 0 {
+            if !matches!(dma.delay, Some(super::DmaDelay::Startup(_))) {
                 match address {
                     0xff80..=0xffff => {} // HRAM + IE — always accessible
                     0xff00..=0xff7f => {} // IO registers — always accessible
@@ -239,11 +264,21 @@ impl MemoryMapped {
     }
 
     fn begin_dma_transfer(&mut self, source: u8) {
+        // When restarting DMA while a previous transfer is active (past startup),
+        // bus conflicts remain in effect during the new startup period.
+        let active_dma = self
+            .dma
+            .as_ref()
+            .is_some_and(|d| !matches!(d.delay, Some(super::DmaDelay::Startup(_))));
         self.dma_source = source;
         self.dma = Some(super::DmaTransfer {
             source: source as u16 * 0x100,
             byte_index: 0,
-            startup_delay: 2,
+            delay: Some(if active_dma {
+                super::DmaDelay::Transfer(2)
+            } else {
+                super::DmaDelay::Startup(2)
+            }),
         });
     }
 }

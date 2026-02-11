@@ -19,15 +19,25 @@ pub mod sgb;
 pub mod timers;
 pub mod video;
 
+/// Pre-transfer delay state for OAM DMA. `None` means the DMA is
+/// actively transferring bytes with bus conflicts enabled.
+enum DmaDelay {
+    /// Fresh DMA: M-cycles remaining before bus conflicts activate and
+    /// the first byte transfers. During this delay OAM is still accessible.
+    Startup(u8),
+    /// Restarted DMA: M-cycles remaining before byte transfers begin.
+    /// Bus conflicts are already active (inherited from the previous DMA).
+    Transfer(u8),
+}
+
 /// State for an in-progress OAM DMA transfer.
 pub struct DmaTransfer {
     /// Base source address (page * 0x100).
     source: u16,
     /// Next byte index to transfer (0..160).
     byte_index: u8,
-    /// M-cycles remaining in the startup delay before the first byte
-    /// transfers and bus conflicts activate (countdown at M-cycle rate).
-    startup_delay: u8,
+    /// Pre-transfer delay countdown, or `None` if actively transferring.
+    delay: Option<DmaDelay>,
 }
 
 // Anything accessible via a memory address is stored in a separate
