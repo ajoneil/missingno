@@ -1,4 +1,3 @@
-use super::super::{MemoryMapped, interrupts::Interrupt};
 use super::{
     Cpu, InterruptMasterEnable,
     instructions::bit_shift::{Carry, Direction},
@@ -168,6 +167,9 @@ pub struct Processor {
     current_action: Option<BusAction>,
     /// Whether we have started T-cycle iteration (have a pending M-cycle).
     tcycle_active: bool,
+    /// Set after the high-byte push of interrupt dispatch. The caller
+    /// must re-check IF & IE to determine the jump vector (IE push bug).
+    pub needs_vector_resolve: bool,
 }
 
 impl Processor {
@@ -181,20 +183,24 @@ impl Processor {
             t_step: 0,
             current_action: None,
             tcycle_active: false,
+            needs_vector_resolve: false,
         }
     }
 
     /// Create a processor for hardware interrupt dispatch.
-    pub fn interrupt(cpu: &mut Cpu, interrupt: Interrupt, mapped: &mut MemoryMapped) -> Self {
+    ///
+    /// Neither the IF bit nor the jump vector are resolved here — both are
+    /// deferred until after the high-byte push so that writes landing on
+    /// the IE register (0xFFFF) can cancel or redirect the dispatch
+    /// (IE push bug).
+    pub fn interrupt(cpu: &mut Cpu) -> Self {
         cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
-        mapped.interrupts.clear(interrupt);
         cpu.halted = false;
 
         let pc = cpu.program_counter;
         let pc_hi = (pc >> 8) as u8;
         let pc_lo = (pc & 0xff) as u8;
         let sp = cpu.stack_pointer;
-        cpu.program_counter = interrupt.vector();
 
         Self {
             instruction: Instruction::NoOperation,
@@ -204,6 +210,7 @@ impl Processor {
             t_step: 0,
             current_action: None,
             tcycle_active: false,
+            needs_vector_resolve: false,
         }
     }
 
@@ -251,6 +258,7 @@ impl Processor {
             t_step: 0,
             current_action: None,
             tcycle_active: false,
+            needs_vector_resolve: false,
         }
     }
 
@@ -450,6 +458,11 @@ impl Processor {
                         })
                     }
                     3 => {
+                        // Signal the caller to resolve the vector now, after
+                        // the high byte push (step 2) but before the low byte
+                        // push. The high byte write may have modified IE at
+                        // 0xFFFF (IE push bug).
+                        self.needs_vector_resolve = true;
                         let addr = sp.wrapping_sub(2);
                         cpu.stack_pointer = addr;
                         Some(BusAction::Write {

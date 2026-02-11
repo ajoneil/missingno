@@ -47,8 +47,8 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let mut processor = if let Some(interrupt) = self.check_for_interrupt() {
-            Processor::interrupt(&mut self.cpu, interrupt, &mut self.mapped)
+        let mut processor = if self.check_for_interrupt().is_some() {
+            Processor::interrupt(&mut self.cpu)
         } else if self.cpu.halted {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
@@ -86,7 +86,22 @@ impl GameBoy {
 
         // Run post-decode T-cycles
         let mut read_value: u8 = 0;
+        let mut vector_resolved = false;
         while let Some(tcycle) = processor.next_tcycle(read_value, &mut self.cpu) {
+            // IE push bug: resolve the interrupt vector after the high byte
+            // push completes but before the low byte push. The high byte
+            // write may have modified IE (at 0xFFFF), changing which
+            // interrupt is pending.
+            if processor.needs_vector_resolve && !vector_resolved {
+                vector_resolved = true;
+                if let Some(interrupt) = self.mapped.interrupts.triggered() {
+                    self.mapped.interrupts.clear(interrupt);
+                    self.cpu.program_counter = interrupt.vector();
+                } else {
+                    self.cpu.program_counter = 0x0000;
+                }
+            }
+
             match tcycle {
                 TCycle::Read { address } => {
                     read_value = self.mapped.read(address);
@@ -98,6 +113,7 @@ impl GameBoy {
             }
             new_screen |= self.tick_hardware_tcycle();
         }
+
         new_screen
     }
 
