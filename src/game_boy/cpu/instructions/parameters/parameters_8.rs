@@ -71,11 +71,14 @@ impl Target8 {
     pub fn high_c() -> Self {
         Self::Memory(Address::HighPlusC)
     }
+}
 
-    pub fn to_source(&self) -> Source8 {
+impl Target8 {
+    /// How many operand bytes were consumed during decode for this target.
+    pub fn operand_byte_count(&self) -> u16 {
         match self {
-            Self::Register(register) => Source8::Register(*register),
-            Self::Memory(address) => Source8::Memory(*address),
+            Self::Register(_) => 0,
+            Self::Memory(address) => address.operand_byte_count(),
         }
     }
 }
@@ -166,6 +169,17 @@ impl Source8 {
 
     pub fn high_c() -> Self {
         Self::Memory(Address::HighPlusC)
+    }
+}
+
+impl Source8 {
+    /// How many operand bytes were consumed during decode for this source.
+    pub fn operand_byte_count(&self) -> u16 {
+        match self {
+            Self::Constant(_) => 1,
+            Self::Register(_) => 0,
+            Self::Memory(address) => address.operand_byte_count(),
+        }
     }
 }
 

@@ -122,19 +122,9 @@ impl MappedAddress {
     }
 }
 
-pub enum MemoryWrite {
-    Write8(MappedAddress, u8),
-    Write16((MappedAddress, u8), (MappedAddress, u8)),
-}
-
 impl MemoryMapped {
     pub fn read(&self, address: u16) -> u8 {
         self.read_mapped(MappedAddress::map(address))
-    }
-
-    pub fn read16(&self, address: u16) -> u16 {
-        // TODO: Confirm correct endianness here
-        u16::from_le_bytes([self.read(address), self.read(address + 1)])
     }
 
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
@@ -176,14 +166,8 @@ impl MemoryMapped {
         }
     }
 
-    pub fn write(&mut self, write: MemoryWrite) {
-        match write {
-            MemoryWrite::Write8(address, value) => self.write_mapped(address, value),
-            MemoryWrite::Write16((address1, value1), (address2, value2)) => {
-                self.write_mapped(address1, value1);
-                self.write_mapped(address2, value2);
-            }
-        }
+    pub fn write_byte(&mut self, address: u16, value: u8) {
+        self.write_mapped(MappedAddress::map(address), value);
     }
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {

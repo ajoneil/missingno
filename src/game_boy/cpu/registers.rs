@@ -36,7 +36,6 @@ pub enum Register16 {
     Hl,
     StackPointer,
     Af,
-    ProgramCounter,
 }
 
 impl fmt::Display for Register16 {
@@ -50,7 +49,6 @@ impl fmt::Display for Register16 {
                 Self::Hl => "hl",
                 Self::StackPointer => "sp",
                 Self::Af => "af",
-                Self::ProgramCounter => "pc",
             }
         )
     }

@@ -1,13 +1,12 @@
 use nanoserde::{DeRon, SerRon};
 
 use flags::{Flag, Flags};
-use instructions::Instruction;
 use registers::{Register8, Register16};
 
 pub mod cycles;
-pub mod execute;
 pub mod flags;
 pub mod instructions;
+pub mod mcycle;
 pub mod registers;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, SerRon, DeRon)]
@@ -73,7 +72,7 @@ impl Cpu {
         }
     }
 
-    fn set_register8(&mut self, register: Register8, value: u8) {
+    pub(crate) fn set_register8(&mut self, register: Register8, value: u8) {
         match register {
             Register8::A => self.a = value,
             Register8::B => self.b = value,
@@ -92,11 +91,10 @@ impl Cpu {
             Register16::Hl => u16::from_be_bytes([self.h, self.l]),
             Register16::StackPointer => self.stack_pointer,
             Register16::Af => u16::from_be_bytes([self.a, self.flags.bits()]),
-            Register16::ProgramCounter => self.program_counter,
         }
     }
 
-    fn set_register16(&mut self, register: Register16, value: u16) {
+    pub(crate) fn set_register16(&mut self, register: Register16, value: u16) {
         let high = (value / 0x100) as u8;
         let low = (value % 0x100) as u8;
 
@@ -118,7 +116,6 @@ impl Cpu {
                 self.a = high;
                 self.flags = Flags::from_bits_retain(low & 0xF0);
             }
-            Register16::ProgramCounter => self.program_counter = value,
         }
     }
 

@@ -11,7 +11,7 @@ pub enum BitShift {
     Swap(Target8),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Direction {
     Left,
     Right,
@@ -26,7 +26,7 @@ impl fmt::Display for Direction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Carry {
     Through,
     SetOnly,

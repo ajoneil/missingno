@@ -132,6 +132,7 @@ impl GameBoy {
         self.mapped.sgb.as_ref()
     }
 
+    #[allow(dead_code)]
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.mapped.serial.output)
     }

@@ -47,6 +47,21 @@ impl Address {
     }
 }
 
+impl Address {
+    /// How many operand bytes were consumed during decode for this address.
+    pub fn operand_byte_count(&self) -> u16 {
+        match self {
+            Self::Fixed(_) => 2,
+            Self::Relative(_) => 1,
+            Self::High(_) => 1,
+            Self::HighPlusC => 0,
+            Self::Dereference(_) => 0,
+            Self::DereferenceHlAndIncrement => 0,
+            Self::DereferenceHlAndDecrement => 0,
+        }
+    }
+}
+
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
