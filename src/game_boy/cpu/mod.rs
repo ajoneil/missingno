@@ -33,6 +33,11 @@ pub struct Cpu {
 
     pub interrupt_master_enable: InterruptMasterEnable,
     pub halted: bool,
+    /// HALT bug: when HALT is executed with IME=0 and an interrupt is
+    /// already pending, the CPU doesn't truly halt — it resumes
+    /// immediately but fails to increment PC on the next opcode fetch,
+    /// causing that byte to be read twice.
+    pub halt_bug: bool,
 }
 
 impl Cpu {
@@ -57,6 +62,7 @@ impl Cpu {
 
             interrupt_master_enable: InterruptMasterEnable::Disabled,
             halted: false,
+            halt_bug: false,
         }
     }
 

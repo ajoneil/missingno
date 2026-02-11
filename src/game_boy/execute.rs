@@ -61,7 +61,14 @@ impl GameBoy {
             // Read opcode byte
             new_screen |= self.tick_hardware_tcycle();
             let opcode = self.mapped.read(self.cpu.program_counter);
-            self.cpu.program_counter += 1;
+            if self.cpu.halt_bug {
+                // HALT bug: PC fails to increment on the fetch after HALT
+                // exits with IME=0 and a pending interrupt, causing this
+                // byte to be read twice (once now, once as the next opcode).
+                self.cpu.halt_bug = false;
+            } else {
+                self.cpu.program_counter += 1;
+            }
             new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
@@ -81,7 +88,21 @@ impl GameBoy {
             // Decode from buffered bytes
             let mut iter = bytes[..1 + op_count as usize].iter().copied();
             let instruction = Instruction::decode(&mut iter).unwrap();
-            Processor::new(instruction, &mut self.cpu)
+            let processor = Processor::new(instruction, &mut self.cpu);
+
+            // HALT bug: if HALT was just executed with IME=0 and an
+            // interrupt is already pending, the CPU doesn't truly halt.
+            // It resumes immediately but fails to increment PC on the
+            // next opcode fetch.
+            if self.cpu.halted
+                && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
+                && self.mapped.interrupts.triggered().is_some()
+            {
+                self.cpu.halted = false;
+                self.cpu.halt_bug = true;
+            }
+
+            processor
         };
 
         // Run post-decode T-cycles
