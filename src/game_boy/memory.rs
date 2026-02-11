@@ -152,18 +152,15 @@ impl MappedAddress {
 
 impl MemoryMapped {
     pub fn read(&self, address: u16) -> u8 {
-        if let Some(dma) = &self.dma {
-            if !matches!(dma.delay, Some(super::DmaDelay::Startup(_))) {
-                // OAM is being written to by DMA; CPU reads return $FF.
-                if (0xFE00..=0xFE9F).contains(&address) {
-                    return 0xFF;
-                }
-                // Bus conflict: if the CPU accesses the same bus the DMA
-                // is reading from, the read returns the byte being transferred.
-                if Bus::of(address) == Some(dma.source_bus) {
-                    let src = dma.source + dma.byte_index as u16;
-                    return self.read_mapped(MappedAddress::map(src));
-                }
+        if let Some(bus) = self.dma.is_active_on_bus() {
+            // OAM is being written to by DMA; CPU reads return $FF.
+            if (0xFE00..=0xFE9F).contains(&address) {
+                return 0xFF;
+            }
+            // Bus conflict: if the CPU accesses the same bus the DMA
+            // is reading from, the read returns the byte being transferred.
+            if Bus::of(address) == Some(bus) {
+                return self.read_mapped(MappedAddress::map(self.dma.conflicting_address()));
             }
         }
         self.read_mapped(MappedAddress::map(address))
@@ -212,23 +209,21 @@ impl MemoryMapped {
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
-            MappedAddress::BeginDmaTransfer => self.dma_source,
+            MappedAddress::BeginDmaTransfer => self.dma.source_register(),
 
             MappedAddress::Unmapped => 0xFF,
         }
     }
 
     pub fn write_byte(&mut self, address: u16, value: u8) {
-        if let Some(dma) = &self.dma {
-            if !matches!(dma.delay, Some(super::DmaDelay::Startup(_))) {
-                // OAM is being written to by DMA; CPU writes are ignored.
-                if (0xFE00..=0xFE9F).contains(&address) {
-                    return;
-                }
-                // Bus conflict: CPU writes on the same bus as DMA are ignored.
-                if Bus::of(address) == Some(dma.source_bus) {
-                    return;
-                }
+        if let Some(bus) = self.dma.is_active_on_bus() {
+            // OAM is being written to by DMA; CPU writes are ignored.
+            if (0xFE00..=0xFE9F).contains(&address) {
+                return;
+            }
+            // Bus conflict: CPU writes on the same bus as DMA are ignored.
+            if Bus::of(address) == Some(bus) {
+                return;
             }
         }
         self.write_mapped(MappedAddress::map(address), value);
@@ -259,7 +254,7 @@ impl MemoryMapped {
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
-            MappedAddress::BeginDmaTransfer => self.begin_dma_transfer(value),
+            MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
                     self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
@@ -271,26 +266,5 @@ impl MemoryMapped {
 
             MappedAddress::Unmapped => {}
         }
-    }
-
-    fn begin_dma_transfer(&mut self, source: u8) {
-        // When restarting DMA while a previous transfer is active (past startup),
-        // bus conflicts remain in effect during the new startup period.
-        let active_dma = self
-            .dma
-            .as_ref()
-            .is_some_and(|d| !matches!(d.delay, Some(super::DmaDelay::Startup(_))));
-        let source_addr = source as u16 * 0x100;
-        self.dma_source = source;
-        self.dma = Some(super::DmaTransfer {
-            source: source_addr,
-            source_bus: Bus::of(source_addr).unwrap_or(Bus::External),
-            byte_index: 0,
-            delay: Some(if active_dma {
-                super::DmaDelay::Transfer(2)
-            } else {
-                super::DmaDelay::Startup(2)
-            }),
-        });
     }
 }

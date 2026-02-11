@@ -161,27 +161,10 @@ impl GameBoy {
         }
 
         // OAM DMA: transfer one byte per M-cycle
-        if let Some(dma) = &mut self.mapped.dma {
-            match &mut dma.delay {
-                Some(super::DmaDelay::Startup(n) | super::DmaDelay::Transfer(n)) if *n > 1 => {
-                    *n -= 1;
-                }
-                Some(_) => dma.delay = None,
-                None => {
-                    let src_addr = dma.source + dma.byte_index as u16;
-                    let dst_offset = dma.byte_index;
-                    dma.byte_index += 1;
-                    let done = dma.byte_index == 160;
-
-                    let byte = self.mapped.read_dma_source(src_addr);
-                    let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
-                    self.mapped.video.write_memory(dst, byte);
-
-                    if done {
-                        self.mapped.dma = None;
-                    }
-                }
-            }
+        if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
+            let byte = self.mapped.read_dma_source(src_addr);
+            let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
+            self.mapped.video.write_memory(dst, byte);
         }
 
         if let Some(interrupt) = self.mapped.serial.mcycle() {

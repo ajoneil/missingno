@@ -1,6 +1,7 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
+use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::Ram;
 use video::{Video, screen::Screen};
@@ -8,6 +9,7 @@ use video::{Video, screen::Screen};
 pub mod audio;
 pub mod cartridge;
 pub mod cpu;
+pub mod dma;
 pub mod execute;
 pub mod interrupts;
 pub mod joypad;
@@ -18,29 +20,6 @@ pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
 pub mod video;
-
-/// Pre-transfer delay state for OAM DMA. `None` means the DMA is
-/// actively transferring bytes with bus conflicts enabled.
-enum DmaDelay {
-    /// Fresh DMA: M-cycles remaining before bus conflicts activate and
-    /// the first byte transfers. During this delay OAM is still accessible.
-    Startup(u8),
-    /// Restarted DMA: M-cycles remaining before byte transfers begin.
-    /// Bus conflicts are already active (inherited from the previous DMA).
-    Transfer(u8),
-}
-
-/// State for an in-progress OAM DMA transfer.
-pub struct DmaTransfer {
-    /// Base source address (page * 0x100).
-    source: u16,
-    /// Which bus the DMA source resides on.
-    source_bus: memory::Bus,
-    /// Next byte index to transfer (0..160).
-    byte_index: u8,
-    /// Pre-transfer delay countdown, or `None` if actively transferring.
-    delay: Option<DmaDelay>,
-}
 
 // Anything accessible via a memory address is stored in a separate
 // struct to allow borrowing independently of the Cpu
@@ -53,8 +32,7 @@ pub struct MemoryMapped {
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
     timers: timers::Timers,
-    dma: Option<DmaTransfer>,
-    dma_source: u8,
+    dma: Dma,
     sgb: Option<sgb::Sgb>,
 }
 
@@ -89,8 +67,7 @@ impl GameBoy {
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
                 timers: timers::Timers::new(),
-                dma: None,
-                dma_source: 0,
+                dma: Dma::new(),
                 sgb,
             },
         }
@@ -107,8 +84,7 @@ impl GameBoy {
         self.mapped.interrupts = interrupts::Registers::new();
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
-        self.mapped.dma = None;
-        self.mapped.dma_source = 0;
+        self.mapped.dma = Dma::new();
         self.mapped.sgb = if self.mapped.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {
