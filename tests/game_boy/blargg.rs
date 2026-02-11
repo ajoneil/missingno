@@ -117,10 +117,14 @@ fn mem_timing() {
     run_blargg_test("blargg/mem_timing/mem_timing.gb");
 }
 
-// Memory timing 2 (screen-only, no serial output)
+// Memory timing 2 (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn mem_timing_2() {
-    run_blargg_test_with_timeout("blargg/mem_timing-2/mem_timing.gb", 1200);
+    run_blargg_screen_test(
+        "blargg/mem_timing-2/mem_timing.gb",
+        "blargg/mem_timing-2/mem_timing-dmg-cgb.png",
+        1200,
+    );
 }
 
 // Halt bug (screen-only, no serial output — uses screenshot comparison)
@@ -129,20 +133,32 @@ fn halt_bug() {
     run_blargg_screen_test("blargg/halt_bug.gb", "blargg/halt_bug-dmg-cgb.png", 1200);
 }
 
-// Interrupt timing (screen-only, no serial output)
+// Interrupt timing (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn interrupt_time() {
-    run_blargg_test_with_timeout("blargg/interrupt_time/interrupt_time.gb", 1200);
+    run_blargg_screen_test(
+        "blargg/interrupt_time/interrupt_time.gb",
+        "blargg/interrupt_time/interrupt_time-dmg.png",
+        1200,
+    );
 }
 
-// DMG sound — combined (screen-only, no serial output)
+// DMG sound — combined (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn dmg_sound() {
-    run_blargg_test_with_timeout("blargg/dmg_sound/dmg_sound.gb", 3600);
+    run_blargg_screen_test(
+        "blargg/dmg_sound/dmg_sound.gb",
+        "blargg/dmg_sound/dmg_sound-dmg.png",
+        3600,
+    );
 }
 
-// OAM bug — combined (screen-only, no serial output)
+// OAM bug — combined (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn oam_bug() {
-    run_blargg_test_with_timeout("blargg/oam_bug/oam_bug.gb", 1200);
+    run_blargg_screen_test(
+        "blargg/oam_bug/oam_bug.gb",
+        "blargg/oam_bug/oam_bug-dmg.png",
+        1200,
+    );
 }
