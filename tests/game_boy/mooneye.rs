@@ -2,6 +2,38 @@ use crate::common;
 
 const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
 
+fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {
+    run_mooneye_screen_test_with_timeout(rom_path, reference_path, TIMEOUT_FRAMES);
+}
+
+fn run_mooneye_screen_test_with_timeout(rom_path: &str, reference_path: &str, timeout_frames: u32) {
+    let mut gb = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    assert!(
+        found_loop,
+        "Mooneye test {rom_path} timed out without reaching infinite loop"
+    );
+
+    let actual = common::screen_to_greyscale(gb.screen());
+    let expected = common::load_reference_png(reference_path);
+
+    let mut mismatches = 0;
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        if a != e {
+            if mismatches < 10 {
+                let (x, y) = (i % 160, i / 160);
+                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
+            }
+            mismatches += 1;
+        }
+    }
+
+    assert_eq!(
+        mismatches, 0,
+        "Mooneye test {rom_path}: {mismatches} pixel mismatches vs {reference_path}"
+    );
+}
+
 fn run_mooneye_test(rom_path: &str) {
     let mut gb = common::load_rom(rom_path);
     let found_loop = common::run_until_infinite_loop(&mut gb, TIMEOUT_FRAMES);
@@ -188,3 +220,22 @@ mooneye_test!(
     timer_tma_write_reloading,
     "mooneye/acceptance/timer/tma_write_reloading.gb"
 );
+
+// madness/ — obscure hardware edge cases (screenshot comparison)
+#[test]
+fn madness_mgb_oam_dma_halt_sprites() {
+    run_mooneye_screen_test_with_timeout(
+        "mooneye/madness/mgb_oam_dma_halt_sprites.gb",
+        "mooneye/madness/mgb_oam_dma_halt_sprites_expected.png",
+        600,
+    );
+}
+
+// manual-only/ — visual tests requiring screenshot comparison
+#[test]
+fn manual_sprite_priority() {
+    run_mooneye_screen_test(
+        "mooneye/manual-only/sprite_priority.gb",
+        "mooneye/manual-only/sprite_priority-dmg.png",
+    );
+}
