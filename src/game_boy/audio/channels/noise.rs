@@ -31,10 +31,10 @@ impl Default for NoiseChannel {
             enabled: Enabled {
                 enabled: false,
                 output_left: true,
-                output_right: true,
+                output_right: false,
             },
             volume_and_envelope: VolumeAndEnvelope(0),
-            length_enabled: true,
+            length_enabled: false,
             frequency_and_randomness: FrequencyAndRandomness(0),
 
             frequency_timer: 0,

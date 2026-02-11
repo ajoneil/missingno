@@ -85,7 +85,7 @@ impl Registers {
     pub fn new() -> Self {
         Self {
             enabled: InterruptFlags::empty(),
-            requested: InterruptFlags::empty(),
+            requested: InterruptFlags::VIDEO_BETWEEN_FRAMES,
         }
     }
 

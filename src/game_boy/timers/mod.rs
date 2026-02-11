@@ -21,7 +21,7 @@ pub struct Timers {
 impl Timers {
     pub fn new() -> Self {
         Self {
-            internal_counter: 0xAB00,
+            internal_counter: 0xABCB,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),

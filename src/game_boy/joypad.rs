@@ -37,8 +37,8 @@ impl Joypad {
 
     pub fn new() -> Self {
         Self {
-            read_buttons: false,
-            read_dpad: false,
+            read_buttons: true,
+            read_dpad: true,
             pressed_buttons: Vec::new(),
         }
     }

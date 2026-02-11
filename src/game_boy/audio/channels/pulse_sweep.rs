@@ -51,7 +51,7 @@ impl Default for PulseSweepChannel {
             },
             sweep: Sweep(0x80),
             waveform_and_initial_length: WaveformAndInitialLength(0xbf),
-            volume_and_envelope: VolumeAndEnvelope(0),
+            volume_and_envelope: VolumeAndEnvelope(0xf3),
             length_enabled: false,
             period: (-1).into(),
 

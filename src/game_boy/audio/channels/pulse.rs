@@ -45,7 +45,7 @@ impl Default for PulseChannel {
                 output_right: true,
             },
             waveform_and_initial_length: WaveformAndInitialLength(0x3f),
-            volume_and_envelope: VolumeAndEnvelope(0xf3),
+            volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
             period: (-1).into(),
 
