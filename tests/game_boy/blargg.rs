@@ -13,6 +13,34 @@ fn run_blargg_test_with_timeout(rom_path: &str, timeout_frames: u32) {
     );
 }
 
+fn run_blargg_screen_test(rom_path: &str, reference_path: &str, timeout_frames: u32) {
+    let mut gb = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    assert!(
+        found_loop,
+        "Blargg test {rom_path} timed out without reaching infinite loop"
+    );
+
+    let actual = common::screen_to_greyscale(gb.screen());
+    let expected = common::load_reference_png(reference_path);
+
+    let mut mismatches = 0;
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        if a != e {
+            if mismatches < 10 {
+                let (x, y) = (i % 160, i / 160);
+                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
+            }
+            mismatches += 1;
+        }
+    }
+
+    assert_eq!(
+        mismatches, 0,
+        "Blargg test {rom_path}: {mismatches} pixel mismatches vs {reference_path}"
+    );
+}
+
 // cpu_instrs — combined test (runs all 11 sub-tests, needs ~55s = ~3300 frames)
 // Currently hangs on sub-test 03 due to inter-test timing issue
 #[test]
@@ -95,10 +123,10 @@ fn mem_timing_2() {
     run_blargg_test_with_timeout("blargg/mem_timing-2/mem_timing.gb", 1200);
 }
 
-// Halt bug (screen-only, no serial output)
+// Halt bug (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn halt_bug() {
-    run_blargg_test_with_timeout("blargg/halt_bug.gb", 1200);
+    run_blargg_screen_test("blargg/halt_bug.gb", "blargg/halt_bug-dmg-cgb.png", 1200);
 }
 
 // Interrupt timing (screen-only, no serial output)
