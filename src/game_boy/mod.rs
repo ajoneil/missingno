@@ -34,6 +34,8 @@ enum DmaDelay {
 pub struct DmaTransfer {
     /// Base source address (page * 0x100).
     source: u16,
+    /// Which bus the DMA source resides on.
+    source_bus: memory::Bus,
     /// Next byte index to transfer (0..160).
     byte_index: u8,
     /// Pre-transfer delay countdown, or `None` if actively transferring.
