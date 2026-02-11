@@ -34,16 +34,6 @@ impl Location {
     }
 }
 
-impl Location {
-    /// How many operand bytes were consumed during decode for this location.
-    pub fn operand_byte_count(&self) -> u16 {
-        match self {
-            Self::Address(address) => address.operand_byte_count(),
-            Self::RegisterHl => 0,
-        }
-    }
-}
-
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

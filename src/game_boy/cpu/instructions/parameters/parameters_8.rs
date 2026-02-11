@@ -73,16 +73,6 @@ impl Target8 {
     }
 }
 
-impl Target8 {
-    /// How many operand bytes were consumed during decode for this target.
-    pub fn operand_byte_count(&self) -> u16 {
-        match self {
-            Self::Register(_) => 0,
-            Self::Memory(address) => address.operand_byte_count(),
-        }
-    }
-}
-
 impl fmt::Display for Target8 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -169,17 +159,6 @@ impl Source8 {
 
     pub fn high_c() -> Self {
         Self::Memory(Address::HighPlusC)
-    }
-}
-
-impl Source8 {
-    /// How many operand bytes were consumed during decode for this source.
-    pub fn operand_byte_count(&self) -> u16 {
-        match self {
-            Self::Constant(_) => 1,
-            Self::Register(_) => 0,
-            Self::Memory(address) => address.operand_byte_count(),
-        }
     }
 }
 

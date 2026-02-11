@@ -30,16 +30,6 @@ impl Target16 {
     }
 }
 
-impl Target16 {
-    /// How many operand bytes were consumed during decode for this target.
-    pub fn operand_byte_count(&self) -> u16 {
-        match self {
-            Self::Register(_) => 0,
-            Self::Memory(address) => address.operand_byte_count(),
-        }
-    }
-}
-
 impl fmt::Display for Target16 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -80,17 +70,6 @@ impl Source16 {
         Some(Self::StackPointerWithOffset(i8::from_le_bytes([
             ops.next()?
         ])))
-    }
-}
-
-impl Source16 {
-    /// How many operand bytes were consumed during decode for this source.
-    pub fn operand_byte_count(&self) -> u16 {
-        match self {
-            Self::Constant(_) => 2,
-            Self::Register(_) => 0,
-            Self::StackPointerWithOffset(_) => 1,
-        }
     }
 }
 

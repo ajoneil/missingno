@@ -52,16 +52,16 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_load(cpu: &mut Cpu, load: &Load, fetches: u8, fetch_pc: u16) -> Phase {
+    pub(super) fn build_load(cpu: &mut Cpu, load: &Load) -> Phase {
         match load {
             Load::Load8(target, source) => match (target, source) {
                 (Target8::Register(treg), Source8::Constant(val)) => {
                     cpu.set_register8(*treg, *val);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 (Target8::Register(treg), Source8::Register(sreg)) => {
                     cpu.set_register8(*treg, cpu.get_register8(*sreg));
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 (Target8::Register(treg), Source8::Memory(address)) => {
                     let addr = Self::resolve_address(cpu, address);
@@ -72,8 +72,6 @@ impl InstructionStepper {
                         ReadAction::LoadRegister(*treg)
                     };
                     Phase::ReadOp {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         action,
                     }
@@ -87,8 +85,6 @@ impl InstructionStepper {
                         Source8::Memory(_) => unreachable!(),
                     };
                     Phase::WriteOp {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         value,
                         hl_post: delta,
@@ -98,15 +94,11 @@ impl InstructionStepper {
             Load::Load16(target, source) => match (target, source) {
                 (Target16::Register(reg), Source16::Constant(val)) => {
                     cpu.set_register16(*reg, *val);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 (Target16::Register(reg), Source16::Register(sreg)) => {
                     cpu.set_register16(*reg, cpu.get_register16(*sreg));
-                    Phase::InternalOp {
-                        fetches,
-                        fetch_pc,
-                        count: 1,
-                    }
+                    Phase::InternalOp { count: 1 }
                 }
                 (Target16::Register(reg), Source16::StackPointerWithOffset(offset)) => {
                     let sp = cpu.stack_pointer;
@@ -121,11 +113,7 @@ impl InstructionStepper {
                     cpu.flags
                         .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
                     cpu.set_register16(*reg, result);
-                    Phase::InternalOp {
-                        fetches,
-                        fetch_pc,
-                        count: 1,
-                    }
+                    Phase::InternalOp { count: 1 }
                 }
                 (Target16::Memory(address), source) => {
                     let addr = Self::resolve_address(cpu, address);
@@ -135,8 +123,6 @@ impl InstructionStepper {
                         Source16::StackPointerWithOffset(_) => unreachable!(),
                     };
                     Phase::Write16 {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         lo: (value & 0xff) as u8,
                         hi: (value >> 8) as u8,
@@ -146,12 +132,7 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_arithmetic(
-        cpu: &mut Cpu,
-        arith: &Arithmetic,
-        fetches: u8,
-        fetch_pc: u16,
-    ) -> Phase {
+    pub(super) fn build_arithmetic(cpu: &mut Cpu, arith: &Arithmetic) -> Phase {
         match arith {
             Arithmetic::Arithmetic8(a8) => match a8 {
                 Arithmetic8::Increment(target) => match target {
@@ -162,13 +143,11 @@ impl InstructionStepper {
                         cpu.flags.remove(Flags::NEGATIVE);
                         cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0b0000);
                         cpu.set_register8(*reg, result);
-                        Phase::FetchOnly { fetches, fetch_pc }
+                        Phase::Empty
                     }
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         Phase::ReadModifyWrite {
-                            fetches,
-                            fetch_pc,
                             address: addr,
                             op: RmwOp::Increment,
                         }
@@ -182,31 +161,25 @@ impl InstructionStepper {
                         cpu.flags.insert(Flags::NEGATIVE);
                         cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0b1111);
                         cpu.set_register8(*reg, result);
-                        Phase::FetchOnly { fetches, fetch_pc }
+                        Phase::Empty
                     }
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         Phase::ReadModifyWrite {
-                            fetches,
-                            fetch_pc,
                             address: addr,
                             op: RmwOp::Decrement,
                         }
                     }
                 },
-                Arithmetic8::AddA(source) => {
-                    Self::build_alu_source(cpu, source, AluOp::Add, fetches, fetch_pc)
-                }
-                Arithmetic8::SubtractA(source) => {
-                    Self::build_alu_source(cpu, source, AluOp::Sub, fetches, fetch_pc)
-                }
+                Arithmetic8::AddA(source) => Self::build_alu_source(cpu, source, AluOp::Add),
+                Arithmetic8::SubtractA(source) => Self::build_alu_source(cpu, source, AluOp::Sub),
                 Arithmetic8::AddACarry(source) => {
                     let carry = if cpu.flags.contains(Flags::CARRY) {
                         1
                     } else {
                         0
                     };
-                    Self::build_alu_source(cpu, source, AluOp::Adc { carry }, fetches, fetch_pc)
+                    Self::build_alu_source(cpu, source, AluOp::Adc { carry })
                 }
                 Arithmetic8::SubtractACarry(source) => {
                     let carry = if cpu.flags.contains(Flags::CARRY) {
@@ -214,28 +187,18 @@ impl InstructionStepper {
                     } else {
                         0
                     };
-                    Self::build_alu_source(cpu, source, AluOp::Sbc { carry }, fetches, fetch_pc)
+                    Self::build_alu_source(cpu, source, AluOp::Sbc { carry })
                 }
-                Arithmetic8::CompareA(source) => {
-                    Self::build_alu_source(cpu, source, AluOp::Cp, fetches, fetch_pc)
-                }
+                Arithmetic8::CompareA(source) => Self::build_alu_source(cpu, source, AluOp::Cp),
             },
             Arithmetic::Arithmetic16(a16) => match a16 {
                 Arithmetic16::Increment(reg) => {
                     cpu.set_register16(*reg, cpu.get_register16(*reg).wrapping_add(1));
-                    Phase::InternalOp {
-                        fetches,
-                        fetch_pc,
-                        count: 1,
-                    }
+                    Phase::InternalOp { count: 1 }
                 }
                 Arithmetic16::Decrement(reg) => {
                     cpu.set_register16(*reg, cpu.get_register16(*reg).wrapping_sub(1));
-                    Phase::InternalOp {
-                        fetches,
-                        fetch_pc,
-                        count: 1,
-                    }
+                    Phase::InternalOp { count: 1 }
                 }
                 Arithmetic16::AddHl(reg) => {
                     let value = cpu.get_register16(*reg);
@@ -248,38 +211,26 @@ impl InstructionStepper {
                     cpu.flags
                         .set(Flags::CARRY, hl as u32 + value as u32 > 0xffff);
                     cpu.set_register16(Register16::Hl, hl.wrapping_add(value));
-                    Phase::InternalOp {
-                        fetches,
-                        fetch_pc,
-                        count: 1,
-                    }
+                    Phase::InternalOp { count: 1 }
                 }
             },
         }
     }
 
-    fn build_alu_source(
-        cpu: &mut Cpu,
-        source: &Source8,
-        op: AluOp,
-        fetches: u8,
-        fetch_pc: u16,
-    ) -> Phase {
+    fn build_alu_source(cpu: &mut Cpu, source: &Source8, op: AluOp) -> Phase {
         match source {
             Source8::Constant(val) => {
                 Self::apply_alu(cpu, &op, *val);
-                Phase::FetchOnly { fetches, fetch_pc }
+                Phase::Empty
             }
             Source8::Register(reg) => {
                 let val = cpu.get_register8(*reg);
                 Self::apply_alu(cpu, &op, val);
-                Phase::FetchOnly { fetches, fetch_pc }
+                Phase::Empty
             }
             Source8::Memory(address) => {
                 let addr = Self::resolve_address(cpu, address);
                 Phase::ReadOp {
-                    fetches,
-                    fetch_pc,
                     address: addr,
                     action: ReadAction::AluA(op),
                 }
@@ -287,32 +238,21 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_bitwise(cpu: &mut Cpu, bw: &Bitwise, fetches: u8, fetch_pc: u16) -> Phase {
+    pub(super) fn build_bitwise(cpu: &mut Cpu, bw: &Bitwise) -> Phase {
         match bw {
-            Bitwise::AndA(source) => {
-                Self::build_alu_source(cpu, source, AluOp::And, fetches, fetch_pc)
-            }
-            Bitwise::OrA(source) => {
-                Self::build_alu_source(cpu, source, AluOp::Or, fetches, fetch_pc)
-            }
-            Bitwise::XorA(source) => {
-                Self::build_alu_source(cpu, source, AluOp::Xor, fetches, fetch_pc)
-            }
+            Bitwise::AndA(source) => Self::build_alu_source(cpu, source, AluOp::And),
+            Bitwise::OrA(source) => Self::build_alu_source(cpu, source, AluOp::Or),
+            Bitwise::XorA(source) => Self::build_alu_source(cpu, source, AluOp::Xor),
             Bitwise::ComplementA => {
                 cpu.a = !cpu.a;
                 cpu.flags.insert(Flags::NEGATIVE);
                 cpu.flags.insert(Flags::HALF_CARRY);
-                Phase::FetchOnly { fetches, fetch_pc }
+                Phase::Empty
             }
         }
     }
 
-    pub(super) fn build_bit_shift(
-        cpu: &mut Cpu,
-        bs: &BitShift,
-        fetches: u8,
-        fetch_pc: u16,
-    ) -> Phase {
+    pub(super) fn build_bit_shift(cpu: &mut Cpu, bs: &BitShift) -> Phase {
         match bs {
             BitShift::RotateA(direction, carry) => {
                 let (new_value, new_carry) = Self::rotate(cpu, cpu.a, direction, carry);
@@ -322,7 +262,7 @@ impl InstructionStepper {
                     Flags::empty()
                 };
                 cpu.a = new_value;
-                Phase::FetchOnly { fetches, fetch_pc }
+                Phase::Empty
             }
             BitShift::Rotate(direction, carry, target) => match target {
                 Target8::Register(reg) => {
@@ -333,13 +273,11 @@ impl InstructionStepper {
                     cpu.flags.remove(Flags::NEGATIVE);
                     cpu.flags.remove(Flags::HALF_CARRY);
                     cpu.set_register8(*reg, new_value);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::Rotate(direction.clone(), carry.clone()),
                     }
@@ -362,13 +300,11 @@ impl InstructionStepper {
                     cpu.flags.remove(Flags::HALF_CARRY);
                     cpu.flags.set(Flags::ZERO, new_value == 0);
                     cpu.set_register8(*reg, new_value);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::ShiftArithmetical(direction.clone()),
                     }
@@ -383,13 +319,11 @@ impl InstructionStepper {
                     cpu.flags.remove(Flags::HALF_CARRY);
                     cpu.flags.set(Flags::ZERO, new_value == 0);
                     cpu.set_register8(*reg, new_value);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::ShiftRightLogical,
                     }
@@ -405,13 +339,11 @@ impl InstructionStepper {
                         Flags::empty()
                     };
                     cpu.set_register8(*reg, new_value);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::Swap,
                     }
@@ -420,7 +352,7 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_bit_flag(cpu: &mut Cpu, bf: &BitFlag, fetches: u8, fetch_pc: u16) -> Phase {
+    pub(super) fn build_bit_flag(cpu: &mut Cpu, bf: &BitFlag) -> Phase {
         match bf {
             BitFlag::Check(bit, source) => match source {
                 Source8::Register(reg) => {
@@ -428,13 +360,11 @@ impl InstructionStepper {
                     cpu.flags.set(Flags::ZERO, val & (1 << bit) == 0);
                     cpu.flags.remove(Flags::NEGATIVE);
                     cpu.flags.insert(Flags::HALF_CARRY);
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Source8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadOp {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         action: ReadAction::BitTest(*bit),
                     }
@@ -445,13 +375,11 @@ impl InstructionStepper {
                 Target8::Register(reg) => {
                     let val = cpu.get_register8(*reg);
                     cpu.set_register8(*reg, val | (1 << bit));
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::BitSet(*bit),
                     }
@@ -461,13 +389,11 @@ impl InstructionStepper {
                 Target8::Register(reg) => {
                     let val = cpu.get_register8(*reg);
                     cpu.set_register8(*reg, val & !(1 << bit));
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 }
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     Phase::ReadModifyWrite {
-                        fetches,
-                        fetch_pc,
                         address: addr,
                         op: RmwOp::BitReset(*bit),
                     }
@@ -476,7 +402,7 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_jump(cpu: &mut Cpu, j: &Jump, fetches: u8, fetch_pc: u16) -> Phase {
+    pub(super) fn build_jump(cpu: &mut Cpu, j: &Jump) -> Phase {
         match j {
             Jump::Jump(condition, location) => {
                 let address = Self::resolve_jump(cpu, location);
@@ -485,13 +411,9 @@ impl InstructionStepper {
                     cpu.program_counter = address;
                 }
                 if matches!(location, jump::Location::RegisterHl) {
-                    Phase::FetchOnly { fetches, fetch_pc }
+                    Phase::Empty
                 } else {
-                    Phase::CondJump {
-                        fetches,
-                        fetch_pc,
-                        taken,
-                    }
+                    Phase::CondJump { taken }
                 }
             }
             Jump::Call(condition, location) => {
@@ -504,8 +426,6 @@ impl InstructionStepper {
                     cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
                     cpu.program_counter = address;
                     Phase::CondCall {
-                        fetches,
-                        fetch_pc,
                         taken: true,
                         sp: cpu.stack_pointer,
                         hi: pc_hi,
@@ -513,8 +433,6 @@ impl InstructionStepper {
                     }
                 } else {
                     Phase::CondCall {
-                        fetches,
-                        fetch_pc,
                         taken: false,
                         sp: 0,
                         hi: 0,
@@ -527,24 +445,18 @@ impl InstructionStepper {
                 let taken = Self::check_condition(cpu, condition);
                 if has_condition {
                     Phase::CondReturn {
-                        fetches,
-                        fetch_pc,
                         taken,
                         sp: cpu.stack_pointer,
                         action: PopAction::SetPc,
                     }
                 } else {
                     Phase::Pop {
-                        fetches,
-                        fetch_pc,
                         sp: cpu.stack_pointer,
                         action: PopAction::SetPc,
                     }
                 }
             }
             Jump::ReturnAndEnableInterrupts => Phase::Pop {
-                fetches,
-                fetch_pc,
                 sp: cpu.stack_pointer,
                 action: PopAction::SetPcEnableInterrupts,
             },
@@ -555,8 +467,6 @@ impl InstructionStepper {
                 cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
                 cpu.program_counter = *address as u16;
                 Phase::Push {
-                    fetches,
-                    fetch_pc,
                     sp: cpu.stack_pointer,
                     hi: pc_hi,
                     lo: pc_lo,
@@ -565,7 +475,7 @@ impl InstructionStepper {
         }
     }
 
-    pub(super) fn build_stack(cpu: &mut Cpu, s: &Stack, fetches: u8, fetch_pc: u16) -> Phase {
+    pub(super) fn build_stack(cpu: &mut Cpu, s: &Stack) -> Phase {
         match s {
             Stack::Push(register) => {
                 let value = cpu.get_register16(*register);
@@ -573,16 +483,12 @@ impl InstructionStepper {
                 let lo = (value & 0xff) as u8;
                 cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
                 Phase::Push {
-                    fetches,
-                    fetch_pc,
                     sp: cpu.stack_pointer,
                     hi,
                     lo,
                 }
             }
             Stack::Pop(register) => Phase::Pop {
-                fetches,
-                fetch_pc,
                 sp: cpu.stack_pointer,
                 action: PopAction::SetRegister(*register),
             },
@@ -598,11 +504,7 @@ impl InstructionStepper {
                 );
                 cpu.flags
                     .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
-                Phase::InternalOp {
-                    fetches,
-                    fetch_pc,
-                    count: 2,
-                }
+                Phase::InternalOp { count: 2 }
             }
         }
     }
