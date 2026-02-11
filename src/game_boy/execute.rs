@@ -3,7 +3,7 @@ use super::{
     cpu::{
         InterruptMasterEnable,
         instructions::Instruction,
-        mcycle::{BusAction, Processor},
+        mcycle::{Processor, TCycle},
     },
     interrupts::Interrupt,
 };
@@ -51,18 +51,30 @@ impl GameBoy {
         } else if self.cpu.halted {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
-            // Read opcode byte and tick hardware
+            // Fetch phase: each byte read is 4 T-cycles with read at T2
+            //   T1: tick hardware
+            //   T2: read byte + tick hardware
+            //   T3: tick hardware
+            //   T4: tick hardware
+
+            // Read opcode byte
+            new_screen |= self.tick_hardware_tcycle();
             let opcode = self.mapped.read(self.cpu.program_counter);
             self.cpu.program_counter += 1;
-            new_screen |= self.tick_hardware_once();
+            new_screen |= self.tick_hardware_tcycle();
+            new_screen |= self.tick_hardware_tcycle();
+            new_screen |= self.tick_hardware_tcycle();
 
-            // Read operand bytes, ticking hardware after each
+            // Read operand bytes
             let op_count = operand_count(opcode);
             let mut bytes = [opcode, 0, 0];
             for i in 0..op_count {
+                new_screen |= self.tick_hardware_tcycle();
                 bytes[1 + i as usize] = self.mapped.read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
-                new_screen |= self.tick_hardware_once();
+                new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_tcycle();
             }
 
             // Decode from buffered bytes
@@ -71,27 +83,46 @@ impl GameBoy {
             Processor::new(instruction, &mut self.cpu)
         };
 
-        // Run post-decode M-cycles
+        // Run post-decode T-cycles
         let mut read_value: u8 = 0;
-        while let Some(action) = processor.next(read_value, &mut self.cpu) {
-            match action {
-                BusAction::Read { address } => {
+        while let Some(tcycle) = processor.next_tcycle(read_value, &mut self.cpu) {
+            match tcycle {
+                TCycle::Read { address } => {
                     read_value = self.mapped.read(address);
                 }
-                BusAction::Write { address, value } => {
+                TCycle::Write { address, value } => {
                     self.mapped.write_byte(address, value);
-                    read_value = 0;
                 }
-                BusAction::Internal => {
-                    read_value = 0;
-                }
+                TCycle::Hardware => {}
             }
-            new_screen |= self.tick_hardware_once();
+            new_screen |= self.tick_hardware_tcycle();
         }
         new_screen
     }
 
-    fn tick_hardware_once(&mut self) -> bool {
+    /// Advance hardware by one T-cycle.
+    ///
+    /// Timers tick every T-cycle (DIV increments by 1 each time) so that
+    /// reads/writes landing at different T-cycle offsets observe different
+    /// DIV values. Overflow/reload processing only happens at M-cycle
+    /// boundaries (every 4th T-cycle).
+    ///
+    /// Other subsystems (video, audio, serial, DMA) still tick once per
+    /// M-cycle on the 4th T-cycle.
+    fn tick_hardware_tcycle(&mut self) -> bool {
+        self.mcycle_counter = self.mcycle_counter.wrapping_add(1) & 3;
+        let is_mcycle_boundary = self.mcycle_counter == 0;
+
+        // Timer ticks every T-cycle for DIV resolution
+        if let Some(interrupt) = self.mapped.timers.tcycle(is_mcycle_boundary) {
+            self.mapped.interrupts.request(interrupt);
+        }
+
+        if !is_mcycle_boundary {
+            return false;
+        }
+
+        // Everything else ticks once per M-cycle
         if let Some(dma_transfer_cycles) = &mut self.mapped.dma_transfer_cycles {
             dma_transfer_cycles.0 -= 1;
             if dma_transfer_cycles.0 == 0 {
@@ -99,15 +130,11 @@ impl GameBoy {
             }
         }
 
-        if let Some(interrupt) = self.mapped.timers.tick() {
+        if let Some(interrupt) = self.mapped.serial.mcycle() {
             self.mapped.interrupts.request(interrupt);
         }
 
-        if let Some(interrupt) = self.mapped.serial.tick() {
-            self.mapped.interrupts.request(interrupt);
-        }
-
-        let video_result = self.mapped.video.tick();
+        let video_result = self.mapped.video.mcycle();
         if video_result.request_vblank {
             self.mapped
                 .interrupts
@@ -126,7 +153,7 @@ impl GameBoy {
             new_screen = true;
         }
 
-        self.mapped.audio.tick();
+        self.mapped.audio.mcycle();
         new_screen
     }
 

@@ -1,5 +1,4 @@
 use core::fmt;
-use std::cmp::min;
 
 use crate::game_boy::video::{
     PpuAccessible,
@@ -104,34 +103,23 @@ impl Rendering {
     }
 
     fn render(&mut self, data: &PpuAccessible) -> bool {
-        let mut remaining_dots = 4;
-
         for _ in 0..4 {
             if self.line.dots == 0 {
                 self.line.find_sprites(data)
             }
 
             if self.line.dots < SCANLINE_PREPARING_DOTS {
-                let time_preparing = min(remaining_dots, SCANLINE_PREPARING_DOTS - self.line.dots);
-                self.line.dots += time_preparing;
-                remaining_dots -= time_preparing;
+                self.line.dots += 1;
             } else {
-                while self.line.pixels_drawn < screen::PIXELS_PER_LINE && remaining_dots > 0 {
+                if self.line.pixels_drawn < screen::PIXELS_PER_LINE {
                     if self.line.penalty > 0 {
                         self.line.penalty -= 1;
                     } else {
                         self.draw_pixel(data);
                     }
-
-                    self.line.dots += 1;
-                    remaining_dots -= 1;
                 }
 
-                let time_waiting = min(remaining_dots, SCANLINE_TOTAL_DOTS - self.line.dots);
-                if time_waiting > 0 {
-                    self.line.dots += time_waiting;
-                    remaining_dots -= time_waiting;
-                }
+                self.line.dots += 1;
 
                 if self.line.dots == SCANLINE_TOTAL_DOTS {
                     if self.line.window_rendered {
@@ -327,7 +315,7 @@ impl PixelProcessingUnit {
         }
     }
 
-    pub fn tick(&mut self, data: &PpuAccessible) -> Option<Screen> {
+    pub fn mcycle(&mut self, data: &PpuAccessible) -> Option<Screen> {
         let mut screen = None;
 
         match self {

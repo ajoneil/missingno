@@ -78,17 +78,17 @@ impl Audio {
         self.volume_right
     }
 
-    pub fn tick(&mut self) {
+    pub fn mcycle(&mut self) {
         if !self.enabled {
             return;
         }
 
-        // Tick channel frequency timers (4 T-cycles per M-cycle)
+        // Advance channel frequency timers (4 T-cycles per M-cycle)
         for _ in 0..4 {
-            self.channels.ch1.tick();
-            self.channels.ch2.tick();
-            self.channels.ch3.tick();
-            self.channels.ch4.tick();
+            self.channels.ch1.tcycle();
+            self.channels.ch2.tcycle();
+            self.channels.ch3.tcycle();
+            self.channels.ch4.tcycle();
         }
 
         // Frame sequencer

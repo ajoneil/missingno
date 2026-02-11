@@ -34,7 +34,7 @@ impl Registers {
         }
     }
 
-    pub fn tick(&mut self) -> Option<Interrupt> {
+    pub fn mcycle(&mut self) -> Option<Interrupt> {
         if self.cycles_remaining == 0 {
             return None;
         }

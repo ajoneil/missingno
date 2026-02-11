@@ -91,6 +91,7 @@ impl SaveState {
         Ok(GameBoy {
             cpu: self.cpu,
             screen,
+            mcycle_counter: 0,
             mapped: super::MemoryMapped {
                 cartridge,
                 ram: self.ram,

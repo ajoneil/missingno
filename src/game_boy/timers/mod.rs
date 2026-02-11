@@ -43,21 +43,25 @@ impl Timers {
         }
     }
 
-    pub fn tick(&mut self) -> Option<Interrupt> {
-        self.reloading = false;
+    /// Advance by one T-cycle. Call this every T-cycle (4 times per M-cycle).
+    /// `is_mcycle_boundary` should be true on the 4th T-cycle of each M-cycle,
+    /// when overflow/reload processing should occur.
+    pub fn tcycle(&mut self, is_mcycle_boundary: bool) -> Option<Interrupt> {
+        let mut interrupt = None;
 
-        // Handle delayed reload from previous tick's overflow
-        let interrupt = if self.overflow_pending {
-            self.overflow_pending = false;
-            self.reloading = true;
-            self.counter = self.modulo;
-            Some(Interrupt::Timer)
-        } else {
-            None
-        };
+        // Handle delayed reload only at M-cycle boundaries
+        if is_mcycle_boundary {
+            self.reloading = false;
+            if self.overflow_pending {
+                self.overflow_pending = false;
+                self.reloading = true;
+                self.counter = self.modulo;
+                interrupt = Some(Interrupt::Timer);
+            }
+        }
 
         let was_set = self.selected_bit_set();
-        self.internal_counter = self.internal_counter.wrapping_add(4);
+        self.internal_counter = self.internal_counter.wrapping_add(1);
         let is_set = self.selected_bit_set();
 
         if was_set && !is_set {

@@ -210,7 +210,7 @@ impl Video {
                 && ly_eq_lyc)
     }
 
-    pub fn tick(&mut self) -> VideoTickResult {
+    pub fn mcycle(&mut self) -> VideoTickResult {
         let mut result = VideoTickResult {
             screen: None,
             request_vblank: false,
@@ -224,7 +224,7 @@ impl Video {
                 self.stat_line_was_high = false;
             }
 
-            if let Some(screen) = self.ppu.as_mut().unwrap().tick(&self.ppu_accessible) {
+            if let Some(screen) = self.ppu.as_mut().unwrap().mcycle(&self.ppu_accessible) {
                 result.screen = Some(screen);
                 result.request_vblank = true;
             }

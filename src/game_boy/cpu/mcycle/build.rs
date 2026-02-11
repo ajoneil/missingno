@@ -423,11 +423,11 @@ impl Processor {
                     let pc = cpu.program_counter;
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
-                    cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
+                    let sp = cpu.stack_pointer;
                     cpu.program_counter = address;
                     Phase::CondCall {
                         taken: true,
-                        sp: cpu.stack_pointer,
+                        sp,
                         hi: pc_hi,
                         lo: pc_lo,
                     }
@@ -464,10 +464,10 @@ impl Processor {
                 let pc = cpu.program_counter;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
-                cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
+                let sp = cpu.stack_pointer;
                 cpu.program_counter = *address as u16;
                 Phase::Push {
-                    sp: cpu.stack_pointer,
+                    sp,
                     hi: pc_hi,
                     lo: pc_lo,
                 }
@@ -481,12 +481,8 @@ impl Processor {
                 let value = cpu.get_register16(*register);
                 let hi = (value >> 8) as u8;
                 let lo = (value & 0xff) as u8;
-                cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
-                Phase::Push {
-                    sp: cpu.stack_pointer,
-                    hi,
-                    lo,
-                }
+                let sp = cpu.stack_pointer;
+                Phase::Push { sp, hi, lo }
             }
             Stack::Pop(register) => Phase::Pop {
                 sp: cpu.stack_pointer,

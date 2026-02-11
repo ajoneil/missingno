@@ -153,7 +153,7 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn tcycle(&mut self) {
         if self.frequency_timer > 0 {
             self.frequency_timer -= 1;
         }

@@ -39,6 +39,9 @@ pub struct GameBoy {
     cpu: Cpu,
     screen: Screen,
     mapped: MemoryMapped,
+    /// Counts T-cycles 0–3 within each M-cycle, used to call
+    /// audio/serial/DMA once per M-cycle (every 4th T-cycle).
+    mcycle_counter: u8,
 }
 
 impl GameBoy {
@@ -53,6 +56,7 @@ impl GameBoy {
         GameBoy {
             cpu,
             screen: Screen::new(),
+            mcycle_counter: 0,
             mapped: MemoryMapped {
                 cartridge,
                 ram: Ram::new(),
@@ -72,6 +76,7 @@ impl GameBoy {
     pub fn reset(&mut self) {
         self.cpu = Cpu::new(self.mapped.cartridge.header_checksum());
         self.screen = Screen::new();
+        self.mcycle_counter = 0;
         self.mapped.ram = Ram::new();
         self.mapped.video = Video::new();
         self.mapped.audio = Audio::new();

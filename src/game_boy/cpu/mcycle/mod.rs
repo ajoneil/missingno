@@ -22,6 +22,21 @@ pub enum BusAction {
     Internal,
 }
 
+// ── T-cycle ─────────────────────────────────────────────────────────────
+
+/// One T-cycle step within an M-cycle. Each M-cycle is expanded into 4
+/// `TCycle` yields, with the bus action placed at the correct T-cycle
+/// offset for cycle-accurate hardware interaction.
+#[derive(Debug)]
+pub enum TCycle {
+    /// Advance hardware by 1 T-cycle (no bus activity).
+    Hardware,
+    /// Read a byte from the given address, then advance hardware by 1 T-cycle.
+    Read { address: u16 },
+    /// Write a byte to the given address, then advance hardware by 1 T-cycle.
+    Write { address: u16, value: u8 },
+}
+
 // ── Helper enums ────────────────────────────────────────────────────────
 
 /// ALU operation applied to A with a read value.
@@ -103,7 +118,7 @@ enum Phase {
     /// Pop: 2 stack reads + optional trailing internal.
     Pop { sp: u16, action: PopAction },
 
-    /// Push: 1 internal + 2 writes.
+    /// Push: 1 internal + 2 writes (SP decremented incrementally).
     Push { sp: u16, hi: u8, lo: u8 },
 
     /// Conditional jump: 0 or 1 internal.
@@ -146,6 +161,13 @@ pub struct Processor {
     /// Scratch byte for multi-read phases (Pop, CondReturn) to store
     /// the first read value until the second read completes.
     scratch: u8,
+    /// T-cycle position within the current M-cycle (0–3).
+    t_step: u8,
+    /// The BusAction for the current M-cycle, fetched at t_step 0.
+    /// `None` means the instruction is complete.
+    current_action: Option<BusAction>,
+    /// Whether we have started T-cycle iteration (have a pending M-cycle).
+    tcycle_active: bool,
 }
 
 impl Processor {
@@ -156,6 +178,9 @@ impl Processor {
             step: 0,
             phase: Phase::HaltedNop { fetch_pc: pc },
             scratch: 0,
+            t_step: 0,
+            current_action: None,
+            tcycle_active: false,
         }
     }
 
@@ -168,18 +193,17 @@ impl Processor {
         let pc = cpu.program_counter;
         let pc_hi = (pc >> 8) as u8;
         let pc_lo = (pc & 0xff) as u8;
-        cpu.stack_pointer = cpu.stack_pointer.wrapping_sub(2);
+        let sp = cpu.stack_pointer;
         cpu.program_counter = interrupt.vector();
 
         Self {
             instruction: Instruction::NoOperation,
             step: 0,
-            phase: Phase::InterruptDispatch {
-                sp: cpu.stack_pointer,
-                pc_hi,
-                pc_lo,
-            },
+            phase: Phase::InterruptDispatch { sp, pc_hi, pc_lo },
             scratch: 0,
+            t_step: 0,
+            current_action: None,
+            tcycle_active: false,
         }
     }
 
@@ -224,6 +248,9 @@ impl Processor {
             step: 0,
             phase,
             scratch: 0,
+            t_step: 0,
+            current_action: None,
+            tcycle_active: false,
         }
     }
 
@@ -334,14 +361,24 @@ impl Processor {
                 let sp = *sp;
                 match step {
                     0 => Some(BusAction::Internal),
-                    1 => Some(BusAction::Write {
-                        address: sp.wrapping_add(1),
-                        value: *hi,
-                    }),
-                    2 => Some(BusAction::Write {
-                        address: sp,
-                        value: *lo,
-                    }),
+                    1 => {
+                        // First decrement: SP-1, write high byte
+                        let addr = sp.wrapping_sub(1);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *hi,
+                        })
+                    }
+                    2 => {
+                        // Second decrement: SP-2, write low byte
+                        let addr = sp.wrapping_sub(2);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *lo,
+                        })
+                    }
                     _ => None,
                 }
             }
@@ -358,14 +395,22 @@ impl Processor {
                 let sp = *sp;
                 match step {
                     0 => Some(BusAction::Internal),
-                    1 => Some(BusAction::Write {
-                        address: sp.wrapping_add(1),
-                        value: *hi,
-                    }),
-                    2 => Some(BusAction::Write {
-                        address: sp,
-                        value: *lo,
-                    }),
+                    1 => {
+                        let addr = sp.wrapping_sub(1);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *hi,
+                        })
+                    }
+                    2 => {
+                        let addr = sp.wrapping_sub(2);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *lo,
+                        })
+                    }
                     _ => None,
                 }
             }
@@ -396,18 +441,77 @@ impl Processor {
                 match step {
                     0 => Some(BusAction::Internal),
                     1 => Some(BusAction::Internal),
-                    2 => Some(BusAction::Write {
-                        address: sp.wrapping_add(1),
-                        value: *pc_hi,
-                    }),
-                    3 => Some(BusAction::Write {
-                        address: sp,
-                        value: *pc_lo,
-                    }),
+                    2 => {
+                        let addr = sp.wrapping_sub(1);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *pc_hi,
+                        })
+                    }
+                    3 => {
+                        let addr = sp.wrapping_sub(2);
+                        cpu.stack_pointer = addr;
+                        Some(BusAction::Write {
+                            address: addr,
+                            value: *pc_lo,
+                        })
+                    }
                     4 => Some(BusAction::Internal),
                     _ => None,
                 }
             }
         }
+    }
+
+    /// Advance one T-cycle. Returns `None` when the instruction is complete.
+    ///
+    /// Each M-cycle from `next()` is expanded into 4 T-cycles with the bus
+    /// action placed at the correct offset:
+    /// - **Read**:     `[Hardware, Read,    Hardware, Hardware]`
+    /// - **Write**:    `[Hardware, Write,   Hardware, Hardware]`
+    /// - **Internal**: `[Hardware, Hardware, Hardware, Hardware]`
+    ///
+    /// `read_value` is only consumed at the T-cycle *after* a `TCycle::Read`
+    /// was yielded (i.e. when the next M-cycle begins).
+    pub fn next_tcycle(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<TCycle> {
+        // If we're between M-cycles, fetch the next one
+        if !self.tcycle_active {
+            self.current_action = self.next(read_value, cpu);
+            if self.current_action.is_none() {
+                return None;
+            }
+            self.t_step = 0;
+            self.tcycle_active = true;
+        }
+
+        let t = self.t_step;
+        self.t_step += 1;
+
+        let result = match &self.current_action {
+            Some(BusAction::Read { address }) => match t {
+                0 => TCycle::Hardware,
+                1 => TCycle::Read { address: *address },
+                2 => TCycle::Hardware,
+                _ => TCycle::Hardware,
+            },
+            Some(BusAction::Write { address, value }) => match t {
+                0 => TCycle::Hardware,
+                1 => TCycle::Write {
+                    address: *address,
+                    value: *value,
+                },
+                2 => TCycle::Hardware,
+                _ => TCycle::Hardware,
+            },
+            Some(BusAction::Internal) => TCycle::Hardware,
+            None => unreachable!(),
+        };
+
+        if t == 3 {
+            self.tcycle_active = false;
+        }
+
+        Some(result)
     }
 }
