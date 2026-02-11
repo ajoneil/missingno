@@ -1,6 +1,6 @@
 use audio::Audio;
 use cartridge::Cartridge;
-use cpu::{Cpu, cycles::Cycles};
+use cpu::Cpu;
 use joypad::{Button, Joypad};
 use memory::Ram;
 use video::{Video, screen::Screen};
@@ -19,6 +19,17 @@ pub mod sgb;
 pub mod timers;
 pub mod video;
 
+/// State for an in-progress OAM DMA transfer.
+pub struct DmaTransfer {
+    /// Base source address (page * 0x100).
+    source: u16,
+    /// Next byte index to transfer (0..160).
+    byte_index: u8,
+    /// M-cycles remaining in the startup delay before the first byte
+    /// transfers and bus conflicts activate (countdown at M-cycle rate).
+    startup_delay: u8,
+}
+
 // Anything accessible via a memory address is stored in a separate
 // struct to allow borrowing independently of the Cpu
 pub struct MemoryMapped {
@@ -30,7 +41,7 @@ pub struct MemoryMapped {
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
     timers: timers::Timers,
-    dma_transfer_cycles: Option<Cycles>,
+    dma: Option<DmaTransfer>,
     dma_source: u8,
     sgb: Option<sgb::Sgb>,
 }
@@ -66,7 +77,7 @@ impl GameBoy {
                 interrupts: interrupts::Registers::new(),
                 serial: serial_transfer::Registers::new(),
                 timers: timers::Timers::new(),
-                dma_transfer_cycles: None,
+                dma: None,
                 dma_source: 0,
                 sgb,
             },
@@ -84,7 +95,7 @@ impl GameBoy {
         self.mapped.interrupts = interrupts::Registers::new();
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
-        self.mapped.dma_transfer_cycles = None;
+        self.mapped.dma = None;
         self.mapped.dma_source = 0;
         self.mapped.sgb = if self.mapped.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())

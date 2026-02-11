@@ -1,6 +1,5 @@
 use crate::game_boy::{
     MemoryMapped, audio,
-    cpu::cycles::Cycles,
     interrupts::{self, InterruptFlags},
     serial_transfer, timers, video,
 };
@@ -124,6 +123,26 @@ impl MappedAddress {
 
 impl MemoryMapped {
     pub fn read(&self, address: u16) -> u8 {
+        // During active DMA (past startup), CPU reads outside HRAM/IO
+        // return the byte currently being transferred.
+        if let Some(dma) = &self.dma {
+            if dma.startup_delay == 0 {
+                match address {
+                    0xff80..=0xffff => {} // HRAM + IE — always accessible
+                    0xff00..=0xff7f => {} // IO registers — always accessible
+                    _ => {
+                        let src = dma.source + dma.byte_index as u16;
+                        return self.read_bypassing_dma(src);
+                    }
+                }
+            }
+        }
+        self.read_mapped(MappedAddress::map(address))
+    }
+
+    /// Read a byte without DMA bus conflict checks. Used by the DMA
+    /// transfer itself and for returning the conflicted byte value.
+    pub fn read_bypassing_dma(&self, address: u16) -> u8 {
         self.read_mapped(MappedAddress::map(address))
     }
 
@@ -167,6 +186,16 @@ impl MemoryMapped {
     }
 
     pub fn write_byte(&mut self, address: u16, value: u8) {
+        // During active DMA (past startup), CPU writes outside HRAM/IO are ignored.
+        if let Some(dma) = &self.dma {
+            if dma.startup_delay == 0 {
+                match address {
+                    0xff80..=0xffff => {} // HRAM + IE — always accessible
+                    0xff00..=0xff7f => {} // IO registers — always accessible
+                    _ => return,
+                }
+            }
+        }
         self.write_mapped(MappedAddress::map(address), value);
     }
 
@@ -211,13 +240,10 @@ impl MemoryMapped {
 
     fn begin_dma_transfer(&mut self, source: u8) {
         self.dma_source = source;
-        let start_address = source as u16 * 0x100;
-        for byte in 0..=0x9f {
-            self.video.write_memory(
-                video::memory::MappedAddress::map(0xfe00 + byte),
-                self.read(start_address + byte),
-            );
-        }
-        self.dma_transfer_cycles = Some(Cycles(160));
+        self.dma = Some(super::DmaTransfer {
+            source: source as u16 * 0x100,
+            byte_index: 0,
+            startup_delay: 2,
+        });
     }
 }
