@@ -170,7 +170,7 @@ impl MemoryMapped {
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
             MappedAddress::VideoRegister(register) => self.video.read_register(register),
-            MappedAddress::BeginDmaTransfer => 0xff,
+            MappedAddress::BeginDmaTransfer => self.dma_source,
 
             MappedAddress::Unmapped => 0xFF,
         }
@@ -228,6 +228,7 @@ impl MemoryMapped {
     }
 
     fn begin_dma_transfer(&mut self, source: u8) {
+        self.dma_source = source;
         let start_address = source as u16 * 0x100;
         for byte in 0..=0x9f {
             self.video.write_memory(

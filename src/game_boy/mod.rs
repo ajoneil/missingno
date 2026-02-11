@@ -31,6 +31,7 @@ pub struct MemoryMapped {
     serial: serial_transfer::Registers,
     timers: timers::Timers,
     dma_transfer_cycles: Option<Cycles>,
+    dma_source: u8,
     sgb: Option<sgb::Sgb>,
 }
 
@@ -62,6 +63,7 @@ impl GameBoy {
                 serial: serial_transfer::Registers::new(),
                 timers: timers::Timers::new(),
                 dma_transfer_cycles: None,
+                dma_source: 0,
                 sgb,
             },
         }
@@ -78,6 +80,7 @@ impl GameBoy {
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
         self.mapped.dma_transfer_cycles = None;
+        self.mapped.dma_source = 0;
         self.mapped.sgb = if self.mapped.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {

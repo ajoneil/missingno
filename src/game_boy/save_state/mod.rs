@@ -33,6 +33,8 @@ pub struct SaveState {
     timers: Timers,
     cartridge: MbcState,
     dma: Option<Cycles>,
+    #[nserde(default)]
+    dma_source: u8,
     sgb: Option<SgbState>,
 }
 
@@ -54,6 +56,7 @@ impl SaveState {
             timers: mapped.timers.clone(),
             cartridge: mapped.cartridge.save_mbc_state(),
             dma: mapped.dma_transfer_cycles,
+            dma_source: mapped.dma_source,
             sgb: mapped.sgb.as_ref().map(|sgb| sgb.save_state()),
         }
     }
@@ -98,6 +101,7 @@ impl SaveState {
                 serial: self.serial,
                 timers: self.timers,
                 dma_transfer_cycles: self.dma,
+                dma_source: self.dma_source,
                 sgb,
             },
         })
