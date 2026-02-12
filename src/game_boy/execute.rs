@@ -171,25 +171,9 @@ impl GameBoy {
             self.mapped.interrupts.request(interrupt);
         }
 
-        if !is_mcycle_boundary {
-            return false;
-        }
-
-        // Serial ticks once per M-cycle, using falling edges of the
-        // internal counter's bit 7 to drive the serial shift clock.
-        let counter = self.mapped.timers.internal_counter();
-        if let Some(interrupt) = self.mapped.serial.mcycle(counter) {
-            self.mapped.interrupts.request(interrupt);
-        }
-
-        // OAM DMA: transfer one byte per M-cycle
-        if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
-            let byte = self.mapped.read_dma_source(src_addr);
-            let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
-            self.mapped.video.write_memory(dst, byte);
-        }
-
-        let video_result = self.mapped.video.mcycle();
+        // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
+        // detection and LYC comparison only run on M-cycle boundaries.
+        let video_result = self.mapped.video.tcycle(is_mcycle_boundary);
         if video_result.request_vblank {
             self.mapped
                 .interrupts
@@ -206,6 +190,24 @@ impl GameBoy {
             }
             self.screen = screen;
             new_screen = true;
+        }
+
+        if !is_mcycle_boundary {
+            return new_screen;
+        }
+
+        // Serial ticks once per M-cycle, using falling edges of the
+        // internal counter's bit 7 to drive the serial shift clock.
+        let counter = self.mapped.timers.internal_counter();
+        if let Some(interrupt) = self.mapped.serial.mcycle(counter) {
+            self.mapped.interrupts.request(interrupt);
+        }
+
+        // OAM DMA: transfer one byte per M-cycle
+        if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
+            let byte = self.mapped.read_dma_source(src_addr);
+            let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
+            self.mapped.video.write_memory(dst, byte);
         }
 
         self.mapped.audio.mcycle();

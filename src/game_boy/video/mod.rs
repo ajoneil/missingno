@@ -239,7 +239,7 @@ impl Video {
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(0));
+        let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(dots) if *dots < 4);
 
         (self
             .interrupts
@@ -263,7 +263,10 @@ impl Video {
                 && self.ly_eq_lyc)
     }
 
-    pub fn mcycle(&mut self) -> VideoTickResult {
+    /// Advance PPU by one dot. Call once per T-cycle. Interrupt edge
+    /// detection only runs on M-cycle boundaries (when `is_mcycle` is true)
+    /// to match hardware behavior.
+    pub fn tcycle(&mut self, is_mcycle: bool) -> VideoTickResult {
         let mut result = VideoTickResult {
             screen: None,
             request_vblank: false,
@@ -276,15 +279,22 @@ impl Video {
                 self.stat_line_was_high = false;
             }
 
-            if let Some(screen) = self.ppu.as_mut().unwrap().mcycle(&self.ppu_accessible) {
+            if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
                 result.screen = Some(screen);
                 result.request_vblank = true;
+            }
+
+            if !is_mcycle {
+                return result;
             }
 
             // Update comparison clock (runs while PPU is on)
             self.ly_eq_lyc =
                 self.ppu.as_ref().unwrap().current_line() == self.interrupts.current_line_compare;
         } else {
+            if !is_mcycle {
+                return result;
+            }
             if self.ppu.is_some() {
                 self.ppu = None;
                 self.stat_line_was_high = false;

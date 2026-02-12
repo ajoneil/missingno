@@ -68,6 +68,8 @@ pub enum PpuState {
         line_dots: u32,
         line_penalty: u32,
         line_pixels_drawn: u8,
+        line_next_sprite: usize,
+        line_sprite_tile_penalized: u32,
         line_window_rendered: bool,
         window_line_counter: u8,
     },
