@@ -97,8 +97,9 @@ impl Processor {
                     Phase::Empty
                 }
                 (Target16::Register(reg), Source16::Register(sreg)) => {
-                    cpu.set_register16(*reg, cpu.get_register16(*sreg));
-                    Phase::InternalOp { count: 1 }
+                    let value = cpu.get_register16(*sreg);
+                    cpu.set_register16(*reg, value);
+                    Phase::InternalOamBug { address: value }
                 }
                 (Target16::Register(reg), Source16::StackPointerWithOffset(offset)) => {
                     let sp = cpu.stack_pointer;
@@ -193,12 +194,14 @@ impl Processor {
             },
             Arithmetic::Arithmetic16(a16) => match a16 {
                 Arithmetic16::Increment(reg) => {
-                    cpu.set_register16(*reg, cpu.get_register16(*reg).wrapping_add(1));
-                    Phase::InternalOp { count: 1 }
+                    let old = cpu.get_register16(*reg);
+                    cpu.set_register16(*reg, old.wrapping_add(1));
+                    Phase::InternalOamBug { address: old }
                 }
                 Arithmetic16::Decrement(reg) => {
-                    cpu.set_register16(*reg, cpu.get_register16(*reg).wrapping_sub(1));
-                    Phase::InternalOp { count: 1 }
+                    let old = cpu.get_register16(*reg);
+                    cpu.set_register16(*reg, old.wrapping_sub(1));
+                    Phase::InternalOamBug { address: old }
                 }
                 Arithmetic16::AddHl(reg) => {
                     let value = cpu.get_register16(*reg);
@@ -405,6 +408,8 @@ impl Processor {
     pub(super) fn build_jump(cpu: &mut Cpu, j: &Jump) -> Phase {
         match j {
             Jump::Jump(condition, location) => {
+                let is_relative = matches!(location, jump::Location::Address(Address::Relative(_)));
+                let pc_before = cpu.program_counter;
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if taken {
@@ -412,6 +417,10 @@ impl Processor {
                 }
                 if matches!(location, jump::Location::RegisterHl) {
                     Phase::Empty
+                } else if is_relative && taken {
+                    // JR puts PC on the bus during the internal cycle,
+                    // potentially triggering the OAM corruption bug.
+                    Phase::InternalOamBug { address: pc_before }
                 } else {
                     Phase::CondJump { taken }
                 }

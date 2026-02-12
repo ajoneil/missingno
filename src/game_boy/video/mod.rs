@@ -152,7 +152,7 @@ impl Video {
             }
             Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0 = PaletteMap(value),
             Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1 = PaletteMap(value),
-            Register::CurrentScanline => unreachable!(),
+            Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
     }
 

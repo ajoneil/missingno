@@ -19,6 +19,10 @@ pub enum BusAction {
     Write { address: u16, value: u8 },
     /// No bus activity (internal CPU work).
     Internal,
+    /// Internal cycle where the IDU places an address on the bus, potentially
+    /// triggering the DMG OAM corruption bug if the address is in 0xFE00-0xFEFF
+    /// and the PPU is in Mode 2.
+    InternalOamBug { address: u16 },
 }
 
 // ── T-cycle ─────────────────────────────────────────────────────────────
@@ -113,6 +117,9 @@ enum Phase {
 
     /// N internal cycles, no bus activity.
     InternalOp { count: u8 },
+
+    /// Single internal cycle where the IDU places an address on the bus.
+    InternalOamBug { address: u16 },
 
     /// Pop: 2 stack reads + optional trailing internal.
     Pop { sp: u16, action: PopAction },
@@ -341,6 +348,11 @@ impl Processor {
                 }
             }
 
+            Phase::InternalOamBug { address } => match step {
+                0 => Some(BusAction::InternalOamBug { address: *address }),
+                _ => None,
+            },
+
             Phase::Pop { sp, action } => {
                 let sp = *sp;
                 match step {
@@ -368,7 +380,7 @@ impl Processor {
             Phase::Push { sp, hi, lo } => {
                 let sp = *sp;
                 match step {
-                    0 => Some(BusAction::Internal),
+                    0 => Some(BusAction::InternalOamBug { address: sp }),
                     1 => {
                         // First decrement: SP-1, write high byte
                         let addr = sp.wrapping_sub(1);
@@ -402,7 +414,7 @@ impl Processor {
                 }
                 let sp = *sp;
                 match step {
-                    0 => Some(BusAction::Internal),
+                    0 => Some(BusAction::InternalOamBug { address: sp }),
                     1 => {
                         let addr = sp.wrapping_sub(1);
                         cpu.stack_pointer = addr;
@@ -447,8 +459,11 @@ impl Processor {
             Phase::InterruptDispatch { sp, pc_hi, pc_lo } => {
                 let sp = *sp;
                 match step {
-                    0 => Some(BusAction::Internal),
-                    1 => Some(BusAction::Internal),
+                    0 => {
+                        let pc = (*pc_hi as u16) << 8 | *pc_lo as u16;
+                        Some(BusAction::InternalOamBug { address: pc })
+                    }
+                    1 => Some(BusAction::InternalOamBug { address: sp }),
                     2 => {
                         let addr = sp.wrapping_sub(1);
                         cpu.stack_pointer = addr;
@@ -517,7 +532,7 @@ impl Processor {
                 2 => TCycle::Hardware,
                 _ => TCycle::Hardware,
             },
-            Some(BusAction::Internal) => TCycle::Hardware,
+            Some(BusAction::Internal) | Some(BusAction::InternalOamBug { .. }) => TCycle::Hardware,
             None => unreachable!(),
         };
 
@@ -526,5 +541,14 @@ impl Processor {
         }
 
         Some(result)
+    }
+
+    /// If the current M-cycle is an `InternalOamBug`, returns the address
+    /// the IDU placed on the bus.
+    pub fn oam_bug_address(&self) -> Option<u16> {
+        match &self.current_action {
+            Some(BusAction::InternalOamBug { address }) => Some(*address),
+            _ => None,
+        }
     }
 }

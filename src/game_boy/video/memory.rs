@@ -82,6 +82,43 @@ impl VideoMemory {
         &self.tile_maps
     }
 
+    /// Read a raw byte from OAM at the given byte offset (0–159).
+    pub(crate) fn oam_byte(&self, offset: u8) -> u8 {
+        let sprite = &self.sprites[(offset / 4) as usize];
+        match offset % 4 {
+            0 => sprite.position.y_plus_16,
+            1 => sprite.position.x_plus_8,
+            2 => sprite.tile.0,
+            3 => sprite.attributes.0,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Write a raw byte to OAM at the given byte offset (0–159).
+    pub(crate) fn set_oam_byte(&mut self, offset: u8, value: u8) {
+        let sprite = &mut self.sprites[(offset / 4) as usize];
+        match offset % 4 {
+            0 => sprite.position.y_plus_16 = value,
+            1 => sprite.position.x_plus_8 = value,
+            2 => sprite.tile = TileIndex(value),
+            3 => sprite.attributes = sprites::Attributes(value),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Read a little-endian 16-bit word from OAM at the given byte offset.
+    pub(crate) fn oam_word(&self, offset: u8) -> u16 {
+        let lo = self.oam_byte(offset) as u16;
+        let hi = self.oam_byte(offset + 1) as u16;
+        lo | (hi << 8)
+    }
+
+    /// Write a little-endian 16-bit word to OAM at the given byte offset.
+    pub(crate) fn set_oam_word(&mut self, offset: u8, value: u16) {
+        self.set_oam_byte(offset, value as u8);
+        self.set_oam_byte(offset + 1, (value >> 8) as u8);
+    }
+
     pub(crate) fn load_state(&mut self, tiles: &[u8], tile_maps: &[u8], sprites_data: &[u8]) {
         for (i, block) in self.tiles.iter_mut().enumerate() {
             let start = i * 0x800;

@@ -234,6 +234,22 @@ impl MemoryMapped {
         }
     }
 
+    /// Trigger OAM bug write corruption if the address is in the OAM
+    /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
+    pub fn oam_bug_write(&mut self, address: u16) {
+        if (0xFE00..=0xFEFF).contains(&address) {
+            self.video.oam_bug_write();
+        }
+    }
+
+    /// Trigger OAM bug read corruption if the address is in the OAM
+    /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
+    pub fn oam_bug_read(&mut self, address: u16) {
+        if (0xFE00..=0xFEFF).contains(&address) {
+            self.video.oam_bug_read();
+        }
+    }
+
     pub fn write_byte(&mut self, address: u16, value: u8) {
         if let Some(bus) = self.dma.is_active_on_bus() {
             // OAM is being written to by DMA; CPU writes are ignored.

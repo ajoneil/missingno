@@ -269,6 +269,25 @@ impl PixelProcessingUnit {
         }
     }
 
+    /// Returns the OAM row byte offset currently being accessed during
+    /// Mode 2, or `None` if the PPU is not scanning OAM.
+    ///
+    /// During Mode 2, the PPU scans 2 sprites per M-cycle (40 sprites over
+    /// 20 M-cycles = 80 dots). The row offset maps the current dot position
+    /// to the 8-byte OAM row being accessed.
+    pub fn accessed_oam_row(&self) -> Option<u8> {
+        match self {
+            PixelProcessingUnit::Rendering(rendering) => {
+                if rendering.line.dots < SCANLINE_PREPARING_DOTS {
+                    Some(((rendering.line.dots / 4 + 1) * 8) as u8)
+                } else {
+                    None
+                }
+            }
+            PixelProcessingUnit::BetweenFrames(_) => None,
+        }
+    }
+
     pub(crate) fn save_state(&self) -> crate::game_boy::save_state::PpuState {
         use crate::game_boy::save_state::{PpuState, ScreenState};
 

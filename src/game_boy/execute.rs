@@ -108,6 +108,7 @@ impl GameBoy {
         // Run post-decode T-cycles
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
+        let mut tcycle_in_mcycle: u8 = 0;
         while let Some(tcycle) = processor.next_tcycle(read_value, &mut self.cpu) {
             // IE push bug: resolve the interrupt vector after the high byte
             // push completes but before the low byte push. The high byte
@@ -123,11 +124,25 @@ impl GameBoy {
                 }
             }
 
+            // OAM bug: IDU placing address on bus during internal cycle.
+            // Only trigger once per M-cycle, at the first T-cycle.
+            if tcycle_in_mcycle == 0 {
+                if let Some(addr) = processor.oam_bug_address() {
+                    self.mapped.oam_bug_write(addr);
+                }
+            }
+            tcycle_in_mcycle += 1;
+            if tcycle_in_mcycle == 4 {
+                tcycle_in_mcycle = 0;
+            }
+
             match tcycle {
                 TCycle::Read { address } => {
+                    self.mapped.oam_bug_read(address);
                     read_value = self.mapped.read(address);
                 }
                 TCycle::Write { address, value } => {
+                    self.mapped.oam_bug_write(address);
                     self.mapped.write_byte(address, value);
                 }
                 TCycle::Hardware => {}
