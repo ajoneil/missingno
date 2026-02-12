@@ -176,6 +176,59 @@ impl Video {
         self.ppu_accessible.control
     }
 
+    /// Trigger OAM bug write corruption if the PPU is in Mode 2.
+    ///
+    /// Called when INC/DEC rr, PUSH, CALL, JR, RST, or interrupt dispatch
+    /// place an OAM-range address on the bus, or when the CPU writes to
+    /// OAM during Mode 2.
+    pub fn oam_bug_write(&mut self) {
+        let row_offset = match self.accessed_oam_row() {
+            Some(offset) if offset >= 8 && offset < 160 => offset,
+            _ => return,
+        };
+
+        let mem = &mut self.ppu_accessible.memory;
+        let a = mem.oam_word(row_offset);
+        let b = mem.oam_word(row_offset - 8);
+        let c = mem.oam_word(row_offset - 4);
+
+        let glitched = ((a ^ c) & (b ^ c)) ^ c;
+        mem.set_oam_word(row_offset, glitched);
+
+        for i in 2..8u8 {
+            let val = mem.oam_byte(row_offset - 8 + i);
+            mem.set_oam_byte(row_offset + i, val);
+        }
+    }
+
+    /// Trigger OAM bug read corruption if the PPU is in Mode 2.
+    ///
+    /// Called when the CPU reads from OAM during Mode 2. Uses a different
+    /// bitwise formula and copies all 8 bytes from the previous row.
+    pub fn oam_bug_read(&mut self) {
+        let row_offset = match self.accessed_oam_row() {
+            Some(offset) if offset >= 8 && offset < 160 => offset,
+            _ => return,
+        };
+
+        let mem = &mut self.ppu_accessible.memory;
+        let a = mem.oam_word(row_offset);
+        let b = mem.oam_word(row_offset - 8);
+        let c = mem.oam_word(row_offset - 4);
+
+        let glitched = b | (a & c);
+        mem.set_oam_word(row_offset, glitched);
+
+        for i in 0..8u8 {
+            let val = mem.oam_byte(row_offset - 8 + i);
+            mem.set_oam_byte(row_offset + i, val);
+        }
+    }
+
+    fn accessed_oam_row(&self) -> Option<u8> {
+        self.ppu.as_ref().and_then(|ppu| ppu.accessed_oam_row())
+    }
+
     fn stat_line_active(&self) -> bool {
         let ppu = match &self.ppu {
             Some(ppu) => ppu,
