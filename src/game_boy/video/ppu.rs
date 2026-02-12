@@ -41,6 +41,9 @@ pub struct Rendering {
     screen: Screen,
     line: Line,
     window_line_counter: u8,
+    /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
+    /// The STAT mode bits read as 0 until Mode 2 actually starts.
+    lcd_turning_on: bool,
 }
 
 struct Line {
@@ -103,6 +106,16 @@ impl Rendering {
             screen: Screen::new(),
             line: Line::new(0),
             window_line_counter: 0,
+            lcd_turning_on: false,
+        }
+    }
+
+    fn new_lcd_on() -> Self {
+        Rendering {
+            screen: Screen::new(),
+            line: Line::new(0),
+            window_line_counter: 0,
+            lcd_turning_on: true,
         }
     }
 
@@ -124,6 +137,9 @@ impl Rendering {
 
         if self.line.dots < SCANLINE_PREPARING_DOTS {
             self.line.dots += 1;
+            if self.line.dots == SCANLINE_PREPARING_DOTS {
+                self.lcd_turning_on = false;
+            }
         } else {
             if self.line.pixels_drawn < screen::PIXELS_PER_LINE {
                 if self.line.penalty > 0 {
@@ -314,6 +330,13 @@ impl PixelProcessingUnit {
         Self::Rendering(Rendering::new())
     }
 
+    /// Create a PPU for an LCD-on transition (LCDC bit 7 set after being
+    /// clear). The first line reports mode 0 in STAT until the OAM scan
+    /// begins internally.
+    pub fn new_lcd_on() -> Self {
+        Self::Rendering(Rendering::new_lcd_on())
+    }
+
     pub fn current_line(&self) -> u8 {
         match self {
             PixelProcessingUnit::Rendering(Rendering {
@@ -339,6 +362,18 @@ impl PixelProcessingUnit {
         match self {
             PixelProcessingUnit::Rendering(rendering) => rendering.mode(),
             PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+        }
+    }
+
+    /// Mode for STAT register reads. After LCD enable, the mode bits
+    /// read as 0 until the first OAM scan completes, even though the
+    /// PPU is internally in Mode 2.
+    pub fn stat_mode(&self) -> Mode {
+        match self {
+            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => {
+                Mode::BetweenLines
+            }
+            _ => self.mode(),
         }
     }
 
@@ -407,6 +442,7 @@ impl PixelProcessingUnit {
                     window_rendered: line_window_rendered,
                 },
                 window_line_counter,
+                lcd_turning_on: false,
             }),
             PpuState::BetweenFrames { dots } => PixelProcessingUnit::BetweenFrames(dots),
             PpuState::Off => PixelProcessingUnit::Rendering(Rendering::new()),

@@ -174,6 +174,7 @@ mooneye_test!(
     ppu_stat_lyc_onoff,
     "mooneye/acceptance/ppu/stat_lyc_onoff.gb"
 );
+
 mooneye_test!(
     ppu_vblank_stat_intr_gs,
     "mooneye/acceptance/ppu/vblank_stat_intr-GS.gb"

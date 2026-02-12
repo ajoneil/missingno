@@ -111,7 +111,7 @@ impl Video {
             Register::Control => self.ppu_accessible.control.bits(),
             Register::Status => {
                 let mode = if let Some(ppu) = &self.ppu {
-                    ppu.mode() as u8
+                    ppu.stat_mode() as u8
                 } else {
                     0
                 };
@@ -275,8 +275,7 @@ impl Video {
 
         if self.control().video_enabled() {
             if self.ppu.is_none() {
-                self.ppu = Some(PixelProcessingUnit::new());
-                self.stat_line_was_high = false;
+                self.ppu = Some(PixelProcessingUnit::new_lcd_on());
             }
 
             if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
@@ -297,7 +296,6 @@ impl Video {
             }
             if self.ppu.is_some() {
                 self.ppu = None;
-                self.stat_line_was_high = false;
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock
