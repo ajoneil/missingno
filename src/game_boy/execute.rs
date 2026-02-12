@@ -160,15 +160,18 @@ impl GameBoy {
             return false;
         }
 
+        // Serial ticks once per M-cycle, using falling edges of the
+        // internal counter's bit 7 to drive the serial shift clock.
+        let counter = self.mapped.timers.internal_counter();
+        if let Some(interrupt) = self.mapped.serial.mcycle(counter) {
+            self.mapped.interrupts.request(interrupt);
+        }
+
         // OAM DMA: transfer one byte per M-cycle
         if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
             let byte = self.mapped.read_dma_source(src_addr);
             let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
             self.mapped.video.write_memory(dst, byte);
-        }
-
-        if let Some(interrupt) = self.mapped.serial.mcycle() {
-            self.mapped.interrupts.request(interrupt);
         }
 
         let video_result = self.mapped.video.mcycle();

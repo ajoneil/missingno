@@ -21,7 +21,7 @@ pub struct Timers {
 impl Timers {
     pub fn new() -> Self {
         Self {
-            internal_counter: 0xABCB,
+            internal_counter: 0xABCC,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
@@ -69,6 +69,10 @@ impl Timers {
         }
 
         interrupt
+    }
+
+    pub fn internal_counter(&self) -> u16 {
+        self.internal_counter
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
