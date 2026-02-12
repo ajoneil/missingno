@@ -73,6 +73,9 @@ pub struct Video {
     ppu: Option<PixelProcessingUnit>,
     ppu_accessible: PpuAccessible,
     interrupts: Interrupts,
+    /// Cached LY=LYC comparison result, updated each M-cycle while the
+    /// PPU is on. Frozen when the PPU is off (comparison clock stops).
+    ly_eq_lyc: bool,
     stat_line_was_high: bool,
 }
 
@@ -98,6 +101,7 @@ impl Video {
                 flags: InterruptFlags::DUMMY,
                 current_line_compare: 0,
             },
+            ly_eq_lyc: true,
             stat_line_was_high: false,
         }
     }
@@ -106,20 +110,13 @@ impl Video {
         match register {
             Register::Control => self.ppu_accessible.control.bits(),
             Register::Status => {
-                if let Some(ppu) = &self.ppu {
-                    let line_compare = if self.interrupts.current_line_compare == ppu.current_line()
-                    {
-                        0b00000100
-                    } else {
-                        0
-                    };
-                    0x80 | (self.interrupts.flags.bits() & 0b01111000)
-                        | line_compare
-                        | ppu.mode() as u8
+                let mode = if let Some(ppu) = &self.ppu {
+                    ppu.mode() as u8
                 } else {
-                    0x80 | (self.interrupts.flags.bits() & 0b01111000)
-                        | ppu::Mode::BetweenFrames as u8
-                }
+                    0
+                };
+                let line_compare = if self.ly_eq_lyc { 0b00000100 } else { 0 };
+                0x80 | (self.interrupts.flags.bits() & 0b01111000) | line_compare | mode
             }
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
             Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x,
@@ -186,7 +183,10 @@ impl Video {
         };
 
         let mode = ppu.mode();
-        let ly_eq_lyc = ppu.current_line() == self.interrupts.current_line_compare;
+
+        // On real hardware, the mode 2 (OAM) STAT condition also triggers
+        // at line 144 when VBlank starts.
+        let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(0));
 
         (self
             .interrupts
@@ -202,12 +202,12 @@ impl Video {
                 .interrupts
                 .flags
                 .contains(InterruptFlags::PREPARING_SCANLINE)
-                && mode == Mode::PreparingScanline)
+                && (mode == Mode::PreparingScanline || vblank_line_144))
             || (self
                 .interrupts
                 .flags
                 .contains(InterruptFlags::CURRENT_LINE_COMPARE)
-                && ly_eq_lyc)
+                && self.ly_eq_lyc)
     }
 
     pub fn mcycle(&mut self) -> VideoTickResult {
@@ -219,8 +219,7 @@ impl Video {
 
         if self.control().video_enabled() {
             if self.ppu.is_none() {
-                let ppu = PixelProcessingUnit::new();
-                self.ppu = Some(ppu);
+                self.ppu = Some(PixelProcessingUnit::new());
                 self.stat_line_was_high = false;
             }
 
@@ -228,12 +227,18 @@ impl Video {
                 result.screen = Some(screen);
                 result.request_vblank = true;
             }
+
+            // Update comparison clock (runs while PPU is on)
+            self.ly_eq_lyc =
+                self.ppu.as_ref().unwrap().current_line() == self.interrupts.current_line_compare;
         } else {
             if self.ppu.is_some() {
                 self.ppu = None;
                 self.stat_line_was_high = false;
                 result.screen = Some(Screen::new());
             }
+            // ly_eq_lyc is intentionally NOT updated — comparison clock
+            // stops when the PPU is off, freezing the last result.
             return result;
         }
 
@@ -327,6 +332,7 @@ impl Video {
                 flags: InterruptFlags::from_bits_truncate(state.interrupt_flags),
                 current_line_compare: state.current_line_compare,
             },
+            ly_eq_lyc: false,
             stat_line_was_high: state.stat_line_was_high,
         }
     }
