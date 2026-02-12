@@ -163,6 +163,25 @@ impl MemoryMapped {
                 return self.read_mapped(MappedAddress::map(self.dma.conflicting_address()));
             }
         }
+
+        // PPU mode-based memory gating: the PPU locks OAM during Mode 2
+        // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
+        let mode = self.video.mode();
+        match address {
+            0xFE00..=0xFE9F => match mode {
+                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                    return 0xFF;
+                }
+                _ => {}
+            },
+            0x8000..=0x9FFF => {
+                if mode == video::ppu::Mode::DrawingPixels {
+                    return 0xFF;
+                }
+            }
+            _ => {}
+        }
+
         self.read_mapped(MappedAddress::map(address))
     }
 
@@ -226,6 +245,25 @@ impl MemoryMapped {
                 return;
             }
         }
+
+        // PPU mode-based memory gating: the PPU locks OAM during Mode 2
+        // and Mode 3, and locks VRAM during Mode 3. Writes are ignored.
+        let mode = self.video.mode();
+        match address {
+            0xFE00..=0xFE9F => match mode {
+                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                    return;
+                }
+                _ => {}
+            },
+            0x8000..=0x9FFF => {
+                if mode == video::ppu::Mode::DrawingPixels {
+                    return;
+                }
+            }
+            _ => {}
+        }
+
         self.write_mapped(MappedAddress::map(address), value);
     }
 
