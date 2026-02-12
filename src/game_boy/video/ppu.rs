@@ -317,9 +317,18 @@ impl PixelProcessingUnit {
     pub fn current_line(&self) -> u8 {
         match self {
             PixelProcessingUnit::Rendering(Rendering {
-                line: Line { number, .. },
+                line: Line { number, dots, .. },
                 ..
-            }) => *number,
+            }) => {
+                // LY increments 4 dots before the end of the scanline on DMG.
+                // During the last 4 dots (452-455), LY already reports the
+                // next line's value.
+                if *dots >= SCANLINE_TOTAL_DOTS - 4 {
+                    number + 1
+                } else {
+                    *number
+                }
+            }
             PixelProcessingUnit::BetweenFrames(dots) => {
                 screen::NUM_SCANLINES + (dots / SCANLINE_TOTAL_DOTS) as u8
             }
