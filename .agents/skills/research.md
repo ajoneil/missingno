@@ -10,15 +10,23 @@ Check what's already documented in `receipts/research/` for the relevant subsyst
 
 ## Research strategy
 
-Work through sources in this order, stopping when you have enough confidence:
+Focus on finding **authoritative answers to specific behavioral questions**. Before searching, write down the exact question you need answered (e.g. "at what dot does LY increment?" not "how does LY work?"). This keeps research targeted and prevents scope creep.
+
+Work through sources in this order, stopping when you have a clear, specific answer:
 
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
-2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy).
-3. **Test suite sources**: Find the assembly/source for relevant test ROMs to understand exactly what they measure.
-4. **Reference emulators**: Search GitHub for accurate emulators of the target platform with permissive licenses (MIT, Apache, zlib, public domain). Use them to understand **what the hardware does**, not how to structure your code. Extract factual hardware behavior (timing values, edge cases, state transitions) — do not copy architectural patterns, data structures, or implementation strategies. Your emulator has its own architecture; the goal is to know what behavior to produce, not how another project chose to produce it. Prefer emulators known for accuracy over speed.
-5. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks.
+2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy). These are the highest-quality sources — prefer them over everything else.
+3. **Hardware test results and analysis**: Look for documents, blog posts, or wiki pages where someone has measured real hardware behavior with an oscilloscope or test ROM and reported the results. These are factual observations, not interpretations.
+4. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks with specific timing values and edge cases.
+5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. This tells you what behavior to produce, with specific cycle counts.
+6. **Reference emulators (last resort)**: Only consult emulator source code when documentation is insufficient. Reading source through WebFetch is unreliable — the AI summarizer often misinterprets code. If you must read emulator source, clone the repo locally and read the actual files. Extract factual hardware behavior (timing values, edge cases, state transitions) — do not copy architectural patterns, data structures, or implementation strategies.
 
-Cross-reference multiple sources to build confidence in what the correct behavior should be.
+### Quality over quantity
+
+- **One good source beats five bad fetches.** If Pan Docs answers your question, stop there. Don't keep searching for confirmation through emulator source code.
+- **Don't read source code through WebFetch.** The summarizer loses critical details like exact cycle counts, conditional branches, and subtle state machine transitions. If you need to read source, use `Bash` to clone the repo and `Read` the files directly.
+- **Stop when you have the answer.** Research is not exploration — you have a specific question. Once answered with a credible source, document it and move on.
+- **If a source doesn't have what you need after one fetch, move to the next source.** Don't re-fetch the same URL with different prompts hoping for different results.
 
 ## Documenting findings
 
