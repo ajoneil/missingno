@@ -112,6 +112,21 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 
 ### 6. Analyze and fix
 
+#### Recognize when you're stuck
+
+If any of these are true, **stop and invoke `/research` immediately** — do not keep reasoning:
+
+- You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle.
+- You're unsure what value a register should have at a particular point in the hardware's operation.
+- You're asking "but how does this work on real hardware?" — even as an internal thought.
+- You've written more than a short paragraph of timing/state analysis without citing a documented source.
+- Your fix attempt didn't work and you don't understand why — the gap is in your hardware knowledge, not your code.
+- You're reading diagnostic output and can't tell whether the emulator's behavior is correct or wrong because you don't know what correct looks like.
+
+Research is cheap. Guessing wastes entire investigation cycles. When in doubt, research.
+
+#### Root cause analysis
+
 - Study the diagnostic output to identify the root cause.
 - **If any hardware behavior is unclear**, stop and use the `research` skill before proceeding. Don't guess at what the hardware does.
 - **Update summary.md** with your hypothesis before attempting a fix.
