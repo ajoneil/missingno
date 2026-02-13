@@ -391,7 +391,7 @@ impl Rendering {
             } else {
                 // Advance sprite fetch pipeline
                 Self::advance_sprite_fetch(sf, self.line.number, data);
-                if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 0 {
+                if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
                     // Sprite fetch just completed — merge and resume
                     Self::merge_sprite_into_obj_fifo(
                         sf,
@@ -594,10 +594,9 @@ impl Rendering {
                     let block = data.memory.tile_block(final_block);
                     sf.tile_data_high =
                         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + 1];
-
-                    // Signal completion by resetting dot_in_step to 0.
-                    // The caller checks step == GetDataHigh && dot_in_step == 0.
-                    sf.dot_in_step = 0;
+                    // Signal completion. Use dot_in_step = 2 to distinguish
+                    // from the initial entry state (dot_in_step = 0).
+                    sf.dot_in_step = 2;
                 }
             }
         }
