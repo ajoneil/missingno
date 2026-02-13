@@ -143,6 +143,73 @@ fn interrupt_time() {
     );
 }
 
+// DMG sound — individual sub-tests (cart RAM result, not serial)
+fn run_dmg_sound_single(name: &str, timeout_frames: u32) {
+    let rom_path = format!("blargg/dmg_sound/rom_singles/{name}.gb");
+    run_blargg_cart_ram_test(&rom_path, timeout_frames);
+}
+
+#[test]
+fn dmg_sound_01_registers() {
+    run_dmg_sound_single("01-registers", 600);
+}
+
+#[test]
+fn dmg_sound_02_len_ctr() {
+    run_dmg_sound_single("02-len ctr", 600);
+}
+
+#[test]
+#[ignore] // Hangs — frame sequencer alignment issue with extra length clocking
+fn dmg_sound_03_trigger() {
+    run_dmg_sound_single("03-trigger", 600);
+}
+
+#[test]
+fn dmg_sound_04_sweep() {
+    run_dmg_sound_single("04-sweep", 600);
+}
+
+#[test]
+fn dmg_sound_05_sweep_details() {
+    run_dmg_sound_single("05-sweep details", 600);
+}
+
+#[test]
+fn dmg_sound_06_overflow_on_trigger() {
+    run_dmg_sound_single("06-overflow on trigger", 600);
+}
+
+#[test]
+fn dmg_sound_07_len_sweep_period_sync() {
+    run_dmg_sound_single("07-len sweep period sync", 600);
+}
+
+#[test]
+fn dmg_sound_08_len_ctr_during_power() {
+    run_dmg_sound_single("08-len ctr during power", 600);
+}
+
+#[test]
+fn dmg_sound_09_wave_read_while_on() {
+    run_dmg_sound_single("09-wave read while on", 600);
+}
+
+#[test]
+fn dmg_sound_10_wave_trigger_while_on() {
+    run_dmg_sound_single("10-wave trigger while on", 600);
+}
+
+#[test]
+fn dmg_sound_11_regs_after_power() {
+    run_dmg_sound_single("11-regs after power", 600);
+}
+
+#[test]
+fn dmg_sound_12_wave_write_while_on() {
+    run_dmg_sound_single("12-wave write while on", 600);
+}
+
 // DMG sound — combined (screen-only, no serial output — uses screenshot comparison)
 #[test]
 fn dmg_sound() {

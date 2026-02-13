@@ -60,6 +60,7 @@ impl Default for PulseChannel {
 
 impl PulseChannel {
     pub fn reset(&mut self) {
+        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             waveform_and_initial_length: WaveformAndInitialLength(0),
@@ -71,7 +72,7 @@ impl PulseChannel {
             wave_duty_position: 0,
             current_volume: 0,
             envelope_timer: 0,
-            length_counter: 0,
+            length_counter,
         };
     }
 
@@ -84,21 +85,46 @@ impl PulseChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
                 self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
             }
-            Register::VolumeAndEnvelope => self.volume_and_envelope = VolumeAndEnvelope(value),
+            Register::VolumeAndEnvelope => {
+                self.volume_and_envelope = VolumeAndEnvelope(value);
+                // Disabling the DAC immediately disables the channel
+                if value & 0xf8 == 0 {
+                    self.enabled.enabled = false;
+                }
+            }
             Register::PeriodLow => self.period.set_low8(value),
             Register::PeriodHighAndControl => {
-                let value = PeriodHighAndControl(value);
-                self.period.set_high3(value.period_high());
-                self.length_enabled = value.enable_length();
+                let ctrl = PeriodHighAndControl(value);
+                self.period.set_high3(ctrl.period_high());
 
-                if value.trigger() {
+                // Extra length clocking on NRx4 write
+                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                let was_length_enabled = self.length_enabled;
+                self.length_enabled = ctrl.enable_length();
+
+                if !next_step_clocks_length
+                    && !was_length_enabled
+                    && self.length_enabled
+                    && self.length_counter > 0
+                {
+                    self.length_counter -= 1;
+                    if self.length_counter == 0 && !ctrl.trigger() {
+                        self.enabled.enabled = false;
+                    }
+                }
+
+                if ctrl.trigger() {
                     self.trigger();
+                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 64
+                    {
+                        self.length_counter = 63;
+                    }
                 }
             }
         }

@@ -306,7 +306,13 @@ impl MemoryMapped {
                 }
             },
             MappedAddress::TimerRegister(register) => {
-                self.timers.write_register(register, value);
+                if matches!(register, timers::Register::Divider) {
+                    let old_counter = self.timers.internal_counter();
+                    self.timers.write_register(register, value);
+                    self.audio.on_div_write(old_counter);
+                } else {
+                    self.timers.write_register(register, value);
+                }
             }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),

@@ -39,6 +39,7 @@ pub struct PulseSweepChannel {
     pub shadow_frequency: u16,
     pub sweep_timer: u8,
     pub sweep_enabled: bool,
+    pub sweep_negate_used: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -63,12 +64,14 @@ impl Default for PulseSweepChannel {
             shadow_frequency: 0,
             sweep_timer: 0,
             sweep_enabled: false,
+            sweep_negate_used: false,
         }
     }
 }
 
 impl PulseSweepChannel {
     pub fn reset(&mut self) {
+        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             sweep: Sweep(0),
@@ -81,10 +84,11 @@ impl PulseSweepChannel {
             wave_duty_position: 0,
             current_volume: 0,
             envelope_timer: 0,
-            length_counter: 0,
+            length_counter,
             shadow_frequency: 0,
             sweep_timer: 0,
             sweep_enabled: false,
+            sweep_negate_used: false,
         }
     }
 
@@ -98,22 +102,55 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
                 self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
             }
-            Register::Volume => self.volume_and_envelope = VolumeAndEnvelope(value),
-            Register::PeriodSweep => self.sweep.0 = value,
+            Register::Volume => {
+                self.volume_and_envelope = VolumeAndEnvelope(value);
+                // Disabling the DAC immediately disables the channel
+                if value & 0xf8 == 0 {
+                    self.enabled.enabled = false;
+                }
+            }
+            Register::PeriodSweep => {
+                let old_negate = self.sweep.0 & 0b1000 != 0;
+                self.sweep.0 = value;
+                let new_negate = value & 0b1000 != 0;
+                // Clearing negate bit after a negate calculation disables the channel
+                if self.sweep_negate_used && old_negate && !new_negate {
+                    self.enabled.enabled = false;
+                }
+            }
             Register::PeriodLow => self.period.set_low8(value),
             Register::PeriodHighAndControl => {
-                let value = PeriodHighAndControl(value);
-                self.period.set_high3(value.period_high());
-                self.length_enabled = value.enable_length();
+                let ctrl = PeriodHighAndControl(value);
+                self.period.set_high3(ctrl.period_high());
 
-                if value.trigger() {
+                // Extra length clocking on NRx4 write
+                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                let was_length_enabled = self.length_enabled;
+                self.length_enabled = ctrl.enable_length();
+
+                if !next_step_clocks_length
+                    && !was_length_enabled
+                    && self.length_enabled
+                    && self.length_counter > 0
+                {
+                    self.length_counter -= 1;
+                    if self.length_counter == 0 && !ctrl.trigger() {
+                        self.enabled.enabled = false;
+                    }
+                }
+
+                if ctrl.trigger() {
                     self.trigger();
+                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 64
+                    {
+                        self.length_counter = 63;
+                    }
                 }
             }
         }
@@ -129,6 +166,7 @@ impl PulseSweepChannel {
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
 
         // Initialize sweep
+        self.sweep_negate_used = false;
         self.shadow_frequency = self.period.0;
         let pace = self.sweep.pace();
         self.sweep_timer = if pace != 0 { pace } else { 8 };
@@ -145,11 +183,14 @@ impl PulseSweepChannel {
         }
     }
 
-    fn calculate_sweep_frequency(&self) -> u16 {
+    fn calculate_sweep_frequency(&mut self) -> u16 {
         let shifted = self.shadow_frequency >> self.sweep.step();
         match self.sweep.direction() {
             SweepDirection::Increasing => self.shadow_frequency.wrapping_add(shifted),
-            SweepDirection::Decreasing => self.shadow_frequency.wrapping_sub(shifted),
+            SweepDirection::Decreasing => {
+                self.sweep_negate_used = true;
+                self.shadow_frequency.wrapping_sub(shifted)
+            }
         }
     }
 

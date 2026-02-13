@@ -211,7 +211,9 @@ impl GameBoy {
             self.mapped.video.write_memory(dst, byte);
         }
 
-        self.mapped.audio.mcycle();
+        self.mapped
+            .audio
+            .mcycle(self.mapped.timers.internal_counter());
         new_screen
     }
 

@@ -106,7 +106,7 @@ impl Audio {
                 value.bits()
             }
 
-            Register::Volume => (self.volume_left.0 << 4) | self.volume_right.0,
+            Register::Volume => self.nr50,
             Register::Channel1(register) => self.channels.ch1.read_register(register),
             Register::Channel2(register) => self.channels.ch2.read_register(register),
             Register::Channel3(register) => self.channels.ch3.read_register(register),
@@ -115,13 +115,24 @@ impl Audio {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8) {
-        if !self.enabled && register != Register::Control {
-            return;
+        if !self.enabled {
+            match register {
+                Register::Control => {} // always writable
+                // DMG: NR41 is writable even when APU is off
+                Register::Channel4(noise::Register::LengthTimer) => {}
+                _ => return,
+            }
         }
 
         match register {
             Register::Control => {
                 if ControlFlags::from_bits_retain(value).contains(ControlFlags::AUDIO_ENABLE) {
+                    if !self.enabled {
+                        // APU power-on: reset frame sequencer step only.
+                        // The DIV-APU bit tracking is NOT reset — the frame
+                        // sequencer picks up wherever DIV currently is.
+                        self.frame_sequencer_step = 0;
+                    }
                     self.enabled = true;
                 } else {
                     self.enabled = false;
@@ -129,6 +140,9 @@ impl Audio {
                     self.channels.ch2.reset();
                     self.channels.ch3.reset();
                     self.channels.ch4.reset();
+                    self.nr50 = 0;
+                    self.volume_left = Volume(0);
+                    self.volume_right = Volume(0);
                 }
             }
             Register::Panning => {
@@ -143,13 +157,30 @@ impl Audio {
                 self.channels.ch4.enabled.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
             }
             Register::Volume => {
+                self.nr50 = value;
                 self.volume_left = Volume((value >> 4) & 0b111);
                 self.volume_right = Volume(value & 0b111);
             }
-            Register::Channel1(register) => self.channels.ch1.write_register(register, value),
-            Register::Channel2(register) => self.channels.ch2.write_register(register, value),
-            Register::Channel3(register) => self.channels.ch3.write_register(register, value),
-            Register::Channel4(register) => self.channels.ch4.write_register(register, value),
+            Register::Channel1(register) => {
+                self.channels
+                    .ch1
+                    .write_register(register, value, self.frame_sequencer_step)
+            }
+            Register::Channel2(register) => {
+                self.channels
+                    .ch2
+                    .write_register(register, value, self.frame_sequencer_step)
+            }
+            Register::Channel3(register) => {
+                self.channels
+                    .ch3
+                    .write_register(register, value, self.frame_sequencer_step)
+            }
+            Register::Channel4(register) => {
+                self.channels
+                    .ch4
+                    .write_register(register, value, self.frame_sequencer_step)
+            }
         }
     }
 }

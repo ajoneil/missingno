@@ -48,6 +48,7 @@ impl Default for NoiseChannel {
 
 impl NoiseChannel {
     pub fn reset(&mut self) {
+        let length_counter = self.length_counter; // DMG: NR41 length timer preserved on power-off
         self.enabled = Enabled::disabled();
         self.volume_and_envelope = VolumeAndEnvelope(0);
         self.length_enabled = false;
@@ -57,7 +58,7 @@ impl NoiseChannel {
         self.lfsr = 0x7fff;
         self.current_volume = 0;
         self.envelope_timer = 0;
-        self.length_counter = 0;
+        self.length_counter = length_counter;
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
@@ -69,20 +70,46 @@ impl NoiseChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
         match register {
             Register::LengthTimer => {
                 self.length_counter = 64 - (value & 0x3f) as u16;
             }
-            Register::VolumeAndEnvelope => self.volume_and_envelope = VolumeAndEnvelope(value),
+            Register::VolumeAndEnvelope => {
+                self.volume_and_envelope = VolumeAndEnvelope(value);
+                // Disabling the DAC immediately disables the channel
+                if value & 0xf8 == 0 {
+                    self.enabled.enabled = false;
+                }
+            }
             Register::FrequencyAndRandomness => {
                 self.frequency_and_randomness = FrequencyAndRandomness(value)
             }
             Register::Control => {
-                let value = Control(value);
-                self.length_enabled = value.enable_length();
-                if value.trigger() {
+                let ctrl = Control(value);
+
+                // Extra length clocking on NRx4 write
+                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                let was_length_enabled = self.length_enabled;
+                self.length_enabled = ctrl.enable_length();
+
+                if !next_step_clocks_length
+                    && !was_length_enabled
+                    && self.length_enabled
+                    && self.length_counter > 0
+                {
+                    self.length_counter -= 1;
+                    if self.length_counter == 0 && !ctrl.trigger() {
+                        self.enabled.enabled = false;
+                    }
+                }
+
+                if ctrl.trigger() {
                     self.trigger();
+                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 64
+                    {
+                        self.length_counter = 63;
+                    }
                 }
             }
         }

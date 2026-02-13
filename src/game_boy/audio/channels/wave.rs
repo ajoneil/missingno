@@ -27,6 +27,10 @@ pub struct WaveChannel {
     pub frequency_timer: u16,
     pub wave_position: u8,
     pub length_counter: u16,
+    /// Which T-cycle (0-3) within the last M-cycle batch CH3 read a sample on.
+    /// Set to 0xFF if no read happened in the last M-cycle. Used for DMG wave
+    /// RAM access timing: CPU can only access wave RAM on the same T-cycle.
+    pub sample_read_tcycle: u8,
 }
 
 impl Default for WaveChannel {
@@ -46,23 +50,27 @@ impl Default for WaveChannel {
             frequency_timer: 0,
             wave_position: 0,
             length_counter: 0,
+            sample_read_tcycle: 0xFF,
         }
     }
 }
 
 impl WaveChannel {
     pub fn reset(&mut self) {
+        let ram = self.ram; // Wave RAM is preserved across APU power off
+        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
         *self = Self {
             enabled: Enabled::disabled(),
             dac_enabled: false,
             volume: Volume(0),
             length_enabled: false,
             period: 0.into(),
-            ram: [0; 16],
+            ram,
 
             frequency_timer: 0,
             wave_position: 0,
-            length_counter: 0,
+            length_counter,
+            sample_read_tcycle: 0xFF,
         };
     }
 
@@ -82,7 +90,7 @@ impl WaveChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
         match register {
             Register::Volume => self.volume = Volume(value),
             Register::Length => {
@@ -96,18 +104,53 @@ impl WaveChannel {
             }
             Register::PeriodLow => self.period.set_low8(value),
             Register::PeriodHighAndControl => {
-                let value = PeriodHighAndControl(value);
-                self.period.set_high3(value.period_high());
-                self.length_enabled = value.enable_length();
+                let ctrl = PeriodHighAndControl(value);
+                self.period.set_high3(ctrl.period_high());
 
-                if value.trigger() {
+                // Extra length clocking on NRx4 write
+                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                let was_length_enabled = self.length_enabled;
+                self.length_enabled = ctrl.enable_length();
+
+                if !next_step_clocks_length
+                    && !was_length_enabled
+                    && self.length_enabled
+                    && self.length_counter > 0
+                {
+                    self.length_counter -= 1;
+                    if self.length_counter == 0 && !ctrl.trigger() {
+                        self.enabled.enabled = false;
+                    }
+                }
+
+                if ctrl.trigger() {
                     self.trigger();
+                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 256
+                    {
+                        self.length_counter = 255;
+                    }
                 }
             }
         }
     }
 
     pub fn trigger(&mut self) {
+        // DMG: triggering while CH3 is active corrupts wave RAM
+        if self.enabled.enabled {
+            let byte_pos = self.wave_position as usize / 2;
+            if byte_pos < 4 {
+                // Reading one of the first 4 bytes: only byte 0 is overwritten
+                self.ram[0] = self.ram[byte_pos];
+            } else {
+                // Reading bytes 4-15: first 4 bytes overwritten with aligned group
+                let aligned = byte_pos & !3; // align to 4-byte boundary
+                self.ram[0] = self.ram[aligned];
+                self.ram[1] = self.ram[aligned + 1];
+                self.ram[2] = self.ram[aligned + 2];
+                self.ram[3] = self.ram[aligned + 3];
+            }
+        }
+
         self.enabled.enabled = true;
         if self.length_counter == 0 {
             self.length_counter = 256;
@@ -120,13 +163,17 @@ impl WaveChannel {
         }
     }
 
-    pub fn tcycle(&mut self) {
+    pub fn tcycle(&mut self, t_index: u8) {
+        if t_index == 0 {
+            self.sample_read_tcycle = 0xFF; // reset at start of M-cycle
+        }
         if self.frequency_timer > 0 {
             self.frequency_timer -= 1;
         }
         if self.frequency_timer == 0 {
             self.frequency_timer = (2048 - self.period.0) * 2;
             self.wave_position = (self.wave_position + 1) % 32;
+            self.sample_read_tcycle = t_index;
         }
     }
 
@@ -176,11 +223,61 @@ impl Volume {
 }
 
 impl Audio {
+    /// Simulate T0 and T1 of the current M-cycle to check if CH3 reads a
+    /// sample on T1. On DMG, wave RAM is only accessible on the exact T-cycle
+    /// that CH3 reads. The CPU read/write happens at T1. Returns the byte
+    /// index into wave RAM if access succeeds, or None if it would return $FF.
+    fn ch3_wave_ram_access_byte(&self) -> Option<usize> {
+        let ch3 = &self.channels.ch3;
+        if !ch3.enabled.enabled {
+            return None;
+        }
+        let reload = (2048 - ch3.period.0) * 2;
+        let mut timer = ch3.frequency_timer;
+        let mut position = ch3.wave_position;
+        // T0: decrement
+        if timer > 0 {
+            timer -= 1;
+        }
+        if timer == 0 {
+            timer = reload;
+            position = (position + 1) % 32;
+        }
+        // T1: decrement — if it hits 0, CH3 reads on T1
+        if timer > 0 {
+            timer -= 1;
+        }
+        if timer == 0 {
+            // CH3 reads the byte at the current position, then advances.
+            // CPU sees the byte being read (before advance).
+            Some(position as usize / 2)
+        } else {
+            None
+        }
+    }
+
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
-        self.channels.ch3.ram[offset as usize]
+        let ch3 = &self.channels.ch3;
+        if ch3.enabled.enabled {
+            // DMG: wave RAM can only be read on the same T-cycle CH3 reads.
+            if let Some(byte_idx) = self.ch3_wave_ram_access_byte() {
+                ch3.ram[byte_idx]
+            } else {
+                0xFF
+            }
+        } else {
+            ch3.ram[offset as usize]
+        }
     }
 
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        self.channels.ch3.ram[offset as usize] = value;
+        if self.channels.ch3.enabled.enabled {
+            // DMG: wave RAM can only be written on the same T-cycle CH3 reads.
+            if let Some(byte_idx) = self.ch3_wave_ram_access_byte() {
+                self.channels.ch3.ram[byte_idx] = value;
+            }
+        } else {
+            self.channels.ch3.ram[offset as usize] = value;
+        }
     }
 }
