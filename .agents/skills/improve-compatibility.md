@@ -20,6 +20,7 @@ Fix a compatibility bug against a test ROM or real game.
 - Read the source to understand what specific hardware behavior is being validated.
 - Identify the subsystem involved (video/PPU, audio/APU, timers, interrupts, memory mapping, DMA, input, serial, etc.).
 - **Update summary.md** with the problem description and subsystem identified.
+- **Write a research document immediately** to `research/` capturing what you learned from the test source — what it measures, expected values, and any timing/behavioral details encoded in the test data. Do this now, not later. This is the first research artifact of the investigation.
 
 ### 3. Research the correct hardware behavior
 
@@ -27,7 +28,10 @@ Fix a compatibility bug against a test ROM or real game.
 - **Study reference emulator implementations** with permissive licenses (MIT, Apache, zlib, public domain) to understand how others handle the same edge case. Search GitHub for well-known accurate emulators of the target system.
 - **Read test ROM documentation** — many test suites include comments explaining expected timing, register states, or behavioral details.
 - Cross-reference multiple sources to build confidence in what the correct behavior should be.
-- **Update summary.md** with research findings. Save detailed research to `research/` folder.
+- **Update summary.md** with research findings.
+- **Write research documents to `research/` as you go** — one file per significant finding, written immediately when you learn something, not deferred to the end. Each document should summarize the behavior, cite the source (URL, doc name, emulator repo + file path), and note any ambiguities or conflicts between sources. If you consult Pan Docs and a reference emulator in the same step, that's two research documents. Examples:
+  - `research/mode3-sprite-penalty.md` — how sprites extend mode 3, citing Pan Docs and test ROM data
+  - `research/sameboy-sprite-handling.md` — how SameBoy implements the same behavior, citing specific file and line numbers
 
 ### 4. Verify regression vs pre-existing
 
@@ -102,11 +106,7 @@ receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
 
 Use the date of the investigation and a short kebab-case name describing the issue (e.g. `2026-02-13-stat-mode0-timing`, `2026-02-13-mbc1-bank-wrap`).
 
-**The `research/` folder preserves what you learned about hardware behavior.** Save a markdown file for each significant finding — summarize the behavior, cite the source (URL, doc name, emulator repo + file path), and note any ambiguities or conflicts between sources. For example:
-- `stat-mode0-timing.md` — when Mode 0 starts relative to pixel output, citing Pan Docs and mooneye-gb test source
-- `oam-scan-duration.md` — how many dots OAM scan takes and what triggers the transition, citing GBEDG and SameBoy source
-
-This avoids re-researching the same hardware questions across investigations.
+**The `research/` folder should already be populated** — you wrote research documents during steps 2 and 3 as you learned about the hardware behavior. At this point, review what's there and fill any gaps. The goal is that a future investigation into the same subsystem can start from these documents instead of re-researching from scratch.
 
 **Diagnostic logs are the most important artifact.** Save every diagnostic run to the `logs/` folder so the work isn't repeated. Name each log file descriptively so you can tell them apart later — include what was being traced and which branch/state produced it. For example:
 - `logs/ppu-mode-timing-main.log` — baseline output from main branch
