@@ -99,6 +99,7 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 - **If any hardware behavior is unclear**, stop and use the `research` skill before proceeding. Don't guess at what the hardware does.
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
+- **Design fixes based on hardware behavior, not other emulators' code.** Research tells you *what* the hardware does (timing values, state transitions, edge cases). Your fix should implement that behavior within your existing architecture. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
 - **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix, saving each run to `logs/` with `tee`. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
 - Run the full test suite after each fix: `cargo test`

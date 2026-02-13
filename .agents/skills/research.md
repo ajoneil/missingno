@@ -17,7 +17,7 @@ Work through sources in this order, stopping when you have enough confidence:
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
 2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy).
 3. **Test suite sources**: Find the assembly/source for relevant test ROMs to understand exactly what they measure.
-4. **Reference emulators**: Search GitHub for accurate emulators of the target platform with permissive licenses (MIT, Apache, zlib, public domain). Study how they implement the specific behavior in question. Prefer emulators known for accuracy over speed.
+4. **Reference emulators**: Search GitHub for accurate emulators of the target platform with permissive licenses (MIT, Apache, zlib, public domain). Use them to understand **what the hardware does**, not how to structure your code. Extract factual hardware behavior (timing values, edge cases, state transitions) — do not copy architectural patterns, data structures, or implementation strategies. Your emulator has its own architecture; the goal is to know what behavior to produce, not how another project chose to produce it. Prefer emulators known for accuracy over speed.
 5. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks.
 
 Cross-reference multiple sources to build confidence in what the correct behavior should be.
