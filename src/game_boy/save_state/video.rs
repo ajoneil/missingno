@@ -76,6 +76,7 @@ pub enum PpuState {
         fetcher_step: u8,
         fetcher_dot_in_step: u8,
         fetcher_tile_x: u8,
+        first_fetch: bool,
         discard_count: u8,
     },
     BetweenFrames {
