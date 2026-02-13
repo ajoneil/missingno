@@ -12,7 +12,7 @@ use super::{
     tiles::{TileAddressMode, TileIndex},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Mode {
     BetweenFrames = 1,
@@ -118,14 +118,13 @@ impl PixelFifo {
 
 // --- Background fetcher ---
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FetcherStep {
     /// Initial penalty dots at scanline start (dummy tile fetch delay).
     Penalty,
     GetTile,
     GetTileDataLow,
     GetTileDataHigh,
-    Sleep,
     Push,
 }
 
@@ -159,15 +158,14 @@ impl Fetcher {
     }
 
     /// Position within the fetcher cycle.
-    /// GetTile: 0-1, DataLow: 2-3, DataHigh: 4-5, Sleep: 6-7, Push: 8+
+    /// GetTile: 0-1, DataLow: 2-3, DataHigh: 4-5, Push: 6+
     fn cycle_position(&self) -> u8 {
         match self.step {
             FetcherStep::Penalty => 0,
             FetcherStep::GetTile => self.dot_in_step,
             FetcherStep::GetTileDataLow => 2 + self.dot_in_step,
             FetcherStep::GetTileDataHigh => 4 + self.dot_in_step,
-            FetcherStep::Sleep => 6 + self.dot_in_step,
-            FetcherStep::Push => 8,
+            FetcherStep::Push => 6,
         }
     }
 }
@@ -503,14 +501,6 @@ impl Rendering {
                         block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + 1];
 
                     fetcher.dot_in_step = 0;
-                    fetcher.step = FetcherStep::Sleep;
-                }
-            }
-            FetcherStep::Sleep => {
-                if fetcher.dot_in_step == 0 {
-                    fetcher.dot_in_step = 1;
-                } else {
-                    fetcher.dot_in_step = 0;
                     fetcher.step = FetcherStep::Push;
                 }
             }
@@ -767,7 +757,7 @@ impl Rendering {
             // Compute wait dots: BG fetcher must reach end of DataHigh (position 5)
             let position = self.line.fetcher.cycle_position();
             let bg_wait_dots = if position >= 6 {
-                0 // Already past DataHigh (in Sleep or Push)
+                0 // Already past DataHigh (in Push)
             } else {
                 5 - position
             };
@@ -947,8 +937,7 @@ impl PixelProcessingUnit {
                     FetcherStep::GetTile => 1,
                     FetcherStep::GetTileDataLow => 2,
                     FetcherStep::GetTileDataHigh => 3,
-                    FetcherStep::Sleep => 4,
-                    FetcherStep::Push => 5,
+                    FetcherStep::Push => 4,
                 },
                 fetcher_dot_in_step: rendering.line.fetcher.dot_in_step,
                 fetcher_tile_x: rendering.line.fetcher.tile_x,
@@ -991,7 +980,6 @@ impl PixelProcessingUnit {
                     1 => FetcherStep::GetTile,
                     2 => FetcherStep::GetTileDataLow,
                     3 => FetcherStep::GetTileDataHigh,
-                    4 => FetcherStep::Sleep,
                     _ => FetcherStep::Push,
                 };
 
