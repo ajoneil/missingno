@@ -25,6 +25,18 @@ These rules override default agent behavior. Follow them exactly:
 5. **Never trace timing in your head.** If you want to know what value a register has at a specific dot, or what mode the PPU is in when a particular instruction executes — add a log line and run the test. Do not manually count M-cycles, dots, or pipeline stages. Your mental model will be wrong. The emulator is already a cycle-accurate simulator; let it simulate.
 6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run the full test suite (`cargo test`) before building further changes on top. If a foundational change (e.g. LY timing, mode transitions) introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes regression checks.
 
+## Periodic self-check
+
+**Every 3-4 tool calls, pause and ask yourself these questions:**
+
+1. **Am I running tests or reading code?** If the last 3+ actions were all file reads, grep searches, or bash commands reading emulator source — you're in an analysis loop. Break out: form a hypothesis, add a log line, run the test.
+2. **Am I tracing timing in my head?** If you've written more than ~4 lines of cycle/timing reasoning since the last log file, you're guessing. Add instrumentation and run.
+3. **Do I have an unanswered hardware question?** If you're unsure what the hardware does and you're trying to figure it out by reading emulator source code, stop. Invoke `/research` with a specific question instead. Reference emulators are the LAST resort, not the first.
+4. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either add logging and run a test, or invoke `/research`.
+5. **Have I updated summary.md recently?** If not, update it now. The act of writing down where you are often clarifies what to do next.
+
+**The default action when uncertain is: add a log line and run `cargo test`.** Not: read more source code. Not: reason about timing. Not: check another emulator. Instrument and observe.
+
 ## Working style: hypothesize, test, interpret
 
 Follow this loop for every investigation step:
