@@ -31,6 +31,7 @@ Fix a compatibility bug against a test ROM or real game.
 
 - **Use the `research` skill** (`/research`) for all hardware research. This includes consulting technical documentation, studying reference emulator implementations, and reading test ROM documentation. The research skill will write general hardware knowledge to `receipts/research/`.
 - Do not perform research inline with ad-hoc web searches — always invoke the `research` skill so findings are properly documented and reusable.
+- **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about hardware behavior — while diagnosing, while interpreting diagnostic output, while designing a fix — stop and use the `research` skill. If you find yourself reasoning through timing, register values, or state machine behavior without a source to back it up, that's a signal to research first.
 - **Update summary.md** with research findings.
 - Capture investigation-specific notes in the session's `research/` folder.
 
@@ -43,7 +44,7 @@ Fix a compatibility bug against a test ROM or real game.
 
 ### 5. Build a diagnostic test harness
 
-**Do not guess at fixes.** The goal is to collect precise information about what the emulator is actually doing vs what it should do. Build temporary diagnostic instrumentation:
+**Do not guess at fixes. Do not reason through timing in your head.** The goal is to collect precise information about what the emulator is actually doing vs what it should do. If you're unsure what the emulator is doing at a particular point, add logging and run it — don't try to trace through the code mentally. Build temporary diagnostic instrumentation:
 
 #### What to instrument
 
@@ -88,8 +89,10 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 ### 6. Analyze and fix
 
 - Study the diagnostic output to identify the root cause.
+- **If any hardware behavior is unclear**, stop and use the `research` skill before proceeding. Don't guess at what the hardware does.
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
+- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix to confirm the change had the expected effect on timing/values. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
 - Run the full test suite after each fix: `cargo test`
 - Verify no new regressions (failure count must not increase).
