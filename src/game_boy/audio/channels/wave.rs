@@ -155,7 +155,11 @@ impl WaveChannel {
         if self.length_counter == 0 {
             self.length_counter = 256;
         }
-        self.frequency_timer = (2048 - self.period.0) * 2;
+        // Extra delay on trigger before first sample read. Real hardware
+        // delays +6 T-cycles (SameBoy: +3 APU ticks). Our M-cycle batch model
+        // runs 4 T-cycles of audio in the same M-cycle as the trigger write,
+        // so the effective offset is +8 to compensate.
+        self.frequency_timer = (2048 - self.period.0) * 2 + 8;
         self.wave_position = 0;
 
         if !self.dac_enabled {
@@ -248,8 +252,8 @@ impl Audio {
             timer -= 1;
         }
         if timer == 0 {
-            // CH3 reads the byte at the current position, then advances.
-            // CPU sees the byte being read (before advance).
+            // CH3 advances position and reads the byte at the new position.
+            position = (position + 1) % 32;
             Some(position as usize / 2)
         } else {
             None
