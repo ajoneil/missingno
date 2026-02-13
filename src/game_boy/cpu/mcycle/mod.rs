@@ -543,8 +543,9 @@ impl Processor {
         Some(result)
     }
 
-    /// If the current M-cycle is an `InternalOamBug`, returns the address
-    /// the IDU placed on the bus.
+    /// If the current M-cycle has an IDU address on the bus (from an
+    /// `InternalOamBug` action), returns that address for OAM bug write
+    /// corruption.
     pub fn oam_bug_address(&self) -> Option<u16> {
         match &self.current_action {
             Some(BusAction::InternalOamBug { address }) => Some(*address),

@@ -124,18 +124,6 @@ impl GameBoy {
                 }
             }
 
-            // OAM bug: IDU placing address on bus during internal cycle.
-            // Only trigger once per M-cycle, at the first T-cycle.
-            if tcycle_in_mcycle == 0 {
-                if let Some(addr) = processor.oam_bug_address() {
-                    self.mapped.oam_bug_write(addr);
-                }
-            }
-            tcycle_in_mcycle += 1;
-            if tcycle_in_mcycle == 4 {
-                tcycle_in_mcycle = 0;
-            }
-
             match tcycle {
                 TCycle::Read { address } => {
                     self.mapped.oam_bug_read(address);
@@ -148,6 +136,19 @@ impl GameBoy {
                 TCycle::Hardware => {}
             }
             new_screen |= self.tick_hardware_tcycle();
+
+            // OAM bug: IDU placing address on bus during internal cycle.
+            // Check after the first tick of the M-cycle so the PPU state
+            // reflects the current dot (matching fetch-phase tick ordering).
+            if tcycle_in_mcycle == 0 {
+                if let Some(addr) = processor.oam_bug_address() {
+                    self.mapped.oam_bug_write(addr);
+                }
+            }
+            tcycle_in_mcycle += 1;
+            if tcycle_in_mcycle == 4 {
+                tcycle_in_mcycle = 0;
+            }
         }
 
         new_screen

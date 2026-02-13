@@ -162,3 +162,74 @@ fn oam_bug() {
         1200,
     );
 }
+
+// OAM bug — individual sub-tests (screen-only, use cart RAM for result text)
+fn run_blargg_cart_ram_test(rom_path: &str, timeout_frames: u32) {
+    let mut gb = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+
+    // Read result text from cart RAM at $A004 (zero-terminated string)
+    // Signature at $A001-$A003 should be $DE $B0 $61
+    let mem = gb.memory_mapped();
+    let mut text = String::new();
+    for i in 0..512u16 {
+        let b = mem.read(0xA004 + i);
+        if b == 0 {
+            break;
+        }
+        text.push(b as char);
+    }
+
+    let result_code = mem.read(0xA000);
+
+    assert!(
+        found_loop,
+        "Blargg test {rom_path} timed out. Result code: 0x{result_code:02X}. Output:\n{text}"
+    );
+
+    assert_eq!(
+        result_code, 0,
+        "Blargg test {rom_path} failed with code {result_code}. Output:\n{text}"
+    );
+}
+
+#[test]
+fn oam_bug_1_lcd_sync() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/1-lcd_sync.gb", 1200);
+}
+
+#[test]
+fn oam_bug_2_causes() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/2-causes.gb", 1200);
+}
+
+#[test]
+fn oam_bug_3_non_causes() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/3-non_causes.gb", 1200);
+}
+
+#[test]
+fn oam_bug_4_scanline_timing() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/4-scanline_timing.gb", 1200);
+}
+
+#[test]
+fn oam_bug_5_timing_bug() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/5-timing_bug.gb", 1200);
+}
+
+#[test]
+fn oam_bug_6_timing_no_bug() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/6-timing_no_bug.gb", 1200);
+}
+
+#[test]
+#[ignore] // Takes too long: 116 iterations of LCD off/on/compare/print cycles
+fn oam_bug_7_timing_effect() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/7-timing_effect.gb", 6000);
+}
+
+#[test]
+fn oam_bug_8_instr_effect() {
+    run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/8-instr_effect.gb", 1200);
+}

@@ -231,25 +231,109 @@ impl Video {
 
     /// Trigger OAM bug read corruption if the PPU is in Mode 2.
     ///
-    /// Called when the CPU reads from OAM during Mode 2. Uses a different
-    /// bitwise formula and copies all 8 bytes from the previous row.
+    /// Read corruption has multiple variants depending on which OAM row
+    /// the PPU is currently scanning. The row offset modulo 0x18 selects
+    /// the variant:
+    ///   0x10 → secondary (4-input formula, corrupts preceding row, copies to row±1)
+    ///   0x00 → tertiary/quaternary (complex, model-specific)
+    ///   0x08, 0x18 → simple (2 rows, `b | (a & c)`)
     pub fn oam_bug_read(&mut self) {
-        let row_offset = match self.accessed_oam_row() {
+        let r = match self.accessed_oam_row() {
             Some(offset) if offset >= 8 && offset < 160 => offset,
             _ => return,
         };
 
         let mem = &mut self.ppu_accessible.memory;
-        let a = mem.oam_word(row_offset);
-        let b = mem.oam_word(row_offset - 8);
-        let c = mem.oam_word(row_offset - 4);
 
-        let glitched = b | (a & c);
-        mem.set_oam_word(row_offset, glitched);
+        match r & 0x18 {
+            0x10 => {
+                // Secondary read corruption: affects row r-1, copies to r-2 and r.
+                // Guard: row must be < 0x98 (SameBoy check).
+                if r < 0x98 {
+                    let a = mem.oam_word(r - 16); // two rows back
+                    let b = mem.oam_word(r - 8); // preceding row (corrupted)
+                    let c = mem.oam_word(r); // current row
+                    let d = mem.oam_word(r - 4); // third word of preceding row
 
-        for i in 0..8u8 {
-            let val = mem.oam_byte(row_offset - 8 + i);
-            mem.set_oam_byte(row_offset + i, val);
+                    let glitched = (b & (a | c | d)) | (a & c & d);
+                    mem.set_oam_word(r - 8, glitched);
+
+                    // Copy preceding row to both two-rows-back and current row
+                    for i in 0..8u8 {
+                        let val = mem.oam_byte(r - 8 + i);
+                        mem.set_oam_byte(r - 16 + i, val);
+                        mem.set_oam_byte(r + i, val);
+                    }
+                }
+            }
+            0x00 => {
+                // Tertiary/quaternary read corruption (DMG-specific).
+                if r < 0x98 {
+                    if r == 0x40 {
+                        // Quaternary: 8 inputs (DMG ignores first word of OAM)
+                        let b = mem.oam_word(r); // current row
+                        let c = mem.oam_word(r - 4); // third word of preceding row
+                        let d = mem.oam_word(r - 6); // second word of preceding row (reversed endian offset)
+                        let e = mem.oam_word(r - 8); // preceding row
+                        let f = mem.oam_word(r - 14); // fourth word of two-rows-back (offset)
+                        let g = mem.oam_word(r - 16); // two rows back
+                        let h = mem.oam_word(r - 32); // four rows back
+
+                        // DMG quaternary: `(e & (h | g | (~d & f) | c | b)) | (c & g & h)`
+                        let glitched = (e & (h | g | (!d & f) | c | b)) | (c & g & h);
+                        mem.set_oam_word(r - 8, glitched);
+                    } else {
+                        // Tertiary read corruption
+                        let a = mem.oam_word(r); // current row
+                        let b = mem.oam_word(r - 4); // third word of preceding row
+                        let c = mem.oam_word(r - 8); // preceding row (corrupted)
+                        let d = mem.oam_word(r - 16); // two rows back
+                        let e = mem.oam_word(r - 32); // four rows back
+
+                        let glitched = match r {
+                            // read_2: `(c & (a | b | d | e)) | (a & b & d & e)`
+                            0x20 => (c & (a | b | d | e)) | (a & b & d & e),
+                            // read_3: `(c & (a | b | d | e)) | (b & d & e)`
+                            0x60 => (c & (a | b | d | e)) | (b & d & e),
+                            // read_1: `c | (a & b & d & e)`
+                            _ => c | (a & b & d & e),
+                        };
+                        mem.set_oam_word(r - 8, glitched);
+                    }
+
+                    // Copy preceding row to both two-rows-back and current row
+                    for i in 0..8u8 {
+                        let val = mem.oam_byte(r - 8 + i);
+                        mem.set_oam_byte(r - 16 + i, val);
+                        mem.set_oam_byte(r + i, val);
+                    }
+                }
+            }
+            _ => {
+                // Simple read corruption (0x08, 0x18): affects current row
+                // and preceding row's first word.
+                let a = mem.oam_word(r);
+                let b = mem.oam_word(r - 8);
+                let c = mem.oam_word(r - 4);
+
+                let glitched = b | (a & c);
+                mem.set_oam_word(r - 8, glitched);
+                mem.set_oam_word(r, glitched);
+
+                // Copy preceding row to current row
+                for i in 0..8u8 {
+                    let val = mem.oam_byte(r - 8 + i);
+                    mem.set_oam_byte(r + i, val);
+                }
+            }
+        }
+
+        // Special case: row 0x80 copies to row 0
+        if r == 0x80 {
+            for i in 0..8u8 {
+                let val = mem.oam_byte(r + i);
+                mem.set_oam_byte(i, val);
+            }
         }
     }
 
