@@ -78,6 +78,7 @@ pub enum PpuState {
         fetcher_tile_x: u8,
         first_fetch: bool,
         discard_count: u8,
+        sprite_bg_tiles_considered: u32,
     },
     BetweenFrames {
         dots: u32,

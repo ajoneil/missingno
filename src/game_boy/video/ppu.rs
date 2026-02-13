@@ -215,6 +215,11 @@ struct Line {
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
+    /// Bitset of BG tile columns already considered by sprite fetches.
+    /// Sprites on a previously-considered tile skip the variable wait
+    /// penalty (Pan Docs OBJ penalty algorithm: "if that tile has not
+    /// been considered by a previous OBJ"). Bit N = tile column N.
+    sprite_bg_tiles_considered: u32,
 }
 
 impl Line {
@@ -232,6 +237,7 @@ impl Line {
             first_fetch: true,
             discard_count: 0,
             sprite_fetch: None,
+            sprite_bg_tiles_considered: 0,
         }
     }
 
@@ -785,13 +791,40 @@ impl Rendering {
                 continue;
             }
 
-            // Compute wait dots: BG fetcher must reach end of DataHigh (position 5)
-            let position = self.line.fetcher.cycle_position();
-            let bg_wait_dots = if position >= 6 {
-                0 // Already past DataHigh (in Push)
+            // Pan Docs OBJ penalty algorithm:
+            // 1. Find the BG tile containing the sprite's leftmost pixel.
+            // 2. If that tile has NOT been considered by a previous OBJ,
+            //    compute variable wait from tile position.
+            // 3. Always add 6-dot flat penalty (sprite fetch).
+            // Exception: OAM X=0 always incurs 11-dot penalty (5 wait + 6 flat).
+
+            // Determine which BG tile this sprite's leftmost pixel falls on.
+            let bg_tile_col = if self.line.fetcher.fetching_window {
+                // Window tiles: column relative to window start
+                let wx = data.window.x_plus_7.wrapping_sub(7);
+                (trigger_x.wrapping_sub(wx)) / 8
             } else {
-                5 - position
+                // Background tiles: column adjusted by SCX
+                trigger_x.wrapping_add(data.background_viewport.x) / 8
             };
+
+            let tile_bit = 1u32 << (bg_tile_col & 31);
+            let tile_already_considered = self.line.sprite_bg_tiles_considered & tile_bit != 0;
+
+            let bg_wait_dots = if tile_already_considered {
+                // Tile already consumed by a previous sprite — skip variable wait.
+                0
+            } else if sprite.position.x_plus_8 == 0 {
+                // Exception: X=0 always incurs 11-dot penalty (5 wait + 6 flat).
+                5
+            } else {
+                // Normal: wait for BG fetcher to reach step 5 (DataHigh).
+                let position = self.line.fetcher.cycle_position();
+                if position >= 6 { 0 } else { 5 - position }
+            };
+
+            // Record this tile as consumed.
+            self.line.sprite_bg_tiles_considered |= tile_bit;
 
             self.line.sprite_fetch = Some(SpriteFetch {
                 sprite: *sprite,
@@ -802,7 +835,8 @@ impl Rendering {
                 bg_wait_dots,
             });
             if bg_wait_dots == 0 {
-                // Fetcher already past step 5 — reset immediately.
+                // Fetcher already past step 5 or tile already consumed
+                // — reset immediately.
                 self.line.fetcher.step = FetcherStep::GetTile;
                 self.line.fetcher.dot_in_step = 0;
             }
@@ -978,6 +1012,7 @@ impl PixelProcessingUnit {
                 fetcher_tile_x: rendering.line.fetcher.tile_x,
                 first_fetch: rendering.line.first_fetch,
                 discard_count: rendering.line.discard_count,
+                sprite_bg_tiles_considered: rendering.line.sprite_bg_tiles_considered,
             },
             PixelProcessingUnit::BetweenFrames(dots) => PpuState::BetweenFrames { dots: *dots },
         }
@@ -1003,6 +1038,7 @@ impl PixelProcessingUnit {
                 fetcher_tile_x,
                 first_fetch,
                 discard_count,
+                sprite_bg_tiles_considered,
             } => {
                 let mut bg_fifo = PixelFifo::new();
                 bg_fifo.head = bg_fifo_head;
@@ -1042,6 +1078,7 @@ impl PixelProcessingUnit {
                         first_fetch,
                         discard_count,
                         sprite_fetch: None,
+                        sprite_bg_tiles_considered,
                     },
                     window_line_counter,
                     lcd_turning_on: false,

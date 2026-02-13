@@ -1,4 +1,4 @@
-# Investigations
+# Investigate
 
 Investigate and fix a compatibility bug against a test ROM or real game.
 
