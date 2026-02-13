@@ -20,7 +20,7 @@ Fix a compatibility bug against a test ROM or real game.
 - Read the source to understand what specific hardware behavior is being validated.
 - Identify the subsystem involved (video/PPU, audio/APU, timers, interrupts, memory mapping, DMA, input, serial, etc.).
 - **Update summary.md** with the problem description and subsystem identified.
-- **Write a research document immediately** to `research/` capturing what you learned from the test source — what it measures, expected values, and any timing/behavioral details encoded in the test data. Do this now, not later. This is the first research artifact of the investigation.
+- **Document what you learned** about the hardware behavior using the `research` skill — write findings to `receipts/research/`. Also capture investigation-specific notes (test ROM analysis, expected values for this particular test) in the session's `research/` folder.
 
 ### 3. Research the correct hardware behavior
 
@@ -29,9 +29,7 @@ Fix a compatibility bug against a test ROM or real game.
 - **Read test ROM documentation** — many test suites include comments explaining expected timing, register states, or behavioral details.
 - Cross-reference multiple sources to build confidence in what the correct behavior should be.
 - **Update summary.md** with research findings.
-- **Write research documents to `research/` as you go** — one file per significant finding, written immediately when you learn something, not deferred to the end. Each document should summarize the behavior, cite the source (URL, doc name, emulator repo + file path), and note any ambiguities or conflicts between sources. If you consult Pan Docs and a reference emulator in the same step, that's two research documents. Examples:
-  - `research/mode3-sprite-penalty.md` — how sprites extend mode 3, citing Pan Docs and test ROM data
-  - `research/sameboy-sprite-handling.md` — how SameBoy implements the same behavior, citing specific file and line numbers
+- **Document findings using the `research` skill** — general hardware knowledge goes to `receipts/research/`, investigation-specific notes go to the session's `research/` folder.
 
 ### 4. Verify regression vs pre-existing
 
@@ -99,14 +97,14 @@ Before starting the investigation, propose a folder name to the developer and ge
 ```
 receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
 ├── summary.md        # Investigation summary (required)
-├── research/         # Hardware behavior findings with sources
+├── research/         # Investigation-specific notes (test ROM analysis, hypotheses)
 ├── logs/             # Diagnostic output captures
 └── ...               # Any other artifacts (diffs, screenshots)
 ```
 
 Use the date of the investigation and a short kebab-case name describing the issue (e.g. `2026-02-13-stat-mode0-timing`, `2026-02-13-mbc1-bank-wrap`).
 
-**The `research/` folder should already be populated** — you wrote research documents during steps 2 and 3 as you learned about the hardware behavior. At this point, review what's there and fill any gaps. The goal is that a future investigation into the same subsystem can start from these documents instead of re-researching from scratch.
+**Two research locations**: general hardware knowledge should already be in `receipts/research/` — you documented it using the `research` skill during steps 2 and 3. The session's `research/` folder is for investigation-specific notes only: test ROM analysis, diagnostic interpretations, hypotheses for this particular failure. If a future investigation into the same subsystem would benefit from a finding, it belongs in `receipts/research/`, not here.
 
 **Diagnostic logs are the most important artifact.** Save every diagnostic run to the `logs/` folder so the work isn't repeated. Name each log file descriptively so you can tell them apart later — include what was being traced and which branch/state produced it. For example:
 - `logs/ppu-mode-timing-main.log` — baseline output from main branch
@@ -144,13 +142,3 @@ Detailed explanation of:
 
 Fixes <test_name>.
 ```
-
-## Research strategy
-
-When investigating hardware behavior:
-
-1. **Project docs first**: Check AGENTS.md, README, and existing commit messages — they often document hardware edge cases already discovered.
-2. **Platform technical docs**: Search for the definitive hardware reference for the target system.
-3. **Test suite sources**: Find the assembly/source for the failing test to understand exactly what it measures.
-4. **Reference emulators**: Search GitHub for accurate emulators of the target platform with open licenses. Study how they implement the specific behavior in question. Prefer emulators known for accuracy over speed.
-5. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks.
