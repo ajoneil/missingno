@@ -2,6 +2,15 @@
 
 Fix a compatibility bug against a test ROM or real game.
 
+## Discipline requirements
+
+These rules override default agent behavior. Follow them exactly:
+
+1. **Never run `cargo test` without `tee` to a log file.** Every test invocation — diagnostic, verification, regression check — must be saved. No exceptions. No piping through `grep`/`tail`/`head` instead of saving.
+2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every fix attempt. If you're about to run a test, write in summary.md what you're testing and why first.
+3. **Never do ad-hoc hardware research.** Use the `research` skill. If you catch yourself reasoning about hardware behavior without a documented source, stop and invoke `/research`.
+4. **Never guess at fixes.** Add instrumentation, run diagnostics, read the output. The log files tell you what's happening — your mental model of the code is not a substitute.
+
 ## Workflow
 
 ### 1. Identify the failure
@@ -66,18 +75,26 @@ Based on the subsystem involved, add targeted `eprintln!` tracing that captures:
 
 #### How to run diagnostics
 
-**Every diagnostic run must be saved to `logs/`.** Use `tee` to capture output at the point of execution — never run a diagnostic without simultaneously writing it to a log file:
+**MANDATORY: Every `cargo test` invocation must be saved to a log file.** This is not optional. Do not run `cargo test` without `tee`. Do not pipe output through `grep`, `tail`, `head`, or any other filter — capture the complete, unfiltered output first, then read the log file afterward to find what you need.
 
 ```bash
+# CORRECT — always use this pattern:
 cargo test <test_name> -- --nocapture 2>&1 | tee receipts/improve-compatibility/<session>/logs/<descriptive-name>.log
+
+# WRONG — never do any of these:
+cargo test <test_name> -- --nocapture 2>&1 | grep "pattern"
+cargo test <test_name> -- --nocapture 2>&1 | tail -50
+cargo test <test_name> -- --nocapture              # no tee = lost output
 ```
 
-Name log files so you can tell them apart later:
+**Why this matters:** Filtered output is thrown away. When you filter at the pipe, you lose context that turns out to be important later. Save everything, read selectively afterward using `grep` on the saved log file.
+
+Name log files descriptively so you can tell them apart later:
 - `logs/mode-timing-baseline.log` — initial failing state
 - `logs/mode-timing-fix-attempt-1.log` — after first fix
 - `logs/mode-timing-main-branch.log` — baseline from main
 
-After saving, **update summary.md** with what you instrumented, what the output showed, and what hypothesis it supports or refutes.
+After saving, **update summary.md** with what you instrumented, what the output showed, and what hypothesis it supports or refutes. Read the log file (using `grep` or `Read`) to extract the relevant details for the summary.
 
 #### What good diagnostic output looks like
 
@@ -100,11 +117,11 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
 - **Design fixes based on hardware behavior, not other emulators' code.** Research tells you *what* the hardware does (timing values, state transitions, edge cases). Your fix should implement that behavior within your existing architecture. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
-- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix, saving each run to `logs/` with `tee`. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
+- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix. Every run must use `tee` to save to `logs/` — no exceptions, no inline filtering. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
-- Run the full test suite after each fix: `cargo test`
+- Run the full test suite after each fix: `cargo test` (also saved with `tee` to `logs/`).
 - Verify no new regressions (failure count must not increase).
-- **Update summary.md** after each fix attempt — whether it worked or not, how test results changed, what you'll try next if it didn't work.
+- **Update summary.md** after each fix attempt — whether it worked or not, how test results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
 
 ### 7. Commit
 
@@ -135,7 +152,7 @@ General hardware knowledge should already be in `receipts/research/` — you doc
 
 `summary.md` is a living document — the developer should be able to read it at any point and understand exactly where the investigation stands. Update it as you work, not at the end.
 
-**Hard rule: update summary.md before every diagnostic run and after every diagnostic run.** Before a run, write what you're about to test and why. After a run, write what the output showed. This applies to every `cargo test` invocation, not just major milestones. If you find yourself running tests without updating the summary first, stop and update it.
+**MANDATORY: update summary.md before every diagnostic run and after every diagnostic run.** This is a blocking prerequisite — do not invoke `cargo test` until you have written in summary.md what you are about to test and why. After the run completes, update summary.md with what the output showed before doing anything else. This applies to every single `cargo test` invocation, including quick verification runs and regression checks — not just major milestones. If you find yourself running tests without updating the summary first, you have violated this rule.
 
 Include:
 - **Status**: Current investigation state (e.g. "diagnosing", "fix in progress", "resolved", "blocked")
