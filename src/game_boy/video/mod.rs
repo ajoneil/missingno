@@ -115,7 +115,16 @@ impl Video {
                 } else {
                     0
                 };
-                let line_compare = if self.ly_eq_lyc { 0b00000100 } else { 0 };
+                let ly_eq_lyc = if let Some(ppu) = &self.ppu {
+                    if ppu.ly_transitioning() {
+                        false
+                    } else {
+                        ppu.current_line() == self.interrupts.current_line_compare
+                    }
+                } else {
+                    self.ly_eq_lyc
+                };
+                let line_compare = if ly_eq_lyc { 0b00000100 } else { 0 };
                 0x80 | (self.interrupts.flags.bits() & 0b01111000) | line_compare | mode
             }
             Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
@@ -167,6 +176,25 @@ impl Video {
     pub fn mode(&self) -> ppu::Mode {
         if let Some(ppu) = &self.ppu {
             ppu.mode()
+        } else {
+            ppu::Mode::BetweenFrames
+        }
+    }
+
+    /// Mode for OAM/VRAM memory gating. Reports Mode 0 during LCD-on
+    /// startup (like stat_mode) but transitions to Mode 0 immediately
+    /// when Mode 3 ends (no 1-dot delay).
+    pub fn gating_mode(&self) -> ppu::Mode {
+        if let Some(ppu) = &self.ppu {
+            ppu.gating_mode()
+        } else {
+            ppu::Mode::BetweenFrames
+        }
+    }
+
+    pub fn write_gating_mode(&self) -> ppu::Mode {
+        if let Some(ppu) = &self.ppu {
+            ppu.write_gating_mode()
         } else {
             ppu::Mode::BetweenFrames
         }
@@ -235,17 +263,20 @@ impl Video {
             None => return false,
         };
 
-        let mode = ppu.mode();
+        let mode = ppu.interrupt_mode();
+        let stat_mode = ppu.stat_mode();
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
         let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(dots) if *dots < 4);
 
+        // Mode 0 interrupt uses stat_mode (3-dot-early transition from
+        // mode 3→0) so the interrupt fires when STAT would report mode 0.
         (self
             .interrupts
             .flags
             .contains(InterruptFlags::FINISHING_SCANLINE)
-            && mode == Mode::BetweenLines)
+            && stat_mode == Mode::BetweenLines)
             || (self
                 .interrupts
                 .flags
@@ -255,7 +286,7 @@ impl Video {
                 .interrupts
                 .flags
                 .contains(InterruptFlags::PREPARING_SCANLINE)
-                && (mode == Mode::PreparingScanline || vblank_line_144))
+                && (ppu.mode2_interrupt_active() || vblank_line_144))
             || (self
                 .interrupts
                 .flags

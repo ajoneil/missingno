@@ -166,7 +166,9 @@ impl MemoryMapped {
 
         // PPU mode-based memory gating: the PPU locks OAM during Mode 2
         // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
-        let mode = self.video.mode();
+        // Uses gating_mode() so that OAM/VRAM remain accessible during the
+        // LCD-on startup period, without the 1-dot STAT mode delay.
+        let mode = self.video.gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
                 video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
@@ -262,9 +264,10 @@ impl MemoryMapped {
             }
         }
 
-        // PPU mode-based memory gating: the PPU locks OAM during Mode 2
-        // and Mode 3, and locks VRAM during Mode 3. Writes are ignored.
-        let mode = self.video.mode();
+        // PPU mode-based memory gating for writes. Writes use different
+        // timing than reads: no early OAM/VRAM locks, and mode 2 releases
+        // OAM 4 dots early (at dot 76).
+        let mode = self.video.write_gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
                 video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {

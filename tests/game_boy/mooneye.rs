@@ -42,11 +42,14 @@ fn run_mooneye_test(rom_path: &str) {
         "Mooneye test {rom_path} timed out without reaching infinite loop"
     );
     let cpu = gb.cpu();
-    assert!(
-        common::check_mooneye_pass(cpu),
-        "Mooneye test {rom_path} failed. Registers: {}",
-        common::format_registers(cpu)
-    );
+    if !common::check_mooneye_pass(cpu) {
+        panic!(
+            "Mooneye test {rom_path} failed. Registers: {} PC=0x{:04X} A=0x{:02X}",
+            common::format_registers(cpu),
+            cpu.program_counter,
+            cpu.a,
+        );
+    }
 }
 
 macro_rules! mooneye_test {

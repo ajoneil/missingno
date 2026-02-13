@@ -47,7 +47,7 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let mut processor = if self.check_for_interrupt().is_some() {
+        let mut processor = if let Some(_interrupt) = self.check_for_interrupt() {
             Processor::interrupt(&mut self.cpu)
         } else if self.cpu.halted {
             Processor::halted_nop(self.cpu.program_counter)
