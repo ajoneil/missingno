@@ -135,15 +135,19 @@ impl WaveChannel {
     }
 
     pub fn trigger(&mut self) {
-        // DMG: triggering while CH3 is active corrupts wave RAM
-        if self.enabled.enabled {
-            let byte_pos = self.wave_position as usize / 2;
+        // DMG: triggering while CH3 is active corrupts wave RAM, but only
+        // when the re-trigger coincides with CH3's frequency timer having
+        // just expired. In SameBoy this is `sample_countdown == 0`. In our
+        // T-cycle model, the timer reloads immediately on expiry. A read on
+        // T3 (last T-cycle of the batch) means the timer reloaded and no
+        // further decrements happened, so frequency_timer == reload value.
+        let reload = (2048 - self.period.0) * 2;
+        if self.enabled.enabled && self.frequency_timer == reload {
+            let byte_pos = ((self.wave_position + 1) / 2) as usize & 0xF;
             if byte_pos < 4 {
-                // Reading one of the first 4 bytes: only byte 0 is overwritten
                 self.ram[0] = self.ram[byte_pos];
             } else {
-                // Reading bytes 4-15: first 4 bytes overwritten with aligned group
-                let aligned = byte_pos & !3; // align to 4-byte boundary
+                let aligned = byte_pos & !3;
                 self.ram[0] = self.ram[aligned];
                 self.ram[1] = self.ram[aligned + 1];
                 self.ram[2] = self.ram[aligned + 2];
