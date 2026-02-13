@@ -41,6 +41,7 @@ These rules override default agent behavior. Follow them exactly:
 - **Use the `research` skill** (`/research`) for all hardware research. This includes consulting technical documentation, studying reference emulator implementations, and reading test ROM documentation. The research skill will write general hardware knowledge to `receipts/research/`.
 - Do not perform research inline with ad-hoc web searches — always invoke the `research` skill so findings are properly documented and reusable.
 - **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about hardware behavior — while diagnosing, while interpreting diagnostic output, while designing a fix — stop and use the `research` skill. If you find yourself reasoning through timing, register values, or state machine behavior without a source to back it up, that's a signal to research first.
+- **Research is a subroutine.** After `/research` completes (document written), your very next action must be applying the findings — editing code, running a diagnostic, updating summary.md. Never end your turn immediately after research. The pattern is: research → act on findings → continue investigation. If you find yourself stopping after research and waiting for the user, you have violated this rule.
 - **Update summary.md** with research findings.
 - Capture investigation-specific notes in the session's `research/` folder.
 

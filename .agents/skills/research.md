@@ -4,6 +4,8 @@ Research hardware behavior and document findings in the persistent knowledge bas
 
 **This skill is a subroutine, not a stopping point.** After completing research, immediately return to the task that prompted it. Do not wait for further user input — apply the findings and continue working.
 
+**IMPORTANT**: When this skill finishes (document written and reviewed), your VERY NEXT action must be applying the findings — editing code, running diagnostics, updating summary.md, etc. Do NOT end your turn after writing the research document. The research answer is useless until you act on it.
+
 ## Before you start
 
 Check what's already documented in `receipts/research/` for the relevant subsystem. Read existing documents before searching externally — avoid re-researching what's already known.
