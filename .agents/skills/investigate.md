@@ -8,7 +8,19 @@ These rules override default agent behavior. Follow them exactly:
 
 1. **Never run `cargo test` without `tee` to a log file.** Every test invocation — diagnostic, verification, regression check — must be saved. No exceptions. No piping through `grep`/`tail`/`head` instead of saving.
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every fix attempt. If you're about to run a test, write in summary.md what you're testing and why first.
-3. **Never do ad-hoc hardware research.** Use the `research` skill. This means: no inline `WebFetch` or `WebSearch` calls for hardware documentation (Pan Docs, GBEDG, wikis, etc.), no cloning reference emulator repos, no fetching test ROM source — all of that goes through `/research`. If you catch yourself about to call `WebFetch` for a hardware question, stop and invoke `/research` instead. After research completes, immediately resume the investigation — do not stop and wait for user input.
+3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes:
+   - Hardware documentation (Pan Docs, GBEDG, wikis, etc.)
+   - Test ROM source code (fetching `.s`/`.asm` files, understanding test ROM helper macros, analyzing what a test expects)
+   - Reference emulator source code
+   - Any `curl`, `WebFetch`, or `WebSearch` call for technical content
+   
+   If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. After research completes, immediately resume the investigation — do not stop and wait for user input.
+   
+   **How to hand off research questions:**
+   - Formulate a **specific, concrete question** before invoking `/research`. Not "how does the wave channel work" but "what initial value does the wave channel frequency timer get on trigger — is there an extra delay beyond `(2048 - period) * 2`?"
+   - Include **only the question and any necessary context** (e.g. which file to read, which subsystem, where to write findings). Do NOT include your hypotheses, diagnostic output, or reasoning about what the answer might mean — that's your job after research returns.
+   - **One question per invocation.** If you have multiple questions, invoke `/research` multiple times with separate, focused questions. Don't bundle unrelated questions into a single research call.
+   - When research returns, **you** interpret the findings in context of your investigation. The research skill reports facts; you figure out what they mean for the bug you're investigating.
 4. **Never guess at fixes.** Add instrumentation, run diagnostics, read the output. The log files tell you what's happening — your mental model of the code is not a substitute.
 5. **Never trace timing in your head.** If you want to know what value a register has at a specific dot, or what mode the PPU is in when a particular instruction executes — add a log line and run the test. Do not manually count M-cycles, dots, or pipeline stages. Your mental model will be wrong. The emulator is already a cycle-accurate simulator; let it simulate.
 6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run the full test suite (`cargo test`) before building further changes on top. If a foundational change (e.g. LY timing, mode transitions) introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes regression checks.
@@ -54,12 +66,11 @@ Follow this loop for every investigation step:
 
 ### 3. Research the correct hardware behavior
 
-- **Use the `research` skill** (`/research`) for all hardware research. This includes consulting technical documentation, studying reference emulator implementations, and reading test ROM documentation. The research skill will write general hardware knowledge to `receipts/research/`.
-- Do not perform research inline with ad-hoc web searches — always invoke the `research` skill so findings are properly documented and reusable.
-- **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about hardware behavior — while diagnosing, while interpreting diagnostic output, while designing a fix — stop and use the `research` skill. If you find yourself reasoning through timing, register values, or state machine behavior without a source to back it up, that's a signal to research first.
-- **Research is a subroutine.** After `/research` completes (document written), your very next action must be applying the findings — editing code, running a diagnostic, updating summary.md. Never end your turn immediately after research. The pattern is: research then act on findings then continue investigation. If you find yourself stopping after research and waiting for the user, you have violated this rule.
-- **Update summary.md** with research findings.
-- Capture investigation-specific notes in the session's `research/` folder.
+- **Formulate specific questions and hand them to `/research`.** Each research invocation should have one clear, answerable question. Include the output location (general `receipts/research/` for hardware behavior, or the investigation's `research/` folder for test-specific analysis) and any context needed to find the answer (e.g. "the SameBoy source is cloned at /tmp/SameBoy"). Do NOT include your hypotheses, diagnostic interpretations, or what you think the answer might be.
+- **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about hardware behavior — while diagnosing, while interpreting diagnostic output, while designing a fix — stop and formulate a research question. If you find yourself reasoning through timing, register values, or state machine behavior without a source to back it up, that's a signal to research first.
+- **Use research to resolve contradictions.** If existing research documents contradict each other — or if diagnostic output contradicts what a research document claims — formulate a specific question and invoke `/research` to get the authoritative answer. When research returns, update or correct the contradicting documents.
+- **Research is a subroutine.** After `/research` returns with findings, your very next action must be interpreting those findings in context of your investigation — updating summary.md, editing code, running a diagnostic. Never end your turn immediately after research. The pattern is: research → interpret findings → act → continue investigation.
+- **Update summary.md** with research findings and your interpretation of what they mean for the investigation.
 
 ### 4. Verify regression vs pre-existing
 
@@ -106,6 +117,12 @@ cargo test <test_name> -- --nocapture              # no tee = lost output
 
 **Why this matters:** Filtered output is thrown away. When you filter at the pipe, you lose context that turns out to be important later. Save everything, read selectively afterward using `grep` on the saved log file.
 
+**Timeouts and test scope:** Test runs can take a long time — the full suite may take 2+ minutes, and individual ROMs with high frame counts can take 60+ seconds each. Be strategic:
+- **Use focused test runs first.** To verify a specific fix, run only the relevant sub-test(s) — not the entire suite. For example, if fixing CH1 sweep behavior, run only the sweep sub-test first, not all 12 sound tests.
+- **Expand to full suite only after focused verification passes.** Regression checks are important but expensive. Do them after confirming the fix works, not as the first verification step.
+- **Set generous timeouts.** `cargo test` in debug mode is slow. Use `timeout` values of at least 120s for individual tests and 300s+ for full suites. A test timing out due to an undersized bash timeout is wasted work — you learn nothing except that your timeout was too short.
+- **If a test hangs, reduce scope — don't reduce timeout.** If a test ROM never reaches its completion loop, a shorter timeout won't help you debug it. Instead, run the specific hanging ROM individually and add instrumentation to understand why it's stuck.
+
 Name log files descriptively so you can tell them apart later:
 - `logs/mode-timing-baseline.log` — initial failing state
 - `logs/mode-timing-fix-attempt-1.log` — after first fix
@@ -135,12 +152,13 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 
 - You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle. **Stop. Add a log line.**
 - You're counting M-cycles or dots by hand to figure out when an instruction executes. **Stop. Log the dot counter at that point in the code.**
-- You're unsure what value a register should have at a particular point. **Stop. Invoke `/research`.**
+- You're unsure what value a register should have at a particular point. **Stop. Formulate the question and invoke `/research`.**
 - You've written more than ~4 lines of timing analysis without citing log output. **Stop. You are guessing.**
 - Your fix attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Add more logging to the area that surprised you and run again.**
-- You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Invoke `/research` to learn what correct looks like.**
+- You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Write down what specific hardware behavior you need to know, and invoke `/research` with that question.**
+- Your existing research documents contradict each other, or diagnostic output contradicts what a research document says. **Stop. Formulate the specific contradiction as a question and invoke `/research` to get the authoritative answer, then correct the wrong document.**
 
-The fix for every kind of stuck is the same: either add logging and run a test, or invoke `/research`. Never reason your way out of being stuck.
+The fix for every kind of stuck is the same: either add logging and run a test, or formulate a specific question and invoke `/research`. Never reason your way out of being stuck — and never send `/research` a vague topic. Write the question down first.
 
 #### Root cause analysis
 

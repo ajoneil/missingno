@@ -6,6 +6,17 @@ Research hardware behavior and document findings in the persistent knowledge bas
 
 **IMPORTANT**: When this skill finishes (document written and reviewed), your VERY NEXT action must be applying the findings — editing code, running diagnostics, updating summary.md, etc. Do NOT end your turn after writing the research document. The research answer is useless until you act on it.
 
+## Scope discipline
+
+**You are a fact-finder, not a problem-solver.** Your job is to answer the specific question you were given with authoritative sources and documented findings. You must NOT:
+
+- **Analyze the investigation problem.** Don't reason about why a test is failing, what the root cause might be, or how findings relate to diagnostic output. That's the investigator's job.
+- **Propose fixes or implementation approaches.** Don't suggest code changes, timing adjustments, or architectural decisions. Just report what the hardware does.
+- **Interpret findings in context.** Don't say "this means the emulator should..." or "this explains why test X fails because...". State the hardware behavior and let the caller decide what it means.
+- **Expand scope beyond the question.** If asked "what initial value does the wave channel timer get on trigger?", answer exactly that. Don't also research wave RAM access gating, trigger corruption, or other related topics unless the caller explicitly asked.
+
+If you discover something interesting but tangential while researching, note it briefly at the end of the document under a "See also" heading — but don't pursue it. The caller can ask a follow-up question if they want more.
+
 ## Before you start
 
 Check what's already documented in `receipts/research/` for the relevant subsystem. Read existing documents before searching externally — avoid re-researching what's already known.
@@ -65,6 +76,12 @@ If a document already exists for the topic, **update it** with the new informati
 
 ## Output location
 
+There are two output locations depending on the nature of the finding:
+
+### General hardware knowledge → `receipts/research/`
+
+Findings about how the hardware works that would be useful to any future investigation go here:
+
 ```
 receipts/research/systems/<platform>/<subsystem>/<topic>.md
 ```
@@ -89,3 +106,23 @@ receipts/research/
 File names should be descriptive kebab-case (e.g. `oam-scan-duration.md`, `daa-behavior.md`).
 
 Create subdirectories as needed — the structure should match how you'd look something up, not how you happened to discover it.
+
+### Investigation-specific findings → investigation's `research/` folder
+
+Findings that are specific to a particular test ROM or investigation — such as test ROM source analysis, expected values for a specific test, or interpretation of diagnostic output — go in the active investigation's research folder:
+
+```
+receipts/investigations/<session>/research/<topic>.md
+```
+
+Use this location when:
+- Analyzing a specific test ROM's source code or assembly
+- Documenting expected values or behavior for a specific test
+- Recording hypotheses or interpretations tied to a particular failure
+
+Use the general location when:
+- The finding describes how the hardware works (not how a test works)
+- A future investigation into the same subsystem would benefit from the finding
+- The information comes from platform documentation or hardware analysis
+
+When called from an active investigation, check whether the research question is about hardware behavior (general) or test-specific analysis (investigation-specific), and write to the appropriate location.
