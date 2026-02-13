@@ -264,19 +264,18 @@ impl Video {
         };
 
         let mode = ppu.interrupt_mode();
-        let stat_mode = ppu.stat_mode();
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
         let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(dots) if *dots < 4);
 
-        // Mode 0 interrupt uses stat_mode (3-dot-early transition from
-        // mode 3→0) so the interrupt fires when STAT would report mode 0.
+        // Mode 0 interrupt fires on the actual mode transition, not the
+        // early stat_mode prediction (which is only for STAT register reads).
         (self
             .interrupts
             .flags
             .contains(InterruptFlags::FINISHING_SCANLINE)
-            && stat_mode == Mode::BetweenLines)
+            && mode == Mode::BetweenLines)
             || (self
                 .interrupts
                 .flags
