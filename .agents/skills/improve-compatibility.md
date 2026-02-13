@@ -135,6 +135,8 @@ General hardware knowledge should already be in `receipts/research/` — you doc
 
 `summary.md` is a living document — the developer should be able to read it at any point and understand exactly where the investigation stands. Update it as you work, not at the end.
 
+**Hard rule: update summary.md before every diagnostic run and after every diagnostic run.** Before a run, write what you're about to test and why. After a run, write what the output showed. This applies to every `cargo test` invocation, not just major milestones. If you find yourself running tests without updating the summary first, stop and update it.
+
 Include:
 - **Status**: Current investigation state (e.g. "diagnosing", "fix in progress", "resolved", "blocked")
 - **Problem**: The failing test/game and symptom
