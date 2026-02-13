@@ -1,6 +1,6 @@
-# Improve Compatibility
+# Investigations
 
-Fix a compatibility bug against a test ROM or real game.
+Investigate and fix a compatibility bug against a test ROM or real game.
 
 ## Discipline requirements
 
@@ -10,6 +10,22 @@ These rules override default agent behavior. Follow them exactly:
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every fix attempt. If you're about to run a test, write in summary.md what you're testing and why first.
 3. **Never do ad-hoc hardware research.** Use the `research` skill. This means: no inline `WebFetch` or `WebSearch` calls for hardware documentation (Pan Docs, GBEDG, wikis, etc.), no cloning reference emulator repos, no fetching test ROM source — all of that goes through `/research`. If you catch yourself about to call `WebFetch` for a hardware question, stop and invoke `/research` instead. After research completes, immediately resume the investigation — do not stop and wait for user input.
 4. **Never guess at fixes.** Add instrumentation, run diagnostics, read the output. The log files tell you what's happening — your mental model of the code is not a substitute.
+5. **Never trace timing in your head.** If you want to know what value a register has at a specific dot, or what mode the PPU is in when a particular instruction executes — add a log line and run the test. Do not manually count M-cycles, dots, or pipeline stages. Your mental model will be wrong. The emulator is already a cycle-accurate simulator; let it simulate.
+6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run the full test suite (`cargo test`) before building further changes on top. If a foundational change (e.g. LY timing, mode transitions) introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes regression checks.
+
+## Working style: hypothesize, test, interpret
+
+Follow this loop for every investigation step:
+
+1. **Form a hypothesis** — a short, testable statement. Write it down in summary.md. ("The STAT read in the counting loop sees mode 3 when it should see mode 0 because mode 3 is 4 dots too long.")
+2. **Design a test** — add targeted logging that will confirm or refute the hypothesis. The log output should directly answer the question. If you can't tell what log line to add, your hypothesis isn't specific enough — refine it first.
+3. **Run the test** — `cargo test ... 2>&1 | tee logs/<name>.log`. No exceptions.
+4. **Read the output** — grep/read the log file. Extract the specific values that answer your hypothesis.
+5. **Update summary.md** — state whether the hypothesis was confirmed or refuted, cite the log evidence, and write the next hypothesis.
+
+**If you catch yourself writing more than ~4 lines of timing/cycle analysis without a log file open, stop.** You are guessing. Add a log line and run the test instead.
+
+**If a fix attempt fails and you don't know why, do not analyze the code harder.** Add more logging to the specific area that surprised you, run again, and read the output.
 
 ## Workflow
 
@@ -18,7 +34,7 @@ These rules override default agent behavior. Follow them exactly:
 - Ask the developer what test or game is failing and what the symptom is.
 - Once the scope is clear, propose a receipt folder name and get approval. Create the receipt folder immediately with this structure:
   ```
-  receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
+  receipts/investigations/<YYYY-MM-DD>-<short-name>/
   ├── summary.md        # Create now with Status: Diagnosing
   ├── research/         # Investigation-specific notes
   └── logs/             # Diagnostic output captures
@@ -41,7 +57,7 @@ These rules override default agent behavior. Follow them exactly:
 - **Use the `research` skill** (`/research`) for all hardware research. This includes consulting technical documentation, studying reference emulator implementations, and reading test ROM documentation. The research skill will write general hardware knowledge to `receipts/research/`.
 - Do not perform research inline with ad-hoc web searches — always invoke the `research` skill so findings are properly documented and reusable.
 - **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about hardware behavior — while diagnosing, while interpreting diagnostic output, while designing a fix — stop and use the `research` skill. If you find yourself reasoning through timing, register values, or state machine behavior without a source to back it up, that's a signal to research first.
-- **Research is a subroutine.** After `/research` completes (document written), your very next action must be applying the findings — editing code, running a diagnostic, updating summary.md. Never end your turn immediately after research. The pattern is: research → act on findings → continue investigation. If you find yourself stopping after research and waiting for the user, you have violated this rule.
+- **Research is a subroutine.** After `/research` completes (document written), your very next action must be applying the findings — editing code, running a diagnostic, updating summary.md. Never end your turn immediately after research. The pattern is: research then act on findings then continue investigation. If you find yourself stopping after research and waiting for the user, you have violated this rule.
 - **Update summary.md** with research findings.
 - Capture investigation-specific notes in the session's `research/` folder.
 
@@ -80,7 +96,7 @@ Based on the subsystem involved, add targeted `eprintln!` tracing that captures:
 
 ```bash
 # CORRECT — always use this pattern:
-cargo test <test_name> -- --nocapture 2>&1 | tee receipts/improve-compatibility/<session>/logs/<descriptive-name>.log
+cargo test <test_name> -- --nocapture 2>&1 | tee receipts/investigations/<session>/logs/<descriptive-name>.log
 
 # WRONG — never do any of these:
 cargo test <test_name> -- --nocapture 2>&1 | grep "pattern"
@@ -115,21 +131,20 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 
 #### Recognize when you're stuck
 
-If any of these are true, **stop and invoke `/research` immediately** — do not keep reasoning:
+**Stuck means: you've spent more than one hypothesis-test cycle without making progress.** Symptoms:
 
-- You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle.
-- You're unsure what value a register should have at a particular point in the hardware's operation.
-- You're asking "but how does this work on real hardware?" — even as an internal thought.
-- You've written more than a short paragraph of timing/state analysis without citing a documented source.
-- Your fix attempt didn't work and you don't understand why — the gap is in your hardware knowledge, not your code.
-- You're reading diagnostic output and can't tell whether the emulator's behavior is correct or wrong because you don't know what correct looks like.
+- You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle. **Stop. Add a log line.**
+- You're counting M-cycles or dots by hand to figure out when an instruction executes. **Stop. Log the dot counter at that point in the code.**
+- You're unsure what value a register should have at a particular point. **Stop. Invoke `/research`.**
+- You've written more than ~4 lines of timing analysis without citing log output. **Stop. You are guessing.**
+- Your fix attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Add more logging to the area that surprised you and run again.**
+- You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Invoke `/research` to learn what correct looks like.**
 
-Research is cheap. Guessing wastes entire investigation cycles. When in doubt, research.
+The fix for every kind of stuck is the same: either add logging and run a test, or invoke `/research`. Never reason your way out of being stuck.
 
 #### Root cause analysis
 
 - Study the diagnostic output to identify the root cause.
-- **If any hardware behavior is unclear**, stop and use the `research` skill before proceeding. Don't guess at what the hardware does.
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
 - **Design fixes based on hardware behavior, not other emulators' code.** Research tells you *what* the hardware does (timing values, state transitions, edge cases). Your fix should implement that behavior within your existing architecture. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
@@ -151,7 +166,7 @@ The receipt folder is created in step 1 and written into continuously throughout
 #### Folder structure
 
 ```
-receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
+receipts/investigations/<YYYY-MM-DD>-<short-name>/
 ├── summary.md        # Living investigation summary (required)
 ├── research/         # Investigation-specific notes (test ROM analysis, hypotheses)
 ├── logs/             # Diagnostic output captures
