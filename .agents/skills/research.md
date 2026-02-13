@@ -34,6 +34,17 @@ Each document should include:
 
 If you consult two different sources in the same step and learn distinct things, that's two documents.
 
+### Review before finishing
+
+After writing a document, **re-read it in full** and edit out:
+
+- **Thinking-out-loud**: "Wait, actually...", "Hmm, let me reconsider", "No...", "Actually looking more carefully...". These are internal reasoning — resolve them to a conclusion and state only the conclusion.
+- **Contradictions**: If you corrected yourself mid-document, delete the wrong version and keep only the right one.
+- **Hedging without resolution**: "This seems like..." or "I think..." — either confirm it with a source or flag it explicitly as uncertain. Don't leave vague impressions.
+- **Unnecessary questions**: Rhetorical questions you then answer — just state the answer.
+
+The document should read as a clean reference, not a transcript of your investigation process.
+
 ### Examples
 
 - `mode3-sprite-penalty.md` — how sprites extend mode 3, citing Pan Docs and test ROM data
