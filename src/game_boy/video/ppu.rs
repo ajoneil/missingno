@@ -409,13 +409,18 @@ impl Rendering {
             self.advance_bg_fetcher(data);
 
             if !self.line.bg_fifo.is_empty() {
-                self.shift_pixel_out(data);
-
-                // After outputting a pixel, check for sprite trigger
+                // Check for sprite trigger before shifting the pixel out.
+                // The trigger must fire when pixels_drawn == sprite X, before
+                // that pixel is consumed, so the sprite fetch can populate the
+                // OBJ FIFO in time.
                 if self.line.pixels_drawn < screen::PIXELS_PER_LINE
                     && self.line.sprite_fetch.is_none()
                 {
                     self.check_sprite_trigger(data);
+                }
+
+                if self.line.sprite_fetch.is_none() {
+                    self.shift_pixel_out(data);
                 }
             }
         }
@@ -631,8 +636,12 @@ impl Rendering {
             0
         };
 
-        // Pad OBJ FIFO with transparent pixels to match BG FIFO length
-        while obj_fifo.len() < bg_fifo.len() {
+        // Pad OBJ FIFO with transparent pixels so all 8 sprite pixels
+        // have a slot. Must be at least 8 entries even if BG FIFO is shorter,
+        // because the sprite's rightmost pixels may extend beyond the
+        // current BG tile fetch.
+        let required_len = bg_fifo.len().max(8 - pixels_clipped_left);
+        while obj_fifo.len() < required_len {
             obj_fifo.push_one(FifoPixel::default());
         }
 
