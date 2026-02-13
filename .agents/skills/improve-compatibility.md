@@ -64,6 +64,21 @@ Based on the subsystem involved, add targeted `eprintln!` tracing that captures:
   3. Diff the two outputs. The first divergence point is your root cause.
 - If no working baseline exists, compare the logged behavior against the expected behavior from documentation or reference emulator source code.
 
+#### How to run diagnostics
+
+**Every diagnostic run must be saved to `logs/`.** Use `tee` to capture output at the point of execution — never run a diagnostic without simultaneously writing it to a log file:
+
+```bash
+cargo test <test_name> -- --nocapture 2>&1 | tee receipts/improve-compatibility/<session>/logs/<descriptive-name>.log
+```
+
+Name log files so you can tell them apart later:
+- `logs/mode-timing-baseline.log` — initial failing state
+- `logs/mode-timing-fix-attempt-1.log` — after first fix
+- `logs/mode-timing-main-branch.log` — baseline from main
+
+After saving, **update summary.md** with what you instrumented, what the output showed, and what hypothesis it supports or refutes.
+
 #### What good diagnostic output looks like
 
 ```
@@ -78,21 +93,13 @@ For example:
 
 The output should be dense enough to pinpoint the bug but filtered enough to read. Thousands of lines of unfiltered output are not useful — focus on the cycles/events the test actually checks.
 
-#### Write to receipts immediately
-
-- **Save every diagnostic run** to `logs/` as soon as it completes. Do not wait until the end of the investigation. Name files descriptively:
-  - `logs/ppu-mode-timing-main.log` — baseline output from main branch
-  - `logs/ppu-mode-timing-fix-attempt-1.log` — output after first fix attempt
-  - `logs/stat-irq-edges-failing.log` — capture of the bug in action
-- **Update summary.md** after every diagnostic run with: what you instrumented, what the output showed, and what hypothesis it supports or refutes.
-
 ### 6. Analyze and fix
 
 - Study the diagnostic output to identify the root cause.
 - **If any hardware behavior is unclear**, stop and use the `research` skill before proceeding. Don't guess at what the hardware does.
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
-- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix to confirm the change had the expected effect on timing/values. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
+- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix, saving each run to `logs/` with `tee`. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
 - Run the full test suite after each fix: `cargo test`
 - Verify no new regressions (failure count must not increase).
