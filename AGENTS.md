@@ -1,6 +1,11 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to AI coding agents when working with code in this repository.
+
+## Agent Infrastructure
+
+- **`.agents/commands/`** — Skill/command definitions (slash commands). Symlinked from `.claude/commands/` for Claude Code.
+- **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored.
 
 ## Project Overview
 
