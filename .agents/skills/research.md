@@ -26,7 +26,7 @@ Work through sources in this order, stopping when you have a clear, specific ans
 ### Quality over quantity
 
 - **One good source beats five bad fetches.** If Pan Docs answers your question, stop there. Don't keep searching for confirmation through emulator source code.
-- **Don't read source code through WebFetch.** The summarizer loses critical details like exact cycle counts, conditional branches, and subtle state machine transitions. If you need to read source, use `Bash` to clone the repo and `Read` the files directly.
+- **Don't use WebFetch for technical content.** The AI summarizer loses critical details like exact cycle counts, conditional branches, timing values, and subtle state machine transitions. Instead, use `Bash` with `curl` to fetch raw page content and read it yourself: `curl -s 'URL' | sed 's/<[^>]*>//g'` for HTML pages, or clone repos and use `Read` for source code. You can read the raw text directly — don't rely on an AI middleman to interpret technical documentation for you.
 - **Stop when you have the answer.** Research is not exploration — you have a specific question. Once answered with a credible source, document it and move on.
 - **If a source doesn't have what you need after one fetch, move to the next source.** Don't re-fetch the same URL with different prompts hoping for different results.
 
