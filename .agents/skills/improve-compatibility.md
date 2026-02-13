@@ -7,7 +7,13 @@ Fix a compatibility bug against a test ROM or real game.
 ### 1. Identify the failure
 
 - Ask the developer what test or game is failing and what the symptom is.
-- Once the scope is clear, propose a receipt folder name and get approval (see step 8 for structure). Create the folder and `summary.md` immediately with Status: Diagnosing.
+- Once the scope is clear, propose a receipt folder name and get approval. Create the receipt folder immediately with this structure:
+  ```
+  receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
+  ├── summary.md        # Create now with Status: Diagnosing
+  ├── research/         # Investigation-specific notes
+  └── logs/             # Diagnostic output captures
+  ```
 - If a test name is given, run it with output visible: `cargo test <test_name> -- --nocapture`
 - Classify the failure type:
   - **Register mismatch**: Expected vs actual CPU/hardware register values after test execution.
@@ -16,20 +22,17 @@ Fix a compatibility bug against a test ROM or real game.
 
 ### 2. Understand what's being tested
 
-- Search for the test ROM's source code online (many test suites publish assembly sources on GitHub).
-- Read the source to understand what specific hardware behavior is being validated.
 - Identify the subsystem involved (video/PPU, audio/APU, timers, interrupts, memory mapping, DMA, input, serial, etc.).
+- **Use the `research` skill** (`/research`) to find and read the test ROM's source code, understand what hardware behavior is being validated, and document findings. The research skill handles source lookup, technical doc consultation, and writing to `receipts/research/`.
 - **Update summary.md** with the problem description and subsystem identified.
-- **Document what you learned** about the hardware behavior using the `research` skill — write findings to `receipts/research/`. Also capture investigation-specific notes (test ROM analysis, expected values for this particular test) in the session's `research/` folder.
+- Capture investigation-specific notes (test ROM analysis, expected values for this particular test) in the session's `research/` folder.
 
 ### 3. Research the correct hardware behavior
 
-- **Consult technical documentation** for the target platform (hardware manuals, community wikis, reverse-engineering docs).
-- **Study reference emulator implementations** with permissive licenses (MIT, Apache, zlib, public domain) to understand how others handle the same edge case. Search GitHub for well-known accurate emulators of the target system.
-- **Read test ROM documentation** — many test suites include comments explaining expected timing, register states, or behavioral details.
-- Cross-reference multiple sources to build confidence in what the correct behavior should be.
+- **Use the `research` skill** (`/research`) for all hardware research. This includes consulting technical documentation, studying reference emulator implementations, and reading test ROM documentation. The research skill will write general hardware knowledge to `receipts/research/`.
+- Do not perform research inline with ad-hoc web searches — always invoke the `research` skill so findings are properly documented and reusable.
 - **Update summary.md** with research findings.
-- **Document findings using the `research` skill** — general hardware knowledge goes to `receipts/research/`, investigation-specific notes go to the session's `research/` folder.
+- Capture investigation-specific notes in the session's `research/` folder.
 
 ### 4. Verify regression vs pre-existing
 
@@ -74,29 +77,38 @@ For example:
 
 The output should be dense enough to pinpoint the bug but filtered enough to read. Thousands of lines of unfiltered output are not useful — focus on the cycles/events the test actually checks.
 
-- **Save all diagnostic output** to the receipt folder. **Update summary.md** with what was instrumented and what the output revealed.
+#### Write to receipts immediately
+
+- **Save every diagnostic run** to `logs/` as soon as it completes. Do not wait until the end of the investigation. Name files descriptively:
+  - `logs/ppu-mode-timing-main.log` — baseline output from main branch
+  - `logs/ppu-mode-timing-fix-attempt-1.log` — output after first fix attempt
+  - `logs/stat-irq-edges-failing.log` — capture of the bug in action
+- **Update summary.md** after every diagnostic run with: what you instrumented, what the output showed, and what hypothesis it supports or refutes.
 
 ### 6. Analyze and fix
 
 - Study the diagnostic output to identify the root cause.
+- **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
 - **Remove all diagnostic logging before committing.**
 - Run the full test suite after each fix: `cargo test`
 - Verify no new regressions (failure count must not increase).
-- **Update summary.md** with root cause, what was changed, and test results. Set status to "resolved" or "blocked".
+- **Update summary.md** after each fix attempt — whether it worked or not, how test results changed, what you'll try next if it didn't work.
 
 ### 7. Commit
 
 - If on a **feature branch**: commit each fix separately before moving to the next issue.
 - If on **main**: ask the user whether to commit directly to main or create a feature branch first.
 
-### 8. Write receipt
+### 8. Receipt conventions
 
-Before starting the investigation, propose a folder name to the developer and get their approval. Then create the investigation folder:
+The receipt folder is created in step 1 and written into continuously throughout the investigation. This section documents the format and conventions.
+
+#### Folder structure
 
 ```
 receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
-├── summary.md        # Investigation summary (required)
+├── summary.md        # Living investigation summary (required)
 ├── research/         # Investigation-specific notes (test ROM analysis, hypotheses)
 ├── logs/             # Diagnostic output captures
 └── ...               # Any other artifacts (diffs, screenshots)
@@ -104,23 +116,13 @@ receipts/improve-compatibility/<YYYY-MM-DD>-<short-name>/
 
 Use the date of the investigation and a short kebab-case name describing the issue (e.g. `2026-02-13-stat-mode0-timing`, `2026-02-13-mbc1-bank-wrap`).
 
-**Two research locations**: general hardware knowledge should already be in `receipts/research/` — you documented it using the `research` skill during steps 2 and 3. The session's `research/` folder is for investigation-specific notes only: test ROM analysis, diagnostic interpretations, hypotheses for this particular failure. If a future investigation into the same subsystem would benefit from a finding, it belongs in `receipts/research/`, not here.
+#### Two research locations
 
-**Diagnostic logs are the most important artifact.** Save every diagnostic run to the `logs/` folder so the work isn't repeated. Name each log file descriptively so you can tell them apart later — include what was being traced and which branch/state produced it. For example:
-- `logs/ppu-mode-timing-main.log` — baseline output from main branch
-- `logs/ppu-mode-timing-fix-attempt-1.log` — output after first fix attempt
-- `logs/stat-irq-edges-failing.log` — capture of the bug in action
+General hardware knowledge should already be in `receipts/research/` — you documented it using the `research` skill during steps 2 and 3. The session's `research/` folder is for investigation-specific notes only: test ROM analysis, diagnostic interpretations, hypotheses for this particular failure. If a future investigation into the same subsystem would benefit from a finding, it belongs in `receipts/research/`, not here.
 
-`summary.md` is a living document — create it at the start of the investigation and keep it updated as you go. This is how you communicate progress to the developer. It should always reflect the current state, not just the final outcome.
+#### summary.md
 
-**Update `summary.md` every time you learn something new** — not just at step boundaries. Specifically:
-- After each diagnostic run: what you instrumented, what the output showed
-- After forming a hypothesis: what you think the bug is and why
-- After each fix attempt: what you changed, whether it worked, how mismatch counts changed
-- After hitting a dead end: what you tried, why it didn't pan out
-- After any significant observation: patterns in the data, connections between symptoms
-
-The developer should be able to read `summary.md` at any point and understand exactly where the investigation stands, what's been learned, and what's being tried next.
+`summary.md` is a living document — the developer should be able to read it at any point and understand exactly where the investigation stands. Update it as you work, not at the end.
 
 Include:
 - **Status**: Current investigation state (e.g. "diagnosing", "fix in progress", "resolved", "blocked")
