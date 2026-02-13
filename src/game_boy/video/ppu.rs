@@ -120,6 +120,8 @@ impl PixelFifo {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FetcherStep {
+    /// Initial penalty dots at scanline start (dummy tile fetch delay).
+    Penalty,
     GetTile,
     GetTileDataLow,
     GetTileDataHigh,
@@ -146,7 +148,7 @@ struct Fetcher {
 impl Fetcher {
     fn new() -> Self {
         Self {
-            step: FetcherStep::GetTile,
+            step: FetcherStep::Penalty,
             dot_in_step: 0,
             tile_x: 0,
             tile_index: 0,
@@ -160,6 +162,7 @@ impl Fetcher {
     /// GetTile: 0-1, DataLow: 2-3, DataHigh: 4-5, Sleep: 6-7, Push: 8+
     fn cycle_position(&self) -> u8 {
         match self.step {
+            FetcherStep::Penalty => 0,
             FetcherStep::GetTile => self.dot_in_step,
             FetcherStep::GetTileDataLow => 2 + self.dot_in_step,
             FetcherStep::GetTileDataHigh => 4 + self.dot_in_step,
@@ -213,9 +216,6 @@ struct Line {
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
-    /// Initial delay at the start of Mode 3 for the dummy tile fetch.
-    /// The first tile fetch is discarded; this burns those dots.
-    scanline_start_delay: u8,
 }
 
 impl Line {
@@ -232,7 +232,6 @@ impl Line {
             fetcher: Fetcher::new(),
             discard_count: 0,
             sprite_fetch: None,
-            scanline_start_delay: 6,
         }
     }
 
@@ -386,12 +385,6 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel FIFO processing.
     fn dot_mode3(&mut self, data: &PpuAccessible) {
-        // Initial dummy tile fetch delay
-        if self.line.scanline_start_delay > 0 {
-            self.line.scanline_start_delay -= 1;
-            return;
-        }
-
         if let Some(ref mut sf) = self.line.sprite_fetch {
             // Sprite fetch in progress
             if sf.bg_wait_dots > 0 {
@@ -435,6 +428,14 @@ impl Rendering {
         let fetcher = &mut self.line.fetcher;
 
         match fetcher.step {
+            FetcherStep::Penalty => {
+                if fetcher.dot_in_step >= 5 {
+                    fetcher.step = FetcherStep::GetTile;
+                    fetcher.dot_in_step = 0;
+                } else {
+                    fetcher.dot_in_step += 1;
+                }
+            }
             FetcherStep::GetTile => {
                 if fetcher.dot_in_step == 0 {
                     fetcher.dot_in_step = 1;
@@ -942,11 +943,12 @@ impl PixelProcessingUnit {
                 bg_fifo_head: rendering.line.bg_fifo.head,
                 bg_fifo_len: rendering.line.bg_fifo.len,
                 fetcher_step: match rendering.line.fetcher.step {
-                    FetcherStep::GetTile => 0,
-                    FetcherStep::GetTileDataLow => 1,
-                    FetcherStep::GetTileDataHigh => 2,
-                    FetcherStep::Sleep => 3,
-                    FetcherStep::Push => 4,
+                    FetcherStep::Penalty => 0,
+                    FetcherStep::GetTile => 1,
+                    FetcherStep::GetTileDataLow => 2,
+                    FetcherStep::GetTileDataHigh => 3,
+                    FetcherStep::Sleep => 4,
+                    FetcherStep::Push => 5,
                 },
                 fetcher_dot_in_step: rendering.line.fetcher.dot_in_step,
                 fetcher_tile_x: rendering.line.fetcher.tile_x,
@@ -985,10 +987,11 @@ impl PixelProcessingUnit {
                 }
 
                 let fetcher_step = match fetcher_step {
-                    0 => FetcherStep::GetTile,
-                    1 => FetcherStep::GetTileDataLow,
-                    2 => FetcherStep::GetTileDataHigh,
-                    3 => FetcherStep::Sleep,
+                    0 => FetcherStep::Penalty,
+                    1 => FetcherStep::GetTile,
+                    2 => FetcherStep::GetTileDataLow,
+                    3 => FetcherStep::GetTileDataHigh,
+                    4 => FetcherStep::Sleep,
                     _ => FetcherStep::Push,
                 };
 
@@ -1014,7 +1017,6 @@ impl PixelProcessingUnit {
                         },
                         discard_count,
                         sprite_fetch: None,
-                        scanline_start_delay: 0,
                     },
                     window_line_counter,
                     lcd_turning_on: false,
