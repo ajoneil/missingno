@@ -2,9 +2,7 @@
 
 Research hardware behavior and document findings in the persistent knowledge base.
 
-## When to use
-
-Any time you need to understand how real hardware behaves — during compatibility investigations, feature implementation, or standalone research tasks.
+**This skill is a subroutine, not a stopping point.** After completing research, immediately return to the task that prompted it. Do not wait for further user input — apply the findings and continue working.
 
 ## Before you start
 

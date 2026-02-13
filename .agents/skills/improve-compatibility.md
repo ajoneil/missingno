@@ -8,7 +8,7 @@ These rules override default agent behavior. Follow them exactly:
 
 1. **Never run `cargo test` without `tee` to a log file.** Every test invocation — diagnostic, verification, regression check — must be saved. No exceptions. No piping through `grep`/`tail`/`head` instead of saving.
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every fix attempt. If you're about to run a test, write in summary.md what you're testing and why first.
-3. **Never do ad-hoc hardware research.** Use the `research` skill. If you catch yourself reasoning about hardware behavior without a documented source, stop and invoke `/research`.
+3. **Never do ad-hoc hardware research.** Use the `research` skill. If you catch yourself reasoning about hardware behavior without a documented source, stop and invoke `/research`. After research completes, immediately resume the investigation — do not stop and wait for user input.
 4. **Never guess at fixes.** Add instrumentation, run diagnostics, read the output. The log files tell you what's happening — your mental model of the code is not a substitute.
 
 ## Workflow
