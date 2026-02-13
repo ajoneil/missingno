@@ -118,8 +118,33 @@ impl Audio {
         if !self.enabled {
             match register {
                 Register::Control => {} // always writable
-                // DMG: NR41 is writable even when APU is off
-                Register::Channel4(noise::Register::LengthTimer) => {}
+                // DMG: NRx1 length timer registers are writable even when APU is off.
+                // For NR11/NR21, only the length bits (lower 6) take effect;
+                // the duty bits (upper 2) are masked out.
+                Register::Channel1(pulse_sweep::Register::WaveformAndInitialLength)
+                | Register::Channel2(pulse::Register::WaveformAndInitialLength) => {
+                    let length_only = value & 0x3F;
+                    match register {
+                        Register::Channel1(r) => {
+                            self.channels.ch1.write_register(
+                                r,
+                                length_only,
+                                self.frame_sequencer_step,
+                            );
+                        }
+                        Register::Channel2(r) => {
+                            self.channels.ch2.write_register(
+                                r,
+                                length_only,
+                                self.frame_sequencer_step,
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                    return;
+                }
+                Register::Channel3(wave::Register::Length)
+                | Register::Channel4(noise::Register::LengthTimer) => {}
                 _ => return,
             }
         }

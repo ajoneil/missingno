@@ -126,3 +126,9 @@ Use the general location when:
 - The information comes from platform documentation or hardware analysis
 
 When called from an active investigation, check whether the research question is about hardware behavior (general) or test-specific analysis (investigation-specific), and write to the appropriate location.
+
+## After research is complete
+
+When you have written and reviewed your research document, **you are not done with your turn.** The research skill is always invoked as a subroutine from another task (usually an investigation). Your document is useless until the caller acts on it.
+
+**Your very next action after finishing the document must be a non-research action**: updating summary.md, editing code, running a diagnostic, or any other concrete investigation step. If you find yourself about to end your turn after writing a research document, you have made an error. Continue working.
