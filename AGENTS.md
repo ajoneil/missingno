@@ -94,7 +94,7 @@ Skills invoked as subroutines are not stopping points. After a callee returns it
 
 **Context restoration:** After a subroutine returns, its skill text will have displaced the caller's instructions from working memory. Before continuing work, re-read the caller's skill file from `.agents/skills/` and the active investigation's `summary.md` (if any). This is not optional — the subroutine's instructions are irrelevant now and the caller's instructions need to be fresh.
 
-Conversely, after a callee finishes its report, it must not wait for further input. The report is the return value; control passes back to the caller.
+**Callee handoff:** After a callee finishes its report, it must not end the turn. The callee must: (1) write the report, (2) re-read the caller's skill file and active summary.md, (3) immediately continue working as the caller. The report is a return value — the same turn continues with the caller's workflow. If the turn ends after a report with no further action, subroutine discipline has been violated.
 
 ## Project Overview
 

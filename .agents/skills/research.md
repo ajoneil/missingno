@@ -120,4 +120,12 @@ When called from an active investigation, check whether the research question is
 
 ## After research is complete
 
-This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md. After writing and reviewing your report, immediately return control to the caller. Do not wait for further input.
+This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
+
+**You MUST continue working after writing your report.** The research phase is over; now resume as the caller. Concretely:
+
+1. Write your report (Findings / Sources / Confidence / See also).
+2. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
+3. **Immediately continue the caller's workflow** — interpret the findings, update summary.md, and proceed to the next step.
+
+Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
