@@ -20,7 +20,9 @@ impl Mbc2 {
     }
 
     fn current_bank(&self, rom_len: usize) -> u8 {
-        (self.bank & ((rom_len / 0x4000) as u8 - 1)).max(1)
+        let bank = if self.bank == 0 { 1 } else { self.bank };
+        let mask = (rom_len / 0x4000) as u8 - 1;
+        bank & mask
     }
 
     pub fn ram(&self) -> Option<Vec<u8>> {
@@ -31,9 +33,16 @@ impl Mbc2 {
         match address {
             0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
-                rom[(self.current_bank(rom.len()) as usize * 0x4000) + (address as usize - 0x4000)]
+                let addr =
+                    self.current_bank(rom.len()) as usize * 0x4000 + (address as usize - 0x4000);
+                rom[addr % rom.len()]
             }
-            0xa000..=0xbfff => self.ram[((address - 0xa000) % 0x200) as usize],
+            0xa000..=0xbfff => {
+                if !self.ram_enabled {
+                    return 0xff;
+                }
+                0xf0 | (self.ram[((address - 0xa000) % 0x200) as usize] & 0x0f)
+            }
             _ => {
                 unreachable!()
             }
@@ -49,7 +58,11 @@ impl Mbc2 {
                     self.bank = value & 0xf;
                 }
             }
-
+            0xa000..=0xbfff => {
+                if self.ram_enabled {
+                    self.ram[((address - 0xa000) % 0x200) as usize] = value & 0x0f;
+                }
+            }
             _ => {}
         }
     }
