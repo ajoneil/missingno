@@ -270,3 +270,43 @@ fn manual_sprite_priority() {
         "mooneye/manual-only/sprite_priority-dmg.png",
     );
 }
+
+// emulator-only/mbc1/ — MBC1 cartridge controller tests
+mooneye_test!(mbc1_bits_bank1, "mooneye/emulator-only/mbc1/bits_bank1.gb");
+mooneye_test!(mbc1_bits_bank2, "mooneye/emulator-only/mbc1/bits_bank2.gb");
+mooneye_test!(mbc1_bits_mode, "mooneye/emulator-only/mbc1/bits_mode.gb");
+mooneye_test!(mbc1_bits_ramg, "mooneye/emulator-only/mbc1/bits_ramg.gb");
+mooneye_test!(
+    mbc1_multicart_rom_8mb,
+    "mooneye/emulator-only/mbc1/multicart_rom_8Mb.gb"
+);
+mooneye_test!(mbc1_ram_64kb, "mooneye/emulator-only/mbc1/ram_64kb.gb");
+mooneye_test!(mbc1_ram_256kb, "mooneye/emulator-only/mbc1/ram_256kb.gb");
+mooneye_test!(mbc1_rom_512kb, "mooneye/emulator-only/mbc1/rom_512kb.gb");
+mooneye_test!(mbc1_rom_1mb, "mooneye/emulator-only/mbc1/rom_1Mb.gb");
+mooneye_test!(mbc1_rom_2mb, "mooneye/emulator-only/mbc1/rom_2Mb.gb");
+mooneye_test!(mbc1_rom_4mb, "mooneye/emulator-only/mbc1/rom_4Mb.gb");
+mooneye_test!(mbc1_rom_8mb, "mooneye/emulator-only/mbc1/rom_8Mb.gb");
+mooneye_test!(mbc1_rom_16mb, "mooneye/emulator-only/mbc1/rom_16Mb.gb");
+
+// emulator-only/mbc2/ — MBC2 cartridge controller tests
+mooneye_test!(mbc2_bits_ramg, "mooneye/emulator-only/mbc2/bits_ramg.gb");
+mooneye_test!(mbc2_bits_romb, "mooneye/emulator-only/mbc2/bits_romb.gb");
+mooneye_test!(
+    mbc2_bits_unused,
+    "mooneye/emulator-only/mbc2/bits_unused.gb"
+);
+mooneye_test!(mbc2_ram, "mooneye/emulator-only/mbc2/ram.gb");
+mooneye_test!(mbc2_rom_512kb, "mooneye/emulator-only/mbc2/rom_512kb.gb");
+mooneye_test!(mbc2_rom_1mb, "mooneye/emulator-only/mbc2/rom_1Mb.gb");
+mooneye_test!(mbc2_rom_2mb, "mooneye/emulator-only/mbc2/rom_2Mb.gb");
+
+// emulator-only/mbc5/ — MBC5 cartridge controller tests
+mooneye_test!(mbc5_rom_512kb, "mooneye/emulator-only/mbc5/rom_512kb.gb");
+mooneye_test!(mbc5_rom_1mb, "mooneye/emulator-only/mbc5/rom_1Mb.gb");
+mooneye_test!(mbc5_rom_2mb, "mooneye/emulator-only/mbc5/rom_2Mb.gb");
+mooneye_test!(mbc5_rom_4mb, "mooneye/emulator-only/mbc5/rom_4Mb.gb");
+mooneye_test!(mbc5_rom_8mb, "mooneye/emulator-only/mbc5/rom_8Mb.gb");
+mooneye_test!(mbc5_rom_16mb, "mooneye/emulator-only/mbc5/rom_16Mb.gb");
+mooneye_test!(mbc5_rom_32mb, "mooneye/emulator-only/mbc5/rom_32Mb.gb");
+mooneye_test!(mbc5_rom_64mb, "mooneye/emulator-only/mbc5/rom_64Mb.gb");

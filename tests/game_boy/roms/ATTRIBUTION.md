@@ -24,3 +24,19 @@ They were obtained from the [c-sp/game-boy-test-roms](https://github.com/c-sp/ga
 - **Source:** https://github.com/mattcurrie/dmg-acid2
 - **License:** MIT
 - **Tests included:** dmg-acid2.gb with reference screenshots
+
+## Mealybug Tearoom Tests
+
+- **Author:** Matt Currie
+- **Source:** https://github.com/mattcurrie/mealybug-tearoom-tests
+- **License:** MIT
+- **Copyright:** (C) 2018 Matt Currie <me@mattcurrie.com>
+- **Tests included:** PPU mid-scanline register change tests (DMG-blob reference screenshots)
+
+## SameSuite
+
+- **Author:** Lior Halphon (LIJI32)
+- **Source:** https://github.com/LIJI32/SameSuite
+- **License:** X11/MIT
+- **Copyright:** (C) 2018-2023 Lior Halphon
+- **Tests included:** DMG-compatible subset (channel_3 wave RAM tests, ei_delay_halt)
