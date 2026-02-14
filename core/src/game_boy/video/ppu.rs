@@ -162,13 +162,13 @@ impl Fetcher {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpriteFetchPhase {
     /// The BG fetcher continues advancing through its normal steps.
-    /// The wait ends when the fetcher reaches the Push step (completing
-    /// GetTileDataHigh) OR the BG FIFO is non-empty — whichever comes
-    /// first. The variable sprite penalty (0-5 dots) emerges from how
-    /// many fetcher steps this phase consumes.
+    /// The wait ends when the fetcher has completed GetTileDataHigh
+    /// (reached Push) AND the BG FIFO is non-empty — both conditions
+    /// must be true simultaneously. The variable sprite penalty (0-5
+    /// dots) emerges from how many fetcher steps this phase consumes.
     WaitingForFetcher,
-    /// The BG fetcher is frozen and reset to GetTile. Sprite tile data
-    /// is read through the SpriteStep state machine (6 dots total).
+    /// The BG fetcher is frozen at its current position. Sprite tile
+    /// data is read through the SpriteStep state machine (6 dots total).
     FetchingData,
 }
 
@@ -212,11 +212,13 @@ struct Line {
     obj_fifo: PixelFifo,
     /// Background/window tile fetcher.
     fetcher: Fetcher,
-    /// Whether the first BG tile fetch of the scanline is still pending.
-    /// Hardware discards the first fetch result, causing 6 extra dots
-    /// of overhead at the start of mode 3.
-    first_fetch: bool,
-    /// Pixels to discard from the first BG tile for SCX fine scroll.
+    /// Pre-loop startup dots remaining. Hardware spends several dots
+    /// in mode 3 before the rendering loop begins (initializing
+    /// internal state). During these dots, no fetcher or pixel
+    /// processing occurs.
+    startup_dots_remaining: u8,
+    /// Pixels to discard from the BG FIFO before LCD output begins.
+    /// Includes 8 pre-fill junk pixels plus SCX fine scroll pixels.
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
@@ -232,10 +234,18 @@ impl Line {
             sprites: Vec::new(),
             next_sprite: 0,
             window_rendered: false,
-            bg_fifo: PixelFifo::new(),
+            bg_fifo: {
+                // Hardware pre-fills the BG FIFO with 8 junk pixels
+                // before the main rendering loop. These are popped and
+                // discarded (via SCX discard or rendered as color 0)
+                // during the startup period.
+                let mut fifo = PixelFifo::new();
+                fifo.push_row([FifoPixel::default(); 8]);
+                fifo
+            },
             obj_fifo: PixelFifo::new(),
             fetcher: Fetcher::new(),
-            first_fetch: true,
+            startup_dots_remaining: 4,
             discard_count: 0,
             sprite_fetch: None,
         }
@@ -258,8 +268,16 @@ impl Line {
         // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
         self.sprites.sort_by_key(|sprite| sprite.position.x_plus_8);
 
-        // Discard SCX fine scroll pixels from the first real tile.
-        self.discard_count = data.background_viewport.x & 7;
+        // Discard the 8 pre-filled junk pixels plus SCX fine scroll
+        // pixels from the first real tile. The junk pixels model the
+        // hardware's startup period — they are popped from the FIFO
+        // and increment position_in_line but are not sent to the LCD.
+        self.discard_count = 8 + (data.background_viewport.x & 7);
+        // Start position_in_line negative so that after all discards
+        // are consumed, position_in_line = 0 at the first LCD pixel.
+        // This keeps sprite trigger checks aligned: sprites trigger
+        // when position_in_line reaches their screen X coordinate.
+        self.position_in_line = -(self.discard_count as i16);
     }
 }
 
@@ -380,6 +398,13 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel FIFO processing.
     fn dot_mode3(&mut self, data: &PpuAccessible) {
+        // Hardware spends several dots initializing before the rendering
+        // loop starts. No fetcher, pixel, or sprite processing occurs.
+        if self.line.startup_dots_remaining > 0 {
+            self.line.startup_dots_remaining -= 1;
+            return;
+        }
+
         if self.line.sprite_fetch.is_none() {
             self.check_sprite_trigger(data);
         }
@@ -393,21 +418,24 @@ impl Rendering {
                     // fetches that may push pixels to the FIFO.
                     self.advance_bg_fetcher(data);
 
-                    // Wait exits when the fetcher has completed its data
-                    // read (reached Push) OR the FIFO already has pixels.
-                    let wait_done = self.line.fetcher.step == FetcherStep::Push
-                        || !self.line.bg_fifo.is_empty();
+                    // Wait exits when BOTH conditions are met:
+                    // 1. The fetcher has completed GetTileDataHigh (reached Push)
+                    // 2. The BG FIFO is non-empty
+                    // This is an AND condition — both must be true simultaneously.
+                    let fetcher_past_data = self.line.fetcher.step == FetcherStep::Push;
+                    let wait_done = fetcher_past_data && !self.line.bg_fifo.is_empty();
 
                     if wait_done {
-                        // Freeze and reset the BG fetcher. Any in-progress
-                        // tile fetch is discarded — the fetcher will restart
-                        // from GetTile after the sprite data is read.
-                        self.line.fetcher.step = FetcherStep::GetTile;
-                        self.line.fetcher.dot_in_step = 0;
+                        // Freeze the BG fetcher at its current position.
+                        // It stays wherever the wait left it (typically Push)
+                        // and resumes from there after the sprite data fetch.
 
-                        // Transition to sprite data fetch.
+                        // Transition to sprite data fetch. The first sprite
+                        // fetch step happens on the same dot as the wait
+                        // exit — the transition itself does not consume a dot.
                         let sf = self.line.sprite_fetch.as_mut().unwrap();
                         sf.phase = SpriteFetchPhase::FetchingData;
+                        Self::advance_sprite_fetch(sf, self.line.number, data);
                     }
                 }
                 SpriteFetchPhase::FetchingData => {
@@ -424,12 +452,14 @@ impl Rendering {
                 }
             }
         } else {
-            // Normal: advance BG fetcher and try to shift a pixel.
-            self.advance_bg_fetcher(data);
-
+            // Normal: shift a pixel out first, then advance the fetcher.
+            // This matches hardware order: the pixel FIFO is clocked
+            // before the fetcher advances, so a push that fills the
+            // FIFO on this dot won't produce a pixel until the next dot.
             if !self.line.bg_fifo.is_empty() {
                 self.shift_pixel_out(data);
             }
+            self.advance_bg_fetcher(data);
         }
     }
 
@@ -504,10 +534,10 @@ impl Rendering {
                     fetcher.tile_data_high =
                         block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + 1];
 
-                    // After the discarded first fetch, push is instant
-                    // when the FIFO is empty (no additional dot cost).
-                    // The first fetch always enters the Push step (1 dot).
-                    if !self.line.first_fetch && self.line.bg_fifo.is_empty() {
+                    // Push is instant when the FIFO is empty (no
+                    // additional dot cost). Otherwise enter the Push
+                    // step to wait for it to drain.
+                    if self.line.bg_fifo.is_empty() {
                         self.push_bg_tile();
                     } else {
                         fetcher.dot_in_step = 0;
@@ -525,23 +555,15 @@ impl Rendering {
         }
     }
 
-    /// Push fetched tile data to the BG FIFO, or discard if this is the
-    /// first fetch of the scanline. Resets the fetcher to GetTile.
+    /// Push fetched tile data to the BG FIFO and reset the fetcher to
+    /// GetTile for the next tile.
     fn push_bg_tile(&mut self) {
-        if self.line.first_fetch {
-            // Hardware discards the first tile fetch of each scanline:
-            // the fetcher resets and the data is thrown away. This adds
-            // 6 dots of overhead (the second fetch adds another 6, for
-            // 12 total before pixel output begins).
-            self.line.first_fetch = false;
-        } else {
-            let pixels = decode_tile_row(
-                self.line.fetcher.tile_data_low,
-                self.line.fetcher.tile_data_high,
-            );
-            self.line.bg_fifo.push_row(pixels);
-            self.line.fetcher.tile_x = self.line.fetcher.tile_x.wrapping_add(1);
-        }
+        let pixels = decode_tile_row(
+            self.line.fetcher.tile_data_low,
+            self.line.fetcher.tile_data_high,
+        );
+        self.line.bg_fifo.push_row(pixels);
+        self.line.fetcher.tile_x = self.line.fetcher.tile_x.wrapping_add(1);
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
     }
