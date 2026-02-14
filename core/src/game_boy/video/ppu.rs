@@ -154,20 +154,23 @@ impl Fetcher {
             fetching_window: false,
         }
     }
-
-    /// Position within the fetcher cycle.
-    /// GetTile: 0-1, DataLow: 2-3, DataHigh: 4-5, Push: 6+
-    fn cycle_position(&self) -> u8 {
-        match self.step {
-            FetcherStep::GetTile => self.dot_in_step,
-            FetcherStep::GetTileDataLow => 2 + self.dot_in_step,
-            FetcherStep::GetTileDataHigh => 4 + self.dot_in_step,
-            FetcherStep::Push => 6,
-        }
-    }
 }
 
 // --- Sprite fetch ---
+
+/// The two phases of a sprite fetch on real hardware.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpriteFetchPhase {
+    /// The BG fetcher continues advancing through its normal steps.
+    /// The wait ends when the fetcher reaches the Push step (completing
+    /// GetTileDataHigh) OR the BG FIFO is non-empty — whichever comes
+    /// first. The variable sprite penalty (0-5 dots) emerges from how
+    /// many fetcher steps this phase consumes.
+    WaitingForFetcher,
+    /// The BG fetcher is frozen and reset to GetTile. Sprite tile data
+    /// is read through the SpriteStep state machine (6 dots total).
+    FetchingData,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpriteStep {
@@ -178,13 +181,11 @@ enum SpriteStep {
 
 struct SpriteFetch {
     sprite: Sprite,
+    phase: SpriteFetchPhase,
     step: SpriteStep,
     dot_in_step: u8,
     tile_data_low: u8,
     tile_data_high: u8,
-    /// Dots remaining for BG fetcher to reach end of DataHigh before
-    /// sprite fetch proper begins (0-5).
-    bg_wait_dots: u8,
 }
 
 // --- Line state ---
@@ -194,6 +195,10 @@ struct Line {
     dots: u32,
     /// Number of pixels pushed to the LCD (0-160).
     pixels_drawn: u8,
+    /// Internal pixel position counter. Incremented on every FIFO pop
+    /// (including SCX-discarded pixels). Used for sprite trigger
+    /// comparison: a sprite triggers when this equals its screen X.
+    position_in_line: i16,
     /// Sprites on this line, sorted by X position (DMG priority).
     sprites: Vec<Sprite>,
     /// Index of the next sprite to check for triggering.
@@ -215,11 +220,6 @@ struct Line {
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
-    /// Bitset of BG tile columns already considered by sprite fetches.
-    /// Sprites on a previously-considered tile skip the variable wait
-    /// penalty (Pan Docs OBJ penalty algorithm: "if that tile has not
-    /// been considered by a previous OBJ"). Bit N = tile column N.
-    sprite_bg_tiles_considered: u32,
 }
 
 impl Line {
@@ -228,6 +228,7 @@ impl Line {
             number,
             dots: 0,
             pixels_drawn: 0,
+            position_in_line: 0,
             sprites: Vec::new(),
             next_sprite: 0,
             window_rendered: false,
@@ -237,7 +238,6 @@ impl Line {
             first_fetch: true,
             discard_count: 0,
             sprite_fetch: None,
-            sprite_bg_tiles_considered: 0,
         }
     }
 
@@ -304,17 +304,6 @@ impl Rendering {
     }
 
     fn stat_mode(&self) -> Mode {
-        // STAT reports mode 0 a couple dots before Mode 3 actually ends.
-        // Predict from FIFO state: if no sprites remain and few pixels left.
-        if self.mode() == Mode::DrawingPixels
-            && self.line.next_sprite >= self.line.sprites.len()
-            && self.line.sprite_fetch.is_none()
-        {
-            let pixels_remaining = (screen::PIXELS_PER_LINE - self.line.pixels_drawn) as u8;
-            if pixels_remaining <= 2 && self.line.bg_fifo.len() >= pixels_remaining {
-                return Mode::BetweenLines;
-            }
-        }
         self.mode()
     }
 
@@ -391,41 +380,47 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel FIFO processing.
     fn dot_mode3(&mut self, data: &PpuAccessible) {
-        // Check for sprite triggers on every dot, including during the
-        // initial fetch period. On real hardware, sprites trigger based
-        // on the internal pixel position, overlapping their BG fetcher
-        // wait with the normal fetcher progression.
         if self.line.sprite_fetch.is_none() {
             self.check_sprite_trigger(data);
         }
 
         if let Some(ref mut sf) = self.line.sprite_fetch {
-            // Sprite fetch in progress.
-            if sf.bg_wait_dots > 0 {
-                // Waiting for BG fetcher alignment. The wait dots are
-                // idle — the fetcher progress doesn't matter because
-                // it will be reset when the wait completes.
-                sf.bg_wait_dots -= 1;
-                if sf.bg_wait_dots == 0 {
-                    // Wait complete. Per GBEDG: "When a sprite fetch is
-                    // initiated the Background Fetcher is reset to step 1
-                    // and paused." Reset the BG fetcher.
-                    self.line.fetcher.step = FetcherStep::GetTile;
-                    self.line.fetcher.dot_in_step = 0;
+            match sf.phase {
+                SpriteFetchPhase::WaitingForFetcher => {
+                    // The BG fetcher continues advancing during the wait.
+                    // This is the hardware behavior: the fetcher keeps
+                    // stepping through its enum states, doing real tile
+                    // fetches that may push pixels to the FIFO.
+                    self.advance_bg_fetcher(data);
+
+                    // Wait exits when the fetcher has completed its data
+                    // read (reached Push) OR the FIFO already has pixels.
+                    let wait_done = self.line.fetcher.step == FetcherStep::Push
+                        || !self.line.bg_fifo.is_empty();
+
+                    if wait_done {
+                        // Freeze and reset the BG fetcher. Any in-progress
+                        // tile fetch is discarded — the fetcher will restart
+                        // from GetTile after the sprite data is read.
+                        self.line.fetcher.step = FetcherStep::GetTile;
+                        self.line.fetcher.dot_in_step = 0;
+
+                        // Transition to sprite data fetch.
+                        let sf = self.line.sprite_fetch.as_mut().unwrap();
+                        sf.phase = SpriteFetchPhase::FetchingData;
+                    }
                 }
-            } else {
-                // Advance sprite fetch pipeline (BG fetcher frozen).
-                Self::advance_sprite_fetch(sf, self.line.number, data);
-                if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
-                    // Sprite fetch complete — merge into OBJ FIFO.
-                    Self::merge_sprite_into_obj_fifo(
-                        sf,
-                        &mut self.line.bg_fifo,
-                        &mut self.line.obj_fifo,
-                    );
-                    self.line.sprite_fetch = None;
-                    // BG fetcher resumes from step 0 where the reset
-                    // left it. No further reset needed.
+                SpriteFetchPhase::FetchingData => {
+                    // BG fetcher is frozen. Advance the sprite data pipeline.
+                    Self::advance_sprite_fetch(sf, self.line.number, data);
+                    if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
+                        Self::merge_sprite_into_obj_fifo(
+                            sf,
+                            &mut self.line.bg_fifo,
+                            &mut self.line.obj_fifo,
+                        );
+                        self.line.sprite_fetch = None;
+                    }
                 }
             }
         } else {
@@ -689,6 +684,7 @@ impl Rendering {
     /// Shift one pixel out of the FIFOs and output to the LCD.
     fn shift_pixel_out(&mut self, data: &PpuAccessible) {
         let bg_pixel = self.line.bg_fifo.pop();
+        self.line.position_in_line += 1;
 
         // Pop from OBJ FIFO in lockstep (if it has pixels)
         let obj_pixel = if !self.line.obj_fifo.is_empty() {
@@ -769,20 +765,21 @@ impl Rendering {
         self.line.window_rendered = true;
     }
 
-    /// Check if a sprite should start fetching at the current screen X.
+    /// Check if a sprite should start fetching at the current pixel position.
     fn check_sprite_trigger(&mut self, data: &PpuAccessible) {
         if !data.control.sprites_enabled() {
             return;
         }
 
-        let screen_x = self.line.pixels_drawn;
-
         while self.line.next_sprite < self.line.sprites.len() {
             let sprite = &self.line.sprites[self.line.next_sprite];
 
-            let trigger_x = (sprite.position.x_plus_8 as i16 - 8).max(0) as u8;
+            // Sprite triggers when the internal position counter reaches
+            // the sprite's screen X. Sprites with x_plus_8 < 8 are
+            // partially off-screen left; they trigger at position 0.
+            let trigger_x = (sprite.position.x_plus_8 as i16 - 8).max(0);
 
-            if screen_x < trigger_x {
+            if self.line.position_in_line < trigger_x {
                 break;
             }
 
@@ -791,57 +788,16 @@ impl Rendering {
                 continue;
             }
 
-            // Pan Docs OBJ penalty algorithm:
-            // 1. Find the BG tile containing the sprite's leftmost pixel.
-            // 2. If that tile has NOT been considered by a previous OBJ,
-            //    compute variable wait from tile position.
-            // 3. Always add 6-dot flat penalty (sprite fetch).
-            // Exception: OAM X=0 always incurs 11-dot penalty (5 wait + 6 flat).
-
-            // Determine which BG tile this sprite's leftmost pixel falls on.
-            let bg_tile_col = if self.line.fetcher.fetching_window {
-                // Window tiles: column relative to window start
-                let wx = data.window.x_plus_7.wrapping_sub(7);
-                (trigger_x.wrapping_sub(wx)) / 8
-            } else {
-                // Background tiles: column adjusted by SCX
-                trigger_x.wrapping_add(data.background_viewport.x) / 8
-            };
-
-            let tile_bit = 1u32 << (bg_tile_col & 31);
-            let tile_already_considered = self.line.sprite_bg_tiles_considered & tile_bit != 0;
-
-            let bg_wait_dots = if tile_already_considered {
-                // Tile already consumed by a previous sprite — skip variable wait.
-                0
-            } else if sprite.position.x_plus_8 == 0 {
-                // Exception: X=0 always incurs 11-dot penalty (5 wait + 6 flat).
-                5
-            } else {
-                // Normal: wait for BG fetcher to reach step 5 (DataHigh).
-                let position = self.line.fetcher.cycle_position();
-                if position >= 6 { 0 } else { 5 - position }
-            };
-
-            // Record this tile as consumed.
-            self.line.sprite_bg_tiles_considered |= tile_bit;
-
             self.line.sprite_fetch = Some(SpriteFetch {
                 sprite: *sprite,
+                phase: SpriteFetchPhase::WaitingForFetcher,
                 step: SpriteStep::GetTile,
                 dot_in_step: 0,
                 tile_data_low: 0,
                 tile_data_high: 0,
-                bg_wait_dots,
             });
-            if bg_wait_dots == 0 {
-                // Fetcher already past step 5 or tile already consumed
-                // — reset immediately.
-                self.line.fetcher.step = FetcherStep::GetTile;
-                self.line.fetcher.dot_in_step = 0;
-            }
             self.line.next_sprite += 1;
-            break; // Only one sprite fetch at a time
+            break;
         }
     }
 }
