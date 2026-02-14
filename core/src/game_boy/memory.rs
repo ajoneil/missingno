@@ -112,23 +112,85 @@ impl MappedAddress {
 }
 
 impl MemoryMapped {
-    pub fn read(&self, address: u16) -> u8 {
+    /// Read a byte as the CPU sees it, updating the data bus latch.
+    ///
+    /// This is the "real" CPU read path: it checks DMA bus conflicts,
+    /// PPU mode gating, and updates the bus latch on the appropriate
+    /// physical bus. Use [`read`] for non-emulation reads (debugger,
+    /// tests) that should not mutate bus state.
+    pub fn cpu_read(&mut self, address: u16) -> u8 {
         if let Some(bus) = self.dma.is_active_on_bus() {
             // OAM is being written to by DMA; CPU reads return $FF.
             if (0xFE00..=0xFE9F).contains(&address) {
                 return 0xFF;
             }
-            // Bus conflict: if the CPU accesses the same bus the DMA
-            // is reading from, the read returns the byte being transferred.
+            // Bus conflict: the DMA controller is driving this bus,
+            // so the CPU sees whatever value the DMA last placed on
+            // it — which is the bus latch.
             if Bus::of(address) == Some(bus) {
-                return self.read_mapped(MappedAddress::map(self.dma.conflicting_address()));
+                return match bus {
+                    Bus::External => self.external_bus,
+                    Bus::Vram => self.vram_bus,
+                };
             }
         }
 
         // PPU mode-based memory gating: the PPU locks OAM during Mode 2
         // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
-        // Uses gating_mode() so that OAM/VRAM remain accessible during the
-        // LCD-on startup period, without the 1-dot STAT mode delay.
+        // The bus latch is NOT updated — no device drove the bus.
+        let mode = self.video.gating_mode();
+        match address {
+            0xFE00..=0xFE9F => match mode {
+                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                    return 0xFF;
+                }
+                _ => {}
+            },
+            0x8000..=0x9FFF => {
+                if mode == video::ppu::Mode::DrawingPixels {
+                    return 0xFF;
+                }
+            }
+            _ => {}
+        }
+
+        let value = self.read_mapped(MappedAddress::map(address));
+
+        // Update the bus latch for whichever physical bus this address
+        // resides on. CPU-internal addresses (OAM, IO, HRAM) are not
+        // on either bus and do not update a latch.
+        match Bus::of(address) {
+            Some(Bus::External) => {
+                self.external_bus = value;
+                self.external_bus_decay = super::EXTERNAL_BUS_DECAY_MCYCLES;
+            }
+            Some(Bus::Vram) => {
+                self.vram_bus = value;
+            }
+            None => {}
+        }
+
+        value
+    }
+
+    /// Read a byte without side effects.
+    ///
+    /// Returns the same value as [`cpu_read`] but does NOT update the
+    /// data bus latch. Used by the debugger, test helpers, and any
+    /// context where a non-emulation peek is needed.
+    pub fn read(&self, address: u16) -> u8 {
+        if let Some(bus) = self.dma.is_active_on_bus() {
+            if (0xFE00..=0xFE9F).contains(&address) {
+                return 0xFF;
+            }
+            if Bus::of(address) == Some(bus) {
+                return match bus {
+                    Bus::External => self.external_bus,
+                    Bus::Vram => self.vram_bus,
+                };
+            }
+        }
+
         let mode = self.video.gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
@@ -220,6 +282,7 @@ impl MemoryMapped {
                 return;
             }
             // Bus conflict: CPU writes on the same bus as DMA are ignored.
+            // The bus latch is NOT updated — DMA is driving the bus.
             if Bus::of(address) == Some(bus) {
                 return;
             }
@@ -228,6 +291,7 @@ impl MemoryMapped {
         // PPU mode-based memory gating for writes. Writes use different
         // timing than reads: no early OAM/VRAM locks, and mode 2 releases
         // OAM 4 dots early (at dot 76).
+        // The bus latch is NOT updated — the write was blocked.
         let mode = self.video.write_gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
@@ -242,6 +306,20 @@ impl MemoryMapped {
                 }
             }
             _ => {}
+        }
+
+        // Update the bus latch to the written value. The CPU drives
+        // the data bus with the value it's writing, regardless of
+        // whether the target device actually stores it.
+        match Bus::of(address) {
+            Some(Bus::External) => {
+                self.external_bus = value;
+                self.external_bus_decay = super::EXTERNAL_BUS_DECAY_MCYCLES;
+            }
+            Some(Bus::Vram) => {
+                self.vram_bus = value;
+            }
+            None => {}
         }
 
         self.write_mapped(MappedAddress::map(address), value);

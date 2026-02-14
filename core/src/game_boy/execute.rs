@@ -1,11 +1,12 @@
 use super::{
-    GameBoy,
+    EXTERNAL_BUS_DECAY_MCYCLES, GameBoy,
     cpu::{
         InterruptMasterEnable,
         instructions::Instruction,
         mcycle::{Processor, TCycle},
     },
     interrupts::Interrupt,
+    memory::Bus,
     video,
 };
 
@@ -61,7 +62,7 @@ impl GameBoy {
 
             // Read opcode byte
             new_screen |= self.tick_hardware_tcycle();
-            let opcode = self.mapped.read(self.cpu.program_counter);
+            let opcode = self.mapped.cpu_read(self.cpu.program_counter);
             if self.cpu.halt_bug {
                 // HALT bug: PC fails to increment on the fetch after HALT
                 // exits with IME=0 and a pending interrupt, causing this
@@ -79,7 +80,7 @@ impl GameBoy {
             let mut bytes = [opcode, 0, 0];
             for i in 0..op_count {
                 new_screen |= self.tick_hardware_tcycle();
-                bytes[1 + i as usize] = self.mapped.read(self.cpu.program_counter);
+                bytes[1 + i as usize] = self.mapped.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
                 new_screen |= self.tick_hardware_tcycle();
                 new_screen |= self.tick_hardware_tcycle();
@@ -138,7 +139,7 @@ impl GameBoy {
             match tcycle {
                 TCycle::Read { address } => {
                     self.mapped.oam_bug_read(address);
-                    read_value = self.mapped.read(address);
+                    read_value = self.mapped.cpu_read(address);
                 }
                 TCycle::Write { address, value } => {
                     self.mapped.oam_bug_write(address);
@@ -215,11 +216,33 @@ impl GameBoy {
             self.mapped.interrupts.request(interrupt);
         }
 
-        // OAM DMA: transfer one byte per M-cycle
+        // OAM DMA: transfer one byte per M-cycle. The DMA controller
+        // drives the source bus with the byte it reads, updating the
+        // bus latch so that CPU reads from the same bus see this value.
         if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
             let byte = self.mapped.read_dma_source(src_addr);
             let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
             self.mapped.video.write_memory(dst, byte);
+            match Bus::of(src_addr) {
+                Some(Bus::External) => {
+                    self.mapped.external_bus = byte;
+                    self.mapped.external_bus_decay = EXTERNAL_BUS_DECAY_MCYCLES;
+                }
+                Some(Bus::Vram) => {
+                    self.mapped.vram_bus = byte;
+                }
+                None => {}
+            }
+        }
+
+        // External bus decay: with no device driving the bus, the
+        // retained value trends toward 0xFF as parasitic capacitance
+        // discharges.
+        if self.mapped.external_bus_decay > 0 {
+            self.mapped.external_bus_decay -= 1;
+            if self.mapped.external_bus_decay == 0 {
+                self.mapped.external_bus = 0xFF;
+            }
         }
 
         self.mapped

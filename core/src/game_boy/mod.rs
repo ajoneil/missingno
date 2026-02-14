@@ -20,6 +20,15 @@ pub mod sgb;
 pub mod timers;
 pub mod video;
 
+/// M-cycles before the external data bus decays to 0xFF.
+///
+/// On real hardware the external bus retains its last driven value
+/// through parasitic capacitance. With no device driving the bus
+/// the charge leaks and the value trends toward 0xFF. The exact
+/// rate is board-dependent; 12 M-cycles (~2.86 µs) is a reasonable
+/// approximation.
+const EXTERNAL_BUS_DECAY_MCYCLES: u8 = 12;
+
 // Anything accessible via a memory address is stored in a separate
 // struct to allow borrowing independently of the Cpu
 pub struct MemoryMapped {
@@ -33,6 +42,18 @@ pub struct MemoryMapped {
     timers: timers::Timers,
     dma: Dma,
     sgb: Option<sgb::Sgb>,
+
+    /// Retained value on the external data bus (ROM, cart RAM, WRAM).
+    /// Updated on every CPU read from or write to an external-bus
+    /// address. Decays toward 0xFF when the bus is idle.
+    external_bus: u8,
+    /// Retained value on the VRAM data bus (0x8000–0x9FFF).
+    /// Updated on every CPU read from or write to a VRAM address.
+    vram_bus: u8,
+    /// M-cycles remaining before `external_bus` decays to 0xFF.
+    /// Reset to [`EXTERNAL_BUS_DECAY_MCYCLES`] on every external bus
+    /// access.
+    external_bus_decay: u8,
 }
 
 pub struct GameBoy {
@@ -68,6 +89,9 @@ impl GameBoy {
                 timers: timers::Timers::new(),
                 dma: Dma::new(),
                 sgb,
+                external_bus: 0xFF,
+                vram_bus: 0xFF,
+                external_bus_decay: 0,
             },
         }
     }
@@ -84,6 +108,9 @@ impl GameBoy {
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
         self.mapped.dma = Dma::new();
+        self.mapped.external_bus = 0xFF;
+        self.mapped.vram_bus = 0xFF;
+        self.mapped.external_bus_decay = 0;
         self.mapped.sgb = if self.mapped.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {
