@@ -16,6 +16,82 @@ Skills contain specific, detailed instructions (e.g. "use curl not WebFetch", "a
 
 **Periodically during long sessions**: Every ~20 tool calls, re-read the active skill file and `summary.md` to check that you're still following the skill's rules. Drift happens gradually — you start cutting corners on logging, skip summary updates, or forget discipline rules. A periodic re-read catches this before it compounds.
 
+### Skill invocation protocol
+
+Skills invoke other skills as subroutines (e.g. investigate invokes research and instrument). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
+
+#### Request format (caller → callee)
+
+Every skill invocation must include exactly these fields. Extraneous context is a protocol violation.
+
+```
+**Question**: <one specific, concrete, testable question — one sentence>
+**Context**: <only what the callee needs to find the answer — file paths, subsystem names, output location>
+**Log path**: <where to save command output> (instrument only)
+```
+
+**What must NOT be in a request:**
+- The caller's hypotheses about what the answer is
+- Diagnostic output or log excerpts from prior steps
+- Reasoning about what the answer means for the investigation
+- Multiple unrelated questions bundled together
+
+If you can't state the question in one sentence, it's not focused enough — split it into multiple invocations.
+
+#### Report format (callee → caller)
+
+Every skill report must use the format below. Interpretation, recommendations, and problem-solving are protocol violations.
+
+**Research reports:**
+```
+## Findings
+<factual answer to the question, with enough detail to act on>
+
+## Sources
+<URLs, doc names, or repo + file path + line numbers>
+
+## Confidence
+<high/medium/low — based on source quality>
+
+## See also
+<one-line notes on tangential discoveries, if any — optional>
+```
+
+**Instrument reports:**
+```
+## Test result
+<pass/fail, which sub-test if applicable>
+
+## Measurements
+<the specific values requested, extracted from log output>
+
+## Raw data
+<compact summary of relevant log lines, with file:line references into the log>
+
+## Also observed
+<unexpected findings not part of the original question — optional>
+```
+
+**What must NOT be in a report:**
+- "This means..." / "This suggests..." / "This confirms..."
+- "The fix should be..." / "You should try..."
+- "This is probably caused by..."
+- Any reasoning about what the findings mean for the caller's problem
+- Any scope expansion beyond what was asked
+
+#### Enforcement
+
+1. **Request validation.** Before invoking a skill, re-read the request and delete anything that isn't Question, Context, or Log path.
+2. **Report validation.** Before returning from a skill, re-read the report and delete any sentence that interprets, recommends, or analyzes. The test: "Could a reader who knows nothing about the caller's problem still understand this report?" If it requires investigation context to parse, it's leaking.
+3. **Scope tripwire.** If a callee catches itself reasoning about the caller's problem (why is the test failing, what should the fix be, does this confirm the hypothesis), that's a scope violation. Stop, delete the reasoning, return to reporting facts or measurements.
+4. **One question, one answer.** Each invocation has exactly one question. If the caller has two unrelated questions, that's two invocations. Multiple measurements that all serve the same hypothesis are fine in a single invocation — but unrelated hypotheses must be separate. If the callee discovers two things, the asked-for answer goes in the report; the other goes in "See also" / "Also observed" as a one-liner.
+
+#### Subroutine discipline
+
+Skills invoked as subroutines are not stopping points. After a callee returns its report, the caller must immediately act on the findings — updating summary.md, editing code, forming the next hypothesis. Never end a turn immediately after receiving a skill report.
+
+Conversely, after a callee finishes its report, it must not wait for further input. The report is the return value; control passes back to the caller.
+
 ## Project Overview
 
 MissingNo. is a Game Boy emulator and debugger written in Rust.

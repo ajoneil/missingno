@@ -8,13 +8,7 @@ These rules override default agent behavior. Follow them exactly:
 
 1. **Never run diagnostic commands without `tee` to a log file.** Every test invocation, benchmark, profiling run, or diagnostic command must be saved. No exceptions. No piping through `grep`/`tail`/`head` instead of saving. For test suites: `cargo test ... 2>&1 | tee <log_path>`. For other commands: `<command> 2>&1 | tee <log_path>`.
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every change attempt. If you're about to run a diagnostic, write in summary.md what you're testing and why first.
-3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. After research completes, immediately resume the investigation — do not stop and wait for user input.
-
-   **How to hand off research questions:**
-   - Formulate a **specific, concrete question** before invoking `/research`. Not "how does X work" but "what specific value does X have when Y happens?"
-   - Include **only the question and any necessary context** (e.g. which file to read, which subsystem, where to write findings). Do NOT include your hypotheses, diagnostic output, or reasoning about what the answer might mean — that's your job after research returns.
-   - **One question per invocation.** If you have multiple questions, invoke `/research` multiple times with separate, focused questions. Don't bundle unrelated questions into a single research call.
-   - When research returns, **you** interpret the findings in context of your investigation. The research skill reports facts; you figure out what they mean for the problem you're investigating.
+3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. After research completes, immediately resume the investigation — do not stop and wait for user input. Format every research request using the skill invocation protocol defined in AGENTS.md. When research returns, **you** interpret the findings — the research skill reports facts; you figure out what they mean.
 4. **Never guess at changes.** Invoke `/instrument` to measure what the system is actually doing before making changes. Log output tells you what's happening — your mental model of the code is not a substitute.
 5. **Never trace behavior in your head.** If you want to know what value a variable has at a specific point, or what state a system is in when a particular event occurs — invoke `/instrument`. Do not manually trace execution paths, count cycles, or simulate state machines. Your mental model will be wrong. **This applies to ALL code** — this project, reference implementations, anything. If you catch yourself stepping through a state machine iteration by iteration to figure out what it does, stop and hand the question to `/research` or `/instrument`.
 6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run verification (tests, benchmarks, the relevant diagnostic) before building further changes on top. If a foundational change introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes verification.
@@ -81,11 +75,10 @@ Follow this loop for every investigation step:
 
 ### 3. Research correct behavior
 
-- **Formulate specific questions and hand them to `/research`.** Each research invocation should have one clear, answerable question. Include the output location and any context needed to find the answer. Do NOT include your hypotheses, diagnostic interpretations, or what you think the answer might be.
+- **Format every `/research` request using the protocol in AGENTS.md.** One question, one context block, no hypotheses or diagnostic output.
 - **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about expected behavior — while diagnosing, while interpreting diagnostic output, while designing a change — stop and formulate a research question.
-- **Use research to resolve contradictions.** If existing research documents contradict each other — or if diagnostic output contradicts what a research document claims — formulate a specific question and invoke `/research` to get the authoritative answer. When research returns, update or correct the contradicting documents.
-- **Research is a subroutine.** After `/research` returns with findings, your very next action must be interpreting those findings in context of your investigation — updating summary.md, editing code, running a diagnostic. Never end your turn immediately after research. The pattern is: research → interpret findings → act → continue investigation.
-- **Update summary.md** with research findings and your interpretation of what they mean for the investigation.
+- **Use research to resolve contradictions.** If existing research documents contradict each other — or if diagnostic output contradicts what a research document claims — invoke `/research` with the specific contradiction as the question.
+- **Interpret the report yourself.** When research returns, read the Findings section and figure out what it means for your investigation. The research skill reports facts — you own the interpretation. Update summary.md with both the findings and your interpretation.
 
 ### 4. Establish baseline
 
@@ -107,15 +100,11 @@ Follow this loop for every investigation step:
 - Reporting what the output shows
 - Baseline comparisons (running the same measurement on a known-good vs current state)
 
-**How to hand off instrumentation requests:**
-- Formulate a **specific hypothesis** before invoking `/instrument`. Not "add some logging" but "I need to know what value X has at the exact point when Y happens."
-- Include **the hypothesis, the measurement points, and the log file path**. The instrument skill handles the mechanics (where to add log lines, how to gate output, running the diagnostic); you provide the question.
-- **One measurement per invocation.** If you need to measure multiple things that are all part of the same hypothesis, that's one invocation. But if you have two unrelated hypotheses, invoke `/instrument` twice.
-- When `/instrument` returns, **you** interpret the measurements in context of your investigation. The instrument skill reports what happened; you figure out what it means.
+**Format every `/instrument` request using the protocol in AGENTS.md.** The Question is your hypothesis (what you expect to observe and where). The Context is which files/subsystems to instrument. The Log path is where to save output. Do not include your reasoning about what the answer might mean.
 
 **Instrumentation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/instrument`.
 
-**Instrumentation is a subroutine.** After `/instrument` returns with measurements, your very next action must be interpreting those measurements in context of your investigation — updating summary.md, adjusting your hypothesis, editing code. Never end your turn immediately after instrumentation. The pattern is: instrument → interpret findings → act → continue investigation.
+**Interpret the report yourself.** When `/instrument` returns, read the Measurements section and figure out what it means for your investigation. The instrument skill reports what happened — you own the interpretation. Update summary.md with both the measurements and your interpretation.
 
 **MANDATORY: Every diagnostic command invocation must be saved to a log file.** This applies whether you run the command yourself or hand it to `/instrument`. No exceptions.
 

@@ -1,21 +1,12 @@
 # Research
 
-Research hardware behavior and document findings in the persistent knowledge base.
-
-**This skill is a subroutine, not a stopping point.** After completing research, immediately return to the task that prompted it. Do not wait for further user input — apply the findings and continue working.
-
-**IMPORTANT**: When this skill finishes (document written and reviewed), your VERY NEXT action must be applying the findings — editing code, running diagnostics, updating summary.md, etc. Do NOT end your turn after writing the research document. The research answer is useless until you act on it.
+Research a specific question and document findings in the persistent knowledge base.
 
 ## Scope discipline
 
-**You are a fact-finder, not a problem-solver.** Your job is to answer the specific question you were given with authoritative sources and documented findings. You must NOT:
+**You are a fact-finder, not a problem-solver.** Your report must follow the research report format defined in the skill invocation protocol in AGENTS.md. If you catch yourself writing interpretation, analysis, or recommendations — stop, delete it, and return to reporting facts.
 
-- **Analyze the investigation problem.** Don't reason about why a test is failing, what the root cause might be, or how findings relate to diagnostic output. That's the investigator's job.
-- **Propose fixes or implementation approaches.** Don't suggest code changes, timing adjustments, or architectural decisions. Just report what the hardware does.
-- **Interpret findings in context.** Don't say "this means the emulator should..." or "this explains why test X fails because...". State the hardware behavior and let the caller decide what it means.
-- **Expand scope beyond the question.** If asked "what initial value does the wave channel timer get on trigger?", answer exactly that. Don't also research wave RAM access gating, trigger corruption, or other related topics unless the caller explicitly asked.
-
-If you discover something interesting but tangential while researching, note it briefly at the end of the document under a "See also" heading — but don't pursue it. The caller can ask a follow-up question if they want more.
+The caller sent you a Question and Context. Answer the Question. Do not reason about the caller's problem, propose fixes, or expand scope. If you discover something tangential, note it as a one-liner in the "See also" section of your report.
 
 ## Before you start
 
@@ -129,6 +120,4 @@ When called from an active investigation, check whether the research question is
 
 ## After research is complete
 
-When you have written and reviewed your research document, **you are not done with your turn.** The research skill is always invoked as a subroutine from another task (usually an investigation). Your document is useless until the caller acts on it.
-
-**Your very next action after finishing the document must be a non-research action**: updating summary.md, editing code, running a diagnostic, or any other concrete investigation step. If you find yourself about to end your turn after writing a research document, you have made an error. Continue working.
+This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md. After writing and reviewing your report, immediately return control to the caller. Do not wait for further input.

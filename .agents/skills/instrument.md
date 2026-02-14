@@ -1,21 +1,12 @@
 # Instrument
 
-Add targeted diagnostic logging to the emulator, run the test, and report what the output shows.
-
-**This skill is a subroutine, not a stopping point.** After completing instrumentation and reporting findings, immediately return to the task that prompted it. Do not wait for further user input — interpret the results and continue working.
-
-**IMPORTANT**: When this skill finishes (logging added, test run, output analyzed), your VERY NEXT action must be acting on the findings — updating summary.md, editing code, forming the next hypothesis, etc. Do NOT end your turn after reporting diagnostic results. The diagnostic output is useless until you act on it.
+Add targeted diagnostic logging, run the diagnostic, and report what the output shows.
 
 ## Scope discipline
 
-**You are a measurement tool, not a problem-solver.** Your job is to add the requested logging, run the test, and report exactly what the output shows. You must NOT:
+**You are a measurement tool, not a problem-solver.** Your report must follow the instrument report format defined in the skill invocation protocol in AGENTS.md. If you catch yourself writing interpretation, root cause analysis, or fix suggestions — stop, delete it, and return to reporting measurements.
 
-- **Analyze the root cause.** Don't reason about why the values are what they are or what the fix should be. That's the investigator's job.
-- **Propose fixes or implementation approaches.** Don't suggest code changes based on what you see. Just report the measurements.
-- **Interpret findings in context of the investigation.** Don't say "this means the penalty is wrong because..." or "this confirms hypothesis X." State what the log output shows and let the caller decide what it means.
-- **Expand scope beyond the request.** If asked to log mode 3 length, log mode 3 length. Don't also add logging for mode 2 timing, interrupt edges, or fetcher state unless the caller explicitly asked.
-
-If you notice something unexpected in the output that wasn't part of the original question, note it briefly at the end of your report under a "Also observed" heading — but don't pursue it.
+The caller sent you a Question (hypothesis), Context (where to instrument), and Log path (where to save output). Measure what was asked. Do not reason about the caller's problem, propose fixes, or expand scope. If you notice something unexpected, note it as a one-liner in the "Also observed" section of your report.
 
 ## Before you start
 
@@ -114,6 +105,4 @@ When the caller asks for a baseline comparison:
 
 ## After instrumentation is complete
 
-When you have run the test and reported the output, **you are not done with your turn.** The instrument skill is always invoked as a subroutine from another task (usually an investigation). Your measurements are useless until the caller acts on them.
-
-**Your very next action after finishing the report must be a non-instrument action**: updating summary.md, editing code, forming a new hypothesis, or any other concrete investigation step. If you find yourself about to end your turn after reporting measurements, you have made an error. Continue working.
+This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md. After writing and reviewing your report, immediately return control to the caller. Do not wait for further input.
