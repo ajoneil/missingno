@@ -88,13 +88,39 @@ Every skill report must use the format below. Interpretation, recommendations, a
 
 #### Subroutine discipline
 
-Skills invoked as subroutines are not stopping points. After a callee returns its report, the caller must immediately act on the findings **in the same response** — reading the callee's output, interpreting it, updating summary.md, and proceeding to the next investigation step. A skill invocation is a function call that returns a value, not a handoff to another agent. The caller's turn does not end when the callee returns — the caller must continue working.
+Skills invoked as subroutines are not stopping points. A skill invocation is a function call that returns a value, not a handoff to another agent. The caller's turn does not end when the callee returns — the caller must continue working.
+
+**Return context block.** Before invoking a subroutine, the caller MUST write a return context block to the active investigation's `summary.md` (or to the receipt file if there is no investigation). This block captures everything the callee needs to hand control back:
+
+```
+## Active subroutine
+- **Callee**: <skill name being invoked>
+- **Caller**: <skill name to return to>
+- **Caller skill file**: `.agents/skills/<caller>.md`
+- **On return**: <one sentence: what the caller will do with the result>
+- **Summary file**: <path to this summary.md>
+```
+
+This block serves three purposes:
+1. **Context boundary.** Once the block is written, the callee operates with a clean slate — it follows only its own skill file, not the caller's. The caller's hypotheses, diagnostic output, and reasoning are irrelevant to the callee. If the callee catches itself reasoning about the caller's problem or reaching for tools outside its own skill's methodology, the context boundary has been violated.
+2. **Survival through compaction.** If context is compacted mid-subroutine, the return context block in summary.md tells the agent exactly where it is and how to continue.
+3. **Clean return.** When the callee finishes its report, it reads the return context block to know which skill file to re-read and what the caller's next step is.
+
+**Callee isolation.** After a subroutine is invoked, the callee MUST operate exclusively within its own skill's rules and methodology. The callee does NOT inherit the caller's tools, habits, or context. Specifically:
+- The callee re-reads its own skill file from `.agents/skills/` and follows only those instructions.
+- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/instrument`'s logging patterns; `/instrument` does not do `/research`'s web fetching).
+- If the callee reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
+
+**Callee handoff.** When the callee finishes:
+1. Write the report in the format specified by the skill invocation protocol.
+2. Read the return context block from summary.md.
+3. Re-read the caller's skill file (path is in the return context block).
+4. Delete the "Active subroutine" section from summary.md.
+5. Immediately continue working as the caller — interpret the results, update summary.md, proceed to the next step.
+
+The report is a return value — the same turn continues with the caller's workflow. If the turn ends after a report with no further action, subroutine discipline has been violated.
 
 **Violation test:** If your response ends with a Skill tool call and nothing after it, you have violated subroutine discipline. After every Skill tool result, you must produce further tool calls or text that acts on the result.
-
-**Context restoration:** After a subroutine returns, its skill text will have displaced the caller's instructions from working memory. Before continuing work, re-read the caller's skill file from `.agents/skills/` and the active investigation's `summary.md` (if any). This is not optional — the subroutine's instructions are irrelevant now and the caller's instructions need to be fresh.
-
-**Callee handoff:** After a callee finishes its report, it must not end the turn. The callee must: (1) write the report, (2) re-read the caller's skill file and active summary.md, (3) immediately continue working as the caller. The report is a return value — the same turn continues with the caller's workflow. If the turn ends after a report with no further action, subroutine discipline has been violated.
 
 ## Project Overview
 

@@ -25,6 +25,12 @@ Work through sources in this order, stopping when you have a clear, specific ans
 5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. This tells you what behavior to produce, with specific cycle counts.
 6. **Reference emulators (last resort)**: Only consult emulator source code when documentation is insufficient. Reading source through WebFetch is unreliable — the AI summarizer often misinterprets code. If you must read emulator source, clone the repo locally and read the actual files. Extract factual hardware behavior (timing values, edge cases, state transitions) — do not copy architectural patterns, data structures, or implementation strategies.
 
+### Allowed and forbidden tools
+
+**Allowed:** `Read`, `Glob`, `Grep`, `Bash` (for `curl` to fetch specific URLs, `git clone` to clone repos). These are the research skill's tools.
+
+**Forbidden:** `WebSearch`, `WebFetch`, `Skill` (no invoking other skills). If you reach for any of these, you have left the research skill's methodology. If your allowed tools can't answer the question, report what you found with `Confidence: low` and return — do NOT escalate to forbidden tools.
+
 ### Quality over quantity
 
 - **One good source beats five bad fetches.** If Pan Docs answers your question, stop there. Don't keep searching for confirmation through emulator source code.
