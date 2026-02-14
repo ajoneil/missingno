@@ -88,7 +88,11 @@ Every skill report must use the format below. Interpretation, recommendations, a
 
 #### Subroutine discipline
 
-Skills invoked as subroutines are not stopping points. After a callee returns its report, the caller must immediately act on the findings — updating summary.md, editing code, forming the next hypothesis. Never end a turn immediately after receiving a skill report.
+Skills invoked as subroutines are not stopping points. After a callee returns its report, the caller must immediately act on the findings **in the same response** — reading the callee's output, interpreting it, updating summary.md, and proceeding to the next investigation step. A skill invocation is a function call that returns a value, not a handoff to another agent. The caller's turn does not end when the callee returns — the caller must continue working.
+
+**Violation test:** If your response ends with a Skill tool call and nothing after it, you have violated subroutine discipline. After every Skill tool result, you must produce further tool calls or text that acts on the result.
+
+**Context restoration:** After a subroutine returns, its skill text will have displaced the caller's instructions from working memory. Before continuing work, re-read the caller's skill file from `.agents/skills/` and the active investigation's `summary.md` (if any). This is not optional — the subroutine's instructions are irrelevant now and the caller's instructions need to be fresh.
 
 Conversely, after a callee finishes its report, it must not wait for further input. The report is the return value; control passes back to the caller.
 
