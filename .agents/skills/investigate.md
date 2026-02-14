@@ -21,35 +21,36 @@ These rules override default agent behavior. Follow them exactly:
    - Include **only the question and any necessary context** (e.g. which file to read, which subsystem, where to write findings). Do NOT include your hypotheses, diagnostic output, or reasoning about what the answer might mean — that's your job after research returns.
    - **One question per invocation.** If you have multiple questions, invoke `/research` multiple times with separate, focused questions. Don't bundle unrelated questions into a single research call.
    - When research returns, **you** interpret the findings in context of your investigation. The research skill reports facts; you figure out what they mean for the bug you're investigating.
-4. **Never guess at fixes.** Add instrumentation, run diagnostics, read the output. The log files tell you what's happening — your mental model of the code is not a substitute.
-5. **Never trace timing in your head.** If you want to know what value a register has at a specific dot, or what mode the PPU is in when a particular instruction executes — add a log line and run the test. Do not manually count M-cycles, dots, or pipeline stages. Your mental model will be wrong. The emulator is already a cycle-accurate simulator; let it simulate.
+4. **Never guess at fixes.** Invoke `/instrument` to measure what the emulator is actually doing. The log files tell you what's happening — your mental model of the code is not a substitute.
+5. **Never trace execution in your head.** If you want to know what value a register has at a specific dot, or what mode the PPU is in when a particular instruction executes — invoke `/instrument`. Do not manually count M-cycles, dots, or pipeline stages. Your mental model will be wrong. The emulator is already a cycle-accurate simulator; let it simulate. **This applies to ALL code** — this emulator, reference emulators, anything. If you catch yourself stepping through a reference emulator's state machine iteration by iteration to figure out what it does, you are doing the same thing as tracing timing in your head. Stop and hand the question to `/research`.
 6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run the full test suite (`cargo test`) before building further changes on top. If a foundational change (e.g. LY timing, mode transitions) introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes regression checks.
+7. **Never read reference emulator source directly.** If you need to know how another emulator implements a behavior, formulate the question and invoke `/research`. Do not open the file yourself, do not `grep` through it, do not `sed` or `cat` it. The research skill can clone repos, read source, and report back with the specific facts you need. Reading reference source yourself leads to rabbit holes: you read one function, then need to understand its callers, then its data structures, then you're tracing execution (violating rule 5). The research skill has scope discipline to prevent this — you don't. One question in, one answer out.
 
 ## Periodic self-check
 
 **Every 3-4 tool calls, pause and ask yourself these questions:**
 
-1. **Am I running tests or reading code?** If the last 3+ actions were all file reads, grep searches, or bash commands reading emulator source — you're in an analysis loop. Break out: form a hypothesis, add a log line, run the test.
-2. **Am I tracing timing in my head?** If you've written more than ~4 lines of cycle/timing reasoning since the last log file, you're guessing. Add instrumentation and run.
+1. **Am I running tests or reading code?** If the last 3+ actions were all file reads, grep searches, or bash commands reading emulator source — you're in an analysis loop. Break out: form a hypothesis, invoke `/instrument`, run the test.
+2. **Am I tracing timing in my head?** If you've written more than ~4 lines of cycle/timing reasoning since the last log file, you're guessing. Invoke `/instrument`.
 3. **Do I have an unanswered hardware question?** If you're unsure what the hardware does and you're trying to figure it out by reading emulator source code, stop. Invoke `/research` with a specific question instead. Reference emulators are the LAST resort, not the first.
-4. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either add logging and run a test, or invoke `/research`.
+3b. **Am I reading a reference emulator?** If any of your last 2+ tool calls read, grepped, or fetched files from a reference emulator (SameBoy, Gambatte, etc.), you are in a rabbit hole. Stop immediately. Formulate the specific question you're trying to answer and invoke `/research`. You should never need more than one glance at reference source — if one excerpt didn't answer your question, the answer requires deeper analysis that `/research` is better equipped to do with scope discipline.
+4. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either invoke `/instrument`, or invoke `/research`.
 5. **Have I updated summary.md recently?** If not, update it now. The act of writing down where you are often clarifies what to do next.
 
-**The default action when uncertain is: add a log line and run `cargo test`.** Not: read more source code. Not: reason about timing. Not: check another emulator. Instrument and observe.
+**The default action when uncertain is: invoke `/instrument`.** Not: read more source code. Not: reason about timing. Not: check another emulator. Measure and observe.
 
 ## Working style: hypothesize, test, interpret
 
 Follow this loop for every investigation step:
 
 1. **Form a hypothesis** — a short, testable statement. Write it down in summary.md. ("The STAT read in the counting loop sees mode 3 when it should see mode 0 because mode 3 is 4 dots too long.")
-2. **Design a test** — add targeted logging that will confirm or refute the hypothesis. The log output should directly answer the question. If you can't tell what log line to add, your hypothesis isn't specific enough — refine it first.
-3. **Run the test** — `cargo test ... 2>&1 | tee logs/<name>.log`. No exceptions.
-4. **Read the output** — grep/read the log file. Extract the specific values that answer your hypothesis.
-5. **Update summary.md** — state whether the hypothesis was confirmed or refuted, cite the log evidence, and write the next hypothesis.
+2. **Invoke `/instrument`** — hand off the hypothesis with specific measurement points. The instrument skill adds targeted logging, runs the test, and reports what the output shows.
+3. **Read the results** — extract the specific values that answer your hypothesis from `/instrument`'s report.
+4. **Update summary.md** — state whether the hypothesis was confirmed or refuted, cite the log evidence, and write the next hypothesis.
 
-**If you catch yourself writing more than ~4 lines of timing/cycle analysis without a log file open, stop.** You are guessing. Add a log line and run the test instead.
+**If you catch yourself writing more than ~4 lines of timing/cycle analysis without a log file open, stop.** You are guessing. Invoke `/instrument` instead.
 
-**If a fix attempt fails and you don't know why, do not analyze the code harder.** Add more logging to the specific area that surprised you, run again, and read the output.
+**If a fix attempt fails and you don't know why, do not analyze the code harder.** Invoke `/instrument` with more targeted logging on the specific area that surprised you.
 
 ## Workflow
 
@@ -91,70 +92,27 @@ Follow this loop for every investigation step:
 - If pre-existing, still worth fixing but important to know the baseline failure count.
 - **Update summary.md** with regression/pre-existing classification.
 
-### 5. Build a diagnostic test harness
+### 5. Instrument and diagnose
 
-**Do not guess at fixes. Do not reason through timing in your head.** The goal is to collect precise information about what the emulator is actually doing vs what it should do. If you're unsure what the emulator is doing at a particular point, add logging and run it — don't try to trace through the code mentally. Build temporary diagnostic instrumentation:
+**Do not guess at fixes. Do not reason through timing in your head.** The goal is to collect precise information about what the emulator is actually doing vs what it should do. If you're unsure what the emulator is doing at a particular point, invoke `/instrument` — don't try to trace through the code mentally.
 
-#### What to instrument
+**Use the `instrument` skill** (`/instrument`) for all diagnostic work. This includes:
+- Adding `eprintln!` tracing to the emulator code
+- Running the test and capturing output to log files
+- Reporting what the output shows
+- Baseline comparisons (running the same logging on main vs current branch)
 
-Based on the subsystem involved, add targeted `eprintln!` tracing that captures:
+**How to hand off instrumentation requests:**
+- Formulate a **specific hypothesis** before invoking `/instrument`. Not "add some logging" but "I need to know what STAT mode the CPU sees at the exact dot when the polling loop's first LDH A,(STAT) executes on LY=68."
+- Include **the hypothesis, the measurement points, and the log file path**. The instrument skill handles the mechanics (where to add log lines, how to gate output, running the test); you provide the question.
+- **One measurement per invocation.** If you need to measure mode 3 length AND interrupt timing AND register values at a specific point, those can be one invocation if they're all part of the same hypothesis. But if you have two unrelated hypotheses, invoke `/instrument` twice.
+- When `/instrument` returns, **you** interpret the measurements in context of your investigation. The instrument skill reports what happened; you figure out what it means.
 
-- **State transitions**: Log the exact cycle/dot/tick when modes, phases, or states change. Include the old and new state.
-- **Timing events**: Log when interrupts fire, when registers are read/written, when DMA transfers occur — with precise cycle counts.
-- **Data flow**: Log pixel values, FIFO contents, fetcher steps, audio sample values — whatever the test is measuring.
-- **Decision points**: Log the values that drive conditional logic (comparison results, flag checks, counter values).
+**Instrumentation is not just for step 5.** Any time during the investigation that you need to know what the emulator is actually doing — while diagnosing, while verifying a fix, while investigating a regression — stop and invoke `/instrument`. If you find yourself reasoning about what value a register has at a particular dot, or what mode the PPU is in when a particular instruction executes, that's a signal to instrument instead.
 
-#### How to instrument
+**Instrumentation is a subroutine.** After `/instrument` returns with measurements, your very next action must be interpreting those measurements in context of your investigation — updating summary.md, adjusting your hypothesis, editing code. Never end your turn immediately after instrumentation. The pattern is: instrument → interpret findings → act → continue investigation.
 
-- Add logging to the emulator code at the points relevant to the failing test. Gate output to only the lines/frames/cycles the test cares about to keep output manageable.
-- **Run on both failing and working code.** The most valuable output is a side-by-side comparison:
-  1. Run the test with logging on your current (failing) branch.
-  2. Stash changes, checkout main (or a known-good state), apply the same logging, run the test again.
-  3. Diff the two outputs. The first divergence point is your root cause.
-- If no working baseline exists, compare the logged behavior against the expected behavior from documentation or reference emulator source code.
-
-#### How to run diagnostics
-
-**MANDATORY: Every `cargo test` invocation must be saved to a log file.** This is not optional. Do not run `cargo test` without `tee`. Do not pipe output through `grep`, `tail`, `head`, or any other filter — capture the complete, unfiltered output first, then read the log file afterward to find what you need.
-
-```bash
-# CORRECT — always use this pattern:
-cargo test <test_name> -- --nocapture 2>&1 | tee receipts/investigations/<session>/logs/<descriptive-name>.log
-
-# WRONG — never do any of these:
-cargo test <test_name> -- --nocapture 2>&1 | grep "pattern"
-cargo test <test_name> -- --nocapture 2>&1 | tail -50
-cargo test <test_name> -- --nocapture              # no tee = lost output
-```
-
-**Why this matters:** Filtered output is thrown away. When you filter at the pipe, you lose context that turns out to be important later. Save everything, read selectively afterward using `grep` on the saved log file.
-
-**Timeouts and test scope:** Test runs can take a long time — the full suite may take 2+ minutes, and individual ROMs with high frame counts can take 60+ seconds each. Be strategic:
-- **Use focused test runs first.** To verify a specific fix, run only the relevant sub-test(s) — not the entire suite. For example, if fixing CH1 sweep behavior, run only the sweep sub-test first, not all 12 sound tests.
-- **Expand to full suite only after focused verification passes.** Regression checks are important but expensive. Do them after confirming the fix works, not as the first verification step.
-- **Set generous timeouts.** `cargo test` in debug mode is slow. Use `timeout` values of at least 120s for individual tests and 300s+ for full suites. A test timing out due to an undersized bash timeout is wasted work — you learn nothing except that your timeout was too short.
-- **If a test hangs, reduce scope — don't reduce timeout.** If a test ROM never reaches its completion loop, a shorter timeout won't help you debug it. Instead, run the specific hanging ROM individually and add instrumentation to understand why it's stuck.
-
-Name log files descriptively so you can tell them apart later:
-- `logs/mode-timing-baseline.log` — initial failing state
-- `logs/mode-timing-fix-attempt-1.log` — after first fix
-- `logs/mode-timing-main-branch.log` — baseline from main
-
-After saving, **update summary.md** with what you instrumented, what the output showed, and what hypothesis it supports or refutes. Read the log file (using `grep` or `Read`) to extract the relevant details for the summary.
-
-#### What good diagnostic output looks like
-
-```
-[SUBSYSTEM] context: state_before -> state_after (key_values)
-```
-
-For example:
-```
-[PPU] LY=66 dot=252: Mode3->Mode0 (mode3_len=172, SCX=0)
-[IRQ] LY=66 dot=252: STAT rising edge (flags=0x08, mode=BetweenLines)
-```
-
-The output should be dense enough to pinpoint the bug but filtered enough to read. Thousands of lines of unfiltered output are not useful — focus on the cycles/events the test actually checks.
+**MANDATORY: Every `cargo test` invocation must be saved to a log file.** This applies whether you run the test yourself or hand it to `/instrument`. No exceptions. No piping through `grep`/`tail`/`head` instead of saving.
 
 ### 6. Analyze and fix
 
@@ -162,15 +120,15 @@ The output should be dense enough to pinpoint the bug but filtered enough to rea
 
 **Stuck means: you've spent more than one hypothesis-test cycle without making progress.** Symptoms:
 
-- You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle. **Stop. Add a log line.**
-- You're counting M-cycles or dots by hand to figure out when an instruction executes. **Stop. Log the dot counter at that point in the code.**
+- You're mentally tracing through PPU/CPU/timer state transitions to predict what should happen at a specific dot or cycle. **Stop. Invoke `/instrument`.**
+- You're counting M-cycles or dots by hand to figure out when an instruction executes. **Stop. Invoke `/instrument` to log the dot counter at that point.**
 - You're unsure what value a register should have at a particular point. **Stop. Formulate the question and invoke `/research`.**
-- You've written more than ~4 lines of timing analysis without citing log output. **Stop. You are guessing.**
-- Your fix attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Add more logging to the area that surprised you and run again.**
+- You've written more than ~4 lines of timing analysis without citing log output. **Stop. You are guessing. Invoke `/instrument`.**
+- Your fix attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Invoke `/instrument` with more targeted logging on the area that surprised you.**
 - You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Write down what specific hardware behavior you need to know, and invoke `/research` with that question.**
 - Your existing research documents contradict each other, or diagnostic output contradicts what a research document says. **Stop. Formulate the specific contradiction as a question and invoke `/research` to get the authoritative answer, then correct the wrong document.**
 
-The fix for every kind of stuck is the same: either add logging and run a test, or formulate a specific question and invoke `/research`. Never reason your way out of being stuck — and never send `/research` a vague topic. Write the question down first.
+The fix for every kind of stuck is the same: either invoke `/instrument` to measure what the emulator is doing, or invoke `/research` to learn what the hardware should do. Never reason your way out of being stuck — and never send vague requests to either skill. Write the specific question or hypothesis down first.
 
 #### Root cause analysis
 
@@ -178,7 +136,7 @@ The fix for every kind of stuck is the same: either add logging and run a test, 
 - **Update summary.md** with your hypothesis before attempting a fix.
 - Fix only the identified issue. Don't refactor surrounding code.
 - **Design fixes based on hardware behavior, not other emulators' code.** Research tells you *what* the hardware does (timing values, state transitions, edge cases). Your fix should implement that behavior within your existing architecture. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
-- **Validate every fix attempt with diagnostic output.** Run with logging before and after the fix. Every run must use `tee` to save to `logs/` — no exceptions, no inline filtering. If the numbers don't match expectations, add more logging rather than reasoning about why — let the output tell you what happened.
+- **Validate every fix attempt with diagnostic output.** Invoke `/instrument` to run with logging before and after the fix. If the numbers don't match expectations, invoke `/instrument` again with more targeted logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
 - Run the full test suite after each fix: `cargo test` (also saved with `tee` to `logs/`).
 - Verify no new regressions (failure count must not increase).
