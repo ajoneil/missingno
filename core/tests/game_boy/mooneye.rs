@@ -253,14 +253,22 @@ mooneye_test!(
 );
 
 // madness/ — obscure hardware edge cases (screenshot comparison)
-#[test]
-fn madness_mgb_oam_dma_halt_sprites() {
-    run_mooneye_screen_test_with_timeout(
-        "mooneye/madness/mgb_oam_dma_halt_sprites.gb",
-        "mooneye/madness/mgb_oam_dma_halt_sprites_expected.png",
-        600,
-    );
-}
+//
+// mgb_oam_dma_halt_sprites: Disabled — this test is MGB (Game Boy Pocket)
+// specific. The expected PNG matches MGB behavior only; DMG produces a
+// different (undocumented) result due to model-specific OAM corruption
+// patterns during halted DMA. No DMG reference image exists upstream or
+// elsewhere. See receipts/research/systems/game-boy/testing/
+// madness-mgb-oam-dma-halt-sprites.md for details.
+//
+// #[test]
+// fn madness_mgb_oam_dma_halt_sprites() {
+//     run_mooneye_screen_test_with_timeout(
+//         "mooneye/madness/mgb_oam_dma_halt_sprites.gb",
+//         "mooneye/madness/mgb_oam_dma_halt_sprites_expected.png",
+//         600,
+//     );
+// }
 
 // manual-only/ — visual tests requiring screenshot comparison
 #[test]
