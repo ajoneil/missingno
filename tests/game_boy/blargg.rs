@@ -160,9 +160,10 @@ fn dmg_sound_02_len_ctr() {
 }
 
 #[test]
-#[ignore] // Hangs — frame sequencer alignment issue with extra length clocking
 fn dmg_sound_03_trigger() {
-    run_dmg_sound_single("03-trigger", 600);
+    // CH3's length counter goes up to 256, so get_len_a takes ~60 frames per
+    // measurement. With many sub-tests, this needs a generous timeout.
+    run_dmg_sound_single("03-trigger", 3600);
 }
 
 #[test]
