@@ -10,7 +10,7 @@ These rules override default agent behavior. Follow them exactly:
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every change attempt. If you're about to run a diagnostic, write in summary.md what you're testing and why first.
 3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. Format every research request using the skill invocation protocol defined in AGENTS.md. **Before invoking `/research` or `/instrument`, write a return context block to summary.md** (see "Subroutine discipline" in AGENTS.md). When the callee returns, **you** interpret the findings — the research skill reports facts; you figure out what they mean. **CRITICAL: After `/research` or `/instrument` returns, you MUST immediately continue the investigation in the same turn — read the callee's output, interpret it, update summary.md, and proceed to the next step. Skill invocations are subroutine calls, not stopping points. Never end your turn after receiving a skill report. Before continuing, re-read this skill file (`.agents/skills/investigate.md`) and the investigation's `summary.md` to restore the investigate context — the subroutine's skill text will have displaced these instructions from your working memory.**
 4. **Never guess at changes.** Invoke `/instrument` to measure what the system is actually doing before making changes. Log output tells you what's happening — your mental model of the code is not a substitute.
-5. **Never trace behavior in your head.** If you want to know what value a variable has at a specific point, or what state a system is in when a particular event occurs — invoke `/instrument`. Do not manually trace execution paths, count cycles, or simulate state machines. Your mental model will be wrong. **This applies to ALL code** — this project, reference implementations, anything. If you catch yourself stepping through a state machine iteration by iteration to figure out what it does, stop and hand the question to `/research` or `/instrument`.
+5. **Never trace behavior in your head.** If you want to know what value a variable has at a specific point, or what state a system is in when a particular event occurs — invoke `/instrument`. Do not manually trace execution paths, count cycles, or simulate state machines. Your mental model will be wrong. **This applies to ALL code** — this project, reference implementations, anything. If you catch yourself stepping through a state machine iteration by iteration to figure out what it does, stop and hand the question to `/research` or `/instrument`. This also applies after failed fixes. If a fix attempt produces unexpected results, do not reason about why — invoke `/instrument` to measure what actually happened, or `/research` to verify your understanding of the expected behavior.
 6. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run verification (tests, benchmarks, the relevant diagnostic) before building further changes on top. If a foundational change introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes verification.
 7. **Never read reference implementation source directly.** If you need to know how another project implements a behavior, formulate the question and invoke `/research`. Do not open the file yourself, do not `grep` through it, do not `sed` or `cat` it. The research skill can clone repos, read source, and report back with the specific facts you need. Reading reference source yourself leads to rabbit holes: you read one function, then need to understand its callers, then its data structures, then you're tracing execution (violating rule 5). The research skill has scope discipline to prevent this — you don't. One question in, one answer out.
 
@@ -24,6 +24,7 @@ These rules override default agent behavior. Follow them exactly:
 3b. **Am I reading a reference implementation?** If any of your last 2+ tool calls read, grepped, or fetched files from a reference project, you are in a rabbit hole. Stop immediately. Formulate the specific question you're trying to answer and invoke `/research`. You should never need more than one glance at reference source — if one excerpt didn't answer your question, the answer requires deeper analysis that `/research` is better equipped to do with scope discipline.
 4. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either invoke `/instrument`, or invoke `/research`.
 5. **Have I updated summary.md recently?** If not, update it now. The act of writing down where you are often clarifies what to do next.
+6. **Am I in trial-and-error mode?** If I've made a code change and re-run the test more than once without invoking `/instrument` or `/research` in between, I'm guessing. A failed fix means my model is wrong — I need new information, not new code.
 
 **The default action when uncertain is: invoke `/instrument`.** Not: read more source code. Not: reason about behavior. Not: check another implementation. Measure and observe.
 
@@ -121,6 +122,7 @@ Follow this loop for every investigation step:
 - Your change attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Invoke `/instrument` with more targeted logging on the area that surprised you.**
 - You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Write down what specific behavior you need to understand, and invoke `/research` with that question.**
 - Your existing research documents contradict each other, or diagnostic output contradicts what a research document says. **Stop. Formulate the specific contradiction as a question and invoke `/research` to get the authoritative answer, then correct the wrong document.**
+- You've made more than one fix attempt without new diagnostic data between them. **Stop. The second attempt is a guess.** Go back to the hypothesis→instrument loop. Invoke `/instrument` to measure what the first attempt actually changed, then invoke `/research` if the measurements reveal a domain knowledge gap.
 
 The fix for every kind of stuck is the same: either invoke `/instrument` to measure what the system is doing, or invoke `/research` to learn what it should do. Never reason your way out of being stuck — and never send vague requests to either skill. Write the specific question or hypothesis down first.
 
@@ -135,6 +137,22 @@ The fix for every kind of stuck is the same: either invoke `/instrument` to meas
 - Run the full verification suite after each change (also saved with `tee` to `logs/`).
 - Verify no new regressions.
 - **Update summary.md** after each change attempt — whether it worked or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
+
+#### When a fix attempt fails
+
+A failed fix is diagnostic data, not a prompt to tweak and retry.
+
+**Never attempt fix N+1 without new diagnostic evidence that fix N didn't have.** If you're changing code based on the same information that produced the failed fix, you're guessing.
+
+When a fix produces unexpected results:
+
+1. **Stop implementing.** Do not tweak the fix. Do not stack another change on top.
+2. **Record what the failure tells you.** Update summary.md: expected result, actual result, which hypothesis this invalidates.
+3. **Identify the knowledge gap.** The fix failed because your model is wrong. Write the gap as a specific question.
+4. **Fill the gap.** Invoke `/instrument` to measure what's actually happening, or `/research` to learn what the hardware should do.
+5. **Redesign only after the gap is filled.** Once you have new validated information, invoke `/design` again with the corrected understanding. Do not patch the old design — the old design was based on wrong assumptions.
+
+The loop is: **hypothesize → instrument → interpret → (repeat until confident) → design → implement → verify.** A failed verification sends you back to "hypothesize", not back to "implement with tweaks".
 
 **For compatibility investigations:**
 - **Design fixes based on hardware behavior, not other emulators' code.** Research tells you *what* the hardware does (timing values, state transitions, edge cases). Your fix should implement that behavior within your existing architecture. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
