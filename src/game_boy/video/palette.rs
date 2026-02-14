@@ -1,6 +1,5 @@
 use std::fmt;
 
-use nanoserde::{DeRon, SerRon};
 use rgb::RGB8;
 
 pub struct Palette {
@@ -43,7 +42,7 @@ impl Palette {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, SerRon, DeRon, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum PaletteChoice {
     #[default]
     Green,

@@ -8,7 +8,6 @@ use iced::{
     Element,
     widget::{Column, column, row, text},
 };
-use nanoserde::{DeRon, SerRon};
 
 use crate::app::{
     self,
@@ -22,7 +21,7 @@ use crate::app::{
 
 const MAX_RECENT: usize = 10;
 
-#[derive(SerRon, DeRon, Clone)]
+#[derive(Clone)]
 struct RecentGame {
     path: String,
     title: String,
@@ -42,7 +41,21 @@ impl RecentGames {
     pub fn load() -> Self {
         let games = recent_path()
             .and_then(|path| fs::read_to_string(path).ok())
-            .and_then(|data| Vec::<RecentGame>::deserialize_ron(&data).ok())
+            .map(|data| {
+                let mut games = Vec::new();
+                let mut lines = data.lines();
+                while let Some(path) = lines.next() {
+                    if path.is_empty() {
+                        continue;
+                    }
+                    let title = lines.next().unwrap_or("").to_string();
+                    games.push(RecentGame {
+                        path: path.to_string(),
+                        title,
+                    });
+                }
+                games
+            })
             .unwrap_or_default();
 
         Self { games }
@@ -55,7 +68,12 @@ impl RecentGames {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let _ = fs::write(path, self.games.serialize_ron());
+        let data: String = self
+            .games
+            .iter()
+            .map(|g| format!("{}\n{}\n", g.path, g.title))
+            .collect();
+        let _ = fs::write(path, data);
     }
 
     pub fn add(&mut self, path: PathBuf, title: String) {
@@ -110,5 +128,5 @@ impl RecentGames {
 }
 
 fn recent_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("missingno").join("recent.ron"))
+    dirs::config_dir().map(|dir| dir.join("missingno").join("recent"))
 }
