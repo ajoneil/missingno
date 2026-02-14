@@ -128,6 +128,7 @@ The fix for every kind of stuck is the same: either invoke `/instrument` to meas
 
 - Study the diagnostic output to identify the root cause.
 - **Update summary.md** with your hypothesis before attempting a fix.
+- **Invoke `/design` before writing any fix.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a plan; you implement it.
 - Fix only the identified issue. Don't refactor surrounding code.
 - **Validate every change with diagnostic output.** Invoke `/instrument` to run with logging before and after the change. If the numbers don't match expectations, invoke `/instrument` again with more targeted logging rather than reasoning about why — let the output tell you what happened.
 - **Remove all diagnostic logging before committing.**
