@@ -21,35 +21,6 @@ pub enum Mbc {
 }
 
 impl Mbc {
-    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
-        match self {
-            Mbc::NoMbc(m) => m.save_state(),
-            Mbc::Mbc1(m) => m.save_state(),
-            Mbc::Mbc2(m) => m.save_state(),
-            Mbc::Mbc3(m) => m.save_state(),
-            Mbc::Mbc5(m) => m.save_state(),
-            Mbc::Mbc6(m) => m.save_state(),
-            Mbc::Mbc7(m) => m.save_state(),
-            Mbc::Huc1(m) => m.save_state(),
-            Mbc::Huc3(m) => m.save_state(),
-        }
-    }
-
-    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
-        use crate::game_boy::save_state::MbcState;
-        match &state {
-            MbcState::NoMbc { .. } => Mbc::NoMbc(no_mbc::NoMbc::from_state(state)),
-            MbcState::Mbc1 { .. } => Mbc::Mbc1(mbc1::Mbc1::from_state(state)),
-            MbcState::Mbc2 { .. } => Mbc::Mbc2(mbc2::Mbc2::from_state(state)),
-            MbcState::Mbc3 { .. } => Mbc::Mbc3(mbc3::Mbc3::from_state(rom, state)),
-            MbcState::Mbc5 { .. } => Mbc::Mbc5(mbc5::Mbc5::from_state(rom, state)),
-            MbcState::Mbc6 { .. } => Mbc::Mbc6(mbc6::Mbc6::from_state(state)),
-            MbcState::Mbc7 { .. } => Mbc::Mbc7(mbc7::Mbc7::from_state(state)),
-            MbcState::Huc1 { .. } => Mbc::Huc1(huc1::Huc1::from_state(rom, state)),
-            MbcState::Huc3 { .. } => Mbc::Huc3(huc3::Huc3::from_state(rom, state)),
-        }
-    }
-
     pub fn ram(&self) -> Option<Vec<u8>> {
         match self {
             Mbc::NoMbc(m) => m.ram(),

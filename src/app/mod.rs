@@ -17,7 +17,6 @@ use crate::game_boy::{
     cartridge::Cartridge,
     joypad::{self, Button},
     recording::Recording,
-    save_state::SaveState,
     video::palette::PaletteChoice,
 };
 use action_bar::ActionBar;
@@ -111,9 +110,6 @@ enum Message {
     MouseMoved,
     HideCursorTick,
     CloseRequested,
-
-    QuickSave,
-    QuickLoad,
 
     StartRecording,
     StopRecording,
@@ -308,65 +304,6 @@ impl App {
             Message::DismissAbout => self.about_shown = false,
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
-            }
-
-            Message::QuickSave => {
-                if let (Game::Loaded(game), Some(save_path)) = (&self.game, &self.save_path) {
-                    let gb = match game {
-                        LoadedGame::Debugger(debugger) => debugger.game_boy(),
-                        LoadedGame::Emulator(emulator) => emulator.game_boy(),
-                    };
-                    let state = SaveState::capture(gb);
-                    let state_path = save_path.with_extension("mnst");
-                    if let Err(e) = state.save_to_file(&state_path) {
-                        eprintln!("Failed to save state: {e}");
-                    }
-                }
-            }
-            Message::QuickLoad => {
-                if let (Game::Loaded(game), Some(save_path)) = (&mut self.game, &self.save_path) {
-                    let state_path = save_path.with_extension("mnst");
-                    match SaveState::load_from_file(&state_path) {
-                        Ok(state) => {
-                            let rom = match game {
-                                LoadedGame::Debugger(debugger) => {
-                                    debugger.game_boy().cartridge().rom().to_vec()
-                                }
-                                LoadedGame::Emulator(emulator) => {
-                                    emulator.game_boy().cartridge().rom().to_vec()
-                                }
-                            };
-                            match state.into_game_boy(rom) {
-                                Ok(new_gb) => {
-                                    let palette = self.settings.palette;
-                                    replace_with_or_abort(game, |game| {
-                                        let was_running = match &game {
-                                            LoadedGame::Debugger(d) => d.running(),
-                                            LoadedGame::Emulator(e) => e.running(),
-                                        };
-                                        if self.debugger_enabled {
-                                            let mut dbg = debugger::Debugger::new(new_gb);
-                                            dbg.set_palette(palette);
-                                            if was_running {
-                                                dbg.run();
-                                            }
-                                            LoadedGame::Debugger(dbg)
-                                        } else {
-                                            let mut emu = emulator::Emulator::new(new_gb);
-                                            emu.set_palette(palette);
-                                            if was_running {
-                                                emu.run();
-                                            }
-                                            LoadedGame::Emulator(emu)
-                                        }
-                                    });
-                                }
-                                Err(e) => eprintln!("Failed to load state: {e}"),
-                            }
-                        }
-                        Err(e) => eprintln!("Failed to load state: {e}"),
-                    }
-                }
             }
 
             Message::StartRecording => {
@@ -699,14 +636,6 @@ impl App {
             },
             event::listen_with(|event, _, _| match event {
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F5),
-                    ..
-                }) => Some(Message::QuickSave),
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F8),
-                    ..
-                }) => Some(Message::QuickLoad),
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F11),
                     ..

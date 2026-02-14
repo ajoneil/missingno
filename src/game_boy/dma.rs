@@ -39,13 +39,6 @@ impl Dma {
         }
     }
 
-    pub fn with_source_register(source_register: u8) -> Self {
-        Self {
-            transfer: None,
-            source_register,
-        }
-    }
-
     /// The last value written to the DMA register (0xFF46).
     pub fn source_register(&self) -> u8 {
         self.source_register

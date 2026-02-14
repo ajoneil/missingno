@@ -3,7 +3,6 @@ use nanoserde::{DeRon, SerRon};
 use flags::{Flag, Flags};
 use registers::{Register8, Register16};
 
-pub mod cycles;
 pub mod flags;
 pub mod instructions;
 pub mod mcycle;

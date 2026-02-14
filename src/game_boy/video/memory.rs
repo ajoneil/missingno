@@ -74,14 +74,6 @@ impl VideoMemory {
         &self.sprites[id.0 as usize]
     }
 
-    pub(crate) fn tile_blocks(&self) -> &[TileBlock; 3] {
-        &self.tiles
-    }
-
-    pub(crate) fn tile_map_data(&self) -> &[TileMap; 2] {
-        &self.tile_maps
-    }
-
     /// Read a raw byte from OAM at the given byte offset (0–159).
     pub(crate) fn oam_byte(&self, offset: u8) -> u8 {
         let sprite = &self.sprites[(offset / 4) as usize];
@@ -117,35 +109,6 @@ impl VideoMemory {
     pub(crate) fn set_oam_word(&mut self, offset: u8, value: u16) {
         self.set_oam_byte(offset, value as u8);
         self.set_oam_byte(offset + 1, (value >> 8) as u8);
-    }
-
-    pub(crate) fn load_state(&mut self, tiles: &[u8], tile_maps: &[u8], sprites_data: &[u8]) {
-        for (i, block) in self.tiles.iter_mut().enumerate() {
-            let start = i * 0x800;
-            let end = start + 0x800;
-            if end <= tiles.len() {
-                block.data.copy_from_slice(&tiles[start..end]);
-            }
-        }
-
-        for (i, map) in self.tile_maps.iter_mut().enumerate() {
-            let start = i * 0x400;
-            for (j, idx) in map.data.iter_mut().enumerate() {
-                if start + j < tile_maps.len() {
-                    *idx = TileIndex(tile_maps[start + j]);
-                }
-            }
-        }
-
-        for (i, sprite) in self.sprites.iter_mut().enumerate() {
-            let start = i * 4;
-            if start + 3 < sprites_data.len() {
-                sprite.position.y_plus_16 = sprites_data[start];
-                sprite.position.x_plus_8 = sprites_data[start + 1];
-                sprite.tile = TileIndex(sprites_data[start + 2]);
-                sprite.attributes = sprites::Attributes(sprites_data[start + 3]);
-            }
-        }
     }
 }
 

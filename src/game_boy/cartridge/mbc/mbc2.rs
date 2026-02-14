@@ -1,5 +1,3 @@
-use crate::game_boy::save_state::Base64Bytes;
-
 pub struct Mbc2 {
     ram: [u8; 0x200],
     ram_enabled: bool,
@@ -23,33 +21,6 @@ impl Mbc2 {
 
     fn current_bank(&self, rom_len: usize) -> u8 {
         (self.bank & ((rom_len / 0x4000) as u8 - 1)).max(1)
-    }
-
-    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
-        crate::game_boy::save_state::MbcState::Mbc2 {
-            ram: Base64Bytes(self.ram.to_vec()),
-            ram_enabled: self.ram_enabled,
-            bank: self.bank,
-        }
-    }
-
-    pub(crate) fn from_state(state: crate::game_boy::save_state::MbcState) -> Self {
-        let crate::game_boy::save_state::MbcState::Mbc2 {
-            ram: ram_data,
-            ram_enabled,
-            bank,
-        } = state
-        else {
-            unreachable!();
-        };
-        let mut ram = [0u8; 0x200];
-        let len = ram_data.len().min(ram.len());
-        ram[..len].copy_from_slice(&ram_data[..len]);
-        Self {
-            ram,
-            ram_enabled,
-            bank,
-        }
     }
 
     pub fn ram(&self) -> Option<Vec<u8>> {

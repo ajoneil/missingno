@@ -1,5 +1,3 @@
-use crate::game_boy::save_state::Base64Bytes;
-
 pub struct Mbc5 {
     ram: Vec<[u8; 8 * 1024]>,
     ram_enabled: bool,
@@ -42,42 +40,6 @@ impl Mbc5 {
             ram_enabled: false,
             rom_bank: 1,
             ram_bank: 0,
-            rumble,
-        }
-    }
-
-    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
-        crate::game_boy::save_state::MbcState::Mbc5 {
-            ram: Base64Bytes::from_banks(&self.ram),
-            ram_enabled: self.ram_enabled,
-            rom_bank: self.rom_bank,
-            ram_bank: self.ram_bank,
-        }
-    }
-
-    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
-        let crate::game_boy::save_state::MbcState::Mbc5 {
-            ram: ram_data,
-            ram_enabled,
-            rom_bank,
-            ram_bank,
-        } = state
-        else {
-            unreachable!();
-        };
-        let rumble = matches!(rom[0x147], 0x1c..=0x1e);
-        let num_ram_banks = match rom[0x149] {
-            2 => 1,
-            3 => 4,
-            4 => 16,
-            5 => 8,
-            _ => 0,
-        };
-        Self {
-            ram: ram_data.into_banks(num_ram_banks),
-            ram_enabled,
-            rom_bank,
-            ram_bank,
             rumble,
         }
     }

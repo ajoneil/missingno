@@ -1,5 +1,3 @@
-use crate::game_boy::save_state::Base64Bytes;
-
 pub struct Huc1 {
     ram: Vec<[u8; 8 * 1024]>,
     rom_bank: u8,
@@ -31,38 +29,6 @@ impl Huc1 {
             rom_bank: 1,
             ram_bank: 0,
             ir_mode: false,
-        }
-    }
-
-    pub(crate) fn save_state(&self) -> crate::game_boy::save_state::MbcState {
-        crate::game_boy::save_state::MbcState::Huc1 {
-            ram: Base64Bytes::from_banks(&self.ram),
-            rom_bank: self.rom_bank,
-            ram_bank: self.ram_bank,
-            ir_mode: self.ir_mode,
-        }
-    }
-
-    pub(crate) fn from_state(rom: &[u8], state: crate::game_boy::save_state::MbcState) -> Self {
-        let crate::game_boy::save_state::MbcState::Huc1 {
-            ram: ram_data,
-            rom_bank,
-            ram_bank,
-            ir_mode,
-        } = state
-        else {
-            unreachable!();
-        };
-        let num_ram_banks = match rom[0x149] {
-            2 => 1,
-            3 => 4,
-            _ => 0,
-        };
-        Self {
-            ram: ram_data.into_banks(num_ram_banks),
-            rom_bank,
-            ram_bank,
-            ir_mode,
         }
     }
 
