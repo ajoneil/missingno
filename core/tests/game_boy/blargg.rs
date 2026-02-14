@@ -133,15 +133,11 @@ fn halt_bug() {
     run_blargg_screen_test("blargg/halt_bug.gb", "blargg/halt_bug-dmg-cgb.png", 1200);
 }
 
-// Interrupt timing (screen-only, no serial output — uses screenshot comparison)
-#[test]
-fn interrupt_time() {
-    run_blargg_screen_test(
-        "blargg/interrupt_time/interrupt_time.gb",
-        "blargg/interrupt_time/interrupt_time-dmg.png",
-        1200,
-    );
-}
+// interrupt_time — removed. This is a CGB-only test (.define REQUIRE_CGB 1)
+// that tests interrupt timing at both normal and double CPU speed. On DMG
+// hardware the ROM immediately displays "Failed" and halts. Matching that
+// failure screenshot tests nothing about emulation accuracy.
+// See receipts/research/systems/game-boy/testing/test-rom-reliability.md
 
 // DMG sound — individual sub-tests (cart RAM result, not serial)
 fn run_dmg_sound_single(name: &str, timeout_frames: u32) {
