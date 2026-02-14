@@ -53,10 +53,30 @@ Before finalizing, check each element of your design against these questions:
 4. **Can a reader understand the hardware from the code?** Read your proposed enum variants and match arms as if you didn't know the hardware. Do they tell a story? `SpriteWait { advancing BG fetcher } → SpriteDataFetch { reading tile data }` tells a story. `bg_wait_dots: u8` does not.
 5. **Does the design handle edge cases through the model?** The strongest test of a good hardware model is that edge cases (sprites at X=0, window reactivation, SCX scroll) are handled by the same state machine as the normal case — no special-case branches needed. If your design has special cases, ask whether a more faithful model would eliminate them.
 
+## Output
+
+Write the design to a receipt file. The location depends on context:
+
+**When called from an investigation:** Write to the investigation's folder:
+```
+receipts/investigations/<session>/design.md
+```
+
+**When called standalone:** Write to the designs receipt folder:
+```
+receipts/designs/<YYYY-MM-DD>-<short-name>.md
+```
+
+Use a descriptive kebab-case name (e.g. `sprite-fetch-state-machine`, `window-reactivation-zero-pixel`).
+
 ## Report format
 
-```
-## Design
+The receipt file must use this format:
+
+```markdown
+# Design: <short title>
+
+## Summary
 
 <High-level description of the approach — what hardware behavior is being modeled
 and how the code structure reflects it. 2-3 sentences.>
@@ -98,8 +118,9 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 
 **You MUST continue working after writing your report.** The design phase is over; now resume as the caller. Concretely:
 
-1. Write your design report in the format above.
-2. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
-3. **Immediately continue the caller's workflow** — update summary.md with the design, and proceed to implementation.
+1. Write the design report to the receipt file.
+2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file.
+3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
+4. **Immediately continue the caller's workflow** — proceed to implementation.
 
 Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
