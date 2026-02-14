@@ -40,6 +40,62 @@ pub enum Register {
     Sprite1Palette,
 }
 
+/// How the PPU observes a mid-rendering CPU write to this register.
+///
+/// On hardware, the CPU write pulse spans the first 3 of 8 sub-dot
+/// phases per M-cycle. The PPU may sample the register before the
+/// DFF latches the new value, observing the old value for 1-2 extra
+/// dots. Some registers also exhibit a 1-dot transitional value
+/// where old and new bits are OR'd together.
+enum WriteConflict {
+    /// PPU sees the new value immediately (0 dots early).
+    /// Used by: WY, WX, LYC, STAT (sampled at or after the DFF latch point).
+    Immediate,
+
+    /// PPU sees the old value for 1 extra dot, then the new value.
+    /// Used by: SCY (sampled 1 dot before the DFF latch point).
+    OneDotEarly,
+
+    /// PPU sees the old value for 2 extra dots, then the new value.
+    /// Used by: SCX (sampled 2 dots before the DFF latch point).
+    TwoDotsEarly,
+
+    /// PPU sees a transitional `old | new` value for 1 dot, then the
+    /// new value, starting 2 dots early.
+    /// Used by: BGP, OBP0, OBP1 (palette registers use DFF8 cells
+    /// whose master-slave transition is visible through the pixel pipeline).
+    PaletteDmg,
+
+    /// PPU sees a transitional value for 1 dot (old OR'd with the
+    /// BG_EN bit of the new value), then the new value, starting
+    /// 2 dots early.
+    /// Used by: LCDC (similar master-slave visibility as palettes,
+    /// but only the BG_EN bit propagates through the master stage).
+    LcdcDmg,
+}
+
+impl Register {
+    fn write_conflict(&self) -> WriteConflict {
+        match self {
+            Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
+                WriteConflict::PaletteDmg
+            }
+
+            Register::Control => WriteConflict::LcdcDmg,
+
+            Register::BackgroundViewportX => WriteConflict::TwoDotsEarly,
+
+            Register::BackgroundViewportY => WriteConflict::OneDotEarly,
+
+            Register::WindowY
+            | Register::WindowX
+            | Register::InterruptOnScanline
+            | Register::Status
+            | Register::CurrentScanline => WriteConflict::Immediate,
+        }
+    }
+}
+
 struct BackgroundViewportPosition {
     x: u8,
     y: u8,
@@ -76,6 +132,12 @@ pub struct Video {
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
     ly_eq_lyc: bool,
     stat_line_was_high: bool,
+    /// Dots the PPU was fast-forwarded during a write conflict.
+    /// Decremented by `tcycle()` instead of ticking the PPU.
+    catch_up_remaining: u8,
+    /// Screen completed during write-conflict catch-up, delivered on
+    /// the next `tcycle()` call.
+    catch_up_screen: Option<Screen>,
 }
 
 pub struct Window {
@@ -102,6 +164,8 @@ impl Video {
             },
             ly_eq_lyc: true,
             stat_line_was_high: false,
+            catch_up_remaining: 0,
+            catch_up_screen: None,
         }
     }
 
@@ -144,7 +208,20 @@ impl Video {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    /// Advance the PPU by one dot during write conflict catch-up.
+    /// Does NOT run interrupt edge detection or LYC comparison —
+    /// those only fire at M-cycle boundaries.
+    fn catch_up_dot(&mut self) {
+        if let Some(ppu) = self.ppu.as_mut() {
+            if let Some(screen) = ppu.tcycle(&self.ppu_accessible) {
+                self.catch_up_screen = Some(screen);
+            }
+            self.catch_up_remaining += 1;
+        }
+    }
+
+    /// Write a value directly to the register backing store.
+    fn write_register_immediate(&mut self, register: &Register, value: u8) {
         match register {
             Register::Control => {
                 self.ppu_accessible.control = Control::new(ControlFlags::from_bits_retain(value))
@@ -161,6 +238,65 @@ impl Video {
             Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0 = PaletteMap(value),
             Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1 = PaletteMap(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
+        }
+    }
+
+    /// Returns true if the PPU is actively drawing pixels (Mode 3),
+    /// meaning register writes may conflict with PPU reads.
+    fn ppu_is_drawing(&self) -> bool {
+        matches!(&self.ppu, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
+    }
+
+    pub fn write_register(&mut self, register: Register, value: u8) {
+        if !self.ppu_is_drawing() {
+            self.write_register_immediate(&register, value);
+            return;
+        }
+
+        match register.write_conflict() {
+            WriteConflict::Immediate => {
+                self.write_register_immediate(&register, value);
+            }
+
+            WriteConflict::OneDotEarly => {
+                // PPU sees old value for 1 extra dot, then new value
+                self.catch_up_dot();
+                self.write_register_immediate(&register, value);
+            }
+
+            WriteConflict::TwoDotsEarly => {
+                // PPU sees old value for 2 extra dots, then new value
+                self.catch_up_dot();
+                self.catch_up_dot();
+                self.write_register_immediate(&register, value);
+            }
+
+            WriteConflict::PaletteDmg => {
+                // PPU sees old value for 1 dot, then old|new for 1 dot,
+                // then final value
+                let old = match &register {
+                    Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
+                    Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
+                    Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
+                    _ => unreachable!(),
+                };
+                self.catch_up_dot();
+                self.write_register_immediate(&register, old | value);
+                self.catch_up_dot();
+                self.write_register_immediate(&register, value);
+            }
+
+            WriteConflict::LcdcDmg => {
+                // PPU sees old value for 1 dot, then old|(new & BG_EN)
+                // for 1 dot, then final value
+                let old = self.ppu_accessible.control.bits();
+                let transitional =
+                    old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
+                self.catch_up_dot();
+                self.write_register_immediate(&register, transitional);
+                self.catch_up_dot();
+                self.write_register_immediate(&register, value);
+            }
         }
     }
 
@@ -391,7 +527,15 @@ impl Video {
                 self.ppu = Some(PixelProcessingUnit::new_lcd_on());
             }
 
-            if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
+            // If the PPU was fast-forwarded during a write conflict,
+            // skip this dot to keep the total dot count correct.
+            if self.catch_up_remaining > 0 {
+                self.catch_up_remaining -= 1;
+                if let Some(screen) = self.catch_up_screen.take() {
+                    result.screen = Some(screen);
+                    result.request_vblank = true;
+                }
+            } else if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
                 result.screen = Some(screen);
                 result.request_vblank = true;
             }
