@@ -57,13 +57,6 @@ impl Dma {
         })
     }
 
-    /// Returns the source address of the byte currently being transferred.
-    /// Only valid when `is_active_on_bus()` returns `Some`.
-    pub fn conflicting_address(&self) -> u16 {
-        let t = self.transfer.as_ref().unwrap();
-        t.source + t.byte_index as u16
-    }
-
     /// Advance DMA by one M-cycle. Returns the (source address,
     /// destination offset) pair when a byte should be transferred.
     pub fn mcycle(&mut self) -> Option<(u16, u8)> {
