@@ -32,6 +32,12 @@ cargo clippy                                 # Lint
 cargo fmt                                    # Format
 ```
 
+## Emulation Philosophy
+
+- **Hardware fidelity**: Model the hardware as closely as possible so correct behavior emerges naturally. Avoid hacks and special-case workarounds — if something needs a hack to work, the underlying model is wrong.
+- **Code as documentation**: The code should teach the reader how the hardware works. Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself, not from comments. Strike a balance between clarity and jargon; assume the reader is a competent programmer but not necessarily a domain expert in the specific hardware.
+- **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
+
 ## Architecture
 
 Three layers with strict separation — core emulation has no UI dependencies:
