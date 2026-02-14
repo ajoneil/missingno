@@ -12,12 +12,6 @@ use iced::{
 };
 use replace_with::replace_with_or_abort;
 
-use crate::game_boy::{
-    GameBoy,
-    cartridge::Cartridge,
-    joypad::{self, Button},
-    video::palette::PaletteChoice,
-};
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use core::{
@@ -25,6 +19,12 @@ use core::{
     icons::{self, Icon},
     sizes::{l, s, xl},
     text,
+};
+use missingno_core::game_boy::{
+    GameBoy,
+    cartridge::Cartridge,
+    joypad::{self, Button},
+    video::palette::PaletteChoice,
 };
 
 mod action_bar;

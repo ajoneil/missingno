@@ -10,37 +10,35 @@ use iced::{
     },
 };
 
-use crate::{
-    app::{
+use crate::app::{
+    self,
+    core::{
+        buttons, fonts,
+        icons::{self, Icon},
+        sizes::{m, s},
+        text,
+    },
+    debugger::{
         self,
-        core::{
-            buttons, fonts,
-            icons::{self, Icon},
-            sizes::{m, s},
-            text,
+        audio::AudioPane,
+        breakpoints::{self, BreakpointsPane},
+        cpu::CpuPane,
+        instructions::InstructionsPane,
+        playback::PlaybackPane,
+        screen::{self, ScreenPane},
+        video::{
+            VideoPane,
+            sprites::{self, SpritesPane},
+            tile_maps::TileMapPane,
+            tiles::TilesPane,
         },
-        debugger::{
-            self,
-            audio::AudioPane,
-            breakpoints::{self, BreakpointsPane},
-            cpu::CpuPane,
-            instructions::InstructionsPane,
-            playback::PlaybackPane,
-            screen::{self, ScreenPane},
-            video::{
-                VideoPane,
-                sprites::{self, SpritesPane},
-                tile_maps::TileMapPane,
-                tiles::TilesPane,
-            },
-        },
-        screen::ScreenView,
     },
-    debugger::Debugger,
-    game_boy::video::{
-        palette::{Palette, PaletteChoice},
-        tile_maps::TileMapId,
-    },
+    screen::ScreenView,
+};
+use missingno_core::debugger::Debugger;
+use missingno_core::game_boy::video::{
+    palette::{Palette, PaletteChoice},
+    tile_maps::TileMapId,
 };
 
 #[derive(Debug, Clone)]

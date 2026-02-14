@@ -4,21 +4,19 @@ use iced::{
     widget::{Column, button, column, container, pane_grid, row, scrollable, text, text_input},
 };
 
-use crate::{
-    app::{
-        self,
-        core::{
-            fonts,
-            icons::{self},
-            sizes::s,
-        },
-        debugger::{
-            self,
-            panes::{self, DebuggerPane, pane, title_bar},
-        },
+use crate::app::{
+    self,
+    core::{
+        fonts,
+        icons::{self},
+        sizes::s,
     },
-    debugger::Debugger,
+    debugger::{
+        self,
+        panes::{self, DebuggerPane, pane, title_bar},
+    },
 };
+use missingno_core::debugger::Debugger;
 
 pub struct BreakpointsPane {
     breakpoint_input: String,

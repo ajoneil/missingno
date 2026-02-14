@@ -3,16 +3,14 @@ use iced::{
     widget::{checkbox, column, row, text},
 };
 
-use crate::{
-    app::Message,
-    game_boy::audio::channels::{
-        Enabled,
-        noise::NoiseChannel,
-        pulse::PulseChannel,
-        pulse_sweep::PulseSweepChannel,
-        registers::{EnvelopeDirection, VolumeAndEnvelope},
-        wave::WaveChannel,
-    },
+use crate::app::Message;
+use missingno_core::game_boy::audio::channels::{
+    Enabled,
+    noise::NoiseChannel,
+    pulse::PulseChannel,
+    pulse_sweep::PulseSweepChannel,
+    registers::{EnvelopeDirection, VolumeAndEnvelope},
+    wave::WaveChannel,
 };
 
 pub fn ch1(channel: &PulseSweepChannel) -> Element<'static, Message> {

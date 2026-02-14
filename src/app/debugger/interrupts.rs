@@ -3,13 +3,11 @@ use iced::{
     widget::{checkbox, column, row, text},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::{m, s, xs},
-    },
-    game_boy::GameBoy,
+use crate::app::{
+    Message,
+    core::sizes::{m, s, xs},
 };
+use missingno_core::game_boy::GameBoy;
 
 pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
@@ -28,21 +26,21 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(crate::game_boy::interrupts::Interrupt::Joypad)
+                    .enabled(missingno_core::game_boy::interrupts::Interrupt::Joypad)
             )
             .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(crate::game_boy::interrupts::Interrupt::Serial)
+                    .enabled(missingno_core::game_boy::interrupts::Interrupt::Serial)
             )
             .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(crate::game_boy::interrupts::Interrupt::Timer)
+                    .enabled(missingno_core::game_boy::interrupts::Interrupt::Timer)
             )
             .label("Timer")
             .width(Length::FillPortion(2)),
@@ -51,14 +49,14 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(crate::game_boy::interrupts::Interrupt::VideoStatus)
+                    .enabled(missingno_core::game_boy::interrupts::Interrupt::VideoStatus)
             )
             .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
+                    .enabled(missingno_core::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
             .label("Between Frames")
             .width(Length::FillPortion(4)),
@@ -75,21 +73,21 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(crate::game_boy::interrupts::Interrupt::Joypad)
+                    .requested(missingno_core::game_boy::interrupts::Interrupt::Joypad)
             )
             .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(crate::game_boy::interrupts::Interrupt::Serial)
+                    .requested(missingno_core::game_boy::interrupts::Interrupt::Serial)
             )
             .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(crate::game_boy::interrupts::Interrupt::Timer)
+                    .requested(missingno_core::game_boy::interrupts::Interrupt::Timer)
             )
             .label("Timer")
             .width(Length::FillPortion(2)),
@@ -98,14 +96,14 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(crate::game_boy::interrupts::Interrupt::VideoStatus)
+                    .requested(missingno_core::game_boy::interrupts::Interrupt::VideoStatus)
             )
             .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(crate::game_boy::interrupts::Interrupt::VideoBetweenFrames)
+                    .requested(missingno_core::game_boy::interrupts::Interrupt::VideoBetweenFrames)
             )
             .label("Between Frames")
             .width(Length::FillPortion(4)),

@@ -1,3 +1,6 @@
+[workspace]
+members = ["core"]
+
 [package]
 name = "missingno"
 version = "26.2.0"
@@ -10,7 +13,7 @@ name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
-bitflags = "2.10.0"
+missingno-core = { path = "core" }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
@@ -22,19 +25,23 @@ iced = { version = "0.14.0", features = [
 ] }
 replace_with = "0.1.8"
 rtrb = "0.3"
+rgb = { workspace = true }
 rfd = "0.17.2"
-rgb = "0.8.52"
 gilrs = "0.11"
 smol = "2"
 jiff = "0.2"
 dirs = "6"
 open = "5"
 
-[dev-dependencies]
-png = "0.17"
+[workspace.dependencies]
+bitflags = "2.10.0"
+rgb = "0.8.52"
 
 [profile.dev]
 opt-level = 0
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[profile.dev.package.missingno-core]
+opt-level = 1

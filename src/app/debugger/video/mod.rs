@@ -3,14 +3,12 @@ use iced::{
     widget::{column, pane_grid, radio, row, rule, scrollable},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::m,
-        debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
-    },
-    game_boy::video::{Video, palette::Palette, ppu::Mode},
+use crate::app::{
+    Message,
+    core::sizes::m,
+    debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
+use missingno_core::game_boy::video::{Video, palette::Palette, ppu::Mode};
 
 use background_and_window::background_and_window;
 use tile_maps::tile_address_mode;

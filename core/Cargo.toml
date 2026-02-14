@@ -1,0 +1,13 @@
+[package]
+name = "missingno-core"
+version = "26.2.0"
+authors = ["Andrew O'Neil <andy@andyofniall.net>"]
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+bitflags = { workspace = true }
+rgb = { workspace = true }
+
+[dev-dependencies]
+png = "0.17"

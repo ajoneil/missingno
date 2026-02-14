@@ -6,21 +6,19 @@ use iced::{
     widget::{Button, container, pick_list, row, toggler},
 };
 
-use crate::{
-    app::{
-        self, App, Game, LoadedGame,
-        core::{
-            buttons,
-            sizes::{m, s, xl},
-        },
-        debugger::{
-            self,
-            panes::{self, DebuggerPane},
-        },
-        load,
+use crate::app::{
+    self, App, Game, LoadedGame,
+    core::{
+        buttons,
+        sizes::{m, s, xl},
     },
-    game_boy::video::palette::PaletteChoice,
+    debugger::{
+        self,
+        panes::{self, DebuggerPane},
+    },
+    load,
 };
+use missingno_core::game_boy::video::palette::PaletteChoice;
 
 #[derive(Debug, Clone)]
 pub enum Message {

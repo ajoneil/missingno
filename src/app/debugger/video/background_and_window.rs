@@ -3,14 +3,12 @@ use iced::{
     widget::{checkbox, column, row, text},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::{m, s},
-        debugger::video::{palette::palette4, tile_maps::tile_map_choice},
-    },
-    game_boy::video::{Video, palette::Palette},
+use crate::app::{
+    Message,
+    core::sizes::{m, s},
+    debugger::video::{palette::palette4, tile_maps::tile_map_choice},
 };
+use missingno_core::game_boy::video::{Video, palette::Palette};
 
 pub fn background_and_window(video: &Video, palette: &Palette) -> Element<'static, Message> {
     column![

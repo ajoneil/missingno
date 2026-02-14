@@ -4,14 +4,12 @@ use iced::{
     widget::{container, row},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::{m, s, xs},
-        screen::iced_color,
-    },
-    game_boy::video::palette::{Palette, PaletteIndex, PaletteMap},
+use crate::app::{
+    Message,
+    core::sizes::{m, s, xs},
+    screen::iced_color,
 };
+use missingno_core::game_boy::video::palette::{Palette, PaletteIndex, PaletteMap};
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(

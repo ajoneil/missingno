@@ -4,17 +4,15 @@ use iced::{
     widget::{column, pane_grid, row, scrollable, text},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::m,
-        debugger::{
-            panes::{DebuggerPane, pane, title_bar},
-            video::tile_atlas::tile_block_atlas,
-        },
+use crate::app::{
+    Message,
+    core::sizes::m,
+    debugger::{
+        panes::{DebuggerPane, pane, title_bar},
+        video::tile_atlas::tile_block_atlas,
     },
-    game_boy::video::{Video, palette::Palette, tiles::TileBlockId},
 };
+use missingno_core::game_boy::video::{Video, palette::Palette, tiles::TileBlockId};
 
 pub struct TilesPane;
 

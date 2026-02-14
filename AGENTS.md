@@ -107,7 +107,8 @@ cargo run --release                          # Build and run
 cargo run --release -- path/to/rom.gb        # Load a ROM
 cargo run --release -- path/to/rom.gb --debugger  # Load with debugger
 cargo check                                  # Type check
-cargo test                                   # Run tests
+cargo test -p missingno-core                 # Run core tests (fast, no GUI deps)
+cargo test                                   # Run all workspace tests
 cargo clippy                                 # Lint
 cargo fmt                                    # Format
 ```
@@ -120,20 +121,22 @@ cargo fmt                                    # Format
 
 ## Architecture
 
-Three layers with strict separation — core emulation has no UI dependencies:
+The project is a Cargo workspace with two crates:
 
-- **`src/game_boy/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns `bool` for whether a new video frame was produced.
-- **`src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, and disassembly.
-- **`src/app/`** — Iced 0.14 GUI. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer.
+- **`core/`** (`missingno-core`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
+  - **`core/src/game_boy/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns `bool` for whether a new video frame was produced.
+  - **`core/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, and disassembly.
+  - **`core/tests/`** — Integration tests (ROM-based accuracy tests).
+- **Root crate** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `src/app/`.
 
 ### Instruction Execution
 
-`GameBoy::step()` in `src/game_boy/execute.rs` runs one instruction in two phases:
+`GameBoy::step()` in `core/src/game_boy/execute.rs` runs one instruction in two phases:
 
 1. **Fetch/decode**: Reads the opcode byte, ticks hardware, then reads operand bytes one at a time (ticking hardware after each). `operand_count()` determines byte count from the opcode alone. The buffered bytes are passed to `Instruction::decode()`.
 2. **Process**: A `Processor` state machine (`src/game_boy/cpu/mcycle/`) yields one `BusAction` per M-cycle for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware.
 
-The `Processor` is split across three files:
+The `Processor` is split across three files in `core/src/game_boy/cpu/mcycle/`:
 - `mod.rs` — `Phase` enum, `BusAction` enum, `Processor` struct and `next()` method
 - `build.rs` — Constructs the `Phase` for each instruction type
 - `apply.rs` — Pure CPU mutations (ALU, flags, DAA, etc.)
@@ -142,13 +145,13 @@ The `Processor` is split across three files:
 
 - **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently.
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
-- **Enum-based MBC dispatch**: `Mbc` enum in `src/game_boy/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
+- **Enum-based MBC dispatch**: `Mbc` enum in `core/src/game_boy/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
 - **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
 - **Post-boot register initialization**: The emulator skips the boot ROM. Initial hardware state must match DMG post-boot values (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`).
-- **Serialization**: Uses `nanoserde` with RON format for save states, config (`~/.config/missingno/settings.ron`, `recent.ron`), and input recordings.
+- **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
 - **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.
 
 ### Debugger
 
 - **Pane system**: `src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants. Each pane is a separate module with a struct (e.g. `CpuPane`, `PlaybackPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum with `Into<app::Message>` impl for routing through the nested message chain (`PaneMessage` → `panes::Message` → `debugger::Message` → `app::Message`). Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
-- **Input recording**: `src/game_boy/recording.rs` defines the `Recording` data model (ROM header + initial state + input events), serialized as RON to `.mnrec` files. Recording state (`ActiveRecording`) lives in `src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`src/app/debugger/playback.rs`) provides the UI.
+- **Input recording**: `core/src/game_boy/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`src/app/debugger/playback.rs`) provides the UI.

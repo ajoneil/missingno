@@ -1,13 +1,11 @@
 use iced::widget::{column, pane_grid, row, rule, slider, text};
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::{l, s},
-        debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
-    },
-    game_boy::audio::Audio,
+use crate::app::{
+    Message,
+    core::sizes::{l, s},
+    debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
+use missingno_core::game_boy::audio::Audio;
 
 mod channels;
 

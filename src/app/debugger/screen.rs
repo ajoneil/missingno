@@ -3,17 +3,15 @@ use iced::{
     widget::{container, pane_grid, responsive, shader},
 };
 
-use crate::{
-    app::{
+use crate::app::{
+    self,
+    debugger::{
         self,
-        debugger::{
-            self,
-            panes::{self, DebuggerPane, pane, title_bar},
-        },
-        screen::{ScreenDisplay, ScreenView},
+        panes::{self, DebuggerPane, pane, title_bar},
     },
-    game_boy::video::palette::PaletteChoice,
+    screen::{ScreenDisplay, ScreenView},
 };
+use missingno_core::game_boy::video::palette::PaletteChoice;
 
 pub struct ScreenPane {
     screen_view: ScreenView,

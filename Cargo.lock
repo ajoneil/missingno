@@ -2017,7 +2017,6 @@ dependencies = [
 name = "missingno"
 version = "26.2.0"
 dependencies = [
- "bitflags 2.10.0",
  "bytemuck",
  "clap",
  "cpal",
@@ -2025,13 +2024,22 @@ dependencies = [
  "gilrs",
  "iced",
  "jiff",
+ "missingno-core",
  "open",
- "png",
  "replace_with",
  "rfd",
  "rgb",
  "rtrb",
  "smol",
+]
+
+[[package]]
+name = "missingno-core"
+version = "26.2.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "png",
+ "rgb",
 ]
 
 [[package]]

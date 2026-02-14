@@ -6,21 +6,19 @@ use iced::{
     widget::{Column, button, container, pane_grid, row, text},
 };
 
-use crate::{
-    app::{
-        self,
-        core::{
-            fonts, icons,
-            sizes::{m, s},
-        },
-        debugger::{
-            self,
-            panes::{DebuggerPane, pane, title_bar},
-        },
+use crate::app::{
+    self,
+    core::{
+        fonts, icons,
+        sizes::{m, s},
     },
-    debugger::instructions::InstructionsIterator,
-    game_boy::{MemoryMapped, cpu::instructions::Instruction},
+    debugger::{
+        self,
+        panes::{DebuggerPane, pane, title_bar},
+    },
 };
+use missingno_core::debugger::instructions::InstructionsIterator;
+use missingno_core::game_boy::{MemoryMapped, cpu::instructions::Instruction};
 
 pub struct InstructionsPane;
 

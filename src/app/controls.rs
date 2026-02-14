@@ -6,7 +6,8 @@ use iced::{
     stream,
 };
 
-use crate::{app, game_boy::joypad};
+use crate::app;
+use missingno_core::game_boy::joypad;
 
 pub fn event_handler(
     event: Event,

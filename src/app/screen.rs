@@ -1,7 +1,7 @@
 use iced::widget::shader;
 use rgb::RGB8;
 
-use crate::game_boy::{
+use missingno_core::game_boy::{
     sgb::SgbRenderData,
     video::{
         palette::{Palette, PaletteChoice},
@@ -109,7 +109,7 @@ pub fn screen_to_pixels(
     palette: &Palette,
     sgb: Option<&SgbRenderData>,
 ) -> Vec<u8> {
-    use crate::game_boy::sgb::MaskMode;
+    use missingno_core::game_boy::sgb::MaskMode;
 
     let mut pixels =
         Vec::with_capacity(screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4);

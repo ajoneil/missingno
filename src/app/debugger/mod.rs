@@ -2,20 +2,18 @@ use std::time::Duration;
 
 use iced::{Element, Subscription, Task, time, widget::container};
 
-use crate::{
-    app::{
-        self,
-        core::sizes::m,
-        emulator::Emulator,
-        screen::{GameBoyScreen, ScreenView, SgbScreen},
-    },
-    game_boy::{
-        GameBoy,
-        joypad::Button,
-        recording::{Input, Recording},
-        sgb::MaskMode,
-        video::palette::PaletteChoice,
-    },
+use crate::app::{
+    self,
+    core::sizes::m,
+    emulator::Emulator,
+    screen::{GameBoyScreen, ScreenView, SgbScreen},
+};
+use missingno_core::game_boy::{
+    GameBoy,
+    joypad::Button,
+    recording::{Input, Recording},
+    sgb::MaskMode,
+    video::palette::PaletteChoice,
 };
 
 use panes::DebuggerPanes;
@@ -58,7 +56,7 @@ struct ActivePlayback {
 }
 
 pub struct Debugger {
-    debugger: crate::debugger::Debugger,
+    debugger: missingno_core::debugger::Debugger,
     panes: DebuggerPanes,
     running: bool,
     frame: u64,
@@ -70,7 +68,7 @@ pub struct Debugger {
 impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
-            debugger: crate::debugger::Debugger::new(game_boy),
+            debugger: missingno_core::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::new(),
             running: false,
             frame: 0,
@@ -82,7 +80,7 @@ impl Debugger {
 
     pub fn from_emulator(game_boy: GameBoy, screen_view: ScreenView) -> Self {
         Self {
-            debugger: crate::debugger::Debugger::new(game_boy),
+            debugger: missingno_core::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
             frame: 0,
@@ -111,7 +109,7 @@ impl Debugger {
 
     fn screen_update_task(
         &self,
-        screen: Option<crate::game_boy::video::screen::Screen>,
+        screen: Option<missingno_core::game_boy::video::screen::Screen>,
     ) -> Task<app::Message> {
         let video_enabled = self.debugger.game_boy().video().control().video_enabled();
         let display = if let Some(sgb) = self.debugger.game_boy().sgb() {

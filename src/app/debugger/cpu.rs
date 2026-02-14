@@ -7,24 +7,22 @@ use iced::{
     },
 };
 
-use crate::{
-    app::{
-        self,
-        core::{
-            fonts,
-            sizes::{m, s},
-        },
-        debugger::{
-            interrupts::interrupts,
-            panes::{DebuggerPane, checkbox_title_bar, pane},
-        },
+use crate::app::{
+    self,
+    core::{
+        fonts,
+        sizes::{m, s},
     },
-    debugger::Debugger,
-    game_boy::cpu::{
-        Cpu,
-        flags::Flags,
-        registers::{Register8, Register16},
+    debugger::{
+        interrupts::interrupts,
+        panes::{DebuggerPane, checkbox_title_bar, pane},
     },
+};
+use missingno_core::debugger::Debugger;
+use missingno_core::game_boy::cpu::{
+    Cpu,
+    flags::Flags,
+    registers::{Register8, Register16},
 };
 
 pub struct CpuPane;

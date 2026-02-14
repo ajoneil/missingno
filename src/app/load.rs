@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::{
-    app::{self, App, Game, LoadedGame},
-    game_boy::{GameBoy, cartridge::Cartridge},
-};
+use crate::app::{self, App, Game, LoadedGame};
+use missingno_core::game_boy::{GameBoy, cartridge::Cartridge};
 
 #[derive(Debug, Clone)]
 pub enum Message {

@@ -5,25 +5,23 @@ use iced::{
     widget::{Row, column, pane_grid, radio, rich_text, row, scrollable, span, toggler},
 };
 
-use crate::{
-    app::{
-        self,
-        core::{
-            icons::{self, Icon},
-            sizes::{l, m, s, xs},
-            text,
-        },
-        debugger::{
-            panes::{self, DebuggerPane, checkbox_title_bar, pane},
-            video::{palette::palette3, tile_widget::tile_flip},
-        },
+use crate::app::{
+    self,
+    core::{
+        icons::{self, Icon},
+        sizes::{l, m, s, xs},
+        text,
     },
-    game_boy::video::{
-        Video,
-        palette::Palette,
-        sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
-        tiles::{TileAddressMode, TileIndex},
+    debugger::{
+        panes::{self, DebuggerPane, checkbox_title_bar, pane},
+        video::{palette::palette3, tile_widget::tile_flip},
     },
+};
+use missingno_core::game_boy::video::{
+    Video,
+    palette::Palette,
+    sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
+    tiles::{TileAddressMode, TileIndex},
 };
 
 pub struct SpritesPane {

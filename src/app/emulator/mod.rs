@@ -7,13 +7,13 @@ use iced::{
     widget::{button, container, mouse_area, responsive, shader, stack, svg},
 };
 
-use crate::{
-    app::{
-        self,
-        core::icons::{self, Icon},
-        screen::{GameBoyScreen, ScreenView, SgbScreen},
-    },
-    game_boy::{GameBoy, joypad::Button, sgb::MaskMode, video::palette::PaletteChoice},
+use crate::app::{
+    self,
+    core::icons::{self, Icon},
+    screen::{GameBoyScreen, ScreenView, SgbScreen},
+};
+use missingno_core::game_boy::{
+    GameBoy, joypad::Button, sgb::MaskMode, video::palette::PaletteChoice,
 };
 
 pub struct Emulator {

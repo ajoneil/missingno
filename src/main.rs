@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use clap::Parser;
 
 mod app;
-mod debugger;
-mod game_boy;
 
 #[derive(Parser)]
 struct Args {

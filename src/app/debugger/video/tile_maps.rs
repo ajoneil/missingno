@@ -4,15 +4,13 @@ use iced::{
     widget::{container, pane_grid, radio, row, scrollable, text},
 };
 
-use crate::{
-    app::{
-        Message,
-        core::sizes::m,
-        debugger::panes::{DebuggerPane, pane, title_bar},
-    },
-    game_boy::video::{
-        Video, control::Control, palette::Palette, tile_maps::TileMapId, tiles::TileAddressMode,
-    },
+use crate::app::{
+    Message,
+    core::sizes::m,
+    debugger::panes::{DebuggerPane, pane, title_bar},
+};
+use missingno_core::game_boy::video::{
+    Video, control::Control, palette::Palette, tile_maps::TileMapId, tiles::TileAddressMode,
 };
 
 use super::tile_atlas::tile_map_atlas;
