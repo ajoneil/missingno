@@ -132,12 +132,19 @@ pub struct Video {
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
     ly_eq_lyc: bool,
     stat_line_was_high: bool,
-    /// Dots the PPU was fast-forwarded during a write conflict.
-    /// Decremented by `tcycle()` instead of ticking the PPU.
-    catch_up_remaining: u8,
-    /// Screen completed during write-conflict catch-up, delivered on
-    /// the next `tcycle()` call.
-    catch_up_screen: Option<Screen>,
+    /// PPU dots accumulated but not yet processed. When
+    /// `accumulating` is true, T-cycle ticks increment this counter
+    /// instead of advancing the PPU, deferring dots for write
+    /// conflict splitting.
+    pending_dots: u8,
+    /// When true, `tcycle()` accumulates dots instead of ticking the
+    /// PPU. Set by the execute loop when it knows a PPU register
+    /// write is coming and needs deferred dots for conflict splitting.
+    accumulating: bool,
+
+    /// Screen completed during a deferred PPU flush, delivered on
+    /// the next `tcycle()` return.
+    pending_screen: Option<Screen>,
 }
 
 pub struct Window {
@@ -164,8 +171,9 @@ impl Video {
             },
             ly_eq_lyc: true,
             stat_line_was_high: false,
-            catch_up_remaining: 0,
-            catch_up_screen: None,
+            pending_dots: 0,
+            accumulating: false,
+            pending_screen: None,
         }
     }
 
@@ -208,16 +216,19 @@ impl Video {
         }
     }
 
-    /// Advance the PPU by one dot during write conflict catch-up.
-    /// Does NOT run interrupt edge detection or LYC comparison —
-    /// those only fire at M-cycle boundaries.
-    fn catch_up_dot(&mut self) {
+    /// Flush `count` pending PPU dots. Ticks the PPU that many times,
+    /// stashing any completed screen. Does NOT run interrupt edge
+    /// detection or LYC comparison — those only run at M-cycle
+    /// boundaries in the main `tcycle()` path.
+    fn flush_dots(&mut self, count: u8) {
         if let Some(ppu) = self.ppu.as_mut() {
-            if let Some(screen) = ppu.tcycle(&self.ppu_accessible) {
-                self.catch_up_screen = Some(screen);
+            for _ in 0..count {
+                if let Some(screen) = ppu.tcycle(&self.ppu_accessible) {
+                    self.pending_screen = Some(screen);
+                }
             }
-            self.catch_up_remaining += 1;
         }
+        self.pending_dots -= count;
     }
 
     /// Write a value directly to the register backing store.
@@ -243,59 +254,85 @@ impl Video {
 
     /// Returns true if the PPU is actively drawing pixels (Mode 3),
     /// meaning register writes may conflict with PPU reads.
-    fn ppu_is_drawing(&self) -> bool {
+    pub fn ppu_is_drawing(&self) -> bool {
         matches!(&self.ppu, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
     }
 
     pub fn write_register(&mut self, register: Register, value: u8) {
-        if !self.ppu_is_drawing() {
+        // Write conflict splitting requires enough deferred dots
+        // (pending_dots >= 5) and the PPU actively drawing (Mode 3).
+        // The execute loop sets accumulating=true for the M-cycle
+        // before a PPU register write, giving 4 deferred dots + 1
+        // from T0 of the write M-cycle = 5 pending at T1.
+        if self.pending_dots < 5 || !self.ppu_is_drawing() {
             self.write_register_immediate(&register, value);
+            // Stop accumulating — the write is done.
+            self.accumulating = false;
             return;
         }
 
+        // Stop accumulating — all pending dots will be flushed during
+        // the split below. After the split, pending_dots is 0 and
+        // normal per-T-cycle ticking resumes.
+        self.accumulating = false;
+
+        // Split pending dots around the register write. With 5 pending
+        // (4 from opcode fetch + 1 from write T0), the split matches
+        // SameBoy's cycle_write advance(pending_cycles - N). Our PPU
+        // position matches SameBoy's (both at the dot before the opcode
+        // fetch), so we flush the same count: 4-N = pending_dots-1-N.
+        //
+        // After the split, flush all remaining pending dots with the
+        // final value so the PPU is caught up before normal ticking.
         match register.write_conflict() {
             WriteConflict::Immediate => {
+                // SameBoy READ_OLD (N=0): advance(4). flush(4).
+                self.flush_dots(self.pending_dots - 1);
                 self.write_register_immediate(&register, value);
+                self.flush_dots(self.pending_dots);
             }
 
             WriteConflict::OneDotEarly => {
-                // PPU sees old value for 1 extra dot, then new value
-                self.catch_up_dot();
+                // SameBoy READ_NEW (N=1): advance(3). flush(3).
+                self.flush_dots(self.pending_dots - 2);
                 self.write_register_immediate(&register, value);
+                self.flush_dots(self.pending_dots);
             }
 
             WriteConflict::TwoDotsEarly => {
-                // PPU sees old value for 2 extra dots, then new value
-                self.catch_up_dot();
-                self.catch_up_dot();
+                // SameBoy SCX_DMG (N=2): advance(2). flush(2).
+                self.flush_dots(self.pending_dots - 3);
                 self.write_register_immediate(&register, value);
+                self.flush_dots(self.pending_dots);
             }
 
             WriteConflict::PaletteDmg => {
-                // PPU sees old value for 1 dot, then old|new for 1 dot,
-                // then final value
+                // SameBoy PALETTE_DMG (N=2): advance(2), write
+                // transitional (old|new), advance(1), write final.
                 let old = match &register {
                     Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
                     Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
                     Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
                     _ => unreachable!(),
                 };
-                self.catch_up_dot();
+                self.flush_dots(self.pending_dots - 3);
                 self.write_register_immediate(&register, old | value);
-                self.catch_up_dot();
+                self.flush_dots(1);
                 self.write_register_immediate(&register, value);
+                self.flush_dots(self.pending_dots);
             }
 
             WriteConflict::LcdcDmg => {
-                // PPU sees old value for 1 dot, then old|(new & BG_EN)
-                // for 1 dot, then final value
+                // SameBoy DMG_LCDC (N=2): same as PALETTE_DMG but
+                // transitional = old | BG_EN bit of new.
                 let old = self.ppu_accessible.control.bits();
                 let transitional =
                     old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
-                self.catch_up_dot();
+                self.flush_dots(self.pending_dots - 3);
                 self.write_register_immediate(&register, transitional);
-                self.catch_up_dot();
+                self.flush_dots(1);
                 self.write_register_immediate(&register, value);
+                self.flush_dots(self.pending_dots);
             }
         }
     }
@@ -512,9 +549,37 @@ impl Video {
                 && self.ly_eq_lyc)
     }
 
-    /// Advance PPU by one dot. Call once per T-cycle. Interrupt edge
-    /// detection only runs on M-cycle boundaries (when `is_mcycle` is true)
-    /// to match hardware behavior.
+    /// Diagnostic: current PPU line and dot counter, if rendering.
+    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
+        self.ppu.as_ref().and_then(|p| p.diag_line_dots())
+    }
+
+    /// Begin accumulating PPU dots instead of ticking. Called by the
+    /// execute loop when it knows a PPU register write is coming and
+    /// needs deferred dots for write conflict splitting.
+    pub fn start_accumulating(&mut self) {
+        self.accumulating = true;
+    }
+
+    /// Stop accumulating and flush all pending dots. Called by the
+    /// execute loop when a tentative accumulation is cancelled (the
+    /// instruction turned out not to write a PPU register).
+    pub fn stop_accumulating_and_flush(&mut self) {
+        self.accumulating = false;
+        if self.pending_dots > 0 {
+            self.flush_dots(self.pending_dots);
+        }
+    }
+
+    /// Advance PPU by one dot. Call once per T-cycle.
+    ///
+    /// When `accumulating` is true, dots are counted but not
+    /// processed — they stay pending for `write_register()` to split
+    /// around a register write. When false, the PPU ticks normally
+    /// (one dot per call).
+    ///
+    /// Interrupt edge detection and LYC comparison only run on
+    /// M-cycle boundaries (when `is_mcycle` is true).
     pub fn tcycle(&mut self, is_mcycle: bool) -> VideoTickResult {
         let mut result = VideoTickResult {
             screen: None,
@@ -527,21 +592,31 @@ impl Video {
                 self.ppu = Some(PixelProcessingUnit::new_lcd_on());
             }
 
-            // If the PPU was fast-forwarded during a write conflict,
-            // skip this dot to keep the total dot count correct.
-            if self.catch_up_remaining > 0 {
-                self.catch_up_remaining -= 1;
-                if let Some(screen) = self.catch_up_screen.take() {
-                    result.screen = Some(screen);
-                    result.request_vblank = true;
-                }
+            if self.accumulating {
+                // Dots are deferred for write conflict splitting.
+                self.pending_dots += 1;
             } else if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
+                // Normal path: tick PPU immediately.
                 result.screen = Some(screen);
                 result.request_vblank = true;
             }
 
             if !is_mcycle {
                 return result;
+            }
+
+            // M-cycle boundary: flush any pending dots and deliver
+            // deferred results. Accumulating boundaries skip the
+            // flush — the execute loop will flush via write_register
+            // or stop_accumulating_and_flush.
+            if !self.accumulating && self.pending_dots > 0 {
+                self.flush_dots(self.pending_dots);
+            }
+
+            // Deliver any screen completed during flush.
+            if let Some(screen) = self.pending_screen.take() {
+                result.screen = Some(screen);
+                result.request_vblank = true;
             }
 
             // Update comparison clock (runs while PPU is on)
@@ -553,6 +628,8 @@ impl Video {
             }
             if self.ppu.is_some() {
                 self.ppu = None;
+                self.pending_dots = 0;
+                self.accumulating = false;
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock

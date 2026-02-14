@@ -552,4 +552,28 @@ impl Processor {
             _ => None,
         }
     }
+
+    /// Returns the target address of the next M-cycle's write, if the
+    /// next M-cycle is a write action. Used by the execute loop to
+    /// start PPU dot accumulation before write M-cycles that target
+    /// PPU registers, enabling write conflict timing.
+    pub fn peek_next_write_address(&self) -> Option<u16> {
+        match &self.phase {
+            Phase::WriteOp { address, .. } if self.step == 0 => Some(*address),
+            Phase::Write16 { address, .. } if self.step == 0 => Some(*address),
+            Phase::Write16 { address, .. } if self.step == 1 => Some(address.wrapping_add(1)),
+            Phase::ReadModifyWrite { address, .. } if self.step == 1 => Some(*address),
+            Phase::Push { sp, .. } if self.step == 1 => Some(sp.wrapping_sub(1)),
+            Phase::Push { sp, .. } if self.step == 2 => Some(sp.wrapping_sub(2)),
+            Phase::CondCall {
+                taken: true, sp, ..
+            } if self.step == 1 => Some(sp.wrapping_sub(1)),
+            Phase::CondCall {
+                taken: true, sp, ..
+            } if self.step == 2 => Some(sp.wrapping_sub(2)),
+            Phase::InterruptDispatch { sp, .. } if self.step == 2 => Some(sp.wrapping_sub(1)),
+            Phase::InterruptDispatch { sp, .. } if self.step == 3 => Some(sp.wrapping_sub(2)),
+            _ => None,
+        }
+    }
 }
