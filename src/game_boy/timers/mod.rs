@@ -1,12 +1,10 @@
-use nanoserde::{DeRon, SerRon};
-
 use crate::game_boy::interrupts::Interrupt;
 use registers::Control;
 pub use registers::Register;
 
 pub mod registers;
 
-#[derive(Clone, SerRon, DeRon)]
+#[derive(Clone)]
 pub struct Timers {
     internal_counter: u16,
     counter: u8,

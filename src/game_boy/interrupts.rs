@@ -1,5 +1,4 @@
 use bitflags::bitflags;
-use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
 #[derive(Debug)]
 pub enum Register {
@@ -41,18 +40,6 @@ bitflags! {
     }
 }
 
-impl SerRon for InterruptFlags {
-    fn ser_ron(&self, _indent_level: usize, state: &mut SerRonState) {
-        self.bits().ser_ron(_indent_level, state);
-    }
-}
-
-impl DeRon for InterruptFlags {
-    fn de_ron(state: &mut DeRonState, input: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
-        Ok(Self::from_bits_retain(u8::de_ron(state, input)?))
-    }
-}
-
 impl Interrupt {
     pub fn vector(&self) -> u16 {
         match self {
@@ -75,7 +62,7 @@ impl Interrupt {
     }
 }
 
-#[derive(Clone, SerRon, DeRon)]
+#[derive(Clone)]
 pub struct Registers {
     pub enabled: InterruptFlags,
     pub requested: InterruptFlags,

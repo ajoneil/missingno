@@ -11,7 +11,7 @@ pub enum Register {
     Control,
 }
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct NoiseChannel {
     pub enabled: Enabled,
     pub volume_and_envelope: VolumeAndEnvelope,
@@ -218,7 +218,7 @@ impl Control {
     }
 }
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct FrequencyAndRandomness(pub u8);
 
 impl FrequencyAndRandomness {

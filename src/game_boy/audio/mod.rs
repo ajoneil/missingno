@@ -27,7 +27,7 @@ const M_CYCLES_PER_SECOND: f32 = 1_048_576.0;
 const M_CYCLES_PER_SAMPLE: f32 = M_CYCLES_PER_SECOND / SAMPLE_RATE;
 const DIV_APU_BIT: u16 = 1 << 12; // Bit 12 of system counter drives frame sequencer
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct Audio {
     pub enabled: bool,
     pub channels: Channels,
@@ -37,9 +37,7 @@ pub struct Audio {
 
     pub prev_div_apu_bit: bool,
     pub frame_sequencer_step: u8,
-    #[nserde(skip)]
     sample_counter: f32,
-    #[nserde(skip)]
     sample_buffer: Vec<(f32, f32)>,
 }
 

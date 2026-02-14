@@ -9,7 +9,7 @@ pub mod pulse_sweep;
 pub mod registers;
 pub mod wave;
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct Channels {
     pub ch1: PulseSweepChannel,
     pub ch2: PulseChannel,
@@ -17,7 +17,7 @@ pub struct Channels {
     pub ch4: NoiseChannel,
 }
 
-#[derive(Copy, Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Copy, Clone)]
 pub struct Enabled {
     pub enabled: bool,
     pub output_left: bool,

@@ -4,7 +4,7 @@ pub enum EnvelopeDirection {
     Increase,
 }
 
-#[derive(Copy, Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Copy, Clone)]
 pub struct WaveformAndInitialLength(pub u8);
 impl WaveformAndInitialLength {
     pub fn waveform(&self) -> u8 {
@@ -16,7 +16,7 @@ impl WaveformAndInitialLength {
     }
 }
 
-#[derive(Copy, Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Copy, Clone)]
 pub struct VolumeAndEnvelope(pub u8);
 
 impl VolumeAndEnvelope {
@@ -68,7 +68,7 @@ impl PeriodHighAndControl {
     }
 }
 
-#[derive(Copy, Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Copy, Clone)]
 pub struct Signed11(pub u16);
 
 impl Signed11 {

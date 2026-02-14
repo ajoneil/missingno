@@ -21,7 +21,7 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct PulseChannel {
     pub enabled: Enabled,
     pub waveform_and_initial_length: WaveformAndInitialLength,

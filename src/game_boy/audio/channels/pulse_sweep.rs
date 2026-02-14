@@ -22,7 +22,7 @@ pub enum Register {
     PeriodHighAndControl,
 }
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct PulseSweepChannel {
     pub enabled: Enabled,
     pub sweep: Sweep,
@@ -283,7 +283,7 @@ pub enum SweepDirection {
     Decreasing,
 }
 
-#[derive(Clone, nanoserde::SerRon, nanoserde::DeRon)]
+#[derive(Clone)]
 pub struct Sweep(pub u8);
 
 impl Sweep {

@@ -1,5 +1,4 @@
 use bitflags::bitflags;
-use nanoserde::{DeRon, DeRonErr, DeRonState, SerRon, SerRonState};
 
 use crate::game_boy::interrupts::Interrupt;
 
@@ -7,7 +6,7 @@ use crate::game_boy::interrupts::Interrupt;
 /// On DMG, this is bit 7 (0x80), giving a base period of 256 T-cycles.
 const CLOCK_BIT: u16 = 0x80;
 
-#[derive(Clone, SerRon, DeRon)]
+#[derive(Clone)]
 pub struct Registers {
     pub data: u8,
     pub control: Control,
@@ -19,7 +18,6 @@ pub struct Registers {
     serial_clock: bool,
     /// Counter value at the previous M-cycle boundary, for edge detection.
     previous_counter: u16,
-    #[nserde(skip)]
     pub output: Vec<u8>,
 }
 
@@ -98,17 +96,5 @@ bitflags! {
         const INTERNAL_CLOCK = 0b00000001;
 
         const _OTHER = !0;
-    }
-}
-
-impl SerRon for Control {
-    fn ser_ron(&self, _indent_level: usize, state: &mut SerRonState) {
-        self.bits().ser_ron(_indent_level, state);
-    }
-}
-
-impl DeRon for Control {
-    fn de_ron(state: &mut DeRonState, input: &mut std::str::Chars<'_>) -> Result<Self, DeRonErr> {
-        Ok(Self::from_bits_retain(u8::de_ron(state, input)?))
     }
 }
