@@ -56,6 +56,27 @@ pub fn run_until_infinite_loop(gb: &mut GameBoy, timeout_frames: u32) -> bool {
     false
 }
 
+/// Run the emulator until `LD B,B` (opcode 0x40) is about to execute, or until a timeout.
+///
+/// The Mealybug Tearoom test suite uses `LD B,B` as a software breakpoint to signal
+/// "take a screenshot now." The ROM continues running after the breakpoint, so we
+/// detect it per-instruction rather than waiting for an infinite loop.
+pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
+    for _ in 0..timeout_frames {
+        loop {
+            // Check for LD B,B breakpoint before executing
+            let pc = gb.cpu().program_counter;
+            if gb.memory_mapped().read(pc) == 0x40 {
+                return true;
+            }
+            if gb.step() {
+                break;
+            }
+        }
+    }
+    false
+}
+
 /// Check if the CPU is stuck in a known completion loop.
 fn is_infinite_loop(gb: &GameBoy) -> bool {
     let pc = gb.cpu().program_counter;
