@@ -126,6 +126,17 @@ enum FetcherStep {
     Push,
 }
 
+/// Mode 3 starts with two BG tile fetches before any pixels shift out.
+/// The first fetch is discarded; the second is the first visible tile.
+/// Each fetch takes 6 dots (GetTile + GetTileDataLow + GetTileDataHigh).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupFetch {
+    /// First tile fetch — result will be discarded (hardware quirk).
+    Discarded,
+    /// Second tile fetch — result is the first visible tile, pushed to FIFO.
+    FirstTile,
+}
+
 struct Fetcher {
     step: FetcherStep,
     /// Sub-dot counter within the current step (0 or 1 for 2-dot steps).
@@ -212,13 +223,13 @@ struct Line {
     obj_fifo: PixelFifo,
     /// Background/window tile fetcher.
     fetcher: Fetcher,
-    /// Pre-loop startup dots remaining. Hardware spends several dots
-    /// in mode 3 before the rendering loop begins (initializing
-    /// internal state). During these dots, no fetcher or pixel
-    /// processing occurs.
-    startup_dots_remaining: u8,
+    /// Tracks the two startup tile fetches at the beginning of mode 3.
+    /// Hardware performs two BG tile fetches (12 dots) before any
+    /// pixels shift out — the first is discarded, the second is the
+    /// first visible tile. `None` once startup is complete.
+    startup_fetch: Option<StartupFetch>,
     /// Pixels to discard from the BG FIFO before LCD output begins.
-    /// Includes 8 pre-fill junk pixels plus SCX fine scroll pixels.
+    /// Equal to SCX & 7 (fine scroll within the first tile).
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
@@ -234,18 +245,10 @@ impl Line {
             sprites: Vec::new(),
             next_sprite: 0,
             window_rendered: false,
-            bg_fifo: {
-                // Hardware pre-fills the BG FIFO with 8 junk pixels
-                // before the main rendering loop. These are popped and
-                // discarded (via SCX discard or rendered as color 0)
-                // during the startup period.
-                let mut fifo = PixelFifo::new();
-                fifo.push_row([FifoPixel::default(); 8]);
-                fifo
-            },
+            bg_fifo: PixelFifo::new(),
             obj_fifo: PixelFifo::new(),
             fetcher: Fetcher::new(),
-            startup_dots_remaining: 4,
+            startup_fetch: Some(StartupFetch::Discarded),
             discard_count: 0,
             sprite_fetch: None,
         }
@@ -268,11 +271,10 @@ impl Line {
         // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
         self.sprites.sort_by_key(|sprite| sprite.position.x_plus_8);
 
-        // Discard the 8 pre-filled junk pixels plus SCX fine scroll
-        // pixels from the first real tile. The junk pixels model the
-        // hardware's startup period — they are popped from the FIFO
-        // and increment position_in_line but are not sent to the LCD.
-        self.discard_count = 8 + (data.background_viewport.x & 7);
+        // Discard SCX fine scroll pixels from the first visible tile.
+        // After the two startup fetches complete, the FIFO contains
+        // the first tile; these pixels align the sub-tile scroll.
+        self.discard_count = data.background_viewport.x & 7;
         // Start position_in_line negative so that after all discards
         // are consumed, position_in_line = 0 at the first LCD pixel.
         // This keeps sprite trigger checks aligned: sprites trigger
@@ -398,10 +400,32 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel FIFO processing.
     fn dot_mode3(&mut self, data: &PpuAccessible) {
-        // Hardware spends several dots initializing before the rendering
-        // loop starts. No fetcher, pixel, or sprite processing occurs.
-        if self.line.startup_dots_remaining > 0 {
-            self.line.startup_dots_remaining -= 1;
+        // Mode 3 starts with two BG tile fetches (12 dots) before any
+        // pixels shift out. The first fetch is discarded; the second
+        // produces the first visible tile.
+        if let Some(phase) = self.line.startup_fetch {
+            self.advance_bg_fetcher(data);
+
+            // A startup fetch completes when the fetcher pushes pixels
+            // to the previously-empty FIFO (detected by FIFO becoming
+            // non-empty after the fetcher advance).
+            if !self.line.bg_fifo.is_empty() {
+                match phase {
+                    StartupFetch::Discarded => {
+                        // First fetch complete — discard and restart
+                        self.line.bg_fifo.clear();
+                        self.line.fetcher.step = FetcherStep::GetTile;
+                        self.line.fetcher.dot_in_step = 0;
+                        self.line.fetcher.tile_x = 0;
+                        self.line.startup_fetch = Some(StartupFetch::FirstTile);
+                    }
+                    StartupFetch::FirstTile => {
+                        // Second fetch complete — FIFO has 8 real pixels.
+                        // Normal rendering begins on the next dot.
+                        self.line.startup_fetch = None;
+                    }
+                }
+            }
             return;
         }
 
@@ -943,6 +967,14 @@ impl PixelProcessingUnit {
             }
             PixelProcessingUnit::Rendering(rendering) => rendering.write_gating_mode(),
             PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+        }
+    }
+
+    /// Diagnostic: return (line_number, dots) if rendering, None otherwise.
+    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
+        match self {
+            PixelProcessingUnit::Rendering(r) => Some((r.line.number, r.line.dots)),
+            PixelProcessingUnit::BetweenFrames(_) => None,
         }
     }
 
