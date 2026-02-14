@@ -72,7 +72,6 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
                 let mut debugger = app::debugger::Debugger::new(game_boy);
                 debugger.set_palette(palette);
                 app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-                return Task::done(app::Message::ScanRecordings);
             } else {
                 let mut emu = app::emulator::Emulator::new(game_boy);
                 emu.set_palette(palette);

@@ -16,7 +16,6 @@ use crate::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},
-    recording::Recording,
     video::palette::PaletteChoice,
 };
 use action_bar::ActionBar;
@@ -113,8 +112,7 @@ enum Message {
 
     StartRecording,
     StopRecording,
-    ScanRecordings,
-    StartPlayback(PathBuf),
+    StartPlayback,
 
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
@@ -152,12 +150,6 @@ impl App {
             None => (Game::Unloaded, None),
         };
 
-        let task = if debugger {
-            Task::done(Message::ScanRecordings)
-        } else {
-            Task::none()
-        };
-
         (
             Self {
                 game,
@@ -170,7 +162,7 @@ impl App {
                 settings,
                 about_shown: false,
             },
-            task,
+            Task::none(),
         )
     }
 
@@ -282,10 +274,6 @@ impl App {
                         }
                     });
                 }
-
-                if debugger_enabled {
-                    return Task::done(Message::ScanRecordings);
-                }
             }
             Message::SelectPalette(palette) => {
                 self.settings.palette = palette;
@@ -307,77 +295,18 @@ impl App {
             }
 
             Message::StartRecording => {
-                if let (Game::Loaded(LoadedGame::Debugger(debugger)), Some(save_path)) =
-                    (&mut self.game, &self.save_path)
-                {
-                    let timestamp = jiff::Zoned::now().strftime("%Y-%m-%d-%H%M%S");
-                    let stem = save_path.file_stem().unwrap().to_string_lossy();
-                    let recording_path =
-                        save_path.with_file_name(format!("{stem}-{timestamp}.mnrec"));
-                    debugger.start_recording(recording_path);
+                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
+                    debugger.start_recording();
                 }
             }
             Message::StopRecording => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    if let Some((path, last_frame)) = debugger.stop_recording() {
-                        let recording_file =
-                            debugger::playback::RecordingFile::new(path, last_frame);
-                        return Task::done(
-                            debugger::playback::Message::RecordingSaved(recording_file).into(),
-                        );
-                    }
+                    debugger.stop_recording();
                 }
             }
-
-            Message::ScanRecordings => {
-                if let (Game::Loaded(LoadedGame::Debugger(debugger)), Some(save_path)) =
-                    (&self.game, &self.save_path)
-                {
-                    let rom_title = debugger.game_boy().cartridge().title().to_string();
-                    let rom_checksum = debugger.game_boy().cartridge().global_checksum();
-                    let dir = save_path
-                        .parent()
-                        .filter(|p| !p.as_os_str().is_empty())
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or_else(|| std::env::current_dir().unwrap());
-                    let mut recordings = Vec::new();
-                    if let Ok(entries) = fs::read_dir(&dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.extension().is_some_and(|ext| ext == "mnrec") {
-                                match Recording::load(&path) {
-                                    Ok(recording) => {
-                                        if recording.rom_title() == rom_title
-                                            && recording.rom_checksum() == rom_checksum
-                                        {
-                                            let last_frame = recording
-                                                .events()
-                                                .last()
-                                                .map(|e| e.frame())
-                                                .unwrap_or(0);
-                                            recordings.push(
-                                                debugger::playback::RecordingFile::new(
-                                                    path, last_frame,
-                                                ),
-                                            );
-                                        }
-                                    }
-                                    Err(_) => {}
-                                }
-                            }
-                        }
-                    }
-                    return Task::done(
-                        debugger::playback::Message::RecordingsScanned(recordings).into(),
-                    );
-                }
-            }
-            Message::StartPlayback(path) => {
+            Message::StartPlayback => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    match Recording::load(&path) {
-                        Ok(recording) => debugger.start_playback(recording),
-                        Err(e) => eprintln!("Failed to load recording: {e}"),
-                    }
+                    debugger.start_playback();
                 }
             }
 

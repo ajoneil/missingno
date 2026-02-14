@@ -25,7 +25,7 @@ use crate::{
             breakpoints::{self, BreakpointsPane},
             cpu::CpuPane,
             instructions::InstructionsPane,
-            playback::{self, PlaybackPane},
+            playback::PlaybackPane,
             screen::{self, ScreenPane},
             video::{
                 VideoPane,
@@ -57,7 +57,6 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
     Breakpoints(breakpoints::Message),
-    Playback(playback::Message),
     Screen(screen::Message),
     Sprites(sprites::Message),
 }
@@ -226,13 +225,6 @@ impl DebuggerPanes {
                     self.panes.iter_mut().for_each(|(_, pane)| {
                         if let PaneInstance::Breakpoints(breakpoints_pane) = pane {
                             breakpoints_pane.update(message, debugger);
-                        }
-                    });
-                }
-                PaneMessage::Playback(message) => {
-                    self.panes.iter_mut().for_each(|(_, pane)| {
-                        if let PaneInstance::Playback(playback_pane) = pane {
-                            playback_pane.update(message);
                         }
                     });
                 }

@@ -1,6 +1,4 @@
-use nanoserde::{DeRon, SerRon};
-
-#[derive(Clone, SerRon, DeRon)]
+#[derive(Clone)]
 pub struct Joypad {
     read_buttons: bool,
     read_dpad: bool,
@@ -8,7 +6,7 @@ pub struct Joypad {
     pressed_buttons: Vec<Button>,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, SerRon, DeRon)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
 pub enum Button {
     Start,
     Select,
@@ -17,7 +15,7 @@ pub enum Button {
     DirectionalPad(DirectionalPad),
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, SerRon, DeRon)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
 pub enum DirectionalPad {
     Up,
     Down,
