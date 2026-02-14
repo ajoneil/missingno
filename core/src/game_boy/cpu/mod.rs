@@ -35,6 +35,11 @@ pub struct Cpu {
     /// immediately but fails to increment PC on the next opcode fetch,
     /// causing that byte to be read twice.
     pub halt_bug: bool,
+    /// Set when check_for_interrupt() consumes the EI delay
+    /// (EnableAfterNextInstruction → Enabled) this step. Used by the
+    /// halt bug check to detect the ei+halt edge case where HALT should
+    /// trigger the halt bug even though IME is now Enabled.
+    pub ei_delay_consumed: bool,
 }
 
 impl Cpu {
@@ -60,6 +65,7 @@ impl Cpu {
             interrupt_master_enable: InterruptMasterEnable::Disabled,
             halted: false,
             halt_bug: false,
+            ei_delay_consumed: false,
         }
     }
 

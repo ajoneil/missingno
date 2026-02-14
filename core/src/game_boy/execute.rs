@@ -46,6 +46,7 @@ fn operand_count(opcode: u8) -> u8 {
 impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
+        self.cpu.ei_delay_consumed = false;
 
         let mut processor = if let Some(_interrupt) = self.check_for_interrupt() {
             Processor::interrupt(&mut self.cpu)
@@ -94,12 +95,22 @@ impl GameBoy {
             // interrupt is already pending, the CPU doesn't truly halt.
             // It resumes immediately but fails to increment PC on the
             // next opcode fetch.
-            if self.cpu.halted
-                && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
-                && self.mapped.interrupts.triggered().is_some()
-            {
-                self.cpu.halted = false;
-                self.cpu.halt_bug = true;
+            if self.cpu.halted && self.mapped.interrupts.triggered().is_some() {
+                if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
+                    self.cpu.halted = false;
+                    self.cpu.halt_bug = true;
+                } else if self.cpu.ei_delay_consumed {
+                    // EI immediately before HALT: on real hardware IME
+                    // was still 0 when HALT checked it, so the halt bug
+                    // triggers. The interrupt will be dispatched (IME is
+                    // now Enabled), but the return address must point to
+                    // HALT so the CPU re-enters halt after the handler.
+                    // Rewind PC (incremented during fetch) instead of
+                    // setting halt_bug, which would bleed into the
+                    // interrupt handler's first fetch.
+                    self.cpu.program_counter -= 1;
+                    self.cpu.halted = false;
+                }
             }
 
             processor
@@ -221,6 +232,7 @@ impl GameBoy {
         match self.cpu.interrupt_master_enable {
             InterruptMasterEnable::EnableAfterNextInstruction => {
                 self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                self.cpu.ei_delay_consumed = true;
                 None
             }
             InterruptMasterEnable::Enabled => self.mapped.interrupts.triggered(),
