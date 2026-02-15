@@ -8,17 +8,30 @@ This file provides guidance to AI coding agents when working with code in this r
 - **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here.
 - **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored.
 
+### Context hygiene
+
+The conversation context is volatile — it will be compacted unpredictably and you cannot control what survives. Treat files on disk as the primary memory. The conversation context is scratch space.
+
+**Write early, write often.** After every meaningful step — a finding, a decision, a measurement, a hypothesis update — write it to the appropriate file (`summary.md`, a research doc, a receipt). Do not accumulate results across turns and write them later. If the context were compacted right now, would your progress survive? If not, you haven't written enough.
+
+**Keep context lean.** After writing state to disk, do not continue to carry it in conversation. When you need to recall earlier findings, re-read the file rather than relying on conversation memory. This applies especially to:
+- Research findings — once written to a research doc, re-read the doc when you need the information; don't try to remember it.
+- Diagnostic output — once the key measurements are recorded in `summary.md`, the raw output in conversation can be forgotten. Reference the log file path, not the content.
+- Hypotheses and decisions — once recorded in `summary.md`, re-read `summary.md` to check your current state rather than scrolling back through conversation.
+
+**Reset after every subroutine return.** When a callee (hypothesize, research, instrument, analyze, design) returns, the caller must: (1) write its interpretation to `summary.md`, (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
+
 ### Staying aligned with skill directives
 
 Skills contain specific, detailed instructions (e.g. "use curl not WebFetch", "always tee to a log file", "update summary.md before every test run") that are critical to follow. These details are easy to lose — either through context compaction or simply drifting during a long session.
 
 **After context compaction**: When context is compacted mid-skill, the full skill text is lost. Before continuing work, **re-read the active skill file** from `.agents/skills/` and the active investigation's `summary.md` (if any). Do not rely on the compaction summary to preserve skill directives — it won't.
 
-**Periodically during long sessions**: Every ~20 tool calls, re-read the active skill file and `summary.md` to check that you're still following the skill's rules. Drift happens gradually — you start cutting corners on logging, skip summary updates, or forget discipline rules. A periodic re-read catches this before it compounds.
+**Periodically during long sessions**: Every ~10 tool calls, re-read the active skill file and `summary.md` to check that you're still following the skill's rules. Drift happens gradually — you start cutting corners on logging, skip summary updates, or forget discipline rules. A periodic re-read catches this before it compounds.
 
 ### Skill invocation protocol
 
-Skills invoke other skills as subroutines (e.g. investigate invokes research and instrument). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
+Skills invoke other skills as subroutines (e.g. investigate invokes hypothesize, research, instrument, analyze, and design). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
 
 #### Request format (caller → callee)
 

@@ -94,6 +94,8 @@ After the test run, read the log file and report:
 
 Do NOT interpret what the measurements mean for the investigation. Just report them.
 
+The log file on disk is the primary record. Your report extracts the key measurements, but the full data lives in the log file. Reference the log path — don't reproduce large amounts of raw output in conversation.
+
 ## Baseline comparisons
 
 When the caller asks for a baseline comparison:
@@ -110,7 +112,8 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 **You MUST continue working after writing your report.** The instrumentation phase is over; now resume as the caller. Concretely:
 
 1. Write your report (Test result / Measurements / Raw data / Also observed).
-2. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
-3. **Immediately continue the caller's workflow** — interpret the measurements, update summary.md, and proceed to the next step.
+2. Write the caller's interpretation of the measurements to `summary.md`, referencing the log file path. The measurements are now on disk in two places (the log file and the summary) — conversation memory of the raw output is no longer needed.
+3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
+4. **Immediately continue the caller's workflow** — proceed to the next step based on what `summary.md` says, not on what you remember.
 
 Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.

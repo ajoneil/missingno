@@ -40,7 +40,7 @@ Work through sources in this order, stopping when you have a clear, specific ans
 
 ## Documenting findings
 
-Write one document per significant finding, **immediately when you learn something** — not deferred to the end.
+Write one document per significant finding, **immediately when you learn something** — not deferred to the end. The document on disk is the deliverable, not the conversation context. Once a finding is written to a file, the conversation memory of that finding is disposable — if you need to reference it later, re-read the file.
 
 Each document should include:
 
@@ -131,7 +131,8 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 **You MUST continue working after writing your report.** The research phase is over; now resume as the caller. Concretely:
 
 1. Write your report (Findings / Sources / Confidence / See also).
-2. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
-3. **Immediately continue the caller's workflow** — interpret the findings, update summary.md, and proceed to the next step.
+2. Write the caller's interpretation of the findings to `summary.md`. The findings are now on disk in two places (the research doc and the summary) — conversation memory of the research is no longer needed.
+3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
+4. **Immediately continue the caller's workflow** — proceed to the next step based on what `summary.md` says, not on what you remember.
 
 Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.

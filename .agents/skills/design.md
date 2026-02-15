@@ -57,17 +57,17 @@ Before finalizing, check each element of your design against these questions:
 
 Write the design to a receipt file. The location depends on context:
 
-**When called from an investigation:** Write to the investigation's folder:
+**When called from an investigation:** Write to the investigation's designs folder:
 ```
-receipts/investigations/<session>/design.md
+receipts/investigations/<session>/designs/<short-name>.md
 ```
 
 **When called standalone:** Write to the designs receipt folder:
 ```
-receipts/designs/<YYYY-MM-DD>-<short-name>.md
+receipts/designs/<YYYY-MM-DD-HHMM>-<short-name>.md
 ```
 
-Use a descriptive kebab-case name (e.g. `sprite-fetch-state-machine`, `window-reactivation-zero-pixel`).
+Use a descriptive kebab-case name (e.g. `sprite-fetch-state-machine`, `window-reactivation-zero-pixel`). Create the `designs/` directory if it doesn't exist. A single investigation may produce multiple designs — one per fix attempt or per distinct subproblem.
 
 ## Report format
 
@@ -119,8 +119,8 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 **You MUST continue working after writing your report.** The design phase is over; now resume as the caller. Concretely:
 
 1. Write the design report to the receipt file.
-2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file.
-3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context.
-4. **Immediately continue the caller's workflow** — proceed to implementation.
+2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file. The design is now on disk — conversation memory of the design reasoning is no longer needed. Reference the receipt file path when implementing.
+3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
+4. **Immediately continue the caller's workflow** — proceed to implementation based on what the design receipt and `summary.md` say, not on what you remember.
 
 Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
