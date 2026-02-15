@@ -5,7 +5,7 @@ This file provides guidance to AI coding agents when working with code in this r
 ## Agent Infrastructure
 
 - **`AGENTS.md`** — Canonical agent instructions. Tool-specific config files (e.g. `CLAUDE.md`) symlink here so all agents share a single source of truth.
-- **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here.
+- **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here. **Symlinks between these directories are user-managed. Do not modify them.**
 - **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored.
 
 ### Context hygiene
@@ -130,7 +130,9 @@ This block serves three purposes:
 3. Read the return context block from summary.md.
 4. Re-read the caller's skill file (path is in the return context block).
 5. Delete the "Active subroutine" section from summary.md.
-6. Hand control back to the caller. The caller reads the updated summary.md and decides what to do next.
+6. **Immediately resume as the caller.** The caller reads the updated summary.md and decides what to do next.
+
+**The turn does not end at a subroutine boundary.** A skill invocation is a function call that returns a value, not a handoff to another agent. After a callee writes its report and hands back, the same turn continues with the caller acting on the result. If the turn ends after a Skill tool call with no further action, subroutine discipline has been violated.
 
 **Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (measure, analyze, hypothesize, design, research) report their output and return. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
 

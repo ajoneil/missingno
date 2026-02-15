@@ -111,4 +111,6 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 
 1. Write your report (Test result / Measurements / Raw data / Also observed).
 2. Record the key measurements in `summary.md`, referencing the log file path. Do not interpret the measurements — just record what was observed. The measurements are now on disk in two places (the log file and the summary) — conversation memory of the raw output is no longer needed.
-3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+
+**The turn does not end here.** Do NOT stop after writing the report. The caller must act on the result in the same turn.

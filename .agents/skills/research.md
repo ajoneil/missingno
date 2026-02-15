@@ -130,4 +130,6 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 
 1. Write your report (Findings / Sources / Confidence / See also).
 2. Record the key findings in `summary.md`, referencing the research document path. Do not interpret the findings — just record what was discovered. The findings are now on disk in two places (the research doc and the summary) — conversation memory of the research is no longer needed.
-3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+
+**The turn does not end here.** Do NOT stop after writing the report. The caller must act on the result in the same turn.

@@ -127,4 +127,6 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 
 1. Write the design report to the receipt file.
 2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file. The design is now on disk — conversation memory of the design reasoning is no longer needed.
-3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to implement or in what order** — the caller reads the design receipt and makes that decision.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to implement or in what order** — the caller reads the design receipt and makes that decision.
+
+**The turn does not end here.** Do NOT stop after writing the design. The caller must act on the result in the same turn.

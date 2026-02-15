@@ -75,4 +75,6 @@ This skill is a subroutine — see "Subroutine discipline" in the skill invocati
 
 1. Write the analysis receipt to the file.
 2. Update the investigation's `summary.md`: rewrite the **Current understanding** section to reflect the new conclusions (this is the most important update — it must always be the best current model of the problem), record the conclusion, note the receipt path. The analysis is now on disk — conversation memory of the reasoning is no longer needed.
-3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+
+**The turn does not end here.** Do NOT stop after writing the receipt. The caller must act on the result in the same turn.
