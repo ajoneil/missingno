@@ -359,7 +359,10 @@ impl Rendering {
 
     /// Whether the mode 2 STAT interrupt condition is active.
     fn mode2_interrupt_active(&self) -> bool {
-        self.mode() == Mode::PreparingScanline
+        // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
+        // from the previous HBlank pre-setting mode_for_interrupt. Line 0
+        // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
+        self.mode() == Mode::PreparingScanline && (self.line.number != 0 || self.line.dots >= 4)
     }
 
     fn gating_mode(&self) -> Mode {
@@ -963,7 +966,11 @@ impl PixelProcessingUnit {
                 Mode::BetweenLines
             }
             PixelProcessingUnit::Rendering(rendering) => rendering.interrupt_mode(),
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+            // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
+            // The internal mode-for-interrupt doesn't transition to Mode 1 until
+            // 4 dots after VBlank entry.
+            PixelProcessingUnit::BetweenFrames(dots) if *dots >= 4 => Mode::BetweenFrames,
+            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenLines,
         }
     }
 
