@@ -37,20 +37,25 @@ const SCANLINE_PREPARING_DOTS: u32 = 80;
 /// The pixel pipeline begins executing 4 dots after Mode 2 ends.
 /// STAT reports Mode 3 from dot 80, but the fetcher/FIFO activate at dot 84.
 const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 4;
+/// Dots of pipeline priming at the start of Mode 3, before the
+/// fetcher begins. The position counter increments during these
+/// dots for trigger evaluation, but no tile fetch occurs.
+const PIPELINE_PRIMING_DOTS: u8 = 3;
 /// STAT transitions from Mode 3 to Mode 0 when this many pixels have
 /// been drawn. The pixel pipeline outputs 4 more pixels after STAT
-/// switches to Mode 0 — these final pixels are rendered during HBlank
-/// from the STAT register's perspective.
-const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
+/// switches to Mode 0. The priming dots extend Mode 3 by 3 physical
+/// dots without drawing pixels, so the boundary decreases by 3 to
+/// keep the Mode 0 transition at the same absolute dot.
+const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4 - PIPELINE_PRIMING_DOTS;
 /// On the first scanline after LCD turn-on, the pixel pipeline activates
 /// 11 dots after Mode 2 ends (vs 4 dots on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 11;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
-/// Number of dots the BG startup phase takes (two tile fetches of 6 dots each).
-/// The first fetch is discarded; the second produces the first visible tile.
-const BG_STARTUP_DOTS: i16 = 12;
+/// Number of dots the BG startup phase takes: 3 pipeline priming dots
+/// (position counter only) plus two tile fetches of 6 dots each (12 dots).
+const BG_STARTUP_DOTS: i16 = 15;
 
 // --- Pixel FIFO types ---
 
@@ -141,11 +146,15 @@ enum FetcherStep {
     Push,
 }
 
-/// Mode 3 starts with two BG tile fetches before any pixels shift out.
-/// The first fetch is discarded; the second is the first visible tile.
-/// Each fetch takes 6 dots (GetTile + GetTileDataLow + GetTileDataHigh).
+/// Mode 3 starts with pipeline priming (3 dots) then two BG tile fetches
+/// (12 dots) before any pixels shift out. During priming the position
+/// counter increments for trigger evaluation but no tile fetch occurs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
+    /// Pipeline priming — position counter increments, trigger checks run,
+    /// but the fetcher does not advance. Models the gap between Mode 3
+    /// start and first fetcher activation.
+    PipelinePriming { dots_remaining: u8 },
     /// First tile fetch — result will be discarded (hardware quirk).
     Discarded,
     /// Second tile fetch — result is the first visible tile, pushed to FIFO.
@@ -271,7 +280,9 @@ impl Line {
             bg_fifo: PixelFifo::new(),
             obj_fifo: PixelFifo::new(),
             fetcher: Fetcher::new(),
-            startup_fetch: Some(StartupFetch::Discarded),
+            startup_fetch: Some(StartupFetch::PipelinePriming {
+                dots_remaining: PIPELINE_PRIMING_DOTS,
+            }),
             discard_count: 0,
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
@@ -300,11 +311,10 @@ impl Line {
         // After the two startup fetches complete, the FIFO contains
         // the first tile; these pixels align the sub-tile scroll.
         self.discard_count = data.background_viewport.x & 7;
-        // Start position_in_line negative to account for both the BG
-        // startup phase and SCX fine scroll discards. After startup
-        // (12 dots) and discards, position_in_line = 0 at the first
-        // LCD pixel. This keeps sprite trigger checks aligned and
-        // enables window trigger evaluation during startup.
+        // position_in_line starts at -(15 + discard_count). The first 3 dots
+        // are pipeline priming (no fetcher), the next 12 are two tile fetches
+        // (discarded + first visible). After startup (15 dots) and SCX fine
+        // scroll discards, position_in_line = 0 at the first LCD pixel.
         self.position_in_line = -(BG_STARTUP_DOTS + self.discard_count as i16);
     }
 }
@@ -333,7 +343,8 @@ impl Rendering {
     fn new_lcd_on() -> Self {
         let mut line = Line::new(0);
         line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
-        line.stat_boundary_pixels = screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8;
+        line.stat_boundary_pixels =
+            screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8 - PIPELINE_PRIMING_DOTS;
         Rendering {
             screen: Screen::new(),
             line,
@@ -432,31 +443,49 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel FIFO processing.
     fn dot_mode3(&mut self, data: &PpuAccessible) {
-        // Mode 3 starts with two BG tile fetches (12 dots) before any
-        // pixels shift out. The first fetch is discarded; the second
-        // produces the first visible tile.
         if let Some(phase) = self.line.startup_fetch {
-            self.advance_bg_fetcher(data);
-            self.line.position_in_line += 1;
-            self.check_window_trigger(data);
-
-            // A startup fetch completes when the fetcher pushes pixels
-            // to the previously-empty FIFO (detected by FIFO becoming
-            // non-empty after the fetcher advance).
-            if !self.line.bg_fifo.is_empty() {
-                match phase {
-                    StartupFetch::Discarded => {
-                        // First fetch complete — discard and restart
-                        self.line.bg_fifo.clear();
-                        self.line.fetcher.step = FetcherStep::GetTile;
-                        self.line.fetcher.dot_in_step = 0;
-                        self.line.fetcher.tile_x = 0;
-                        self.line.startup_fetch = Some(StartupFetch::FirstTile);
+            match phase {
+                StartupFetch::PipelinePriming { dots_remaining } => {
+                    // Pipeline priming: position increments, trigger checks,
+                    // but no fetcher advance.
+                    self.line.position_in_line += 1;
+                    self.check_window_trigger(data);
+                    if self.line.sprite_fetch.is_none() {
+                        self.check_sprite_trigger(data);
                     }
-                    StartupFetch::FirstTile => {
-                        // Second fetch complete — FIFO has 8 real pixels.
-                        // Normal rendering begins on the next dot.
-                        self.line.startup_fetch = None;
+                    self.line.startup_fetch = if dots_remaining > 1 {
+                        Some(StartupFetch::PipelinePriming {
+                            dots_remaining: dots_remaining - 1,
+                        })
+                    } else {
+                        Some(StartupFetch::Discarded)
+                    };
+                }
+                StartupFetch::Discarded | StartupFetch::FirstTile => {
+                    self.advance_bg_fetcher(data);
+                    self.line.position_in_line += 1;
+                    self.check_window_trigger(data);
+
+                    // A startup fetch completes when the fetcher pushes pixels
+                    // to the previously-empty FIFO (detected by FIFO becoming
+                    // non-empty after the fetcher advance).
+                    if !self.line.bg_fifo.is_empty() {
+                        match phase {
+                            StartupFetch::Discarded => {
+                                // First fetch complete — discard and restart
+                                self.line.bg_fifo.clear();
+                                self.line.fetcher.step = FetcherStep::GetTile;
+                                self.line.fetcher.dot_in_step = 0;
+                                self.line.fetcher.tile_x = 0;
+                                self.line.startup_fetch = Some(StartupFetch::FirstTile);
+                            }
+                            StartupFetch::FirstTile => {
+                                // Second fetch complete — FIFO has 8 real pixels.
+                                // Normal rendering begins on the next dot.
+                                self.line.startup_fetch = None;
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                 }
             }
@@ -850,15 +879,19 @@ impl Rendering {
             return;
         }
 
+        let match_x = sprite_match_x(self.line.position_in_line);
+
         while self.line.next_sprite < self.line.sprites.len() {
             let sprite = &self.line.sprites[self.line.next_sprite];
 
-            // Sprite triggers when the internal position counter reaches
-            // the sprite's screen X. Sprites with x_plus_8 < 8 are
-            // partially off-screen left; they trigger at position 0.
-            let trigger_x = (sprite.position.x_plus_8 as i16 - 8).max(0);
+            if sprite.position.x_plus_8 < match_x {
+                // Sprite already passed — skip it
+                self.line.next_sprite += 1;
+                continue;
+            }
 
-            if self.line.position_in_line < trigger_x {
+            if sprite.position.x_plus_8 != match_x {
+                // Sprite not yet reached
                 break;
             }
 
@@ -879,6 +912,17 @@ impl Rendering {
             break;
         }
     }
+}
+
+/// Compute the sprite match X value from the internal position counter.
+///
+/// On hardware, sprite triggering compares `x_plus_8` against
+/// `(position_in_line + 8) as u8`. Positions deeply negative
+/// (-15 through -8) wrap around in unsigned, so they are clamped
+/// to match value 0 (matching off-screen-left sprites).
+fn sprite_match_x(position_in_line: i16) -> u8 {
+    let x = (position_in_line + 8) as u8;
+    if x > 240 { 0 } else { x }
 }
 
 /// Decode a tile row (2 bytes) into 8 FIFO pixels.
