@@ -70,7 +70,8 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
   ├── analysis/         # Analysis receipts (numbered chronologically)
   ├── designs/          # Design receipts
   ├── implementation/   # Implementation receipts
-  └── logs/             # Diagnostic output captures
+  ├── measurements/     # Measurement receipts
+  └── logs/             # Raw diagnostic output captures
   ```
 - Invoke `/measure` to run an initial diagnostic, establish the current state, and confirm the problem.
 - Invoke `/analyze` to interpret the initial results.
@@ -193,7 +194,8 @@ receipts/investigations/<YYYY-MM-DD-HHMM>-<short-name>/
 ├── analysis/         # Analysis receipts (numbered chronologically)
 ├── designs/          # Design receipts
 ├── implementation/   # Implementation receipts
-├── logs/             # Diagnostic output captures
+├── measurements/     # Measurement receipts
+├── logs/             # Raw diagnostic output captures
 └── ...               # Any other artifacts (diffs, screenshots, profiles)
 ```
 

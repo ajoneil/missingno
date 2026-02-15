@@ -86,15 +86,41 @@ For Mooneye tests specifically, the convention is Fibonacci values in registers 
 
 ## Reporting results
 
-After the test run, read the log file and report:
+After the test run, write a measurement receipt to the investigation's `measurements/` folder:
 
-1. **Test result**: pass/fail, which sub-test failed if applicable.
-2. **Key measurements**: The specific values the hypothesis was about, extracted from log output with line references.
-3. **Raw data**: A compact summary of the relevant log lines (not the entire log — just the lines that answer the hypothesis).
+```
+receipts/investigations/<session>/measurements/<NNN>-<short-name>.md
+```
+
+Create the `measurements/` directory if it doesn't exist. Number measurement receipts sequentially (`01`, `02`, ...) to form a readable chronological trail. Use a short descriptive suffix (e.g. `01-baseline.md`, `03-opcode-pending-dots.md`).
+
+### Receipt format
+
+```markdown
+# Measurement: <short title>
+
+## Question
+<the hypothesis or question being tested, copied from the caller's request>
+
+## Log file
+<path to the raw log file>
+
+## Test result
+<pass/fail, which sub-test failed if applicable>
+
+## Key measurements
+<the specific values the hypothesis was about, extracted from log output with file:line references>
+
+## Raw data
+<compact summary of the relevant log lines — not the entire log, just the lines that answer the hypothesis>
+
+## Also observed
+<unexpected findings not part of the original question — optional, one-liners only>
+```
 
 Do NOT interpret what the measurements mean for the investigation. Just report them.
 
-The log file on disk is the primary record. Your report extracts the key measurements, but the full data lives in the log file. Reference the log path — don't reproduce large amounts of raw output in conversation.
+The log file on disk is the primary record. The receipt extracts the key measurements, but the full data lives in the log file.
 
 ## Baseline comparisons
 
@@ -109,8 +135,8 @@ When the caller asks for a baseline comparison:
 
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
-1. Write your report (Test result / Measurements / Raw data / Also observed).
+1. Write the measurement receipt to the file (see "Reporting results" above).
 2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate the measurements into the RCA tree.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the measurement report and makes that decision.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the measurement receipt and makes that decision.
 
-**The turn does not end here.** Do NOT stop after writing the report. The caller must act on the result in the same turn.
+**The turn does not end here.** Do NOT stop after writing the receipt. The caller must act on the result in the same turn.
