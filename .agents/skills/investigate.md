@@ -176,10 +176,25 @@ The loop is: **`/hypothesize` → `/measure` → `/analyze` → (repeat until co
 - **Design fixes based on hardware behavior, not other emulators' code.** The intermediate step is always understanding what the real hardware does — then modeling that behavior in your architecture. Never shortcut from "emulator X does Y" to "we should do Y". Instead: research establishes what the hardware does → design models that behavior in your architecture → implementation follows the design. Reference emulators are evidence about hardware behavior, not templates to copy. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
 - `/implement` runs the full test suite as part of its verification — check its report for regression counts.
 
-### 7. Commit
+### 7. Branch and commit hygiene
 
-- If on a **feature branch**: commit each fix separately before moving to the next issue.
-- If on **main**: ask the user whether to commit directly to main or create a feature branch first.
+The investigate skill owns the investigation branch. The implement skill creates per-implementation branches from it and merges back on success.
+
+**At investigation start:**
+- Record the current branch as the **base branch** (usually `main`). Write it in summary.md.
+- If on `main`, create an investigation branch: `git checkout -b <investigation-short-name>` (e.g., `write-conflict-flush-fix`). Ask the user for approval before creating.
+- If already on a feature branch, stay on it — that's the investigation branch.
+
+**During the investigation:**
+- `/implement` creates `impl/<name>` branches from the investigation branch, commits there, and merges back on success or leaves unmerged on failure. The investigation branch always reflects the latest successful state.
+- Failed implementation branches (`impl/<name>`) stay around as recoverable state. Do not delete them — they're part of the investigation record.
+- If you need to return to a clean state, the investigation branch is always safe to `git checkout` back to.
+
+**After the investigation resolves:**
+- Verify the investigation branch is clean (`git status`).
+- Ask the user whether to merge to the base branch (fast-forward, squash, or regular merge) or leave it for review.
+- Do not force-push or rewrite history without explicit user approval.
+- Do not delete `impl/*` branches — leave cleanup to the user.
 
 ### 8. Receipt conventions
 

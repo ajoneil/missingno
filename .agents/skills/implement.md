@@ -86,6 +86,46 @@ Compare the test results against the baseline (from `summary.md`):
 - **Run `cargo fmt`** to ensure formatting is consistent.
 - **Run `cargo clippy`** to catch any lint issues introduced by the changes.
 
+### 7. Branch and commit
+
+Every implementation gets its own branch. This preserves state — even failed attempts are recoverable from their branch.
+
+**Before making any code changes** (step 3), record the current branch and create a new one:
+
+```bash
+# Record the base branch (report this in the receipt)
+git branch --show-current  # e.g., "main" or "write-conflict-flush-fix"
+
+# Create an implementation branch from the current state
+git checkout -b impl/<short-name>  # e.g., "impl/reduce-pre-write-flush"
+```
+
+Use a descriptive kebab-case name matching the implementation receipt name. If the branch already exists (from a prior attempt), append a number: `impl/reduce-pre-write-flush-2`.
+
+**After verification**, commit all changes to the implementation branch regardless of outcome (success, partial success, or failure):
+
+```bash
+git add -A && git commit -m "<short summary of what changed>"
+```
+
+The commit message should be a concise one-liner describing the code change (not the investigation context). Examples: "Use variant N directly as pre-write flush count", "Add sprite fetch state machine", "Fix STAT interrupt blocking during mode transitions".
+
+**After committing**, switch back to the base branch:
+
+- **On success (no regressions):** merge the implementation branch into the base branch, then continue on the base branch:
+  ```bash
+  git checkout <base-branch>
+  git merge impl/<short-name>
+  ```
+- **On failure or regression:** return to the base branch without merging. The implementation branch stays around as a record:
+  ```bash
+  git checkout <base-branch>
+  ```
+
+**Report the branch name** in the implementation receipt so the caller can find it later if needed.
+
+**Do not push.** The implement skill works locally. The caller (investigate) decides when to push.
+
 ## Output
 
 Write an implementation report. The location depends on context:
@@ -121,6 +161,10 @@ Create the `implementation/` directory if it doesn't exist.
 ### Tests
 <test results — pass count, fail count, comparison to baseline>
 <log file path>
+
+## Branch
+<base branch> → <implementation branch>
+<merged / not merged>
 
 ## Result
 <success / partial success / failure — one word, then explanation>
