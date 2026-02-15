@@ -33,6 +33,8 @@ These rules override default agent behavior. Follow them exactly:
 5c. **Am I framing questions in terms of hardware or in terms of other emulators?** If your research questions or hypotheses mention what another emulator does rather than what the hardware does, reframe them. "What does the hardware do when X?" not "How does emulator Y handle X?"
 6. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either invoke `/measure`, or invoke `/research`.
 7. **Am I in trial-and-error mode?** If I've made a code change and re-run the test more than once without invoking `/measure` or `/research` in between, I'm guessing. A failed fix means my model is wrong — I need new information, not new code.
+8. **Am I proposing a code change without a hardware model?** If the active hypothesis describes what code to change (e.g., "add idle dots", "shorten startup", "bonus flush") rather than what the hardware does (e.g., "the hardware overlaps fetch with pixel output"), it's a fix attempt disguised as a hypothesis. Reframe it: what hardware behavior would make this code change correct? Then research whether that hardware behavior is real.
+9. **Have I tried more than 2 implementations without updating the hardware model?** Count the `impl/` branches since the last update to `## Hardware model` in summary.md. If more than 2, the hardware model is wrong. Stop implementing entirely and go back to `/research`. No new designs or implementations until the hardware model is updated with new research findings.
 
 **The default action when uncertain is: invoke `/measure`.** Not: read more source code. Not: reason about behavior. Not: check another implementation. Measure and observe.
 
@@ -152,7 +154,20 @@ The fix for every kind of stuck is the same: either invoke `/measure` to measure
 
 - Study the diagnostic output to identify the root cause.
 - **Update summary.md** with your hypothesis before attempting a fix.
-- **Invoke `/design` before writing any fix.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a receipt.
+
+##### Hardware model gate
+
+**Before invoking `/design`, the investigation must have all three:**
+
+1. **A documented hardware behavior model** (in a research receipt) answering: "What does the hardware do, step by step, in this scenario?" This must be cited in summary.md's `## Hardware model` section.
+2. **A documented model divergence** (in an analysis receipt) answering: "What does our emulator do differently, and which specific data structures / state machines / enums are wrong?" This must be cited in summary.md's `## Model divergence` section.
+3. **Both sections in summary.md must be filled in** — not "Unknown", not blank.
+
+If any of these are missing, `/design` is blocked. Redirect to `/research` (to understand the hardware) or `/measure` + `/analyze` (to understand the model divergence). The point: you must understand both what the hardware does AND how your model differs before you can design a fix. Skipping this leads to trial-and-error implementation attempts.
+
+##### Design and implement
+
+- **Invoke `/design` only after the hardware model gate is satisfied.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a receipt.
 - **Invoke `/implement` to apply the design.** The implement skill reads the design receipt, makes the code changes, runs verification, and reports results. Do not make code changes yourself — hand them to `/implement`. Format the request using the skill invocation protocol: Design (path to design receipt), Context (summary.md path). The implement skill handles: reading the code, making changes, running `cargo check`, running the test suite, removing diagnostic logging, and reporting pass/fail with test counts.
 - **Update summary.md** after `/implement` returns — whether it succeeded or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
 
@@ -189,9 +204,11 @@ When a fix produces unexpected results:
 
 1. **Stop implementing.** Do not tweak the fix. Do not stack another change on top.
 2. **Record what the failure tells you.** Update summary.md: expected result, actual result, which hypothesis this invalidates.
-3. **Identify the knowledge gap.** The fix failed because your model is wrong. Write the gap as a specific question.
-4. **Fill the gap.** Invoke `/measure` to measure what's actually happening, or `/research` to learn what the hardware should do. Then invoke `/analyze` to interpret the new data.
-5. **Redesign only after the gap is filled.** Once you've updated summary.md with the new conclusions from `/analyze`, invoke `/design` again with the corrected understanding. Do not patch the old design — the old design was based on wrong assumptions.
+3. **Identify which understanding is wrong.** A failed fix means either the **hardware model** or the **model divergence** analysis is specifically wrong. The question is not "what other code change could work?" but "what did I get wrong about the hardware or about our model?" Write the gap as a specific question targeting one of these two documents.
+4. **Fill the gap.** Invoke `/research` to correct the hardware model, or `/measure` + `/analyze` to correct the model divergence. Update the `## Hardware model` or `## Model divergence` section of summary.md with the corrected understanding.
+5. **Redesign only after the gap is filled.** The hardware model gate must still be satisfied — both sections must reflect the updated understanding. Do not patch the old design — the old design was based on wrong assumptions.
+
+**Two-strike rule:** If you've attempted 2 implementations without updating the `## Hardware model` section, your hardware understanding is insufficient. Stop implementing entirely and go back to `/research`. New implementation attempts are blocked until the hardware model is updated with new research findings.
 
 The loop is: **`/hypothesize` → `/measure` → `/analyze` → (repeat until confident) → `/design` → `/implement` → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks".
 
@@ -265,23 +282,30 @@ General domain knowledge should already be in `receipts/research/` — you docum
 ## Baseline
 <test counts: N pass, N fail, N ignored out of N total>
 
+## Hardware model
+<What the hardware does in this scenario, step by step. Cite research receipts.
+Must be filled in before any /design invocation. "Unknown" is valid early on —
+the investigation's job is to fill this in through /research and /measure.>
+
+## Model divergence
+<How the emulator's data model differs from the hardware model above. Name the
+specific structs, enums, state machines that are wrong and HOW they're wrong.
+Cite analysis receipts. Must be filled in before any /design invocation.>
+
 ## Root cause analysis
 
-<A tree of hypotheses. This is the heart of the investigation.
-Each node is a hypothesis with a status. Indent children under parents.
-Cross off dead ends. Mark the active line of inquiry.>
+<A tree of hypotheses about HARDWARE BEHAVIOR, not about code changes.
+Each node states what the hardware does and where the model diverges.
+Indent children under parents. Cross off dead ends.>
 
-- [ ] **Write-conflict accumulation window** — expand from 5→9 pending dots ← ACTIVE
+- [ ] **Hardware overlaps first tile fetch with FIFO priming** — first pixel at dot 8, not dot 12 ← ACTIVE
   - [x] Pixel offset confirmed as exactly 4 (`logs/09-pixel-offset-measurement.log`)
-  - [ ] Design: fixed pre-write flush + expanded window (`designs/05-write-conflict-offset.md`)
-- [x] ~~Pipeline latency mismatch at PPU rendering level~~ — FIFO-empty gap blocks all PPU-side approaches (`designs/04-startup-suppression.md`)
-  - [x] ~~PipelineFill phase during second startup fetch~~ — FIFO empty, no-op (`logs/07-pipeline-fill-fifo-state.log`)
-  - [x] ~~position_in_line +4 at mode 3 start~~ — doesn't affect write-conflict timing, breaks sprites (`analysis/10-position-in-line-failure.md`)
-  - [x] ~~Shorten startup to 8 dots + suppress pixels_drawn~~ — structurally unviable (`designs/04-startup-suppression.md`)
+  - [ ] Research: does the hardware fetch the first tile while simultaneously priming the FIFO?
+- [x] ~~Hardware uses a separate scanline-position counter for STAT~~ — Mode 3 length via STAT is independent of pixel output timing (`analysis/10-stat-timing.md`)
 
 ## Current understanding
 <2-4 sentences: the best working model right now. What you believe
-is the root cause and what approach is being pursued. No history,
+the hardware does and where the emulator diverges. No history,
 no dead ends — just the current state of knowledge.>
 
 ## Active subroutine
@@ -291,6 +315,7 @@ no dead ends — just the current state of knowledge.>
 ##### Rules
 
 - **Root cause analysis tree is mandatory.** Start it after the first measurement. Update it after every `/analyze` return. Every hypothesis goes in the tree — confirmed, refuted, or active. This is the primary navigation structure for the investigation.
+- **Hypotheses describe hardware behavior, not code changes.** Each entry in the tree must be a claim about what the hardware does and where the model diverges. "Hardware overlaps first tile fetch with FIFO priming — first pixel at dot 8 not dot 12" is a hypothesis. "Add idle dots at Mode 3 start" is NOT a hypothesis — it's a proposed fix that skips the understanding step. If a hypothesis reads like an implementation plan, reframe it: what hardware behavior would make that implementation correct?
 - **Active hypothesis goes first.** The active line of inquiry must be the first entry in the tree so it's immediately visible. Refuted hypotheses sink to the bottom. When a hypothesis is refuted, move it (and its children) below the active line. When a new hypothesis becomes active, move it to the top.
 - **Use `[x] ~~struck~~` for refuted hypotheses.** Include a short reason and a receipt link. Do not delete refuted hypotheses — they document dead ends.
 - **Use `[ ] **bold**` for the active hypothesis.** Mark it with `← ACTIVE`. There should be exactly one at any time.
