@@ -34,6 +34,14 @@ impl fmt::Display for Mode {
 
 const SCANLINE_TOTAL_DOTS: u32 = 456;
 const SCANLINE_PREPARING_DOTS: u32 = 80;
+/// The pixel pipeline begins executing 4 dots after Mode 2 ends.
+/// STAT reports Mode 3 from dot 80, but the fetcher/FIFO activate at dot 84.
+const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 4;
+/// STAT transitions from Mode 3 to Mode 0 when this many pixels have
+/// been drawn. The pixel pipeline outputs 4 more pixels after STAT
+/// switches to Mode 0 — these final pixels are rendered during HBlank
+/// from the STAT register's perspective.
+const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -316,7 +324,7 @@ impl Rendering {
     fn mode(&self) -> Mode {
         if self.line.dots < SCANLINE_PREPARING_DOTS {
             Mode::PreparingScanline
-        } else if self.line.pixels_drawn < screen::PIXELS_PER_LINE {
+        } else if self.line.pixels_drawn < MODE3_STAT_BOUNDARY_PIXELS {
             Mode::DrawingPixels
         } else {
             Mode::BetweenLines
@@ -378,7 +386,7 @@ impl Rendering {
         } else {
             // Mode 3 (drawing) and Mode 0 (HBlank)
             let was_drawing = self.line.pixels_drawn < screen::PIXELS_PER_LINE;
-            if was_drawing {
+            if was_drawing && self.line.dots >= SCANLINE_RENDERING_DOTS {
                 self.dot_mode3(data);
             }
             self.line.dots += 1;
