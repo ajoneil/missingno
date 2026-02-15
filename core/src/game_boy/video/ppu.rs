@@ -824,8 +824,7 @@ impl Rendering {
         if self.line.number < data.window.y {
             return;
         }
-        let wx = data.window.x_plus_7.wrapping_sub(7);
-        if self.line.pixels_drawn < wx {
+        if self.line.pixels_drawn + 7 < data.window.x_plus_7 {
             return;
         }
 
