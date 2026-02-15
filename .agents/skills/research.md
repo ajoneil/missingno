@@ -20,12 +20,32 @@ Focus on finding **authoritative answers to specific behavioral questions**. Bef
 
 Work through sources in this order, stopping when you have a clear, specific answer:
 
+### Primary sources (ground truth)
+
+These describe what the hardware actually does. They are the source of truth.
+
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
-2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy). These are the highest-quality sources — prefer them over everything else.
-3. **Hardware test results and analysis**: Look for documents, blog posts, or wiki pages where someone has measured real hardware behavior with an oscilloscope or test ROM and reported the results. These are factual observations, not interpretations.
-4. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks with specific timing values and edge cases.
-5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. This tells you what behavior to produce, with specific cycle counts.
-6. **Highly accurate emulator source (secondary evidence)**: Emulator source from projects with strong hardware accuracy (e.g. SameBoy, Gambatte) can be consulted to answer **hardware behavior questions** — extracting timing values, edge-case handling, and state transitions that reveal what the hardware does. Clone the repo locally and read the actual files (WebFetch loses critical details). **Report findings as hardware facts**, not as implementation details. "The hardware transitions to mode 0 at dot N" — not "SameBoy sets mode to 0 at line N of file X". Do not copy architectural patterns, data structures, or implementation strategies — these are the emulator author's design choices, not hardware behavior.
+2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy). These are the highest-quality written sources.
+3. **Hardware test results and analysis**: Documents, blog posts, or wiki pages where someone has measured real hardware behavior with an oscilloscope, logic analyzer, or test ROM and reported the raw results. These are direct observations of the hardware, not interpretations or models.
+4. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
+
+### Secondary sources (community knowledge)
+
+Useful for filling gaps, but may reflect incomplete understanding or outdated models.
+
+5. **Community resources**: Forums, wikis, and blog posts from the emulation development community. These often document obscure hardware quirks, but treat them as leads to verify against primary sources rather than as facts. Community consensus can be wrong — the history of emulation is full of "everyone implemented it this way" turning out to be inaccurate when someone finally tested on hardware.
+
+### Tertiary sources (confirmation only)
+
+**Emulator source code is a model of the hardware, not the hardware itself.** Another developer's reverse-engineered approximation is not a primary source, no matter how accurate the emulator is. Use it only to confirm or fill in details after you already have a primary-source understanding.
+
+6. **Highly accurate emulator source (confirmation and gap-filling)**: Emulator source from projects with strong hardware accuracy (e.g. SameBoy, Gambatte) may be consulted **after** you have established the expected behavior from primary sources. Their role is to:
+   - **Confirm** a timing value or edge case you already found in docs/tests/hardware measurements.
+   - **Fill gaps** where primary sources are silent — but flag these findings as `Confidence: low` since you're trusting another developer's reverse engineering rather than a direct hardware observation.
+   
+   Clone the repo locally and read the actual files (WebFetch loses critical details). **Report what the emulator does, attributed to the emulator**, not presented as hardware fact. "SameBoy transitions to mode 0 at dot N (file:line)" — not "the hardware transitions to mode 0 at dot N". The caller can decide how much weight to give an emulator-sourced finding. Do not copy architectural patterns, data structures, or implementation strategies — these are the emulator author's design choices, not hardware behavior.
+   
+   **Never use emulator source as the starting point for understanding a behavior.** If you find yourself reading SameBoy to figure out how something works and then looking for docs to confirm it, you've inverted the hierarchy. The emulator's model shapes your mental model, and confirmation bias makes the docs seem to agree. Start from docs and hardware tests; go to emulator source only to check details.
 
 ### Allowed and forbidden tools
 
@@ -48,7 +68,7 @@ This is especially important when reading assembly source code for test ROMs. Yo
 
 ### Quality over quantity
 
-- **One good source beats five bad fetches.** If Pan Docs answers your question, stop there. Don't keep searching for confirmation through emulator source code.
+- **One good primary source beats five emulator readings.** If Pan Docs or a hardware test answers your question, stop there. Don't keep searching for confirmation through emulator source code — that inverts the hierarchy. The exception is when primary sources give a general description but you need a specific value (e.g. "sprites extend mode 3" but no exact dot count) — then emulator source can fill the gap, flagged as low confidence.
 - **Don't use WebFetch for technical content.** The AI summarizer loses critical details like exact cycle counts, conditional branches, timing values, and subtle state machine transitions. Instead, use `Bash` with `curl` to fetch raw page content and read it yourself: `curl -s 'URL' | sed 's/<[^>]*>//g'` for HTML pages, or clone repos and use `Read` for source code. You can read the raw text directly — don't rely on an AI middleman to interpret technical documentation for you.
 - **Stop when you have the answer.** Research is not exploration — you have a specific question. Once answered with a credible source, document it and move on.
 - **If a source doesn't have what you need after one fetch, move to the next source.** Don't re-fetch the same URL with different prompts hoping for different results.
