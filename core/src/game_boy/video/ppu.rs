@@ -48,6 +48,9 @@ const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 11;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
+/// Number of dots the BG startup phase takes (two tile fetches of 6 dots each).
+/// The first fetch is discarded; the second produces the first visible tile.
+const BG_STARTUP_DOTS: i16 = 12;
 
 // --- Pixel FIFO types ---
 
@@ -297,11 +300,12 @@ impl Line {
         // After the two startup fetches complete, the FIFO contains
         // the first tile; these pixels align the sub-tile scroll.
         self.discard_count = data.background_viewport.x & 7;
-        // Start position_in_line negative so that after all discards
-        // are consumed, position_in_line = 0 at the first LCD pixel.
-        // This keeps sprite trigger checks aligned: sprites trigger
-        // when position_in_line reaches their screen X coordinate.
-        self.position_in_line = -(self.discard_count as i16);
+        // Start position_in_line negative to account for both the BG
+        // startup phase and SCX fine scroll discards. After startup
+        // (12 dots) and discards, position_in_line = 0 at the first
+        // LCD pixel. This keeps sprite trigger checks aligned and
+        // enables window trigger evaluation during startup.
+        self.position_in_line = -(BG_STARTUP_DOTS + self.discard_count as i16);
     }
 }
 
@@ -433,6 +437,8 @@ impl Rendering {
         // produces the first visible tile.
         if let Some(phase) = self.line.startup_fetch {
             self.advance_bg_fetcher(data);
+            self.line.position_in_line += 1;
+            self.check_window_trigger(data);
 
             // A startup fetch completes when the fetcher pushes pixels
             // to the previously-empty FIFO (detected by FIFO becoming
@@ -824,7 +830,7 @@ impl Rendering {
         if self.line.number < data.window.y {
             return;
         }
-        if self.line.pixels_drawn + 7 != data.window.x_plus_7 {
+        if (self.line.position_in_line + 7) as u8 != data.window.x_plus_7 {
             return;
         }
 
