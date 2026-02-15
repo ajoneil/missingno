@@ -231,13 +231,13 @@ General domain knowledge should already be in `receipts/research/` — you docum
 Each node is a hypothesis with a status. Indent children under parents.
 Cross off dead ends. Mark the active line of inquiry.>
 
+- [ ] **Write-conflict accumulation window** — expand from 5→9 pending dots ← ACTIVE
+  - [x] Pixel offset confirmed as exactly 4 (`logs/09-pixel-offset-measurement.log`)
+  - [ ] Design: fixed pre-write flush + expanded window (`designs/05-write-conflict-offset.md`)
 - [x] ~~Pipeline latency mismatch at PPU rendering level~~ — FIFO-empty gap blocks all PPU-side approaches (`designs/04-startup-suppression.md`)
   - [x] ~~PipelineFill phase during second startup fetch~~ — FIFO empty, no-op (`logs/07-pipeline-fill-fifo-state.log`)
   - [x] ~~position_in_line +4 at mode 3 start~~ — doesn't affect write-conflict timing, breaks sprites (`analysis/10-position-in-line-failure.md`)
   - [x] ~~Shorten startup to 8 dots + suppress pixels_drawn~~ — structurally unviable (`designs/04-startup-suppression.md`)
-- [ ] **Write-conflict accumulation window** — expand from 5→9 pending dots ← ACTIVE
-  - [x] Pixel offset confirmed as exactly 4 (`logs/09-pixel-offset-measurement.log`)
-  - [ ] Design: fixed pre-write flush + expanded window (`designs/05-write-conflict-offset.md`)
 
 ## Current understanding
 <2-4 sentences: the best working model right now. What you believe
@@ -251,6 +251,7 @@ no dead ends — just the current state of knowledge.>
 ##### Rules
 
 - **Root cause analysis tree is mandatory.** Start it after the first measurement. Update it after every `/analyze` return. Every hypothesis goes in the tree — confirmed, refuted, or active. This is the primary navigation structure for the investigation.
+- **Active hypothesis goes first.** The active line of inquiry must be the first entry in the tree so it's immediately visible. Refuted hypotheses sink to the bottom. When a hypothesis is refuted, move it (and its children) below the active line. When a new hypothesis becomes active, move it to the top.
 - **Use `[x] ~~struck~~` for refuted hypotheses.** Include a short reason and a receipt link. Do not delete refuted hypotheses — they document dead ends.
 - **Use `[ ] **bold**` for the active hypothesis.** Mark it with `← ACTIVE`. There should be exactly one at any time.
 - **Use `[x]` (no strike) for confirmed findings** that support the active line but aren't hypotheses themselves.
