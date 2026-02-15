@@ -42,6 +42,10 @@ const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 4;
 /// switches to Mode 0 — these final pixels are rendered during HBlank
 /// from the STAT register's perspective.
 const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
+/// On the first scanline after LCD turn-on, the pixel pipeline activates
+/// 11 dots after Mode 2 ends (vs 4 dots on normal lines). The hardware's
+/// first Mode 0 is correspondingly shorter.
+const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 11;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -241,6 +245,14 @@ struct Line {
     discard_count: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
+    /// Dot at which the pixel pipeline begins executing in Mode 3.
+    /// Normally SCANLINE_PREPARING_DOTS + 4 (84); on the first scanline
+    /// after LCD turn-on, SCANLINE_PREPARING_DOTS + 11 (91).
+    rendering_start_dot: u32,
+    /// Pixel count at which STAT transitions from Mode 3 to Mode 0.
+    /// Normally PIXELS_PER_LINE - 4 (156); on the first scanline
+    /// after LCD turn-on, PIXELS_PER_LINE - 11 (149).
+    stat_boundary_pixels: u8,
 }
 
 impl Line {
@@ -259,6 +271,8 @@ impl Line {
             startup_fetch: Some(StartupFetch::Discarded),
             discard_count: 0,
             sprite_fetch: None,
+            rendering_start_dot: SCANLINE_RENDERING_DOTS,
+            stat_boundary_pixels: MODE3_STAT_BOUNDARY_PIXELS,
         }
     }
 
@@ -313,9 +327,12 @@ impl Rendering {
     }
 
     fn new_lcd_on() -> Self {
+        let mut line = Line::new(0);
+        line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
+        line.stat_boundary_pixels = screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8;
         Rendering {
             screen: Screen::new(),
-            line: Line::new(0),
+            line,
             window_line_counter: 0,
             lcd_turning_on: true,
         }
@@ -324,7 +341,7 @@ impl Rendering {
     fn mode(&self) -> Mode {
         if self.line.dots < SCANLINE_PREPARING_DOTS {
             Mode::PreparingScanline
-        } else if self.line.pixels_drawn < MODE3_STAT_BOUNDARY_PIXELS {
+        } else if self.line.pixels_drawn < self.line.stat_boundary_pixels {
             Mode::DrawingPixels
         } else {
             Mode::BetweenLines
@@ -386,7 +403,7 @@ impl Rendering {
         } else {
             // Mode 3 (drawing) and Mode 0 (HBlank)
             let was_drawing = self.line.pixels_drawn < screen::PIXELS_PER_LINE;
-            if was_drawing && self.line.dots >= SCANLINE_RENDERING_DOTS {
+            if was_drawing && self.line.dots >= self.line.rendering_start_dot {
                 self.dot_mode3(data);
             }
             self.line.dots += 1;
