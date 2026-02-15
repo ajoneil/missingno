@@ -8,12 +8,16 @@ Design a solution that aligns with the project's architectural requirements.
 
 The caller sent you a Question (what needs to change) and Context (files, research docs, investigation summary). Design a solution that answers the Question. Do not implement it. Do not diagnose the problem further — the caller has already done that.
 
-**The understanding must be complete before design begins.** The caller is responsible for establishing the root cause, validating hypotheses, and resolving knowledge gaps BEFORE invoking this skill. If the context doesn't contain enough information to produce a confident design — if you find yourself needing to hypothesize about what the hardware does, research how a mechanism works, trace execution paths to figure out timing, or reason about what measurements would show — **stop and return to the caller with a clear statement of what's missing.** Do not attempt to fill knowledge gaps yourself. Specifically:
+**Design from the brief, not from exploration.** The caller gives you a Question (what to change), Context (file paths, research docs, summary), and — critically — a clear statement of the problem and the intended fix direction. Your job is to translate that into a concrete structural design. You should not need to understand the problem more deeply than the brief explains it.
 
-- **No hypothesis generation.** Do not speculate about alternative root causes or mechanisms. The root cause is established; design for it.
-- **No research.** Do not invoke `/research`, `WebSearch`, `WebFetch`, or read reference implementation source code. All domain knowledge should already be in the research docs referenced by the context.
-- **No behavioral tracing.** Do not step through state machines, count cycles, or simulate execution to figure out what the code does at a specific point. If the design depends on knowing a specific value or state at a specific time, that measurement should have been done before design was invoked.
-- **No extended reasoning about root cause.** If you're writing more than 2-3 sentences about WHY the problem occurs (as opposed to WHAT the solution is), you're diagnosing, not designing. The summary.md should already contain the diagnosis.
+**Do not investigate.** The caller has already established the root cause, validated hypotheses, and resolved knowledge gaps. If the brief says "start pixel output 4 dots earlier," design exactly that — do not re-derive why 4 is the right number, trace execution to verify the claim, or explore alternative approaches. Trust the brief.
+
+Specifically:
+- **No hypothesis generation.** Do not speculate about alternative root causes or mechanisms.
+- **No research.** Do not invoke `/research`, `WebSearch`, `WebFetch`, or read reference implementation source code.
+- **No behavioral tracing.** Do not step through state machines, count cycles, or simulate execution to figure out what the code does at a specific point. If you need to understand a function's behavior to design the change, read the function — but stop at understanding the structure, not tracing runtime values.
+- **No extended reasoning about root cause.** If you're writing more than 2-3 sentences about WHY the problem occurs (as opposed to WHAT the solution is), you're diagnosing, not designing.
+- **Minimal source reading.** Read only the files and functions you need to modify. Do not read the entire codebase to "understand the context" — the brief provides the context. If the brief says to change `shift_pixel_out` in `ppu.rs`, read that function and its immediate callers, not the entire PPU.
 
 **If the context is insufficient**, write a short receipt explaining what's missing and what the caller needs to establish before re-invoking design. This is not a failure — it's the correct response when the investigation hasn't yet produced enough validated understanding to support a design.
 
@@ -24,11 +28,7 @@ The caller sent you a Question (what needs to change) and Context (files, resear
 - **Hardware fidelity**: Correct behavior must emerge from modeling the hardware, not from hacks, formulas, or precomputed values. If the hardware uses a state machine, model the state machine. If the hardware has an internal counter, model the counter. If you find yourself computing what the hardware would produce instead of simulating the process that produces it, the design is wrong.
 - **Code as documentation**: Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself. Magic numbers, ad-hoc arithmetic, and implicit conventions are design flaws. A reader should understand what the hardware is doing by reading the enum variants and match arms, not by decoding numeric formulas.
 
-**Then read the context the caller provided.** This includes:
-- The investigation's `summary.md` (problem description, root cause, research findings)
-- The current source files that will be modified
-- Any research documents referenced in the summary
-- The existing architecture patterns in the codebase
+**Then read the code you'll be modifying.** Read the functions, structs, and enums that the design will touch — and enough of their callers/callees to understand how they fit into the architecture. The goal is to understand the code's structure so your design extends existing patterns correctly. But stop at structure — do not trace runtime behavior, count cycles through the code, or simulate what values variables hold at specific points. That's investigation, not design.
 
 ## Design principles
 
