@@ -23,7 +23,7 @@ Specifically:
 
 ## Before you start
 
-**Mandatory: re-read the project's architectural requirements.** Read the "Emulation Philosophy" section in `CLAUDE.md` before doing anything else. Every design decision must be checked against these principles:
+**Mandatory: re-read the project's architectural requirements.** Read the "Emulation Philosophy" and "Architecture" sections in `CLAUDE.md` before doing anything else. The Architecture section describes the codebase structure, key patterns (CPU/memory separation, enum-based dispatch, PPU state machine, etc.), and conventions that your design must follow. Every design decision must be checked against these principles:
 
 - **Hardware fidelity**: Correct behavior must emerge from modeling the hardware, not from hacks, formulas, or precomputed values. If the hardware uses a state machine, model the state machine. If the hardware has an internal counter, model the counter. If you find yourself computing what the hardware would produce instead of simulating the process that produces it, the design is wrong.
 - **Code as documentation**: Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself. Magic numbers, ad-hoc arithmetic, and implicit conventions are design flaws. A reader should understand what the hardware is doing by reading the enum variants and match arms, not by decoding numeric formulas.
