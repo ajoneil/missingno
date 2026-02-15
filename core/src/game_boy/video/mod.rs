@@ -315,11 +315,13 @@ impl Video {
                     Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
                     _ => unreachable!(),
                 };
-                self.flush_dots(self.pending_dots - 3);
+                let pre_flush = self.pending_dots - 3;
+                self.flush_dots(pre_flush);
                 self.write_register_immediate(&register, old | value);
                 self.flush_dots(1);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                let remaining = self.pending_dots;
+                self.flush_dots(remaining);
             }
 
             WriteConflict::LcdcDmg => {
@@ -547,11 +549,6 @@ impl Video {
                 .flags
                 .contains(InterruptFlags::CURRENT_LINE_COMPARE)
                 && self.ly_eq_lyc)
-    }
-
-    /// Diagnostic: current PPU line and dot counter, if rendering.
-    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
-        self.ppu.as_ref().and_then(|p| p.diag_line_dots())
     }
 
     /// Begin accumulating PPU dots instead of ticking. Called by the
