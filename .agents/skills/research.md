@@ -33,6 +33,19 @@ Work through sources in this order, stopping when you have a clear, specific ans
 
 **Forbidden:** `WebSearch`, `WebFetch`, `Skill` (no invoking other skills). If you reach for any of these, you have left the research skill's methodology. If your allowed tools can't answer the question, report what you found with `Confidence: low` and return — do NOT escalate to forbidden tools.
 
+### Research finds facts, it does not derive them
+
+**If answering the question requires reasoning through multiple steps of logic, arithmetic, or simulation — stop.** You are no longer researching; you are reasoning. Research finds stated facts in sources. Examples:
+
+- **Research question**: "What does Pan Docs say the first pixel output dot is?" → Read Pan Docs, report the stated value. This is research.
+- **NOT a research question**: "Given that the interrupt dispatch takes 20 cycles and the handler has 12 cycles of setup, at what scanline dot does the first BGP write land?" → This requires cycle-counting arithmetic. It belongs in `/measure` (instrument the emulator and log the actual dot) or `/analyze` (interpret measurements).
+- **Research question**: "What pixel position does the `m3_bgp_change` reference screenshot show for the first palette transition?" → Look at the image, report the pixel coordinate. This is research.
+- **NOT a research question**: "Working backwards from the reference screenshot's pixel position and the test ROM's cycle timing, at what Mode 3 dot does BGP take effect?" → This requires multi-step derivation. Report the raw facts (the pixel position, the cycle counts from the source) and let the caller's `/analyze` step do the derivation.
+
+The test: **can you answer by quoting or directly observing a source, or do you need to calculate?** If you need to calculate, report the raw inputs and return. The caller will invoke `/analyze` or `/measure` to do the derivation.
+
+This is especially important when reading assembly source code for test ROMs. You can report what the code does (instructions, register values, addresses written to) but you must not trace execution to derive timing values. "The handler writes to BGP via `ld [c], a`" is a fact you can report. "The BGP write happens at scanline dot 92" requires counting cycles through the interrupt dispatch, handler preamble, and instructions — that's derivation, not research.
+
 ### Quality over quantity
 
 - **One good source beats five bad fetches.** If Pan Docs answers your question, stop there. Don't keep searching for confirmation through emulator source code.
