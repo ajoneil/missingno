@@ -170,7 +170,7 @@ Sometimes an investigation discovers that the original premise was wrong — the
 1. Write a final update to the current investigation's summary.md: set Status to `resolved → spawned new investigation`, update Current understanding with the reframed root cause, and add a link to the new investigation.
 2. Create a new investigation folder with a name that describes the actual problem (e.g., `2026-02-15-1600-mode3-first-pixel-timing` instead of continuing `write-conflict-flush-fix`).
 3. In the new investigation's summary.md, reference the parent investigation and carry forward only the validated findings — not the dead-end history. The new investigation starts clean with a correct problem statement.
-4. The new investigation inherits the base branch but gets its own investigation branch if needed.
+4. Create a new investigation branch from the base branch (usually `main`): `git checkout main && git checkout -b <new-investigation-short-name>`. The new investigation always gets its own branch — do not reuse the parent investigation's branch, even if it shares the same base.
 
 **Do NOT spin off when:**
 - A hypothesis within the original scope was refuted and you're trying the next one — that's normal investigation flow
