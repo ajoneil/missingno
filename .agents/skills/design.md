@@ -21,6 +21,8 @@ Specifically:
 
 **If the context is insufficient**, write a short receipt explaining what's missing and what the caller needs to establish before re-invoking design. This is not a failure — it's the correct response when the investigation hasn't yet produced enough validated understanding to support a design.
 
+**Reasoning is a symptom of missing information.** If you find yourself reasoning through how the hardware works, weighing alternative interpretations of research, working out timing arithmetic, or debating tradeoffs between approaches — stop. You do not have enough information to design. The brief should make the design obvious; if it doesn't, the caller needs to do more research or measurement first. Write the insufficient-context receipt listing the specific questions that need answers, and return to the caller. Do not push through ambiguity by thinking harder — that produces designs built on guesses.
+
 ## Before you start
 
 **Mandatory: re-read the project's architectural requirements.** Read the "Emulation Philosophy" and "Architecture" sections in `CLAUDE.md` before doing anything else. The Architecture section describes the codebase structure, key patterns (CPU/memory separation, enum-based dispatch, PPU state machine, etc.), and conventions that your design must follow. Every design decision must be checked against these principles:
