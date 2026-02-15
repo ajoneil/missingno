@@ -46,10 +46,6 @@ const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
 /// 11 dots after Mode 2 ends (vs 4 dots on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 11;
-/// On line 0 after VBlank, the Mode 2 STAT interrupt condition
-/// activates 4 dots later than on lines 1+ (no previous HBlank
-/// pre-activates mode_for_interrupt).
-const LINE0_MODE2_STAT_DELAY: u8 = 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -257,11 +253,6 @@ struct Line {
     /// Normally PIXELS_PER_LINE - 4 (156); on the first scanline
     /// after LCD turn-on, PIXELS_PER_LINE - 11 (149).
     stat_boundary_pixels: u8,
-    /// Number of Mode 2 dots to suppress the STAT interrupt condition.
-    /// On line 0 after VBlank, the hardware doesn't pre-activate
-    /// mode_for_interrupt=2 from the previous HBlank, so the Mode 2
-    /// STAT interrupt fires 4 dots later than on lines 1+.
-    mode2_stat_delay: u8,
 }
 
 impl Line {
@@ -282,11 +273,6 @@ impl Line {
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
             stat_boundary_pixels: MODE3_STAT_BOUNDARY_PIXELS,
-            mode2_stat_delay: if number == 0 {
-                LINE0_MODE2_STAT_DELAY
-            } else {
-                0
-            },
         }
     }
 
@@ -344,7 +330,6 @@ impl Rendering {
         let mut line = Line::new(0);
         line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
         line.stat_boundary_pixels = screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8;
-        line.mode2_stat_delay = 0;
         Rendering {
             screen: Screen::new(),
             line,
@@ -374,7 +359,7 @@ impl Rendering {
 
     /// Whether the mode 2 STAT interrupt condition is active.
     fn mode2_interrupt_active(&self) -> bool {
-        self.mode() == Mode::PreparingScanline && self.line.mode2_stat_delay == 0
+        self.mode() == Mode::PreparingScanline
     }
 
     fn gating_mode(&self) -> Mode {
@@ -412,9 +397,6 @@ impl Rendering {
         if self.line.dots < SCANLINE_PREPARING_DOTS {
             // Mode 2: OAM scan
             self.line.dots += 1;
-            if self.line.mode2_stat_delay > 0 {
-                self.line.mode2_stat_delay -= 1;
-            }
             if self.line.dots == SCANLINE_PREPARING_DOTS {
                 self.lcd_turning_on = false;
             }
@@ -1010,6 +992,14 @@ impl PixelProcessingUnit {
             }
             PixelProcessingUnit::Rendering(rendering) => rendering.write_gating_mode(),
             PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+        }
+    }
+
+    /// Diagnostic: return (line_number, dots) if rendering, None otherwise.
+    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
+        match self {
+            PixelProcessingUnit::Rendering(r) => Some((r.line.number, r.line.dots)),
+            PixelProcessingUnit::BetweenFrames(_) => None,
         }
     }
 
