@@ -16,6 +16,8 @@ Check what's already documented in `receipts/research/` for the relevant subsyst
 
 Focus on finding **authoritative answers to specific behavioral questions**. Before searching, write down the exact question you need answered (e.g. "at what dot does LY increment?" not "how does LY work?"). This keeps research targeted and prevents scope creep.
 
+**The goal is always to understand what the real hardware does.** When consulting any source — documentation, hardware tests, or emulator code — the question you're answering is "what does the hardware do?", never "how does emulator X implement this?".
+
 Work through sources in this order, stopping when you have a clear, specific answer:
 
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
@@ -23,7 +25,7 @@ Work through sources in this order, stopping when you have a clear, specific ans
 3. **Hardware test results and analysis**: Look for documents, blog posts, or wiki pages where someone has measured real hardware behavior with an oscilloscope or test ROM and reported the results. These are factual observations, not interpretations.
 4. **Community resources**: Forums, wikis, and blog posts from the emulation development community often document obscure hardware quirks with specific timing values and edge cases.
 5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. This tells you what behavior to produce, with specific cycle counts.
-6. **Reference emulators (last resort)**: Only consult emulator source code when documentation is insufficient. Reading source through WebFetch is unreliable — the AI summarizer often misinterprets code. If you must read emulator source, clone the repo locally and read the actual files. Extract factual hardware behavior (timing values, edge cases, state transitions) — do not copy architectural patterns, data structures, or implementation strategies.
+6. **Highly accurate emulator source (secondary evidence)**: Emulator source from projects with strong hardware accuracy (e.g. SameBoy, Gambatte) can be consulted to answer **hardware behavior questions** — extracting timing values, edge-case handling, and state transitions that reveal what the hardware does. Clone the repo locally and read the actual files (WebFetch loses critical details). **Report findings as hardware facts**, not as implementation details. "The hardware transitions to mode 0 at dot N" — not "SameBoy sets mode to 0 at line N of file X". Do not copy architectural patterns, data structures, or implementation strategies — these are the emulator author's design choices, not hardware behavior.
 
 ### Allowed and forbidden tools
 
@@ -64,8 +66,9 @@ The document should read as a clean reference, not a transcript of your investig
 ### Examples
 
 - `mode3-sprite-penalty.md` — how sprites extend mode 3, citing Pan Docs and test ROM data
-- `sameboy-sprite-handling.md` — how SameBoy implements the same behavior, citing specific file and line numbers
-- `mbc1-bank-wrapping.md` — how MBC1 handles bank number overflow, citing hardware manual and Gambatte source
+- `mbc1-bank-wrapping.md` — how MBC1 handles bank number overflow, citing hardware manual and test ROM analysis
+- `ly-increment-timing.md` — exact dot on which LY increments, citing TCAGBD measurements and hardware oscilloscope data
+- `write-conflict-mechanism.md` — hardware write conflict timing values extracted from accurate emulator source, reported as hardware facts
 
 ### Updating existing documents
 
