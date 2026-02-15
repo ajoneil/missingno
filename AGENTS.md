@@ -12,14 +12,14 @@ This file provides guidance to AI coding agents when working with code in this r
 
 The conversation context is volatile — it will be compacted unpredictably and you cannot control what survives. Treat files on disk as the primary memory. The conversation context is scratch space.
 
-**Write early, write often.** After every meaningful step — a finding, a decision, a measurement, a hypothesis update — write it to the appropriate file (`summary.md`, a research doc, a receipt). Do not accumulate results across turns and write them later. If the context were compacted right now, would your progress survive? If not, you haven't written enough.
+**Write early, write often.** After every meaningful step — a finding, a decision, a measurement, a hypothesis update — write it to the appropriate file (a receipt, a research doc, or `summary.md` if you're the investigate skill). Do not accumulate results across turns and write them later. If the context were compacted right now, would your progress survive? If not, you haven't written enough.
 
 **Keep context lean.** After writing state to disk, do not continue to carry it in conversation. When you need to recall earlier findings, re-read the file rather than relying on conversation memory. This applies especially to:
 - Research findings — once written to a research doc, re-read the doc when you need the information; don't try to remember it.
-- Diagnostic output — once the key measurements are recorded in `summary.md`, the raw output in conversation can be forgotten. Reference the log file path, not the content.
-- Hypotheses and decisions — once recorded in `summary.md`, re-read `summary.md` to check your current state rather than scrolling back through conversation.
+- Diagnostic output — once recorded in a log file and referenced by a receipt, the raw output in conversation can be forgotten. Reference the log file path, not the content.
+- Investigation state — re-read `summary.md` to check current state rather than scrolling back through conversation.
 
-**Reset after every subroutine return.** When a callee (hypothesize, research, measure, analyze, design) returns, the caller must: (1) write its interpretation to `summary.md`, (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
+**Reset after every subroutine return.** When a callee (hypothesize, research, measure, analyze, design, implement) returns, the caller must: (1) read the receipt and update `summary.md` (only the investigate skill writes to summary.md), (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
 
 ### Staying aligned with skill directives
 

@@ -1,6 +1,6 @@
 # Analyze
 
-Interpret new data — from measurement or research — against the current understanding of the problem. Write a durable analysis receipt and update the investigation's summary.
+Interpret new data — from measurement or research — against the current understanding of the problem. Write a durable analysis receipt.
 
 ## Scope discipline
 
@@ -17,7 +17,7 @@ You do NOT gather new data (that's measure/research), design solutions (that's d
 The caller provides:
 
 - **Data**: A pointer to the new data — a log file path (from measure) or a research document path (from research). Read the file; do not rely on conversation memory of its contents.
-- **Summary**: Path to the investigation's `summary.md`. Read it to understand the current state — active hypotheses, what's been tried, what's known.
+- **Summary**: Path to the investigation's `summary.md`. Read it to understand the current state — the RCA tree, active hypothesis, and current understanding.
 
 ## Process
 
@@ -74,7 +74,7 @@ Create the `analysis/` directory if it doesn't exist.
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
 1. Write the analysis receipt to the file.
-2. Update the investigation's `summary.md`: rewrite the **Current understanding** section to reflect the new conclusions (this is the most important update — it must always be the best current model of the problem), record the conclusion, note the receipt path. The analysis is now on disk — conversation memory of the reasoning is no longer needed.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.
+2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate your conclusions.
+3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the analysis receipt and makes that decision.
 
 **The turn does not end here.** Do NOT stop after writing the receipt. The caller must act on the result in the same turn.

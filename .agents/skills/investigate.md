@@ -8,14 +8,15 @@ These rules override default agent behavior. Follow them exactly:
 
 1. **Never run diagnostic commands directly.** All test invocations, benchmarks, profiling runs, and diagnostic commands go through `/measure`. Do not run `cargo test` or any other diagnostic command yourself — hand it to the measure skill, which handles logging, output capture, and reporting.
 2. **Never skip summary.md updates.** Update it before and after every diagnostic run and every change attempt. If you're about to run a diagnostic, write in summary.md what you're testing and why first.
-3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. Format every research request using the skill invocation protocol defined in AGENTS.md. **Before invoking `/research`, `/measure`, or `/analyze`, write a return context block to summary.md** (see "Subroutine discipline" in AGENTS.md). **CRITICAL: After any subroutine returns, you MUST immediately continue the investigation in the same turn. Skill invocations are subroutine calls, not stopping points. Never end your turn after receiving a skill report. Before continuing, re-read this skill file (`.agents/skills/investigate.md`) and the investigation's `summary.md` to restore the investigate context — the subroutine's skill text will have displaced these instructions from your working memory.**
+3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, stop and invoke `/research` instead. Format every research request using the skill invocation protocol defined in AGENTS.md. **Before invoking any subroutine (`/research`, `/measure`, `/analyze`, `/hypothesize`, `/design`, `/implement`), write a return context block to summary.md** (see "Subroutine discipline" in AGENTS.md). **CRITICAL: After any subroutine returns, you MUST immediately continue the investigation in the same turn. Skill invocations are subroutine calls, not stopping points. Never end your turn after receiving a skill report. Before continuing, re-read this skill file (`.agents/skills/investigate.md`) and the investigation's `summary.md` to restore the investigate context — the subroutine's skill text will have displaced these instructions from your working memory.**
 4. **Never interpret data inline.** When `/measure` or `/research` returns new data, invoke `/analyze` to interpret it. Do not reason about what measurements mean or what research findings imply in the investigate skill itself. The analyze skill writes a durable receipt of the interpretation and updates summary.md. You then re-read summary.md and continue from the updated state. **This includes after failed fixes.** When a test run shows the fix didn't work, do NOT write paragraphs about why it failed or what the results mean — invoke `/analyze` with the log file. The analyze skill will interpret the failure and update summary.md. Your only inline job is dispatching to subroutines, not thinking.
 5. **Never guess at changes.** Invoke `/measure` to measure what the system is actually doing before making changes. Log output tells you what's happening — your mental model of the code is not a substitute.
 6. **Never trace behavior in your head.** If you want to know what value a variable has at a specific point, or what state a system is in when a particular event occurs — invoke `/measure`. Do not manually trace execution paths, count cycles, or simulate state machines. Your mental model will be wrong. **This applies to ALL code** — this project, reference implementations, anything. If you catch yourself stepping through a state machine iteration by iteration to figure out what it does, stop and hand the question to `/research` or `/measure`. This also applies after failed fixes. If a fix attempt produces unexpected results, do not reason about why — invoke `/measure` to measure what actually happened, or `/research` to verify your understanding of the expected behavior.
 7. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run verification (tests, benchmarks, the relevant diagnostic) before building further changes on top. If a foundational change introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes verification.
 8. **Hardware is the source of truth.** The goal of every investigation is to understand what the **real hardware** does and model that behavior. Research should target hardware documentation, specifications, test ROM analysis, and hardware-level observations — not how other emulators implement things. Reference emulators can be useful as a secondary data point to confirm *what* the hardware does (e.g., confirming a timing value or state transition), but they are never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?"
-10. **Never design fixes inline.** When you know what needs to change, invoke `/design` — do not write multi-paragraph plans in conversation about what code to modify and how. The design skill reads the architecture, reviews the code, and produces a receipt. You implement its output. If you catch yourself writing sentences like "the simplest approach would be..." or "what if we..." or "the trick is..." — you are designing inline. Stop and invoke `/design`. The only exception is a true one-line experiment explicitly framed as a hypothesis test (not a fix attempt).
+10. **Never design fixes inline.** When you know what needs to change, invoke `/design` — do not write multi-paragraph plans in conversation about what code to modify and how. The design skill reads the architecture, reviews the code, and produces a receipt. Then invoke `/implement` to apply it. If you catch yourself writing sentences like "the simplest approach would be..." or "what if we..." or "the trick is..." — you are designing inline. Stop and invoke `/design`. The only exception is a true one-line experiment explicitly framed as a hypothesis test (not a fix attempt).
 11. **Never read reference implementation source directly.** If you need to know how another project handles a behavior, formulate the question as a hardware behavior question and invoke `/research`. Do not open the file yourself, do not `grep` through it, do not `sed` or `cat` it. The research skill can consult sources and report back with the specific facts you need. Reading reference source yourself leads to rabbit holes: you read one function, then need to understand its callers, then its data structures, then you're tracing execution (violating rule 6). The research skill has scope discipline to prevent this — you don't. One question in, one answer out. **When reference source is consulted, the research report should translate implementation details into hardware behavior facts** — "the hardware does X at cycle Y" not "emulator Z implements X by doing Y".
+12. **Never implement fixes directly.** When `/design` returns a design receipt, invoke `/implement` to apply it. Do not make code changes yourself — the implement skill reads the design, modifies the code, runs verification, and reports results. If you catch yourself editing source files, writing code, or running `cargo test` to verify a change — stop, you are implementing inline. Hand it to `/implement`.
 
 ## Periodic self-check
 
@@ -38,12 +39,16 @@ These rules override default agent behavior. Follow them exactly:
 
 Follow this loop for every investigation step:
 
-1. **Invoke `/hypothesize`** — given the current understanding and what's been tried, generate ranked testable hypotheses. The skill writes a receipt and sets the top-ranked hypothesis as active in summary.md.
-2. **Invoke `/measure`** — hand off the active hypothesis with specific measurement points. The measure skill adds targeted logging/measurement, runs the diagnostic, and reports what the output shows.
-3. **Invoke `/analyze`** — hand the measure report (log file path) and the current summary.md to the analyze skill. It interprets the measurements against the hypothesis, writes an analysis receipt, and updates summary.md (including Current understanding).
-4. **Re-read and continue** — re-read this skill file and summary.md. The analysis conclusion is on disk. If the problem isn't solved, loop back to step 1 — invoke `/hypothesize` again with the updated understanding.
+1. **Invoke `/hypothesize`** — generates ranked testable hypotheses, writes a receipt.
+2. **Update summary.md** — read the receipt, add the top hypothesis to the RCA tree as `[ ] **bold** ← ACTIVE`.
+3. **Invoke `/measure`** — hand off the active hypothesis with specific measurement points. Writes a report.
+4. **Invoke `/analyze`** — hand the measure report (log file path) and summary.md. Writes an analysis receipt with confirmed/refuted/inconclusive.
+5. **Update summary.md** — read the analysis receipt, mark the hypothesis in the RCA tree (`[x]` confirmed, `[x] ~~struck~~` refuted), rewrite Current understanding. This is the investigate skill's job — subroutines never touch summary.md.
+6. **Re-read and continue** — re-read this skill file and summary.md. If the problem isn't solved, loop back to step 1.
 
-The same loop applies when `/research` returns new data: invoke `/analyze` with the research document path to interpret the findings, then `/hypothesize` if a new direction is needed.
+The same loop applies when `/research` returns new data: invoke `/analyze` with the research document path, then update summary.md yourself, then `/hypothesize` if a new direction is needed.
+
+**summary.md is owned exclusively by investigate.** No subroutine skill writes to it. After every subroutine return, you (investigate) read the receipt and update summary.md — typically one or two lines in the RCA tree plus a rewrite of Current understanding if the model changed.
 
 **If you catch yourself forming hypotheses inline instead of invoking `/hypothesize`, stop.** Hand it to the skill so the reasoning is recorded in a receipt.
 
@@ -63,6 +68,7 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
   ├── research/         # Investigation-specific notes
   ├── analysis/         # Analysis receipts (numbered chronologically)
   ├── designs/          # Design receipts
+  ├── implementation/   # Implementation receipts
   └── logs/             # Diagnostic output captures
   ```
 - Invoke `/measure` to run an initial diagnostic, establish the current state, and confirm the problem.
@@ -93,7 +99,7 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 - **Frame research questions in terms of hardware behavior.** "What does the Game Boy PPU do when SCX is non-zero during mode 3?" not "How does emulator X handle SCX scrolling?" The answer should describe what the silicon does, grounded in specifications, hardware tests, and authoritative documentation. Reference emulators may be consulted as secondary evidence, but the research report must translate any implementation details into hardware behavior facts.
 - **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about expected behavior — while diagnosing, while interpreting diagnostic output, while designing a change — stop and formulate a research question.
 - **Use research to resolve contradictions.** If existing research documents contradict each other — or if diagnostic output contradicts what a research document claims — invoke `/research` with the specific contradiction as the question. Prefer hardware documentation and test ROM evidence over what any particular emulator does.
-- **Invoke `/analyze` to interpret.** When research returns, invoke `/analyze` with the research document path and summary.md. The analyze skill interprets the findings against your current hypotheses, writes an analysis receipt, and updates summary.md. Do not interpret research findings inline.
+- **Invoke `/analyze` to interpret.** When research returns, invoke `/analyze` with the research document path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret research findings inline.
 
 ### 4. Establish baseline
 
@@ -119,7 +125,7 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 
 **Instrumentation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/measure`.
 
-**Invoke `/analyze` to interpret.** When `/measure` returns, invoke `/analyze` with the log file path and summary.md. The analyze skill interprets the measurements against your current hypotheses, writes an analysis receipt, and updates summary.md. Do not interpret measure results inline.
+**Invoke `/analyze` to interpret.** When `/measure` returns, invoke `/analyze` with the log file path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret measure results inline.
 
 **Every diagnostic command goes through `/measure`**, which handles log file capture. Do not run diagnostics directly.
 
@@ -144,13 +150,9 @@ The fix for every kind of stuck is the same: either invoke `/measure` to measure
 
 - Study the diagnostic output to identify the root cause.
 - **Update summary.md** with your hypothesis before attempting a fix.
-- **Invoke `/design` before writing any fix.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a plan; you implement it.
-- Fix only the identified issue. Don't refactor surrounding code.
-- **Validate every change with diagnostic output.** Invoke `/measure` to run with logging before and after the change, then `/analyze` to interpret. If the numbers don't match expectations, invoke `/measure` again with more targeted logging rather than reasoning about why — let the output tell you what happened.
-- **Remove all diagnostic logging before committing.**
-- Invoke `/measure` to run the full verification suite after each change.
-- Invoke `/analyze` to confirm no new regressions.
-- **Update summary.md** after each change attempt — whether it worked or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
+- **Invoke `/design` before writing any fix.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a receipt.
+- **Invoke `/implement` to apply the design.** The implement skill reads the design receipt, makes the code changes, runs verification, and reports results. Do not make code changes yourself — hand them to `/implement`. Format the request using the skill invocation protocol: Design (path to design receipt), Context (summary.md path). The implement skill handles: reading the code, making changes, running `cargo check`, running the test suite, removing diagnostic logging, and reporting pass/fail with test counts.
+- **Update summary.md** after `/implement` returns — whether it succeeded or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
 
 #### When a fix attempt fails
 
@@ -164,14 +166,13 @@ When a fix produces unexpected results:
 2. **Record what the failure tells you.** Update summary.md: expected result, actual result, which hypothesis this invalidates.
 3. **Identify the knowledge gap.** The fix failed because your model is wrong. Write the gap as a specific question.
 4. **Fill the gap.** Invoke `/measure` to measure what's actually happening, or `/research` to learn what the hardware should do. Then invoke `/analyze` to interpret the new data.
-5. **Redesign only after the gap is filled.** Once `/analyze` has updated summary.md with new validated information, invoke `/design` again with the corrected understanding. Do not patch the old design — the old design was based on wrong assumptions.
+5. **Redesign only after the gap is filled.** Once you've updated summary.md with the new conclusions from `/analyze`, invoke `/design` again with the corrected understanding. Do not patch the old design — the old design was based on wrong assumptions.
 
-The loop is: **`/hypothesize` → `/measure` → `/analyze` → (repeat until confident) → `/design` → implement → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks".
+The loop is: **`/hypothesize` → `/measure` → `/analyze` → (repeat until confident) → `/design` → `/implement` → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks".
 
 **For compatibility investigations:**
 - **Design fixes based on hardware behavior, not other emulators' code.** The intermediate step is always understanding what the real hardware does — then modeling that behavior in your architecture. Never shortcut from "emulator X does Y" to "we should do Y". Instead: research establishes what the hardware does → design models that behavior in your architecture → implementation follows the design. Reference emulators are evidence about hardware behavior, not templates to copy. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
-- Invoke `/measure` to run the full test suite after each fix.
-- Invoke `/analyze` to verify no new regressions (failure count must not increase).
+- `/implement` runs the full test suite as part of its verification — check its report for regression counts.
 
 ### 7. Commit
 
@@ -190,6 +191,7 @@ receipts/investigations/<YYYY-MM-DD-HHMM>-<short-name>/
 ├── research/         # Investigation-specific notes
 ├── analysis/         # Analysis receipts (numbered chronologically)
 ├── designs/          # Design receipts
+├── implementation/   # Implementation receipts
 ├── logs/             # Diagnostic output captures
 └── ...               # Any other artifacts (diffs, screenshots, profiles)
 ```
@@ -202,18 +204,59 @@ General domain knowledge should already be in `receipts/research/` — you docum
 
 #### summary.md
 
-`summary.md` is a living document — the developer should be able to read it at any point and understand exactly where the investigation stands. Update it as you work, not at the end.
+`summary.md` is a **lightweight dashboard**, not a log. A developer should be able to read it in under a minute and know exactly where things stand. Details live in receipts — summary.md points to them.
 
-**MANDATORY: update summary.md before every `/measure` invocation and after every `/analyze` return.** This is a blocking prerequisite — do not invoke `/measure` until you have written in summary.md what you are about to test and why. After `/analyze` returns, summary.md should already reflect the interpretation (the analyze skill updates it), but verify this before continuing. This applies to every single diagnostic cycle, including quick verification runs and regression checks — not just major milestones.
+**Keep it short.** If summary.md is growing past ~60 lines, you're putting too much in it. Move detail into receipts and replace it with a link.
 
-Include:
-- **Status**: Current investigation state (e.g. "diagnosing", "fix in progress", "resolved", "blocked")
-- **Problem**: What's wrong and what the expected behavior is
-- **Current understanding**: The best working model of the problem right now — what you believe is happening and why, based on evidence so far. This is the section you read first after compaction. It must always reflect the latest analysis. When `/analyze` returns, this section must be updated to incorporate the new conclusions. Write it as a confident statement of what is known, what is suspected, and what is still unknown — not as a log of discoveries.
-- **What's been tried**: Diagnostic approaches, hypotheses tested, change attempts — even failed ones
-- **Findings**: What diagnostic output revealed, root cause if known
-- **Resolution**: What was changed and what now works (once fixed)
-- **Remaining**: Any related issues or open questions
+**Update it before every subroutine invocation and after every subroutine return.** This is a blocking prerequisite. The update should be a line or two — not paragraphs.
+
+##### Format
+
+```markdown
+# Investigation: <title>
+
+## Status
+<one line: diagnosing | fix in progress | resolved | blocked>
+
+## Problem
+<2-3 sentences: what's wrong, what should happen instead>
+
+## Baseline
+<test counts: N pass, N fail, N ignored out of N total>
+
+## Root cause analysis
+
+<A tree of hypotheses. This is the heart of the investigation.
+Each node is a hypothesis with a status. Indent children under parents.
+Cross off dead ends. Mark the active line of inquiry.>
+
+- [x] ~~Pipeline latency mismatch at PPU rendering level~~ — FIFO-empty gap blocks all PPU-side approaches (`designs/04-startup-suppression.md`)
+  - [x] ~~PipelineFill phase during second startup fetch~~ — FIFO empty, no-op (`logs/07-pipeline-fill-fifo-state.log`)
+  - [x] ~~position_in_line +4 at mode 3 start~~ — doesn't affect write-conflict timing, breaks sprites (`analysis/10-position-in-line-failure.md`)
+  - [x] ~~Shorten startup to 8 dots + suppress pixels_drawn~~ — structurally unviable (`designs/04-startup-suppression.md`)
+- [ ] **Write-conflict accumulation window** — expand from 5→9 pending dots ← ACTIVE
+  - [x] Pixel offset confirmed as exactly 4 (`logs/09-pixel-offset-measurement.log`)
+  - [ ] Design: fixed pre-write flush + expanded window (`designs/05-write-conflict-offset.md`)
+
+## Current understanding
+<2-4 sentences: the best working model right now. What you believe
+is the root cause and what approach is being pursued. No history,
+no dead ends — just the current state of knowledge.>
+
+## Active subroutine
+<return context block when a subroutine is in flight — see AGENTS.md>
+```
+
+##### Rules
+
+- **Root cause analysis tree is mandatory.** Start it after the first measurement. Update it after every `/analyze` return. Every hypothesis goes in the tree — confirmed, refuted, or active. This is the primary navigation structure for the investigation.
+- **Use `[x] ~~struck~~` for refuted hypotheses.** Include a short reason and a receipt link. Do not delete refuted hypotheses — they document dead ends.
+- **Use `[ ] **bold**` for the active hypothesis.** Mark it with `← ACTIVE`. There should be exactly one at any time.
+- **Use `[x]` (no strike) for confirmed findings** that support the active line but aren't hypotheses themselves.
+- **Indent child hypotheses** under their parent. A refuted parent means all children are implicitly dead.
+- **Current understanding is a snapshot, not a history.** It should read as "here's what we know right now" — not "first we discovered X, then Y". Rewrite it from scratch when the model changes rather than appending.
+- **No "What's been tried" log.** The RCA tree captures this. Each crossed-off hypothesis IS a record of what was tried. Receipt links provide detail.
+- **No duplicating receipt content.** If a finding is documented in an analysis receipt, link to it — don't reproduce the finding in summary.md.
 
 ### 9. Commit format
 
