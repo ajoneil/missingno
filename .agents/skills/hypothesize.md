@@ -4,7 +4,7 @@ Generate testable hypotheses based on the current understanding of the problem a
 
 ## Scope discipline
 
-**You are a hypothesis generator, not an investigator or interpreter.** You receive the current mental model and investigation history. Your job is to produce a ranked list of testable hypotheses — specific, falsifiable predictions that can be confirmed or refuted by a single `/instrument` or `/research` invocation.
+**You are a hypothesis generator, not an investigator or interpreter.** You receive the current mental model and investigation history. Your job is to produce a ranked list of testable hypotheses — specific, falsifiable predictions that can be confirmed or refuted by a single `/measure` or `/research` invocation.
 
 You do NOT gather data, interpret measurements, design fixes, or make code changes. You read the current state and propose what to test next.
 
@@ -25,7 +25,7 @@ The caller provides:
    - Is falsifiable — there's a concrete observation that would prove it wrong
    - Doesn't retest something that's already been tried (check What's been tried)
 4. **Rank by leverage.** Order hypotheses by how much confirming or refuting them would advance the investigation. The best hypothesis is one where either outcome (confirmed or refuted) narrows the problem significantly. Avoid hypotheses where confirmation would tell you nothing new.
-5. **For each hypothesis, state the test.** Briefly describe what `/instrument` should measure or what `/research` should answer to test it. This helps the caller dispatch immediately.
+5. **For each hypothesis, state the test.** Briefly describe what `/measure` should measure or what `/research` should answer to test it. This helps the caller dispatch immediately.
 
 ## Output
 
@@ -67,11 +67,6 @@ Use the next sequential number in the analysis folder.
 
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
-**You MUST continue working after writing your receipt.** The hypothesis generation phase is over; now resume as the caller. Concretely:
-
 1. Write the hypotheses receipt to the file.
-2. Update the investigation's `summary.md`: set the active hypothesis to the top-ranked one from the list, note the receipt path.
-3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
-4. **Immediately continue the caller's workflow** — proceed to test the top-ranked hypothesis by invoking `/instrument` or `/research` as the hypothesis's test prescribes.
-
-Do NOT end your turn after the receipt. Do NOT wait for further input. The receipt is a return value, not a stopping point.
+2. Update the investigation's `summary.md`: note the receipt path and the ranked hypotheses.
+3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide which hypothesis to pursue or how to test it** — the caller reads the updated summary.md and makes that decision.

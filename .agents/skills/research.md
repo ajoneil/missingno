@@ -128,11 +128,6 @@ When called from an active investigation, check whether the research question is
 
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
-**You MUST continue working after writing your report.** The research phase is over; now resume as the caller. Concretely:
-
 1. Write your report (Findings / Sources / Confidence / See also).
-2. Write the caller's interpretation of the findings to `summary.md`. The findings are now on disk in two places (the research doc and the summary) — conversation memory of the research is no longer needed.
-3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
-4. **Immediately continue the caller's workflow** — proceed to the next step based on what `summary.md` says, not on what you remember.
-
-Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
+2. Record the key findings in `summary.md`, referencing the research document path. Do not interpret the findings — just record what was discovered. The findings are now on disk in two places (the research doc and the summary) — conversation memory of the research is no longer needed.
+3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.

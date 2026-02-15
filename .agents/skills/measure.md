@@ -1,10 +1,10 @@
-# Instrument
+# Measure
 
 Add targeted diagnostic logging, run the diagnostic, and report what the output shows.
 
 ## Scope discipline
 
-**You are a measurement tool, not a problem-solver.** Your report must follow the instrument report format defined in the skill invocation protocol in AGENTS.md. If you catch yourself writing interpretation, root cause analysis, or fix suggestions — stop, delete it, and return to reporting measurements.
+**You are a measurement tool, not a problem-solver.** Your report must follow the measure report format defined in the skill invocation protocol in AGENTS.md. If you catch yourself writing interpretation, root cause analysis, or fix suggestions — stop, delete it, and return to reporting measurements.
 
 The caller sent you a Question (hypothesis), Context (where to instrument), and Log path (where to save output). Measure what was asked. Do not reason about the caller's problem, propose fixes, or expand scope. If you notice something unexpected, note it as a one-liner in the "Also observed" section of your report.
 
@@ -105,15 +105,10 @@ When the caller asks for a baseline comparison:
 3. Diff the two outputs. Report the first divergence point and the surrounding context.
 4. Restore the working branch (unstash).
 
-## After instrumentation is complete
+## After measurement is complete
 
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
-**You MUST continue working after writing your report.** The instrumentation phase is over; now resume as the caller. Concretely:
-
 1. Write your report (Test result / Measurements / Raw data / Also observed).
-2. Write the caller's interpretation of the measurements to `summary.md`, referencing the log file path. The measurements are now on disk in two places (the log file and the summary) — conversation memory of the raw output is no longer needed.
-3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
-4. **Immediately continue the caller's workflow** — proceed to the next step based on what `summary.md` says, not on what you remember.
-
-Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
+2. Record the key measurements in `summary.md`, referencing the log file path. Do not interpret the measurements — just record what was observed. The measurements are now on disk in two places (the log file and the summary) — conversation memory of the raw output is no longer needed.
+3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to do next** — the caller reads the updated summary.md and makes that decision.

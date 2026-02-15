@@ -19,7 +19,7 @@ The conversation context is volatile — it will be compacted unpredictably and 
 - Diagnostic output — once the key measurements are recorded in `summary.md`, the raw output in conversation can be forgotten. Reference the log file path, not the content.
 - Hypotheses and decisions — once recorded in `summary.md`, re-read `summary.md` to check your current state rather than scrolling back through conversation.
 
-**Reset after every subroutine return.** When a callee (hypothesize, research, instrument, analyze, design) returns, the caller must: (1) write its interpretation to `summary.md`, (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
+**Reset after every subroutine return.** When a callee (hypothesize, research, measure, analyze, design) returns, the caller must: (1) write its interpretation to `summary.md`, (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
 
 ### Staying aligned with skill directives
 
@@ -31,7 +31,7 @@ Skills contain specific, detailed instructions (e.g. "use curl not WebFetch", "a
 
 ### Skill invocation protocol
 
-Skills invoke other skills as subroutines (e.g. investigate invokes hypothesize, research, instrument, analyze, and design). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
+Skills invoke other skills as subroutines (e.g. investigate invokes hypothesize, research, measure, analyze, and design). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
 
 #### Request format (caller → callee)
 
@@ -40,7 +40,7 @@ Every skill invocation must include exactly these fields. Extraneous context is 
 ```
 **Question**: <one specific, concrete, testable question — one sentence>
 **Context**: <only what the callee needs to find the answer — file paths, subsystem names, output location>
-**Log path**: <where to save command output> (instrument only)
+**Log path**: <where to save command output> (measure only)
 ```
 
 **What must NOT be in a request:**
@@ -121,19 +121,18 @@ This block serves three purposes:
 
 **Callee isolation.** After a subroutine is invoked, the callee MUST operate exclusively within its own skill's rules and methodology. The callee does NOT inherit the caller's tools, habits, or context. Specifically:
 - The callee re-reads its own skill file from `.agents/skills/` and follows only those instructions.
-- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/instrument`'s logging patterns; `/instrument` does not do `/research`'s web fetching).
+- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/measure`'s logging patterns; `/measure` does not do `/research`'s web fetching).
 - If the callee reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
 
 **Callee handoff.** When the callee finishes:
 1. Write the report in the format specified by the skill invocation protocol.
-2. Read the return context block from summary.md.
-3. Re-read the caller's skill file (path is in the return context block).
-4. Delete the "Active subroutine" section from summary.md.
-5. Immediately continue working as the caller — interpret the results, update summary.md, proceed to the next step.
+2. Update summary.md with the factual output (measurements, findings, hypotheses, design) — but do not interpret them or decide next steps. That's the caller's job.
+3. Read the return context block from summary.md.
+4. Re-read the caller's skill file (path is in the return context block).
+5. Delete the "Active subroutine" section from summary.md.
+6. Hand control back to the caller. The caller reads the updated summary.md and decides what to do next.
 
-The report is a return value — the same turn continues with the caller's workflow. If the turn ends after a report with no further action, subroutine discipline has been violated.
-
-**Violation test:** If your response ends with a Skill tool call and nothing after it, you have violated subroutine discipline. After every Skill tool result, you must produce further tool calls or text that acts on the result.
+**Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (measure, analyze, hypothesize, design, research) report their output and return. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
 
 ## Project Overview
 

@@ -4,9 +4,18 @@ Design a solution that aligns with the project's architectural requirements.
 
 ## Scope discipline
 
-**You are an architect, not an implementer.** Your report must follow the format defined below. You produce a design — the caller implements it. If you catch yourself writing code changes, diffs, or implementation details beyond what's needed to communicate the design — stop, pull back to the structural level.
+**You are an architect, not an implementer or investigator.** Your report must follow the format defined below. You produce a design — the caller implements it. If you catch yourself writing code changes, diffs, or implementation details beyond what's needed to communicate the design — stop, pull back to the structural level.
 
 The caller sent you a Question (what needs to change) and Context (files, research docs, investigation summary). Design a solution that answers the Question. Do not implement it. Do not diagnose the problem further — the caller has already done that.
+
+**The understanding must be complete before design begins.** The caller is responsible for establishing the root cause, validating hypotheses, and resolving knowledge gaps BEFORE invoking this skill. If the context doesn't contain enough information to produce a confident design — if you find yourself needing to hypothesize about what the hardware does, research how a mechanism works, trace execution paths to figure out timing, or reason about what measurements would show — **stop and return to the caller with a clear statement of what's missing.** Do not attempt to fill knowledge gaps yourself. Specifically:
+
+- **No hypothesis generation.** Do not speculate about alternative root causes or mechanisms. The root cause is established; design for it.
+- **No research.** Do not invoke `/research`, `WebSearch`, `WebFetch`, or read reference implementation source code. All domain knowledge should already be in the research docs referenced by the context.
+- **No behavioral tracing.** Do not step through state machines, count cycles, or simulate execution to figure out what the code does at a specific point. If the design depends on knowing a specific value or state at a specific time, that measurement should have been done before design was invoked.
+- **No extended reasoning about root cause.** If you're writing more than 2-3 sentences about WHY the problem occurs (as opposed to WHAT the solution is), you're diagnosing, not designing. The summary.md should already contain the diagnosis.
+
+**If the context is insufficient**, write a short receipt explaining what's missing and what the caller needs to establish before re-invoking design. This is not a failure — it's the correct response when the investigation hasn't yet produced enough validated understanding to support a design.
 
 ## Before you start
 
@@ -116,11 +125,6 @@ tested first.>
 
 This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
 
-**You MUST continue working after writing your report.** The design phase is over; now resume as the caller. Concretely:
-
 1. Write the design report to the receipt file.
-2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file. The design is now on disk — conversation memory of the design reasoning is no longer needed. Reference the receipt file path when implementing.
-3. Re-read the caller's skill file (e.g. `.agents/skills/investigate.md`) and the active investigation's `summary.md` to restore the caller's context from disk. Work from the file state, not from conversation memory.
-4. **Immediately continue the caller's workflow** — proceed to implementation based on what the design receipt and `summary.md` say, not on what you remember.
-
-Do NOT end your turn after the report. Do NOT wait for further input. The report is a return value, not a stopping point.
+2. Update the investigation's `summary.md` with a short summary of the design and a pointer to the receipt file. The design is now on disk — conversation memory of the design reasoning is no longer needed.
+3. **Return to the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and hand control back. **Do not decide what to implement or in what order** — the caller reads the design receipt and makes that decision.
