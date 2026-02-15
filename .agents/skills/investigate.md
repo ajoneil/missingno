@@ -156,6 +156,29 @@ The fix for every kind of stuck is the same: either invoke `/measure` to measure
 - **Invoke `/implement` to apply the design.** The implement skill reads the design receipt, makes the code changes, runs verification, and reports results. Do not make code changes yourself — hand them to `/implement`. Format the request using the skill invocation protocol: Design (path to design receipt), Context (summary.md path). The implement skill handles: reading the code, making changes, running `cargo check`, running the test suite, removing diagnostic logging, and reporting pass/fail with test counts.
 - **Update summary.md** after `/implement` returns — whether it succeeded or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
 
+#### When the premise changes — spinning off a new investigation
+
+Sometimes an investigation discovers that the original premise was wrong — the root cause is in a completely different subsystem, or the problem is fundamentally different from what was initially scoped. When this happens, **start a new investigation** rather than continuing under the old one.
+
+**Spin off when:**
+- The root cause is in a different subsystem than the investigation was scoped for (e.g., investigation was "write-conflict timing" but root cause is "PPU pixel output pipeline timing")
+- The fix requires changes to code that has nothing to do with the original hypothesis
+- The investigation name no longer describes the problem being solved
+- The RCA tree has exhausted all hypotheses within the original scope and the new direction is a fundamentally different problem, not a refinement of the same one
+
+**How to spin off:**
+1. Write a final update to the current investigation's summary.md: set Status to `resolved → spawned new investigation`, update Current understanding with the reframed root cause, and add a link to the new investigation.
+2. Create a new investigation folder with a name that describes the actual problem (e.g., `2026-02-15-1600-mode3-first-pixel-timing` instead of continuing `write-conflict-flush-fix`).
+3. In the new investigation's summary.md, reference the parent investigation and carry forward only the validated findings — not the dead-end history. The new investigation starts clean with a correct problem statement.
+4. The new investigation inherits the base branch but gets its own investigation branch if needed.
+
+**Do NOT spin off when:**
+- A hypothesis within the original scope was refuted and you're trying the next one — that's normal investigation flow
+- The fix is more complex than expected but still addresses the original problem
+- You need to change a helper function in a different file — the subsystem boundary is about conceptual scope, not file boundaries
+
+The test: "Would someone reading the investigation name and problem statement understand why the current active hypothesis is being pursued?" If yes, continue. If no, spin off.
+
 #### When a fix attempt fails
 
 A failed fix is diagnostic data, not a prompt to tweak and retry.
