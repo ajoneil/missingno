@@ -34,23 +34,22 @@ impl fmt::Display for Mode {
 
 const SCANLINE_TOTAL_DOTS: u32 = 456;
 const SCANLINE_PREPARING_DOTS: u32 = 80;
-/// The pixel pipeline begins executing 4 dots after Mode 2 ends.
-/// STAT reports Mode 3 from dot 80, but the fetcher/FIFO activate at dot 84.
-const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 4;
+/// Pipeline priming begins 1 dot after Mode 2 ends. STAT reports Mode 3
+/// from dot 80, pipeline priming runs at dots 81-83, then the fetcher/FIFO
+/// activate at dot 84.
+const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 1;
 /// Dots of pipeline priming at the start of Mode 3, before the
 /// fetcher begins. The position counter increments during these
 /// dots for trigger evaluation, but no tile fetch occurs.
 const PIPELINE_PRIMING_DOTS: u8 = 3;
 /// STAT transitions from Mode 3 to Mode 0 when this many pixels have
 /// been drawn. The pixel pipeline outputs 4 more pixels after STAT
-/// switches to Mode 0. The priming dots extend Mode 3 by 3 physical
-/// dots without drawing pixels, so the boundary decreases by 3 to
-/// keep the Mode 0 transition at the same absolute dot.
-const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4 - PIPELINE_PRIMING_DOTS;
+/// switches to Mode 0.
+const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
 /// On the first scanline after LCD turn-on, the pixel pipeline activates
-/// 11 dots after Mode 2 ends (vs 4 dots on normal lines). The hardware's
+/// 8 dots after Mode 2 ends (vs 1 dot on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
-const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 11;
+const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 /// Number of dots the BG startup phase takes: 3 pipeline priming dots
