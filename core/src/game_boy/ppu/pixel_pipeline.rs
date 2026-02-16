@@ -46,15 +46,9 @@ const PIPELINE_PRIMING_DOTS: u8 = 3;
 /// 8 dots after Mode 2 ends (vs 1 dot on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
-/// Offset between PIXELS_PER_LINE and the STAT Mode 0 trigger point.
-///
-/// The hardware fires WODU (hblank gate) at pixel counter PX=167, after
-/// 159 LCD-clocked visible pixels. The emulator's pixel pipeline produces
-/// its first visible pixel 3 dots later than the hardware due to the FIFO
-/// startup model. Combined with the 1-pixel difference between the
-/// hardware's 159 LCD clocks and PIXELS_PER_LINE (160), the total
-/// offset is 4.
-const MODE3_STAT_BOUNDARY_OFFSET: u8 = 4;
+/// Hardware pixel counter value at which WODU fires (hblank gate).
+/// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
+const WODU_PIXEL_COUNT: u8 = 167;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 /// Number of dots the BG startup phase takes: 3 pipeline priming dots
@@ -445,15 +439,17 @@ struct Line {
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
+    /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
+    /// the pixel clock starts after startup. Drives WODU (hblank gate)
+    /// at PX=167. Not reset on window trigger — PX is a monotonic
+    /// per-line counter.
+    pixel_counter: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Dot at which the pixel pipeline begins executing in Mode 3.
     /// Normally SCANLINE_PREPARING_DOTS + 4 (84); on the first scanline
     /// after LCD turn-on, SCANLINE_PREPARING_DOTS + 11 (91).
     rendering_start_dot: u32,
-    /// Pixel count at which STAT transitions to Mode 0 (hblank_gate fires).
-    /// Normally PIXELS_PER_LINE - 4 (156); on LCD-on first line, 149.
-    stat_boundary_pixels: u8,
 }
 
 impl Line {
@@ -473,9 +469,9 @@ impl Line {
                 dots_remaining: PIPELINE_PRIMING_DOTS,
             }),
             fine_scroll: FineScroll::new(),
+            pixel_counter: 0,
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
-            stat_boundary_pixels: screen::PIXELS_PER_LINE - MODE3_STAT_BOUNDARY_OFFSET,
         }
     }
 
@@ -546,8 +542,6 @@ impl Rendering {
     fn new_lcd_on() -> Self {
         let mut line = Line::new(0);
         line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
-        line.stat_boundary_pixels =
-            screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8 - PIPELINE_PRIMING_DOTS;
         Rendering {
             screen: Screen::new(),
             line,
@@ -641,11 +635,11 @@ impl Rendering {
                 self.dot_mode3(data, oam, vram);
             }
 
-            // Set hblank_gate when pixel count reaches the STAT boundary
+            // Set hblank_gate when pixel counter reaches WODU threshold
             // and no sprite fetch is active
             // (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
             if self.rendering
-                && self.line.pixels_drawn >= self.line.stat_boundary_pixels
+                && self.line.pixel_counter >= WODU_PIXEL_COUNT
                 && self.line.sprite_fetch.is_none()
             {
                 self.hblank_gate = true;
@@ -1053,6 +1047,7 @@ impl Rendering {
         // Shift one bit from each BG bitplane
         let (bg_lo, bg_hi) = self.line.bg_shifter.shift();
         self.line.position_in_line += 1;
+        self.line.pixel_counter += 1;
 
         // Shift OBJ in lockstep (if it has pixels)
         let obj_bits = self.line.obj_shifter.shift();
