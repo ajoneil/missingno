@@ -270,17 +270,14 @@ impl GameBoy {
         // PPU mode-based memory gating: the PPU locks OAM during Mode 2
         // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
         // The bus latch is NOT updated — no device drove the bus.
-        let mode = self.ppu.gating_mode();
         match address {
-            0xFE00..=0xFE9F => match mode {
-                ppu::pixel_pipeline::Mode::PreparingScanline
-                | ppu::pixel_pipeline::Mode::DrawingPixels => {
+            0xFE00..=0xFE9F => {
+                if self.ppu.oam_locked() {
                     return 0xFF;
                 }
-                _ => {}
-            },
+            }
             0x8000..=0x9FFF => {
-                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
+                if self.ppu.vram_locked() {
                     return 0xFF;
                 }
             }
@@ -323,17 +320,14 @@ impl GameBoy {
             }
         }
 
-        let mode = self.ppu.gating_mode();
         match address {
-            0xFE00..=0xFE9F => match mode {
-                ppu::pixel_pipeline::Mode::PreparingScanline
-                | ppu::pixel_pipeline::Mode::DrawingPixels => {
+            0xFE00..=0xFE9F => {
+                if self.ppu.oam_locked() {
                     return 0xFF;
                 }
-                _ => {}
-            },
+            }
             0x8000..=0x9FFF => {
-                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
+                if self.ppu.vram_locked() {
                     return 0xFF;
                 }
             }
@@ -421,21 +415,16 @@ impl GameBoy {
             }
         }
 
-        // PPU mode-based memory gating for writes. Writes use different
-        // timing than reads: no early OAM/VRAM locks, and mode 2 releases
-        // OAM 4 dots early (at dot 76).
+        // PPU mode-based memory gating for writes.
         // The bus latch is NOT updated — the write was blocked.
-        let mode = self.ppu.write_gating_mode();
         match address {
-            0xFE00..=0xFE9F => match mode {
-                ppu::pixel_pipeline::Mode::PreparingScanline
-                | ppu::pixel_pipeline::Mode::DrawingPixels => {
+            0xFE00..=0xFE9F => {
+                if self.ppu.oam_write_locked() {
                     return;
                 }
-                _ => {}
-            },
+            }
             0x8000..=0x9FFF => {
-                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
+                if self.ppu.vram_write_locked() {
                     return;
                 }
             }

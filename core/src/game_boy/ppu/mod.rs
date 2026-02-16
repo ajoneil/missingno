@@ -256,7 +256,7 @@ impl Ppu {
     /// Returns true if the PPU is actively drawing pixels (Mode 3),
     /// meaning register writes may conflict with PPU reads.
     pub fn ppu_is_drawing(&self) -> bool {
-        matches!(&self.pixel_pipeline, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
+        matches!(&self.pixel_pipeline, Some(ppu) if ppu.is_rendering())
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) {
@@ -354,23 +354,28 @@ impl Ppu {
         }
     }
 
-    /// Mode for OAM/VRAM memory gating. Reports Mode 0 during LCD-on
-    /// startup (like stat_mode) but transitions to Mode 0 immediately
-    /// when Mode 3 ends (no 1-dot delay).
-    pub fn gating_mode(&self) -> pixel_pipeline::Mode {
-        if let Some(ppu) = &self.pixel_pipeline {
-            ppu.gating_mode()
-        } else {
-            pixel_pipeline::Mode::BetweenFrames
-        }
+    pub fn oam_locked(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map_or(false, |ppu| ppu.oam_locked())
     }
 
-    pub fn write_gating_mode(&self) -> pixel_pipeline::Mode {
-        if let Some(ppu) = &self.pixel_pipeline {
-            ppu.write_gating_mode()
-        } else {
-            pixel_pipeline::Mode::BetweenFrames
-        }
+    pub fn vram_locked(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map_or(false, |ppu| ppu.vram_locked())
+    }
+
+    pub fn oam_write_locked(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map_or(false, |ppu| ppu.oam_write_locked())
+    }
+
+    pub fn vram_write_locked(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map_or(false, |ppu| ppu.vram_write_locked())
     }
 
     pub fn control(&self) -> Control {

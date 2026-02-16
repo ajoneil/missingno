@@ -42,10 +42,6 @@ const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 1;
 /// fetcher begins. The position counter increments during these
 /// dots for trigger evaluation, but no tile fetch occurs.
 const PIPELINE_PRIMING_DOTS: u8 = 3;
-/// STAT transitions from Mode 3 to Mode 0 when this many pixels have
-/// been drawn. The pixel pipeline outputs 4 more pixels after STAT
-/// switches to Mode 0.
-const MODE3_STAT_BOUNDARY_PIXELS: u8 = screen::PIXELS_PER_LINE - 4;
 /// On the first scanline after LCD turn-on, the pixel pipeline activates
 /// 8 dots after Mode 2 ends (vs 1 dot on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
@@ -399,10 +395,6 @@ struct Line {
     /// Normally SCANLINE_PREPARING_DOTS + 4 (84); on the first scanline
     /// after LCD turn-on, SCANLINE_PREPARING_DOTS + 11 (91).
     rendering_start_dot: u32,
-    /// Pixel count at which STAT transitions from Mode 3 to Mode 0.
-    /// Normally PIXELS_PER_LINE - 4 (156); on the first scanline
-    /// after LCD turn-on, PIXELS_PER_LINE - 11 (149).
-    stat_boundary_pixels: u8,
 }
 
 impl Line {
@@ -424,7 +416,6 @@ impl Line {
             discard_count: 0,
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
-            stat_boundary_pixels: MODE3_STAT_BOUNDARY_PIXELS,
         }
     }
 
@@ -472,6 +463,13 @@ pub struct Rendering {
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     lcd_turning_on: bool,
+    /// Hardware rendering latch (XYMU, page 21). True = Mode 3 active.
+    /// Gates VRAM/OAM access, pixel pipeline clocks.
+    rendering: bool,
+    /// Hardware HBlank gate (WODU, page 21). True = pixel counter reached
+    /// 160 and no sprite match active. Pixel clock stops immediately;
+    /// rendering latch clears on the next dot.
+    hblank_gate: bool,
 }
 
 impl Rendering {
@@ -481,27 +479,29 @@ impl Rendering {
             line: Line::new(0),
             window_line_counter: 0,
             lcd_turning_on: false,
+            rendering: false,
+            hblank_gate: false,
         }
     }
 
     fn new_lcd_on() -> Self {
         let mut line = Line::new(0);
         line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
-        line.stat_boundary_pixels =
-            screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8 - PIPELINE_PRIMING_DOTS;
         Rendering {
             screen: Screen::new(),
             line,
             window_line_counter: 0,
             lcd_turning_on: true,
+            rendering: false,
+            hblank_gate: false,
         }
     }
 
     fn mode(&self) -> Mode {
-        if self.line.dots < SCANLINE_PREPARING_DOTS {
-            Mode::PreparingScanline
-        } else if self.line.pixels_drawn < self.line.stat_boundary_pixels {
+        if self.rendering {
             Mode::DrawingPixels
+        } else if self.line.dots < SCANLINE_PREPARING_DOTS {
+            Mode::PreparingScanline
         } else {
             Mode::BetweenLines
         }
@@ -511,9 +511,18 @@ impl Rendering {
         self.mode()
     }
 
-    /// Mode for STAT interrupt edge detection.
+    /// Mode for STAT interrupt edge detection. Mode 0 fires from
+    /// WODU (hblank_gate) directly — one dot before XYMU clears.
     fn interrupt_mode(&self) -> Mode {
-        self.mode()
+        if self.hblank_gate {
+            Mode::BetweenLines
+        } else if self.rendering {
+            Mode::DrawingPixels
+        } else if self.line.dots < SCANLINE_PREPARING_DOTS {
+            Mode::PreparingScanline
+        } else {
+            Mode::BetweenLines
+        }
     }
 
     /// Whether the mode 2 STAT interrupt condition is active.
@@ -524,30 +533,20 @@ impl Rendering {
         self.mode() == Mode::PreparingScanline && (self.line.number != 0 || self.line.dots >= 4)
     }
 
-    fn gating_mode(&self) -> Mode {
-        // OAM is locked 4 dots before the scanline ends (at dot 452),
-        // before STAT reports mode 2.
-        if self.line.dots >= SCANLINE_TOTAL_DOTS - 4 && self.mode() == Mode::BetweenLines {
-            Mode::PreparingScanline
-        // VRAM is locked 4 dots before mode 3 starts (at dot 76),
-        // while STAT still reports mode 2.
-        } else if self.line.dots >= SCANLINE_PREPARING_DOTS - 4
-            && self.mode() == Mode::PreparingScanline
-        {
-            Mode::DrawingPixels
-        } else {
-            self.mode()
-        }
+    fn oam_locked(&self) -> bool {
+        self.rendering || self.line.dots < SCANLINE_PREPARING_DOTS
     }
 
-    fn write_gating_mode(&self) -> Mode {
-        // Writes don't have early locks. Instead, mode 2 releases OAM
-        // 4 dots early (at dot 76), creating a brief gap before mode 3.
-        if self.line.dots >= SCANLINE_PREPARING_DOTS - 4 && self.mode() == Mode::PreparingScanline {
-            Mode::BetweenLines
-        } else {
-            self.mode()
-        }
+    fn vram_locked(&self) -> bool {
+        self.rendering
+    }
+
+    fn oam_write_locked(&self) -> bool {
+        self.rendering || self.line.dots < SCANLINE_PREPARING_DOTS
+    }
+
+    fn vram_write_locked(&self) -> bool {
+        self.rendering
     }
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
@@ -561,16 +560,33 @@ impl Rendering {
             self.line.dots += 1;
             if self.line.dots == SCANLINE_PREPARING_DOTS {
                 self.lcd_turning_on = false;
+                self.rendering = true;
             }
         } else {
+            // Clear rendering latch one dot after hblank_gate (VOGA delay)
+            if self.hblank_gate && self.rendering {
+                self.rendering = false;
+            }
+
             // Mode 3 (drawing) and Mode 0 (HBlank)
-            let was_drawing = self.line.pixels_drawn < screen::PIXELS_PER_LINE;
-            if was_drawing && self.line.dots >= self.line.rendering_start_dot {
+            if self.rendering && self.line.dots >= self.line.rendering_start_dot {
                 self.dot_mode3(data, oam, vram);
             }
+
+            // Set hblank_gate when all pixels are output and no sprite
+            // fetch is active (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
+            if self.rendering
+                && self.line.pixels_drawn >= screen::PIXELS_PER_LINE
+                && self.line.sprite_fetch.is_none()
+            {
+                self.hblank_gate = true;
+            }
+
             self.line.dots += 1;
 
             if self.line.dots == SCANLINE_TOTAL_DOTS {
+                self.rendering = false;
+                self.hblank_gate = false;
                 if self.line.window_rendered {
                     self.window_line_counter += 1;
                 }
@@ -1173,19 +1189,42 @@ impl PixelPipeline {
         }
     }
 
-    pub fn gating_mode(&self) -> Mode {
+    pub fn oam_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
-            PixelPipeline::Rendering(rendering) => rendering.gating_mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
+            PixelPipeline::Rendering(rendering) => rendering.oam_locked(),
+            PixelPipeline::BetweenFrames(_) => false,
         }
     }
 
-    pub fn write_gating_mode(&self) -> Mode {
+    pub fn vram_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
-            PixelPipeline::Rendering(rendering) => rendering.write_gating_mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
+            PixelPipeline::Rendering(rendering) => rendering.vram_locked(),
+            PixelPipeline::BetweenFrames(_) => false,
+        }
+    }
+
+    pub fn oam_write_locked(&self) -> bool {
+        match self {
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
+            PixelPipeline::Rendering(rendering) => rendering.oam_write_locked(),
+            PixelPipeline::BetweenFrames(_) => false,
+        }
+    }
+
+    pub fn vram_write_locked(&self) -> bool {
+        match self {
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
+            PixelPipeline::Rendering(rendering) => rendering.vram_write_locked(),
+            PixelPipeline::BetweenFrames(_) => false,
+        }
+    }
+
+    pub fn is_rendering(&self) -> bool {
+        match self {
+            PixelPipeline::Rendering(rendering) => rendering.rendering,
+            PixelPipeline::BetweenFrames(_) => false,
         }
     }
 
