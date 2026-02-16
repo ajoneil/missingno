@@ -401,18 +401,31 @@ struct SpriteFetch {
     tile_data_high: u8,
 }
 
-// --- Line state ---
+// --- Rendering ---
 
-struct Line {
-    number: u8,
-    dots: u32,
+pub struct Rendering {
+    screen: Screen,
+    window_line_counter: u8,
+    /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
+    /// The STAT mode bits read as 0 until Mode 2 actually starts.
+    lcd_turning_on: bool,
+    /// Hardware rendering latch (XYMU, page 21). True = Mode 3 active.
+    /// Gates VRAM/OAM access, pixel pipeline clocks.
+    rendering: bool,
+    /// Hardware HBlank gate (WODU, page 21). True = pixel counter reached
+    /// 160 and no sprite match active. Pixel clock stops immediately;
+    /// rendering latch clears on the next dot.
+    hblank_gate: bool,
+    /// Current scanline number (0-143 during rendering).
+    line_number: u8,
+    /// Dot position within the current scanline (0..456).
+    dot: u32,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
     /// Index of the next sprite store entry to check for triggering.
     next_sprite: u8,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
-
     /// Background pixel shift register (page 32).
     bg_shifter: BgShifter,
     /// Sprite pixel shift register (pages 33-34).
@@ -435,11 +448,38 @@ struct Line {
     sprite_fetch: Option<SpriteFetch>,
 }
 
-impl Line {
-    fn new(number: u8) -> Self {
-        Line {
-            number,
-            dots: 0,
+impl Rendering {
+    fn new() -> Self {
+        Rendering {
+            screen: Screen::new(),
+            window_line_counter: 0,
+            lcd_turning_on: false,
+            rendering: false,
+            hblank_gate: false,
+            line_number: 0,
+            dot: 0,
+            sprites: SpriteStore::new(),
+            next_sprite: 0,
+            window_rendered: false,
+            bg_shifter: BgShifter::new(),
+            obj_shifter: ObjShifter::new(),
+            fetcher: TileFetcher::new(),
+            startup_fetch: Some(StartupFetch::FirstTile),
+            fine_scroll: FineScroll::new(),
+            pixel_counter: 0,
+            sprite_fetch: None,
+        }
+    }
+
+    fn new_lcd_on() -> Self {
+        Rendering {
+            screen: Screen::new(),
+            window_line_counter: 0,
+            lcd_turning_on: true,
+            rendering: false,
+            hblank_gate: false,
+            line_number: 0,
+            dot: 0,
             sprites: SpriteStore::new(),
             next_sprite: 0,
             window_rendered: false,
@@ -460,9 +500,9 @@ impl Line {
             if count as usize >= MAX_SPRITES_PER_LINE {
                 break;
             }
-            if sprite.position.on_line(self.number, sprite_size) {
+            if sprite.position.on_line(self.line_number, sprite_size) {
                 let line_offset =
-                    (self.number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
+                    (self.line_number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
                 self.sprites.entries[count as usize] = SpriteStoreEntry {
                     oam_index: oam_index as u8,
                     line_offset,
@@ -478,53 +518,11 @@ impl Line {
 
         self.fine_scroll = FineScroll::new();
     }
-}
-
-// --- Rendering ---
-
-pub struct Rendering {
-    screen: Screen,
-    line: Line,
-    window_line_counter: u8,
-    /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
-    /// The STAT mode bits read as 0 until Mode 2 actually starts.
-    lcd_turning_on: bool,
-    /// Hardware rendering latch (XYMU, page 21). True = Mode 3 active.
-    /// Gates VRAM/OAM access, pixel pipeline clocks.
-    rendering: bool,
-    /// Hardware HBlank gate (WODU, page 21). True = pixel counter reached
-    /// 160 and no sprite match active. Pixel clock stops immediately;
-    /// rendering latch clears on the next dot.
-    hblank_gate: bool,
-}
-
-impl Rendering {
-    fn new() -> Self {
-        Rendering {
-            screen: Screen::new(),
-            line: Line::new(0),
-            window_line_counter: 0,
-            lcd_turning_on: false,
-            rendering: false,
-            hblank_gate: false,
-        }
-    }
-
-    fn new_lcd_on() -> Self {
-        Rendering {
-            screen: Screen::new(),
-            line: Line::new(0),
-            window_line_counter: 0,
-            lcd_turning_on: true,
-            rendering: false,
-            hblank_gate: false,
-        }
-    }
 
     fn mode(&self) -> Mode {
         if self.rendering {
             Mode::DrawingPixels
-        } else if self.line.dots < SCANLINE_PREPARING_DOTS {
+        } else if self.dot < SCANLINE_PREPARING_DOTS {
             Mode::PreparingScanline
         } else {
             Mode::BetweenLines
@@ -542,7 +540,7 @@ impl Rendering {
             Mode::BetweenLines
         } else if self.rendering {
             Mode::DrawingPixels
-        } else if self.line.dots < SCANLINE_PREPARING_DOTS {
+        } else if self.dot < SCANLINE_PREPARING_DOTS {
             Mode::PreparingScanline
         } else {
             Mode::BetweenLines
@@ -554,7 +552,7 @@ impl Rendering {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::PreparingScanline && (self.line.number != 0 || self.line.dots >= 4)
+        self.mode() == Mode::PreparingScanline && (self.line_number != 0 || self.dot >= 4)
     }
 
     fn oam_locked(&self) -> bool {
@@ -563,8 +561,8 @@ impl Rendering {
         //   chain trigger at LX=113 (dot 452) through end of scanline.
         // XYMU: active during Mode 3, cleared when WODU (hblank_gate) fires.
         (self.rendering && !self.hblank_gate)
-            || self.line.dots < SCANLINE_PREPARING_DOTS
-            || self.line.dots >= SCANLINE_OAM_LOCK_DOTS
+            || self.dot < SCANLINE_PREPARING_DOTS
+            || self.dot >= SCANLINE_OAM_LOCK_DOTS
     }
 
     fn vram_locked(&self) -> bool {
@@ -575,8 +573,8 @@ impl Rendering {
 
     fn oam_write_locked(&self) -> bool {
         (self.rendering && !self.hblank_gate)
-            || self.line.dots < SCANLINE_PREPARING_DOTS
-            || self.line.dots >= SCANLINE_OAM_LOCK_DOTS
+            || self.dot < SCANLINE_PREPARING_DOTS
+            || self.dot >= SCANLINE_OAM_LOCK_DOTS
     }
 
     fn vram_write_locked(&self) -> bool {
@@ -584,15 +582,15 @@ impl Rendering {
     }
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
-    fn dot(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
-        if self.line.dots == 0 {
-            self.line.find_sprites(data, oam);
+    fn dot_tick(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
+        if self.dot == 0 {
+            self.find_sprites(data, oam);
         }
 
-        if self.line.dots < SCANLINE_PREPARING_DOTS {
+        if self.dot < SCANLINE_PREPARING_DOTS {
             // Mode 2: OAM scan
-            self.line.dots += 1;
-            if self.line.dots == SCANLINE_PREPARING_DOTS {
+            self.dot += 1;
+            if self.dot == SCANLINE_PREPARING_DOTS {
                 self.lcd_turning_on = false;
                 self.rendering = true;
             }
@@ -606,7 +604,7 @@ impl Rendering {
             }
 
             // Mode 3 (drawing) and Mode 0 (HBlank)
-            if self.rendering && self.line.dots >= SCANLINE_RENDERING_DOTS {
+            if self.rendering && self.dot >= SCANLINE_RENDERING_DOTS {
                 self.dot_mode3(data, oam, vram);
             }
 
@@ -614,23 +612,36 @@ impl Rendering {
             // and no sprite fetch is active
             // (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
             if self.rendering
-                && self.line.pixel_counter >= WODU_PIXEL_COUNT
-                && self.line.sprite_fetch.is_none()
+                && self.pixel_counter >= WODU_PIXEL_COUNT
+                && self.sprite_fetch.is_none()
             {
                 self.hblank_gate = true;
             }
 
-            self.line.dots += 1;
+            self.dot += 1;
 
-            if self.line.dots == SCANLINE_TOTAL_DOTS {
+            if self.dot == SCANLINE_TOTAL_DOTS {
                 self.rendering = false;
                 self.hblank_gate = false;
-                if self.line.window_rendered {
+                if self.window_rendered {
                     self.window_line_counter += 1;
                 }
-                self.line = Line::new(self.line.number + 1);
 
-                if self.line.number == screen::NUM_SCANLINES {
+                // Line transition — reset per-line state
+                self.line_number += 1;
+                self.dot = 0;
+                self.sprites = SpriteStore::new();
+                self.next_sprite = 0;
+                self.window_rendered = false;
+                self.bg_shifter = BgShifter::new();
+                self.obj_shifter = ObjShifter::new();
+                self.fetcher = TileFetcher::new();
+                self.startup_fetch = Some(StartupFetch::FirstTile);
+                self.fine_scroll = FineScroll::new();
+                self.pixel_counter = 0;
+                self.sprite_fetch = None;
+
+                if self.line_number == screen::NUM_SCANLINES {
                     return true;
                 }
             }
@@ -641,7 +652,7 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel pipeline processing.
     fn dot_mode3(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
-        if let Some(StartupFetch::FirstTile) = self.line.startup_fetch {
+        if let Some(StartupFetch::FirstTile) = self.startup_fetch {
             self.advance_bg_fetcher(data, vram);
             self.check_window_trigger(data);
 
@@ -649,8 +660,8 @@ impl Rendering {
             // into the previously-empty shifter. TAVE/POKY fire:
             // pixel clock starts on this same dot (fall through to
             // normal rendering below).
-            if !self.line.bg_shifter.is_empty() {
-                self.line.startup_fetch = None;
+            if !self.bg_shifter.is_empty() {
+                self.startup_fetch = None;
             } else {
                 return;
             }
@@ -660,11 +671,10 @@ impl Rendering {
         // the ROXY latch clears combinationally when the fine counter matches
         // SCX & 7. SACU (pixel clock) and sprite matchers both see the
         // updated state on the same dot.
-        self.line
-            .fine_scroll
+        self.fine_scroll
             .check_scroll_match(data.background_viewport.x);
 
-        if let Some(ref mut sf) = self.line.sprite_fetch {
+        if let Some(ref mut sf) = self.sprite_fetch {
             match sf.phase {
                 SpriteFetchPhase::WaitingForFetcher => {
                     // The BG fetcher continues advancing during the wait.
@@ -677,8 +687,8 @@ impl Rendering {
                     // 1. The fetcher has completed GetTileDataHigh (reached Load)
                     // 2. The BG shifter is non-empty
                     // This is an AND condition — both must be true simultaneously.
-                    let fetcher_past_data = self.line.fetcher.step == FetcherStep::Load;
-                    let wait_done = fetcher_past_data && !self.line.bg_shifter.is_empty();
+                    let fetcher_past_data = self.fetcher.step == FetcherStep::Load;
+                    let wait_done = fetcher_past_data && !self.bg_shifter.is_empty();
 
                     if wait_done {
                         // Freeze the BG fetcher at its current position.
@@ -688,7 +698,7 @@ impl Rendering {
                         // Transition to sprite data fetch. The first sprite
                         // fetch step happens on the same dot as the wait
                         // exit — the transition itself does not consume a dot.
-                        let sf = self.line.sprite_fetch.as_mut().unwrap();
+                        let sf = self.sprite_fetch.as_mut().unwrap();
                         sf.phase = SpriteFetchPhase::FetchingData;
                         Self::advance_sprite_fetch(sf, data, oam, vram);
                     }
@@ -700,10 +710,10 @@ impl Rendering {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
                             oam,
-                            &self.line.bg_shifter,
-                            &mut self.line.obj_shifter,
+                            &self.bg_shifter,
+                            &mut self.obj_shifter,
                         );
-                        self.line.sprite_fetch = None;
+                        self.sprite_fetch = None;
                     }
                 }
             }
@@ -712,31 +722,31 @@ impl Rendering {
             // increments on SACU (pixel clock), gated by POKY (after startup)
             // and ROXY (fine scroll). Sprite matching uses state_new.pix_count
             // (post-increment), so the increment must precede trigger checks.
-            if self.line.fine_scroll.pixel_clock_active() {
-                self.line.pixel_counter += 1;
+            if self.fine_scroll.pixel_clock_active() {
+                self.pixel_counter += 1;
             }
 
             // Sprite trigger check — now uses pixel_counter (change A).
-            if self.line.sprite_fetch.is_none() {
+            if self.sprite_fetch.is_none() {
                 self.check_sprite_trigger(data);
             }
 
             // SEKO pre-load (change C). On hardware, when fine_count==7
             // the async SET/RST pipe load overwrites the shift register
             // contents before the clock-driven shift on the same dot.
-            if self.line.fine_scroll.count == 7
-                && self.line.fetcher.step == FetcherStep::Load
-                && self.line.bg_shifter.len() == 1
+            if self.fine_scroll.count == 7
+                && self.fetcher.step == FetcherStep::Load
+                && self.bg_shifter.len() == 1
             {
                 self.load_bg_tile();
             }
 
-            if !self.line.bg_shifter.is_empty() {
+            if !self.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
             }
 
             self.advance_bg_fetcher(data, vram);
-            self.line.fine_scroll.tick();
+            self.fine_scroll.tick();
         }
     }
 
@@ -753,29 +763,26 @@ impl Rendering {
         let scx = data.background_viewport.x;
         let scy = data.background_viewport.y;
         (
-            ((self.line.pixel_counter.wrapping_add(scx)) >> 3) & 31,
-            (self.line.number.wrapping_add(scy) / 8) & 31,
+            ((self.pixel_counter.wrapping_add(scx)) >> 3) & 31,
+            (self.line_number.wrapping_add(scy) / 8) & 31,
         )
     }
 
     /// Window tilemap coordinate computation (page 27).
     /// Uses the window's internal line counter, no scroll offset.
     fn window_tilemap_coords(&self) -> (u8, u8) {
-        (
-            self.line.fetcher.window_tile_x,
-            self.window_line_counter / 8,
-        )
+        (self.fetcher.window_tile_x, self.window_line_counter / 8)
     }
 
     /// Read the tile index from the tilemap for the current fetch position.
     fn read_tile_index(&self, data: &Registers, vram: &Vram) -> u8 {
-        let (map_x, map_y) = if self.line.fetcher.fetching_window {
+        let (map_x, map_y) = if self.fetcher.fetching_window {
             self.window_tilemap_coords()
         } else {
             self.bg_tilemap_coords(data)
         };
 
-        let map_id = if self.line.fetcher.fetching_window {
+        let map_id = if self.fetcher.fetching_window {
             data.control.window_tile_map()
         } else {
             data.control.background_tile_map()
@@ -785,7 +792,7 @@ impl Rendering {
 
     /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
     fn bg_fine_y(&self, data: &Registers) -> u8 {
-        self.line.number.wrapping_add(data.background_viewport.y) % 8
+        self.line_number.wrapping_add(data.background_viewport.y) % 8
     }
 
     /// Window fine Y offset (page 27): which row within the tile, from
@@ -801,10 +808,10 @@ impl Rendering {
     /// tilemap read) with the fine Y offset from the appropriate
     /// address generator. The VRAM interface (page 25) performs the read.
     fn read_tile_data(&self, data: &Registers, vram: &Vram, high: bool) -> u8 {
-        let tile_index = TileIndex(self.line.fetcher.tile_index);
+        let tile_index = TileIndex(self.fetcher.tile_index);
         let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
 
-        let fine_y = if self.line.fetcher.fetching_window {
+        let fine_y = if self.fetcher.fetching_window {
             self.window_fine_y()
         } else {
             self.bg_fine_y(data)
@@ -816,46 +823,46 @@ impl Rendering {
 
     /// Advance the background tile fetcher by one dot.
     fn advance_bg_fetcher(&mut self, data: &Registers, vram: &Vram) {
-        match self.line.fetcher.step {
+        match self.fetcher.step {
             FetcherStep::GetTile => {
-                if self.line.fetcher.dot_in_step == 0 {
-                    self.line.fetcher.dot_in_step = 1;
+                if self.fetcher.dot_in_step == 0 {
+                    self.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_index = self.read_tile_index(data, vram);
-                    self.line.fetcher.dot_in_step = 0;
-                    self.line.fetcher.step = FetcherStep::GetTileDataLow;
+                    self.fetcher.tile_index = self.read_tile_index(data, vram);
+                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.step = FetcherStep::GetTileDataLow;
                 }
             }
             FetcherStep::GetTileDataLow => {
-                if self.line.fetcher.dot_in_step == 0 {
-                    self.line.fetcher.dot_in_step = 1;
+                if self.fetcher.dot_in_step == 0 {
+                    self.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_data_low = self.read_tile_data(data, vram, false);
-                    self.line.fetcher.dot_in_step = 0;
-                    self.line.fetcher.step = FetcherStep::GetTileDataHigh;
+                    self.fetcher.tile_data_low = self.read_tile_data(data, vram, false);
+                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.step = FetcherStep::GetTileDataHigh;
                 }
             }
             FetcherStep::GetTileDataHigh => {
-                if self.line.fetcher.dot_in_step == 0 {
-                    self.line.fetcher.dot_in_step = 1;
+                if self.fetcher.dot_in_step == 0 {
+                    self.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
+                    self.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
 
                     // Load is instant when the shifter is empty (no
                     // additional dot cost). Otherwise enter the Load
                     // step to wait for it to drain.
-                    if self.line.bg_shifter.is_empty() {
+                    if self.bg_shifter.is_empty() {
                         self.load_bg_tile();
                     } else {
-                        self.line.fetcher.dot_in_step = 0;
-                        self.line.fetcher.step = FetcherStep::Load;
+                        self.fetcher.dot_in_step = 0;
+                        self.fetcher.step = FetcherStep::Load;
                     }
                 }
             }
             FetcherStep::Load => {
                 // Shifter was not empty when DataHigh completed. Wait here
                 // until it drains, then load.
-                if self.line.bg_shifter.is_empty() {
+                if self.bg_shifter.is_empty() {
                     self.load_bg_tile();
                 }
             }
@@ -865,15 +872,13 @@ impl Rendering {
     /// Load fetched tile data into the BG shifter and reset the fetcher to
     /// GetTile for the next tile.
     fn load_bg_tile(&mut self) {
-        self.line.bg_shifter.load(
-            self.line.fetcher.tile_data_low,
-            self.line.fetcher.tile_data_high,
-        );
-        if self.line.fetcher.fetching_window {
-            self.line.fetcher.window_tile_x = self.line.fetcher.window_tile_x.wrapping_add(1);
+        self.bg_shifter
+            .load(self.fetcher.tile_data_low, self.fetcher.tile_data_high);
+        if self.fetcher.fetching_window {
+            self.fetcher.window_tile_x = self.fetcher.window_tile_x.wrapping_add(1);
         }
-        self.line.fetcher.step = FetcherStep::GetTile;
-        self.line.fetcher.dot_in_step = 0;
+        self.fetcher.step = FetcherStep::GetTile;
+        self.fetcher.dot_in_step = 0;
     }
 
     /// Read one byte of sprite tile data (low or high bitplane).
@@ -1007,36 +1012,36 @@ impl Rendering {
     /// maps it through the appropriate palette to the LCD.
     fn shift_pixel_out(&mut self, data: &Registers) {
         // Shift one bit from each BG bitplane
-        let (bg_lo, bg_hi) = self.line.bg_shifter.shift();
+        let (bg_lo, bg_hi) = self.bg_shifter.shift();
 
         // Shift OBJ in lockstep (if it has pixels)
-        let obj_bits = self.line.obj_shifter.shift();
+        let obj_bits = self.obj_shifter.shift();
 
         // During fine scroll gating (ROXY active), the pixel clock is
         // frozen on hardware — SACU is held high, PX does not increment,
         // no LCD output. The shifters still advance here (unlike true
         // hardware gating) to keep sprite alignment consistent with the
         // existing sprite fetch model.
-        if !self.line.fine_scroll.pixel_clock_active() {
+        if !self.fine_scroll.pixel_clock_active() {
             return;
         }
 
         // PX 1 through FIRST_VISIBLE_PIXEL-1 are invisible — the first
         // tile shifts through the pipe without writing to the framebuffer.
         // On hardware, the LCD clock gate (WUSA) doesn't open until PX=8.
-        if self.line.pixel_counter < FIRST_VISIBLE_PIXEL {
+        if self.pixel_counter < FIRST_VISIBLE_PIXEL {
             self.check_window_trigger(data);
             return;
         }
 
         // Past the visible region — safety guard for dots between WODU
         // and rendering latch clearing.
-        if self.line.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+        if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
             return;
         }
 
-        let x = self.line.pixel_counter - FIRST_VISIBLE_PIXEL;
-        let y = self.line.number;
+        let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
+        let y = self.line_number;
 
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
         let bg_color = if data.control.background_and_window_enabled() {
@@ -1072,28 +1077,28 @@ impl Rendering {
 
     /// Check if the window should start rendering at the current pixel position.
     fn check_window_trigger(&mut self, data: &Registers) {
-        if self.line.fetcher.fetching_window {
+        if self.fetcher.fetching_window {
             return;
         }
         if !data.control.window_enabled() {
             return;
         }
-        if self.line.number < data.window.y {
+        if self.line_number < data.window.y {
             return;
         }
-        if self.line.pixel_counter != data.window.x_plus_7 {
+        if self.pixel_counter != data.window.x_plus_7 {
             return;
         }
 
         // Window trigger: clear shifters, reset fine scroll, and restart fetcher
-        self.line.bg_shifter.clear();
-        self.line.obj_shifter.clear();
-        self.line.fine_scroll.reset_for_window();
-        self.line.fetcher.step = FetcherStep::GetTile;
-        self.line.fetcher.dot_in_step = 0;
-        self.line.fetcher.window_tile_x = 0;
-        self.line.fetcher.fetching_window = true;
-        self.line.window_rendered = true;
+        self.bg_shifter.clear();
+        self.obj_shifter.clear();
+        self.fine_scroll.reset_for_window();
+        self.fetcher.step = FetcherStep::GetTile;
+        self.fetcher.dot_in_step = 0;
+        self.fetcher.window_tile_x = 0;
+        self.fetcher.fetching_window = true;
+        self.window_rendered = true;
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
@@ -1102,14 +1107,14 @@ impl Rendering {
             return;
         }
 
-        let match_x = self.line.pixel_counter;
+        let match_x = self.pixel_counter;
 
-        while (self.line.next_sprite as usize) < self.line.sprites.count as usize {
-            let entry = &self.line.sprites.entries[self.line.next_sprite as usize];
+        while (self.next_sprite as usize) < self.sprites.count as usize {
+            let entry = &self.sprites.entries[self.next_sprite as usize];
 
             if entry.x < match_x {
                 // Sprite already passed — skip it
-                self.line.next_sprite += 1;
+                self.next_sprite += 1;
                 continue;
             }
 
@@ -1119,11 +1124,11 @@ impl Rendering {
             }
 
             if entry.x >= 168 {
-                self.line.next_sprite += 1;
+                self.next_sprite += 1;
                 continue;
             }
 
-            self.line.sprite_fetch = Some(SpriteFetch {
+            self.sprite_fetch = Some(SpriteFetch {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
                 step: SpriteStep::GetTile,
@@ -1131,7 +1136,7 @@ impl Rendering {
                 tile_data_low: 0,
                 tile_data_high: 0,
             });
-            self.line.next_sprite += 1;
+            self.next_sprite += 1;
             break;
         }
     }
@@ -1159,13 +1164,12 @@ impl PixelPipeline {
     pub fn current_line(&self) -> u8 {
         match self {
             PixelPipeline::Rendering(Rendering {
-                line: Line { number, dots, .. },
-                ..
+                line_number, dot, ..
             }) => {
-                if *dots >= SCANLINE_TOTAL_DOTS - 4 {
-                    number + 1
+                if *dot >= SCANLINE_TOTAL_DOTS - 4 {
+                    line_number + 1
                 } else {
-                    *number
+                    *line_number
                 }
             }
             PixelPipeline::BetweenFrames(dots) => {
@@ -1178,10 +1182,7 @@ impl PixelPipeline {
     /// standard scanline end).
     pub fn ly_transitioning(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(Rendering {
-                line: Line { dots, .. },
-                ..
-            }) => *dots == SCANLINE_TOTAL_DOTS - 4,
+            PixelPipeline::Rendering(Rendering { dot, .. }) => *dot == SCANLINE_TOTAL_DOTS - 4,
             PixelPipeline::BetweenFrames(dots) => {
                 dots % SCANLINE_TOTAL_DOTS == SCANLINE_TOTAL_DOTS - 4
             }
@@ -1265,8 +1266,8 @@ impl PixelPipeline {
     pub fn accessed_oam_row(&self) -> Option<u8> {
         match self {
             PixelPipeline::Rendering(rendering) => {
-                if rendering.line.dots < SCANLINE_PREPARING_DOTS {
-                    Some(((rendering.line.dots / 4 + 1) * 8) as u8)
+                if rendering.dot < SCANLINE_PREPARING_DOTS {
+                    Some(((rendering.dot / 4 + 1) * 8) as u8)
                 } else {
                     None
                 }
@@ -1282,7 +1283,7 @@ impl PixelPipeline {
 
         match self {
             PixelPipeline::Rendering(rendering) => {
-                if rendering.dot(data, oam, vram) {
+                if rendering.dot_tick(data, oam, vram) {
                     screen = Some(rendering.screen.clone());
                     *self = PixelPipeline::BetweenFrames(0);
                 }
