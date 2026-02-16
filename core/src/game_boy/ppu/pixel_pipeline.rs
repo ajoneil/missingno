@@ -239,7 +239,7 @@ enum FetcherStep {
     GetTile,
     GetTileDataLow,
     GetTileDataHigh,
-    Push,
+    Load,
 }
 
 /// Mode 3 starts with pipeline priming (3 dots) then two BG tile fetches
@@ -257,7 +257,7 @@ enum StartupFetch {
     FirstTile,
 }
 
-struct Fetcher {
+struct TileFetcher {
     step: FetcherStep,
     /// Sub-dot counter within the current step (0 or 1 for 2-dot steps).
     dot_in_step: u8,
@@ -273,7 +273,7 @@ struct Fetcher {
     fetching_window: bool,
 }
 
-impl Fetcher {
+impl TileFetcher {
     fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
@@ -335,7 +335,7 @@ impl SpriteStore {
 enum SpriteFetchPhase {
     /// The BG fetcher continues advancing through its normal steps.
     /// The wait ends when the fetcher has completed GetTileDataHigh
-    /// (reached Push) AND the BG shifter is non-empty — both conditions
+    /// (reached Load) AND the BG shifter is non-empty — both conditions
     /// must be true simultaneously. The variable sprite penalty (0-5
     /// dots) emerges from how many fetcher steps this phase consumes.
     WaitingForFetcher,
@@ -347,8 +347,8 @@ enum SpriteFetchPhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpriteStep {
     GetTile,
-    GetDataLow,
-    GetDataHigh,
+    GetTileDataLow,
+    GetTileDataHigh,
 }
 
 struct SpriteFetch {
@@ -384,7 +384,7 @@ struct Line {
     /// Sprite pixel shift register (pages 33-34).
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
-    fetcher: Fetcher,
+    fetcher: TileFetcher,
     /// Tracks the two startup tile fetches at the beginning of mode 3.
     /// Hardware performs two BG tile fetches (12 dots) before any
     /// pixels shift out — the first is discarded, the second is the
@@ -417,7 +417,7 @@ impl Line {
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
-            fetcher: Fetcher::new(),
+            fetcher: TileFetcher::new(),
             startup_fetch: Some(StartupFetch::PipelinePriming {
                 dots_remaining: PIPELINE_PRIMING_DOTS,
             }),
@@ -650,15 +650,15 @@ impl Rendering {
                     self.advance_bg_fetcher(data, vram);
 
                     // Wait exits when BOTH conditions are met:
-                    // 1. The fetcher has completed GetTileDataHigh (reached Push)
+                    // 1. The fetcher has completed GetTileDataHigh (reached Load)
                     // 2. The BG shifter is non-empty
                     // This is an AND condition — both must be true simultaneously.
-                    let fetcher_past_data = self.line.fetcher.step == FetcherStep::Push;
+                    let fetcher_past_data = self.line.fetcher.step == FetcherStep::Load;
                     let wait_done = fetcher_past_data && !self.line.bg_shifter.is_empty();
 
                     if wait_done {
                         // Freeze the BG fetcher at its current position.
-                        // It stays wherever the wait left it (typically Push)
+                        // It stays wherever the wait left it (typically Load)
                         // and resumes from there after the sprite data fetch.
 
                         // Transition to sprite data fetch. The first sprite
@@ -672,7 +672,7 @@ impl Rendering {
                 SpriteFetchPhase::FetchingData => {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
                     Self::advance_sprite_fetch(sf, data, oam, vram);
-                    if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
+                    if sf.step == SpriteStep::GetTileDataHigh && sf.dot_in_step == 2 {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
                             oam,
@@ -769,22 +769,22 @@ impl Rendering {
                 } else {
                     self.line.fetcher.tile_data_high = self.read_bg_tile_data(data, vram, true);
 
-                    // Push is instant when the shifter is empty (no
-                    // additional dot cost). Otherwise enter the Push
+                    // Load is instant when the shifter is empty (no
+                    // additional dot cost). Otherwise enter the Load
                     // step to wait for it to drain.
                     if self.line.bg_shifter.is_empty() {
-                        self.push_bg_tile();
+                        self.load_bg_tile();
                     } else {
                         self.line.fetcher.dot_in_step = 0;
-                        self.line.fetcher.step = FetcherStep::Push;
+                        self.line.fetcher.step = FetcherStep::Load;
                     }
                 }
             }
-            FetcherStep::Push => {
+            FetcherStep::Load => {
                 // Shifter was not empty when DataHigh completed. Wait here
-                // until it drains, then push.
+                // until it drains, then load.
                 if self.line.bg_shifter.is_empty() {
-                    self.push_bg_tile();
+                    self.load_bg_tile();
                 }
             }
         }
@@ -792,7 +792,7 @@ impl Rendering {
 
     /// Load fetched tile data into the BG shifter and reset the fetcher to
     /// GetTile for the next tile.
-    fn push_bg_tile(&mut self) {
+    fn load_bg_tile(&mut self) {
         self.line.bg_shifter.load(
             self.line.fetcher.tile_data_low,
             self.line.fetcher.tile_data_high,
@@ -848,19 +848,19 @@ impl Rendering {
                 } else {
                     // Tile index comes from OAM via the sprite store's oam_index
                     sf.dot_in_step = 0;
-                    sf.step = SpriteStep::GetDataLow;
+                    sf.step = SpriteStep::GetTileDataLow;
                 }
             }
-            SpriteStep::GetDataLow => {
+            SpriteStep::GetTileDataLow => {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
                     sf.tile_data_low = Self::read_sprite_tile_data(sf, data, oam, vram, false);
                     sf.dot_in_step = 0;
-                    sf.step = SpriteStep::GetDataHigh;
+                    sf.step = SpriteStep::GetTileDataHigh;
                 }
             }
-            SpriteStep::GetDataHigh => {
+            SpriteStep::GetTileDataHigh => {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
