@@ -56,33 +56,30 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 /// (position counter only) plus two tile fetches of 6 dots each (12 dots).
 const BG_STARTUP_DOTS: i16 = 15;
 
-// --- Pixel shift register types ---
+// --- Pixel shift registers ---
+//
+// On hardware (pages 32-34), each pixel layer uses separate 8-bit shift
+// registers for each bitplane. Tile data is loaded in parallel and shifted
+// out one bit per dot. The 2-bit color index is only formed at the pixel
+// mux (page 35) by combining the two bitplane outputs.
 
-#[derive(Clone, Copy, Default)]
-struct Pixel {
-    /// 2-bit color index (0-3) before palette mapping.
-    color: u8,
-    /// Sprite palette: 0 = OBP0, 1 = OBP1. Only meaningful in OBJ shifter.
-    palette: u8,
-    /// OBJ-to-BG priority bit from sprite attributes.
-    bg_priority: bool,
-}
-
-/// 8-pixel shift register. On hardware, each layer has two 8-bit shift
-/// registers (one per bitplane) that load in parallel from a tile fetch
-/// and shift out one pixel per dot. This struct models the combined
-/// 2bpp output as decoded pixels.
-struct PixelShifter {
-    pixels: [Pixel; 8],
-    head: u8,
+/// Background pixel shift register (page 32 on the die).
+///
+/// Two 8-bit shift registers, one per bitplane (BgwPipeA/BgwPipeB).
+/// Loaded in parallel from a BG/window tile fetch, shifted out one
+/// bit per dot. The "FIFO is empty" condition from Pan Docs corresponds
+/// to `len == 0` (all bits have been shifted out).
+struct BgShifter {
+    low: u8,
+    high: u8,
     len: u8,
 }
 
-impl PixelShifter {
+impl BgShifter {
     fn new() -> Self {
         Self {
-            pixels: [Pixel::default(); 8],
-            head: 0,
+            low: 0,
+            high: 0,
             len: 0,
         }
     }
@@ -96,45 +93,142 @@ impl PixelShifter {
     }
 
     fn clear(&mut self) {
-        self.head = 0;
         self.len = 0;
     }
 
-    /// Load 8 pixels (parallel load). Only valid when shifter is empty.
-    fn push_row(&mut self, pixels: [Pixel; 8]) {
+    /// Parallel load from a tile fetch. Only valid when empty.
+    fn load(&mut self, low: u8, high: u8) {
         debug_assert!(self.is_empty());
-        self.pixels = pixels;
-        self.head = 0;
+        self.low = low;
+        self.high = high;
         self.len = 8;
     }
 
-    /// Push a single pixel to the back.
-    fn push_one(&mut self, pixel: Pixel) {
-        debug_assert!(self.len < 8);
-        let idx = (self.head + self.len) & 7;
-        self.pixels[idx as usize] = pixel;
-        self.len += 1;
-    }
-
-    /// Pop one pixel from the front.
-    fn pop(&mut self) -> Pixel {
+    /// Shift out one pixel's bitplane values (MSB first, matching hardware).
+    /// Returns (low_bit, high_bit) — the 2-bit color is `(high << 1) | low`.
+    fn shift(&mut self) -> (u8, u8) {
         debug_assert!(self.len > 0);
-        let pixel = self.pixels[self.head as usize];
-        self.head = (self.head + 1) & 7;
+        let lo = (self.low >> 7) & 1;
+        let hi = (self.high >> 7) & 1;
+        self.low <<= 1;
+        self.high <<= 1;
         self.len -= 1;
-        pixel
+        (lo, hi)
+    }
+}
+
+/// Sprite pixel shift register (pages 33-34 on the die).
+///
+/// Four parallel 8-bit shift registers matching the hardware:
+/// - `low`/`high`: sprite bitplanes (SprPipeA/SprPipeB, page 33)
+/// - `palette`: palette selection bit per pixel (PalPipe, page 34)
+/// - `priority`: BG-over-OBJ priority bit per pixel (MaskPipe, page 26)
+///
+/// Unlike the BG shifter, sprites are merged into the OBJ shifter with
+/// transparency-aware logic: only non-zero (opaque) sprite pixels
+/// overwrite existing transparent slots. This implements DMG sprite
+/// priority (lower X / lower OAM index wins).
+struct ObjShifter {
+    low: u8,
+    high: u8,
+    palette: u8,
+    priority: u8,
+    len: u8,
+}
+
+impl ObjShifter {
+    fn new() -> Self {
+        Self {
+            low: 0,
+            high: 0,
+            palette: 0,
+            priority: 0,
+            len: 0,
+        }
     }
 
-    /// Get a mutable reference to the pixel at the given offset from head.
-    fn get_mut(&mut self, offset: u8) -> &mut Pixel {
-        let idx = (self.head + offset) & 7;
-        &mut self.pixels[idx as usize]
+    fn clear(&mut self) {
+        self.low = 0;
+        self.high = 0;
+        self.palette = 0;
+        self.priority = 0;
+        self.len = 0;
     }
 
-    /// Get the pixel at the given offset from head.
-    fn get(&self, offset: u8) -> Pixel {
-        let idx = (self.head + offset) & 7;
-        self.pixels[idx as usize]
+    /// Shift out one pixel's data (MSB first). Returns None if empty.
+    /// When non-empty, returns (low_bit, high_bit, palette_bit, priority_bit).
+    fn shift(&mut self) -> Option<(u8, u8, u8, u8)> {
+        if self.len == 0 {
+            return None;
+        }
+        let lo = (self.low >> 7) & 1;
+        let hi = (self.high >> 7) & 1;
+        let pal = (self.palette >> 7) & 1;
+        let pri = (self.priority >> 7) & 1;
+        self.low <<= 1;
+        self.high <<= 1;
+        self.palette <<= 1;
+        self.priority <<= 1;
+        self.len -= 1;
+        Some((lo, hi, pal, pri))
+    }
+
+    /// Merge sprite tile data into the shifter with transparency-aware
+    /// logic. Only non-zero (opaque) sprite pixels overwrite existing
+    /// transparent (color 0) slots.
+    ///
+    /// `sprite_low`/`sprite_high` are the raw bitplane bytes from the
+    /// sprite tile fetch (already X-flipped if needed). `palette_bit`
+    /// and `priority_bit` are uniform for all 8 pixels of this sprite.
+    /// `pixels_clipped_left` is how many MSB pixels to skip (for sprites
+    /// partially off the left edge). `bg_len` is the current BG shifter
+    /// length, used to determine padding.
+    fn merge(
+        &mut self,
+        sprite_low: u8,
+        sprite_high: u8,
+        palette_bit: u8,
+        priority_bit: u8,
+        pixels_clipped_left: u8,
+        bg_len: u8,
+    ) {
+        // Ensure the shifter is long enough to hold all visible sprite pixels.
+        let visible_pixels = 8 - pixels_clipped_left;
+        let required_len = bg_len.max(visible_pixels);
+        if self.len < required_len {
+            // Pad with transparent pixels (zeros) — just extend the length.
+            // The shift register bits are already 0 in the extended positions
+            // because we shift left and the low bits are 0.
+            self.len = required_len;
+        }
+
+        // Overlay sprite pixels. Only replace transparent (color 0) slots.
+        // Work MSB-first, skipping clipped pixels.
+        for i in pixels_clipped_left..8 {
+            let bit_pos = 7 - i;
+            let lo = (sprite_low >> bit_pos) & 1;
+            let hi = (sprite_high >> bit_pos) & 1;
+            let color = (hi << 1) | lo;
+            if color == 0 {
+                continue; // Transparent sprite pixel — don't overwrite
+            }
+
+            // Position in the shifter (0 = MSB = next to shift out)
+            let shifter_bit = 7 - (i - pixels_clipped_left);
+            let existing_lo = (self.low >> shifter_bit) & 1;
+            let existing_hi = (self.high >> shifter_bit) & 1;
+            let existing_color = (existing_hi << 1) | existing_lo;
+            if existing_color != 0 {
+                continue; // Existing opaque pixel wins (DMG priority)
+            }
+
+            // Write this sprite's pixel into the slot
+            let mask = 1 << shifter_bit;
+            self.low = (self.low & !mask) | (lo << shifter_bit);
+            self.high = (self.high & !mask) | (hi << shifter_bit);
+            self.palette = (self.palette & !mask) | (palette_bit << shifter_bit);
+            self.priority = (self.priority & !mask) | (priority_bit << shifter_bit);
+        }
     }
 }
 
@@ -285,10 +379,10 @@ struct Line {
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
 
-    /// Background pixel shift register.
-    bg_shifter: PixelShifter,
-    /// Object/sprite pixel shift register (shifts in lockstep with bg_shifter).
-    obj_shifter: PixelShifter,
+    /// Background pixel shift register (page 32).
+    bg_shifter: BgShifter,
+    /// Sprite pixel shift register (pages 33-34).
+    obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: Fetcher,
     /// Tracks the two startup tile fetches at the beginning of mode 3.
@@ -321,8 +415,8 @@ impl Line {
             sprites: SpriteStore::new(),
             next_sprite: 0,
             window_rendered: false,
-            bg_shifter: PixelShifter::new(),
-            obj_shifter: PixelShifter::new(),
+            bg_shifter: BgShifter::new(),
+            obj_shifter: ObjShifter::new(),
             fetcher: Fetcher::new(),
             startup_fetch: Some(StartupFetch::PipelinePriming {
                 dots_remaining: PIPELINE_PRIMING_DOTS,
@@ -582,7 +676,7 @@ impl Rendering {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
                             oam,
-                            &mut self.line.bg_shifter,
+                            &self.line.bg_shifter,
                             &mut self.line.obj_shifter,
                         );
                         self.line.sprite_fetch = None;
@@ -699,11 +793,10 @@ impl Rendering {
     /// Load fetched tile data into the BG shifter and reset the fetcher to
     /// GetTile for the next tile.
     fn push_bg_tile(&mut self) {
-        let pixels = decode_tile_row(
+        self.line.bg_shifter.load(
             self.line.fetcher.tile_data_low,
             self.line.fetcher.tile_data_high,
         );
-        self.line.bg_shifter.push_row(pixels);
         self.line.fetcher.tile_x = self.line.fetcher.tile_x.wrapping_add(1);
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
@@ -784,27 +877,36 @@ impl Rendering {
     fn merge_sprite_into_obj_shifter(
         sf: &SpriteFetch,
         oam: &Oam,
-        bg_shifter: &mut PixelShifter,
-        obj_shifter: &mut PixelShifter,
+        bg_shifter: &BgShifter,
+        obj_shifter: &mut ObjShifter,
     ) {
         let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
 
-        // Decode 8 sprite pixels
-        let mut sprite_pixels = [Pixel::default(); 8];
-        for i in 0..8u8 {
-            let bit = if sprite.attributes.flip_x() { i } else { 7 - i };
-            let lo = (sf.tile_data_low >> bit) & 1;
-            let hi = (sf.tile_data_high >> bit) & 1;
-            sprite_pixels[i as usize] = Pixel {
-                color: (hi << 1) | lo,
-                palette: if sprite.attributes.contains(sprites::Attributes::PALETTE) {
-                    1
-                } else {
-                    0
-                },
-                bg_priority: sprite.attributes.contains(sprites::Attributes::PRIORITY),
-            };
-        }
+        // X-flip: hardware reverses the bit order when loading the shift
+        // register. For normal sprites, MSB shifts out first (leftmost pixel).
+        // For flipped sprites, LSB shifts out first — achieved by reversing
+        // the byte's bit order before loading.
+        let sprite_low = if sprite.attributes.flip_x() {
+            sf.tile_data_low.reverse_bits()
+        } else {
+            sf.tile_data_low
+        };
+        let sprite_high = if sprite.attributes.flip_x() {
+            sf.tile_data_high.reverse_bits()
+        } else {
+            sf.tile_data_high
+        };
+
+        let palette_bit = if sprite.attributes.contains(sprites::Attributes::PALETTE) {
+            1
+        } else {
+            0
+        };
+        let priority_bit = if sprite.attributes.contains(sprites::Attributes::PRIORITY) {
+            1
+        } else {
+            0
+        };
 
         // Sprites partially off-screen left: skip the clipped pixels
         let sprite_screen_x = sf.entry.x as i16 - 8;
@@ -814,39 +916,28 @@ impl Rendering {
             0
         };
 
-        // Pad OBJ shifter with transparent pixels so all 8 sprite pixels
-        // have a slot. Must be at least 8 entries even if BG shifter is shorter,
-        // because the sprite's rightmost pixels may extend beyond the
-        // current BG tile fetch.
-        let required_len = bg_shifter.len().max(8 - pixels_clipped_left);
-        while obj_shifter.len() < required_len {
-            obj_shifter.push_one(Pixel::default());
-        }
-
-        // Overlay sprite pixels — only replace transparent (color 0) slots.
-        // DMG priority: sprites are sorted by X, so first sprite wins.
-        for i in pixels_clipped_left..8 {
-            let shifter_pos = i - pixels_clipped_left;
-            if shifter_pos < obj_shifter.len() {
-                let existing = obj_shifter.get(shifter_pos);
-                if existing.color == 0 {
-                    *obj_shifter.get_mut(shifter_pos) = sprite_pixels[i as usize];
-                }
-            }
-        }
+        obj_shifter.merge(
+            sprite_low,
+            sprite_high,
+            palette_bit,
+            priority_bit,
+            pixels_clipped_left,
+            bg_shifter.len(),
+        );
     }
 
-    /// Shift one pixel out of the shift registers and output to the LCD.
+    /// Pixel mux (page 35 on the die).
+    ///
+    /// Shifts one bit from each shift register, forms the 2-bit color
+    /// indices, applies priority logic, selects the winning pixel, and
+    /// maps it through the appropriate palette to the LCD.
     fn shift_pixel_out(&mut self, data: &Registers) {
-        let bg_pixel = self.line.bg_shifter.pop();
+        // Shift one bit from each BG bitplane
+        let (bg_lo, bg_hi) = self.line.bg_shifter.shift();
         self.line.position_in_line += 1;
 
-        // Pop from OBJ shifter in lockstep (if it has pixels)
-        let obj_pixel = if !self.line.obj_shifter.is_empty() {
-            Some(self.line.obj_shifter.pop())
-        } else {
-            None
-        };
+        // Shift OBJ in lockstep (if it has pixels)
+        let obj_bits = self.line.obj_shifter.shift();
 
         // Discard pixels for SCX fine scroll
         if self.line.discard_count > 0 {
@@ -861,24 +952,25 @@ impl Rendering {
         let x = self.line.pixels_drawn;
         let y = self.line.number;
 
-        // Background color (0 if BG/window disabled)
+        // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
         let bg_color = if data.control.background_and_window_enabled() {
-            bg_pixel.color
+            (bg_hi << 1) | bg_lo
         } else {
             0
         };
 
-        // Check sprite pixel for priority mixing
+        // Sprite priority mixing
         if data.control.sprites_enabled() {
-            if let Some(sp) = obj_pixel {
-                if sp.color != 0 && (!sp.bg_priority || bg_color == 0) {
+            if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
+                let spr_color = (spr_hi << 1) | spr_lo;
+                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                     // Sprite pixel wins
-                    let sprite_palette = if sp.palette == 0 {
+                    let sprite_palette = if spr_pal == 0 {
                         &data.palettes.sprite0
                     } else {
                         &data.palettes.sprite1
                     };
-                    let mapped = sprite_palette.map(PaletteIndex(sp.color));
+                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
                     self.screen.set_pixel(x, y, mapped);
                     self.line.pixels_drawn += 1;
                     self.check_window_trigger(data);
@@ -969,22 +1061,6 @@ impl Rendering {
 fn sprite_match_x(position_in_line: i16) -> u8 {
     let x = (position_in_line + 8) as u8;
     if x > 240 { 0 } else { x }
-}
-
-/// Decode a tile row (2 bytes) into 8 pixels for the shift register.
-fn decode_tile_row(low: u8, high: u8) -> [Pixel; 8] {
-    let mut pixels = [Pixel::default(); 8];
-    for i in 0..8 {
-        let bit = 7 - i;
-        let lo = (low >> bit) & 1;
-        let hi = (high >> bit) & 1;
-        pixels[i] = Pixel {
-            color: (hi << 1) | lo,
-            palette: 0,
-            bg_priority: false,
-        };
-    }
-    pixels
 }
 
 // --- PixelPipeline enum ---
