@@ -4,17 +4,79 @@ use crate::game_boy::{
     serial_transfer, timers, video,
 };
 
-#[derive(Clone)]
-pub struct Ram {
-    pub work_ram: [u8; 0x2000],
-    pub high_ram: [u8; 0x80],
+use super::cartridge::Cartridge;
+
+/// M-cycles before the external data bus decays to 0xFF.
+///
+/// On real hardware the external bus retains its last driven value
+/// through parasitic capacitance. With no device driving the bus
+/// the charge leaks and the value trends toward 0xFF. The exact
+/// rate is board-dependent; 12 M-cycles (~2.86 µs) is a reasonable
+/// approximation.
+const EXTERNAL_BUS_DECAY_MCYCLES: u8 = 12;
+
+/// The external data bus connects the SoC to the cartridge and, on
+/// DMG, to work RAM. The bus retains its last driven value through
+/// parasitic capacitance, decaying toward 0xFF when idle.
+pub struct ExternalBus {
+    pub(super) cartridge: Cartridge,
+    pub(super) work_ram: [u8; 0x2000],
+
+    /// Retained value on the data bus. Updated on every CPU read/write
+    /// to an external-bus address and by DMA when reading from this bus.
+    pub(super) latch: u8,
+    /// M-cycles remaining before `latch` decays to 0xFF.
+    pub(super) decay: u8,
 }
 
-impl Ram {
-    pub fn new() -> Self {
+impl ExternalBus {
+    pub fn new(cartridge: Cartridge) -> Self {
         Self {
+            cartridge,
             work_ram: [0; 0x2000],
-            high_ram: [0; 0x80],
+            latch: 0xFF,
+            decay: 0,
+        }
+    }
+
+    /// Read from a device on this bus (cartridge or WRAM).
+    /// Does NOT update the latch — callers decide when to latch.
+    pub fn read(&self, address: MappedAddress) -> u8 {
+        match address {
+            MappedAddress::Cartridge(addr) => self.cartridge.read(addr),
+            MappedAddress::WorkRam(addr) => self.work_ram[addr as usize],
+            _ => unreachable!("ExternalBus::read called with non-external address"),
+        }
+    }
+
+    /// Write to a device on this bus (cartridge or WRAM).
+    pub fn write(&mut self, address: MappedAddress, value: u8) {
+        match address {
+            MappedAddress::Cartridge(addr) => self.cartridge.write(addr, value),
+            MappedAddress::WorkRam(addr) => self.work_ram[addr as usize] = value,
+            _ => unreachable!("ExternalBus::write called with non-external address"),
+        }
+    }
+
+    /// Update the bus latch to `value` and reset the decay counter.
+    pub fn drive(&mut self, value: u8) {
+        self.latch = value;
+        self.decay = EXTERNAL_BUS_DECAY_MCYCLES;
+    }
+
+    /// Return the current latch value (for DMA bus conflict reads).
+    pub fn latch(&self) -> u8 {
+        self.latch
+    }
+
+    /// Tick decay: call once per M-cycle. If the counter reaches zero,
+    /// the latch decays to 0xFF.
+    pub fn tick_decay(&mut self) {
+        if self.decay > 0 {
+            self.decay -= 1;
+            if self.decay == 0 {
+                self.latch = 0xFF;
+            }
         }
     }
 }
@@ -129,7 +191,7 @@ impl MemoryMapped {
             // it — which is the bus latch.
             if Bus::of(address) == Some(bus) {
                 return match bus {
-                    Bus::External => self.external_bus,
+                    Bus::External => self.external.latch(),
                     Bus::Vram => self.vram_bus,
                 };
             }
@@ -161,8 +223,7 @@ impl MemoryMapped {
         // on either bus and do not update a latch.
         match Bus::of(address) {
             Some(Bus::External) => {
-                self.external_bus = value;
-                self.external_bus_decay = super::EXTERNAL_BUS_DECAY_MCYCLES;
+                self.external.drive(value);
             }
             Some(Bus::Vram) => {
                 self.vram_bus = value;
@@ -185,7 +246,7 @@ impl MemoryMapped {
             }
             if Bus::of(address) == Some(bus) {
                 return match bus {
-                    Bus::External => self.external_bus,
+                    Bus::External => self.external.latch(),
                     Bus::Vram => self.vram_bus,
                 };
             }
@@ -222,9 +283,8 @@ impl MemoryMapped {
 
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
-            MappedAddress::Cartridge(address) => self.cartridge.read(address),
-            MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize],
-            MappedAddress::HighRam(address) => self.ram.high_ram[address as usize],
+            MappedAddress::Cartridge(_) | MappedAddress::WorkRam(_) => self.external.read(address),
+            MappedAddress::HighRam(offset) => self.high_ram[offset as usize],
             MappedAddress::VideoRam(address) => self.video.read_memory(address),
             MappedAddress::JoypadRegister => {
                 let mut value = self.joypad.read_register();
@@ -313,8 +373,7 @@ impl MemoryMapped {
         // whether the target device actually stores it.
         match Bus::of(address) {
             Some(Bus::External) => {
-                self.external_bus = value;
-                self.external_bus_decay = super::EXTERNAL_BUS_DECAY_MCYCLES;
+                self.external.drive(value);
             }
             Some(Bus::Vram) => {
                 self.vram_bus = value;
@@ -327,9 +386,10 @@ impl MemoryMapped {
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
-            MappedAddress::Cartridge(address) => self.cartridge.write(address, value),
-            MappedAddress::WorkRam(address) => self.ram.work_ram[address as usize] = value,
-            MappedAddress::HighRam(address) => self.ram.high_ram[address as usize] = value,
+            MappedAddress::Cartridge(_) | MappedAddress::WorkRam(_) => {
+                self.external.write(address, value)
+            }
+            MappedAddress::HighRam(offset) => self.high_ram[offset as usize] = value,
             MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
             MappedAddress::JoypadRegister => {
                 if let Some(sgb) = &mut self.sgb {

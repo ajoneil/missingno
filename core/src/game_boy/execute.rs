@@ -1,5 +1,5 @@
 use super::{
-    EXTERNAL_BUS_DECAY_MCYCLES, GameBoy,
+    GameBoy,
     cpu::{
         InterruptMasterEnable,
         instructions::Instruction,
@@ -313,8 +313,7 @@ impl GameBoy {
             self.mapped.video.write_memory(dst, byte);
             match Bus::of(src_addr) {
                 Some(Bus::External) => {
-                    self.mapped.external_bus = byte;
-                    self.mapped.external_bus_decay = EXTERNAL_BUS_DECAY_MCYCLES;
+                    self.mapped.external.drive(byte);
                 }
                 Some(Bus::Vram) => {
                     self.mapped.vram_bus = byte;
@@ -326,12 +325,7 @@ impl GameBoy {
         // External bus decay: with no device driving the bus, the
         // retained value trends toward 0xFF as parasitic capacitance
         // discharges.
-        if self.mapped.external_bus_decay > 0 {
-            self.mapped.external_bus_decay -= 1;
-            if self.mapped.external_bus_decay == 0 {
-                self.mapped.external_bus = 0xFF;
-            }
-        }
+        self.mapped.external.tick_decay();
 
         self.mapped
             .audio
