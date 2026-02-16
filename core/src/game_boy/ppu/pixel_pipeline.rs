@@ -601,76 +601,79 @@ impl Rendering {
         }
     }
 
+    /// Read the tile index from the tilemap for the current fetcher position.
+    ///
+    /// On the die, BG address generation (page 26) and window address
+    /// generation (page 27) are separate blocks that feed tilemap
+    /// coordinates to the VRAM interface.
+    fn read_bg_tile_index(&self, data: &Registers, vram: &Vram) -> u8 {
+        let fetcher = &self.line.fetcher;
+        let (map_x, map_y) = if fetcher.fetching_window {
+            (fetcher.tile_x, self.window_line_counter / 8)
+        } else {
+            let scx = data.background_viewport.x;
+            let scy = data.background_viewport.y;
+            (
+                (fetcher.tile_x.wrapping_add(scx / 8)) & 31,
+                (self.line.number.wrapping_add(scy) / 8) & 31,
+            )
+        };
+
+        let map_id = if fetcher.fetching_window {
+            data.control.window_tile_map()
+        } else {
+            data.control.background_tile_map()
+        };
+        vram.tile_map(map_id).get_tile(map_x, map_y).0
+    }
+
+    /// Read one byte of tile data (low or high bitplane) for the
+    /// current BG/window fetch.
+    ///
+    /// On the die, the tile data address comes from the BG/window
+    /// address generators (pages 26-27) combined with the tile index
+    /// cached from the tilemap read. The VRAM interface (page 25)
+    /// performs the actual read.
+    fn read_bg_tile_data(&self, data: &Registers, vram: &Vram, high: bool) -> u8 {
+        let tile_index = TileIndex(self.line.fetcher.tile_index);
+        let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
+
+        let fine_y = if self.line.fetcher.fetching_window {
+            self.window_line_counter % 8
+        } else {
+            self.line.number.wrapping_add(data.background_viewport.y) % 8
+        };
+
+        let block = vram.tile_block(block_id);
+        block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + high as usize]
+    }
+
     /// Advance the background tile fetcher by one dot.
     fn advance_bg_fetcher(&mut self, data: &Registers, vram: &Vram) {
-        let fetcher = &mut self.line.fetcher;
-
-        match fetcher.step {
+        match self.line.fetcher.step {
             FetcherStep::GetTile => {
-                if fetcher.dot_in_step == 0 {
-                    fetcher.dot_in_step = 1;
+                if self.line.fetcher.dot_in_step == 0 {
+                    self.line.fetcher.dot_in_step = 1;
                 } else {
-                    // Read tile index from tilemap
-                    let (map_x, map_y) = if fetcher.fetching_window {
-                        (fetcher.tile_x, self.window_line_counter / 8)
-                    } else {
-                        let scx = data.background_viewport.x;
-                        let scy = data.background_viewport.y;
-                        (
-                            (fetcher.tile_x.wrapping_add(scx / 8)) & 31,
-                            (self.line.number.wrapping_add(scy) / 8) & 31,
-                        )
-                    };
-
-                    let map_id = if fetcher.fetching_window {
-                        data.control.window_tile_map()
-                    } else {
-                        data.control.background_tile_map()
-                    };
-                    let map = vram.tile_map(map_id);
-                    fetcher.tile_index = map.get_tile(map_x, map_y).0;
-
-                    fetcher.dot_in_step = 0;
-                    fetcher.step = FetcherStep::GetTileDataLow;
+                    self.line.fetcher.tile_index = self.read_bg_tile_index(data, vram);
+                    self.line.fetcher.dot_in_step = 0;
+                    self.line.fetcher.step = FetcherStep::GetTileDataLow;
                 }
             }
             FetcherStep::GetTileDataLow => {
-                if fetcher.dot_in_step == 0 {
-                    fetcher.dot_in_step = 1;
+                if self.line.fetcher.dot_in_step == 0 {
+                    self.line.fetcher.dot_in_step = 1;
                 } else {
-                    let tile_index = TileIndex(fetcher.tile_index);
-                    let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
-
-                    let fine_y = if fetcher.fetching_window {
-                        self.window_line_counter % 8
-                    } else {
-                        self.line.number.wrapping_add(data.background_viewport.y) % 8
-                    };
-
-                    let block = vram.tile_block(block_id);
-                    fetcher.tile_data_low =
-                        block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2];
-
-                    fetcher.dot_in_step = 0;
-                    fetcher.step = FetcherStep::GetTileDataHigh;
+                    self.line.fetcher.tile_data_low = self.read_bg_tile_data(data, vram, false);
+                    self.line.fetcher.dot_in_step = 0;
+                    self.line.fetcher.step = FetcherStep::GetTileDataHigh;
                 }
             }
             FetcherStep::GetTileDataHigh => {
-                if fetcher.dot_in_step == 0 {
-                    fetcher.dot_in_step = 1;
+                if self.line.fetcher.dot_in_step == 0 {
+                    self.line.fetcher.dot_in_step = 1;
                 } else {
-                    let tile_index = TileIndex(fetcher.tile_index);
-                    let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
-
-                    let fine_y = if fetcher.fetching_window {
-                        self.window_line_counter % 8
-                    } else {
-                        self.line.number.wrapping_add(data.background_viewport.y) % 8
-                    };
-
-                    let block = vram.tile_block(block_id);
-                    fetcher.tile_data_high =
-                        block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + 1];
+                    self.line.fetcher.tile_data_high = self.read_bg_tile_data(data, vram, true);
 
                     // Push is instant when the shifter is empty (no
                     // additional dot cost). Otherwise enter the Push
@@ -678,8 +681,8 @@ impl Rendering {
                     if self.line.bg_shifter.is_empty() {
                         self.push_bg_tile();
                     } else {
-                        fetcher.dot_in_step = 0;
-                        fetcher.step = FetcherStep::Push;
+                        self.line.fetcher.dot_in_step = 0;
+                        self.line.fetcher.step = FetcherStep::Push;
                     }
                 }
             }
@@ -706,6 +709,43 @@ impl Rendering {
         self.line.fetcher.dot_in_step = 0;
     }
 
+    /// Read one byte of sprite tile data (low or high bitplane).
+    ///
+    /// On the die, the sprite fetcher (page 29) uses the OAM index
+    /// from the sprite store to look up the tile index and attributes,
+    /// then generates a VRAM address from the tile index, line offset,
+    /// and flip flags. The VRAM interface (page 25) performs the read.
+    fn read_sprite_tile_data(
+        sf: &SpriteFetch,
+        data: &Registers,
+        oam: &Oam,
+        vram: &Vram,
+        high: bool,
+    ) -> u8 {
+        let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
+        let tile_index = if data.control.sprite_size() == SpriteSize::Double {
+            TileIndex(sprite.tile.0 & 0xFE)
+        } else {
+            sprite.tile
+        };
+        let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
+
+        let flipped_y = if sprite.attributes.flip_y() {
+            (data.control.sprite_size().height() as i16 - 1 - sf.entry.line_offset as i16) as u8
+        } else {
+            sf.entry.line_offset
+        };
+
+        let (final_block, final_idx, final_y) = if flipped_y < 8 {
+            (block_id, mapped_idx, flipped_y)
+        } else {
+            (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
+        };
+
+        let block = vram.tile_block(final_block);
+        block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
+    }
+
     /// Advance the sprite fetch pipeline by one dot.
     fn advance_sprite_fetch(sf: &mut SpriteFetch, data: &Registers, oam: &Oam, vram: &Vram) {
         match sf.step {
@@ -722,31 +762,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
-                    let tile_index = if data.control.sprite_size() == SpriteSize::Double {
-                        TileIndex(sprite.tile.0 & 0xFE)
-                    } else {
-                        sprite.tile
-                    };
-                    let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
-
-                    let flipped_y = if sprite.attributes.flip_y() {
-                        (data.control.sprite_size().height() as i16
-                            - 1
-                            - sf.entry.line_offset as i16) as u8
-                    } else {
-                        sf.entry.line_offset
-                    };
-
-                    let (final_block, final_idx, final_y) = if flipped_y < 8 {
-                        (block_id, mapped_idx, flipped_y)
-                    } else {
-                        (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
-                    };
-
-                    let block = vram.tile_block(final_block);
-                    sf.tile_data_low = block.data[final_idx.0 as usize * 16 + final_y as usize * 2];
-
+                    sf.tile_data_low = Self::read_sprite_tile_data(sf, data, oam, vram, false);
                     sf.dot_in_step = 0;
                     sf.step = SpriteStep::GetDataHigh;
                 }
@@ -755,31 +771,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
-                    let tile_index = if data.control.sprite_size() == SpriteSize::Double {
-                        TileIndex(sprite.tile.0 & 0xFE)
-                    } else {
-                        sprite.tile
-                    };
-                    let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
-
-                    let flipped_y = if sprite.attributes.flip_y() {
-                        (data.control.sprite_size().height() as i16
-                            - 1
-                            - sf.entry.line_offset as i16) as u8
-                    } else {
-                        sf.entry.line_offset
-                    };
-
-                    let (final_block, final_idx, final_y) = if flipped_y < 8 {
-                        (block_id, mapped_idx, flipped_y)
-                    } else {
-                        (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
-                    };
-
-                    let block = vram.tile_block(final_block);
-                    sf.tile_data_high =
-                        block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + 1];
+                    sf.tile_data_high = Self::read_sprite_tile_data(sf, data, oam, vram, true);
                     // Signal completion. Use dot_in_step = 2 to distinguish
                     // from the initial entry state (dot_in_step = 0).
                     sf.dot_in_step = 2;
