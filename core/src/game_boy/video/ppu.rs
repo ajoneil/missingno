@@ -5,11 +5,10 @@ use crate::game_boy::video::{
     memory::Vram,
     palette::PaletteIndex,
     screen::{self, Screen},
-    sprites::Sprite,
 };
 
 use super::{
-    sprites::{self, SpriteSize},
+    sprites::{self, SpriteId, SpriteSize},
     tiles::{TileAddressMode, TileIndex},
 };
 
@@ -194,6 +193,47 @@ impl Fetcher {
     }
 }
 
+// --- Sprite store ---
+
+/// One entry in the hardware's 10-slot sprite store register file.
+/// Written during Mode 2 OAM scan, read during Mode 3 sprite fetch.
+#[derive(Clone, Copy)]
+struct SpriteStoreEntry {
+    /// OAM sprite number (0-39). The hardware stores this as a 6-bit
+    /// value. Used during Mode 3 to look up tile index and attributes
+    /// from OAM via the sprite fetcher.
+    oam_index: u8,
+    /// Which row of the sprite falls on this scanline (0-15).
+    /// Pre-computed during Mode 2 so the sprite fetcher can generate
+    /// a VRAM tile address without re-reading OAM Y position.
+    line_offset: u8,
+    /// X position (the raw x_plus_8 value from OAM byte 1).
+    /// Compared against the pixel position counter by the X matchers
+    /// during Mode 3.
+    x: u8,
+}
+
+/// The hardware's 10-entry sprite store. Populated during Mode 2 OAM scan,
+/// consumed during Mode 3 by the X matchers and sprite fetcher.
+struct SpriteStore {
+    entries: [SpriteStoreEntry; MAX_SPRITES_PER_LINE],
+    /// Number of entries written during this line's OAM scan (0-10).
+    count: u8,
+}
+
+impl SpriteStore {
+    fn new() -> Self {
+        Self {
+            entries: [SpriteStoreEntry {
+                oam_index: 0,
+                line_offset: 0,
+                x: 0,
+            }; MAX_SPRITES_PER_LINE],
+            count: 0,
+        }
+    }
+}
+
 // --- Sprite fetch ---
 
 /// The two phases of a sprite fetch on real hardware.
@@ -218,7 +258,8 @@ enum SpriteStep {
 }
 
 struct SpriteFetch {
-    sprite: Sprite,
+    /// The sprite store entry that triggered this fetch.
+    entry: SpriteStoreEntry,
     phase: SpriteFetchPhase,
     step: SpriteStep,
     dot_in_step: u8,
@@ -237,10 +278,10 @@ struct Line {
     /// (including SCX-discarded pixels). Used for sprite trigger
     /// comparison: a sprite triggers when this equals its screen X.
     position_in_line: i16,
-    /// Sprites on this line, sorted by X position (DMG priority).
-    sprites: Vec<Sprite>,
-    /// Index of the next sprite to check for triggering.
-    next_sprite: usize,
+    /// Sprites on this line, stored as hardware register file entries.
+    sprites: SpriteStore,
+    /// Index of the next sprite store entry to check for triggering.
+    next_sprite: u8,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
 
@@ -277,7 +318,7 @@ impl Line {
             dots: 0,
             pixels_drawn: 0,
             position_in_line: 0,
-            sprites: Vec::new(),
+            sprites: SpriteStore::new(),
             next_sprite: 0,
             window_rendered: false,
             bg_shifter: PixelShifter::new(),
@@ -294,21 +335,27 @@ impl Line {
     }
 
     fn find_sprites(&mut self, data: &PpuAccessible) {
-        self.sprites = data
-            .oam
-            .sprites()
-            .iter()
-            .filter(|sprite| {
-                sprite
-                    .position
-                    .on_line(self.number, data.control.sprite_size())
-            })
-            .take(MAX_SPRITES_PER_LINE)
-            .cloned()
-            .collect();
+        let sprite_size = data.control.sprite_size();
+        let mut count = 0u8;
+        for (oam_index, sprite) in data.oam.sprites().iter().enumerate() {
+            if count as usize >= MAX_SPRITES_PER_LINE {
+                break;
+            }
+            if sprite.position.on_line(self.number, sprite_size) {
+                let line_offset =
+                    (self.number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
+                self.sprites.entries[count as usize] = SpriteStoreEntry {
+                    oam_index: oam_index as u8,
+                    line_offset,
+                    x: sprite.position.x_plus_8,
+                };
+                count += 1;
+            }
+        }
+        self.sprites.count = count;
 
         // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
-        self.sprites.sort_by_key(|sprite| sprite.position.x_plus_8);
+        self.sprites.entries[..count as usize].sort_by_key(|entry| entry.x);
 
         // Discard SCX fine scroll pixels from the first visible tile.
         // After the two startup fetches complete, the shifter contains
@@ -525,15 +572,16 @@ impl Rendering {
                         // exit — the transition itself does not consume a dot.
                         let sf = self.line.sprite_fetch.as_mut().unwrap();
                         sf.phase = SpriteFetchPhase::FetchingData;
-                        Self::advance_sprite_fetch(sf, self.line.number, data, vram);
+                        Self::advance_sprite_fetch(sf, data, vram);
                     }
                 }
                 SpriteFetchPhase::FetchingData => {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
-                    Self::advance_sprite_fetch(sf, self.line.number, data, vram);
+                    Self::advance_sprite_fetch(sf, data, vram);
                     if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
+                            data,
                             &mut self.line.bg_shifter,
                             &mut self.line.obj_shifter,
                         );
@@ -659,18 +707,13 @@ impl Rendering {
     }
 
     /// Advance the sprite fetch pipeline by one dot.
-    fn advance_sprite_fetch(
-        sf: &mut SpriteFetch,
-        line_number: u8,
-        data: &PpuAccessible,
-        vram: &Vram,
-    ) {
+    fn advance_sprite_fetch(sf: &mut SpriteFetch, data: &PpuAccessible, vram: &Vram) {
         match sf.step {
             SpriteStep::GetTile => {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    // Tile index comes from OAM (already in sprite struct)
+                    // Tile index comes from OAM via the sprite store's oam_index
                     sf.dot_in_step = 0;
                     sf.step = SpriteStep::GetDataLow;
                 }
@@ -679,7 +722,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = &sf.sprite;
+                    let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
                     let tile_index = if data.control.sprite_size() == SpriteSize::Double {
                         TileIndex(sprite.tile.0 & 0xFE)
                     } else {
@@ -687,12 +730,13 @@ impl Rendering {
                     };
                     let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
 
-                    let sprite_y = line_number as i16 + 16 - sprite.position.y_plus_16 as i16;
                     let flipped_y = if sprite.attributes.flip_y() {
-                        (data.control.sprite_size().height() as i16 - 1) - sprite_y
+                        (data.control.sprite_size().height() as i16
+                            - 1
+                            - sf.entry.line_offset as i16) as u8
                     } else {
-                        sprite_y
-                    } as u8;
+                        sf.entry.line_offset
+                    };
 
                     let (final_block, final_idx, final_y) = if flipped_y < 8 {
                         (block_id, mapped_idx, flipped_y)
@@ -711,7 +755,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = &sf.sprite;
+                    let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
                     let tile_index = if data.control.sprite_size() == SpriteSize::Double {
                         TileIndex(sprite.tile.0 & 0xFE)
                     } else {
@@ -719,12 +763,13 @@ impl Rendering {
                     };
                     let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
 
-                    let sprite_y = line_number as i16 + 16 - sprite.position.y_plus_16 as i16;
                     let flipped_y = if sprite.attributes.flip_y() {
-                        (data.control.sprite_size().height() as i16 - 1) - sprite_y
+                        (data.control.sprite_size().height() as i16
+                            - 1
+                            - sf.entry.line_offset as i16) as u8
                     } else {
-                        sprite_y
-                    } as u8;
+                        sf.entry.line_offset
+                    };
 
                     let (final_block, final_idx, final_y) = if flipped_y < 8 {
                         (block_id, mapped_idx, flipped_y)
@@ -746,10 +791,11 @@ impl Rendering {
     /// Merge fetched sprite pixels into the OBJ shifter.
     fn merge_sprite_into_obj_shifter(
         sf: &SpriteFetch,
+        data: &PpuAccessible,
         bg_shifter: &mut PixelShifter,
         obj_shifter: &mut PixelShifter,
     ) {
-        let sprite = &sf.sprite;
+        let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
 
         // Decode 8 sprite pixels
         let mut sprite_pixels = [Pixel::default(); 8];
@@ -769,7 +815,7 @@ impl Rendering {
         }
 
         // Sprites partially off-screen left: skip the clipped pixels
-        let sprite_screen_x = sprite.position.x_plus_8 as i16 - 8;
+        let sprite_screen_x = sf.entry.x as i16 - 8;
         let pixels_clipped_left = if sprite_screen_x < 0 {
             (-sprite_screen_x) as u8
         } else {
@@ -889,27 +935,27 @@ impl Rendering {
 
         let match_x = sprite_match_x(self.line.position_in_line);
 
-        while self.line.next_sprite < self.line.sprites.len() {
-            let sprite = &self.line.sprites[self.line.next_sprite];
+        while (self.line.next_sprite as usize) < self.line.sprites.count as usize {
+            let entry = &self.line.sprites.entries[self.line.next_sprite as usize];
 
-            if sprite.position.x_plus_8 < match_x {
+            if entry.x < match_x {
                 // Sprite already passed — skip it
                 self.line.next_sprite += 1;
                 continue;
             }
 
-            if sprite.position.x_plus_8 != match_x {
+            if entry.x != match_x {
                 // Sprite not yet reached
                 break;
             }
 
-            if sprite.position.x_plus_8 >= 168 {
+            if entry.x >= 168 {
                 self.line.next_sprite += 1;
                 continue;
             }
 
             self.line.sprite_fetch = Some(SpriteFetch {
-                sprite: *sprite,
+                entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
                 step: SpriteStep::GetTile,
                 dot_in_step: 0,
