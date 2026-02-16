@@ -618,15 +618,11 @@ impl Rendering {
                 self.rendering = true;
             }
         } else {
-            // Clear rendering latch when all visible pixels are drawn
-            // and no sprite fetch is active. Decoupled from hblank_gate:
-            // hblank_gate fires at stat_boundary_pixels (156) for STAT
-            // timing, while rendering stays true until all 160 pixels
-            // are output for pixel drawing and memory gating.
-            if self.line.pixels_drawn >= screen::PIXELS_PER_LINE
-                && self.line.sprite_fetch.is_none()
-                && self.rendering
-            {
+            // Clear rendering latch when hblank gate fires. On hardware,
+            // WODU (PX=167) feeds VOGA/WEGO to clear XYMU with a 1-dot
+            // delay. Since hblank_gate is set at the end of the dot where
+            // PX=167, checking it here (start of next dot) gives the delay.
+            if self.hblank_gate && self.rendering {
                 self.rendering = false;
             }
 
