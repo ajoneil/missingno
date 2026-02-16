@@ -52,8 +52,8 @@ const WODU_PIXEL_COUNT: u8 = 167;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 /// Number of dots the BG startup phase takes: 3 pipeline priming dots
-/// (position counter only) plus two tile fetches of 6 dots each (12 dots).
-const BG_STARTUP_DOTS: i16 = 15;
+/// (position counter only) plus one tile fetch of 6 dots.
+const BG_STARTUP_DOTS: i16 = 9;
 
 // --- Pixel shift registers ---
 //
@@ -288,8 +288,8 @@ enum FetcherStep {
     Load,
 }
 
-/// Mode 3 starts with pipeline priming (3 dots) then two BG tile fetches
-/// (12 dots) before any pixels shift out. During priming the position
+/// Mode 3 starts with pipeline priming (3 dots) then one BG tile fetch
+/// (6 dots) before any pixels shift out. During priming the position
 /// counter increments for trigger evaluation but no tile fetch occurs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
@@ -297,9 +297,9 @@ enum StartupFetch {
     /// but the fetcher does not advance. Models the gap between Mode 3
     /// start and first fetcher activation.
     PipelinePriming { dots_remaining: u8 },
-    /// First tile fetch — result will be discarded (hardware quirk).
-    Discarded,
-    /// Second tile fetch — result is the first visible tile, loaded into shifter.
+    /// Single tile fetch — loads the first tile into the BG shifter.
+    /// When the shifter becomes non-empty, startup is complete and
+    /// normal rendering begins on the next dot.
     FirstTile,
 }
 
@@ -432,9 +432,8 @@ struct Line {
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
     /// Tracks the two startup tile fetches at the beginning of mode 3.
-    /// Hardware performs two BG tile fetches (12 dots) before any
-    /// pixels shift out — the first is discarded, the second is the
-    /// first visible tile. `None` once startup is complete.
+    /// Hardware performs one BG tile fetch (6 dots) before any
+    /// pixels shift out. `None` once startup is complete.
     startup_fetch: Option<StartupFetch>,
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
@@ -677,34 +676,19 @@ impl Rendering {
                             dots_remaining: dots_remaining - 1,
                         })
                     } else {
-                        Some(StartupFetch::Discarded)
+                        Some(StartupFetch::FirstTile)
                     };
                 }
-                StartupFetch::Discarded | StartupFetch::FirstTile => {
+                StartupFetch::FirstTile => {
                     self.advance_bg_fetcher(data, vram);
                     self.line.position_in_line += 1;
                     self.check_window_trigger(data);
 
-                    // A startup fetch completes when the fetcher loads pixels
+                    // Startup fetch completes when the fetcher loads pixels
                     // into the previously-empty shifter (detected by shifter
                     // becoming non-empty after the fetcher advance).
                     if !self.line.bg_shifter.is_empty() {
-                        match phase {
-                            StartupFetch::Discarded => {
-                                // First fetch complete — discard and restart
-                                self.line.bg_shifter.clear();
-                                self.line.fetcher.step = FetcherStep::GetTile;
-                                self.line.fetcher.dot_in_step = 0;
-                                self.line.fetcher.tile_x = 0;
-                                self.line.startup_fetch = Some(StartupFetch::FirstTile);
-                            }
-                            StartupFetch::FirstTile => {
-                                // Second fetch complete — shifter has 8 real pixels.
-                                // Normal rendering begins on the next dot.
-                                self.line.startup_fetch = None;
-                            }
-                            _ => unreachable!(),
-                        }
+                        self.line.startup_fetch = None;
                     }
                 }
             }
