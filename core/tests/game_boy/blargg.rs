@@ -231,17 +231,16 @@ fn run_blargg_cart_ram_test(rom_path: &str, timeout_frames: u32) {
 
     // Read result text from cart RAM at $A004 (zero-terminated string)
     // Signature at $A001-$A003 should be $DE $B0 $61
-    let mem = gb.memory_mapped();
     let mut text = String::new();
     for i in 0..512u16 {
-        let b = mem.read(0xA004 + i);
+        let b = gb.read(0xA004 + i);
         if b == 0 {
             break;
         }
         text.push(b as char);
     }
 
-    let result_code = mem.read(0xA000);
+    let result_code = gb.read(0xA000);
 
     assert!(
         found_loop,

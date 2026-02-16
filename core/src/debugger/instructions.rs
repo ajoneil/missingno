@@ -1,12 +1,12 @@
-use crate::game_boy::MemoryMapped;
+use crate::game_boy::GameBoy;
 
 pub struct InstructionsIterator<'a> {
     pub address: Option<u16>,
-    pub memory: &'a MemoryMapped,
+    pub memory: &'a GameBoy,
 }
 
 impl<'a> InstructionsIterator<'a> {
-    pub fn new(address: u16, memory: &'a MemoryMapped) -> Self {
+    pub fn new(address: u16, memory: &'a GameBoy) -> Self {
         InstructionsIterator {
             address: Some(address),
             memory,

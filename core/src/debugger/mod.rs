@@ -39,10 +39,7 @@ impl Debugger {
     }
 
     pub fn step_over(&mut self) -> Option<Screen> {
-        let mut it = InstructionsIterator::new(
-            self.game_boy.cpu().program_counter,
-            self.game_boy.memory_mapped(),
-        );
+        let mut it = InstructionsIterator::new(self.game_boy.cpu().program_counter, &self.game_boy);
         Instruction::decode(&mut it);
         let next_address = it.address.unwrap();
 

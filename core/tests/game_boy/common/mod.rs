@@ -66,7 +66,7 @@ pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
         loop {
             // Check for LD B,B breakpoint before executing
             let pc = gb.cpu().program_counter;
-            if gb.memory_mapped().read(pc) == 0x40 {
+            if gb.read(pc) == 0x40 {
                 return true;
             }
             if gb.step() {
@@ -80,10 +80,8 @@ pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
 /// Check if the CPU is stuck in a known completion loop.
 fn is_infinite_loop(gb: &GameBoy) -> bool {
     let pc = gb.cpu().program_counter;
-    let mem = gb.memory_mapped();
-
     // JR -2 (0x18 0xFE) — standard completion loop
-    if mem.read(pc) == 0x18 && mem.read(pc.wrapping_add(1)) == 0xFE {
+    if gb.read(pc) == 0x18 && gb.read(pc.wrapping_add(1)) == 0xFE {
         return true;
     }
 
@@ -96,12 +94,12 @@ fn is_infinite_loop(gb: &GameBoy) -> bool {
 
         // HALT-based loops: when halted, PC is past the HALT instruction.
         // Check if HALT at pc-1 is part of a small backward-jumping loop.
-        if mem.read(pc.wrapping_sub(1)) == 0x76 {
+        if gb.read(pc.wrapping_sub(1)) == 0x76 {
             // Scan the few bytes after HALT for a JR that jumps back to or before the HALT
             for offset in 0u16..4 {
                 let addr = pc.wrapping_add(offset);
-                if mem.read(addr) == 0x18 {
-                    let rel = mem.read(addr.wrapping_add(1)) as i8;
+                if gb.read(addr) == 0x18 {
+                    let rel = gb.read(addr.wrapping_add(1)) as i8;
                     // JR target = addr + 2 + rel; loop if target <= HALT address (pc-1)
                     let target = addr.wrapping_add(2).wrapping_add(rel as u16);
                     if target <= pc.wrapping_sub(1) {

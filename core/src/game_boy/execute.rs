@@ -106,12 +106,12 @@ impl GameBoy {
             // 0-operand PPU register write (like LD [HL],r or LD [C],A),
             // giving 4 fetch dots + 1 write T0 = 5 pending for conflict
             // splitting. Cancelled after reading the opcode if not needed.
-            let tentative = self.mapped.video.ppu_is_drawing();
+            let tentative = self.video.ppu_is_drawing();
             if tentative {
-                self.mapped.video.start_accumulating();
+                self.video.start_accumulating();
             }
             new_screen |= self.tick_hardware_tcycle();
-            let opcode = self.mapped.cpu_read(self.cpu.program_counter);
+            let opcode = self.cpu_read(self.cpu.program_counter);
             if self.cpu.halt_bug {
                 self.cpu.halt_bug = false;
             } else {
@@ -129,9 +129,7 @@ impl GameBoy {
             if tentative && !(op_count == 0 && known_ppu_write) {
                 // Not a 0-operand PPU write — cancel tentative
                 // accumulation and flush the captured T0 dot.
-                self.mapped
-                    .video
-                    .stop_accumulating_and_flush(&self.mapped.vram_bus.vram);
+                self.video.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
 
             new_screen |= self.tick_hardware_tcycle();
@@ -144,10 +142,10 @@ impl GameBoy {
                 if i == op_count - 1 && defer_for_write {
                     // Last operand M-cycle: start accumulating from
                     // T0 so the full M-cycle (4 dots) is deferred.
-                    self.mapped.video.start_accumulating();
+                    self.video.start_accumulating();
                 }
                 new_screen |= self.tick_hardware_tcycle();
-                bytes[1 + i as usize] = self.mapped.cpu_read(self.cpu.program_counter);
+                bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
                 new_screen |= self.tick_hardware_tcycle();
                 new_screen |= self.tick_hardware_tcycle();
@@ -160,9 +158,7 @@ impl GameBoy {
             if deferred_addr_write {
                 let target = (bytes[2] as u16) << 8 | bytes[1] as u16;
                 if !is_ppu_register(target) {
-                    self.mapped
-                        .video
-                        .stop_accumulating_and_flush(&self.mapped.vram_bus.vram);
+                    self.video.stop_accumulating_and_flush(&self.vram_bus.vram);
                 }
             }
 
@@ -175,7 +171,7 @@ impl GameBoy {
             // interrupt is already pending, the CPU doesn't truly halt.
             // It resumes immediately but fails to increment PC on the
             // next opcode fetch.
-            if self.cpu.halted && self.mapped.interrupts.triggered().is_some() {
+            if self.cpu.halted && self.interrupts.triggered().is_some() {
                 if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
                     self.cpu.halted = false;
                     self.cpu.halt_bug = true;
@@ -207,8 +203,8 @@ impl GameBoy {
             // interrupt is pending.
             if processor.needs_vector_resolve && !vector_resolved {
                 vector_resolved = true;
-                if let Some(interrupt) = self.mapped.interrupts.triggered() {
-                    self.mapped.interrupts.clear(interrupt);
+                if let Some(interrupt) = self.interrupts.triggered() {
+                    self.interrupts.clear(interrupt);
                     self.cpu.program_counter = interrupt.vector();
                 } else {
                     self.cpu.program_counter = 0x0000;
@@ -217,12 +213,12 @@ impl GameBoy {
 
             match tcycle {
                 TCycle::Read { address } => {
-                    self.mapped.oam_bug_read(address);
-                    read_value = self.mapped.cpu_read(address);
+                    self.oam_bug_read(address);
+                    read_value = self.cpu_read(address);
                 }
                 TCycle::Write { address, value } => {
-                    self.mapped.oam_bug_write(address);
-                    self.mapped.write_byte(address, value);
+                    self.oam_bug_write(address);
+                    self.write_byte(address, value);
                 }
                 TCycle::Hardware => {}
             }
@@ -233,8 +229,8 @@ impl GameBoy {
             // at the write's T1 for conflict splitting.
             if tcycle_in_mcycle == 0 {
                 if let Some(addr) = processor.peek_next_write_address() {
-                    if is_ppu_register(addr) && self.mapped.video.ppu_is_drawing() {
-                        self.mapped.video.start_accumulating();
+                    if is_ppu_register(addr) && self.video.ppu_is_drawing() {
+                        self.video.start_accumulating();
                     }
                 }
             }
@@ -246,7 +242,7 @@ impl GameBoy {
             // reflects the current dot (matching fetch-phase tick ordering).
             if tcycle_in_mcycle == 0 {
                 if let Some(addr) = processor.oam_bug_address() {
-                    self.mapped.oam_bug_write(addr);
+                    self.oam_bug_write(addr);
                 }
             }
             tcycle_in_mcycle += 1;
@@ -272,28 +268,23 @@ impl GameBoy {
         let is_mcycle_boundary = self.mcycle_counter == 0;
 
         // Timer ticks every T-cycle for DIV resolution
-        if let Some(interrupt) = self.mapped.timers.tcycle(is_mcycle_boundary) {
-            self.mapped.interrupts.request(interrupt);
+        if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
+            self.interrupts.request(interrupt);
         }
 
         // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
         // detection and LYC comparison only run on M-cycle boundaries.
-        let video_result = self
-            .mapped
-            .video
-            .tcycle(is_mcycle_boundary, &self.mapped.vram_bus.vram);
+        let video_result = self.video.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
         if video_result.request_vblank {
-            self.mapped
-                .interrupts
-                .request(Interrupt::VideoBetweenFrames);
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
         if video_result.request_stat {
-            self.mapped.interrupts.request(Interrupt::VideoStatus);
+            self.interrupts.request(Interrupt::VideoStatus);
         }
 
         let mut new_screen = false;
         if let Some(screen) = video_result.screen {
-            if let Some(sgb) = &mut self.mapped.sgb {
+            if let Some(sgb) = &mut self.sgb {
                 sgb.update_screen(&screen);
             }
             self.screen = screen;
@@ -306,27 +297,27 @@ impl GameBoy {
 
         // Serial ticks once per M-cycle, using falling edges of the
         // internal counter's bit 7 to drive the serial shift clock.
-        let counter = self.mapped.timers.internal_counter();
-        if let Some(interrupt) = self.mapped.serial.mcycle(counter) {
-            self.mapped.interrupts.request(interrupt);
+        let counter = self.timers.internal_counter();
+        if let Some(interrupt) = self.serial.mcycle(counter) {
+            self.interrupts.request(interrupt);
         }
 
         // OAM DMA: transfer one byte per M-cycle. The DMA controller
         // drives the source bus with the byte it reads, updating the
         // bus latch so that CPU reads from the same bus see this value.
-        if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
-            let byte = self.mapped.read_dma_source(src_addr);
+        if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+            let byte = self.read_dma_source(src_addr);
             let oam_addr = match video::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
                 video::memory::MappedAddress::Oam(addr) => addr,
                 _ => unreachable!(),
             };
-            self.mapped.video.write_oam(oam_addr, byte);
+            self.video.write_oam(oam_addr, byte);
             match Bus::of(src_addr) {
                 Some(Bus::External) => {
-                    self.mapped.external.drive(byte);
+                    self.external.drive(byte);
                 }
                 Some(Bus::Vram) => {
-                    self.mapped.vram_bus.drive(byte);
+                    self.vram_bus.drive(byte);
                 }
                 None => {}
             }
@@ -335,11 +326,9 @@ impl GameBoy {
         // External bus decay: with no device driving the bus, the
         // retained value trends toward 0xFF as parasitic capacitance
         // discharges.
-        self.mapped.external.tick_decay();
+        self.external.tick_decay();
 
-        self.mapped
-            .audio
-            .mcycle(self.mapped.timers.internal_counter());
+        self.audio.mcycle(self.timers.internal_counter());
         new_screen
     }
 
@@ -350,9 +339,9 @@ impl GameBoy {
                 self.cpu.ei_delay_consumed = true;
                 None
             }
-            InterruptMasterEnable::Enabled => self.mapped.interrupts.triggered(),
+            InterruptMasterEnable::Enabled => self.interrupts.triggered(),
             InterruptMasterEnable::Disabled => {
-                if self.cpu.halted && self.mapped.interrupts.triggered().is_some() {
+                if self.cpu.halted && self.interrupts.triggered().is_some() {
                     self.cpu.halted = false;
                 }
                 None

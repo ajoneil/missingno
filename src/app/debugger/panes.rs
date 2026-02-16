@@ -268,7 +268,7 @@ impl DebuggerPanes {
             |_handle, instance, _is_maximized| match instance {
                 PaneInstance::Screen(screen) => screen.content(),
                 PaneInstance::Instructions(instructions) => instructions.content(
-                    debugger.game_boy().memory_mapped(),
+                    debugger.game_boy(),
                     debugger.game_boy().cpu().program_counter,
                     debugger.breakpoints(),
                 ),

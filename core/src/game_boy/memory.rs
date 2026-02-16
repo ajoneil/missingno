@@ -1,5 +1,5 @@
 use crate::game_boy::{
-    MemoryMapped, audio,
+    GameBoy, audio,
     interrupts::{self, InterruptFlags},
     serial_transfer, timers, video,
 };
@@ -218,7 +218,7 @@ impl MappedAddress {
     }
 }
 
-impl MemoryMapped {
+impl GameBoy {
     /// Read a byte as the CPU sees it, updating the data bus latch.
     ///
     /// This is the "real" CPU read path: it checks DMA bus conflicts,

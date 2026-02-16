@@ -18,7 +18,7 @@ use crate::app::{
     },
 };
 use missingno_core::debugger::instructions::InstructionsIterator;
-use missingno_core::game_boy::{MemoryMapped, cpu::instructions::Instruction};
+use missingno_core::game_boy::{GameBoy, cpu::instructions::Instruction};
 
 pub struct InstructionsPane;
 
@@ -29,7 +29,7 @@ impl InstructionsPane {
 
     pub fn content(
         &self,
-        memory: &MemoryMapped,
+        memory: &GameBoy,
         pc: u16,
         breakpoints: &BTreeSet<u16>,
     ) -> pane_grid::Content<'_, app::Message> {

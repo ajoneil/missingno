@@ -20,9 +20,13 @@ pub mod sgb;
 pub mod timers;
 pub mod video;
 
-// Anything accessible via a memory address is stored in a separate
-// struct to allow borrowing independently of the Cpu
-pub struct MemoryMapped {
+pub struct GameBoy {
+    cpu: Cpu,
+    screen: Screen,
+    /// Counts T-cycles 0–3 within each M-cycle, used to call
+    /// audio/serial/DMA once per M-cycle (every 4th T-cycle).
+    mcycle_counter: u8,
+
     external: ExternalBus,
     high_ram: [u8; 0x80],
     video: Video,
@@ -33,17 +37,7 @@ pub struct MemoryMapped {
     timers: timers::Timers,
     dma: Dma,
     sgb: Option<sgb::Sgb>,
-
     vram_bus: VramBus,
-}
-
-pub struct GameBoy {
-    cpu: Cpu,
-    screen: Screen,
-    mapped: MemoryMapped,
-    /// Counts T-cycles 0–3 within each M-cycle, used to call
-    /// audio/serial/DMA once per M-cycle (every 4th T-cycle).
-    mcycle_counter: u8,
 }
 
 impl GameBoy {
@@ -59,51 +53,45 @@ impl GameBoy {
             cpu,
             screen: Screen::new(),
             mcycle_counter: 0,
-            mapped: MemoryMapped {
-                external: ExternalBus::new(cartridge),
-                high_ram: [0; 0x80],
-                video: Video::new(),
-                audio: Audio::new(),
-                joypad: Joypad::new(),
-                interrupts: interrupts::Registers::new(),
-                serial: serial_transfer::Registers::new(),
-                timers: timers::Timers::new(),
-                dma: Dma::new(),
-                sgb,
-                vram_bus: VramBus::new(),
-            },
+            external: ExternalBus::new(cartridge),
+            high_ram: [0; 0x80],
+            video: Video::new(),
+            audio: Audio::new(),
+            joypad: Joypad::new(),
+            interrupts: interrupts::Registers::new(),
+            serial: serial_transfer::Registers::new(),
+            timers: timers::Timers::new(),
+            dma: Dma::new(),
+            sgb,
+            vram_bus: VramBus::new(),
         }
     }
 
     pub fn reset(&mut self) {
-        self.cpu = Cpu::new(self.mapped.external.cartridge.header_checksum());
+        self.cpu = Cpu::new(self.external.cartridge.header_checksum());
         self.screen = Screen::new();
         self.mcycle_counter = 0;
-        self.mapped.external.work_ram = [0; 0x2000];
-        self.mapped.external.latch = 0xFF;
-        self.mapped.external.decay = 0;
-        self.mapped.high_ram = [0; 0x80];
-        self.mapped.video = Video::new();
-        self.mapped.audio = Audio::new();
-        self.mapped.joypad = Joypad::new();
-        self.mapped.interrupts = interrupts::Registers::new();
-        self.mapped.serial = serial_transfer::Registers::new();
-        self.mapped.timers = timers::Timers::new();
-        self.mapped.dma = Dma::new();
-        self.mapped.vram_bus = VramBus::new();
-        self.mapped.sgb = if self.mapped.external.cartridge.supports_sgb() {
+        self.external.work_ram = [0; 0x2000];
+        self.external.latch = 0xFF;
+        self.external.decay = 0;
+        self.high_ram = [0; 0x80];
+        self.video = Video::new();
+        self.audio = Audio::new();
+        self.joypad = Joypad::new();
+        self.interrupts = interrupts::Registers::new();
+        self.serial = serial_transfer::Registers::new();
+        self.timers = timers::Timers::new();
+        self.dma = Dma::new();
+        self.vram_bus = VramBus::new();
+        self.sgb = if self.external.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {
             None
         };
     }
 
-    pub fn memory_mapped(&self) -> &MemoryMapped {
-        &self.mapped
-    }
-
     pub fn cartridge(&self) -> &Cartridge {
-        &self.mapped.external.cartridge
+        &self.external.cartridge
     }
 
     pub fn cpu(&self) -> &Cpu {
@@ -111,15 +99,15 @@ impl GameBoy {
     }
 
     pub fn video(&self) -> &Video {
-        &self.mapped.video
+        &self.video
     }
 
     pub fn vram(&self) -> &video::memory::Vram {
-        &self.mapped.vram_bus.vram
+        &self.vram_bus.vram
     }
 
     pub fn audio(&self) -> &Audio {
-        &self.mapped.audio
+        &self.audio
     }
 
     pub fn screen(&self) -> &Screen {
@@ -127,27 +115,27 @@ impl GameBoy {
     }
 
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        self.mapped.audio.drain_samples()
+        self.audio.drain_samples()
     }
 
     pub fn press_button(&mut self, button: Button) {
-        self.mapped.joypad.press_button(button);
+        self.joypad.press_button(button);
     }
 
     pub fn release_button(&mut self, button: Button) {
-        self.mapped.joypad.release_button(button);
+        self.joypad.release_button(button);
     }
 
     pub fn interrupts(&self) -> &interrupts::Registers {
-        &self.mapped.interrupts
+        &self.interrupts
     }
 
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
-        self.mapped.sgb.as_ref()
+        self.sgb.as_ref()
     }
 
     #[allow(dead_code)]
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.mapped.serial.output)
+        std::mem::take(&mut self.serial.output)
     }
 }
