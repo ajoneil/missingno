@@ -114,17 +114,22 @@ struct Interrupts {
     current_line_compare: u8,
 }
 
-pub struct PpuAccessible {
+/// The PPU register file: values the pixel pipeline reads each dot.
+///
+/// On hardware, these are DFF cells (pages 23, 36) whose outputs are
+/// routed as signals to the pipeline blocks. The CPU writes them via
+/// the register bus; the pixel pipeline only reads.
+pub struct Registers {
     control: Control,
     background_viewport: BackgroundViewportPosition,
     window: Window,
     palettes: Palettes,
-    pub(super) oam: Oam,
 }
 
 pub struct Ppu {
     pixel_pipeline: Option<PixelPipeline>,
-    ppu_accessible: PpuAccessible,
+    registers: Registers,
+    pub(super) oam: Oam,
     interrupts: Interrupts,
     /// Cached LY=LYC comparison result, updated each M-cycle while the
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
@@ -153,13 +158,13 @@ pub struct Window {
 impl Ppu {
     pub fn new() -> Self {
         Self {
-            ppu_accessible: PpuAccessible {
+            registers: Registers {
                 control: Control::default(),
                 background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
                 window: Window { y: 0, x_plus_7: 0 },
                 palettes: Palettes::default(),
-                oam: Oam::new(),
             },
+            oam: Oam::new(),
 
             pixel_pipeline: Some(PixelPipeline::new()),
             interrupts: Interrupts {
@@ -177,7 +182,7 @@ impl Ppu {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::Control => self.ppu_accessible.control.bits(),
+            Register::Control => self.registers.control.bits(),
             Register::Status => {
                 let mode = if let Some(ppu) = &self.pixel_pipeline {
                     ppu.stat_mode() as u8
@@ -196,10 +201,10 @@ impl Ppu {
                 let line_compare = if ly_eq_lyc { 0b00000100 } else { 0 };
                 0x80 | (self.interrupts.flags.bits() & 0b01111000) | line_compare | mode
             }
-            Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y,
-            Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x,
-            Register::WindowY => self.ppu_accessible.window.y,
-            Register::WindowX => self.ppu_accessible.window.x_plus_7,
+            Register::BackgroundViewportY => self.registers.background_viewport.y,
+            Register::BackgroundViewportX => self.registers.background_viewport.x,
+            Register::WindowY => self.registers.window.y,
+            Register::WindowX => self.registers.window.x_plus_7,
             Register::CurrentScanline => {
                 if let Some(ppu) = &self.pixel_pipeline {
                     ppu.current_line()
@@ -208,9 +213,9 @@ impl Ppu {
                 }
             }
             Register::InterruptOnScanline => self.interrupts.current_line_compare,
-            Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
-            Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
-            Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
+            Register::BackgroundPalette => self.registers.palettes.background.0,
+            Register::Sprite0Palette => self.registers.palettes.sprite0.0,
+            Register::Sprite1Palette => self.registers.palettes.sprite1.0,
         }
     }
 
@@ -221,7 +226,7 @@ impl Ppu {
     fn flush_dots(&mut self, count: u8, vram: &Vram) {
         if let Some(ppu) = self.pixel_pipeline.as_mut() {
             for _ in 0..count {
-                if let Some(screen) = ppu.tcycle(&self.ppu_accessible, vram) {
+                if let Some(screen) = ppu.tcycle(&self.registers, &self.oam, vram) {
                     self.pending_screen = Some(screen);
                 }
             }
@@ -233,19 +238,17 @@ impl Ppu {
     fn write_register_immediate(&mut self, register: &Register, value: u8) {
         match register {
             Register::Control => {
-                self.ppu_accessible.control = Control::new(ControlFlags::from_bits_retain(value))
+                self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
             }
             Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
-            Register::BackgroundViewportY => self.ppu_accessible.background_viewport.y = value,
-            Register::BackgroundViewportX => self.ppu_accessible.background_viewport.x = value,
-            Register::WindowY => self.ppu_accessible.window.y = value,
-            Register::WindowX => self.ppu_accessible.window.x_plus_7 = value,
+            Register::BackgroundViewportY => self.registers.background_viewport.y = value,
+            Register::BackgroundViewportX => self.registers.background_viewport.x = value,
+            Register::WindowY => self.registers.window.y = value,
+            Register::WindowX => self.registers.window.x_plus_7 = value,
             Register::InterruptOnScanline => self.interrupts.current_line_compare = value,
-            Register::BackgroundPalette => {
-                self.ppu_accessible.palettes.background = PaletteMap(value)
-            }
-            Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0 = PaletteMap(value),
-            Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1 = PaletteMap(value),
+            Register::BackgroundPalette => self.registers.palettes.background = PaletteMap(value),
+            Register::Sprite0Palette => self.registers.palettes.sprite0 = PaletteMap(value),
+            Register::Sprite1Palette => self.registers.palettes.sprite1 = PaletteMap(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
     }
@@ -308,9 +311,9 @@ impl Ppu {
                 // SameBoy PALETTE_DMG (N=2): advance(2), write
                 // transitional (old|new), advance(1), write final.
                 let old = match &register {
-                    Register::BackgroundPalette => self.ppu_accessible.palettes.background.0,
-                    Register::Sprite0Palette => self.ppu_accessible.palettes.sprite0.0,
-                    Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
+                    Register::BackgroundPalette => self.registers.palettes.background.0,
+                    Register::Sprite0Palette => self.registers.palettes.sprite0.0,
+                    Register::Sprite1Palette => self.registers.palettes.sprite1.0,
                     _ => unreachable!(),
                 };
                 self.flush_dots(self.pending_dots - 3, vram);
@@ -323,7 +326,7 @@ impl Ppu {
             WriteConflict::LcdcDmg => {
                 // SameBoy DMG_LCDC (N=2): same as PALETTE_DMG but
                 // transitional = old | BG_EN bit of new.
-                let old = self.ppu_accessible.control.bits();
+                let old = self.registers.control.bits();
                 let transitional =
                     old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
                 self.flush_dots(self.pending_dots - 3, vram);
@@ -336,11 +339,11 @@ impl Ppu {
     }
 
     pub fn read_oam(&self, address: OamAddress) -> u8 {
-        self.ppu_accessible.oam.read(address)
+        self.oam.read(address)
     }
 
     pub fn write_oam(&mut self, address: OamAddress, value: u8) {
-        self.ppu_accessible.oam.write(address, value);
+        self.oam.write(address, value);
     }
 
     pub fn mode(&self) -> pixel_pipeline::Mode {
@@ -371,7 +374,7 @@ impl Ppu {
     }
 
     pub fn control(&self) -> Control {
-        self.ppu_accessible.control
+        self.registers.control
     }
 
     /// Trigger OAM bug write corruption if the PPU is in Mode 2.
@@ -385,7 +388,7 @@ impl Ppu {
             _ => return,
         };
 
-        let oam = &mut self.ppu_accessible.oam;
+        let oam = &mut self.oam;
         let a = oam.oam_word(row_offset);
         let b = oam.oam_word(row_offset - 8);
         let c = oam.oam_word(row_offset - 4);
@@ -413,7 +416,7 @@ impl Ppu {
             _ => return,
         };
 
-        let oam = &mut self.ppu_accessible.oam;
+        let oam = &mut self.oam;
 
         match r & 0x18 {
             0x10 => {
@@ -597,11 +600,11 @@ impl Ppu {
             if self.accumulating {
                 // Dots are deferred for write conflict splitting.
                 self.pending_dots += 1;
-            } else if let Some(screen) = self
-                .pixel_pipeline
-                .as_mut()
-                .unwrap()
-                .tcycle(&self.ppu_accessible, vram)
+            } else if let Some(screen) =
+                self.pixel_pipeline
+                    .as_mut()
+                    .unwrap()
+                    .tcycle(&self.registers, &self.oam, vram)
             {
                 // Normal path: tick PPU immediately.
                 result.screen = Some(screen);
@@ -655,10 +658,10 @@ impl Ppu {
     }
 
     pub fn palettes(&self) -> &Palettes {
-        &self.ppu_accessible.palettes
+        &self.registers.palettes
     }
 
     pub fn sprite(&self, sprite: SpriteId) -> &Sprite {
-        self.ppu_accessible.oam.sprite(sprite)
+        self.oam.sprite(sprite)
     }
 }

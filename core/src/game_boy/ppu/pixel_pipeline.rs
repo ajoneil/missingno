@@ -1,8 +1,8 @@
 use core::fmt;
 
 use crate::game_boy::ppu::{
-    PpuAccessible,
-    memory::Vram,
+    Registers,
+    memory::{Oam, Vram},
     palette::PaletteIndex,
     screen::{self, Screen},
 };
@@ -334,10 +334,10 @@ impl Line {
         }
     }
 
-    fn find_sprites(&mut self, data: &PpuAccessible) {
+    fn find_sprites(&mut self, data: &Registers, oam: &Oam) {
         let sprite_size = data.control.sprite_size();
         let mut count = 0u8;
-        for (oam_index, sprite) in data.oam.sprites().iter().enumerate() {
+        for (oam_index, sprite) in oam.sprites().iter().enumerate() {
             if count as usize >= MAX_SPRITES_PER_LINE {
                 break;
             }
@@ -457,9 +457,9 @@ impl Rendering {
     }
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
-    fn dot(&mut self, data: &PpuAccessible, vram: &Vram) -> bool {
+    fn dot(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
         if self.line.dots == 0 {
-            self.line.find_sprites(data);
+            self.line.find_sprites(data, oam);
         }
 
         if self.line.dots < SCANLINE_PREPARING_DOTS {
@@ -472,7 +472,7 @@ impl Rendering {
             // Mode 3 (drawing) and Mode 0 (HBlank)
             let was_drawing = self.line.pixels_drawn < screen::PIXELS_PER_LINE;
             if was_drawing && self.line.dots >= self.line.rendering_start_dot {
-                self.dot_mode3(data, vram);
+                self.dot_mode3(data, oam, vram);
             }
             self.line.dots += 1;
 
@@ -492,7 +492,7 @@ impl Rendering {
     }
 
     /// One dot of Mode 3 pixel pipeline processing.
-    fn dot_mode3(&mut self, data: &PpuAccessible, vram: &Vram) {
+    fn dot_mode3(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         if let Some(phase) = self.line.startup_fetch {
             match phase {
                 StartupFetch::PipelinePriming { dots_remaining } => {
@@ -572,16 +572,16 @@ impl Rendering {
                         // exit — the transition itself does not consume a dot.
                         let sf = self.line.sprite_fetch.as_mut().unwrap();
                         sf.phase = SpriteFetchPhase::FetchingData;
-                        Self::advance_sprite_fetch(sf, data, vram);
+                        Self::advance_sprite_fetch(sf, data, oam, vram);
                     }
                 }
                 SpriteFetchPhase::FetchingData => {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
-                    Self::advance_sprite_fetch(sf, data, vram);
+                    Self::advance_sprite_fetch(sf, data, oam, vram);
                     if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
-                            data,
+                            oam,
                             &mut self.line.bg_shifter,
                             &mut self.line.obj_shifter,
                         );
@@ -602,7 +602,7 @@ impl Rendering {
     }
 
     /// Advance the background tile fetcher by one dot.
-    fn advance_bg_fetcher(&mut self, data: &PpuAccessible, vram: &Vram) {
+    fn advance_bg_fetcher(&mut self, data: &Registers, vram: &Vram) {
         let fetcher = &mut self.line.fetcher;
 
         match fetcher.step {
@@ -707,7 +707,7 @@ impl Rendering {
     }
 
     /// Advance the sprite fetch pipeline by one dot.
-    fn advance_sprite_fetch(sf: &mut SpriteFetch, data: &PpuAccessible, vram: &Vram) {
+    fn advance_sprite_fetch(sf: &mut SpriteFetch, data: &Registers, oam: &Oam, vram: &Vram) {
         match sf.step {
             SpriteStep::GetTile => {
                 if sf.dot_in_step == 0 {
@@ -722,7 +722,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
+                    let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
                     let tile_index = if data.control.sprite_size() == SpriteSize::Double {
                         TileIndex(sprite.tile.0 & 0xFE)
                     } else {
@@ -755,7 +755,7 @@ impl Rendering {
                 if sf.dot_in_step == 0 {
                     sf.dot_in_step = 1;
                 } else {
-                    let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
+                    let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
                     let tile_index = if data.control.sprite_size() == SpriteSize::Double {
                         TileIndex(sprite.tile.0 & 0xFE)
                     } else {
@@ -791,11 +791,11 @@ impl Rendering {
     /// Merge fetched sprite pixels into the OBJ shifter.
     fn merge_sprite_into_obj_shifter(
         sf: &SpriteFetch,
-        data: &PpuAccessible,
+        oam: &Oam,
         bg_shifter: &mut PixelShifter,
         obj_shifter: &mut PixelShifter,
     ) {
-        let sprite = data.oam.sprite(SpriteId(sf.entry.oam_index));
+        let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
 
         // Decode 8 sprite pixels
         let mut sprite_pixels = [Pixel::default(); 8];
@@ -845,7 +845,7 @@ impl Rendering {
     }
 
     /// Shift one pixel out of the shift registers and output to the LCD.
-    fn shift_pixel_out(&mut self, data: &PpuAccessible) {
+    fn shift_pixel_out(&mut self, data: &Registers) {
         let bg_pixel = self.line.bg_shifter.pop();
         self.line.position_in_line += 1;
 
@@ -903,7 +903,7 @@ impl Rendering {
     }
 
     /// Check if the window should start rendering at the current pixel position.
-    fn check_window_trigger(&mut self, data: &PpuAccessible) {
+    fn check_window_trigger(&mut self, data: &Registers) {
         if self.line.fetcher.fetching_window {
             return;
         }
@@ -928,7 +928,7 @@ impl Rendering {
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
-    fn check_sprite_trigger(&mut self, data: &PpuAccessible) {
+    fn check_sprite_trigger(&mut self, data: &Registers) {
         if !data.control.sprites_enabled() {
             return;
         }
@@ -1120,12 +1120,12 @@ impl PixelPipeline {
 
     /// Advance the PPU by one dot (T-cycle). Returns a completed screen
     /// when a full frame finishes rendering.
-    pub fn tcycle(&mut self, data: &PpuAccessible, vram: &Vram) -> Option<Screen> {
+    pub fn tcycle(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
         let mut screen = None;
 
         match self {
             PixelPipeline::Rendering(rendering) => {
-                if rendering.dot(data, vram) {
+                if rendering.dot(data, oam, vram) {
                     screen = Some(rendering.screen.clone());
                     *self = PixelPipeline::BetweenFrames(0);
                 }
