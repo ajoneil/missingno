@@ -309,8 +309,9 @@ struct TileFetcher {
     step: FetcherStep,
     /// Sub-dot counter within the current step (0 or 1 for 2-dot steps).
     dot_in_step: u8,
-    /// Tile X coordinate in the tilemap row (increments per tile fetched).
-    tile_x: u8,
+    /// Window tile X counter (hardware's win_x.map). Increments per
+    /// window tile fetched. Reset to 0 on window trigger.
+    window_tile_x: u8,
     /// Cached tile index from GetTile step.
     tile_index: u8,
     /// Cached low byte of tile row from GetTileDataLow step.
@@ -326,7 +327,7 @@ impl TileFetcher {
         Self {
             step: FetcherStep::GetTile,
             dot_in_step: 0,
-            tile_x: 0,
+            window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
             tile_data_high: 0,
@@ -624,6 +625,12 @@ impl Rendering {
                 && self.line.pixel_counter >= WODU_PIXEL_COUNT
                 && self.line.sprite_fetch.is_none()
             {
+                if !self.hblank_gate && self.line.number == 0 {
+                    eprintln!(
+                        "[PPU] LY=0 dot={}: hblank_gate SET pixel_counter={} next_sprite={}",
+                        self.line.dots, self.line.pixel_counter, self.line.next_sprite
+                    );
+                }
                 self.hblank_gate = true;
             }
 
@@ -672,6 +679,15 @@ impl Rendering {
                     // into the previously-empty shifter (detected by shifter
                     // becoming non-empty after the fetcher advance).
                     if !self.line.bg_shifter.is_empty() {
+                        if self.line.number == 0 {
+                            eprintln!(
+                                "[PPU] LY=0 dot={}: STARTUP_DONE fetcher={:?} window_tile_x={} shifter_len={}",
+                                self.line.dots,
+                                self.line.fetcher.step,
+                                self.line.fetcher.window_tile_x,
+                                self.line.bg_shifter.len(),
+                            );
+                        }
                         self.line.startup_fetch = None;
                     }
                 }
@@ -738,6 +754,14 @@ impl Rendering {
             // and ROXY (fine scroll). Sprite matching uses state_new.pix_count
             // (post-increment), so the increment must precede trigger checks.
             if self.line.fine_scroll.pixel_clock_active() {
+                if self.line.pixel_counter == 0 && self.line.number == 0 {
+                    eprintln!(
+                        "[PPU] LY=0 dot={}: FIRST_PX_INCREMENT fine_count={} shifter_len={}",
+                        self.line.dots,
+                        self.line.fine_scroll.count,
+                        self.line.bg_shifter.len(),
+                    );
+                }
                 self.line.pixel_counter += 1;
             }
 
@@ -758,6 +782,15 @@ impl Rendering {
 
             if !self.line.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
+            } else if self.line.fine_scroll.pixel_clock_active() && self.line.number == 0 {
+                eprintln!(
+                    "[PPU] LY=0 dot={}: EMPTY_PIPE pixel_counter={} fine_count={} fetcher={:?} window_tile_x={}",
+                    self.line.dots,
+                    self.line.pixel_counter,
+                    self.line.fine_scroll.count,
+                    self.line.fetcher.step,
+                    self.line.fetcher.window_tile_x,
+                );
             }
 
             self.advance_bg_fetcher(data, vram);
@@ -768,8 +801,8 @@ impl Rendering {
     // --- Address generation (pages 26-27) ---
     //
     // On the die, BG and window have separate address generators:
-    //   Page 26 (BACKGROUND): tilemap coords from SCX, SCY, tile_x, LY
-    //   Page 27 (WINDOW MAP LOOKUP): tilemap coords from tile_x, window_line_counter
+    //   Page 26 (BACKGROUND): tilemap coords from pixel_counter, SCX, SCY, LY
+    //   Page 27 (WINDOW MAP LOOKUP): tilemap coords from window_tile_x, window_line_counter
     // Both feed into the shared VRAM interface (page 25).
 
     /// BG tilemap coordinate computation (page 26).
@@ -778,7 +811,7 @@ impl Rendering {
         let scx = data.background_viewport.x;
         let scy = data.background_viewport.y;
         (
-            (self.line.fetcher.tile_x.wrapping_add(scx / 8)) & 31,
+            ((self.line.pixel_counter.wrapping_add(scx)) >> 3) & 31,
             (self.line.number.wrapping_add(scy) / 8) & 31,
         )
     }
@@ -786,7 +819,10 @@ impl Rendering {
     /// Window tilemap coordinate computation (page 27).
     /// Uses the window's internal line counter, no scroll offset.
     fn window_tilemap_coords(&self) -> (u8, u8) {
-        (self.line.fetcher.tile_x, self.window_line_counter / 8)
+        (
+            self.line.fetcher.window_tile_x,
+            self.window_line_counter / 8,
+        )
     }
 
     /// Read the tile index from the tilemap for the current fetch position.
@@ -891,7 +927,9 @@ impl Rendering {
             self.line.fetcher.tile_data_low,
             self.line.fetcher.tile_data_high,
         );
-        self.line.fetcher.tile_x = self.line.fetcher.tile_x.wrapping_add(1);
+        if self.line.fetcher.fetching_window {
+            self.line.fetcher.window_tile_x = self.line.fetcher.window_tile_x.wrapping_add(1);
+        }
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
     }
@@ -1058,6 +1096,21 @@ impl Rendering {
         let x = self.line.pixel_counter - FIRST_VISIBLE_PIXEL;
         let y = self.line.number;
 
+        if y == 136 && x <= 19 {
+            eprintln!(
+                "[PPU] LY={} dot={}: framebuffer_write x={} pixel_counter={} bg_color={}",
+                y,
+                self.line.dots,
+                x,
+                self.line.pixel_counter,
+                if data.control.background_and_window_enabled() {
+                    (bg_hi << 1) | bg_lo
+                } else {
+                    0
+                }
+            );
+        }
+
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
         let bg_color = if data.control.background_and_window_enabled() {
             (bg_hi << 1) | bg_lo
@@ -1111,7 +1164,7 @@ impl Rendering {
         self.line.fine_scroll.reset_for_window();
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
-        self.line.fetcher.tile_x = 0;
+        self.line.fetcher.window_tile_x = 0;
         self.line.fetcher.fetching_window = true;
         self.line.window_rendered = true;
     }
@@ -1143,6 +1196,12 @@ impl Rendering {
                 continue;
             }
 
+            if self.line.number == 0 {
+                eprintln!(
+                    "[PPU] LY=0 dot={}: SPRITE_TRIGGER x={} pixel_counter={}",
+                    self.line.dots, entry.x, match_x
+                );
+            }
             self.line.sprite_fetch = Some(SpriteFetch {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
