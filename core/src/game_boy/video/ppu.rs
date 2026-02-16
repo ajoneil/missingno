@@ -36,7 +36,7 @@ impl fmt::Display for Mode {
 const SCANLINE_TOTAL_DOTS: u32 = 456;
 const SCANLINE_PREPARING_DOTS: u32 = 80;
 /// Pipeline priming begins 1 dot after Mode 2 ends. STAT reports Mode 3
-/// from dot 80, pipeline priming runs at dots 81-83, then the fetcher/FIFO
+/// from dot 80, pipeline priming runs at dots 81-83, then the fetcher/shifter
 /// activate at dot 84.
 const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 1;
 /// Dots of pipeline priming at the start of Mode 3, before the
@@ -57,29 +57,32 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 /// (position counter only) plus two tile fetches of 6 dots each (12 dots).
 const BG_STARTUP_DOTS: i16 = 15;
 
-// --- Pixel FIFO types ---
+// --- Pixel shift register types ---
 
 #[derive(Clone, Copy, Default)]
-struct FifoPixel {
+struct Pixel {
     /// 2-bit color index (0-3) before palette mapping.
     color: u8,
-    /// Sprite palette: 0 = OBP0, 1 = OBP1. Only meaningful in OBJ FIFO.
+    /// Sprite palette: 0 = OBP0, 1 = OBP1. Only meaningful in OBJ shifter.
     palette: u8,
     /// OBJ-to-BG priority bit from sprite attributes.
     bg_priority: bool,
 }
 
-/// Fixed-size circular buffer holding up to 8 pixels.
-struct PixelFifo {
-    pixels: [FifoPixel; 8],
+/// 8-pixel shift register. On hardware, each layer has two 8-bit shift
+/// registers (one per bitplane) that load in parallel from a tile fetch
+/// and shift out one pixel per dot. This struct models the combined
+/// 2bpp output as decoded pixels.
+struct PixelShifter {
+    pixels: [Pixel; 8],
     head: u8,
     len: u8,
 }
 
-impl PixelFifo {
+impl PixelShifter {
     fn new() -> Self {
         Self {
-            pixels: [FifoPixel::default(); 8],
+            pixels: [Pixel::default(); 8],
             head: 0,
             len: 0,
         }
@@ -98,8 +101,8 @@ impl PixelFifo {
         self.len = 0;
     }
 
-    /// Push 8 pixels. Only valid when FIFO is empty.
-    fn push_row(&mut self, pixels: [FifoPixel; 8]) {
+    /// Load 8 pixels (parallel load). Only valid when shifter is empty.
+    fn push_row(&mut self, pixels: [Pixel; 8]) {
         debug_assert!(self.is_empty());
         self.pixels = pixels;
         self.head = 0;
@@ -107,7 +110,7 @@ impl PixelFifo {
     }
 
     /// Push a single pixel to the back.
-    fn push_one(&mut self, pixel: FifoPixel) {
+    fn push_one(&mut self, pixel: Pixel) {
         debug_assert!(self.len < 8);
         let idx = (self.head + self.len) & 7;
         self.pixels[idx as usize] = pixel;
@@ -115,7 +118,7 @@ impl PixelFifo {
     }
 
     /// Pop one pixel from the front.
-    fn pop(&mut self) -> FifoPixel {
+    fn pop(&mut self) -> Pixel {
         debug_assert!(self.len > 0);
         let pixel = self.pixels[self.head as usize];
         self.head = (self.head + 1) & 7;
@@ -124,13 +127,13 @@ impl PixelFifo {
     }
 
     /// Get a mutable reference to the pixel at the given offset from head.
-    fn get_mut(&mut self, offset: u8) -> &mut FifoPixel {
+    fn get_mut(&mut self, offset: u8) -> &mut Pixel {
         let idx = (self.head + offset) & 7;
         &mut self.pixels[idx as usize]
     }
 
     /// Get the pixel at the given offset from head.
-    fn get(&self, offset: u8) -> FifoPixel {
+    fn get(&self, offset: u8) -> Pixel {
         let idx = (self.head + offset) & 7;
         self.pixels[idx as usize]
     }
@@ -157,7 +160,7 @@ enum StartupFetch {
     PipelinePriming { dots_remaining: u8 },
     /// First tile fetch — result will be discarded (hardware quirk).
     Discarded,
-    /// Second tile fetch — result is the first visible tile, pushed to FIFO.
+    /// Second tile fetch — result is the first visible tile, loaded into shifter.
     FirstTile,
 }
 
@@ -198,7 +201,7 @@ impl Fetcher {
 enum SpriteFetchPhase {
     /// The BG fetcher continues advancing through its normal steps.
     /// The wait ends when the fetcher has completed GetTileDataHigh
-    /// (reached Push) AND the BG FIFO is non-empty — both conditions
+    /// (reached Push) AND the BG shifter is non-empty — both conditions
     /// must be true simultaneously. The variable sprite penalty (0-5
     /// dots) emerges from how many fetcher steps this phase consumes.
     WaitingForFetcher,
@@ -230,7 +233,7 @@ struct Line {
     dots: u32,
     /// Number of pixels pushed to the LCD (0-160).
     pixels_drawn: u8,
-    /// Internal pixel position counter. Incremented on every FIFO pop
+    /// Internal pixel position counter. Incremented on every shifter pop
     /// (including SCX-discarded pixels). Used for sprite trigger
     /// comparison: a sprite triggers when this equals its screen X.
     position_in_line: i16,
@@ -241,10 +244,10 @@ struct Line {
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
 
-    /// Background pixel FIFO.
-    bg_fifo: PixelFifo,
-    /// Object/sprite pixel FIFO (shifts in lockstep with bg_fifo).
-    obj_fifo: PixelFifo,
+    /// Background pixel shift register.
+    bg_shifter: PixelShifter,
+    /// Object/sprite pixel shift register (shifts in lockstep with bg_shifter).
+    obj_shifter: PixelShifter,
     /// Background/window tile fetcher.
     fetcher: Fetcher,
     /// Tracks the two startup tile fetches at the beginning of mode 3.
@@ -252,7 +255,7 @@ struct Line {
     /// pixels shift out — the first is discarded, the second is the
     /// first visible tile. `None` once startup is complete.
     startup_fetch: Option<StartupFetch>,
-    /// Pixels to discard from the BG FIFO before LCD output begins.
+    /// Pixels to discard from the BG shifter before LCD output begins.
     /// Equal to SCX & 7 (fine scroll within the first tile).
     discard_count: u8,
     /// Active sprite fetch, if any.
@@ -277,8 +280,8 @@ impl Line {
             sprites: Vec::new(),
             next_sprite: 0,
             window_rendered: false,
-            bg_fifo: PixelFifo::new(),
-            obj_fifo: PixelFifo::new(),
+            bg_shifter: PixelShifter::new(),
+            obj_shifter: PixelShifter::new(),
             fetcher: Fetcher::new(),
             startup_fetch: Some(StartupFetch::PipelinePriming {
                 dots_remaining: PIPELINE_PRIMING_DOTS,
@@ -308,7 +311,7 @@ impl Line {
         self.sprites.sort_by_key(|sprite| sprite.position.x_plus_8);
 
         // Discard SCX fine scroll pixels from the first visible tile.
-        // After the two startup fetches complete, the FIFO contains
+        // After the two startup fetches complete, the shifter contains
         // the first tile; these pixels align the sub-tile scroll.
         self.discard_count = data.background_viewport.x & 7;
         // position_in_line starts at -(15 + discard_count). The first 3 dots
@@ -441,7 +444,7 @@ impl Rendering {
         false
     }
 
-    /// One dot of Mode 3 pixel FIFO processing.
+    /// One dot of Mode 3 pixel pipeline processing.
     fn dot_mode3(&mut self, data: &PpuAccessible, vram: &Vram) {
         if let Some(phase) = self.line.startup_fetch {
             match phase {
@@ -466,21 +469,21 @@ impl Rendering {
                     self.line.position_in_line += 1;
                     self.check_window_trigger(data);
 
-                    // A startup fetch completes when the fetcher pushes pixels
-                    // to the previously-empty FIFO (detected by FIFO becoming
-                    // non-empty after the fetcher advance).
-                    if !self.line.bg_fifo.is_empty() {
+                    // A startup fetch completes when the fetcher loads pixels
+                    // into the previously-empty shifter (detected by shifter
+                    // becoming non-empty after the fetcher advance).
+                    if !self.line.bg_shifter.is_empty() {
                         match phase {
                             StartupFetch::Discarded => {
                                 // First fetch complete — discard and restart
-                                self.line.bg_fifo.clear();
+                                self.line.bg_shifter.clear();
                                 self.line.fetcher.step = FetcherStep::GetTile;
                                 self.line.fetcher.dot_in_step = 0;
                                 self.line.fetcher.tile_x = 0;
                                 self.line.startup_fetch = Some(StartupFetch::FirstTile);
                             }
                             StartupFetch::FirstTile => {
-                                // Second fetch complete — FIFO has 8 real pixels.
+                                // Second fetch complete — shifter has 8 real pixels.
                                 // Normal rendering begins on the next dot.
                                 self.line.startup_fetch = None;
                             }
@@ -502,15 +505,15 @@ impl Rendering {
                     // The BG fetcher continues advancing during the wait.
                     // This is the hardware behavior: the fetcher keeps
                     // stepping through its enum states, doing real tile
-                    // fetches that may push pixels to the FIFO.
+                    // fetches that may load pixels into the shifter.
                     self.advance_bg_fetcher(data, vram);
 
                     // Wait exits when BOTH conditions are met:
                     // 1. The fetcher has completed GetTileDataHigh (reached Push)
-                    // 2. The BG FIFO is non-empty
+                    // 2. The BG shifter is non-empty
                     // This is an AND condition — both must be true simultaneously.
                     let fetcher_past_data = self.line.fetcher.step == FetcherStep::Push;
-                    let wait_done = fetcher_past_data && !self.line.bg_fifo.is_empty();
+                    let wait_done = fetcher_past_data && !self.line.bg_shifter.is_empty();
 
                     if wait_done {
                         // Freeze the BG fetcher at its current position.
@@ -529,10 +532,10 @@ impl Rendering {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
                     Self::advance_sprite_fetch(sf, self.line.number, data, vram);
                     if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
-                        Self::merge_sprite_into_obj_fifo(
+                        Self::merge_sprite_into_obj_shifter(
                             sf,
-                            &mut self.line.bg_fifo,
-                            &mut self.line.obj_fifo,
+                            &mut self.line.bg_shifter,
+                            &mut self.line.obj_shifter,
                         );
                         self.line.sprite_fetch = None;
                     }
@@ -540,10 +543,10 @@ impl Rendering {
             }
         } else {
             // Normal: shift a pixel out first, then advance the fetcher.
-            // This matches hardware order: the pixel FIFO is clocked
-            // before the fetcher advances, so a push that fills the
-            // FIFO on this dot won't produce a pixel until the next dot.
-            if !self.line.bg_fifo.is_empty() {
+            // This matches hardware order: the pixel shifter is clocked
+            // before the fetcher advances, so a load that fills the
+            // shifter on this dot won't produce a pixel until the next dot.
+            if !self.line.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
             }
             self.advance_bg_fetcher(data, vram);
@@ -621,10 +624,10 @@ impl Rendering {
                     fetcher.tile_data_high =
                         block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + 1];
 
-                    // Push is instant when the FIFO is empty (no
+                    // Push is instant when the shifter is empty (no
                     // additional dot cost). Otherwise enter the Push
                     // step to wait for it to drain.
-                    if self.line.bg_fifo.is_empty() {
+                    if self.line.bg_shifter.is_empty() {
                         self.push_bg_tile();
                     } else {
                         fetcher.dot_in_step = 0;
@@ -633,23 +636,23 @@ impl Rendering {
                 }
             }
             FetcherStep::Push => {
-                // FIFO was not empty when DataHigh completed. Wait here
+                // Shifter was not empty when DataHigh completed. Wait here
                 // until it drains, then push.
-                if self.line.bg_fifo.is_empty() {
+                if self.line.bg_shifter.is_empty() {
                     self.push_bg_tile();
                 }
             }
         }
     }
 
-    /// Push fetched tile data to the BG FIFO and reset the fetcher to
+    /// Load fetched tile data into the BG shifter and reset the fetcher to
     /// GetTile for the next tile.
     fn push_bg_tile(&mut self) {
         let pixels = decode_tile_row(
             self.line.fetcher.tile_data_low,
             self.line.fetcher.tile_data_high,
         );
-        self.line.bg_fifo.push_row(pixels);
+        self.line.bg_shifter.push_row(pixels);
         self.line.fetcher.tile_x = self.line.fetcher.tile_x.wrapping_add(1);
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
@@ -740,21 +743,21 @@ impl Rendering {
         }
     }
 
-    /// Merge fetched sprite pixels into the OBJ FIFO.
-    fn merge_sprite_into_obj_fifo(
+    /// Merge fetched sprite pixels into the OBJ shifter.
+    fn merge_sprite_into_obj_shifter(
         sf: &SpriteFetch,
-        bg_fifo: &mut PixelFifo,
-        obj_fifo: &mut PixelFifo,
+        bg_shifter: &mut PixelShifter,
+        obj_shifter: &mut PixelShifter,
     ) {
         let sprite = &sf.sprite;
 
         // Decode 8 sprite pixels
-        let mut sprite_pixels = [FifoPixel::default(); 8];
+        let mut sprite_pixels = [Pixel::default(); 8];
         for i in 0..8u8 {
             let bit = if sprite.attributes.flip_x() { i } else { 7 - i };
             let lo = (sf.tile_data_low >> bit) & 1;
             let hi = (sf.tile_data_high >> bit) & 1;
-            sprite_pixels[i as usize] = FifoPixel {
+            sprite_pixels[i as usize] = Pixel {
                 color: (hi << 1) | lo,
                 palette: if sprite.attributes.contains(sprites::Attributes::PALETTE) {
                     1
@@ -773,36 +776,36 @@ impl Rendering {
             0
         };
 
-        // Pad OBJ FIFO with transparent pixels so all 8 sprite pixels
-        // have a slot. Must be at least 8 entries even if BG FIFO is shorter,
+        // Pad OBJ shifter with transparent pixels so all 8 sprite pixels
+        // have a slot. Must be at least 8 entries even if BG shifter is shorter,
         // because the sprite's rightmost pixels may extend beyond the
         // current BG tile fetch.
-        let required_len = bg_fifo.len().max(8 - pixels_clipped_left);
-        while obj_fifo.len() < required_len {
-            obj_fifo.push_one(FifoPixel::default());
+        let required_len = bg_shifter.len().max(8 - pixels_clipped_left);
+        while obj_shifter.len() < required_len {
+            obj_shifter.push_one(Pixel::default());
         }
 
         // Overlay sprite pixels — only replace transparent (color 0) slots.
         // DMG priority: sprites are sorted by X, so first sprite wins.
         for i in pixels_clipped_left..8 {
-            let fifo_pos = i - pixels_clipped_left;
-            if fifo_pos < obj_fifo.len() {
-                let existing = obj_fifo.get(fifo_pos);
+            let shifter_pos = i - pixels_clipped_left;
+            if shifter_pos < obj_shifter.len() {
+                let existing = obj_shifter.get(shifter_pos);
                 if existing.color == 0 {
-                    *obj_fifo.get_mut(fifo_pos) = sprite_pixels[i as usize];
+                    *obj_shifter.get_mut(shifter_pos) = sprite_pixels[i as usize];
                 }
             }
         }
     }
 
-    /// Shift one pixel out of the FIFOs and output to the LCD.
+    /// Shift one pixel out of the shift registers and output to the LCD.
     fn shift_pixel_out(&mut self, data: &PpuAccessible) {
-        let bg_pixel = self.line.bg_fifo.pop();
+        let bg_pixel = self.line.bg_shifter.pop();
         self.line.position_in_line += 1;
 
-        // Pop from OBJ FIFO in lockstep (if it has pixels)
-        let obj_pixel = if !self.line.obj_fifo.is_empty() {
-            Some(self.line.obj_fifo.pop())
+        // Pop from OBJ shifter in lockstep (if it has pixels)
+        let obj_pixel = if !self.line.obj_shifter.is_empty() {
+            Some(self.line.obj_shifter.pop())
         } else {
             None
         };
@@ -868,9 +871,9 @@ impl Rendering {
             return;
         }
 
-        // Window trigger: clear FIFO and restart fetcher for window tiles
-        self.line.bg_fifo.clear();
-        self.line.obj_fifo.clear();
+        // Window trigger: clear shifters and restart fetcher for window tiles
+        self.line.bg_shifter.clear();
+        self.line.obj_shifter.clear();
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
         self.line.fetcher.tile_x = 0;
@@ -930,14 +933,14 @@ fn sprite_match_x(position_in_line: i16) -> u8 {
     if x > 240 { 0 } else { x }
 }
 
-/// Decode a tile row (2 bytes) into 8 FIFO pixels.
-fn decode_tile_row(low: u8, high: u8) -> [FifoPixel; 8] {
-    let mut pixels = [FifoPixel::default(); 8];
+/// Decode a tile row (2 bytes) into 8 pixels for the shift register.
+fn decode_tile_row(low: u8, high: u8) -> [Pixel; 8] {
+    let mut pixels = [Pixel::default(); 8];
     for i in 0..8 {
         let bit = 7 - i;
         let lo = (low >> bit) & 1;
         let hi = (high >> bit) & 1;
-        pixels[i] = FifoPixel {
+        pixels[i] = Pixel {
             color: (hi << 1) | lo,
             palette: 0,
             bg_priority: false,
