@@ -11,6 +11,16 @@ fn run_samesuite_test(rom_path: &str) {
     );
     let cpu = gb.cpu();
     if !common::check_mooneye_pass(cpu) {
+        let all_same =
+            cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
+        if all_same && cpu.b != 0 {
+            panic!(
+                "SameSuite test {rom_path} failed (all registers = 0x{:02X}, ROM uses \
+                 uniform failure — sub-test number unknown)",
+                cpu.b,
+            );
+        }
+
         let fib = [
             (cpu.b, 3, "B"),
             (cpu.c, 5, "C"),

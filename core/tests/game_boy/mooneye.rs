@@ -49,8 +49,20 @@ fn run_mooneye_test(rom_path: &str) {
     );
     let cpu = gb.cpu();
     if !common::check_mooneye_pass(cpu) {
-        // Mooneye tests set registers to Fibonacci values (3,5,8,13,21,34)
-        // in order as sub-tests pass. Identify which sub-test failed.
+        // Most Mooneye tests set registers to Fibonacci values (3,5,8,13,21,34)
+        // in order as sub-tests pass. Some tests (e.g. lcdon_timing-GS) use
+        // quit_inline which sets ALL registers to 0x42 on any failure —
+        // detect this pattern to avoid misleading "sub-test 1 failed" reports.
+        let all_same =
+            cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
+        if all_same && cpu.b != 0 {
+            panic!(
+                "Mooneye test {rom_path} failed (all registers = 0x{:02X}, ROM uses \
+                 uniform failure — sub-test number unknown). Serial: {:?}",
+                cpu.b, serial_output,
+            );
+        }
+
         let fib = [
             (cpu.b, 3, "B"),
             (cpu.c, 5, "C"),
