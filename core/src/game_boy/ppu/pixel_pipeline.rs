@@ -46,6 +46,15 @@ const PIPELINE_PRIMING_DOTS: u8 = 3;
 /// 8 dots after Mode 2 ends (vs 1 dot on normal lines). The hardware's
 /// first Mode 0 is correspondingly shorter.
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
+/// Offset between PIXELS_PER_LINE and the STAT Mode 0 trigger point.
+///
+/// The hardware fires WODU (hblank gate) at pixel counter PX=167, after
+/// 159 LCD-clocked visible pixels. The emulator's pixel pipeline produces
+/// its first visible pixel 3 dots later than the hardware due to the FIFO
+/// startup model. Combined with the 1-pixel difference between the
+/// hardware's 159 LCD clocks and PIXELS_PER_LINE (160), the total
+/// offset is 4.
+const MODE3_STAT_BOUNDARY_OFFSET: u8 = 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 /// Number of dots the BG startup phase takes: 3 pipeline priming dots
@@ -395,6 +404,9 @@ struct Line {
     /// Normally SCANLINE_PREPARING_DOTS + 4 (84); on the first scanline
     /// after LCD turn-on, SCANLINE_PREPARING_DOTS + 11 (91).
     rendering_start_dot: u32,
+    /// Pixel count at which STAT transitions to Mode 0 (hblank_gate fires).
+    /// Normally PIXELS_PER_LINE - 4 (156); on LCD-on first line, 149.
+    stat_boundary_pixels: u8,
 }
 
 impl Line {
@@ -416,6 +428,7 @@ impl Line {
             discard_count: 0,
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
+            stat_boundary_pixels: screen::PIXELS_PER_LINE - MODE3_STAT_BOUNDARY_OFFSET,
         }
     }
 
@@ -487,6 +500,8 @@ impl Rendering {
     fn new_lcd_on() -> Self {
         let mut line = Line::new(0);
         line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
+        line.stat_boundary_pixels =
+            screen::PIXELS_PER_LINE - FIRST_SCANLINE_PIPELINE_DELAY as u8 - PIPELINE_PRIMING_DOTS;
         Rendering {
             screen: Screen::new(),
             line,
@@ -508,7 +523,7 @@ impl Rendering {
     }
 
     fn stat_mode(&self) -> Mode {
-        self.mode()
+        self.interrupt_mode()
     }
 
     /// Mode for STAT interrupt edge detection. Mode 0 fires from
@@ -563,8 +578,15 @@ impl Rendering {
                 self.rendering = true;
             }
         } else {
-            // Clear rendering latch one dot after hblank_gate (VOGA delay)
-            if self.hblank_gate && self.rendering {
+            // Clear rendering latch when all visible pixels are drawn
+            // and no sprite fetch is active. Decoupled from hblank_gate:
+            // hblank_gate fires at stat_boundary_pixels (156) for STAT
+            // timing, while rendering stays true until all 160 pixels
+            // are output for pixel drawing and memory gating.
+            if self.line.pixels_drawn >= screen::PIXELS_PER_LINE
+                && self.line.sprite_fetch.is_none()
+                && self.rendering
+            {
                 self.rendering = false;
             }
 
@@ -573,10 +595,11 @@ impl Rendering {
                 self.dot_mode3(data, oam, vram);
             }
 
-            // Set hblank_gate when all pixels are output and no sprite
-            // fetch is active (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
+            // Set hblank_gate when pixel count reaches the STAT boundary
+            // and no sprite fetch is active
+            // (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
             if self.rendering
-                && self.line.pixels_drawn >= screen::PIXELS_PER_LINE
+                && self.line.pixels_drawn >= self.line.stat_boundary_pixels
                 && self.line.sprite_fetch.is_none()
             {
                 self.hblank_gate = true;
