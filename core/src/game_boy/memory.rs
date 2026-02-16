@@ -16,6 +16,34 @@ use video::memory::{OamAddress, Vram, VramAddress};
 /// approximation.
 const EXTERNAL_BUS_DECAY_MCYCLES: u8 = 12;
 
+/// High RAM (0xFF80–0xFFFE): 127 bytes of SoC-internal SRAM.
+///
+/// Not on either the external or VRAM bus — always accessible to
+/// the CPU, even during OAM DMA. This is why DMA wait loops must
+/// execute from HRAM.
+pub struct HighRam([u8; 0x7F]);
+
+impl HighRam {
+    pub fn new() -> Self {
+        Self([0; 0x7F])
+    }
+
+    pub fn read(&self, offset: u8) -> u8 {
+        self.0[offset as usize]
+    }
+
+    pub fn write(&mut self, offset: u8, value: u8) {
+        self.0[offset as usize] = value;
+    }
+}
+
+/// Address on the external data bus: cartridge or work RAM.
+#[derive(Debug)]
+pub enum ExternalAddress {
+    Cartridge(u16),
+    WorkRam(u16),
+}
+
 /// The external data bus connects the SoC to the cartridge and, on
 /// DMG, to work RAM. The bus retains its last driven value through
 /// parasitic capacitance, decaying toward 0xFF when idle.
@@ -42,20 +70,18 @@ impl ExternalBus {
 
     /// Read from a device on this bus (cartridge or WRAM).
     /// Does NOT update the latch — callers decide when to latch.
-    pub fn read(&self, address: MappedAddress) -> u8 {
+    pub fn read(&self, address: ExternalAddress) -> u8 {
         match address {
-            MappedAddress::Cartridge(addr) => self.cartridge.read(addr),
-            MappedAddress::WorkRam(addr) => self.work_ram[addr as usize],
-            _ => unreachable!("ExternalBus::read called with non-external address"),
+            ExternalAddress::Cartridge(addr) => self.cartridge.read(addr),
+            ExternalAddress::WorkRam(addr) => self.work_ram[addr as usize],
         }
     }
 
     /// Write to a device on this bus (cartridge or WRAM).
-    pub fn write(&mut self, address: MappedAddress, value: u8) {
+    pub fn write(&mut self, address: ExternalAddress, value: u8) {
         match address {
-            MappedAddress::Cartridge(addr) => self.cartridge.write(addr, value),
-            MappedAddress::WorkRam(addr) => self.work_ram[addr as usize] = value,
-            _ => unreachable!("ExternalBus::write called with non-external address"),
+            ExternalAddress::Cartridge(addr) => self.cartridge.write(addr, value),
+            ExternalAddress::WorkRam(addr) => self.work_ram[addr as usize] = value,
         }
     }
 
@@ -150,8 +176,7 @@ impl Bus {
 
 #[derive(Debug)]
 pub enum MappedAddress {
-    Cartridge(u16),
-    WorkRam(u16),
+    External(ExternalAddress),
     HighRam(u8),
     Vram(VramAddress),
     Oam(OamAddress),
@@ -169,14 +194,14 @@ pub enum MappedAddress {
 impl MappedAddress {
     pub fn map(address: u16) -> Self {
         match address {
-            0x0000..=0x7fff => Self::Cartridge(address),
+            0x0000..=0x7fff => Self::External(ExternalAddress::Cartridge(address)),
             0x8000..=0x9fff => match video::memory::MappedAddress::map(address) {
                 video::memory::MappedAddress::Vram(addr) => Self::Vram(addr),
                 video::memory::MappedAddress::Oam(_) => unreachable!(),
             },
-            0xa000..=0xbfff => Self::Cartridge(address),
-            0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
-            0xe000..=0xfdff => Self::WorkRam(address - 0xe000),
+            0xa000..=0xbfff => Self::External(ExternalAddress::Cartridge(address)),
+            0xc000..=0xdfff => Self::External(ExternalAddress::WorkRam(address - 0xc000)),
+            0xe000..=0xfdff => Self::External(ExternalAddress::WorkRam(address - 0xe000)),
             0xfe00..=0xfe9f => match video::memory::MappedAddress::map(address) {
                 video::memory::MappedAddress::Oam(addr) => Self::Oam(addr),
                 video::memory::MappedAddress::Vram(_) => unreachable!(),
@@ -321,15 +346,15 @@ impl GameBoy {
     pub fn read_dma_source(&self, address: u16) -> u8 {
         let mapped = match Bus::of(address) {
             Some(_) => MappedAddress::map(address),
-            None => MappedAddress::WorkRam(address.wrapping_sub(0xE000)),
+            None => MappedAddress::External(ExternalAddress::WorkRam(address.wrapping_sub(0xE000))),
         };
         self.read_mapped(mapped)
     }
 
     pub fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
-            MappedAddress::Cartridge(_) | MappedAddress::WorkRam(_) => self.external.read(address),
-            MappedAddress::HighRam(offset) => self.high_ram[offset as usize],
+            MappedAddress::External(addr) => self.external.read(addr),
+            MappedAddress::HighRam(offset) => self.high_ram.read(offset),
             MappedAddress::Vram(address) => self.vram_bus.read(address),
             MappedAddress::Oam(address) => self.video.read_oam(address),
             MappedAddress::JoypadRegister => {
@@ -432,10 +457,8 @@ impl GameBoy {
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
-            MappedAddress::Cartridge(_) | MappedAddress::WorkRam(_) => {
-                self.external.write(address, value)
-            }
-            MappedAddress::HighRam(offset) => self.high_ram[offset as usize] = value,
+            MappedAddress::External(addr) => self.external.write(addr, value),
+            MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
             MappedAddress::Vram(address) => self.vram_bus.write(address, value),
             MappedAddress::Oam(address) => self.video.write_oam(address, value),
             MappedAddress::JoypadRegister => {

@@ -3,7 +3,7 @@ use cartridge::Cartridge;
 use cpu::Cpu;
 use dma::Dma;
 use joypad::{Button, Joypad};
-use memory::{ExternalBus, VramBus};
+use memory::{ExternalBus, HighRam, VramBus};
 use video::{Video, screen::Screen};
 
 pub mod audio;
@@ -28,7 +28,7 @@ pub struct GameBoy {
     mcycle_counter: u8,
 
     external: ExternalBus,
-    high_ram: [u8; 0x80],
+    high_ram: HighRam,
     video: Video,
     audio: Audio,
     joypad: Joypad,
@@ -54,7 +54,7 @@ impl GameBoy {
             screen: Screen::new(),
             mcycle_counter: 0,
             external: ExternalBus::new(cartridge),
-            high_ram: [0; 0x80],
+            high_ram: HighRam::new(),
             video: Video::new(),
             audio: Audio::new(),
             joypad: Joypad::new(),
@@ -74,7 +74,7 @@ impl GameBoy {
         self.external.work_ram = [0; 0x2000];
         self.external.latch = 0xFF;
         self.external.decay = 0;
-        self.high_ram = [0; 0x80];
+        self.high_ram = HighRam::new();
         self.video = Video::new();
         self.audio = Audio::new();
         self.joypad = Joypad::new();
