@@ -37,9 +37,6 @@ const SCANLINE_PREPARING_DOTS: u32 = 80;
 /// The pixel pipeline begins executing at the start of Mode 3.
 /// On hardware, AVAP fires at dot 80 and the fetcher starts immediately.
 const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS;
-/// On the first scanline after LCD turn-on, the pixel pipeline activates
-/// 8 dots after Mode 3 entry (vs immediately on normal lines).
-const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
@@ -432,10 +429,6 @@ struct Line {
     pixel_counter: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
-    /// Dot at which the pixel pipeline begins executing in Mode 3.
-    /// Normally SCANLINE_RENDERING_DOTS (80); on the first scanline
-    /// after LCD turn-on, SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY (88).
-    rendering_start_dot: u32,
 }
 
 impl Line {
@@ -453,7 +446,6 @@ impl Line {
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
             sprite_fetch: None,
-            rendering_start_dot: SCANLINE_RENDERING_DOTS,
         }
     }
 
@@ -515,11 +507,9 @@ impl Rendering {
     }
 
     fn new_lcd_on() -> Self {
-        let mut line = Line::new(0);
-        line.rendering_start_dot = SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY;
         Rendering {
             screen: Screen::new(),
-            line,
+            line: Line::new(0),
             window_line_counter: 0,
             lcd_turning_on: true,
             rendering: false,
@@ -602,7 +592,7 @@ impl Rendering {
             }
 
             // Mode 3 (drawing) and Mode 0 (HBlank)
-            if self.rendering && self.line.dots >= self.line.rendering_start_dot {
+            if self.rendering && self.line.dots >= SCANLINE_RENDERING_DOTS {
                 self.dot_mode3(data, oam, vram);
             }
 
