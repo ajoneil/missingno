@@ -443,8 +443,8 @@ struct Line {
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Dot at which the pixel pipeline begins executing in Mode 3.
-    /// Normally SCANLINE_PREPARING_DOTS + 4 (84); on the first scanline
-    /// after LCD turn-on, SCANLINE_PREPARING_DOTS + 11 (91).
+    /// Normally SCANLINE_RENDERING_DOTS (81); on the first scanline
+    /// after LCD turn-on, SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY (88).
     rendering_start_dot: u32,
 }
 
