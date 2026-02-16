@@ -695,25 +695,39 @@ impl Rendering {
         }
     }
 
-    /// Read the tile index from the tilemap for the current fetcher position.
-    ///
-    /// On the die, BG address generation (page 26) and window address
-    /// generation (page 27) are separate blocks that feed tilemap
-    /// coordinates to the VRAM interface.
-    fn read_bg_tile_index(&self, data: &Registers, vram: &Vram) -> u8 {
-        let fetcher = &self.line.fetcher;
-        let (map_x, map_y) = if fetcher.fetching_window {
-            (fetcher.tile_x, self.window_line_counter / 8)
+    // --- Address generation (pages 26-27) ---
+    //
+    // On the die, BG and window have separate address generators:
+    //   Page 26 (BACKGROUND): tilemap coords from SCX, SCY, tile_x, LY
+    //   Page 27 (WINDOW MAP LOOKUP): tilemap coords from tile_x, window_line_counter
+    // Both feed into the shared VRAM interface (page 25).
+
+    /// BG tilemap coordinate computation (page 26).
+    /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
+    fn bg_tilemap_coords(&self, data: &Registers) -> (u8, u8) {
+        let scx = data.background_viewport.x;
+        let scy = data.background_viewport.y;
+        (
+            (self.line.fetcher.tile_x.wrapping_add(scx / 8)) & 31,
+            (self.line.number.wrapping_add(scy) / 8) & 31,
+        )
+    }
+
+    /// Window tilemap coordinate computation (page 27).
+    /// Uses the window's internal line counter, no scroll offset.
+    fn window_tilemap_coords(&self) -> (u8, u8) {
+        (self.line.fetcher.tile_x, self.window_line_counter / 8)
+    }
+
+    /// Read the tile index from the tilemap for the current fetch position.
+    fn read_tile_index(&self, data: &Registers, vram: &Vram) -> u8 {
+        let (map_x, map_y) = if self.line.fetcher.fetching_window {
+            self.window_tilemap_coords()
         } else {
-            let scx = data.background_viewport.x;
-            let scy = data.background_viewport.y;
-            (
-                (fetcher.tile_x.wrapping_add(scx / 8)) & 31,
-                (self.line.number.wrapping_add(scy) / 8) & 31,
-            )
+            self.bg_tilemap_coords(data)
         };
 
-        let map_id = if fetcher.fetching_window {
+        let map_id = if self.line.fetcher.fetching_window {
             data.control.window_tile_map()
         } else {
             data.control.background_tile_map()
@@ -721,21 +735,31 @@ impl Rendering {
         vram.tile_map(map_id).get_tile(map_x, map_y).0
     }
 
+    /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
+    fn bg_fine_y(&self, data: &Registers) -> u8 {
+        self.line.number.wrapping_add(data.background_viewport.y) % 8
+    }
+
+    /// Window fine Y offset (page 27): which row within the tile, from
+    /// the window's internal line counter.
+    fn window_fine_y(&self) -> u8 {
+        self.window_line_counter % 8
+    }
+
     /// Read one byte of tile data (low or high bitplane) for the
     /// current BG/window fetch.
     ///
-    /// On the die, the tile data address comes from the BG/window
-    /// address generators (pages 26-27) combined with the tile index
-    /// cached from the tilemap read. The VRAM interface (page 25)
-    /// performs the actual read.
-    fn read_bg_tile_data(&self, data: &Registers, vram: &Vram, high: bool) -> u8 {
+    /// The tile data address combines the tile index (cached from the
+    /// tilemap read) with the fine Y offset from the appropriate
+    /// address generator. The VRAM interface (page 25) performs the read.
+    fn read_tile_data(&self, data: &Registers, vram: &Vram, high: bool) -> u8 {
         let tile_index = TileIndex(self.line.fetcher.tile_index);
         let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
 
         let fine_y = if self.line.fetcher.fetching_window {
-            self.window_line_counter % 8
+            self.window_fine_y()
         } else {
-            self.line.number.wrapping_add(data.background_viewport.y) % 8
+            self.bg_fine_y(data)
         };
 
         let block = vram.tile_block(block_id);
@@ -749,7 +773,7 @@ impl Rendering {
                 if self.line.fetcher.dot_in_step == 0 {
                     self.line.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_index = self.read_bg_tile_index(data, vram);
+                    self.line.fetcher.tile_index = self.read_tile_index(data, vram);
                     self.line.fetcher.dot_in_step = 0;
                     self.line.fetcher.step = FetcherStep::GetTileDataLow;
                 }
@@ -758,7 +782,7 @@ impl Rendering {
                 if self.line.fetcher.dot_in_step == 0 {
                     self.line.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_data_low = self.read_bg_tile_data(data, vram, false);
+                    self.line.fetcher.tile_data_low = self.read_tile_data(data, vram, false);
                     self.line.fetcher.dot_in_step = 0;
                     self.line.fetcher.step = FetcherStep::GetTileDataHigh;
                 }
@@ -767,7 +791,7 @@ impl Rendering {
                 if self.line.fetcher.dot_in_step == 0 {
                     self.line.fetcher.dot_in_step = 1;
                 } else {
-                    self.line.fetcher.tile_data_high = self.read_bg_tile_data(data, vram, true);
+                    self.line.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
 
                     // Load is instant when the shifter is empty (no
                     // additional dot cost). Otherwise enter the Load
