@@ -49,11 +49,12 @@ const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
+/// First pixel counter value that produces a visible LCD pixel.
+/// On hardware, the LCD X coordinate is `pix_count - 8`. Pixels at
+/// PX 0–7 shift the first tile's data through the pipe invisibly.
+const FIRST_VISIBLE_PIXEL: u8 = 8;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
-/// Number of dots the BG startup phase takes: 3 pipeline priming dots
-/// (position counter only) plus one tile fetch of 6 dots.
-const BG_STARTUP_DOTS: i16 = 9;
 
 // --- Pixel shift registers ---
 //
@@ -95,9 +96,10 @@ impl BgShifter {
         self.len = 0;
     }
 
-    /// Parallel load from a tile fetch. Only valid when empty.
+    /// Parallel load from a tile fetch. On hardware, the DFF22 shift
+    /// register cells use async SET/RST pins, so a load unconditionally
+    /// overwrites the current contents (SEKO pre-load at tile boundaries).
     fn load(&mut self, low: u8, high: u8) {
-        debug_assert!(self.is_empty());
         self.low = low;
         self.high = high;
         self.len = 8;
@@ -412,12 +414,6 @@ struct SpriteFetch {
 struct Line {
     number: u8,
     dots: u32,
-    /// Number of pixels pushed to the LCD (0-160).
-    pixels_drawn: u8,
-    /// Internal pixel position counter. Incremented on every shifter pop
-    /// (including SCX-discarded pixels). Used for sprite trigger
-    /// comparison: a sprite triggers when this equals its screen X.
-    position_in_line: i16,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
     /// Index of the next sprite store entry to check for triggering.
@@ -456,8 +452,6 @@ impl Line {
         Line {
             number,
             dots: 0,
-            pixels_drawn: 0,
-            position_in_line: 0,
             sprites: SpriteStore::new(),
             next_sprite: 0,
             window_rendered: false,
@@ -497,14 +491,7 @@ impl Line {
         // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
         self.sprites.entries[..count as usize].sort_by_key(|entry| entry.x);
 
-        // Initialize fine scroll gating. The pixel clock is gated for
-        // SCX & 7 dots after startup. position_in_line accounts for
-        // the gated dots because the shifters still advance during
-        // gating (for sprite alignment), so position_in_line reaches 0
-        // at the first visible pixel.
-        let fine_scroll_dots = (data.background_viewport.x & 7) as i16;
         self.fine_scroll = FineScroll::new();
-        self.position_in_line = -(BG_STARTUP_DOTS + fine_scroll_dots);
     }
 }
 
@@ -664,9 +651,7 @@ impl Rendering {
         if let Some(phase) = self.line.startup_fetch {
             match phase {
                 StartupFetch::PipelinePriming { dots_remaining } => {
-                    // Pipeline priming: position increments, trigger checks,
-                    // but no fetcher advance.
-                    self.line.position_in_line += 1;
+                    // Pipeline priming: trigger checks, but no fetcher advance.
                     self.check_window_trigger(data);
                     if self.line.sprite_fetch.is_none() {
                         self.check_sprite_trigger(data);
@@ -681,7 +666,6 @@ impl Rendering {
                 }
                 StartupFetch::FirstTile => {
                     self.advance_bg_fetcher(data, vram);
-                    self.line.position_in_line += 1;
                     self.check_window_trigger(data);
 
                     // Startup fetch completes when the fetcher loads pixels
@@ -703,10 +687,6 @@ impl Rendering {
             self.line
                 .fine_scroll
                 .check_scroll_match(data.background_viewport.x);
-        }
-
-        if self.line.sprite_fetch.is_none() {
-            self.check_sprite_trigger(data);
         }
 
         if let Some(ref mut sf) = self.line.sprite_fetch {
@@ -753,7 +733,29 @@ impl Rendering {
                 }
             }
         } else {
-            // Normal rendering: shift a pixel out, then advance the fetcher.
+            // Pixel counter increment (change D). On hardware, pix_count
+            // increments on SACU (pixel clock), gated by POKY (after startup)
+            // and ROXY (fine scroll). Sprite matching uses state_new.pix_count
+            // (post-increment), so the increment must precede trigger checks.
+            if self.line.fine_scroll.pixel_clock_active() {
+                self.line.pixel_counter += 1;
+            }
+
+            // Sprite trigger check — now uses pixel_counter (change A).
+            if self.line.sprite_fetch.is_none() {
+                self.check_sprite_trigger(data);
+            }
+
+            // SEKO pre-load (change C). On hardware, when fine_count==7
+            // the async SET/RST pipe load overwrites the shift register
+            // contents before the clock-driven shift on the same dot.
+            if self.line.fine_scroll.count == 7
+                && self.line.fetcher.step == FetcherStep::Load
+                && self.line.bg_shifter.len() == 1
+            {
+                self.load_bg_tile();
+            }
+
             if !self.line.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
             }
@@ -1026,7 +1028,6 @@ impl Rendering {
     fn shift_pixel_out(&mut self, data: &Registers) {
         // Shift one bit from each BG bitplane
         let (bg_lo, bg_hi) = self.line.bg_shifter.shift();
-        self.line.position_in_line += 1;
 
         // Shift OBJ in lockstep (if it has pixels)
         let obj_bits = self.line.obj_shifter.shift();
@@ -1040,15 +1041,21 @@ impl Rendering {
             return;
         }
 
-        // PX increments only when the pixel clock is active (after gating).
-        // On hardware, ROXY blocks SACU which freezes PX.
-        self.line.pixel_counter += 1;
-
-        if self.line.pixels_drawn >= screen::PIXELS_PER_LINE {
+        // PX 1 through FIRST_VISIBLE_PIXEL-1 are invisible — the first
+        // tile shifts through the pipe without writing to the framebuffer.
+        // On hardware, the LCD clock gate (WUSA) doesn't open until PX=8.
+        if self.line.pixel_counter < FIRST_VISIBLE_PIXEL {
+            self.check_window_trigger(data);
             return;
         }
 
-        let x = self.line.pixels_drawn;
+        // Past the visible region — safety guard for dots between WODU
+        // and rendering latch clearing.
+        if self.line.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+            return;
+        }
+
+        let x = self.line.pixel_counter - FIRST_VISIBLE_PIXEL;
         let y = self.line.number;
 
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
@@ -1071,7 +1078,6 @@ impl Rendering {
                     };
                     let mapped = sprite_palette.map(PaletteIndex(spr_color));
                     self.screen.set_pixel(x, y, mapped);
-                    self.line.pixels_drawn += 1;
                     self.check_window_trigger(data);
                     return;
                 }
@@ -1081,7 +1087,6 @@ impl Rendering {
         // Background pixel
         let mapped = data.palettes.background.map(PaletteIndex(bg_color));
         self.screen.set_pixel(x, y, mapped);
-        self.line.pixels_drawn += 1;
         self.check_window_trigger(data);
     }
 
@@ -1096,7 +1101,7 @@ impl Rendering {
         if self.line.number < data.window.y {
             return;
         }
-        if (self.line.position_in_line + 7) as u8 != data.window.x_plus_7 {
+        if self.line.pixel_counter != data.window.x_plus_7 {
             return;
         }
 
@@ -1117,7 +1122,7 @@ impl Rendering {
             return;
         }
 
-        let match_x = sprite_match_x(self.line.position_in_line);
+        let match_x = self.line.pixel_counter;
 
         while (self.line.next_sprite as usize) < self.line.sprites.count as usize {
             let entry = &self.line.sprites.entries[self.line.next_sprite as usize];
@@ -1150,17 +1155,6 @@ impl Rendering {
             break;
         }
     }
-}
-
-/// Compute the sprite match X value from the internal position counter.
-///
-/// On hardware, sprite triggering compares `x_plus_8` against
-/// `(position_in_line + 8) as u8`. Positions deeply negative
-/// (-15 through -8) wrap around in unsigned, so they are clamped
-/// to match value 0 (matching off-screen-left sprites).
-fn sprite_match_x(position_in_line: i16) -> u8 {
-    let x = (position_in_line + 8) as u8;
-    if x > 240 { 0 } else { x }
 }
 
 // --- PixelPipeline enum ---
