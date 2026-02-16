@@ -237,6 +237,53 @@ impl ObjShifter {
     }
 }
 
+// --- Fine scroll (ROXY pixel clock gate) ---
+
+/// Hardware fine scroll counter (RYKU/ROGA/RUBU) and pixel clock
+/// gate (ROXY). The ROXY latch gates the pixel clock (SACU) until
+/// the counter matches SCX & 7, implementing sub-tile fine scrolling.
+struct FineScroll {
+    /// 3-bit counter (0–7).
+    count: u8,
+    /// ROXY latch. true = pixel clock gated (scrolling not done).
+    /// Clears when count == SCX & 7 (one-shot per line).
+    gating: bool,
+}
+
+impl FineScroll {
+    fn new() -> Self {
+        Self {
+            count: 0,
+            gating: true,
+        }
+    }
+
+    /// Whether the pixel clock is active (SACU ungated).
+    fn pixel_clock_active(&self) -> bool {
+        !self.gating
+    }
+
+    /// Advance the fine counter by one dot (PECU clock).
+    fn tick(&mut self) {
+        self.count = (self.count + 1) & 7;
+    }
+
+    /// Check and clear the gating latch if count matches SCX & 7.
+    /// One-shot: once cleared, stays cleared for the rest of the line.
+    fn check_scroll_match(&mut self, scx: u8) {
+        if self.gating && self.count == (scx & 7) {
+            self.gating = false;
+        }
+    }
+
+    /// Reset for window trigger — counter resets, gating clears
+    /// (window has no fine scroll).
+    fn reset_for_window(&mut self) {
+        self.count = 0;
+        self.gating = false;
+    }
+}
+
 // --- Background fetcher ---
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -395,9 +442,9 @@ struct Line {
     /// pixels shift out — the first is discarded, the second is the
     /// first visible tile. `None` once startup is complete.
     startup_fetch: Option<StartupFetch>,
-    /// Pixels to discard from the BG shifter before LCD output begins.
-    /// Equal to SCX & 7 (fine scroll within the first tile).
-    discard_count: u8,
+    /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
+    /// clock for SCX & 7 dots at the start of each line.
+    fine_scroll: FineScroll,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Dot at which the pixel pipeline begins executing in Mode 3.
@@ -425,7 +472,7 @@ impl Line {
             startup_fetch: Some(StartupFetch::PipelinePriming {
                 dots_remaining: PIPELINE_PRIMING_DOTS,
             }),
-            discard_count: 0,
+            fine_scroll: FineScroll::new(),
             sprite_fetch: None,
             rendering_start_dot: SCANLINE_RENDERING_DOTS,
             stat_boundary_pixels: screen::PIXELS_PER_LINE - MODE3_STAT_BOUNDARY_OFFSET,
@@ -455,15 +502,14 @@ impl Line {
         // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
         self.sprites.entries[..count as usize].sort_by_key(|entry| entry.x);
 
-        // Discard SCX fine scroll pixels from the first visible tile.
-        // After the two startup fetches complete, the shifter contains
-        // the first tile; these pixels align the sub-tile scroll.
-        self.discard_count = data.background_viewport.x & 7;
-        // position_in_line starts at -(15 + discard_count). The first 3 dots
-        // are pipeline priming (no fetcher), the next 12 are two tile fetches
-        // (discarded + first visible). After startup (15 dots) and SCX fine
-        // scroll discards, position_in_line = 0 at the first LCD pixel.
-        self.position_in_line = -(BG_STARTUP_DOTS + self.discard_count as i16);
+        // Initialize fine scroll gating. The pixel clock is gated for
+        // SCX & 7 dots after startup. position_in_line accounts for
+        // the gated dots because the shifters still advance during
+        // gating (for sprite alignment), so position_in_line reaches 0
+        // at the first visible pixel.
+        let fine_scroll_dots = (data.background_viewport.x & 7) as i16;
+        self.fine_scroll = FineScroll::new();
+        self.position_in_line = -(BG_STARTUP_DOTS + fine_scroll_dots);
     }
 }
 
@@ -675,6 +721,16 @@ impl Rendering {
             return;
         }
 
+        // Update fine scroll gating before sprite/pixel checks. On hardware,
+        // the ROXY latch clears combinationally when the fine counter matches
+        // SCX & 7. SACU (pixel clock) and sprite matchers both see the
+        // updated state on the same dot.
+        if self.line.startup_fetch.is_none() {
+            self.line
+                .fine_scroll
+                .check_scroll_match(data.background_viewport.x);
+        }
+
         if self.line.sprite_fetch.is_none() {
             self.check_sprite_trigger(data);
         }
@@ -723,14 +779,13 @@ impl Rendering {
                 }
             }
         } else {
-            // Normal: shift a pixel out first, then advance the fetcher.
-            // This matches hardware order: the pixel shifter is clocked
-            // before the fetcher advances, so a load that fills the
-            // shifter on this dot won't produce a pixel until the next dot.
+            // Normal rendering: shift a pixel out, then advance the fetcher.
             if !self.line.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
             }
+
             self.advance_bg_fetcher(data, vram);
+            self.line.fine_scroll.tick();
         }
     }
 
@@ -1002,9 +1057,11 @@ impl Rendering {
         // Shift OBJ in lockstep (if it has pixels)
         let obj_bits = self.line.obj_shifter.shift();
 
-        // Discard pixels for SCX fine scroll
-        if self.line.discard_count > 0 {
-            self.line.discard_count -= 1;
+        // During fine scroll gating (ROXY active), the pixel clock is
+        // frozen on hardware — no LCD output. The shifters still advance
+        // here (unlike true hardware gating) to keep sprite alignment
+        // consistent with the existing sprite fetch model.
+        if !self.line.fine_scroll.pixel_clock_active() {
             return;
         }
 
@@ -1064,9 +1121,10 @@ impl Rendering {
             return;
         }
 
-        // Window trigger: clear shifters and restart fetcher for window tiles
+        // Window trigger: clear shifters, reset fine scroll, and restart fetcher
         self.line.bg_shifter.clear();
         self.line.obj_shifter.clear();
+        self.line.fine_scroll.reset_for_window();
         self.line.fetcher.step = FetcherStep::GetTile;
         self.line.fetcher.dot_in_step = 0;
         self.line.fetcher.tile_x = 0;
