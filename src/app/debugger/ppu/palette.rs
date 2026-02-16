@@ -9,7 +9,7 @@ use crate::app::{
     core::sizes::{m, s, xs},
     screen::iced_color,
 };
-use missingno_core::game_boy::video::palette::{Palette, PaletteIndex, PaletteMap};
+use missingno_core::game_boy::ppu::palette::{Palette, PaletteIndex, PaletteMap};
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(

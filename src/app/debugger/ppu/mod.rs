@@ -8,7 +8,7 @@ use crate::app::{
     core::sizes::m,
     debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
-use missingno_core::game_boy::video::{Video, palette::Palette, ppu::Mode};
+use missingno_core::game_boy::ppu::{Ppu, palette::Palette, pixel_pipeline::Mode};
 
 use background_and_window::background_and_window;
 use tile_maps::tile_address_mode;
@@ -21,33 +21,29 @@ pub mod tile_maps;
 mod tile_widget;
 pub mod tiles;
 
-pub struct VideoPane;
+pub struct PpuPane;
 
-impl VideoPane {
+impl PpuPane {
     pub fn new() -> Self {
         Self
     }
 
-    pub fn content(&self, video: &Video, palette: &Palette) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, ppu: &Ppu, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
-            checkbox_title_bar(
-                "Video",
-                video.control().video_enabled(),
-                DebuggerPane::Video,
-            ),
+            checkbox_title_bar("PPU", ppu.control().video_enabled(), DebuggerPane::Ppu),
             scrollable(
                 column![
                     row![
-                        self.mode_radio(video.mode(), Mode::BetweenFrames),
-                        self.mode_radio(video.mode(), Mode::PreparingScanline)
+                        self.mode_radio(ppu.mode(), Mode::BetweenFrames),
+                        self.mode_radio(ppu.mode(), Mode::PreparingScanline)
                     ],
                     row![
-                        self.mode_radio(video.mode(), Mode::DrawingPixels),
-                        self.mode_radio(video.mode(), Mode::BetweenLines),
+                        self.mode_radio(ppu.mode(), Mode::DrawingPixels),
+                        self.mode_radio(ppu.mode(), Mode::BetweenLines),
                     ],
-                    tile_address_mode(video.control()),
+                    tile_address_mode(ppu.control()),
                     rule::horizontal(1),
-                    background_and_window(video, palette),
+                    background_and_window(ppu, palette),
                 ]
                 .spacing(m())
                 .padding(m()),

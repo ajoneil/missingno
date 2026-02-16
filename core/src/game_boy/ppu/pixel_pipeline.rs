@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::game_boy::video::{
+use crate::game_boy::ppu::{
     PpuAccessible,
     memory::Vram,
     palette::PaletteIndex,
@@ -995,14 +995,14 @@ fn decode_tile_row(low: u8, high: u8) -> [Pixel; 8] {
     pixels
 }
 
-// --- PixelProcessingUnit enum ---
+// --- PixelPipeline enum ---
 
-pub enum PixelProcessingUnit {
+pub enum PixelPipeline {
     Rendering(Rendering),
     BetweenFrames(u32),
 }
 
-impl PixelProcessingUnit {
+impl PixelPipeline {
     pub fn new() -> Self {
         Self::Rendering(Rendering::new())
     }
@@ -1016,7 +1016,7 @@ impl PixelProcessingUnit {
 
     pub fn current_line(&self) -> u8 {
         match self {
-            PixelProcessingUnit::Rendering(Rendering {
+            PixelPipeline::Rendering(Rendering {
                 line: Line { number, dots, .. },
                 ..
             }) => {
@@ -1026,7 +1026,7 @@ impl PixelProcessingUnit {
                     *number
                 }
             }
-            PixelProcessingUnit::BetweenFrames(dots) => {
+            PixelPipeline::BetweenFrames(dots) => {
                 screen::NUM_SCANLINES + (dots / SCANLINE_TOTAL_DOTS) as u8
             }
         }
@@ -1036,11 +1036,11 @@ impl PixelProcessingUnit {
     /// standard scanline end).
     pub fn ly_transitioning(&self) -> bool {
         match self {
-            PixelProcessingUnit::Rendering(Rendering {
+            PixelPipeline::Rendering(Rendering {
                 line: Line { dots, .. },
                 ..
             }) => *dots == SCANLINE_TOTAL_DOTS - 4,
-            PixelProcessingUnit::BetweenFrames(dots) => {
+            PixelPipeline::BetweenFrames(dots) => {
                 dots % SCANLINE_TOTAL_DOTS == SCANLINE_TOTAL_DOTS - 4
             }
         }
@@ -1048,81 +1048,73 @@ impl PixelProcessingUnit {
 
     pub fn mode(&self) -> Mode {
         match self {
-            PixelProcessingUnit::Rendering(rendering) => rendering.mode(),
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) => rendering.mode(),
+            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
         }
     }
 
     pub fn stat_mode(&self) -> Mode {
         match self {
-            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => {
-                Mode::BetweenLines
-            }
-            PixelProcessingUnit::Rendering(rendering) => rendering.stat_mode(),
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) => rendering.stat_mode(),
+            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
         }
     }
 
     pub fn interrupt_mode(&self) -> Mode {
         match self {
-            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => {
-                Mode::BetweenLines
-            }
-            PixelProcessingUnit::Rendering(rendering) => rendering.interrupt_mode(),
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) => rendering.interrupt_mode(),
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
-            PixelProcessingUnit::BetweenFrames(dots) if *dots >= 4 => Mode::BetweenFrames,
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenLines,
+            PixelPipeline::BetweenFrames(dots) if *dots >= 4 => Mode::BetweenFrames,
+            PixelPipeline::BetweenFrames(_) => Mode::BetweenLines,
         }
     }
 
     pub fn mode2_interrupt_active(&self) -> bool {
         match self {
-            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelProcessingUnit::Rendering(rendering) => rendering.mode2_interrupt_active(),
-            PixelProcessingUnit::BetweenFrames(_) => false,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
+            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(),
+            PixelPipeline::BetweenFrames(_) => false,
         }
     }
 
     pub fn gating_mode(&self) -> Mode {
         match self {
-            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => {
-                Mode::BetweenLines
-            }
-            PixelProcessingUnit::Rendering(rendering) => rendering.gating_mode(),
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) => rendering.gating_mode(),
+            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
         }
     }
 
     pub fn write_gating_mode(&self) -> Mode {
         match self {
-            PixelProcessingUnit::Rendering(rendering) if rendering.lcd_turning_on => {
-                Mode::BetweenLines
-            }
-            PixelProcessingUnit::Rendering(rendering) => rendering.write_gating_mode(),
-            PixelProcessingUnit::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) => rendering.write_gating_mode(),
+            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
         }
     }
 
     /// Diagnostic: return (line_number, dots) if rendering, None otherwise.
     pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
         match self {
-            PixelProcessingUnit::Rendering(r) => Some((r.line.number, r.line.dots)),
-            PixelProcessingUnit::BetweenFrames(_) => None,
+            PixelPipeline::Rendering(r) => Some((r.line.number, r.line.dots)),
+            PixelPipeline::BetweenFrames(_) => None,
         }
     }
 
     pub fn accessed_oam_row(&self) -> Option<u8> {
         match self {
-            PixelProcessingUnit::Rendering(rendering) => {
+            PixelPipeline::Rendering(rendering) => {
                 if rendering.line.dots < SCANLINE_PREPARING_DOTS {
                     Some(((rendering.line.dots / 4 + 1) * 8) as u8)
                 } else {
                     None
                 }
             }
-            PixelProcessingUnit::BetweenFrames(_) => None,
+            PixelPipeline::BetweenFrames(_) => None,
         }
     }
 
@@ -1132,16 +1124,16 @@ impl PixelProcessingUnit {
         let mut screen = None;
 
         match self {
-            PixelProcessingUnit::Rendering(rendering) => {
+            PixelPipeline::Rendering(rendering) => {
                 if rendering.dot(data, vram) {
                     screen = Some(rendering.screen.clone());
-                    *self = PixelProcessingUnit::BetweenFrames(0);
+                    *self = PixelPipeline::BetweenFrames(0);
                 }
             }
-            PixelProcessingUnit::BetweenFrames(dots) => {
+            PixelPipeline::BetweenFrames(dots) => {
                 *dots += 1;
                 if *dots >= BETWEEN_FRAMES_DOTS {
-                    *self = PixelProcessingUnit::Rendering(Rendering::new());
+                    *self = PixelPipeline::Rendering(Rendering::new());
                 }
             }
         };

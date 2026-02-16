@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use missingno_core::game_boy::{GameBoy, cartridge::Cartridge, cpu::Cpu, video::screen::Screen};
+use missingno_core::game_boy::{GameBoy, cartridge::Cartridge, cpu::Cpu, ppu::screen::Screen};
 
 fn rom_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

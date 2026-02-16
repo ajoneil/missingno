@@ -11,7 +11,7 @@ use crate::app::{
     },
     screen::{ScreenDisplay, ScreenView},
 };
-use missingno_core::game_boy::video::palette::PaletteChoice;
+use missingno_core::game_boy::ppu::palette::PaletteChoice;
 
 pub struct ScreenPane {
     screen_view: ScreenView,

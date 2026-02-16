@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::game_boy::video::tiles::TileIndex;
+use crate::game_boy::ppu::tiles::TileIndex;
 
 #[derive(Copy, Clone)]
 pub struct TileMap {

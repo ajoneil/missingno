@@ -25,18 +25,18 @@ use crate::app::{
         cpu::CpuPane,
         instructions::InstructionsPane,
         playback::PlaybackPane,
-        screen::{self, ScreenPane},
-        video::{
-            VideoPane,
+        ppu::{
+            PpuPane,
             sprites::{self, SpritesPane},
             tile_maps::TileMapPane,
             tiles::TilesPane,
         },
+        screen::{self, ScreenPane},
     },
     screen::ScreenView,
 };
 use missingno_core::debugger::Debugger;
-use missingno_core::game_boy::video::{
+use missingno_core::game_boy::ppu::{
     palette::{Palette, PaletteChoice},
     tile_maps::TileMapId,
 };
@@ -77,7 +77,7 @@ pub enum DebuggerPane {
     Instructions,
     Breakpoints,
     Cpu,
-    Video,
+    Ppu,
     Tiles,
     TileMap(TileMapId),
     Sprites,
@@ -90,7 +90,7 @@ enum PaneInstance {
     Instructions(InstructionsPane),
     Breakpoints(BreakpointsPane),
     Cpu(CpuPane),
-    Video(VideoPane),
+    Ppu(PpuPane),
     Tiles(TilesPane),
     TileMap(TileMapPane),
     Sprites(SpritesPane),
@@ -134,14 +134,14 @@ impl DebuggerPanes {
         handles.insert(DebuggerPane::Screen, screen_handle);
         panes.resize(split, 1.0 / 4.0);
 
-        let (video_handle, split) = panes
+        let (ppu_handle, split) = panes
             .split(
                 Horizontal,
                 screen_handle,
-                Self::construct_pane(DebuggerPane::Video),
+                Self::construct_pane(DebuggerPane::Ppu),
             )
             .unwrap();
-        handles.insert(DebuggerPane::Video, video_handle);
+        handles.insert(DebuggerPane::Ppu, ppu_handle);
         panes.resize(split, 3.0 / 4.0);
 
         let (instructions_handle, split) = panes
@@ -177,7 +177,7 @@ impl DebuggerPanes {
             DebuggerPane::Instructions => PaneInstance::Instructions(InstructionsPane::new()),
             DebuggerPane::Breakpoints => PaneInstance::Breakpoints(BreakpointsPane::new()),
             DebuggerPane::Cpu => PaneInstance::Cpu(CpuPane::new()),
-            DebuggerPane::Video => PaneInstance::Video(VideoPane::new()),
+            DebuggerPane::Ppu => PaneInstance::Ppu(PpuPane::new()),
             DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
             DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
@@ -274,13 +274,13 @@ impl DebuggerPanes {
                 ),
                 PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
                 PaneInstance::Cpu(cpu) => cpu.content(debugger),
-                PaneInstance::Video(video) => video.content(debugger.game_boy().video(), pal),
+                PaneInstance::Ppu(ppu_pane) => ppu_pane.content(debugger.game_boy().ppu(), pal),
                 PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
                 PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(debugger.game_boy().video(), debugger.game_boy().vram(), pal)
+                    tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
                 }
                 PaneInstance::Sprites(sprites) => {
-                    sprites.content(debugger.game_boy().video(), debugger.game_boy().vram(), pal)
+                    sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
                 }
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
                 PaneInstance::Playback(playback) => playback.content(app_debugger),
@@ -302,7 +302,7 @@ impl DebuggerPanes {
             DebuggerPane::Instructions,
             DebuggerPane::Breakpoints,
             DebuggerPane::Cpu,
-            DebuggerPane::Video,
+            DebuggerPane::Ppu,
             DebuggerPane::Tiles,
             DebuggerPane::TileMap(TileMapId(0)),
             DebuggerPane::TileMap(TileMapId(1)),
@@ -328,7 +328,7 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::Instructions => write!(f, "Instructions"),
             DebuggerPane::Breakpoints => write!(f, "Breakpoints"),
             DebuggerPane::Cpu => write!(f, "CPU"),
-            DebuggerPane::Video => write!(f, "Video"),
+            DebuggerPane::Ppu => write!(f, "PPU"),
             DebuggerPane::Tiles => write!(f, "Tiles"),
             DebuggerPane::TileMap(map) => write!(f, "{}", map),
             DebuggerPane::Sprites => write!(f, "Sprites"),

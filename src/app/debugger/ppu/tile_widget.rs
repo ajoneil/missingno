@@ -1,7 +1,7 @@
 use iced::widget::shader;
 
 use crate::app::{Message, texture_renderer::TextureRenderer};
-use missingno_core::game_boy::video::{palette::Palette, tiles::Tile};
+use missingno_core::game_boy::ppu::{palette::Palette, tiles::Tile};
 
 pub fn tile_flip(
     tile: Tile,

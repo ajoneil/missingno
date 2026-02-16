@@ -9,10 +9,10 @@ use crate::app::{
     core::sizes::m,
     debugger::{
         panes::{DebuggerPane, pane, title_bar},
-        video::tile_atlas::tile_block_atlas,
+        ppu::tile_atlas::tile_block_atlas,
     },
 };
-use missingno_core::game_boy::video::{memory::Vram, palette::Palette, tiles::TileBlockId};
+use missingno_core::game_boy::ppu::{memory::Vram, palette::Palette, tiles::TileBlockId};
 
 pub struct TilesPane;
 

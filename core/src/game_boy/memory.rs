@@ -1,11 +1,11 @@
 use crate::game_boy::{
     GameBoy, audio,
     interrupts::{self, InterruptFlags},
-    serial_transfer, timers, video,
+    ppu, serial_transfer, timers,
 };
 
 use super::cartridge::Cartridge;
-use video::memory::{OamAddress, Vram, VramAddress};
+use ppu::memory::{OamAddress, Vram, VramAddress};
 
 /// M-cycles before the external data bus decays to 0xFF.
 ///
@@ -186,7 +186,7 @@ pub enum MappedAddress {
     InterruptRegister(interrupts::Register),
     AudioRegister(audio::Register),
     AudioWaveRam(u8),
-    VideoRegister(video::Register),
+    PpuRegister(ppu::Register),
     BeginDmaTransfer,
     Unmapped,
 }
@@ -195,16 +195,16 @@ impl MappedAddress {
     pub fn map(address: u16) -> Self {
         match address {
             0x0000..=0x7fff => Self::External(ExternalAddress::Cartridge(address)),
-            0x8000..=0x9fff => match video::memory::MappedAddress::map(address) {
-                video::memory::MappedAddress::Vram(addr) => Self::Vram(addr),
-                video::memory::MappedAddress::Oam(_) => unreachable!(),
+            0x8000..=0x9fff => match ppu::memory::MappedAddress::map(address) {
+                ppu::memory::MappedAddress::Vram(addr) => Self::Vram(addr),
+                ppu::memory::MappedAddress::Oam(_) => unreachable!(),
             },
             0xa000..=0xbfff => Self::External(ExternalAddress::Cartridge(address)),
             0xc000..=0xdfff => Self::External(ExternalAddress::WorkRam(address - 0xc000)),
             0xe000..=0xfdff => Self::External(ExternalAddress::WorkRam(address - 0xe000)),
-            0xfe00..=0xfe9f => match video::memory::MappedAddress::map(address) {
-                video::memory::MappedAddress::Oam(addr) => Self::Oam(addr),
-                video::memory::MappedAddress::Vram(_) => unreachable!(),
+            0xfe00..=0xfe9f => match ppu::memory::MappedAddress::map(address) {
+                ppu::memory::MappedAddress::Oam(addr) => Self::Oam(addr),
+                ppu::memory::MappedAddress::Vram(_) => unreachable!(),
             },
             0xfea0..=0xfeff => Self::Unmapped,
             0xff00 => Self::JoypadRegister,
@@ -224,18 +224,18 @@ impl MappedAddress {
             0xff20..=0xff26 => Self::AudioRegister(audio::Register::map(address)),
             0xff27..=0xff2f => Self::Unmapped,
             0xff30..=0xff3f => Self::AudioWaveRam((address - 0xff30) as u8),
-            0xff40 => Self::VideoRegister(video::Register::Control),
-            0xff41 => Self::VideoRegister(video::Register::Status),
-            0xff42 => Self::VideoRegister(video::Register::BackgroundViewportY),
-            0xff43 => Self::VideoRegister(video::Register::BackgroundViewportX),
-            0xff44 => Self::VideoRegister(video::Register::CurrentScanline),
-            0xff45 => Self::VideoRegister(video::Register::InterruptOnScanline),
+            0xff40 => Self::PpuRegister(ppu::Register::Control),
+            0xff41 => Self::PpuRegister(ppu::Register::Status),
+            0xff42 => Self::PpuRegister(ppu::Register::BackgroundViewportY),
+            0xff43 => Self::PpuRegister(ppu::Register::BackgroundViewportX),
+            0xff44 => Self::PpuRegister(ppu::Register::CurrentScanline),
+            0xff45 => Self::PpuRegister(ppu::Register::InterruptOnScanline),
             0xff46 => Self::BeginDmaTransfer,
-            0xff47 => Self::VideoRegister(video::Register::BackgroundPalette),
-            0xff48 => Self::VideoRegister(video::Register::Sprite0Palette),
-            0xff49 => Self::VideoRegister(video::Register::Sprite1Palette),
-            0xff4a => Self::VideoRegister(video::Register::WindowY),
-            0xff4b => Self::VideoRegister(video::Register::WindowX),
+            0xff47 => Self::PpuRegister(ppu::Register::BackgroundPalette),
+            0xff48 => Self::PpuRegister(ppu::Register::Sprite0Palette),
+            0xff49 => Self::PpuRegister(ppu::Register::Sprite1Palette),
+            0xff4a => Self::PpuRegister(ppu::Register::WindowY),
+            0xff4b => Self::PpuRegister(ppu::Register::WindowX),
             0xff4c..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
@@ -270,16 +270,17 @@ impl GameBoy {
         // PPU mode-based memory gating: the PPU locks OAM during Mode 2
         // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
         // The bus latch is NOT updated — no device drove the bus.
-        let mode = self.video.gating_mode();
+        let mode = self.ppu.gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
-                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                ppu::pixel_pipeline::Mode::PreparingScanline
+                | ppu::pixel_pipeline::Mode::DrawingPixels => {
                     return 0xFF;
                 }
                 _ => {}
             },
             0x8000..=0x9FFF => {
-                if mode == video::ppu::Mode::DrawingPixels {
+                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
                     return 0xFF;
                 }
             }
@@ -322,16 +323,17 @@ impl GameBoy {
             }
         }
 
-        let mode = self.video.gating_mode();
+        let mode = self.ppu.gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
-                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                ppu::pixel_pipeline::Mode::PreparingScanline
+                | ppu::pixel_pipeline::Mode::DrawingPixels => {
                     return 0xFF;
                 }
                 _ => {}
             },
             0x8000..=0x9FFF => {
-                if mode == video::ppu::Mode::DrawingPixels {
+                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
                     return 0xFF;
                 }
             }
@@ -356,7 +358,7 @@ impl GameBoy {
             MappedAddress::External(addr) => self.external.read(addr),
             MappedAddress::HighRam(offset) => self.high_ram.read(offset),
             MappedAddress::Vram(address) => self.vram_bus.read(address),
-            MappedAddress::Oam(address) => self.video.read_oam(address),
+            MappedAddress::Oam(address) => self.ppu.read_oam(address),
             MappedAddress::JoypadRegister => {
                 let mut value = self.joypad.read_register();
                 if let Some(sgb) = &self.sgb {
@@ -383,7 +385,7 @@ impl GameBoy {
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
             MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
-            MappedAddress::VideoRegister(register) => self.video.read_register(register),
+            MappedAddress::PpuRegister(register) => self.ppu.read_register(register),
             MappedAddress::BeginDmaTransfer => self.dma.source_register(),
 
             MappedAddress::Unmapped => 0xFF,
@@ -394,7 +396,7 @@ impl GameBoy {
     /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
     pub fn oam_bug_write(&mut self, address: u16) {
         if (0xFE00..=0xFEFF).contains(&address) {
-            self.video.oam_bug_write();
+            self.ppu.oam_bug_write();
         }
     }
 
@@ -402,7 +404,7 @@ impl GameBoy {
     /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
     pub fn oam_bug_read(&mut self, address: u16) {
         if (0xFE00..=0xFEFF).contains(&address) {
-            self.video.oam_bug_read();
+            self.ppu.oam_bug_read();
         }
     }
 
@@ -423,16 +425,17 @@ impl GameBoy {
         // timing than reads: no early OAM/VRAM locks, and mode 2 releases
         // OAM 4 dots early (at dot 76).
         // The bus latch is NOT updated — the write was blocked.
-        let mode = self.video.write_gating_mode();
+        let mode = self.ppu.write_gating_mode();
         match address {
             0xFE00..=0xFE9F => match mode {
-                video::ppu::Mode::PreparingScanline | video::ppu::Mode::DrawingPixels => {
+                ppu::pixel_pipeline::Mode::PreparingScanline
+                | ppu::pixel_pipeline::Mode::DrawingPixels => {
                     return;
                 }
                 _ => {}
             },
             0x8000..=0x9FFF => {
-                if mode == video::ppu::Mode::DrawingPixels {
+                if mode == ppu::pixel_pipeline::Mode::DrawingPixels {
                     return;
                 }
             }
@@ -460,7 +463,7 @@ impl GameBoy {
             MappedAddress::External(addr) => self.external.write(addr, value),
             MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
             MappedAddress::Vram(address) => self.vram_bus.write(address, value),
-            MappedAddress::Oam(address) => self.video.write_oam(address, value),
+            MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 if let Some(sgb) = &mut self.sgb {
                     sgb.write_joypad(value);
@@ -485,8 +488,8 @@ impl GameBoy {
             }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
-            MappedAddress::VideoRegister(register) => {
-                self.video
+            MappedAddress::PpuRegister(register) => {
+                self.ppu
                     .write_register(register, value, &self.vram_bus.vram)
             }
             MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),

@@ -13,7 +13,7 @@ use crate::app::{
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
 use missingno_core::game_boy::{
-    GameBoy, joypad::Button, sgb::MaskMode, video::palette::PaletteChoice,
+    GameBoy, joypad::Button, ppu::palette::PaletteChoice, sgb::MaskMode,
 };
 
 pub struct Emulator {
@@ -72,7 +72,7 @@ impl Emulator {
             Message::EmulateFrame => {
                 while !self.game_boy.step() {}
                 let screen = *self.game_boy.screen();
-                let video_enabled = self.game_boy.video().control().video_enabled();
+                let video_enabled = self.game_boy.ppu().control().video_enabled();
                 let display = if let Some(sgb) = self.game_boy.sgb() {
                     let render_data = sgb.render_data(video_enabled);
                     if sgb.mask_mode == MaskMode::Freeze {

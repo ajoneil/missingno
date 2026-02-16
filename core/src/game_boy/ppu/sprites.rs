@@ -2,7 +2,7 @@ use core::fmt;
 
 use bitflags::bitflags;
 
-use crate::game_boy::video::tiles::TileIndex;
+use crate::game_boy::ppu::tiles::TileIndex;
 
 #[derive(Clone, Copy)]
 pub struct Sprite {

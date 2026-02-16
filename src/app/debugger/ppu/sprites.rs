@@ -14,11 +14,11 @@ use crate::app::{
     },
     debugger::{
         panes::{self, DebuggerPane, checkbox_title_bar, pane},
-        video::{palette::palette3, tile_widget::tile_flip},
+        ppu::{palette::palette3, tile_widget::tile_flip},
     },
 };
-use missingno_core::game_boy::video::{
-    Video,
+use missingno_core::game_boy::ppu::{
+    Ppu,
     memory::Vram,
     palette::Palette,
     sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
@@ -55,33 +55,33 @@ impl SpritesPane {
 
     pub fn content<'a>(
         &'a self,
-        video: &'a Video,
+        ppu: &'a Ppu,
         vram: &'a Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
         pane(
             checkbox_title_bar(
                 "Sprites",
-                video.control().sprites_enabled(),
+                ppu.control().sprites_enabled(),
                 DebuggerPane::Sprites,
             ),
             scrollable(
                 column![
-                    self.sprite_size(video.control().sprite_size()),
+                    self.sprite_size(ppu.control().sprite_size()),
                     row![
                         text::m("Palette 0"),
-                        palette3(&video.palettes().sprite0, palette)
+                        palette3(&ppu.palettes().sprite0, palette)
                     ]
                     .spacing(m()),
                     row![
                         text::m("Palette 1"),
-                        palette3(&video.palettes().sprite1, palette)
+                        palette3(&ppu.palettes().sprite1, palette)
                     ]
                     .spacing(m()),
                     toggler(self.on_screen_only)
                         .label("Show on-screen only")
                         .on_toggle(|on| Message::ToggleOnScreenOnly(on).into()),
-                    self.sprites(video, vram, palette)
+                    self.sprites(ppu, vram, palette)
                 ]
                 .width(Fill)
                 .spacing(s())
@@ -113,16 +113,15 @@ impl SpritesPane {
 
     fn sprites<'a>(
         &'a self,
-        video: &'a Video,
+        ppu: &'a Ppu,
         vram: &'a Vram,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0..40)
-            .map(|i| video.sprite(SpriteId(i)))
+            .map(|i| ppu.sprite(SpriteId(i)))
             .filter(|s| {
                 if self.on_screen_only {
-                    s.position.on_screen_x()
-                        && s.position.on_screen_y(video.control().sprite_size())
+                    s.position.on_screen_x() && s.position.on_screen_y(ppu.control().sprite_size())
                 } else {
                     true
                 }
@@ -132,7 +131,7 @@ impl SpritesPane {
         if sprites.peek().is_none() {
             text::m("No on-screen sprites").into()
         } else {
-            Row::with_children(sprites.map(|s| self.sprite(video, vram, s, palette)))
+            Row::with_children(sprites.map(|s| self.sprite(ppu, vram, s, palette)))
                 .spacing(l())
                 .wrap()
                 .into()
@@ -141,7 +140,7 @@ impl SpritesPane {
 
     fn sprite<'a>(
         &'a self,
-        video: &'a Video,
+        ppu: &'a Ppu,
         vram: &'a Vram,
         sprite: &Sprite,
         palette: &Palette,
@@ -149,8 +148,8 @@ impl SpritesPane {
         row![
             self.priority(sprite.attributes.priority()),
             column![
-                self.tiles(sprite, vram, video, palette),
-                self.position(&sprite.position, video.control().sprite_size())
+                self.tiles(sprite, vram, ppu, palette),
+                self.position(&sprite.position, ppu.control().sprite_size())
             ]
             .spacing(xs())
             .width(60)
@@ -163,14 +162,14 @@ impl SpritesPane {
         &self,
         sprite: &Sprite,
         vram: &Vram,
-        video: &Video,
+        ppu: &Ppu,
         palette: &Palette,
     ) -> Element<'_, app::Message> {
         let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);
         let flip_x = sprite.attributes.flip_x();
         let flip_y = sprite.attributes.flip_y();
 
-        match video.control().sprite_size() {
+        match ppu.control().sprite_size() {
             SpriteSize::Single => tile_flip(
                 vram.tile_block(tile_block_id).tile(tile_id),
                 flip_x,

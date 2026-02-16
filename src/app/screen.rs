@@ -2,11 +2,11 @@ use iced::widget::shader;
 use rgb::RGB8;
 
 use missingno_core::game_boy::{
-    sgb::SgbRenderData,
-    video::{
+    ppu::{
         palette::{Palette, PaletteChoice},
         screen::{self, Screen},
     },
+    sgb::SgbRenderData,
 };
 
 use super::texture_renderer::TextureRenderer;

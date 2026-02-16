@@ -1,4 +1,4 @@
-use super::video::screen::{self, Screen};
+use super::ppu::screen::{self, Screen};
 use rgb::RGB8;
 
 /// Convert the rendered screen into a 4KB transfer data buffer.

@@ -11,9 +11,9 @@ use crate::app::{
 use missingno_core::game_boy::{
     GameBoy,
     joypad::Button,
+    ppu::palette::PaletteChoice,
     recording::{Input, Recording},
     sgb::MaskMode,
-    video::palette::PaletteChoice,
 };
 
 use panes::DebuggerPanes;
@@ -25,8 +25,8 @@ mod instructions;
 mod interrupts;
 pub mod panes;
 pub mod playback;
+mod ppu;
 mod screen;
-mod video;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -109,9 +109,9 @@ impl Debugger {
 
     fn screen_update_task(
         &self,
-        screen: Option<missingno_core::game_boy::video::screen::Screen>,
+        screen: Option<missingno_core::game_boy::ppu::screen::Screen>,
     ) -> Task<app::Message> {
-        let video_enabled = self.debugger.game_boy().video().control().video_enabled();
+        let video_enabled = self.debugger.game_boy().ppu().control().video_enabled();
         let display = if let Some(sgb) = self.debugger.game_boy().sgb() {
             let render_data = sgb.render_data(video_enabled);
             if sgb.mask_mode == MaskMode::Freeze {

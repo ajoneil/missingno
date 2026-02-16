@@ -4,7 +4,7 @@ use cpu::Cpu;
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
-use video::{Video, screen::Screen};
+use ppu::{Ppu, screen::Screen};
 
 pub mod audio;
 pub mod cartridge;
@@ -14,11 +14,11 @@ pub mod execute;
 pub mod interrupts;
 pub mod joypad;
 pub mod memory;
+pub mod ppu;
 pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
-pub mod video;
 
 pub struct GameBoy {
     cpu: Cpu,
@@ -29,7 +29,7 @@ pub struct GameBoy {
 
     external: ExternalBus,
     high_ram: HighRam,
-    video: Video,
+    ppu: Ppu,
     audio: Audio,
     joypad: Joypad,
     interrupts: interrupts::Registers,
@@ -55,7 +55,7 @@ impl GameBoy {
             mcycle_counter: 0,
             external: ExternalBus::new(cartridge),
             high_ram: HighRam::new(),
-            video: Video::new(),
+            ppu: Ppu::new(),
             audio: Audio::new(),
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
@@ -75,7 +75,7 @@ impl GameBoy {
         self.external.latch = 0xFF;
         self.external.decay = 0;
         self.high_ram = HighRam::new();
-        self.video = Video::new();
+        self.ppu = Ppu::new();
         self.audio = Audio::new();
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
@@ -98,11 +98,11 @@ impl GameBoy {
         &self.cpu
     }
 
-    pub fn video(&self) -> &Video {
-        &self.video
+    pub fn ppu(&self) -> &Ppu {
+        &self.ppu
     }
 
-    pub fn vram(&self) -> &video::memory::Vram {
+    pub fn vram(&self) -> &ppu::memory::Vram {
         &self.vram_bus.vram
     }
 

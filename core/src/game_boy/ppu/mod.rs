@@ -1,14 +1,14 @@
 use bitflags::bitflags;
-use ppu::Mode;
+use pixel_pipeline::Mode;
 use screen::Screen;
 use sprites::{Sprite, SpriteId};
 
 use control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
 use palette::{PaletteMap, Palettes};
-use ppu::PixelProcessingUnit;
+use pixel_pipeline::PixelPipeline;
 
-pub struct VideoTickResult {
+pub struct PpuTickResult {
     pub screen: Option<Screen>,
     pub request_vblank: bool,
     pub request_stat: bool,
@@ -17,7 +17,7 @@ pub struct VideoTickResult {
 pub mod control;
 pub mod memory;
 pub mod palette;
-pub mod ppu;
+pub mod pixel_pipeline;
 pub mod screen;
 pub mod sprites;
 pub mod tile_maps;
@@ -122,8 +122,8 @@ pub struct PpuAccessible {
     pub(super) oam: Oam,
 }
 
-pub struct Video {
-    ppu: Option<PixelProcessingUnit>,
+pub struct Ppu {
+    pixel_pipeline: Option<PixelPipeline>,
     ppu_accessible: PpuAccessible,
     interrupts: Interrupts,
     /// Cached LY=LYC comparison result, updated each M-cycle while the
@@ -150,7 +150,7 @@ pub struct Window {
     x_plus_7: u8,
 }
 
-impl Video {
+impl Ppu {
     pub fn new() -> Self {
         Self {
             ppu_accessible: PpuAccessible {
@@ -161,7 +161,7 @@ impl Video {
                 oam: Oam::new(),
             },
 
-            ppu: Some(PixelProcessingUnit::new()),
+            pixel_pipeline: Some(PixelPipeline::new()),
             interrupts: Interrupts {
                 // The first bit is unused, but is set at boot time
                 flags: InterruptFlags::DUMMY,
@@ -179,12 +179,12 @@ impl Video {
         match register {
             Register::Control => self.ppu_accessible.control.bits(),
             Register::Status => {
-                let mode = if let Some(ppu) = &self.ppu {
+                let mode = if let Some(ppu) = &self.pixel_pipeline {
                     ppu.stat_mode() as u8
                 } else {
                     0
                 };
-                let ly_eq_lyc = if let Some(ppu) = &self.ppu {
+                let ly_eq_lyc = if let Some(ppu) = &self.pixel_pipeline {
                     if ppu.ly_transitioning() {
                         false
                     } else {
@@ -201,7 +201,7 @@ impl Video {
             Register::WindowY => self.ppu_accessible.window.y,
             Register::WindowX => self.ppu_accessible.window.x_plus_7,
             Register::CurrentScanline => {
-                if let Some(ppu) = &self.ppu {
+                if let Some(ppu) = &self.pixel_pipeline {
                     ppu.current_line()
                 } else {
                     0
@@ -219,7 +219,7 @@ impl Video {
     /// detection or LYC comparison — those only run at M-cycle
     /// boundaries in the main `tcycle()` path.
     fn flush_dots(&mut self, count: u8, vram: &Vram) {
-        if let Some(ppu) = self.ppu.as_mut() {
+        if let Some(ppu) = self.pixel_pipeline.as_mut() {
             for _ in 0..count {
                 if let Some(screen) = ppu.tcycle(&self.ppu_accessible, vram) {
                     self.pending_screen = Some(screen);
@@ -253,7 +253,7 @@ impl Video {
     /// Returns true if the PPU is actively drawing pixels (Mode 3),
     /// meaning register writes may conflict with PPU reads.
     pub fn ppu_is_drawing(&self) -> bool {
-        matches!(&self.ppu, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
+        matches!(&self.pixel_pipeline, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) {
@@ -343,30 +343,30 @@ impl Video {
         self.ppu_accessible.oam.write(address, value);
     }
 
-    pub fn mode(&self) -> ppu::Mode {
-        if let Some(ppu) = &self.ppu {
+    pub fn mode(&self) -> pixel_pipeline::Mode {
+        if let Some(ppu) = &self.pixel_pipeline {
             ppu.mode()
         } else {
-            ppu::Mode::BetweenFrames
+            pixel_pipeline::Mode::BetweenFrames
         }
     }
 
     /// Mode for OAM/VRAM memory gating. Reports Mode 0 during LCD-on
     /// startup (like stat_mode) but transitions to Mode 0 immediately
     /// when Mode 3 ends (no 1-dot delay).
-    pub fn gating_mode(&self) -> ppu::Mode {
-        if let Some(ppu) = &self.ppu {
+    pub fn gating_mode(&self) -> pixel_pipeline::Mode {
+        if let Some(ppu) = &self.pixel_pipeline {
             ppu.gating_mode()
         } else {
-            ppu::Mode::BetweenFrames
+            pixel_pipeline::Mode::BetweenFrames
         }
     }
 
-    pub fn write_gating_mode(&self) -> ppu::Mode {
-        if let Some(ppu) = &self.ppu {
+    pub fn write_gating_mode(&self) -> pixel_pipeline::Mode {
+        if let Some(ppu) = &self.pixel_pipeline {
             ppu.write_gating_mode()
         } else {
-            ppu::Mode::BetweenFrames
+            pixel_pipeline::Mode::BetweenFrames
         }
     }
 
@@ -508,11 +508,13 @@ impl Video {
     }
 
     fn accessed_oam_row(&self) -> Option<u8> {
-        self.ppu.as_ref().and_then(|ppu| ppu.accessed_oam_row())
+        self.pixel_pipeline
+            .as_ref()
+            .and_then(|ppu| ppu.accessed_oam_row())
     }
 
     fn stat_line_active(&self) -> bool {
-        let ppu = match &self.ppu {
+        let ppu = match &self.pixel_pipeline {
             Some(ppu) => ppu,
             None => return false,
         };
@@ -521,7 +523,7 @@ impl Video {
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 = matches!(ppu, PixelProcessingUnit::BetweenFrames(dots) if *dots < 4);
+        let vblank_line_144 = matches!(ppu, PixelPipeline::BetweenFrames(dots) if *dots < 4);
 
         // Mode 0 interrupt fires on the actual mode transition, not the
         // early stat_mode prediction (which is only for STAT register reads).
@@ -549,7 +551,9 @@ impl Video {
 
     /// Diagnostic: current PPU line and dot counter, if rendering.
     pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
-        self.ppu.as_ref().and_then(|p| p.diag_line_dots())
+        self.pixel_pipeline
+            .as_ref()
+            .and_then(|p| p.diag_line_dots())
     }
 
     /// Begin accumulating PPU dots instead of ticking. Called by the
@@ -578,23 +582,23 @@ impl Video {
     ///
     /// Interrupt edge detection and LYC comparison only run on
     /// M-cycle boundaries (when `is_mcycle` is true).
-    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> VideoTickResult {
-        let mut result = VideoTickResult {
+    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+        let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
             request_stat: false,
         };
 
         if self.control().video_enabled() {
-            if self.ppu.is_none() {
-                self.ppu = Some(PixelProcessingUnit::new_lcd_on());
+            if self.pixel_pipeline.is_none() {
+                self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
             if self.accumulating {
                 // Dots are deferred for write conflict splitting.
                 self.pending_dots += 1;
             } else if let Some(screen) = self
-                .ppu
+                .pixel_pipeline
                 .as_mut()
                 .unwrap()
                 .tcycle(&self.ppu_accessible, vram)
@@ -623,14 +627,14 @@ impl Video {
             }
 
             // Update comparison clock (runs while PPU is on)
-            self.ly_eq_lyc =
-                self.ppu.as_ref().unwrap().current_line() == self.interrupts.current_line_compare;
+            self.ly_eq_lyc = self.pixel_pipeline.as_ref().unwrap().current_line()
+                == self.interrupts.current_line_compare;
         } else {
             if !is_mcycle {
                 return result;
             }
-            if self.ppu.is_some() {
-                self.ppu = None;
+            if self.pixel_pipeline.is_some() {
+                self.pixel_pipeline = None;
                 self.pending_dots = 0;
                 self.accumulating = false;
                 result.screen = Some(Screen::new());

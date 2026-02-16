@@ -9,8 +9,8 @@ use crate::app::{
     core::sizes::m,
     debugger::panes::{DebuggerPane, pane, title_bar},
 };
-use missingno_core::game_boy::video::{
-    Video, control::Control, memory::Vram, palette::Palette, tile_maps::TileMapId,
+use missingno_core::game_boy::ppu::{
+    Ppu, control::Control, memory::Vram, palette::Palette, tile_maps::TileMapId,
     tiles::TileAddressMode,
 };
 
@@ -71,7 +71,7 @@ impl TileMapPane {
 
     pub fn content(
         &self,
-        video: &Video,
+        ppu: &Ppu,
         vram: &Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'_, Message> {
@@ -80,7 +80,7 @@ impl TileMapPane {
             scrollable(
                 container(tile_map_atlas(
                     vram.tile_map(self.tile_map),
-                    video.control(),
+                    ppu.control(),
                     vram,
                     palette,
                 ))

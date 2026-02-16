@@ -24,7 +24,7 @@ use missingno_core::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},
-    video::palette::PaletteChoice,
+    ppu::palette::PaletteChoice,
 };
 
 mod action_bar;

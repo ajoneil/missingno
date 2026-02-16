@@ -7,7 +7,7 @@ use super::{
     },
     interrupts::Interrupt,
     memory::Bus,
-    video,
+    ppu,
 };
 
 /// Returns true if the address maps to a PPU register (FF40-FF4B,
@@ -106,9 +106,9 @@ impl GameBoy {
             // 0-operand PPU register write (like LD [HL],r or LD [C],A),
             // giving 4 fetch dots + 1 write T0 = 5 pending for conflict
             // splitting. Cancelled after reading the opcode if not needed.
-            let tentative = self.video.ppu_is_drawing();
+            let tentative = self.ppu.ppu_is_drawing();
             if tentative {
-                self.video.start_accumulating();
+                self.ppu.start_accumulating();
             }
             new_screen |= self.tick_hardware_tcycle();
             let opcode = self.cpu_read(self.cpu.program_counter);
@@ -129,7 +129,7 @@ impl GameBoy {
             if tentative && !(op_count == 0 && known_ppu_write) {
                 // Not a 0-operand PPU write — cancel tentative
                 // accumulation and flush the captured T0 dot.
-                self.video.stop_accumulating_and_flush(&self.vram_bus.vram);
+                self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
 
             new_screen |= self.tick_hardware_tcycle();
@@ -142,7 +142,7 @@ impl GameBoy {
                 if i == op_count - 1 && defer_for_write {
                     // Last operand M-cycle: start accumulating from
                     // T0 so the full M-cycle (4 dots) is deferred.
-                    self.video.start_accumulating();
+                    self.ppu.start_accumulating();
                 }
                 new_screen |= self.tick_hardware_tcycle();
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
@@ -158,7 +158,7 @@ impl GameBoy {
             if deferred_addr_write {
                 let target = (bytes[2] as u16) << 8 | bytes[1] as u16;
                 if !is_ppu_register(target) {
-                    self.video.stop_accumulating_and_flush(&self.vram_bus.vram);
+                    self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
                 }
             }
 
@@ -229,8 +229,8 @@ impl GameBoy {
             // at the write's T1 for conflict splitting.
             if tcycle_in_mcycle == 0 {
                 if let Some(addr) = processor.peek_next_write_address() {
-                    if is_ppu_register(addr) && self.video.ppu_is_drawing() {
-                        self.video.start_accumulating();
+                    if is_ppu_register(addr) && self.ppu.ppu_is_drawing() {
+                        self.ppu.start_accumulating();
                     }
                 }
             }
@@ -274,7 +274,7 @@ impl GameBoy {
 
         // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
         // detection and LYC comparison only run on M-cycle boundaries.
-        let video_result = self.video.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
+        let video_result = self.ppu.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -307,11 +307,11 @@ impl GameBoy {
         // bus latch so that CPU reads from the same bus see this value.
         if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
             let byte = self.read_dma_source(src_addr);
-            let oam_addr = match video::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
-                video::memory::MappedAddress::Oam(addr) => addr,
+            let oam_addr = match ppu::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
+                ppu::memory::MappedAddress::Oam(addr) => addr,
                 _ => unreachable!(),
             };
-            self.video.write_oam(oam_addr, byte);
+            self.ppu.write_oam(oam_addr, byte);
             match Bus::of(src_addr) {
                 Some(Bus::External) => {
                     self.external.drive(byte);
