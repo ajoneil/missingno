@@ -34,17 +34,11 @@ impl fmt::Display for Mode {
 
 const SCANLINE_TOTAL_DOTS: u32 = 456;
 const SCANLINE_PREPARING_DOTS: u32 = 80;
-/// Pipeline priming begins 1 dot after Mode 2 ends. STAT reports Mode 3
-/// from dot 80, pipeline priming runs at dots 81-83, then the fetcher/shifter
-/// activate at dot 84.
-const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS + 1;
-/// Dots of pipeline priming at the start of Mode 3, before the
-/// fetcher begins. The position counter increments during these
-/// dots for trigger evaluation, but no tile fetch occurs.
-const PIPELINE_PRIMING_DOTS: u8 = 3;
+/// The pixel pipeline begins executing at the start of Mode 3.
+/// On hardware, AVAP fires at dot 80 and the fetcher starts immediately.
+const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS;
 /// On the first scanline after LCD turn-on, the pixel pipeline activates
-/// 8 dots after Mode 2 ends (vs 1 dot on normal lines). The hardware's
-/// first Mode 0 is correspondingly shorter.
+/// 8 dots after Mode 3 entry (vs immediately on normal lines).
 const FIRST_SCANLINE_PIPELINE_DELAY: u32 = 8;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
@@ -290,18 +284,14 @@ enum FetcherStep {
     Load,
 }
 
-/// Mode 3 starts with pipeline priming (3 dots) then one BG tile fetch
-/// (6 dots) before any pixels shift out. During priming the position
-/// counter increments for trigger evaluation but no tile fetch occurs.
+/// Mode 3 starts with one BG tile fetch (6 dots) before any pixels
+/// shift out. On hardware, AVAP fires at Mode 3 entry and the fetcher
+/// begins immediately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
-    /// Pipeline priming — position counter increments, trigger checks run,
-    /// but the fetcher does not advance. Models the gap between Mode 3
-    /// start and first fetcher activation.
-    PipelinePriming { dots_remaining: u8 },
     /// Single tile fetch — loads the first tile into the BG shifter.
     /// When the shifter becomes non-empty, startup is complete and
-    /// normal rendering begins on the next dot.
+    /// normal rendering begins on the same dot.
     FirstTile,
 }
 
@@ -443,7 +433,7 @@ struct Line {
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Dot at which the pixel pipeline begins executing in Mode 3.
-    /// Normally SCANLINE_RENDERING_DOTS (81); on the first scanline
+    /// Normally SCANLINE_RENDERING_DOTS (80); on the first scanline
     /// after LCD turn-on, SCANLINE_PREPARING_DOTS + FIRST_SCANLINE_PIPELINE_DELAY (88).
     rendering_start_dot: u32,
 }
@@ -459,9 +449,7 @@ impl Line {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            startup_fetch: Some(StartupFetch::PipelinePriming {
-                dots_remaining: PIPELINE_PRIMING_DOTS,
-            }),
+            startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
             sprite_fetch: None,
@@ -625,12 +613,6 @@ impl Rendering {
                 && self.line.pixel_counter >= WODU_PIXEL_COUNT
                 && self.line.sprite_fetch.is_none()
             {
-                if !self.hblank_gate && self.line.number == 0 {
-                    eprintln!(
-                        "[PPU] LY=0 dot={}: hblank_gate SET pixel_counter={} next_sprite={}",
-                        self.line.dots, self.line.pixel_counter, self.line.next_sprite
-                    );
-                }
                 self.hblank_gate = true;
             }
 
@@ -655,55 +637,28 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel pipeline processing.
     fn dot_mode3(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
-        if let Some(phase) = self.line.startup_fetch {
-            match phase {
-                StartupFetch::PipelinePriming { dots_remaining } => {
-                    // Pipeline priming: trigger checks, but no fetcher advance.
-                    self.check_window_trigger(data);
-                    if self.line.sprite_fetch.is_none() {
-                        self.check_sprite_trigger(data);
-                    }
-                    self.line.startup_fetch = if dots_remaining > 1 {
-                        Some(StartupFetch::PipelinePriming {
-                            dots_remaining: dots_remaining - 1,
-                        })
-                    } else {
-                        Some(StartupFetch::FirstTile)
-                    };
-                }
-                StartupFetch::FirstTile => {
-                    self.advance_bg_fetcher(data, vram);
-                    self.check_window_trigger(data);
+        if let Some(StartupFetch::FirstTile) = self.line.startup_fetch {
+            self.advance_bg_fetcher(data, vram);
+            self.check_window_trigger(data);
 
-                    // Startup fetch completes when the fetcher loads pixels
-                    // into the previously-empty shifter (detected by shifter
-                    // becoming non-empty after the fetcher advance).
-                    if !self.line.bg_shifter.is_empty() {
-                        if self.line.number == 0 {
-                            eprintln!(
-                                "[PPU] LY=0 dot={}: STARTUP_DONE fetcher={:?} window_tile_x={} shifter_len={}",
-                                self.line.dots,
-                                self.line.fetcher.step,
-                                self.line.fetcher.window_tile_x,
-                                self.line.bg_shifter.len(),
-                            );
-                        }
-                        self.line.startup_fetch = None;
-                    }
-                }
+            // Startup fetch completes when the fetcher loads pixels
+            // into the previously-empty shifter. TAVE/POKY fire:
+            // pixel clock starts on this same dot (fall through to
+            // normal rendering below).
+            if !self.line.bg_shifter.is_empty() {
+                self.line.startup_fetch = None;
+            } else {
+                return;
             }
-            return;
         }
 
         // Update fine scroll gating before sprite/pixel checks. On hardware,
         // the ROXY latch clears combinationally when the fine counter matches
         // SCX & 7. SACU (pixel clock) and sprite matchers both see the
         // updated state on the same dot.
-        if self.line.startup_fetch.is_none() {
-            self.line
-                .fine_scroll
-                .check_scroll_match(data.background_viewport.x);
-        }
+        self.line
+            .fine_scroll
+            .check_scroll_match(data.background_viewport.x);
 
         if let Some(ref mut sf) = self.line.sprite_fetch {
             match sf.phase {
@@ -754,14 +709,6 @@ impl Rendering {
             // and ROXY (fine scroll). Sprite matching uses state_new.pix_count
             // (post-increment), so the increment must precede trigger checks.
             if self.line.fine_scroll.pixel_clock_active() {
-                if self.line.pixel_counter == 0 && self.line.number == 0 {
-                    eprintln!(
-                        "[PPU] LY=0 dot={}: FIRST_PX_INCREMENT fine_count={} shifter_len={}",
-                        self.line.dots,
-                        self.line.fine_scroll.count,
-                        self.line.bg_shifter.len(),
-                    );
-                }
                 self.line.pixel_counter += 1;
             }
 
@@ -782,15 +729,6 @@ impl Rendering {
 
             if !self.line.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
-            } else if self.line.fine_scroll.pixel_clock_active() && self.line.number == 0 {
-                eprintln!(
-                    "[PPU] LY=0 dot={}: EMPTY_PIPE pixel_counter={} fine_count={} fetcher={:?} window_tile_x={}",
-                    self.line.dots,
-                    self.line.pixel_counter,
-                    self.line.fine_scroll.count,
-                    self.line.fetcher.step,
-                    self.line.fetcher.window_tile_x,
-                );
             }
 
             self.advance_bg_fetcher(data, vram);
@@ -1096,21 +1034,6 @@ impl Rendering {
         let x = self.line.pixel_counter - FIRST_VISIBLE_PIXEL;
         let y = self.line.number;
 
-        if y == 136 && x <= 19 {
-            eprintln!(
-                "[PPU] LY={} dot={}: framebuffer_write x={} pixel_counter={} bg_color={}",
-                y,
-                self.line.dots,
-                x,
-                self.line.pixel_counter,
-                if data.control.background_and_window_enabled() {
-                    (bg_hi << 1) | bg_lo
-                } else {
-                    0
-                }
-            );
-        }
-
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
         let bg_color = if data.control.background_and_window_enabled() {
             (bg_hi << 1) | bg_lo
@@ -1196,12 +1119,6 @@ impl Rendering {
                 continue;
             }
 
-            if self.line.number == 0 {
-                eprintln!(
-                    "[PPU] LY=0 dot={}: SPRITE_TRIGGER x={} pixel_counter={}",
-                    self.line.dots, entry.x, match_x
-                );
-            }
             self.line.sprite_fetch = Some(SpriteFetch {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
