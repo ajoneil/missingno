@@ -568,7 +568,9 @@ impl Rendering {
     }
 
     fn vram_locked(&self) -> bool {
-        self.rendering
+        // Hardware: VRAM blocked by XYMU_RENDERINGp, cleared when WODU fires.
+        // Same signal as the XYMU component of OAM blocking.
+        self.rendering && !self.hblank_gate
     }
 
     fn oam_write_locked(&self) -> bool {
