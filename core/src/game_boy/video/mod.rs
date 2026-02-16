@@ -2,13 +2,11 @@ use bitflags::bitflags;
 use ppu::Mode;
 use screen::Screen;
 use sprites::{Sprite, SpriteId};
-use tile_maps::{TileMap, TileMapId};
 
 use control::{Control, ControlFlags};
-use memory::VideoMemory;
+use memory::{Oam, OamAddress, Vram};
 use palette::{PaletteMap, Palettes};
 use ppu::PixelProcessingUnit;
-use tiles::{TileBlock, TileBlockId};
 
 pub struct VideoTickResult {
     pub screen: Option<Screen>,
@@ -121,7 +119,7 @@ pub struct PpuAccessible {
     background_viewport: BackgroundViewportPosition,
     window: Window,
     palettes: Palettes,
-    memory: VideoMemory,
+    pub(super) oam: Oam,
 }
 
 pub struct Video {
@@ -160,7 +158,7 @@ impl Video {
                 background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
                 window: Window { y: 0, x_plus_7: 0 },
                 palettes: Palettes::default(),
-                memory: VideoMemory::new(),
+                oam: Oam::new(),
             },
 
             ppu: Some(PixelProcessingUnit::new()),
@@ -220,10 +218,10 @@ impl Video {
     /// stashing any completed screen. Does NOT run interrupt edge
     /// detection or LYC comparison — those only run at M-cycle
     /// boundaries in the main `tcycle()` path.
-    fn flush_dots(&mut self, count: u8) {
+    fn flush_dots(&mut self, count: u8, vram: &Vram) {
         if let Some(ppu) = self.ppu.as_mut() {
             for _ in 0..count {
-                if let Some(screen) = ppu.tcycle(&self.ppu_accessible) {
+                if let Some(screen) = ppu.tcycle(&self.ppu_accessible, vram) {
                     self.pending_screen = Some(screen);
                 }
             }
@@ -258,7 +256,7 @@ impl Video {
         matches!(&self.ppu, Some(ppu) if ppu.mode() == Mode::DrawingPixels)
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) {
         // Write conflict splitting requires enough deferred dots
         // (pending_dots >= 5) and the PPU actively drawing (Mode 3).
         // The execute loop sets accumulating=true for the M-cycle
@@ -287,23 +285,23 @@ impl Video {
         match register.write_conflict() {
             WriteConflict::Immediate => {
                 // SameBoy READ_OLD (N=0): advance(4). flush(4).
-                self.flush_dots(self.pending_dots - 1);
+                self.flush_dots(self.pending_dots - 1, vram);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
 
             WriteConflict::OneDotEarly => {
                 // SameBoy READ_NEW (N=1): advance(3). flush(3).
-                self.flush_dots(self.pending_dots - 2);
+                self.flush_dots(self.pending_dots - 2, vram);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
 
             WriteConflict::TwoDotsEarly => {
                 // SameBoy SCX_DMG (N=2): advance(2). flush(2).
-                self.flush_dots(self.pending_dots - 3);
+                self.flush_dots(self.pending_dots - 3, vram);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
 
             WriteConflict::PaletteDmg => {
@@ -315,11 +313,11 @@ impl Video {
                     Register::Sprite1Palette => self.ppu_accessible.palettes.sprite1.0,
                     _ => unreachable!(),
                 };
-                self.flush_dots(self.pending_dots - 3);
+                self.flush_dots(self.pending_dots - 3, vram);
                 self.write_register_immediate(&register, old | value);
-                self.flush_dots(1);
+                self.flush_dots(1, vram);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
 
             WriteConflict::LcdcDmg => {
@@ -328,21 +326,21 @@ impl Video {
                 let old = self.ppu_accessible.control.bits();
                 let transitional =
                     old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
-                self.flush_dots(self.pending_dots - 3);
+                self.flush_dots(self.pending_dots - 3, vram);
                 self.write_register_immediate(&register, transitional);
-                self.flush_dots(1);
+                self.flush_dots(1, vram);
                 self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
         }
     }
 
-    pub fn read_memory(&self, address: memory::MappedAddress) -> u8 {
-        self.ppu_accessible.memory.read(address)
+    pub fn read_oam(&self, address: OamAddress) -> u8 {
+        self.ppu_accessible.oam.read(address)
     }
 
-    pub fn write_memory(&mut self, address: memory::MappedAddress, value: u8) {
-        self.ppu_accessible.memory.write(address, value);
+    pub fn write_oam(&mut self, address: OamAddress, value: u8) {
+        self.ppu_accessible.oam.write(address, value);
     }
 
     pub fn mode(&self) -> ppu::Mode {
@@ -387,17 +385,17 @@ impl Video {
             _ => return,
         };
 
-        let mem = &mut self.ppu_accessible.memory;
-        let a = mem.oam_word(row_offset);
-        let b = mem.oam_word(row_offset - 8);
-        let c = mem.oam_word(row_offset - 4);
+        let oam = &mut self.ppu_accessible.oam;
+        let a = oam.oam_word(row_offset);
+        let b = oam.oam_word(row_offset - 8);
+        let c = oam.oam_word(row_offset - 4);
 
         let glitched = ((a ^ c) & (b ^ c)) ^ c;
-        mem.set_oam_word(row_offset, glitched);
+        oam.set_oam_word(row_offset, glitched);
 
         for i in 2..8u8 {
-            let val = mem.oam_byte(row_offset - 8 + i);
-            mem.set_oam_byte(row_offset + i, val);
+            let val = oam.oam_byte(row_offset - 8 + i);
+            oam.set_oam_byte(row_offset + i, val);
         }
     }
 
@@ -415,26 +413,26 @@ impl Video {
             _ => return,
         };
 
-        let mem = &mut self.ppu_accessible.memory;
+        let oam = &mut self.ppu_accessible.oam;
 
         match r & 0x18 {
             0x10 => {
                 // Secondary read corruption: affects row r-1, copies to r-2 and r.
                 // Guard: row must be < 0x98 (SameBoy check).
                 if r < 0x98 {
-                    let a = mem.oam_word(r - 16); // two rows back
-                    let b = mem.oam_word(r - 8); // preceding row (corrupted)
-                    let c = mem.oam_word(r); // current row
-                    let d = mem.oam_word(r - 4); // third word of preceding row
+                    let a = oam.oam_word(r - 16); // two rows back
+                    let b = oam.oam_word(r - 8); // preceding row (corrupted)
+                    let c = oam.oam_word(r); // current row
+                    let d = oam.oam_word(r - 4); // third word of preceding row
 
                     let glitched = (b & (a | c | d)) | (a & c & d);
-                    mem.set_oam_word(r - 8, glitched);
+                    oam.set_oam_word(r - 8, glitched);
 
                     // Copy preceding row to both two-rows-back and current row
                     for i in 0..8u8 {
-                        let val = mem.oam_byte(r - 8 + i);
-                        mem.set_oam_byte(r - 16 + i, val);
-                        mem.set_oam_byte(r + i, val);
+                        let val = oam.oam_byte(r - 8 + i);
+                        oam.set_oam_byte(r - 16 + i, val);
+                        oam.set_oam_byte(r + i, val);
                     }
                 }
             }
@@ -443,24 +441,24 @@ impl Video {
                 if r < 0x98 {
                     if r == 0x40 {
                         // Quaternary: 8 inputs (DMG ignores first word of OAM)
-                        let b = mem.oam_word(r); // current row
-                        let c = mem.oam_word(r - 4); // third word of preceding row
-                        let d = mem.oam_word(r - 6); // second word of preceding row (reversed endian offset)
-                        let e = mem.oam_word(r - 8); // preceding row
-                        let f = mem.oam_word(r - 14); // fourth word of two-rows-back (offset)
-                        let g = mem.oam_word(r - 16); // two rows back
-                        let h = mem.oam_word(r - 32); // four rows back
+                        let b = oam.oam_word(r); // current row
+                        let c = oam.oam_word(r - 4); // third word of preceding row
+                        let d = oam.oam_word(r - 6); // second word of preceding row (reversed endian offset)
+                        let e = oam.oam_word(r - 8); // preceding row
+                        let f = oam.oam_word(r - 14); // fourth word of two-rows-back (offset)
+                        let g = oam.oam_word(r - 16); // two rows back
+                        let h = oam.oam_word(r - 32); // four rows back
 
                         // DMG quaternary: `(e & (h | g | (~d & f) | c | b)) | (c & g & h)`
                         let glitched = (e & (h | g | (!d & f) | c | b)) | (c & g & h);
-                        mem.set_oam_word(r - 8, glitched);
+                        oam.set_oam_word(r - 8, glitched);
                     } else {
                         // Tertiary read corruption
-                        let a = mem.oam_word(r); // current row
-                        let b = mem.oam_word(r - 4); // third word of preceding row
-                        let c = mem.oam_word(r - 8); // preceding row (corrupted)
-                        let d = mem.oam_word(r - 16); // two rows back
-                        let e = mem.oam_word(r - 32); // four rows back
+                        let a = oam.oam_word(r); // current row
+                        let b = oam.oam_word(r - 4); // third word of preceding row
+                        let c = oam.oam_word(r - 8); // preceding row (corrupted)
+                        let d = oam.oam_word(r - 16); // two rows back
+                        let e = oam.oam_word(r - 32); // four rows back
 
                         let glitched = match r {
                             // read_2: `(c & (a | b | d | e)) | (a & b & d & e)`
@@ -470,32 +468,32 @@ impl Video {
                             // read_1: `c | (a & b & d & e)`
                             _ => c | (a & b & d & e),
                         };
-                        mem.set_oam_word(r - 8, glitched);
+                        oam.set_oam_word(r - 8, glitched);
                     }
 
                     // Copy preceding row to both two-rows-back and current row
                     for i in 0..8u8 {
-                        let val = mem.oam_byte(r - 8 + i);
-                        mem.set_oam_byte(r - 16 + i, val);
-                        mem.set_oam_byte(r + i, val);
+                        let val = oam.oam_byte(r - 8 + i);
+                        oam.set_oam_byte(r - 16 + i, val);
+                        oam.set_oam_byte(r + i, val);
                     }
                 }
             }
             _ => {
                 // Simple read corruption (0x08, 0x18): affects current row
                 // and preceding row's first word.
-                let a = mem.oam_word(r);
-                let b = mem.oam_word(r - 8);
-                let c = mem.oam_word(r - 4);
+                let a = oam.oam_word(r);
+                let b = oam.oam_word(r - 8);
+                let c = oam.oam_word(r - 4);
 
                 let glitched = b | (a & c);
-                mem.set_oam_word(r - 8, glitched);
-                mem.set_oam_word(r, glitched);
+                oam.set_oam_word(r - 8, glitched);
+                oam.set_oam_word(r, glitched);
 
                 // Copy preceding row to current row
                 for i in 0..8u8 {
-                    let val = mem.oam_byte(r - 8 + i);
-                    mem.set_oam_byte(r + i, val);
+                    let val = oam.oam_byte(r - 8 + i);
+                    oam.set_oam_byte(r + i, val);
                 }
             }
         }
@@ -503,8 +501,8 @@ impl Video {
         // Special case: row 0x80 copies to row 0
         if r == 0x80 {
             for i in 0..8u8 {
-                let val = mem.oam_byte(r + i);
-                mem.set_oam_byte(i, val);
+                let val = oam.oam_byte(r + i);
+                oam.set_oam_byte(i, val);
             }
         }
     }
@@ -564,10 +562,10 @@ impl Video {
     /// Stop accumulating and flush all pending dots. Called by the
     /// execute loop when a tentative accumulation is cancelled (the
     /// instruction turned out not to write a PPU register).
-    pub fn stop_accumulating_and_flush(&mut self) {
+    pub fn stop_accumulating_and_flush(&mut self, vram: &Vram) {
         self.accumulating = false;
         if self.pending_dots > 0 {
-            self.flush_dots(self.pending_dots);
+            self.flush_dots(self.pending_dots, vram);
         }
     }
 
@@ -580,7 +578,7 @@ impl Video {
     ///
     /// Interrupt edge detection and LYC comparison only run on
     /// M-cycle boundaries (when `is_mcycle` is true).
-    pub fn tcycle(&mut self, is_mcycle: bool) -> VideoTickResult {
+    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> VideoTickResult {
         let mut result = VideoTickResult {
             screen: None,
             request_vblank: false,
@@ -595,7 +593,12 @@ impl Video {
             if self.accumulating {
                 // Dots are deferred for write conflict splitting.
                 self.pending_dots += 1;
-            } else if let Some(screen) = self.ppu.as_mut().unwrap().tcycle(&self.ppu_accessible) {
+            } else if let Some(screen) = self
+                .ppu
+                .as_mut()
+                .unwrap()
+                .tcycle(&self.ppu_accessible, vram)
+            {
                 // Normal path: tick PPU immediately.
                 result.screen = Some(screen);
                 result.request_vblank = true;
@@ -610,7 +613,7 @@ impl Video {
             // flush — the execute loop will flush via write_register
             // or stop_accumulating_and_flush.
             if !self.accumulating && self.pending_dots > 0 {
-                self.flush_dots(self.pending_dots);
+                self.flush_dots(self.pending_dots, vram);
             }
 
             // Deliver any screen completed during flush.
@@ -651,15 +654,7 @@ impl Video {
         &self.ppu_accessible.palettes
     }
 
-    pub fn tile_block(&self, block: TileBlockId) -> &TileBlock {
-        self.ppu_accessible.memory.tile_block(block)
-    }
-
-    pub fn tile_map(&self, map: TileMapId) -> &TileMap {
-        self.ppu_accessible.memory.tile_map(map)
-    }
-
     pub fn sprite(&self, sprite: SpriteId) -> &Sprite {
-        self.ppu_accessible.memory.sprite(sprite)
+        self.ppu_accessible.oam.sprite(sprite)
     }
 }

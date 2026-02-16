@@ -19,6 +19,7 @@ use crate::app::{
 };
 use missingno_core::game_boy::video::{
     Video,
+    memory::Vram,
     palette::Palette,
     sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     tiles::{TileAddressMode, TileIndex},
@@ -55,6 +56,7 @@ impl SpritesPane {
     pub fn content<'a>(
         &'a self,
         video: &'a Video,
+        vram: &'a Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
         pane(
@@ -79,7 +81,7 @@ impl SpritesPane {
                     toggler(self.on_screen_only)
                         .label("Show on-screen only")
                         .on_toggle(|on| Message::ToggleOnScreenOnly(on).into()),
-                    self.sprites(video, palette)
+                    self.sprites(video, vram, palette)
                 ]
                 .width(Fill)
                 .spacing(s())
@@ -109,7 +111,12 @@ impl SpritesPane {
         .into()
     }
 
-    fn sprites<'a>(&'a self, video: &'a Video, palette: &Palette) -> Element<'a, app::Message> {
+    fn sprites<'a>(
+        &'a self,
+        video: &'a Video,
+        vram: &'a Vram,
+        palette: &Palette,
+    ) -> Element<'a, app::Message> {
         let mut sprites = (0..40)
             .map(|i| video.sprite(SpriteId(i)))
             .filter(|s| {
@@ -125,7 +132,7 @@ impl SpritesPane {
         if sprites.peek().is_none() {
             text::m("No on-screen sprites").into()
         } else {
-            Row::with_children(sprites.map(|s| self.sprite(video, s, palette)))
+            Row::with_children(sprites.map(|s| self.sprite(video, vram, s, palette)))
                 .spacing(l())
                 .wrap()
                 .into()
@@ -135,13 +142,14 @@ impl SpritesPane {
     fn sprite<'a>(
         &'a self,
         video: &'a Video,
+        vram: &'a Vram,
         sprite: &Sprite,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
         row![
             self.priority(sprite.attributes.priority()),
             column![
-                self.tiles(sprite, video, palette),
+                self.tiles(sprite, vram, video, palette),
                 self.position(&sprite.position, video.control().sprite_size())
             ]
             .spacing(xs())
@@ -154,6 +162,7 @@ impl SpritesPane {
     fn tiles(
         &self,
         sprite: &Sprite,
+        vram: &Vram,
         video: &Video,
         palette: &Palette,
     ) -> Element<'_, app::Message> {
@@ -163,7 +172,7 @@ impl SpritesPane {
 
         match video.control().sprite_size() {
             SpriteSize::Single => tile_flip(
-                video.tile_block(tile_block_id).tile(tile_id),
+                vram.tile_block(tile_block_id).tile(tile_id),
                 flip_x,
                 flip_y,
                 palette,
@@ -173,7 +182,7 @@ impl SpritesPane {
             .into(),
             SpriteSize::Double => {
                 let tile1 = tile_flip(
-                    video.tile_block(tile_block_id).tile(tile_id),
+                    vram.tile_block(tile_block_id).tile(tile_id),
                     flip_x,
                     flip_y,
                     palette,
@@ -182,8 +191,7 @@ impl SpritesPane {
                 .height(48);
 
                 let tile2 = tile_flip(
-                    video
-                        .tile_block(tile_block_id)
+                    vram.tile_block(tile_block_id)
                         .tile(TileIndex(tile_id.0 + 1)),
                     flip_x,
                     flip_y,

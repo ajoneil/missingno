@@ -2,6 +2,7 @@ use core::fmt;
 
 use crate::game_boy::video::{
     PpuAccessible,
+    memory::Vram,
     palette::PaletteIndex,
     screen::{self, Screen},
     sprites::Sprite,
@@ -291,7 +292,7 @@ impl Line {
 
     fn find_sprites(&mut self, data: &PpuAccessible) {
         self.sprites = data
-            .memory
+            .oam
             .sprites()
             .iter()
             .filter(|sprite| {
@@ -406,7 +407,7 @@ impl Rendering {
     }
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
-    fn dot(&mut self, data: &PpuAccessible) -> bool {
+    fn dot(&mut self, data: &PpuAccessible, vram: &Vram) -> bool {
         if self.line.dots == 0 {
             self.line.find_sprites(data);
         }
@@ -421,7 +422,7 @@ impl Rendering {
             // Mode 3 (drawing) and Mode 0 (HBlank)
             let was_drawing = self.line.pixels_drawn < screen::PIXELS_PER_LINE;
             if was_drawing && self.line.dots >= self.line.rendering_start_dot {
-                self.dot_mode3(data);
+                self.dot_mode3(data, vram);
             }
             self.line.dots += 1;
 
@@ -441,7 +442,7 @@ impl Rendering {
     }
 
     /// One dot of Mode 3 pixel FIFO processing.
-    fn dot_mode3(&mut self, data: &PpuAccessible) {
+    fn dot_mode3(&mut self, data: &PpuAccessible, vram: &Vram) {
         if let Some(phase) = self.line.startup_fetch {
             match phase {
                 StartupFetch::PipelinePriming { dots_remaining } => {
@@ -461,7 +462,7 @@ impl Rendering {
                     };
                 }
                 StartupFetch::Discarded | StartupFetch::FirstTile => {
-                    self.advance_bg_fetcher(data);
+                    self.advance_bg_fetcher(data, vram);
                     self.line.position_in_line += 1;
                     self.check_window_trigger(data);
 
@@ -502,7 +503,7 @@ impl Rendering {
                     // This is the hardware behavior: the fetcher keeps
                     // stepping through its enum states, doing real tile
                     // fetches that may push pixels to the FIFO.
-                    self.advance_bg_fetcher(data);
+                    self.advance_bg_fetcher(data, vram);
 
                     // Wait exits when BOTH conditions are met:
                     // 1. The fetcher has completed GetTileDataHigh (reached Push)
@@ -521,12 +522,12 @@ impl Rendering {
                         // exit — the transition itself does not consume a dot.
                         let sf = self.line.sprite_fetch.as_mut().unwrap();
                         sf.phase = SpriteFetchPhase::FetchingData;
-                        Self::advance_sprite_fetch(sf, self.line.number, data);
+                        Self::advance_sprite_fetch(sf, self.line.number, data, vram);
                     }
                 }
                 SpriteFetchPhase::FetchingData => {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
-                    Self::advance_sprite_fetch(sf, self.line.number, data);
+                    Self::advance_sprite_fetch(sf, self.line.number, data, vram);
                     if sf.step == SpriteStep::GetDataHigh && sf.dot_in_step == 2 {
                         Self::merge_sprite_into_obj_fifo(
                             sf,
@@ -545,12 +546,12 @@ impl Rendering {
             if !self.line.bg_fifo.is_empty() {
                 self.shift_pixel_out(data);
             }
-            self.advance_bg_fetcher(data);
+            self.advance_bg_fetcher(data, vram);
         }
     }
 
     /// Advance the background tile fetcher by one dot.
-    fn advance_bg_fetcher(&mut self, data: &PpuAccessible) {
+    fn advance_bg_fetcher(&mut self, data: &PpuAccessible, vram: &Vram) {
         let fetcher = &mut self.line.fetcher;
 
         match fetcher.step {
@@ -575,7 +576,7 @@ impl Rendering {
                     } else {
                         data.control.background_tile_map()
                     };
-                    let map = data.memory.tile_map(map_id);
+                    let map = vram.tile_map(map_id);
                     fetcher.tile_index = map.get_tile(map_x, map_y).0;
 
                     fetcher.dot_in_step = 0;
@@ -595,7 +596,7 @@ impl Rendering {
                         self.line.number.wrapping_add(data.background_viewport.y) % 8
                     };
 
-                    let block = data.memory.tile_block(block_id);
+                    let block = vram.tile_block(block_id);
                     fetcher.tile_data_low =
                         block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2];
 
@@ -616,7 +617,7 @@ impl Rendering {
                         self.line.number.wrapping_add(data.background_viewport.y) % 8
                     };
 
-                    let block = data.memory.tile_block(block_id);
+                    let block = vram.tile_block(block_id);
                     fetcher.tile_data_high =
                         block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + 1];
 
@@ -655,7 +656,12 @@ impl Rendering {
     }
 
     /// Advance the sprite fetch pipeline by one dot.
-    fn advance_sprite_fetch(sf: &mut SpriteFetch, line_number: u8, data: &PpuAccessible) {
+    fn advance_sprite_fetch(
+        sf: &mut SpriteFetch,
+        line_number: u8,
+        data: &PpuAccessible,
+        vram: &Vram,
+    ) {
         match sf.step {
             SpriteStep::GetTile => {
                 if sf.dot_in_step == 0 {
@@ -691,7 +697,7 @@ impl Rendering {
                         (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
                     };
 
-                    let block = data.memory.tile_block(final_block);
+                    let block = vram.tile_block(final_block);
                     sf.tile_data_low = block.data[final_idx.0 as usize * 16 + final_y as usize * 2];
 
                     sf.dot_in_step = 0;
@@ -723,7 +729,7 @@ impl Rendering {
                         (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
                     };
 
-                    let block = data.memory.tile_block(final_block);
+                    let block = vram.tile_block(final_block);
                     sf.tile_data_high =
                         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + 1];
                     // Signal completion. Use dot_in_step = 2 to distinguish
@@ -1073,12 +1079,12 @@ impl PixelProcessingUnit {
 
     /// Advance the PPU by one dot (T-cycle). Returns a completed screen
     /// when a full frame finishes rendering.
-    pub fn tcycle(&mut self, data: &PpuAccessible) -> Option<Screen> {
+    pub fn tcycle(&mut self, data: &PpuAccessible, vram: &Vram) -> Option<Screen> {
         let mut screen = None;
 
         match self {
             PixelProcessingUnit::Rendering(rendering) => {
-                if rendering.dot(data) {
+                if rendering.dot(data, vram) {
                     screen = Some(rendering.screen.clone());
                     *self = PixelProcessingUnit::BetweenFrames(0);
                 }

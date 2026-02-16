@@ -275,11 +275,13 @@ impl DebuggerPanes {
                 PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
                 PaneInstance::Cpu(cpu) => cpu.content(debugger),
                 PaneInstance::Video(video) => video.content(debugger.game_boy().video(), pal),
-                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().video(), pal),
+                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
                 PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(debugger.game_boy().video(), pal)
+                    tile_map.content(debugger.game_boy().video(), debugger.game_boy().vram(), pal)
                 }
-                PaneInstance::Sprites(sprites) => sprites.content(debugger.game_boy().video(), pal),
+                PaneInstance::Sprites(sprites) => {
+                    sprites.content(debugger.game_boy().video(), debugger.game_boy().vram(), pal)
+                }
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
                 PaneInstance::Playback(playback) => playback.content(app_debugger),
             },

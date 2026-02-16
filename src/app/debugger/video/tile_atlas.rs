@@ -4,7 +4,9 @@ use iced::{
 };
 
 use crate::app::{Message, texture_renderer::TextureRenderer};
-use missingno_core::game_boy::video::{palette::Palette, tiles::TileBlock};
+use missingno_core::game_boy::video::{
+    control::Control, memory::Vram, palette::Palette, tiles::TileBlock,
+};
 
 /// Renders a grid of tiles as a single texture atlas
 pub fn tile_block_atlas(block: &TileBlock, palette: &Palette) -> Element<'static, Message> {
@@ -46,7 +48,8 @@ pub fn tile_block_atlas(block: &TileBlock, palette: &Palette) -> Element<'static
 /// Renders a tile map as a single texture atlas
 pub fn tile_map_atlas(
     tile_map: &missingno_core::game_boy::video::tile_maps::TileMap,
-    video: &missingno_core::game_boy::video::Video,
+    control: Control,
+    vram: &Vram,
     palette: &Palette,
 ) -> Element<'static, Message> {
     // 32 tiles wide × 32 tiles tall
@@ -64,9 +67,8 @@ pub fn tile_map_atlas(
             // For each tile in this row
             for tile_col in 0..32 {
                 let map_tile_index = tile_map.get_tile(tile_col, tile_row);
-                let (block, mapped_index) =
-                    video.control().tile_address_mode().tile(map_tile_index);
-                let tile = video.tile_block(block).tile(mapped_index);
+                let (block, mapped_index) = control.tile_address_mode().tile(map_tile_index);
+                let tile = vram.tile_block(block).tile(mapped_index);
 
                 // For each pixel in this tile's row
                 for pixel_x in 0..8 {

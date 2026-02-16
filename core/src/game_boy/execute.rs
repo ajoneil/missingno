@@ -129,7 +129,9 @@ impl GameBoy {
             if tentative && !(op_count == 0 && known_ppu_write) {
                 // Not a 0-operand PPU write — cancel tentative
                 // accumulation and flush the captured T0 dot.
-                self.mapped.video.stop_accumulating_and_flush();
+                self.mapped
+                    .video
+                    .stop_accumulating_and_flush(&self.mapped.vram_bus.vram);
             }
 
             new_screen |= self.tick_hardware_tcycle();
@@ -158,7 +160,9 @@ impl GameBoy {
             if deferred_addr_write {
                 let target = (bytes[2] as u16) << 8 | bytes[1] as u16;
                 if !is_ppu_register(target) {
-                    self.mapped.video.stop_accumulating_and_flush();
+                    self.mapped
+                        .video
+                        .stop_accumulating_and_flush(&self.mapped.vram_bus.vram);
                 }
             }
 
@@ -274,7 +278,10 @@ impl GameBoy {
 
         // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
         // detection and LYC comparison only run on M-cycle boundaries.
-        let video_result = self.mapped.video.tcycle(is_mcycle_boundary);
+        let video_result = self
+            .mapped
+            .video
+            .tcycle(is_mcycle_boundary, &self.mapped.vram_bus.vram);
         if video_result.request_vblank {
             self.mapped
                 .interrupts
@@ -309,14 +316,17 @@ impl GameBoy {
         // bus latch so that CPU reads from the same bus see this value.
         if let Some((src_addr, dst_offset)) = self.mapped.dma.mcycle() {
             let byte = self.mapped.read_dma_source(src_addr);
-            let dst = video::memory::MappedAddress::map(0xfe00 + dst_offset as u16);
-            self.mapped.video.write_memory(dst, byte);
+            let oam_addr = match video::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
+                video::memory::MappedAddress::Oam(addr) => addr,
+                _ => unreachable!(),
+            };
+            self.mapped.video.write_oam(oam_addr, byte);
             match Bus::of(src_addr) {
                 Some(Bus::External) => {
                     self.mapped.external.drive(byte);
                 }
                 Some(Bus::Vram) => {
-                    self.mapped.vram_bus = byte;
+                    self.mapped.vram_bus.drive(byte);
                 }
                 None => {}
             }

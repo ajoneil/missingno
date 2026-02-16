@@ -3,7 +3,7 @@ use cartridge::Cartridge;
 use cpu::Cpu;
 use dma::Dma;
 use joypad::{Button, Joypad};
-use memory::ExternalBus;
+use memory::{ExternalBus, VramBus};
 use video::{Video, screen::Screen};
 
 pub mod audio;
@@ -34,9 +34,7 @@ pub struct MemoryMapped {
     dma: Dma,
     sgb: Option<sgb::Sgb>,
 
-    /// Retained value on the VRAM data bus (0x8000–0x9FFF).
-    /// Updated on every CPU read from or write to a VRAM address.
-    vram_bus: u8,
+    vram_bus: VramBus,
 }
 
 pub struct GameBoy {
@@ -72,7 +70,7 @@ impl GameBoy {
                 timers: timers::Timers::new(),
                 dma: Dma::new(),
                 sgb,
-                vram_bus: 0xFF,
+                vram_bus: VramBus::new(),
             },
         }
     }
@@ -92,7 +90,7 @@ impl GameBoy {
         self.mapped.serial = serial_transfer::Registers::new();
         self.mapped.timers = timers::Timers::new();
         self.mapped.dma = Dma::new();
-        self.mapped.vram_bus = 0xFF;
+        self.mapped.vram_bus = VramBus::new();
         self.mapped.sgb = if self.mapped.external.cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {
@@ -114,6 +112,10 @@ impl GameBoy {
 
     pub fn video(&self) -> &Video {
         &self.mapped.video
+    }
+
+    pub fn vram(&self) -> &video::memory::Vram {
+        &self.mapped.vram_bus.vram
     }
 
     pub fn audio(&self) -> &Audio {

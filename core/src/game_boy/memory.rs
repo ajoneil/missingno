@@ -5,6 +5,7 @@ use crate::game_boy::{
 };
 
 use super::cartridge::Cartridge;
+use video::memory::{OamAddress, Vram, VramAddress};
 
 /// M-cycles before the external data bus decays to 0xFF.
 ///
@@ -81,6 +82,43 @@ impl ExternalBus {
     }
 }
 
+/// The VRAM data bus connects the SoC to video RAM (0x8000–0x9FFF).
+/// The bus retains its last driven value as a latch (no decay).
+pub struct VramBus {
+    pub(super) vram: Vram,
+    /// Retained value on the VRAM data bus.
+    latch: u8,
+}
+
+impl VramBus {
+    pub fn new() -> Self {
+        Self {
+            vram: Vram::new(),
+            latch: 0xFF,
+        }
+    }
+
+    /// Read from VRAM. Does NOT update the latch.
+    pub fn read(&self, address: VramAddress) -> u8 {
+        self.vram.read(address)
+    }
+
+    /// Write to VRAM.
+    pub fn write(&mut self, address: VramAddress, value: u8) {
+        self.vram.write(address, value);
+    }
+
+    /// Update the bus latch to `value`.
+    pub fn drive(&mut self, value: u8) {
+        self.latch = value;
+    }
+
+    /// Return the current latch value.
+    pub fn latch(&self) -> u8 {
+        self.latch
+    }
+}
+
 /// Which physical data bus an address resides on, if any.
 ///
 /// The Game Boy has two data buses:
@@ -115,7 +153,8 @@ pub enum MappedAddress {
     Cartridge(u16),
     WorkRam(u16),
     HighRam(u8),
-    VideoRam(video::memory::MappedAddress),
+    Vram(VramAddress),
+    Oam(OamAddress),
     JoypadRegister,
     SerialTransferRegister(serial_transfer::Register),
     TimerRegister(timers::Register),
@@ -131,11 +170,17 @@ impl MappedAddress {
     pub fn map(address: u16) -> Self {
         match address {
             0x0000..=0x7fff => Self::Cartridge(address),
-            0x8000..=0x9fff => Self::VideoRam(video::memory::MappedAddress::map(address)),
+            0x8000..=0x9fff => match video::memory::MappedAddress::map(address) {
+                video::memory::MappedAddress::Vram(addr) => Self::Vram(addr),
+                video::memory::MappedAddress::Oam(_) => unreachable!(),
+            },
             0xa000..=0xbfff => Self::Cartridge(address),
             0xc000..=0xdfff => Self::WorkRam(address - 0xc000),
             0xe000..=0xfdff => Self::WorkRam(address - 0xe000),
-            0xfe00..=0xfe9f => Self::VideoRam(video::memory::MappedAddress::map(address)),
+            0xfe00..=0xfe9f => match video::memory::MappedAddress::map(address) {
+                video::memory::MappedAddress::Oam(addr) => Self::Oam(addr),
+                video::memory::MappedAddress::Vram(_) => unreachable!(),
+            },
             0xfea0..=0xfeff => Self::Unmapped,
             0xff00 => Self::JoypadRegister,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
@@ -192,7 +237,7 @@ impl MemoryMapped {
             if Bus::of(address) == Some(bus) {
                 return match bus {
                     Bus::External => self.external.latch(),
-                    Bus::Vram => self.vram_bus,
+                    Bus::Vram => self.vram_bus.latch(),
                 };
             }
         }
@@ -226,7 +271,7 @@ impl MemoryMapped {
                 self.external.drive(value);
             }
             Some(Bus::Vram) => {
-                self.vram_bus = value;
+                self.vram_bus.drive(value);
             }
             None => {}
         }
@@ -247,7 +292,7 @@ impl MemoryMapped {
             if Bus::of(address) == Some(bus) {
                 return match bus {
                     Bus::External => self.external.latch(),
-                    Bus::Vram => self.vram_bus,
+                    Bus::Vram => self.vram_bus.latch(),
                 };
             }
         }
@@ -285,7 +330,8 @@ impl MemoryMapped {
         match address {
             MappedAddress::Cartridge(_) | MappedAddress::WorkRam(_) => self.external.read(address),
             MappedAddress::HighRam(offset) => self.high_ram[offset as usize],
-            MappedAddress::VideoRam(address) => self.video.read_memory(address),
+            MappedAddress::Vram(address) => self.vram_bus.read(address),
+            MappedAddress::Oam(address) => self.video.read_oam(address),
             MappedAddress::JoypadRegister => {
                 let mut value = self.joypad.read_register();
                 if let Some(sgb) = &self.sgb {
@@ -376,7 +422,7 @@ impl MemoryMapped {
                 self.external.drive(value);
             }
             Some(Bus::Vram) => {
-                self.vram_bus = value;
+                self.vram_bus.drive(value);
             }
             None => {}
         }
@@ -390,7 +436,8 @@ impl MemoryMapped {
                 self.external.write(address, value)
             }
             MappedAddress::HighRam(offset) => self.high_ram[offset as usize] = value,
-            MappedAddress::VideoRam(address) => self.video.write_memory(address, value),
+            MappedAddress::Vram(address) => self.vram_bus.write(address, value),
+            MappedAddress::Oam(address) => self.video.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 if let Some(sgb) = &mut self.sgb {
                     sgb.write_joypad(value);
@@ -415,7 +462,10 @@ impl MemoryMapped {
             }
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
-            MappedAddress::VideoRegister(register) => self.video.write_register(register, value),
+            MappedAddress::VideoRegister(register) => {
+                self.video
+                    .write_register(register, value, &self.vram_bus.vram)
+            }
             MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {

@@ -4,57 +4,40 @@ use super::{
     tiles::{TileBlock, TileBlockId, TileIndex},
 };
 
-pub struct VideoMemory {
+/// VRAM: tile data and tile maps. Physically on the VRAM data bus
+/// (0x8000–0x9FFF), separate from OAM.
+pub struct Vram {
     tiles: [TileBlock; 3],
     tile_maps: [TileMap; 2],
-    sprites: [Sprite; 40],
 }
 
-impl VideoMemory {
+impl Vram {
     pub fn new() -> Self {
         Self {
             tiles: [TileBlock::new(); 3],
             tile_maps: [TileMap::new(); 2],
-            sprites: [Sprite::new(); 40],
         }
     }
 
-    pub fn read(&self, address: MappedAddress) -> u8 {
+    pub fn read(&self, address: VramAddress) -> u8 {
         match address {
-            MappedAddress::Tile(TileAddress { block, offset }) => {
+            VramAddress::Tile(TileAddress { block, offset }) => {
                 self.tiles[block.0 as usize].data[offset as usize]
             }
-            MappedAddress::TileMap(TileMapAddress { map, offset }) => {
+            VramAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize].0
-            }
-            MappedAddress::Sprite(SpriteAddress { sprite, byte }) => {
-                let sprite = &self.sprites[sprite.0 as usize];
-                match byte {
-                    SpriteByte::PositionY => sprite.position.y_plus_16,
-                    SpriteByte::PositionX => sprite.position.x_plus_8,
-                    SpriteByte::Tile => sprite.tile.0,
-                    SpriteByte::Attributes => sprite.attributes.0,
-                }
             }
         }
     }
 
-    pub fn write(&mut self, address: MappedAddress, value: u8) {
+    pub fn write(&mut self, address: VramAddress, value: u8) {
         match address {
-            MappedAddress::Tile(TileAddress { block, offset }) => {
+            VramAddress::Tile(TileAddress { block, offset }) => {
                 self.tiles[block.0 as usize].data[offset as usize] = value;
             }
-            MappedAddress::TileMap(TileMapAddress { map, offset }) => {
+            VramAddress::TileMap(TileMapAddress { map, offset }) => {
                 self.tile_maps[map.0 as usize].data[offset as usize] = TileIndex(value);
             }
-            MappedAddress::Sprite(SpriteAddress { sprite, byte }) => match byte {
-                SpriteByte::PositionY => self.sprites[sprite.0 as usize].position.y_plus_16 = value,
-                SpriteByte::PositionX => self.sprites[sprite.0 as usize].position.x_plus_8 = value,
-                SpriteByte::Tile => self.sprites[sprite.0 as usize].tile = TileIndex(value),
-                SpriteByte::Attributes => {
-                    self.sprites[sprite.0 as usize].attributes = sprites::Attributes(value)
-                }
-            },
         }
     }
 
@@ -64,6 +47,45 @@ impl VideoMemory {
 
     pub fn tile_map(&self, id: TileMapId) -> &TileMap {
         &self.tile_maps[id.0 as usize]
+    }
+}
+
+/// OAM: sprite attribute memory. SoC-internal, not on either data bus.
+/// 40 sprites × 4 bytes = 160 bytes (0xFE00–0xFE9F).
+pub struct Oam {
+    sprites: [Sprite; 40],
+}
+
+impl Oam {
+    pub fn new() -> Self {
+        Self {
+            sprites: [Sprite::new(); 40],
+        }
+    }
+
+    pub fn read(&self, address: OamAddress) -> u8 {
+        let sprite = &self.sprites[address.sprite.0 as usize];
+        match address.byte {
+            SpriteByte::PositionY => sprite.position.y_plus_16,
+            SpriteByte::PositionX => sprite.position.x_plus_8,
+            SpriteByte::Tile => sprite.tile.0,
+            SpriteByte::Attributes => sprite.attributes.0,
+        }
+    }
+
+    pub fn write(&mut self, address: OamAddress, value: u8) {
+        match address.byte {
+            SpriteByte::PositionY => {
+                self.sprites[address.sprite.0 as usize].position.y_plus_16 = value
+            }
+            SpriteByte::PositionX => {
+                self.sprites[address.sprite.0 as usize].position.x_plus_8 = value
+            }
+            SpriteByte::Tile => self.sprites[address.sprite.0 as usize].tile = TileIndex(value),
+            SpriteByte::Attributes => {
+                self.sprites[address.sprite.0 as usize].attributes = sprites::Attributes(value)
+            }
+        }
     }
 
     pub fn sprites(&self) -> &[Sprite] {
@@ -112,11 +134,18 @@ impl VideoMemory {
     }
 }
 
+/// Address on the VRAM bus (0x8000–0x9FFF).
 #[derive(Debug, Clone)]
-pub enum MappedAddress {
+pub enum VramAddress {
     Tile(TileAddress),
     TileMap(TileMapAddress),
-    Sprite(SpriteAddress),
+}
+
+/// Address in OAM (0xFE00–0xFE9F).
+#[derive(Debug, Clone)]
+pub struct OamAddress {
+    pub sprite: SpriteId,
+    pub byte: SpriteByte,
 }
 
 #[derive(Debug, Clone)]
@@ -132,7 +161,7 @@ pub struct TileMapAddress {
 }
 
 #[derive(Debug, Clone)]
-enum SpriteByte {
+pub enum SpriteByte {
     PositionX,
     PositionY,
     Tile,
@@ -140,35 +169,35 @@ enum SpriteByte {
 }
 
 #[derive(Debug, Clone)]
-pub struct SpriteAddress {
-    sprite: SpriteId,
-    byte: SpriteByte,
+pub enum MappedAddress {
+    Vram(VramAddress),
+    Oam(OamAddress),
 }
 
 impl MappedAddress {
     pub fn map(address: u16) -> Self {
         match address {
-            0x8000..=0x87ff => Self::Tile(TileAddress {
+            0x8000..=0x87ff => Self::Vram(VramAddress::Tile(TileAddress {
                 block: TileBlockId(0),
                 offset: address - 0x8000,
-            }),
-            0x8800..=0x8fff => Self::Tile(TileAddress {
+            })),
+            0x8800..=0x8fff => Self::Vram(VramAddress::Tile(TileAddress {
                 block: TileBlockId(1),
                 offset: address - 0x8800,
-            }),
-            0x9000..=0x97ff => Self::Tile(TileAddress {
+            })),
+            0x9000..=0x97ff => Self::Vram(VramAddress::Tile(TileAddress {
                 block: TileBlockId(2),
                 offset: address - 0x9000,
-            }),
-            0x9800..=0x9bff => Self::TileMap(TileMapAddress {
+            })),
+            0x9800..=0x9bff => Self::Vram(VramAddress::TileMap(TileMapAddress {
                 map: TileMapId(0),
                 offset: address - 0x9800,
-            }),
-            0x9c00..=0x9fff => Self::TileMap(TileMapAddress {
+            })),
+            0x9c00..=0x9fff => Self::Vram(VramAddress::TileMap(TileMapAddress {
                 map: TileMapId(1),
                 offset: address - 0x9c00,
-            }),
-            0xfe00..=0xfe9f => Self::Sprite(SpriteAddress {
+            })),
+            0xfe00..=0xfe9f => Self::Oam(OamAddress {
                 sprite: SpriteId(((address - 0xfe00) / 4) as u8),
                 byte: match (address - 0xfe00) % 4 {
                     0 => SpriteByte::PositionY,
