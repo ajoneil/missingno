@@ -147,7 +147,7 @@ receipts/studies/<YYYY-MM-DD-HHMM>-<short-name>/
 └── logs/
 ```
 
-Use the date and time (to the minute) and a short kebab-case name describing the area being studied (e.g., `2026-02-16-1400-ppu-fetcher-states`, `2026-02-16-0930-timer-overflow-behavior`).
+Use the date and time (to the minute) and a short kebab-case name describing the area being studied (e.g., `2026-02-16-1400-ppu-fetcher-states`, `2026-02-16-0930-timer-overflow-behavior`). **Get the current time from `date +%Y-%m-%d-%H%M`** — do not guess or estimate the timestamp.
 
 ### session.md
 

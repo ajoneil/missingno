@@ -259,7 +259,7 @@ receipts/investigations/<YYYY-MM-DD-HHMM>-<short-name>/
 └── ...               # Any other artifacts (diffs, screenshots, profiles)
 ```
 
-Use the date and time (to the minute) of the investigation and a short kebab-case name describing the issue (e.g. `2026-02-13-1430-stat-mode0-timing`, `2026-02-13-0915-slow-test-builds`).
+Use the date and time (to the minute) of the investigation and a short kebab-case name describing the issue (e.g. `2026-02-13-1430-stat-mode0-timing`, `2026-02-13-0915-slow-test-builds`). **Get the current time from `date +%Y-%m-%d-%H%M`** — do not guess or estimate the timestamp.
 
 #### Two research locations
 

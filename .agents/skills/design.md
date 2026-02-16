@@ -78,6 +78,8 @@ receipts/investigations/<session>/designs/<short-name>.md
 receipts/designs/<YYYY-MM-DD-HHMM>-<short-name>.md
 ```
 
+**Get the current time from `date +%Y-%m-%d-%H%M`** — do not guess or estimate the timestamp.
+
 Use a descriptive kebab-case name (e.g. `sprite-fetch-state-machine`, `window-reactivation-zero-pixel`). Create the `designs/` directory if it doesn't exist. A single investigation may produce multiple designs — one per fix attempt or per distinct subproblem.
 
 ## Report format
