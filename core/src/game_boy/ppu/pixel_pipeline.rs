@@ -44,6 +44,10 @@ const WODU_PIXEL_COUNT: u8 = 167;
 /// On hardware, the LCD X coordinate is `pix_count - 8`. Pixels at
 /// PX 0–7 shift the first tile's data through the pipe invisibly.
 const FIRST_VISIBLE_PIXEL: u8 = 8;
+/// Dot at which the line-end counter chain (SANU at LX=113) triggers
+/// the OAM scan start signal (ACYL), blocking CPU OAM access for the
+/// next line. On hardware, SANU fires at LX=113 = dot 452.
+const SCANLINE_OAM_LOCK_DOTS: u32 = SCANLINE_TOTAL_DOTS - 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -554,7 +558,13 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        self.rendering || self.line.dots < SCANLINE_PREPARING_DOTS
+        // Hardware: OAM blocked = ACYL_SCANNING OR XYMU_RENDERING
+        // ACYL: active during Mode 2 (dots 0-79) and from the line-end
+        //   chain trigger at LX=113 (dot 452) through end of scanline.
+        // XYMU: active during Mode 3, cleared when WODU (hblank_gate) fires.
+        (self.rendering && !self.hblank_gate)
+            || self.line.dots < SCANLINE_PREPARING_DOTS
+            || self.line.dots >= SCANLINE_OAM_LOCK_DOTS
     }
 
     fn vram_locked(&self) -> bool {
@@ -562,7 +572,9 @@ impl Rendering {
     }
 
     fn oam_write_locked(&self) -> bool {
-        self.rendering || self.line.dots < SCANLINE_PREPARING_DOTS
+        (self.rendering && !self.hblank_gate)
+            || self.line.dots < SCANLINE_PREPARING_DOTS
+            || self.line.dots >= SCANLINE_OAM_LOCK_DOTS
     }
 
     fn vram_write_locked(&self) -> bool {
@@ -1245,14 +1257,6 @@ impl PixelPipeline {
         match self {
             PixelPipeline::Rendering(rendering) => rendering.rendering,
             PixelPipeline::BetweenFrames(_) => false,
-        }
-    }
-
-    /// Diagnostic: return (line_number, dots) if rendering, None otherwise.
-    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
-        match self {
-            PixelPipeline::Rendering(r) => Some((r.line.number, r.line.dots)),
-            PixelPipeline::BetweenFrames(_) => None,
         }
     }
 

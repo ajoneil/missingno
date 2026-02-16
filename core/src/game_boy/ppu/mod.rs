@@ -583,13 +583,6 @@ impl Ppu {
                 && self.ly_eq_lyc)
     }
 
-    /// Diagnostic: current PPU line and dot counter, if rendering.
-    pub fn diag_line_dots(&self) -> Option<(u8, u32)> {
-        self.pixel_pipeline
-            .as_ref()
-            .and_then(|p| p.diag_line_dots())
-    }
-
     /// Begin accumulating PPU dots instead of ticking. Called by the
     /// execute loop when it knows a PPU register write is coming and
     /// needs deferred dots for write conflict splitting.
