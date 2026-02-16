@@ -353,6 +353,10 @@ struct SpriteStore {
     entries: [SpriteStoreEntry; MAX_SPRITES_PER_LINE],
     /// Number of entries written during this line's OAM scan (0-10).
     count: u8,
+    /// Bitmask of which store slots have been fetched during Mode 3.
+    /// Bit N set = slot N already consumed. On hardware, each slot has
+    /// an independent reset flag (EBOJ-FONO). Reset at line start.
+    fetched: u16,
 }
 
 impl SpriteStore {
@@ -364,7 +368,70 @@ impl SpriteStore {
                 x: 0,
             }; MAX_SPRITES_PER_LINE],
             count: 0,
+            fetched: 0,
         }
+    }
+}
+
+// --- OAM scanner ---
+
+/// Hardware OAM scanner (YFEL-FONY scan counter + comparison logic).
+/// Processes one OAM entry every 2 dots during Mode 2, reading Y and X
+/// from OAM, comparing Y against LY, and writing matches into the
+/// sprite store.
+struct OamScanner {
+    /// Which OAM entry to process next (0-39). Increments every 2 dots.
+    entry: u8,
+    /// Sub-tick within the current entry (0 or 1). The hardware clocks
+    /// once per 2 dots; we model this as two dots per entry.
+    dot_in_entry: u8,
+}
+
+impl OamScanner {
+    fn new() -> Self {
+        Self {
+            entry: 0,
+            dot_in_entry: 0,
+        }
+    }
+
+    /// Process one dot of OAM scanning. On even dots, prepares; on odd
+    /// dots, reads the OAM entry, checks Y, and writes to the store.
+    fn scan_next_entry(
+        &mut self,
+        line_number: u8,
+        sprites: &mut SpriteStore,
+        data: &Registers,
+        oam: &Oam,
+    ) {
+        if self.dot_in_entry == 0 {
+            self.dot_in_entry = 1;
+        } else {
+            if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
+                let sprite = oam.sprite(SpriteId(self.entry));
+                if sprite
+                    .position
+                    .on_line(line_number, data.control.sprite_size())
+                {
+                    let line_offset =
+                        (line_number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
+                    sprites.entries[sprites.count as usize] = SpriteStoreEntry {
+                        oam_index: self.entry,
+                        line_offset,
+                        x: sprite.position.x_plus_8,
+                    };
+                    sprites.count += 1;
+                }
+            }
+            self.entry += 1;
+            self.dot_in_entry = 0;
+        }
+    }
+
+    /// OAM byte offset currently being accessed (for OAM bug).
+    /// Returns the byte address of the row the scanner is touching.
+    fn accessed_oam_byte_offset(&self) -> u8 {
+        ((self.entry as u16 / 2 + 1) * 8) as u8
     }
 }
 
@@ -422,8 +489,8 @@ pub struct Rendering {
     dot: u32,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
-    /// Index of the next sprite store entry to check for triggering.
-    next_sprite: u8,
+    /// OAM scanner — active during Mode 2, consumed when scan completes.
+    scanner: Option<OamScanner>,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
     /// Background pixel shift register (page 32).
@@ -459,7 +526,7 @@ impl Rendering {
             line_number: 0,
             dot: 0,
             sprites: SpriteStore::new(),
-            next_sprite: 0,
+            scanner: Some(OamScanner::new()),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -481,7 +548,7 @@ impl Rendering {
             line_number: 0,
             dot: 0,
             sprites: SpriteStore::new(),
-            next_sprite: 0,
+            scanner: Some(OamScanner::new()),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -491,32 +558,6 @@ impl Rendering {
             pixel_counter: 0,
             sprite_fetch: None,
         }
-    }
-
-    fn find_sprites(&mut self, data: &Registers, oam: &Oam) {
-        let sprite_size = data.control.sprite_size();
-        let mut count = 0u8;
-        for (oam_index, sprite) in oam.sprites().iter().enumerate() {
-            if count as usize >= MAX_SPRITES_PER_LINE {
-                break;
-            }
-            if sprite.position.on_line(self.line_number, sprite_size) {
-                let line_offset =
-                    (self.line_number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
-                self.sprites.entries[count as usize] = SpriteStoreEntry {
-                    oam_index: oam_index as u8,
-                    line_offset,
-                    x: sprite.position.x_plus_8,
-                };
-                count += 1;
-            }
-        }
-        self.sprites.count = count;
-
-        // DMG priority: lower X position wins, ties broken by OAM order (stable sort)
-        self.sprites.entries[..count as usize].sort_by_key(|entry| entry.x);
-
-        self.fine_scroll = FineScroll::new();
     }
 
     fn mode(&self) -> Mode {
@@ -583,14 +624,15 @@ impl Rendering {
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
     fn dot_tick(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
-        if self.dot == 0 {
-            self.find_sprites(data, oam);
-        }
-
         if self.dot < SCANLINE_PREPARING_DOTS {
-            // Mode 2: OAM scan
+            // Mode 2: OAM scan — process one entry every 2 dots
+            if let Some(ref mut scanner) = self.scanner {
+                scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
+            }
             self.dot += 1;
             if self.dot == SCANLINE_PREPARING_DOTS {
+                // Scan complete — discard the scanner.
+                self.scanner = None;
                 self.lcd_turning_on = false;
                 self.rendering = true;
             }
@@ -631,7 +673,7 @@ impl Rendering {
                 self.line_number += 1;
                 self.dot = 0;
                 self.sprites = SpriteStore::new();
-                self.next_sprite = 0;
+                self.scanner = Some(OamScanner::new());
                 self.window_rendered = false;
                 self.bg_shifter = BgShifter::new();
                 self.obj_shifter = ObjShifter::new();
@@ -1102,6 +1144,8 @@ impl Rendering {
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
+    /// Scans all store slots in parallel, matching the hardware's 10
+    /// independent X comparators. The lowest-indexed matching slot wins.
     fn check_sprite_trigger(&mut self, data: &Registers) {
         if !data.control.sprites_enabled() {
             return;
@@ -1109,25 +1153,25 @@ impl Rendering {
 
         let match_x = self.pixel_counter;
 
-        while (self.next_sprite as usize) < self.sprites.count as usize {
-            let entry = &self.sprites.entries[self.next_sprite as usize];
-
-            if entry.x < match_x {
-                // Sprite already passed — skip it
-                self.next_sprite += 1;
-                continue;
+        for i in 0..self.sprites.count as usize {
+            if self.sprites.fetched & (1 << i) != 0 {
+                continue; // Already fetched — reset flag is set
             }
 
+            let entry = &self.sprites.entries[i];
+
             if entry.x != match_x {
-                // Sprite not yet reached
-                break;
+                continue; // X doesn't match current pixel counter
             }
 
             if entry.x >= 168 {
-                self.next_sprite += 1;
+                // Off-screen right — mark as fetched so we don't check again
+                self.sprites.fetched |= 1 << i;
                 continue;
             }
 
+            // Match found — trigger sprite fetch, mark slot as fetched
+            self.sprites.fetched |= 1 << i;
             self.sprite_fetch = Some(SpriteFetch {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
@@ -1136,8 +1180,7 @@ impl Rendering {
                 tile_data_low: 0,
                 tile_data_high: 0,
             });
-            self.next_sprite += 1;
-            break;
+            break; // Only one sprite fetch at a time
         }
     }
 }
@@ -1265,13 +1308,10 @@ impl PixelPipeline {
 
     pub fn accessed_oam_row(&self) -> Option<u8> {
         match self {
-            PixelPipeline::Rendering(rendering) => {
-                if rendering.dot < SCANLINE_PREPARING_DOTS {
-                    Some(((rendering.dot / 4 + 1) * 8) as u8)
-                } else {
-                    None
-                }
-            }
+            PixelPipeline::Rendering(rendering) => rendering
+                .scanner
+                .as_ref()
+                .map(|s| s.accessed_oam_byte_offset()),
             PixelPipeline::BetweenFrames(_) => None,
         }
     }
