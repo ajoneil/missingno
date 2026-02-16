@@ -1047,18 +1047,22 @@ impl Rendering {
         // Shift one bit from each BG bitplane
         let (bg_lo, bg_hi) = self.line.bg_shifter.shift();
         self.line.position_in_line += 1;
-        self.line.pixel_counter += 1;
 
         // Shift OBJ in lockstep (if it has pixels)
         let obj_bits = self.line.obj_shifter.shift();
 
         // During fine scroll gating (ROXY active), the pixel clock is
-        // frozen on hardware — no LCD output. The shifters still advance
-        // here (unlike true hardware gating) to keep sprite alignment
-        // consistent with the existing sprite fetch model.
+        // frozen on hardware — SACU is held high, PX does not increment,
+        // no LCD output. The shifters still advance here (unlike true
+        // hardware gating) to keep sprite alignment consistent with the
+        // existing sprite fetch model.
         if !self.line.fine_scroll.pixel_clock_active() {
             return;
         }
+
+        // PX increments only when the pixel clock is active (after gating).
+        // On hardware, ROXY blocks SACU which freezes PX.
+        self.line.pixel_counter += 1;
 
         if self.line.pixels_drawn >= screen::PIXELS_PER_LINE {
             return;
