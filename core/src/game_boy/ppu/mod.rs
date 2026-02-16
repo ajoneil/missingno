@@ -235,12 +235,31 @@ impl Ppu {
     }
 
     /// Write a value directly to the register backing store.
-    fn write_register_immediate(&mut self, register: &Register, value: u8) {
+    ///
+    /// Returns true if the write triggered a STAT interrupt request
+    /// (DMG STAT write quirk: writing to FF41 briefly sets all enable
+    /// bits high, which can produce a rising edge on the STAT line).
+    fn write_register_immediate(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
                 self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
             }
-            Register::Status => self.interrupts.flags = InterruptFlags::from_bits_truncate(value),
+            Register::Status => {
+                // DMG STAT write quirk: briefly set all enable bits high.
+                // If any condition is active, this produces a rising edge.
+                self.interrupts.flags = InterruptFlags::all();
+                let glitch_line = self.stat_line_active();
+                let glitch_edge = glitch_line && !self.stat_line_was_high;
+                self.stat_line_was_high = glitch_line;
+
+                // Now apply the real value.
+                self.interrupts.flags = InterruptFlags::from_bits_truncate(value);
+                let final_line = self.stat_line_active();
+                let final_edge = final_line && !self.stat_line_was_high;
+                self.stat_line_was_high = final_line;
+
+                return glitch_edge || final_edge;
+            }
             Register::BackgroundViewportY => self.registers.background_viewport.y = value,
             Register::BackgroundViewportX => self.registers.background_viewport.x = value,
             Register::WindowY => self.registers.window.y = value,
@@ -251,6 +270,7 @@ impl Ppu {
             Register::Sprite1Palette => self.registers.palettes.sprite1 = PaletteMap(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
+        false
     }
 
     /// Returns true if the PPU is actively drawing pixels (Mode 3),
@@ -259,17 +279,17 @@ impl Ppu {
         matches!(&self.pixel_pipeline, Some(ppu) if ppu.is_rendering())
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) {
+    pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) -> bool {
         // Write conflict splitting requires enough deferred dots
         // (pending_dots >= 5) and the PPU actively drawing (Mode 3).
         // The execute loop sets accumulating=true for the M-cycle
         // before a PPU register write, giving 4 deferred dots + 1
         // from T0 of the write M-cycle = 5 pending at T1.
         if self.pending_dots < 5 || !self.ppu_is_drawing() {
-            self.write_register_immediate(&register, value);
+            let stat = self.write_register_immediate(&register, value);
             // Stop accumulating — the write is done.
             self.accumulating = false;
-            return;
+            return stat;
         }
 
         // Stop accumulating — all pending dots will be flushed during
@@ -285,26 +305,29 @@ impl Ppu {
         //
         // After the split, flush all remaining pending dots with the
         // final value so the PPU is caught up before normal ticking.
-        match register.write_conflict() {
+        let stat = match register.write_conflict() {
             WriteConflict::Immediate => {
                 // SameBoy READ_OLD (N=0): advance(4). flush(4).
                 self.flush_dots(self.pending_dots - 1, vram);
-                self.write_register_immediate(&register, value);
+                let stat = self.write_register_immediate(&register, value);
                 self.flush_dots(self.pending_dots, vram);
+                stat
             }
 
             WriteConflict::OneDotEarly => {
                 // SameBoy READ_NEW (N=1): advance(3). flush(3).
                 self.flush_dots(self.pending_dots - 2, vram);
-                self.write_register_immediate(&register, value);
+                let stat = self.write_register_immediate(&register, value);
                 self.flush_dots(self.pending_dots, vram);
+                stat
             }
 
             WriteConflict::TwoDotsEarly => {
                 // SameBoy SCX_DMG (N=2): advance(2). flush(2).
                 self.flush_dots(self.pending_dots - 3, vram);
-                self.write_register_immediate(&register, value);
+                let stat = self.write_register_immediate(&register, value);
                 self.flush_dots(self.pending_dots, vram);
+                stat
             }
 
             WriteConflict::PaletteDmg => {
@@ -319,8 +342,9 @@ impl Ppu {
                 self.flush_dots(self.pending_dots - 3, vram);
                 self.write_register_immediate(&register, old | value);
                 self.flush_dots(1, vram);
-                self.write_register_immediate(&register, value);
+                let stat = self.write_register_immediate(&register, value);
                 self.flush_dots(self.pending_dots, vram);
+                stat
             }
 
             WriteConflict::LcdcDmg => {
@@ -332,10 +356,12 @@ impl Ppu {
                 self.flush_dots(self.pending_dots - 3, vram);
                 self.write_register_immediate(&register, transitional);
                 self.flush_dots(1, vram);
-                self.write_register_immediate(&register, value);
+                let stat = self.write_register_immediate(&register, value);
                 self.flush_dots(self.pending_dots, vram);
+                stat
             }
-        }
+        };
+        stat
     }
 
     pub fn read_oam(&self, address: OamAddress) -> u8 {

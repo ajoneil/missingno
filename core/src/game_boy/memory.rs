@@ -478,8 +478,14 @@ impl GameBoy {
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
-                self.ppu
+                if self
+                    .ppu
                     .write_register(register, value, &self.vram_bus.vram)
+                {
+                    self.interrupts
+                        .requested
+                        .insert(InterruptFlags::VIDEO_STATUS);
+                }
             }
             MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),
             MappedAddress::InterruptRegister(register) => match register {
