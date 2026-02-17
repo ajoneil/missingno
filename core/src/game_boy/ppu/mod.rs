@@ -544,7 +544,8 @@ impl Ppu {
     fn accessed_oam_row(&self) -> Option<u8> {
         self.pixel_pipeline
             .as_ref()
-            .and_then(|ppu| ppu.accessed_oam_row())
+            .and_then(|ppu| ppu.scanner_oam_address())
+            .map(|address| (address / 8 + 1) * 8)
     }
 
     fn stat_line_active(&self) -> bool {

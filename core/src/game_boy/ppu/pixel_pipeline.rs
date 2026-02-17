@@ -428,10 +428,10 @@ impl OamScanner {
         }
     }
 
-    /// OAM byte offset currently being accessed (for OAM bug).
-    /// Returns the byte address of the row the scanner is touching.
-    fn accessed_oam_byte_offset(&self) -> u8 {
-        ((self.entry as u16 / 2 + 1) * 8) as u8
+    /// The byte address the scanner is currently driving on the OAM bus.
+    /// Hardware: OAM_A[7:2] = scan_counter, OAM_A[1:0] = 0.
+    fn oam_address(&self) -> u8 {
+        self.entry * 4
     }
 }
 
@@ -1306,12 +1306,11 @@ impl PixelPipeline {
         }
     }
 
-    pub fn accessed_oam_row(&self) -> Option<u8> {
+    pub fn scanner_oam_address(&self) -> Option<u8> {
         match self {
-            PixelPipeline::Rendering(rendering) => rendering
-                .scanner
-                .as_ref()
-                .map(|s| s.accessed_oam_byte_offset()),
+            PixelPipeline::Rendering(rendering) => {
+                rendering.scanner.as_ref().map(|s| s.oam_address())
+            }
             PixelPipeline::BetweenFrames(_) => None,
         }
     }
