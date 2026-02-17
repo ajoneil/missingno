@@ -33,10 +33,6 @@ impl fmt::Display for Mode {
 }
 
 const SCANLINE_TOTAL_DOTS: u32 = 456;
-const SCANLINE_PREPARING_DOTS: u32 = 80;
-/// The pixel pipeline begins executing at the start of Mode 3.
-/// On hardware, AVAP fires at dot 80 and the fetcher starts immediately.
-const SCANLINE_RENDERING_DOTS: u32 = SCANLINE_PREPARING_DOTS;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
@@ -44,10 +40,6 @@ const WODU_PIXEL_COUNT: u8 = 167;
 /// On hardware, the LCD X coordinate is `pix_count - 8`. Pixels at
 /// PX 0–7 shift the first tile's data through the pipe invisibly.
 const FIRST_VISIBLE_PIXEL: u8 = 8;
-/// Dot at which the line-end counter chain (SANU at LX=113) triggers
-/// the OAM scan start signal (ACYL), blocking CPU OAM access for the
-/// next line. On hardware, SANU fires at LX=113 = dot 452.
-const SCANLINE_OAM_LOCK_DOTS: u32 = SCANLINE_TOTAL_DOTS - 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -439,6 +431,12 @@ impl OamScanner {
         }
     }
 
+    /// Hardware FETO_SCAN_DONE signal. Fires when the scan counter
+    /// has processed all 40 OAM entries.
+    fn done(&self) -> bool {
+        self.entry >= 40
+    }
+
     /// The byte address the scanner is currently driving on the OAM bus.
     /// Hardware: OAM_A[7:2] = scan_counter, OAM_A[1:0] = 0.
     fn oam_address(&self) -> u8 {
@@ -487,6 +485,10 @@ pub struct Rendering {
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     lcd_turning_on: bool,
+    /// Hardware scanning signal (ACYL). True from dot 452 (SANU LX=113)
+    /// through the scan completing (FETO_SCAN_DONE at entry 39). Gates
+    /// CPU OAM access independently of the rendering latch (XYMU).
+    scanning: bool,
     /// Hardware rendering latch (XYMU, page 21). True = Mode 3 active.
     /// Gates VRAM/OAM access, pixel pipeline clocks.
     rendering: bool,
@@ -532,6 +534,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
+            scanning: true,
             rendering: false,
             hblank_gate: false,
             line_number: 0,
@@ -554,6 +557,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: true,
+            scanning: true,
             rendering: false,
             hblank_gate: false,
             line_number: 0,
@@ -574,7 +578,7 @@ impl Rendering {
     fn mode(&self) -> Mode {
         if self.rendering {
             Mode::DrawingPixels
-        } else if self.dot < SCANLINE_PREPARING_DOTS {
+        } else if self.scanning && self.scanner.is_some() {
             Mode::PreparingScanline
         } else {
             Mode::BetweenLines
@@ -592,7 +596,7 @@ impl Rendering {
             Mode::BetweenLines
         } else if self.rendering {
             Mode::DrawingPixels
-        } else if self.dot < SCANLINE_PREPARING_DOTS {
+        } else if self.scanning && self.scanner.is_some() {
             Mode::PreparingScanline
         } else {
             Mode::BetweenLines
@@ -608,13 +612,7 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        // Hardware: OAM blocked = ACYL_SCANNING OR XYMU_RENDERING
-        // ACYL: active during Mode 2 (dots 0-79) and from the line-end
-        //   chain trigger at LX=113 (dot 452) through end of scanline.
-        // XYMU: active during Mode 3, cleared when WODU (hblank_gate) fires.
-        (self.rendering && !self.hblank_gate)
-            || self.dot < SCANLINE_PREPARING_DOTS
-            || self.dot >= SCANLINE_OAM_LOCK_DOTS
+        self.scanning || (self.rendering && !self.hblank_gate)
     }
 
     fn vram_locked(&self) -> bool {
@@ -624,9 +622,7 @@ impl Rendering {
     }
 
     fn oam_write_locked(&self) -> bool {
-        (self.rendering && !self.hblank_gate)
-            || self.dot < SCANLINE_PREPARING_DOTS
-            || self.dot >= SCANLINE_OAM_LOCK_DOTS
+        self.scanning || (self.rendering && !self.hblank_gate)
     }
 
     fn vram_write_locked(&self) -> bool {
@@ -635,15 +631,14 @@ impl Rendering {
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
     fn dot_tick(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
-        if self.dot < SCANLINE_PREPARING_DOTS {
+        if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
-            if let Some(ref mut scanner) = self.scanner {
-                scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
-            }
+            scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
             self.dot += 1;
-            if self.dot == SCANLINE_PREPARING_DOTS {
-                // Scan complete — discard the scanner.
+            if scanner.done() {
+                // FETO_SCAN_DONE — scan complete, enter Mode 3.
                 self.scanner = None;
+                self.scanning = false;
                 self.lcd_turning_on = false;
                 self.rendering = true;
             }
@@ -657,7 +652,7 @@ impl Rendering {
             }
 
             // Mode 3 (drawing) and Mode 0 (HBlank)
-            if self.rendering && self.dot >= SCANLINE_RENDERING_DOTS {
+            if self.rendering {
                 self.dot_mode3(data, oam, vram);
             }
 
@@ -672,6 +667,11 @@ impl Rendering {
             }
 
             self.dot += 1;
+
+            // SANU trigger (LX=113, dot 452): activate ACYL scanning signal
+            if self.dot == SCANLINE_TOTAL_DOTS - 4 {
+                self.scanning = true;
+            }
 
             if self.dot == SCANLINE_TOTAL_DOTS {
                 self.rendering = false;
@@ -1218,9 +1218,12 @@ impl PixelPipeline {
     pub fn current_line(&self) -> u8 {
         match self {
             PixelPipeline::Rendering(Rendering {
-                line_number, dot, ..
+                line_number,
+                scanning,
+                scanner,
+                ..
             }) => {
-                if *dot >= SCANLINE_TOTAL_DOTS - 4 {
+                if *scanning && scanner.is_none() {
                     line_number + 1
                 } else {
                     *line_number
