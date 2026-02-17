@@ -395,8 +395,13 @@ impl OamScanner {
         }
     }
 
-    /// Process one dot of OAM scanning. On even dots, prepares; on odd
-    /// dots, reads the OAM entry, checks Y, and writes to the store.
+    /// Process one dot of OAM scanning. On even dots, the scan counter
+    /// drives the OAM address and OAM outputs data; on odd dots, the Y
+    /// comparison fires and matches are written to the sprite store.
+    ///
+    /// Only bytes 0–1 (Y, X) are read from OAM during scanning — the
+    /// hardware's 16-bit OAM bus provides both in a single access. Tile
+    /// index and attributes (bytes 2–3) are not accessed until Mode 3.
     fn scan_next_entry(
         &mut self,
         line_number: u8,
@@ -408,17 +413,23 @@ impl OamScanner {
             self.dot_in_entry = 1;
         } else {
             if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
-                let sprite = oam.sprite(SpriteId(self.entry));
-                if sprite
-                    .position
-                    .on_line(line_number, data.control.sprite_size())
-                {
-                    let line_offset =
-                        (line_number as i16 + 16 - sprite.position.y_plus_16 as i16) as u8;
+                // OAM bus read: only Y (byte 0) and X (byte 1).
+                let (y_plus_16, x_plus_8) = oam.sprite_position(SpriteId(self.entry));
+
+                // Y comparison (hardware subtractor ERUC–WUHU):
+                // Computes delta = LY + 16 - sprite_Y using wrapping
+                // arithmetic (matching the 8-bit hardware subtractor).
+                // Match when delta < height (8 or 16 per LCDC.2).
+                // Bits 0–3 of delta are the sprite line offset — the
+                // same value drives the sprite store's line register.
+                let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
+                let height = data.control.sprite_size().height();
+                if delta < height {
+                    let line_offset = delta;
                     sprites.entries[sprites.count as usize] = SpriteStoreEntry {
                         oam_index: self.entry,
                         line_offset,
-                        x: sprite.position.x_plus_8,
+                        x: x_plus_8,
                     };
                     sprites.count += 1;
                 }

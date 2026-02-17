@@ -96,6 +96,18 @@ impl Oam {
         &self.sprites[id.0 as usize]
     }
 
+    /// Read the Y and X position bytes for an OAM entry.
+    ///
+    /// On hardware, the OAM bus is 16 bits wide. During Mode 2 scanning,
+    /// the scan counter drives `OAM_A[7:2]` with `A[1:0] = 0`, so both
+    /// byte 0 (Y) and byte 1 (X) are read in a single access. Bytes 2–3
+    /// (tile index, attributes) are not on the bus during scanning — they
+    /// are only read during Mode 3's sprite tile fetch.
+    pub fn sprite_position(&self, id: SpriteId) -> (u8, u8) {
+        let sprite = &self.sprites[id.0 as usize];
+        (sprite.position.y_plus_16, sprite.position.x_plus_8)
+    }
+
     /// Read a raw byte from OAM at the given byte offset (0–159).
     pub(crate) fn oam_byte(&self, offset: u8) -> u8 {
         let sprite = &self.sprites[(offset / 4) as usize];

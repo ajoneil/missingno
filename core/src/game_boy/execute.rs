@@ -10,6 +10,14 @@ use super::{
     ppu,
 };
 
+/// Whether the OAM bug corruption uses the read or write formula.
+/// Determined by the CPU operation type, not by the OAM control
+/// signals at the moment of the spurious SRAM clock.
+enum OamBugKind {
+    Read,
+    Write,
+}
+
 /// Returns true if the address maps to a PPU register (FF40-FF4B,
 /// excluding FF46 which is DMA). Used to determine whether a write
 /// needs PPU dot deferral for write conflict timing.
@@ -196,6 +204,7 @@ impl GameBoy {
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
         let mut tcycle_in_mcycle: u8 = 0;
+        let mut pending_oam_bug: Option<OamBugKind> = None;
         while let Some(tcycle) = processor.next_tcycle(read_value, &mut self.cpu) {
             // IE push bug: resolve the interrupt vector after the high byte
             // push completes but before the low byte push. The high byte
@@ -213,14 +222,36 @@ impl GameBoy {
 
             match tcycle {
                 TCycle::Read { address } => {
-                    self.oam_bug_read(address);
+                    if (0xFE00..=0xFEFF).contains(&address) {
+                        pending_oam_bug = Some(OamBugKind::Read);
+                    }
                     read_value = self.cpu_read(address);
                 }
                 TCycle::Write { address, value } => {
-                    self.oam_bug_write(address);
+                    if (0xFE00..=0xFEFF).contains(&address) {
+                        pending_oam_bug = Some(OamBugKind::Write);
+                    }
                     self.write_byte(address, value);
                 }
                 TCycle::Hardware => {}
+            }
+
+            // IDU OAM bug: record the pending corruption kind at T0.
+            // The IDU address is determined by the processor's current
+            // phase, not by PPU state, so it can be checked before ticks.
+            if tcycle_in_mcycle == 0 {
+                if let Some(addr) = processor.oam_bug_address() {
+                    if (0xFE00..=0xFEFF).contains(&addr) {
+                        match pending_oam_bug {
+                            // Read + IDU = compound "read during increase".
+                            // Keep as Read — oam_bug_read applies both.
+                            Some(OamBugKind::Read) => {}
+                            _ => {
+                                pending_oam_bug = Some(OamBugKind::Write);
+                            }
+                        }
+                    }
+                }
             }
 
             // Write conflict: at T0 of each M-cycle, check if the NEXT
@@ -235,16 +266,21 @@ impl GameBoy {
                 }
             }
 
-            new_screen |= self.tick_hardware_tcycle();
-
-            // OAM bug: IDU placing address on bus during internal cycle.
-            // Check after the first tick of the M-cycle so the PPU state
-            // reflects the current dot (matching fetch-phase tick ordering).
-            if tcycle_in_mcycle == 0 {
-                if let Some(addr) = processor.oam_bug_address() {
-                    self.oam_bug_write(addr);
+            // OAM bug: the hardware CUFE clock fires at the D→E phase
+            // boundary (start of T2). Apply pending corruption after 2
+            // dots have been ticked so the scanner position matches
+            // the hardware state at the spurious SRAM clock edge.
+            if tcycle_in_mcycle == 2 {
+                if let Some(kind) = pending_oam_bug.take() {
+                    match kind {
+                        OamBugKind::Read => self.ppu.oam_bug_read(),
+                        OamBugKind::Write => self.ppu.oam_bug_write(),
+                    }
                 }
             }
+
+            new_screen |= self.tick_hardware_tcycle();
+
             tcycle_in_mcycle += 1;
             if tcycle_in_mcycle == 4 {
                 tcycle_in_mcycle = 0;
