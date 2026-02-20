@@ -772,10 +772,10 @@ impl Rendering {
             }
         } else {
             // Pixel counter increment (change D). On hardware, pix_count
-            // increments on SACU (pixel clock), gated by POKY (after startup)
-            // and ROXY (fine scroll). Sprite matching uses state_new.pix_count
-            // (post-increment), so the increment must precede trigger checks.
-            if self.fine_scroll.pixel_clock_active() {
+            // increments on SACU (pixel clock), gated by POKY (after startup),
+            // ROXY (fine scroll), and FIFO readiness (shifter non-empty).
+            // The shifter-empty gate ensures PX stalls during window refetch.
+            if self.fine_scroll.pixel_clock_active() && !self.bg_shifter.is_empty() {
                 self.pixel_counter += 1;
             }
 
@@ -794,7 +794,7 @@ impl Rendering {
                 self.load_bg_tile();
             }
 
-            if !self.bg_shifter.is_empty() {
+            if !self.bg_shifter.is_empty() && self.sprite_fetch.is_none() {
                 self.shift_pixel_out(data);
             }
 
