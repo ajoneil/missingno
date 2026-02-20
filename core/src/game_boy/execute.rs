@@ -100,11 +100,10 @@ impl GameBoy {
         } else if self.cpu.halted {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
-            // Fetch phase: each byte read is 4 T-cycles with read at T2
-            //   T1: tick hardware
-            //   T2: read byte + tick hardware
-            //   T3: tick hardware
-            //   T4: tick hardware
+            // Fetch phase: each byte read is 4 T-cycles with bus op after
+            // all ticks, matching hardware's tick(4) → read ordering.
+            //   T1-T4: tick hardware
+            //   Bus:   read byte (observes post-tick state)
 
             // Read opcode byte
             //
@@ -118,6 +117,9 @@ impl GameBoy {
             if tentative {
                 self.ppu.start_accumulating();
             }
+            new_screen |= self.tick_hardware_tcycle();
+            new_screen |= self.tick_hardware_tcycle();
+            new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
             let opcode = self.cpu_read(self.cpu.program_counter);
             if self.cpu.halt_bug {
@@ -140,10 +142,6 @@ impl GameBoy {
                 self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
 
-            new_screen |= self.tick_hardware_tcycle();
-            new_screen |= self.tick_hardware_tcycle();
-            new_screen |= self.tick_hardware_tcycle();
-
             // Read operand bytes
             let mut bytes = [opcode, 0, 0];
             for i in 0..op_count {
@@ -153,11 +151,11 @@ impl GameBoy {
                     self.ppu.start_accumulating();
                 }
                 new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_tcycle();
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
-                new_screen |= self.tick_hardware_tcycle();
-                new_screen |= self.tick_hardware_tcycle();
-                new_screen |= self.tick_hardware_tcycle();
             }
 
             // For deferred-address writes, check the actual target now
@@ -200,12 +198,13 @@ impl GameBoy {
             processor
         };
 
-        // Run post-decode T-cycles
+        // Run post-decode M-cycles. Hardware ticks all 4 T-cycles before
+        // the CPU bus operation: tick(4) → bus op.
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
-        let mut tcycle_in_mcycle: u8 = 0;
         let mut pending_oam_bug: Option<OamBugKind> = None;
-        while let Some(tcycle) = processor.next_tcycle(read_value, &mut self.cpu) {
+
+        loop {
             // IE push bug: resolve the interrupt vector after the high byte
             // push completes but before the low byte push. The high byte
             // write may have modified IE (at 0xFFFF), changing which
@@ -220,74 +219,95 @@ impl GameBoy {
                 }
             }
 
-            match tcycle {
-                TCycle::Read { address } => {
-                    if (0xFE00..=0xFEFF).contains(&address) {
-                        pending_oam_bug = Some(OamBugKind::Read);
-                    }
-                    read_value = self.cpu_read(address);
-                }
-                TCycle::Write { address, value } => {
-                    if (0xFE00..=0xFEFF).contains(&address) {
-                        pending_oam_bug = Some(OamBugKind::Write);
-                    }
-                    self.write_byte(address, value);
-                }
-                TCycle::Hardware => {}
-            }
+            // Collect one M-cycle (4 T-cycles), deferring bus action.
+            let mut deferred_bus_action: Option<TCycle> = None;
 
-            // IDU OAM bug: record the pending corruption kind at T0.
-            // The IDU address is determined by the processor's current
-            // phase, not by PPU state, so it can be checked before ticks.
-            if tcycle_in_mcycle == 0 {
-                if let Some(addr) = processor.oam_bug_address() {
-                    if (0xFE00..=0xFEFF).contains(&addr) {
-                        match pending_oam_bug {
-                            // Read + IDU = compound "read during increase".
-                            // Keep as Read — oam_bug_read applies both.
-                            Some(OamBugKind::Read) => {}
-                            _ => {
-                                pending_oam_bug = Some(OamBugKind::Write);
+            for tcycle_in_mcycle in 0u8..4 {
+                let tcycle = match processor.next_tcycle(read_value, &mut self.cpu) {
+                    Some(t) => t,
+                    None => {
+                        // Instruction complete at M-cycle boundary.
+                        return new_screen;
+                    }
+                };
+
+                // Record bus action for deferred execution; detect OAM bug
+                // address at the point the action is yielded (T1).
+                match &tcycle {
+                    TCycle::Read { address } => {
+                        if (0xFE00..=0xFEFF).contains(address) {
+                            pending_oam_bug = Some(OamBugKind::Read);
+                        }
+                        deferred_bus_action = Some(tcycle);
+                    }
+                    TCycle::Write { address, .. } => {
+                        if (0xFE00..=0xFEFF).contains(address) {
+                            pending_oam_bug = Some(OamBugKind::Write);
+                        }
+                        deferred_bus_action = Some(tcycle);
+                    }
+                    TCycle::Hardware => {}
+                }
+
+                // IDU OAM bug: record the pending corruption kind at T0.
+                // The IDU address is determined by the processor's current
+                // phase, not by PPU state, so it can be checked before ticks.
+                if tcycle_in_mcycle == 0 {
+                    if let Some(addr) = processor.oam_bug_address() {
+                        if (0xFE00..=0xFEFF).contains(&addr) {
+                            match pending_oam_bug {
+                                // Read + IDU = compound "read during increase".
+                                // Keep as Read — oam_bug_read applies both.
+                                Some(OamBugKind::Read) => {}
+                                _ => {
+                                    pending_oam_bug = Some(OamBugKind::Write);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Write conflict: at T0 of each M-cycle, check if the NEXT
-            // M-cycle will write a PPU register. If so, start accumulating
-            // dots so this M-cycle's 4 dots are deferred, giving 5 pending
-            // at the write's T1 for conflict splitting.
-            if tcycle_in_mcycle == 0 {
-                if let Some(addr) = processor.peek_next_write_address() {
-                    if is_ppu_register(addr) && self.ppu.ppu_is_drawing() {
-                        self.ppu.start_accumulating();
+                // Write conflict: at T0 of each M-cycle, check if the NEXT
+                // M-cycle will write a PPU register. If so, start accumulating
+                // dots so this M-cycle's 4 dots are deferred, giving 5 pending
+                // at the write's T1 for conflict splitting.
+                if tcycle_in_mcycle == 0 {
+                    if let Some(addr) = processor.peek_next_write_address() {
+                        if is_ppu_register(addr) && self.ppu.ppu_is_drawing() {
+                            self.ppu.start_accumulating();
+                        }
                     }
                 }
-            }
 
-            // OAM bug: the hardware CUFE clock fires at the D→E phase
-            // boundary (start of T2). Apply pending corruption after 2
-            // dots have been ticked so the scanner position matches
-            // the hardware state at the spurious SRAM clock edge.
-            if tcycle_in_mcycle == 2 {
-                if let Some(kind) = pending_oam_bug.take() {
-                    match kind {
-                        OamBugKind::Read => self.ppu.oam_bug_read(),
-                        OamBugKind::Write => self.ppu.oam_bug_write(),
+                // OAM bug: the hardware CUFE clock fires at the D→E phase
+                // boundary (start of T2). Apply pending corruption after 2
+                // dots have been ticked so the scanner position matches
+                // the hardware state at the spurious SRAM clock edge.
+                if tcycle_in_mcycle == 2 {
+                    if let Some(kind) = pending_oam_bug.take() {
+                        match kind {
+                            OamBugKind::Read => self.ppu.oam_bug_read(),
+                            OamBugKind::Write => self.ppu.oam_bug_write(),
+                        }
                     }
                 }
+
+                new_screen |= self.tick_hardware_tcycle();
             }
 
-            new_screen |= self.tick_hardware_tcycle();
-
-            tcycle_in_mcycle += 1;
-            if tcycle_in_mcycle == 4 {
-                tcycle_in_mcycle = 0;
+            // After all 4 ticks: execute the deferred bus action.
+            // CPU reads/writes now observe post-tick state, matching
+            // hardware's tick(4) → bus op ordering.
+            match deferred_bus_action {
+                Some(TCycle::Read { address }) => {
+                    read_value = self.cpu_read(address);
+                }
+                Some(TCycle::Write { address, value }) => {
+                    self.write_byte(address, value);
+                }
+                _ => {}
             }
         }
-
-        new_screen
     }
 
     /// Advance hardware by one T-cycle.
