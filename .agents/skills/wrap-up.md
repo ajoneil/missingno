@@ -16,10 +16,10 @@ You do NOT investigate new issues, start fixing test failures, refactor code, or
 ## Process
 
 1. **Check git status.** Run `git status` and `git diff --stat` to understand what's changed.
-2. **Run the test suite.** Run `cargo test -p missingno-core`. Record the results — total passed, failed, ignored.
+2. **Run the test suite.** Run `./scripts/test-report.sh --diff` to get a structured report with baseline comparison. If no baseline exists yet, run `./scripts/test-report.sh` for a plain report.
 3. **Assess results.**
-   - If all tests pass (or the same tests that were failing before still fail — no regressions): proceed to commit.
-   - If there are new regressions: **stop**. Report the regressions and do NOT commit. The session needs intervention before wrapping up.
+   - If no regressions (newly failing tests that previously passed): proceed to commit.
+   - If there are regressions: **stop**. Report the regressions and do NOT commit. The session needs intervention before wrapping up.
 4. **Commit.** If there are uncommitted changes and no regressions:
    - Stage the relevant files (not `git add -A` — be specific).
    - Write a clear commit message summarizing the changes.
