@@ -41,7 +41,6 @@ const WODU_PIXEL_COUNT: u8 = 167;
 /// PX 0–7 shift the first tile's data through the pipe invisibly.
 const FIRST_VISIBLE_PIXEL: u8 = 8;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
-const LCD_TURN_ON_SCAN_OFFSET: u8 = 4;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
 // --- Pixel shift registers ---
@@ -388,13 +387,6 @@ impl OamScanner {
         }
     }
 
-    fn new_lcd_on() -> Self {
-        Self {
-            entry: LCD_TURN_ON_SCAN_OFFSET,
-            dot_in_entry: 0,
-        }
-    }
-
     /// Process one dot of OAM scanning. On even dots, the scan counter
     /// drives the OAM address and OAM outputs data; on odd dots, the Y
     /// comparison fires and matches are written to the sprite store.
@@ -577,7 +569,7 @@ impl Rendering {
             line_number: 0,
             dot: 0,
             sprites: SpriteStore::new(),
-            scanner: Some(OamScanner::new_lcd_on()),
+            scanner: Some(OamScanner::new()),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
