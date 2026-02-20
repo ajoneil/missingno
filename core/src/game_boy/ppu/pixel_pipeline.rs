@@ -806,7 +806,11 @@ impl Rendering {
                 self.load_bg_tile();
             }
 
-            if !self.bg_shifter.is_empty() {
+            // On hardware, the pixel clock freezes when a sprite triggers
+            // (FEPO match). No pixel is output on the trigger dot — PX
+            // stays at the trigger value and the first pixel at that PX is
+            // the sprite-composited pixel on the resumption dot.
+            if !self.bg_shifter.is_empty() && self.sprite_fetch.is_none() {
                 self.shift_pixel_out(data);
                 self.sprite_resuming = false;
             }
