@@ -101,9 +101,10 @@ impl GameBoy {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
             // Fetch phase: each byte read is 4 T-cycles with bus op after
-            // all ticks, matching hardware's tick(4) → read ordering.
-            //   T1-T4: tick hardware
-            //   Bus:   read byte (observes post-tick state)
+            // 3 ticks, matching hardware's data latch capture at phases G-H.
+            //   T1-T3: tick hardware
+            //   Bus:   read byte (observes post-tick(3) state)
+            //   T4:    tick hardware
 
             // Read opcode byte
             //
@@ -117,7 +118,6 @@ impl GameBoy {
             if tentative {
                 self.ppu.start_accumulating();
             }
-            new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
             new_screen |= self.tick_hardware_tcycle();
@@ -141,6 +141,7 @@ impl GameBoy {
                 // accumulation and flush the captured T0 dot.
                 self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
+            new_screen |= self.tick_hardware_tcycle();
 
             // Read operand bytes
             let mut bytes = [opcode, 0, 0];
@@ -153,9 +154,9 @@ impl GameBoy {
                 new_screen |= self.tick_hardware_tcycle();
                 new_screen |= self.tick_hardware_tcycle();
                 new_screen |= self.tick_hardware_tcycle();
-                new_screen |= self.tick_hardware_tcycle();
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
+                new_screen |= self.tick_hardware_tcycle();
             }
 
             // For deferred-address writes, check the actual target now
@@ -198,8 +199,8 @@ impl GameBoy {
             processor
         };
 
-        // Run post-decode M-cycles. Hardware ticks all 4 T-cycles before
-        // the CPU bus operation: tick(4) → bus op.
+        // Run post-decode M-cycles. Hardware ticks 3 T-cycles, then the
+        // CPU bus operation, then the 4th tick: tick(3) → bus → tick(1).
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
@@ -292,20 +293,22 @@ impl GameBoy {
                     }
                 }
 
-                new_screen |= self.tick_hardware_tcycle();
-            }
+                // Execute deferred bus action after 3 ticks (before T3's
+                // tick). CPU reads/writes observe post-tick(3) state,
+                // matching hardware's data latch capture at phases G-H.
+                if tcycle_in_mcycle == 3 {
+                    match deferred_bus_action.take() {
+                        Some(TCycle::Read { address }) => {
+                            read_value = self.cpu_read(address);
+                        }
+                        Some(TCycle::Write { address, value }) => {
+                            self.write_byte(address, value);
+                        }
+                        _ => {}
+                    }
+                }
 
-            // After all 4 ticks: execute the deferred bus action.
-            // CPU reads/writes now observe post-tick state, matching
-            // hardware's tick(4) → bus op ordering.
-            match deferred_bus_action {
-                Some(TCycle::Read { address }) => {
-                    read_value = self.cpu_read(address);
-                }
-                Some(TCycle::Write { address, value }) => {
-                    self.write_byte(address, value);
-                }
-                _ => {}
+                new_screen |= self.tick_hardware_tcycle();
             }
         }
     }
