@@ -526,6 +526,11 @@ pub struct Rendering {
     pixel_counter: u8,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
+    /// Set when a sprite fetch completes (sprite_fetch → None). On the
+    /// next dot in the normal rendering path, suppresses the pixel_counter
+    /// increment so the first sprite pixel is output at PX=N (the frozen
+    /// trigger value). Cleared after the resumption dot's shift_pixel_out.
+    sprite_resuming: bool,
 }
 
 impl Rendering {
@@ -549,6 +554,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
             sprite_fetch: None,
+            sprite_resuming: false,
         }
     }
 
@@ -572,6 +578,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
             sprite_fetch: None,
+            sprite_resuming: false,
         }
     }
 
@@ -693,6 +700,7 @@ impl Rendering {
                 self.fine_scroll = FineScroll::new();
                 self.pixel_counter = 0;
                 self.sprite_fetch = None;
+                self.sprite_resuming = false;
 
                 if self.line_number == screen::NUM_SCANLINES {
                     return true;
@@ -767,15 +775,19 @@ impl Rendering {
                             &mut self.obj_shifter,
                         );
                         self.sprite_fetch = None;
+                        self.sprite_resuming = true;
                     }
                 }
             }
         } else {
-            // Pixel counter increment (change D). On hardware, pix_count
-            // increments on SACU (pixel clock), gated by POKY (after startup),
-            // ROXY (fine scroll), and FIFO readiness (shifter non-empty).
-            // The shifter-empty gate ensures PX stalls during window refetch.
-            if self.fine_scroll.pixel_clock_active() && !self.bg_shifter.is_empty() {
+            // Pixel counter increment. On hardware, SACU (pixel clock) is
+            // gated by ROXY (fine scroll), FIFO readiness (shifter non-empty),
+            // and sprite resumption (PX stays frozen on the first dot after a
+            // sprite fetch so the pixel at PX=N is output before PX advances).
+            if self.fine_scroll.pixel_clock_active()
+                && !self.bg_shifter.is_empty()
+                && !self.sprite_resuming
+            {
                 self.pixel_counter += 1;
             }
 
@@ -794,8 +806,9 @@ impl Rendering {
                 self.load_bg_tile();
             }
 
-            if !self.bg_shifter.is_empty() && self.sprite_fetch.is_none() {
+            if !self.bg_shifter.is_empty() {
                 self.shift_pixel_out(data);
+                self.sprite_resuming = false;
             }
 
             self.advance_bg_fetcher(data, vram);
