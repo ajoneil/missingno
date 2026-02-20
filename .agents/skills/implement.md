@@ -56,9 +56,9 @@ After all changes are made:
 
 - **Build check**: Run `cargo check` to verify compilation.
 - **Targeted test**: If the design or caller specifies a particular test, run it.
-- **Full suite**: Run `cargo test -p missingno-core` to check for regressions.
+- **Full suite**: Run `./scripts/test-report.sh --diff` to check for regressions (requires a saved baseline — if none exists, run `./scripts/test-report.sh --save-baseline` first, then apply your changes, then `--diff`). The report is saved automatically to `receipts/test-reports/`.
 
-Capture all test output to a log file:
+Also capture raw test output to the investigation log:
 ```
 receipts/investigations/<session>/logs/<NNN>-implementation-verify.log
 ```

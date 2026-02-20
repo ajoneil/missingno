@@ -163,6 +163,7 @@ cargo fmt                                    # Format
 ## Testing
 
 - Always run tests against missingno-core: `cargo test -p missingno-core`. Do not run `cargo test` against the whole workspace unless specifically asked.
+- For regression checking, use `./scripts/test-report.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/`.
 - After any fix, verify no regressions before committing.
 
 ## Emulation Philosophy
