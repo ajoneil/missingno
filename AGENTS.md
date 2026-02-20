@@ -125,8 +125,8 @@ This block serves three purposes:
 - If the callee reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
 
 **Callee handoff.** When the callee finishes:
-1. Write the report in the format specified by the skill invocation protocol.
-2. Update summary.md with the factual output (measurements, findings, hypotheses, design) — but do not interpret them or decide next steps. That's the caller's job.
+1. Write the report/receipt in the format specified by the skill invocation protocol.
+2. Do NOT write to summary.md — only the investigate skill (top-level caller) updates summary.md from receipts.
 3. Read the return context block from summary.md.
 4. Re-read the caller's skill file (path is in the return context block).
 5. Delete the "Active subroutine" section from summary.md.
@@ -135,6 +135,13 @@ This block serves three purposes:
 **The turn does not end at a subroutine boundary.** A skill invocation is a function call that returns a value, not a handoff to another agent. After a callee writes its report and hands back, the same turn continues with the caller acting on the result. If the turn ends after a Skill tool call with no further action, subroutine discipline has been violated.
 
 **Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (measure, analyze, hypothesize, design, research) report their output and return. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
+
+## Workflow Discipline
+
+- When asked to investigate or debug, always use the appropriate skill (investigate, measure, research, etc.) — never start ad-hoc analysis or use WebSearch directly. Follow the skill discipline hierarchy.
+- When asked to update documentation, commit, or do a simple task, do exactly that — don't go on analysis tangents or start investigating new issues. Complete the requested task first.
+- Before starting any work, check git status and ensure the working directory is clean. If there are uncommitted changes or stashed work, ask before proceeding.
+- If the Read tool returns content that seems stale or inconsistent (especially after git operations like stash or checkout), fall back to `cat <file>` via Bash to get accurate file state.
 
 ## Project Overview
 
@@ -153,10 +160,16 @@ cargo clippy                                 # Lint
 cargo fmt                                    # Format
 ```
 
+## Testing
+
+- Always run tests against missingno-core: `cargo test -p missingno-core`. Do not run `cargo test` against the whole workspace unless specifically asked.
+- After any fix, verify no regressions before committing.
+
 ## Emulation Philosophy
 
 - **Hardware fidelity**: Model the hardware as closely as possible so correct behavior emerges naturally. Avoid hacks and special-case workarounds — if something needs a hack to work, the underlying model is wrong.
 - **Code as documentation**: The code should teach the reader how the hardware works. Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself, not from comments. Strike a balance between clarity and jargon; assume the reader is a competent programmer but not necessarily a domain expert in the specific hardware.
+- **Hardware over emulator comparisons**: When debugging, prioritize real hardware behavior and documentation over comparing with other emulator implementations (e.g., SameBoy). Other emulators are reference material, not ground truth.
 - **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
 
 ## Architecture
