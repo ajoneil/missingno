@@ -206,20 +206,6 @@ impl GameBoy {
         let mut pending_oam_bug: Option<OamBugKind> = None;
 
         loop {
-            // IE push bug: resolve the interrupt vector after the high byte
-            // push completes but before the low byte push. The high byte
-            // write may have modified IE (at 0xFFFF), changing which
-            // interrupt is pending.
-            if processor.needs_vector_resolve && !vector_resolved {
-                vector_resolved = true;
-                if let Some(interrupt) = self.interrupts.triggered() {
-                    self.interrupts.clear(interrupt);
-                    self.cpu.program_counter = interrupt.vector();
-                } else {
-                    self.cpu.program_counter = 0x0000;
-                }
-            }
-
             // Collect one M-cycle (4 T-cycles), deferring bus action.
             let mut deferred_bus_action: Option<TCycle> = None;
 
@@ -231,6 +217,26 @@ impl GameBoy {
                         return new_screen;
                     }
                 };
+
+                // IE push bug: resolve the interrupt vector after the high byte
+                // push completes but before the low byte push. The high byte
+                // write may have modified IE (at 0xFFFF), changing which
+                // interrupt is pending.
+                //
+                // This check must be INSIDE the T-cycle loop, after next_tcycle()
+                // (which sets needs_vector_resolve at the start of the M-cycle
+                // where it applies), so that it fires at the same point as on the
+                // per-T-cycle main branch loop: after next_tcycle yields the first
+                // T-cycle of step 3, before the bus op for step 3 executes.
+                if processor.needs_vector_resolve && !vector_resolved {
+                    vector_resolved = true;
+                    if let Some(interrupt) = self.interrupts.triggered() {
+                        self.interrupts.clear(interrupt);
+                        self.cpu.program_counter = interrupt.vector();
+                    } else {
+                        self.cpu.program_counter = 0x0000;
+                    }
+                }
 
                 // Record bus action for deferred execution; detect OAM bug
                 // address at the point the action is yielded (T1).
