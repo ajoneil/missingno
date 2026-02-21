@@ -1300,17 +1300,18 @@ impl Rendering {
         if self.line_number < data.window.y {
             return;
         }
-        // The hardware WX comparator matches WX against PX-1 (one cycle
-        // behind the XEHO counter), so we compare against x_plus_7 + 1.
-        if self.pixel_counter != data.window.x_plus_7.wrapping_add(1) {
+        if self.pixel_counter != data.window.x_plus_7 {
             return;
         }
 
-        // Window already active — check for reactivation zero pixel (DMG only)
+        // Window already active — check for reactivation zero pixel (DMG only).
+        // The hardware condition is GetTile T1 (first tick). Since our WX check
+        // runs after advance_bg_fetcher in mode3_even, the fetcher has already
+        // been ticked: what was dot=0 (T1) is now dot=1. So we check dot=1.
         if self.fetcher.fetching_window {
             if self.startup_fetch.is_none()
                 && self.fetcher.step == FetcherStep::GetTile
-                && self.fetcher.dot_in_step == 0
+                && self.fetcher.dot_in_step == 1
                 && self.bg_shifter.len() == 8
             {
                 self.window_zero_pixel = true;
