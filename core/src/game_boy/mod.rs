@@ -23,9 +23,10 @@ pub mod timers;
 pub struct GameBoy {
     cpu: Cpu,
     screen: Screen,
-    /// Counts T-cycles 0–3 within each M-cycle, used to call
-    /// audio/serial/DMA once per M-cycle (every 4th T-cycle).
-    mcycle_counter: u8,
+    /// Counts clock phases 0–7 within each M-cycle. PPU and timer tick
+    /// on even phases (0, 2, 4, 6 = one per T-cycle). M-cycle-rate
+    /// subsystems (audio, serial, DMA) tick once per M-cycle.
+    phase_counter: u8,
 
     external: ExternalBus,
     high_ram: HighRam,
@@ -52,7 +53,7 @@ impl GameBoy {
         GameBoy {
             cpu,
             screen: Screen::new(),
-            mcycle_counter: 0,
+            phase_counter: 0,
             external: ExternalBus::new(cartridge),
             high_ram: HighRam::new(),
             ppu: Ppu::new(),
@@ -70,7 +71,7 @@ impl GameBoy {
     pub fn reset(&mut self) {
         self.cpu = Cpu::new(self.external.cartridge.header_checksum());
         self.screen = Screen::new();
-        self.mcycle_counter = 0;
+        self.phase_counter = 0;
         self.external.work_ram = [0; 0x2000];
         self.external.latch = 0xFF;
         self.external.decay = 0;

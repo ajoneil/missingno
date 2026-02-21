@@ -100,11 +100,9 @@ impl GameBoy {
         } else if self.cpu.halted {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
-            // Fetch phase: each byte read is 4 T-cycles with bus op after
-            // 3 ticks, matching hardware's data latch capture at phases G-H.
-            //   T1-T3: tick hardware
-            //   Bus:   read byte (observes post-tick(3) state)
-            //   T4:    tick hardware
+            // Fetch phase: each byte read takes one M-cycle (8 phases).
+            // The bus read happens at phase 5 (after 3 dots at phases
+            // 0, 2, 4), matching the current tick(3)→bus→tick(1) timing.
 
             // Read opcode byte
             //
@@ -118,9 +116,11 @@ impl GameBoy {
             if tentative {
                 self.ppu.start_accumulating();
             }
-            new_screen |= self.tick_hardware_tcycle();
-            new_screen |= self.tick_hardware_tcycle();
-            new_screen |= self.tick_hardware_tcycle();
+            // Phases 0–4: tick 3 dots (at phases 0, 2, 4)
+            for _ in 0..5 {
+                new_screen |= self.tick_hardware_phase();
+            }
+            // Phase 5: bus read (after 3 dots)
             let opcode = self.cpu_read(self.cpu.program_counter);
             if self.cpu.halt_bug {
                 self.cpu.halt_bug = false;
@@ -141,7 +141,10 @@ impl GameBoy {
                 // accumulation and flush the captured T0 dot.
                 self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
-            new_screen |= self.tick_hardware_tcycle();
+            // Phases 5–7: tick 1 more dot (at phase 6, with M-cycle boundary)
+            for _ in 5..8 {
+                new_screen |= self.tick_hardware_phase();
+            }
 
             // Read operand bytes
             let mut bytes = [opcode, 0, 0];
@@ -151,12 +154,17 @@ impl GameBoy {
                     // T0 so the full M-cycle (4 dots) is deferred.
                     self.ppu.start_accumulating();
                 }
-                new_screen |= self.tick_hardware_tcycle();
-                new_screen |= self.tick_hardware_tcycle();
-                new_screen |= self.tick_hardware_tcycle();
+                // Phases 0–4: tick 3 dots
+                for _ in 0..5 {
+                    new_screen |= self.tick_hardware_phase();
+                }
+                // Phase 5: bus read (after 3 dots)
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
-                new_screen |= self.tick_hardware_tcycle();
+                // Phases 5–7: tick 1 more dot (with M-cycle boundary)
+                for _ in 5..8 {
+                    new_screen |= self.tick_hardware_phase();
+                }
             }
 
             // For deferred-address writes, check the actual target now
@@ -199,72 +207,66 @@ impl GameBoy {
             processor
         };
 
-        // Run post-decode M-cycles. Hardware ticks 3 T-cycles, then the
-        // CPU bus operation, then the 4th tick: tick(3) → bus → tick(1).
+        // Run post-decode M-cycles. Each M-cycle is 8 clock phases.
+        // The processor yields one T-cycle per dot phase (phases 0, 2,
+        // 4, 6 — 4 yields per M-cycle). Bus actions and OAM bug fire
+        // at phase 5 (after 3 dots), preserving tick(3)→bus→tick(1).
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
 
         loop {
-            // Collect one M-cycle (4 T-cycles), deferring bus action.
+            // Collect one M-cycle (8 phases), deferring bus action.
             let mut deferred_bus_action: Option<TCycle> = None;
 
-            for tcycle_in_mcycle in 0u8..4 {
-                let tcycle = match processor.next_tcycle(read_value, &mut self.cpu) {
-                    Some(t) => t,
-                    None => {
-                        // Instruction complete at M-cycle boundary.
-                        return new_screen;
-                    }
-                };
+            for phase_in_mcycle in 0u8..8 {
+                // Yield a T-cycle from the processor on dot phases (even).
+                if phase_in_mcycle & 1 == 0 {
+                    let tcycle = match processor.next_tcycle(read_value, &mut self.cpu) {
+                        Some(t) => t,
+                        None => {
+                            // Instruction complete at M-cycle boundary.
+                            return new_screen;
+                        }
+                    };
 
-                // IE push bug: resolve the interrupt vector after the high byte
-                // push completes but before the low byte push. The high byte
-                // write may have modified IE (at 0xFFFF), changing which
-                // interrupt is pending.
-                //
-                // This check must be INSIDE the T-cycle loop, after next_tcycle()
-                // (which sets needs_vector_resolve at the start of the M-cycle
-                // where it applies), so that it fires at the same point as on the
-                // per-T-cycle main branch loop: after next_tcycle yields the first
-                // T-cycle of step 3, before the bus op for step 3 executes.
-                if processor.needs_vector_resolve && !vector_resolved {
-                    vector_resolved = true;
-                    if let Some(interrupt) = self.interrupts.triggered() {
-                        self.interrupts.clear(interrupt);
-                        self.cpu.program_counter = interrupt.vector();
-                    } else {
-                        self.cpu.program_counter = 0x0000;
+                    // IE push bug: resolve the interrupt vector after the
+                    // high byte push completes but before the low byte push.
+                    if processor.needs_vector_resolve && !vector_resolved {
+                        vector_resolved = true;
+                        if let Some(interrupt) = self.interrupts.triggered() {
+                            self.interrupts.clear(interrupt);
+                            self.cpu.program_counter = interrupt.vector();
+                        } else {
+                            self.cpu.program_counter = 0x0000;
+                        }
+                    }
+
+                    // Record bus action for deferred execution; detect OAM
+                    // bug address at the point the action is yielded.
+                    match &tcycle {
+                        TCycle::Read { address } => {
+                            if (0xFE00..=0xFEFF).contains(address) {
+                                pending_oam_bug = Some(OamBugKind::Read);
+                            }
+                            deferred_bus_action = Some(tcycle);
+                        }
+                        TCycle::Write { address, .. } => {
+                            if (0xFE00..=0xFEFF).contains(address) {
+                                pending_oam_bug = Some(OamBugKind::Write);
+                            }
+                            deferred_bus_action = Some(tcycle);
+                        }
+                        TCycle::Hardware => {}
                     }
                 }
 
-                // Record bus action for deferred execution; detect OAM bug
-                // address at the point the action is yielded (T1).
-                match &tcycle {
-                    TCycle::Read { address } => {
-                        if (0xFE00..=0xFEFF).contains(address) {
-                            pending_oam_bug = Some(OamBugKind::Read);
-                        }
-                        deferred_bus_action = Some(tcycle);
-                    }
-                    TCycle::Write { address, .. } => {
-                        if (0xFE00..=0xFEFF).contains(address) {
-                            pending_oam_bug = Some(OamBugKind::Write);
-                        }
-                        deferred_bus_action = Some(tcycle);
-                    }
-                    TCycle::Hardware => {}
-                }
-
-                // IDU OAM bug: record the pending corruption kind at T0.
-                // The IDU address is determined by the processor's current
-                // phase, not by PPU state, so it can be checked before ticks.
-                if tcycle_in_mcycle == 0 {
+                // Phase 0: IDU OAM bug check + write conflict lookahead.
+                if phase_in_mcycle == 0 {
+                    // IDU OAM bug: record the pending corruption kind.
                     if let Some(addr) = processor.oam_bug_address() {
                         if (0xFE00..=0xFEFF).contains(&addr) {
                             match pending_oam_bug {
-                                // Read + IDU = compound "read during increase".
-                                // Keep as Read — oam_bug_read applies both.
                                 Some(OamBugKind::Read) => {}
                                 _ => {
                                     pending_oam_bug = Some(OamBugKind::Write);
@@ -272,13 +274,10 @@ impl GameBoy {
                             }
                         }
                     }
-                }
 
-                // Write conflict: at T0 of each M-cycle, check if the NEXT
-                // M-cycle will write a PPU register. If so, start accumulating
-                // dots so this M-cycle's 4 dots are deferred, giving 5 pending
-                // at the write's T1 for conflict splitting.
-                if tcycle_in_mcycle == 0 {
+                    // Write conflict: check if the NEXT M-cycle will write
+                    // a PPU register. Start accumulating dots so this
+                    // M-cycle's 4 dots are deferred.
                     if let Some(addr) = processor.peek_next_write_address() {
                         if is_ppu_register(addr) && self.ppu.ppu_is_drawing() {
                             self.ppu.start_accumulating();
@@ -286,13 +285,10 @@ impl GameBoy {
                     }
                 }
 
-                // OAM bug: the hardware CUFE clock fires at the D→E phase
-                // boundary (after 2 dots of the M-cycle are clocked). In this
-                // loop the tick fires at the end of each iteration, so the
-                // OAM bug must apply at the start of iteration T3 — after
-                // T0, T1, and T2's ticks have all fired — to see the correct
-                // post-2-dot PPU state.
-                if tcycle_in_mcycle == 3 {
+                // Phase 5: OAM bug fires (after 3 dots at phases 0, 2, 4).
+                // Preserves current timing where OAM bug applies at T3
+                // after T0+T1+T2 ticks.
+                if phase_in_mcycle == 5 {
                     if let Some(kind) = pending_oam_bug.take() {
                         match kind {
                             OamBugKind::Read => self.ppu.oam_bug_read(),
@@ -301,10 +297,10 @@ impl GameBoy {
                     }
                 }
 
-                // Execute deferred bus action after 3 ticks (before T3's
-                // tick). CPU reads/writes observe post-tick(3) state,
-                // matching hardware's data latch capture at phases G-H.
-                if tcycle_in_mcycle == 3 {
+                // Phase 5: execute deferred bus action (after 3 dots).
+                // CPU reads/writes observe post-tick(3) state, preserving
+                // the current tick(3)→bus→tick(1) timing.
+                if phase_in_mcycle == 5 {
                     match deferred_bus_action.take() {
                         Some(TCycle::Read { address }) => {
                             read_value = self.cpu_read(address);
@@ -316,86 +312,94 @@ impl GameBoy {
                     }
                 }
 
-                new_screen |= self.tick_hardware_tcycle();
+                new_screen |= self.tick_hardware_phase();
             }
         }
     }
 
-    /// Advance hardware by one T-cycle.
+    /// Advance hardware by one clock phase.
     ///
-    /// Timers tick every T-cycle (DIV increments by 1 each time) so that
-    /// reads/writes landing at different T-cycle offsets observe different
-    /// DIV values. Overflow/reload processing only happens at M-cycle
-    /// boundaries (every 4th T-cycle).
+    /// Each M-cycle has 8 phases (0–7). PPU and timer tick on even
+    /// phases (0, 2, 4, 6 — one dot per T-cycle, 4 per M-cycle).
+    /// M-cycle-rate subsystems (serial, DMA, audio) tick once when the
+    /// M-cycle boundary fires.
     ///
-    /// Other subsystems (video, audio, serial, DMA) still tick once per
-    /// M-cycle on the 4th T-cycle.
-    fn tick_hardware_tcycle(&mut self) -> bool {
-        self.mcycle_counter = self.mcycle_counter.wrapping_add(1) & 3;
-        let is_mcycle_boundary = self.mcycle_counter == 0;
+    /// Current phase assignments (Step 1 — preserves pre-refactor timing):
+    ///   Phases 0, 2, 4: dot ticks (timer + PPU)
+    ///   Phase 5:         bus action window (after 3 dots)
+    ///   Phase 6:         4th dot tick + M-cycle boundary (serial/DMA/audio)
+    ///   Phases 1, 3, 7:  non-dot phases (no-ops for now)
+    fn tick_hardware_phase(&mut self) -> bool {
+        let phase = self.phase_counter;
+        self.phase_counter = (self.phase_counter + 1) & 7;
 
-        // Timer ticks every T-cycle for DIV resolution
-        if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
-            self.interrupts.request(interrupt);
-        }
-
-        // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
-        // detection and LYC comparison only run on M-cycle boundaries.
-        let video_result = self.ppu.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
-        if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        if video_result.request_stat {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
+        let is_dot = phase & 1 == 0; // phases 0, 2, 4, 6
+        let is_mcycle_boundary = phase == 6; // 4th dot, same as old counter wrapping to 0
 
         let mut new_screen = false;
-        if let Some(screen) = video_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
+
+        if is_dot {
+            // Timer ticks every T-cycle for DIV resolution
+            if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
+                self.interrupts.request(interrupt);
             }
-            self.screen = screen;
-            new_screen = true;
-        }
 
-        if !is_mcycle_boundary {
-            return new_screen;
-        }
+            // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
+            // detection and LYC comparison only run on M-cycle boundaries.
+            let video_result = self.ppu.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
+            if video_result.request_vblank {
+                self.interrupts.request(Interrupt::VideoBetweenFrames);
+            }
+            if video_result.request_stat {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
 
-        // Serial ticks once per M-cycle, using falling edges of the
-        // internal counter's bit 7 to drive the serial shift clock.
-        let counter = self.timers.internal_counter();
-        if let Some(interrupt) = self.serial.mcycle(counter) {
-            self.interrupts.request(interrupt);
-        }
-
-        // OAM DMA: transfer one byte per M-cycle. The DMA controller
-        // drives the source bus with the byte it reads, updating the
-        // bus latch so that CPU reads from the same bus see this value.
-        if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
-            let byte = self.read_dma_source(src_addr);
-            let oam_addr = match ppu::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
-                ppu::memory::MappedAddress::Oam(addr) => addr,
-                _ => unreachable!(),
-            };
-            self.ppu.write_oam(oam_addr, byte);
-            match Bus::of(src_addr) {
-                Some(Bus::External) => {
-                    self.external.drive(byte);
+            if let Some(screen) = video_result.screen {
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.update_screen(&screen);
                 }
-                Some(Bus::Vram) => {
-                    self.vram_bus.drive(byte);
-                }
-                None => {}
+                self.screen = screen;
+                new_screen = true;
             }
         }
 
-        // External bus decay: with no device driving the bus, the
-        // retained value trends toward 0xFF as parasitic capacitance
-        // discharges.
-        self.external.tick_decay();
+        if is_mcycle_boundary {
+            // Serial ticks once per M-cycle, using falling edges of the
+            // internal counter's bit 7 to drive the serial shift clock.
+            let counter = self.timers.internal_counter();
+            if let Some(interrupt) = self.serial.mcycle(counter) {
+                self.interrupts.request(interrupt);
+            }
 
-        self.audio.mcycle(self.timers.internal_counter());
+            // OAM DMA: transfer one byte per M-cycle. The DMA controller
+            // drives the source bus with the byte it reads, updating the
+            // bus latch so that CPU reads from the same bus see this value.
+            if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+                let byte = self.read_dma_source(src_addr);
+                let oam_addr = match ppu::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
+                    ppu::memory::MappedAddress::Oam(addr) => addr,
+                    _ => unreachable!(),
+                };
+                self.ppu.write_oam(oam_addr, byte);
+                match Bus::of(src_addr) {
+                    Some(Bus::External) => {
+                        self.external.drive(byte);
+                    }
+                    Some(Bus::Vram) => {
+                        self.vram_bus.drive(byte);
+                    }
+                    None => {}
+                }
+            }
+
+            // External bus decay: with no device driving the bus, the
+            // retained value trends toward 0xFF as parasitic capacitance
+            // discharges.
+            self.external.tick_decay();
+
+            self.audio.mcycle(self.timers.internal_counter());
+        }
+
         new_screen
     }
 
