@@ -544,6 +544,11 @@ pub struct Rendering {
     /// increment so the first sprite pixel is output at PX=N (the frozen
     /// trigger value). Cleared after the resumption dot's shift_pixel_out.
     sprite_resuming: bool,
+    /// Window reactivation zero pixel (DMG only). Set when WX re-matches
+    /// while the window is active with specific fetcher/FIFO conditions.
+    /// Causes the next pixel output to use bg_color=0 without popping
+    /// the BG shifter. The OBJ shifter is popped normally.
+    window_zero_pixel: bool,
 }
 
 impl Rendering {
@@ -571,6 +576,7 @@ impl Rendering {
             poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
+            window_zero_pixel: false,
         }
     }
 
@@ -598,6 +604,7 @@ impl Rendering {
             poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
+            window_zero_pixel: false,
         }
     }
 
@@ -757,6 +764,7 @@ impl Rendering {
                 self.poky = false;
                 self.sprite_fetch = None;
                 self.sprite_resuming = false;
+                self.window_zero_pixel = false;
 
                 if self.line_number == screen::NUM_SCANLINES {
                     return true;
@@ -1179,6 +1187,48 @@ impl Rendering {
     /// indices, applies priority logic, selects the winning pixel, and
     /// maps it through the appropriate palette to the LCD.
     fn shift_pixel_out(&mut self, data: &Registers) {
+        // Window reactivation zero pixel: substitute color 0 for the BG
+        // pixel without popping the BG shifter. The OBJ shifter is still
+        // popped so sprite pixels mix against the zero pixel.
+        if self.window_zero_pixel {
+            self.window_zero_pixel = false;
+            let obj_bits = self.obj_shifter.shift();
+
+            if !self.fine_scroll.pixel_clock_active() {
+                return;
+            }
+            if self.pixel_counter < FIRST_VISIBLE_PIXEL {
+                return;
+            }
+            if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+                return;
+            }
+
+            let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
+            let y = self.line_number;
+            let bg_color: u8 = 0;
+
+            if data.control.sprites_enabled() {
+                if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
+                    let spr_color = (spr_hi << 1) | spr_lo;
+                    if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                        let sprite_palette = if spr_pal == 0 {
+                            &data.palettes.sprite0
+                        } else {
+                            &data.palettes.sprite1
+                        };
+                        let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                        self.screen.set_pixel(x, y, mapped);
+                        return;
+                    }
+                }
+            }
+
+            let mapped = data.palettes.background.map(PaletteIndex(bg_color));
+            self.screen.set_pixel(x, y, mapped);
+            return;
+        }
+
         // Shift one bit from each BG bitplane
         let (bg_lo, bg_hi) = self.bg_shifter.shift();
 
@@ -1241,10 +1291,9 @@ impl Rendering {
     }
 
     /// Check if the window should start rendering at the current pixel position.
+    /// Also detects window reactivation zero pixel conditions when the window
+    /// is already active.
     fn check_window_trigger(&mut self, data: &Registers) {
-        if self.fetcher.fetching_window {
-            return;
-        }
         if !data.control.window_enabled() {
             return;
         }
@@ -1252,6 +1301,18 @@ impl Rendering {
             return;
         }
         if self.pixel_counter != data.window.x_plus_7 {
+            return;
+        }
+
+        // Window already active — check for reactivation zero pixel (DMG only)
+        if self.fetcher.fetching_window {
+            if self.startup_fetch.is_none()
+                && self.fetcher.step == FetcherStep::GetTile
+                && self.fetcher.dot_in_step == 0
+                && self.bg_shifter.len() == 8
+            {
+                self.window_zero_pixel = true;
+            }
             return;
         }
 
