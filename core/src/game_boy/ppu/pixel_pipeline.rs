@@ -672,6 +672,15 @@ impl Rendering {
         if self.rendering {
             self.mode3_even(data, vram);
         }
+
+        // WODU hblank gate (DELTA_EVEN). On hardware, WODU fires on
+        // the even half-cycle using pix_count from the previous odd
+        // half-cycle. Since half_even runs before half_odd, pixel_counter
+        // still holds the previous dot's value here.
+        // WODU = AND(XENA_STORE_MATCHn, XANO_PX167p)
+        if self.rendering && self.pixel_counter >= WODU_PIXEL_COUNT && self.sprite_fetch.is_none() {
+            self.hblank_gate = true;
+        }
     }
 
     /// DELTA_ODD half-cycle: output phase.
@@ -695,15 +704,6 @@ impl Rendering {
             // Mode 3 (drawing) and Mode 0 (HBlank)
             if self.rendering {
                 self.mode3_odd(data, oam, vram);
-            }
-
-            // TODO(step2): move to half_even — hardware fires WODU on
-            // DELTA_EVEN using previous dot's pix_count
-            if self.rendering
-                && self.pixel_counter >= WODU_PIXEL_COUNT
-                && self.sprite_fetch.is_none()
-            {
-                self.hblank_gate = true;
             }
 
             self.dot += 1;
