@@ -277,20 +277,20 @@ enum FetcherStep {
     Load,
 }
 
-/// Mode 3 starts with one BG tile fetch (6 dots) before any pixels
-/// shift out. On hardware, AVAP fires at Mode 3 entry and the fetcher
-/// begins immediately.
+/// Mode 3 starts with one BG tile fetch before any pixels shift out.
+/// On hardware, AVAP fires at Mode 3 entry and the fetcher begins
+/// immediately.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
     /// Single tile fetch — loads the first tile into the BG shifter.
-    /// When the shifter becomes non-empty, transitions to Cascade.
+    /// When the shifter becomes non-empty, NYKA fires on DELTA_EVEN
+    /// and transitions to Cascade.
     FirstTile,
 
-    /// NYKA→PORY→PYGO→POKY cascade. On hardware, this 3-DFF chain
-    /// (EVEN→ODD→EVEN phasing) delays the POKY latch — which enables
-    /// the pixel clock — by ~3 dots after the first tile data is ready.
-    /// The fetcher continues advancing during the cascade.
-    Cascade { dots_remaining: u8 },
+    /// NYKA→PORY→POKY cascade. The 3-DFF chain (EVEN→ODD→EVEN)
+    /// delays the POKY latch — which enables the pixel clock — by
+    /// 3 half-cycles after the first tile data is ready.
+    Cascade,
 }
 
 struct TileFetcher {
@@ -529,6 +529,14 @@ pub struct Rendering {
     /// at PX=167. Not reset on window trigger — PX is a monotonic
     /// per-line counter.
     pixel_counter: u8,
+    /// NYKA_FETCH_DONEp_evn — set on DELTA_EVEN when the BG shifter
+    /// first becomes non-empty during startup (fetch complete signal).
+    nyka: bool,
+    /// PORY_FETCH_DONEp_odd — captures NYKA on DELTA_ODD.
+    pory: bool,
+    /// POKY_PRELOAD_LATCHp_evn — set on DELTA_EVEN when PORY is set.
+    /// Enables the pixel clock, ending the startup cascade.
+    poky: bool,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Set when a sprite fetch completes (sprite_fetch → None). On the
@@ -558,6 +566,9 @@ impl Rendering {
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
+            nyka: false,
+            pory: false,
+            poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
         }
@@ -582,6 +593,9 @@ impl Rendering {
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
+            nyka: false,
+            pory: false,
+            poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
         }
@@ -732,6 +746,9 @@ impl Rendering {
                 self.startup_fetch = Some(StartupFetch::FirstTile);
                 self.fine_scroll = FineScroll::new();
                 self.pixel_counter = 0;
+                self.nyka = false;
+                self.pory = false;
+                self.poky = false;
                 self.sprite_fetch = None;
                 self.sprite_resuming = false;
 
@@ -746,11 +763,40 @@ impl Rendering {
 
     /// DELTA_EVEN Mode 3 processing.
     ///
-    /// Fine scroll match (PUXA_SCX_FINE_MATCH_evn) and window WX match
-    /// (PYCO_WIN_MATCHp) both fire on DELTA_EVEN.
-    fn mode3_even(&mut self, data: &Registers, _vram: &Vram) {
+    /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
+    /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
+    /// all fire on DELTA_EVEN.
+    fn mode3_even(&mut self, data: &Registers, vram: &Vram) {
+        // Fetcher advances every half-cycle (DELTA_EVEN phase).
+        // The BG fetcher is frozen only during sprite data fetch
+        // (FetchingData phase). It continues during startup, sprite
+        // wait (WaitingForFetcher), and normal rendering.
+        let sprite_data_fetch = matches!(
+            self.sprite_fetch,
+            Some(SpriteFetch {
+                phase: SpriteFetchPhase::FetchingData,
+                ..
+            })
+        );
+        if !sprite_data_fetch {
+            self.advance_bg_fetcher(data, vram);
+        }
+
+        // NYKA: detect fetch done on DELTA_EVEN. When the BG shifter
+        // first becomes non-empty during startup, the fetch is complete.
+        if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
+            self.startup_fetch = Some(StartupFetch::Cascade);
+            self.nyka = true;
+        }
+
+        // POKY: set on DELTA_EVEN when PORY is set. This enables the
+        // pixel clock, ending the startup cascade.
+        if self.startup_fetch == Some(StartupFetch::Cascade) && self.pory {
+            self.poky = true;
+            self.startup_fetch = None;
+        }
+
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
-        // The ROXY latch clears when the fine counter matches SCX & 7.
         // No fine scroll processing during startup fetch.
         if self.startup_fetch.is_none() {
             self.fine_scroll
@@ -758,7 +804,6 @@ impl Rendering {
         }
 
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
-        // Compares pixel_counter (from previous ODD) against WX+7.
         // Active during both startup fetch and normal rendering.
         self.check_window_trigger(data);
     }
@@ -766,24 +811,15 @@ impl Rendering {
     /// DELTA_ODD Mode 3 pixel pipeline processing.
     fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
-            Some(StartupFetch::FirstTile) => {
+            Some(StartupFetch::FirstTile) | Some(StartupFetch::Cascade) => {
+                // Fetcher ODD half-cycle advance during startup.
                 self.advance_bg_fetcher(data, vram);
 
-                if !self.bg_shifter.is_empty() {
-                    self.startup_fetch = Some(StartupFetch::Cascade { dots_remaining: 3 });
+                // PORY: captures NYKA on DELTA_ODD.
+                if self.nyka {
+                    self.pory = true;
                 }
-                return;
-            }
-            Some(StartupFetch::Cascade { dots_remaining }) => {
-                self.advance_bg_fetcher(data, vram);
 
-                if dots_remaining <= 1 {
-                    self.startup_fetch = None;
-                } else {
-                    self.startup_fetch = Some(StartupFetch::Cascade {
-                        dots_remaining: dots_remaining - 1,
-                    });
-                }
                 return;
             }
             None => {}
@@ -1213,7 +1249,8 @@ impl Rendering {
             return;
         }
 
-        // Window trigger: clear shifters, reset fine scroll, and restart fetcher
+        // Window trigger: clear shifters, reset fine scroll, restart fetcher,
+        // and reset cascade DFFs so a new startup fetch begins.
         self.bg_shifter.clear();
         self.obj_shifter.clear();
         self.fine_scroll.reset_for_window();
@@ -1221,6 +1258,12 @@ impl Rendering {
         self.fetcher.dot_in_step = 0;
         self.fetcher.window_tile_x = 0;
         self.fetcher.fetching_window = true;
+        self.nyka = false;
+        self.pory = false;
+        self.poky = false;
+        if self.startup_fetch.is_some() {
+            self.startup_fetch = Some(StartupFetch::FirstTile);
+        }
         self.window_rendered = true;
     }
 
