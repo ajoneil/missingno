@@ -279,20 +279,17 @@ enum FetcherStep {
 
 /// Mode 3 starts with one BG tile fetch before any pixels shift out.
 /// On hardware, AVAP fires at Mode 3 entry and the fetcher begins
-/// immediately. After the first tile fetch completes, a 4-DFF cascade
-/// (LYRY→NYKA→PORY→POKY) propagates the "fetch done" signal across
-/// alternating clock phases before enabling the pixel clock.
+/// immediately. After the first tile fetch completes, a 3-DFF cascade
+/// (LYRY is combinational, NYKA→PORY→POKY are DFFs) propagates the
+/// "fetch done" signal across alternating clock phases before enabling
+/// the pixel clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
     /// Single tile fetch in progress. The fetcher runs on DELTA_EVEN only
-    /// (LEBO clock). When the BG shifter becomes non-empty, transitions
-    /// to FetchDone on the same DELTA_EVEN.
+    /// (LEBO clock). When the BG shifter becomes non-empty, LYRY fires
+    /// combinationally and NYKA captures it on the same DELTA_EVEN,
+    /// transitioning directly to NykaFired.
     FirstTile,
-
-    /// LYRY_BFETCH_DONEp has fired (combinational). The first tile's data
-    /// is in the BG shifter. NYKA will capture on the *next* DELTA_EVEN
-    /// (DFF reads previous tick's LYRY).
-    FetchDone,
 
     /// NYKA_FETCH_DONEp_evn has captured LYRY. PORY will capture NYKA on
     /// the next DELTA_ODD.
@@ -785,11 +782,8 @@ impl Rendering {
         // Startup cascade — each match arm is one DFF capture on DELTA_EVEN.
         match self.startup_fetch {
             Some(StartupFetch::FirstTile) if !self.bg_shifter.is_empty() => {
-                // LYRY fires combinationally when the BG shifter first fills.
-                self.startup_fetch = Some(StartupFetch::FetchDone);
-            }
-            Some(StartupFetch::FetchDone) => {
-                // NYKA captures LYRY on the next DELTA_EVEN.
+                // LYRY is combinational — fires the same cycle the shifter fills.
+                // NYKA captures LYRY on this DELTA_EVEN.
                 self.startup_fetch = Some(StartupFetch::NykaFired);
             }
             Some(StartupFetch::PoryFired) => {
@@ -814,8 +808,8 @@ impl Rendering {
     /// DELTA_ODD Mode 3 pixel pipeline processing.
     fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
-            Some(StartupFetch::FirstTile) | Some(StartupFetch::FetchDone) => {
-                // During fetch and LYRY-fired phases, no pixel processing.
+            Some(StartupFetch::FirstTile) => {
+                // During fetch phase, no pixel processing.
                 // Fetcher does NOT advance on ODD (LEBO clock is EVEN-only).
                 return;
             }
