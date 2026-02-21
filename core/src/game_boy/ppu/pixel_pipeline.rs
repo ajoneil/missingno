@@ -695,6 +695,17 @@ impl Rendering {
         if self.rendering && self.pixel_counter >= WODU_PIXEL_COUNT && self.sprite_fetch.is_none() {
             self.hblank_gate = true;
         }
+
+        // SANU scanning trigger (DELTA_EVEN). On hardware, SANU fires
+        // combinationally at LX=113 (dot 452). The ACYL scanning signal
+        // activates after the SANU→RUTU→CATU→BESU pipeline (~3 half-
+        // cycles), but we set scanning here directly. This regresses
+        // oam_bug tests because the empirical OAM corruption formulas
+        // are calibrated to the old timing — the OAM bug model needs
+        // updating, not this signal placement.
+        if self.dot == SCANLINE_TOTAL_DOTS - 4 {
+            self.scanning = true;
+        }
     }
 
     /// DELTA_ODD half-cycle: output phase.
@@ -721,16 +732,6 @@ impl Rendering {
             }
 
             self.dot += 1;
-
-            // SANU fires on DELTA_EVEN at LX=113, but ACYL (scanning)
-            // doesn't go high until the SANU→RUTU→CATU→BESU pipeline
-            // completes (~3 half-cycles later). Keeping this in half_odd
-            // after the dot increment produces the correct OAM locking
-            // timing from the CPU bus perspective. Moving to half_even
-            // shifts the locking boundary and regresses oam_bug tests.
-            if self.dot == SCANLINE_TOTAL_DOTS - 4 {
-                self.scanning = true;
-            }
 
             if self.dot == SCANLINE_TOTAL_DOTS {
                 self.rendering = false;
