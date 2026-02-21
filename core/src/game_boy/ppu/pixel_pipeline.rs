@@ -279,18 +279,28 @@ enum FetcherStep {
 
 /// Mode 3 starts with one BG tile fetch before any pixels shift out.
 /// On hardware, AVAP fires at Mode 3 entry and the fetcher begins
-/// immediately.
+/// immediately. After the first tile fetch completes, a 4-DFF cascade
+/// (LYRY→NYKA→PORY→POKY) propagates the "fetch done" signal across
+/// alternating clock phases before enabling the pixel clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
-    /// Single tile fetch — loads the first tile into the BG shifter.
-    /// When the shifter becomes non-empty, NYKA fires on DELTA_EVEN
-    /// and transitions to Cascade.
+    /// Single tile fetch in progress. The fetcher runs on DELTA_EVEN only
+    /// (LEBO clock). When the BG shifter becomes non-empty, transitions
+    /// to FetchDone on the same DELTA_EVEN.
     FirstTile,
 
-    /// NYKA→PORY→POKY cascade. The 3-DFF chain (EVEN→ODD→EVEN)
-    /// delays the POKY latch — which enables the pixel clock — by
-    /// 3 half-cycles after the first tile data is ready.
-    Cascade,
+    /// LYRY_BFETCH_DONEp has fired (combinational). The first tile's data
+    /// is in the BG shifter. NYKA will capture on the *next* DELTA_EVEN
+    /// (DFF reads previous tick's LYRY).
+    FetchDone,
+
+    /// NYKA_FETCH_DONEp_evn has captured LYRY. PORY will capture NYKA on
+    /// the next DELTA_ODD.
+    NykaFired,
+
+    /// PORY_FETCH_DONEp_odd has captured NYKA. POKY will latch on the
+    /// next DELTA_EVEN, enabling the pixel clock (startup_fetch → None).
+    PoryFired,
 }
 
 struct TileFetcher {
@@ -529,14 +539,6 @@ pub struct Rendering {
     /// at PX=167. Not reset on window trigger — PX is a monotonic
     /// per-line counter.
     pixel_counter: u8,
-    /// NYKA_FETCH_DONEp_evn — set on DELTA_EVEN when the BG shifter
-    /// first becomes non-empty during startup (fetch complete signal).
-    nyka: bool,
-    /// PORY_FETCH_DONEp_odd — captures NYKA on DELTA_ODD.
-    pory: bool,
-    /// POKY_PRELOAD_LATCHp_evn — set on DELTA_EVEN when PORY is set.
-    /// Enables the pixel clock, ending the startup cascade.
-    poky: bool,
     /// Active sprite fetch, if any.
     sprite_fetch: Option<SpriteFetch>,
     /// Set when a sprite fetch completes (sprite_fetch → None). On the
@@ -571,9 +573,6 @@ impl Rendering {
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
-            nyka: false,
-            pory: false,
-            poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
             window_zero_pixel: false,
@@ -599,9 +598,6 @@ impl Rendering {
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
             pixel_counter: 0,
-            nyka: false,
-            pory: false,
-            poky: false,
             sprite_fetch: None,
             sprite_resuming: false,
             window_zero_pixel: false,
@@ -759,9 +755,6 @@ impl Rendering {
                 self.startup_fetch = Some(StartupFetch::FirstTile);
                 self.fine_scroll = FineScroll::new();
                 self.pixel_counter = 0;
-                self.nyka = false;
-                self.pory = false;
-                self.poky = false;
                 self.sprite_fetch = None;
                 self.sprite_resuming = false;
                 self.window_zero_pixel = false;
@@ -796,18 +789,21 @@ impl Rendering {
             self.advance_bg_fetcher(data, vram);
         }
 
-        // NYKA: detect fetch done on DELTA_EVEN. When the BG shifter
-        // first becomes non-empty during startup, the fetch is complete.
-        if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
-            self.startup_fetch = Some(StartupFetch::Cascade);
-            self.nyka = true;
-        }
-
-        // POKY: set on DELTA_EVEN when PORY is set. This enables the
-        // pixel clock, ending the startup cascade.
-        if self.startup_fetch == Some(StartupFetch::Cascade) && self.pory {
-            self.poky = true;
-            self.startup_fetch = None;
+        // Startup cascade — each match arm is one DFF capture on DELTA_EVEN.
+        match self.startup_fetch {
+            Some(StartupFetch::FirstTile) if !self.bg_shifter.is_empty() => {
+                // LYRY fires combinationally when the BG shifter first fills.
+                self.startup_fetch = Some(StartupFetch::FetchDone);
+            }
+            Some(StartupFetch::FetchDone) => {
+                // NYKA captures LYRY on the next DELTA_EVEN.
+                self.startup_fetch = Some(StartupFetch::NykaFired);
+            }
+            Some(StartupFetch::PoryFired) => {
+                // POKY latches from PORY — enables pixel clock.
+                self.startup_fetch = None;
+            }
+            _ => {}
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
@@ -825,15 +821,18 @@ impl Rendering {
     /// DELTA_ODD Mode 3 pixel pipeline processing.
     fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
-            Some(StartupFetch::FirstTile) | Some(StartupFetch::Cascade) => {
-                // Fetcher ODD half-cycle advance during startup.
-                self.advance_bg_fetcher(data, vram);
-
-                // PORY: captures NYKA on DELTA_ODD.
-                if self.nyka {
-                    self.pory = true;
-                }
-
+            Some(StartupFetch::FirstTile) | Some(StartupFetch::FetchDone) => {
+                // During fetch and LYRY-fired phases, no pixel processing.
+                // Fetcher does NOT advance on ODD (LEBO clock is EVEN-only).
+                return;
+            }
+            Some(StartupFetch::NykaFired) => {
+                // PORY captures NYKA on DELTA_ODD.
+                self.startup_fetch = Some(StartupFetch::PoryFired);
+                return;
+            }
+            Some(StartupFetch::PoryFired) => {
+                // Waiting for POKY on next EVEN. No pixel processing yet.
                 return;
             }
             None => {}
@@ -1328,9 +1327,6 @@ impl Rendering {
         self.fetcher.dot_in_step = 0;
         self.fetcher.window_tile_x = 0;
         self.fetcher.fetching_window = true;
-        self.nyka = false;
-        self.pory = false;
-        self.poky = false;
         if self.startup_fetch.is_some() {
             self.startup_fetch = Some(StartupFetch::FirstTile);
         }
