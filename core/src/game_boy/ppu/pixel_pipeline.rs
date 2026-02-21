@@ -722,7 +722,12 @@ impl Rendering {
 
             self.dot += 1;
 
-            // TODO(step2): move to half_even — SANU fires on DELTA_EVEN
+            // SANU fires on DELTA_EVEN at LX=113, but ACYL (scanning)
+            // doesn't go high until the SANU→RUTU→CATU→BESU pipeline
+            // completes (~3 half-cycles later). Keeping this in half_odd
+            // after the dot increment produces the correct OAM locking
+            // timing from the CPU bus perspective. Moving to half_even
+            // shifts the locking boundary and regresses oam_bug tests.
             if self.dot == SCANLINE_TOTAL_DOTS - 4 {
                 self.scanning = true;
             }
