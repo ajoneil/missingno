@@ -746,17 +746,21 @@ impl Rendering {
 
     /// DELTA_EVEN Mode 3 processing.
     ///
-    /// Fine scroll match (PUXA_SCX_FINE_MATCH_evn) fires on DELTA_EVEN.
-    /// During startup fetch, no fine scroll processing occurs.
+    /// Fine scroll match (PUXA_SCX_FINE_MATCH_evn) and window WX match
+    /// (PYCO_WIN_MATCHp) both fire on DELTA_EVEN.
     fn mode3_even(&mut self, data: &Registers, _vram: &Vram) {
-        if self.startup_fetch.is_some() {
-            return;
-        }
-
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
         // The ROXY latch clears when the fine counter matches SCX & 7.
-        self.fine_scroll
-            .check_scroll_match(data.background_viewport.x);
+        // No fine scroll processing during startup fetch.
+        if self.startup_fetch.is_none() {
+            self.fine_scroll
+                .check_scroll_match(data.background_viewport.x);
+        }
+
+        // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
+        // Compares pixel_counter (from previous ODD) against WX+7.
+        // Active during both startup fetch and normal rendering.
+        self.check_window_trigger(data);
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -764,7 +768,6 @@ impl Rendering {
         match self.startup_fetch {
             Some(StartupFetch::FirstTile) => {
                 self.advance_bg_fetcher(data, vram);
-                self.check_window_trigger(data);
 
                 if !self.bg_shifter.is_empty() {
                     self.startup_fetch = Some(StartupFetch::Cascade { dots_remaining: 3 });
@@ -773,7 +776,6 @@ impl Rendering {
             }
             Some(StartupFetch::Cascade { dots_remaining }) => {
                 self.advance_bg_fetcher(data, vram);
-                self.check_window_trigger(data);
 
                 if dots_remaining <= 1 {
                     self.startup_fetch = None;
@@ -1154,7 +1156,6 @@ impl Rendering {
         // tile shifts through the pipe without writing to the framebuffer.
         // On hardware, the LCD clock gate (WUSA) doesn't open until PX=8.
         if self.pixel_counter < FIRST_VISIBLE_PIXEL {
-            self.check_window_trigger(data);
             return;
         }
 
@@ -1187,7 +1188,6 @@ impl Rendering {
                     };
                     let mapped = sprite_palette.map(PaletteIndex(spr_color));
                     self.screen.set_pixel(x, y, mapped);
-                    self.check_window_trigger(data);
                     return;
                 }
             }
@@ -1196,7 +1196,6 @@ impl Rendering {
         // Background pixel
         let mapped = data.palettes.background.map(PaletteIndex(bg_color));
         self.screen.set_pixel(x, y, mapped);
-        self.check_window_trigger(data);
     }
 
     /// Check if the window should start rendering at the current pixel position.
