@@ -1300,7 +1300,7 @@ impl Rendering {
         if self.line_number < data.window.y {
             return;
         }
-        if self.pixel_counter != data.window.x_plus_7 {
+        if self.pixel_counter != data.window.x_plus_7.wrapping_add(1) {
             return;
         }
 
