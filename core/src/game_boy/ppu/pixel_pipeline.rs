@@ -717,6 +717,12 @@ impl Rendering {
                 self.scanning = false;
                 self.lcd_turning_on = false;
                 self.rendering = true;
+
+                // AVAP: On hardware, scan_done fires on DELTA_EVEN and
+                // resets phase_tfetch to 0. The first increment happens on
+                // the same dot's DELTA_ODD (phase_lx 163). Give the fetcher
+                // its first sub-step here to match.
+                self.advance_bg_fetcher(data, vram);
             }
         } else {
             // Mode 3 (drawing) and Mode 0 (HBlank)
