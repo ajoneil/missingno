@@ -643,6 +643,43 @@ impl Rendering {
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
     fn dot_tick(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
+        self.half_even(data, vram);
+        self.half_odd(data, oam, vram)
+    }
+
+    /// DELTA_EVEN half-cycle: setup phase.
+    ///
+    /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
+    /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
+    /// match (PUXA), and window WX match (PYCO).
+    fn half_even(&mut self, data: &Registers, vram: &Vram) {
+        if self.scanner.is_some() {
+            // Mode 2: OAM scan uses M-cycle sub-phases, not simple
+            // EVEN/ODD. Full scan processing deferred to half_odd
+            // for step 1 behavior preservation.
+            return;
+        }
+
+        // Clear rendering latch when hblank gate fires. On hardware,
+        // WODU (PX=167) feeds VOGA/WEGO to clear XYMU on DELTA_EVEN.
+        // Since hblank_gate is set at the end of the previous dot,
+        // checking it here gives the 1-dot delay.
+        if self.hblank_gate && self.rendering {
+            self.rendering = false;
+        }
+
+        // Mode 3 EVEN-phase processing
+        if self.rendering {
+            self.mode3_even(data, vram);
+        }
+    }
+
+    /// DELTA_ODD half-cycle: output phase.
+    ///
+    /// On hardware, DELTA_ODD handles pixel counter increment,
+    /// fine counter increment, pipe shift, and sprite X matching.
+    /// Returns true when a full frame is complete.
+    fn half_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
             scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
@@ -655,22 +692,13 @@ impl Rendering {
                 self.rendering = true;
             }
         } else {
-            // Clear rendering latch when hblank gate fires. On hardware,
-            // WODU (PX=167) feeds VOGA/WEGO to clear XYMU with a 1-dot
-            // delay. Since hblank_gate is set at the end of the dot where
-            // PX=167, checking it here (start of next dot) gives the delay.
-            if self.hblank_gate && self.rendering {
-                self.rendering = false;
-            }
-
             // Mode 3 (drawing) and Mode 0 (HBlank)
             if self.rendering {
-                self.dot_mode3(data, oam, vram);
+                self.mode3_odd(data, oam, vram);
             }
 
-            // Set hblank_gate when pixel counter reaches WODU threshold
-            // and no sprite fetch is active
-            // (WODU = AND(XENA_STORE_MATCHn, XANO_PX167p))
+            // TODO(step2): move to half_even — hardware fires WODU on
+            // DELTA_EVEN using previous dot's pix_count
             if self.rendering
                 && self.pixel_counter >= WODU_PIXEL_COUNT
                 && self.sprite_fetch.is_none()
@@ -680,7 +708,7 @@ impl Rendering {
 
             self.dot += 1;
 
-            // SANU trigger (LX=113, dot 452): activate ACYL scanning signal
+            // TODO(step2): move to half_even — SANU fires on DELTA_EVEN
             if self.dot == SCANLINE_TOTAL_DOTS - 4 {
                 self.scanning = true;
             }
@@ -716,8 +744,23 @@ impl Rendering {
         false
     }
 
-    /// One dot of Mode 3 pixel pipeline processing.
-    fn dot_mode3(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
+    /// DELTA_EVEN Mode 3 processing.
+    ///
+    /// Fine scroll match (PUXA_SCX_FINE_MATCH_evn) fires on DELTA_EVEN.
+    /// During startup fetch, no fine scroll processing occurs.
+    fn mode3_even(&mut self, data: &Registers, _vram: &Vram) {
+        if self.startup_fetch.is_some() {
+            return;
+        }
+
+        // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
+        // The ROXY latch clears when the fine counter matches SCX & 7.
+        self.fine_scroll
+            .check_scroll_match(data.background_viewport.x);
+    }
+
+    /// DELTA_ODD Mode 3 pixel pipeline processing.
+    fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
             Some(StartupFetch::FirstTile) => {
                 self.advance_bg_fetcher(data, vram);
@@ -744,12 +787,7 @@ impl Rendering {
             None => {}
         }
 
-        // Update fine scroll gating before sprite/pixel checks. On hardware,
-        // the ROXY latch clears combinationally when the fine counter matches
-        // SCX & 7. SACU (pixel clock) and sprite matchers both see the
-        // updated state on the same dot.
-        self.fine_scroll
-            .check_scroll_match(data.background_viewport.x);
+        // Fine scroll match already processed in mode3_even (DELTA_EVEN).
 
         if let Some(ref mut sf) = self.sprite_fetch {
             match sf.phase {
