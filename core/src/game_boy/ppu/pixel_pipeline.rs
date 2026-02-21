@@ -1300,6 +1300,8 @@ impl Rendering {
         if self.line_number < data.window.y {
             return;
         }
+        // The hardware WX comparator matches WX against PX-1 (one cycle
+        // behind the XEHO counter), so we compare against x_plus_7 + 1.
         if self.pixel_counter != data.window.x_plus_7.wrapping_add(1) {
             return;
         }
