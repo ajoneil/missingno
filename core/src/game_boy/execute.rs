@@ -287,10 +287,12 @@ impl GameBoy {
                 }
 
                 // OAM bug: the hardware CUFE clock fires at the D→E phase
-                // boundary (start of T2). Apply pending corruption after 2
-                // dots have been ticked so the scanner position matches
-                // the hardware state at the spurious SRAM clock edge.
-                if tcycle_in_mcycle == 2 {
+                // boundary (after 2 dots of the M-cycle are clocked). In this
+                // loop the tick fires at the end of each iteration, so the
+                // OAM bug must apply at the start of iteration T3 — after
+                // T0, T1, and T2's ticks have all fired — to see the correct
+                // post-2-dot PPU state.
+                if tcycle_in_mcycle == 3 {
                     if let Some(kind) = pending_oam_bug.take() {
                         match kind {
                             OamBugKind::Read => self.ppu.oam_bug_read(),
