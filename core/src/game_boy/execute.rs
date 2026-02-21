@@ -209,8 +209,8 @@ impl GameBoy {
 
         // Run post-decode M-cycles. Each M-cycle is 8 clock phases.
         // The processor yields one T-cycle per dot phase (phases 0, 2,
-        // 4, 6 — 4 yields per M-cycle). Bus actions and OAM bug fire
-        // at phase 5 (after 3 dots), preserving tick(3)→bus→tick(1).
+        // 4, 6 — 4 yields per M-cycle). Bus ops execute at phase 4
+        // (after 2 dots), OAM bug fires at phase 5.
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
@@ -297,16 +297,16 @@ impl GameBoy {
                     }
                 }
 
-                // Phase 5: execute deferred bus action (after 3 dots).
-                // CPU reads/writes observe post-tick(3) state, preserving
-                // the current tick(3)→bus→tick(1) timing.
-                if phase_in_mcycle == 5 {
+                // Phase 4: bus execution (after 2 dots at phases 0, 2).
+                // Hardware: writes latch at G→H, reads capture at H→A —
+                // both after 2 dots in the M-cycle.
+                if phase_in_mcycle == 4 {
                     match deferred_bus_action.take() {
-                        Some(TCycle::Read { address }) => {
-                            read_value = self.cpu_read(address);
-                        }
                         Some(TCycle::Write { address, value }) => {
                             self.write_byte(address, value);
+                        }
+                        Some(TCycle::Read { address }) => {
+                            read_value = self.cpu_read(address);
                         }
                         _ => {}
                     }
@@ -324,11 +324,12 @@ impl GameBoy {
     /// M-cycle-rate subsystems (serial, DMA, audio) tick once when the
     /// M-cycle boundary fires.
     ///
-    /// Current phase assignments (Step 1 — preserves pre-refactor timing):
-    ///   Phases 0, 2, 4: dot ticks (timer + PPU)
-    ///   Phase 5:         bus action window (after 3 dots)
-    ///   Phase 6:         4th dot tick + M-cycle boundary (serial/DMA/audio)
-    ///   Phases 1, 3, 7:  non-dot phases (no-ops for now)
+    /// Phase assignments:
+    ///   Phases 0, 2:     dot ticks (T1, T2)
+    ///   Phase 4:         bus action window (writes then reads, after 2 dots)
+    ///   Phases 4, 6:     dot ticks (T3, T4; phase 6 also fires M-cycle boundary)
+    ///   Phase 5:         OAM bug
+    ///   Phases 1, 3, 7:  non-dot phases
     fn tick_hardware_phase(&mut self) -> bool {
         let phase = self.phase_counter;
         self.phase_counter = (self.phase_counter + 1) & 7;
