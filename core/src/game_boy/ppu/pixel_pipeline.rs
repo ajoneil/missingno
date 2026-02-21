@@ -283,9 +283,14 @@ enum FetcherStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
     /// Single tile fetch — loads the first tile into the BG shifter.
-    /// When the shifter becomes non-empty, startup is complete and
-    /// normal rendering begins on the same dot.
+    /// When the shifter becomes non-empty, transitions to Cascade.
     FirstTile,
+
+    /// NYKA→PORY→PYGO→POKY cascade. On hardware, this 3-DFF chain
+    /// (EVEN→ODD→EVEN phasing) delays the POKY latch — which enables
+    /// the pixel clock — by ~3 dots after the first tile data is ready.
+    /// The fetcher continues advancing during the cascade.
+    Cascade { dots_remaining: u8 },
 }
 
 struct TileFetcher {
@@ -713,19 +718,30 @@ impl Rendering {
 
     /// One dot of Mode 3 pixel pipeline processing.
     fn dot_mode3(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
-        if let Some(StartupFetch::FirstTile) = self.startup_fetch {
-            self.advance_bg_fetcher(data, vram);
-            self.check_window_trigger(data);
+        match self.startup_fetch {
+            Some(StartupFetch::FirstTile) => {
+                self.advance_bg_fetcher(data, vram);
+                self.check_window_trigger(data);
 
-            // Startup fetch completes when the fetcher loads pixels
-            // into the previously-empty shifter. TAVE/POKY fire:
-            // pixel clock starts on this same dot (fall through to
-            // normal rendering below).
-            if !self.bg_shifter.is_empty() {
-                self.startup_fetch = None;
-            } else {
+                if !self.bg_shifter.is_empty() {
+                    self.startup_fetch = Some(StartupFetch::Cascade { dots_remaining: 3 });
+                }
                 return;
             }
+            Some(StartupFetch::Cascade { dots_remaining }) => {
+                self.advance_bg_fetcher(data, vram);
+                self.check_window_trigger(data);
+
+                if dots_remaining <= 1 {
+                    self.startup_fetch = None;
+                } else {
+                    self.startup_fetch = Some(StartupFetch::Cascade {
+                        dots_remaining: dots_remaining - 1,
+                    });
+                }
+                return;
+            }
+            None => {}
         }
 
         // Update fine scroll gating before sprite/pixel checks. On hardware,
