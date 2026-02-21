@@ -101,8 +101,9 @@ impl GameBoy {
             Processor::halted_nop(self.cpu.program_counter)
         } else {
             // Fetch phase: each byte read takes one M-cycle (8 phases).
-            // The bus read happens at phase 5 (after 3 dots at phases
-            // 0, 2, 4), matching the current tick(3)→bus→tick(1) timing.
+            // The bus read happens after all 4 dots (phases 0, 2, 4, 6)
+            // including the M-cycle boundary, with serial/DMA/audio
+            // deferred until after the read.
 
             // Read opcode byte
             //
@@ -116,12 +117,17 @@ impl GameBoy {
             if tentative {
                 self.ppu.start_accumulating();
             }
-            // Phases 0–4: tick 3 dots (at phases 0, 2, 4)
-            for _ in 0..5 {
+            // Phases 0–5: tick 3 dots (at phases 0, 2, 4)
+            for _ in 0..6 {
                 new_screen |= self.tick_hardware_phase();
             }
-            // Phase 5: bus read (after 3 dots)
+            // Phase 6: 4th dot with timer+PPU boundary (serial/DMA/audio deferred)
+            new_screen |= self.tick_fetch_boundary_dot();
+            // Phase 7: non-dot phase
+            new_screen |= self.tick_hardware_phase();
+            // Bus read (after 4 dots)
             let opcode = self.cpu_read(self.cpu.program_counter);
+            self.tick_fetch_deferred_mcycle();
             if self.cpu.halt_bug {
                 self.cpu.halt_bug = false;
             } else {
@@ -141,10 +147,6 @@ impl GameBoy {
                 // accumulation and flush the captured T0 dot.
                 self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
             }
-            // Phases 5–7: tick 1 more dot (at phase 6, with M-cycle boundary)
-            for _ in 5..8 {
-                new_screen |= self.tick_hardware_phase();
-            }
 
             // Read operand bytes
             let mut bytes = [opcode, 0, 0];
@@ -154,17 +156,18 @@ impl GameBoy {
                     // T0 so the full M-cycle (4 dots) is deferred.
                     self.ppu.start_accumulating();
                 }
-                // Phases 0–4: tick 3 dots
-                for _ in 0..5 {
+                // Phases 0–5: tick 3 dots (at phases 0, 2, 4)
+                for _ in 0..6 {
                     new_screen |= self.tick_hardware_phase();
                 }
-                // Phase 5: bus read (after 3 dots)
+                // Phase 6: 4th dot with timer+PPU boundary (serial/DMA/audio deferred)
+                new_screen |= self.tick_fetch_boundary_dot();
+                // Phase 7: non-dot phase
+                new_screen |= self.tick_hardware_phase();
+                // Bus read (after 4 dots)
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
-                // Phases 5–7: tick 1 more dot (with M-cycle boundary)
-                for _ in 5..8 {
-                    new_screen |= self.tick_hardware_phase();
-                }
+                self.tick_fetch_deferred_mcycle();
             }
 
             // For deferred-address writes, check the actual target now
@@ -402,6 +405,72 @@ impl GameBoy {
         }
 
         new_screen
+    }
+
+    /// Tick the 4th dot (phase 6) with timer and PPU boundary behavior
+    /// but skip M-cycle-rate subsystems (serial, DMA, audio, bus decay).
+    ///
+    /// During fetch M-cycles, the bus read needs to happen after all 4
+    /// dots — including the M-cycle boundary's timer/PPU effects — but
+    /// before serial, DMA, and audio fire. This method provides the
+    /// first half of that split.
+    fn tick_fetch_boundary_dot(&mut self) -> bool {
+        let phase = self.phase_counter;
+        self.phase_counter = (self.phase_counter + 1) & 7;
+        debug_assert_eq!(phase, 6);
+
+        let mut new_screen = false;
+
+        if let Some(interrupt) = self.timers.tcycle(true) {
+            self.interrupts.request(interrupt);
+        }
+
+        let video_result = self.ppu.tcycle(true, &self.vram_bus.vram);
+        if video_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if video_result.request_stat {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+        if let Some(screen) = video_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            new_screen = true;
+        }
+
+        new_screen
+    }
+
+    /// Fire the M-cycle-rate effects that were deferred by
+    /// `tick_fetch_boundary_dot`: serial, DMA, audio, and bus decay.
+    fn tick_fetch_deferred_mcycle(&mut self) {
+        let counter = self.timers.internal_counter();
+        if let Some(interrupt) = self.serial.mcycle(counter) {
+            self.interrupts.request(interrupt);
+        }
+
+        if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+            let byte = self.read_dma_source(src_addr);
+            let oam_addr = match ppu::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
+                ppu::memory::MappedAddress::Oam(addr) => addr,
+                _ => unreachable!(),
+            };
+            self.ppu.write_oam(oam_addr, byte);
+            match Bus::of(src_addr) {
+                Some(Bus::External) => {
+                    self.external.drive(byte);
+                }
+                Some(Bus::Vram) => {
+                    self.vram_bus.drive(byte);
+                }
+                None => {}
+            }
+        }
+
+        self.external.tick_decay();
+        self.audio.mcycle(self.timers.internal_counter());
     }
 
     fn check_for_interrupt(&mut self) -> Option<Interrupt> {
