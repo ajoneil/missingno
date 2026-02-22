@@ -51,9 +51,10 @@ enum WriteConflictPhase {
     /// Last dot of transitional visibility.
     /// Next tcycle writes the final value and clears the pending state.
     Settling,
-    /// DFF9 propagation delay: the old value persists for N more dots
-    /// before the new value reaches the pipeline output.
-    Delayed { dots_remaining: u8 },
+    /// DFF9 propagation delay: the old value persists on the output
+    /// while the new value routes through internal wiring. Decrements
+    /// each dot; when it reaches zero the final value is applied.
+    Propagating { delay: u8 },
 }
 
 /// A register write that is resolving over multiple dots during Mode 3.
@@ -269,7 +270,7 @@ impl Ppu {
                     self.pending_write = Some(PendingWrite {
                         register,
                         final_value: value,
-                        phase: WriteConflictPhase::Delayed { dots_remaining: 1 },
+                        phase: WriteConflictPhase::Propagating { delay: 1 },
                     });
                     false
                 } else {
@@ -282,7 +283,7 @@ impl Ppu {
                     self.pending_write = Some(PendingWrite {
                         register,
                         final_value: value,
-                        phase: WriteConflictPhase::Delayed { dots_remaining: 2 },
+                        phase: WriteConflictPhase::Propagating { delay: 2 },
                     });
                     false
                 } else {
@@ -622,17 +623,18 @@ impl Ppu {
                     self.write_register_immediate(&pw.register, pw.final_value);
                 }
                 Some(PendingWrite {
-                    phase: WriteConflictPhase::Delayed { dots_remaining },
+                    phase: WriteConflictPhase::Propagating { delay },
                     ..
                 }) => {
-                    let remaining = *dots_remaining;
+                    let remaining = *delay;
                     if remaining <= 1 {
                         let pw = self.pending_write.take().unwrap();
                         self.write_register_immediate(&pw.register, pw.final_value);
                     } else {
-                        self.pending_write.as_mut().unwrap().phase = WriteConflictPhase::Delayed {
-                            dots_remaining: remaining - 1,
-                        };
+                        self.pending_write.as_mut().unwrap().phase =
+                            WriteConflictPhase::Propagating {
+                                delay: remaining - 1,
+                            };
                     }
                 }
                 None => {}
