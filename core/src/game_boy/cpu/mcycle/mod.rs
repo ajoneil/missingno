@@ -1,8 +1,8 @@
 use super::{
     Cpu, InterruptMasterEnable,
     instructions::Instruction,
+    instructions::Interrupt as InterruptInstruction,
     instructions::bit_shift::{Carry, Direction},
-    instructions::{Interrupt as InterruptInstruction},
     registers::{Register8, Register16},
 };
 
@@ -277,6 +277,48 @@ impl Processor {
             instruction: Instruction::NoOperation,
             step: 0,
             phase: Phase::HaltedNop { fetch_pc: pc },
+            scratch: 0,
+            dot_in_mcycle: 0,
+            current_action: None,
+            mcycle_active: false,
+            needs_vector_resolve: false,
+        }
+    }
+
+    /// Create a processor that skips the opcode read M-cycle.
+    /// The opcode has already been fetched; the Processor starts at the
+    /// point where it would consume `read_value` as the opcode byte.
+    pub fn fetch_with_opcode(cpu: &mut Cpu, opcode: u8) -> Self {
+        let mut proc = Self {
+            instruction: Instruction::NoOperation,
+            step: 1,
+            phase: Phase::Fetch {
+                pc: cpu.program_counter,
+                bytes: [0; 3],
+                bytes_read: 0,
+                bytes_needed: 0,
+            },
+            scratch: 0,
+            dot_in_mcycle: 0,
+            current_action: None,
+            mcycle_active: false,
+            needs_vector_resolve: false,
+        };
+        proc.current_action = proc.next_mcycle(opcode, cpu);
+        if proc.current_action.is_some() {
+            proc.mcycle_active = true;
+        }
+        proc
+    }
+
+    /// Create a processor for a halted NOP that skips the fetch M-cycle.
+    /// Used when the opcode fetch was already performed as the previous
+    /// step()'s trailing fetch. The CPU is halted, so no decode occurs.
+    pub fn halted_nop_no_fetch() -> Self {
+        Self {
+            instruction: Instruction::NoOperation,
+            step: 0,
+            phase: Phase::Empty,
             scratch: 0,
             dot_in_mcycle: 0,
             current_action: None,
