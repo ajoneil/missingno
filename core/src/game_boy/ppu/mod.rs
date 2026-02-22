@@ -566,18 +566,10 @@ impl Ppu {
                 self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
-            // Normal path: tick PPU immediately, one dot per T-cycle.
-            if let Some(screen) =
-                self.pixel_pipeline
-                    .as_mut()
-                    .unwrap()
-                    .tcycle(&self.registers, &self.oam, vram)
-            {
-                result.screen = Some(screen);
-                result.request_vblank = true;
-            }
-
-            // Resolve DFF8 pending writes (palette and LCDC transitional values)
+            // Resolve DFF8 pending writes BEFORE pixel output.
+            // On hardware, the DFF8 write pulse settling (falling edge)
+            // completes before the pixel clock shifts out, so the final
+            // register value is visible to the pixel pipeline.
             if let Some(ref mut pending) = self.palette_pending {
                 pending.dots_remaining -= 1;
                 if pending.dots_remaining == 0 {
@@ -594,6 +586,17 @@ impl Ppu {
                     self.lcdc_pending = None;
                     self.write_register_immediate(&Register::Control, val);
                 }
+            }
+
+            // Normal path: tick PPU immediately, one dot per T-cycle.
+            if let Some(screen) =
+                self.pixel_pipeline
+                    .as_mut()
+                    .unwrap()
+                    .tcycle(&self.registers, &self.oam, vram)
+            {
+                result.screen = Some(screen);
+                result.request_vblank = true;
             }
 
             if !is_mcycle {
