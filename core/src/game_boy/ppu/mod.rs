@@ -38,28 +38,29 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// Resolution phase of a register write that hasn't fully settled.
+/// How a register write propagates through its DFF cell to the pipeline.
 ///
 /// On hardware, some DFF cells expose a transitional output during the
-/// CPU write pulse before settling to the final value. DFF8 (palette)
-/// cells have a master-slave structure: the master latches on the rising
-/// edge while the slave still holds the old value, producing `old | new`.
-/// LCDC has a similar transitional: `old | (new & BG_EN)`. The phase
-/// enum tracks how far through this process the register has progressed.
+/// CPU write pulse before settling to the final value. Others have
+/// signal routing delays that defer the new value by one or more dots.
+/// This enum models both behaviors.
 enum WriteConflictPhase {
-    /// Transitional value is visible to the pixel pipeline.
-    /// Next tcycle advances to Settling.
+    /// DFF8/LCDC: a transitional value (`old | new` or `old | (new & BG_EN)`)
+    /// is visible to the pixel pipeline. Next tcycle advances to Settling.
     Transitional,
     /// Last dot of transitional visibility.
     /// Next tcycle writes the final value and clears the pending state.
     Settling,
+    /// DFF9 propagation delay: the old value persists for N more dots
+    /// before the new value reaches the pipeline output.
+    Delayed { dots_remaining: u8 },
 }
 
 /// A register write that is resolving over multiple dots during Mode 3.
 ///
-/// Created when the CPU writes a register whose DFF cell produces a
-/// transitional output (palettes, LCDC). The tcycle resolution advances
-/// Transitional → Settling → resolved, writing the final value when done.
+/// Created when the CPU writes a register whose DFF cell has a
+/// transitional output or a propagation delay. The tcycle resolution
+/// advances the phase each dot until the final value is applied.
 struct PendingWrite {
     register: Register,
     final_value: u8,
@@ -262,9 +263,35 @@ impl Ppu {
                     self.write_register_immediate(&register, value)
                 }
             }
+            Register::BackgroundViewportY => {
+                if is_drawing {
+                    // SCY: 1-dot propagation delay through DFF9 routing.
+                    self.pending_write = Some(PendingWrite {
+                        register,
+                        final_value: value,
+                        phase: WriteConflictPhase::Delayed { dots_remaining: 1 },
+                    });
+                    false
+                } else {
+                    self.write_register_immediate(&register, value)
+                }
+            }
+            Register::WindowX => {
+                if is_drawing {
+                    // WX: 2-dot propagation delay through DFF9 routing.
+                    self.pending_write = Some(PendingWrite {
+                        register,
+                        final_value: value,
+                        phase: WriteConflictPhase::Delayed { dots_remaining: 2 },
+                    });
+                    false
+                } else {
+                    self.write_register_immediate(&register, value)
+                }
+            }
             _ => {
-                // DFF9 registers with no transitional: atomic latch at
-                // the write point (G→H boundary, after all 4 PPU dots).
+                // Remaining DFF9 registers: no propagation delay, atomic
+                // latch at the write point (G→H boundary).
                 self.write_register_immediate(&register, value)
             }
         }
@@ -580,9 +607,7 @@ impl Ppu {
             }
 
             // Advance write-conflict resolution before pixel output.
-            // Transitional → Settling: transitional value remains visible.
-            // Settling → resolved: final value written, pending cleared.
-            match self.pending_write {
+            match &self.pending_write {
                 Some(PendingWrite {
                     phase: WriteConflictPhase::Transitional,
                     ..
@@ -593,10 +618,22 @@ impl Ppu {
                     phase: WriteConflictPhase::Settling,
                     ..
                 }) => {
-                    let reg = self.pending_write.as_ref().unwrap().register;
-                    let val = self.pending_write.as_ref().unwrap().final_value;
-                    self.pending_write = None;
-                    self.write_register_immediate(&reg, val);
+                    let pw = self.pending_write.take().unwrap();
+                    self.write_register_immediate(&pw.register, pw.final_value);
+                }
+                Some(PendingWrite {
+                    phase: WriteConflictPhase::Delayed { dots_remaining },
+                    ..
+                }) => {
+                    let remaining = *dots_remaining;
+                    if remaining <= 1 {
+                        let pw = self.pending_write.take().unwrap();
+                        self.write_register_immediate(&pw.register, pw.final_value);
+                    } else {
+                        self.pending_write.as_mut().unwrap().phase = WriteConflictPhase::Delayed {
+                            dots_remaining: remaining - 1,
+                        };
+                    }
                 }
                 None => {}
             }
