@@ -700,17 +700,6 @@ impl Rendering {
             self.mode3_even(data, vram);
         }
 
-        // WODU hblank gate (DELTA_EVEN). On hardware, WODU fires when
-        // pix_count reaches 167 and no sprite match is active. The STAT
-        // mode 0 interrupt condition (TARU) uses WODU directly. XYMU
-        // clears on the next dot via the VOGA DFF latch.
-        if self.render_phase == RenderPhase::Drawing
-            && self.pixel_counter >= WODU_PIXEL_COUNT
-            && self.sprite_fetch.is_none()
-        {
-            self.render_phase = RenderPhase::WoduFired;
-        }
-
         // SANU scanning trigger (DELTA_EVEN). On hardware, SANU fires
         // combinationally at LX=113 (dot 452). The ACYL scanning signal
         // activates after the SANU→RUTU→CATU→BESU pipeline (~3 half-
@@ -750,6 +739,19 @@ impl Rendering {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
                 self.mode3_odd(data, oam, vram);
+            }
+
+            // WODU hblank gate (DELTA_ODD). On hardware, WODU fires
+            // combinationally on the ODD phase when pix_count reaches
+            // 167 and no sprite match is active. TARU (STAT mode 0
+            // interrupt condition) uses WODU directly on the same
+            // phase. VOGA latches WODU on the next EVEN phase,
+            // clearing XYMU (handled in half_even).
+            if self.render_phase == RenderPhase::Drawing
+                && self.pixel_counter >= WODU_PIXEL_COUNT
+                && self.sprite_fetch.is_none()
+            {
+                self.render_phase = RenderPhase::WoduFired;
             }
 
             self.dot += 1;
