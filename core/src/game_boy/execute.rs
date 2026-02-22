@@ -113,6 +113,27 @@ impl GameBoy {
                 }
             }
 
+            // DFF8 rising edge: stage palette writes before tick_dot so
+            // the transitional old|new value is visible to pixel output
+            // in the same dot. On hardware, the DFF8 write pulse's rising
+            // edge precedes the pixel clock.
+            if let DotAction::Write { address, value } = &dot_action {
+                if self.ppu.is_rendering() {
+                    match *address {
+                        0xFF47 | 0xFF48 | 0xFF49 => {
+                            let register = match *address {
+                                0xFF47 => ppu::Register::BackgroundPalette,
+                                0xFF48 => ppu::Register::Sprite0Palette,
+                                0xFF49 => ppu::Register::Sprite1Palette,
+                                _ => unreachable!(),
+                            };
+                            self.ppu.stage_dff8_write(register, *value);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             // Tick hardware (one dot).
             let is_mcycle_boundary = dot_in_mcycle == 3;
             new_screen |= self.tick_dot(is_mcycle_boundary);

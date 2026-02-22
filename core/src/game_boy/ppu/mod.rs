@@ -38,17 +38,27 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// A pending palette register write in the DFF8 master-slave transition.
+/// Which phase of the DFF8 write pulse the palette register is in.
 ///
-/// DFF8 cells (BGP, OBP0, OBP1) latch on the rising edge of the CPU
-/// write pulse. During the transition, both master (new) and slave (old)
-/// stages are visible through the combinational pixel pipeline, producing
-/// `old | new` for approximately 1 dot. After 1 dot the slave settles
-/// and only the new value is visible.
+/// DFF8 cells have a master-slave structure. During a CPU write, the
+/// master latches the new value on the rising edge while the slave
+/// still holds the old value — the combinational pixel pipeline sees
+/// `old | new` (transitional). On the falling edge the slave settles
+/// and only the new value is visible (final).
+enum Dff8WritePhase {
+    /// Rising edge just fired. The register holds `old | new`.
+    /// Next tcycle will advance to `Settling`.
+    RisingEdge,
+    /// Master-slave transition complete after this dot.
+    /// Next tcycle will write the final value and clear the pending.
+    Settling,
+}
+
+/// A pending palette register write in the DFF8 master-slave transition.
 struct PalettePending {
     register: Register,
     final_value: u8,
-    dots_remaining: u8,
+    phase: Dff8WritePhase,
 }
 
 /// A pending LCDC register write with transitional BG_EN bit.
@@ -222,7 +232,17 @@ impl Ppu {
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
                 if is_drawing {
-                    // DFF8 transitional: write old|new now, schedule final in 1 dot
+                    if matches!(
+                        self.palette_pending,
+                        Some(PalettePending {
+                            phase: Dff8WritePhase::RisingEdge,
+                            ..
+                        })
+                    ) {
+                        // Already staged via stage_dff8_write — skip.
+                        return false;
+                    }
+                    // Not staged: apply transitional directly.
                     let old = match register {
                         Register::BackgroundPalette => self.registers.palettes.background.0,
                         Register::Sprite0Palette => self.registers.palettes.sprite0.0,
@@ -233,7 +253,7 @@ impl Ppu {
                     self.palette_pending = Some(PalettePending {
                         register,
                         final_value: value,
-                        dots_remaining: 1,
+                        phase: Dff8WritePhase::Settling,
                     });
                     false
                 } else {
@@ -307,6 +327,35 @@ impl Ppu {
 
     pub fn control(&self) -> Control {
         self.registers.control
+    }
+
+    pub fn is_rendering(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map_or(false, |p| p.is_rendering())
+    }
+
+    /// Stage a DFF8 palette write at the rising-edge latch point.
+    ///
+    /// Called from execute.rs before tick_dot when the current dot's
+    /// bus action writes to a DFF8 palette register during Mode 3.
+    /// Applies the transitional `old|new` immediately (so the pixel
+    /// pipeline sees it this dot) and sets palette_pending in the
+    /// RisingEdge phase. The tcycle resolution will advance through
+    /// RisingEdge → Settling → resolved over the next two tcycles.
+    pub fn stage_dff8_write(&mut self, register: Register, value: u8) {
+        let old = match register {
+            Register::BackgroundPalette => self.registers.palettes.background.0,
+            Register::Sprite0Palette => self.registers.palettes.sprite0.0,
+            Register::Sprite1Palette => self.registers.palettes.sprite1.0,
+            _ => unreachable!(),
+        };
+        self.write_register_immediate(&register, old | value);
+        self.palette_pending = Some(PalettePending {
+            register,
+            final_value: value,
+            phase: Dff8WritePhase::RisingEdge,
+        });
     }
 
     // --- OAM corruption bug ---
@@ -566,19 +615,28 @@ impl Ppu {
                 self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
-            // Resolve DFF8 pending writes BEFORE pixel output.
-            // On hardware, the DFF8 write pulse settling (falling edge)
-            // completes before the pixel clock shifts out, so the final
-            // register value is visible to the pixel pipeline.
-            if let Some(ref mut pending) = self.palette_pending {
-                pending.dots_remaining -= 1;
-                if pending.dots_remaining == 0 {
-                    let reg = pending.register;
-                    let val = pending.final_value;
+            // Advance the DFF8 write pulse phase before pixel output.
+            // RisingEdge → Settling: transitional old|new remains visible.
+            // Settling → resolved: final value written, pending cleared.
+            match self.palette_pending {
+                Some(PalettePending {
+                    phase: Dff8WritePhase::RisingEdge,
+                    ..
+                }) => {
+                    self.palette_pending.as_mut().unwrap().phase = Dff8WritePhase::Settling;
+                }
+                Some(PalettePending {
+                    phase: Dff8WritePhase::Settling,
+                    ..
+                }) => {
+                    let reg = self.palette_pending.as_ref().unwrap().register;
+                    let val = self.palette_pending.as_ref().unwrap().final_value;
                     self.palette_pending = None;
                     self.write_register_immediate(&reg, val);
                 }
+                None => {}
             }
+
             if let Some(ref mut pending) = self.lcdc_pending {
                 pending.dots_remaining -= 1;
                 if pending.dots_remaining == 0 {
