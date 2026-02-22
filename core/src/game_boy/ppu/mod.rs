@@ -5,7 +5,7 @@ use sprites::{Sprite, SpriteId};
 
 use control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
-use palette::{PaletteMap, Palettes};
+use palette::Palettes;
 use pixel_pipeline::PixelPipeline;
 
 pub struct PpuTickResult {
@@ -38,40 +38,116 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// How a register write propagates through its DFF cell to the pipeline.
+/// The propagation state of a value moving through a DFF cell.
 ///
-/// On hardware, some DFF cells expose a transitional output during the
-/// CPU write pulse before settling to the final value. Others have
-/// signal routing delays that defer the new value by one or more dots.
-/// This enum models both behaviors.
-enum WriteConflictPhase {
-    /// DFF8 palettes: `old | new` visible. LCDC: only BG_EN bit has
-    /// `old | new` transitional; other bits already at final value.
-    /// Next tcycle advances to Settling.
-    Transitional,
-    /// Last dot of transitional visibility.
-    /// Next tcycle writes the final value and clears the pending state.
-    Settling,
-    /// DFF9 propagation delay: the old value persists on the output
-    /// while the new value routes through internal wiring. Decrements
-    /// each dot; when it reaches zero the final value is applied.
-    Propagating { delay: u8 },
+/// On hardware, the CPU write pulse sets D on the master latch.
+/// What happens next depends on the cell type:
+/// - DFF8: master-slave transparency produces `old | new` for one dot
+///   before the slave settles to the final value.
+/// - DFF9: the value latches atomically, but internal signal routing
+///   may delay when the new value appears on the output pin.
+enum LatchState {
+    /// DFF8 transitional: output is `old | new` while the master latch
+    /// is transparent. Next dot advances to Settling.
+    Transitional { final_value: u8 },
+    /// DFF8 settling: last dot of `old | new` visibility. Next dot
+    /// applies the final value and clears the latch.
+    Settling { final_value: u8 },
+    /// DFF9 propagation: the old value persists on the output while
+    /// the new value routes through internal wiring. When delay
+    /// reaches zero, the final value is applied.
+    Propagating { final_value: u8, delay: u8 },
 }
 
-/// A register write that is resolving over multiple dots during Mode 3.
+/// A DFF register cell that holds its output value and any pending latch.
 ///
-/// Created when the CPU writes a register whose DFF cell has a
-/// transitional output or a propagation delay. The tcycle resolution
-/// advances the phase each dot until the final value is applied.
-struct PendingWrite {
-    register: Register,
-    final_value: u8,
-    phase: WriteConflictPhase,
+/// On hardware, each register is a physical DFF cell whose output feeds
+/// the pixel pipeline. The CPU writes to the cell's input; the latch
+/// state tracks how the new value propagates to the output.
+///
+/// Outside Mode 3, writes go directly to `output` (no latch state).
+/// During Mode 3, the write behavior depends on the cell type.
+pub struct DffLatch {
+    output: u8,
+    state: Option<LatchState>,
+}
+
+impl DffLatch {
+    fn new(initial: u8) -> Self {
+        Self {
+            output: initial,
+            state: None,
+        }
+    }
+
+    pub fn output(&self) -> u8 {
+        self.output
+    }
+
+    /// Advance the latch state by one dot. Returns true if the latch
+    /// resolved (final value applied) on this tick.
+    fn tick(&mut self) -> bool {
+        match self.state {
+            Some(LatchState::Transitional { final_value }) => {
+                self.state = Some(LatchState::Settling { final_value });
+                false
+            }
+            Some(LatchState::Settling { final_value }) => {
+                self.output = final_value;
+                self.state = None;
+                true
+            }
+            Some(LatchState::Propagating { final_value, delay }) => {
+                if delay <= 1 {
+                    self.output = final_value;
+                    self.state = None;
+                    true
+                } else {
+                    self.state = Some(LatchState::Propagating {
+                        final_value,
+                        delay: delay - 1,
+                    });
+                    false
+                }
+            }
+            None => false,
+        }
+    }
+
+    /// DFF8 write during Mode 3. Sets the transitional `old | new`
+    /// output and begins the settling sequence.
+    fn write_dff8(&mut self, new_value: u8) {
+        self.output = self.output | new_value;
+        self.state = Some(LatchState::Transitional {
+            final_value: new_value,
+        });
+    }
+
+    /// DFF9 write during Mode 3 with propagation delay. The old value
+    /// persists on the output until the delay expires.
+    fn write_propagating(&mut self, new_value: u8, delay: u8) {
+        self.state = Some(LatchState::Propagating {
+            final_value: new_value,
+            delay,
+        });
+    }
+
+    /// Direct write — sets the output immediately and clears any
+    /// pending latch state.
+    fn write_immediate(&mut self, new_value: u8) {
+        self.output = new_value;
+        self.state = None;
+    }
+
+    /// Clear pending latch state without applying the final value.
+    fn clear(&mut self) {
+        self.state = None;
+    }
 }
 
 struct BackgroundViewportPosition {
     x: u8,
-    y: u8,
+    y: DffLatch,
 }
 
 bitflags! {
@@ -96,6 +172,8 @@ struct Interrupts {
 /// the register bus; the pixel pipeline only reads.
 pub struct Registers {
     control: Control,
+    /// DFF8-style latch for LCDC bit 0 (BG_EN) only.
+    control_bg_en: DffLatch,
     background_viewport: BackgroundViewportPosition,
     window: Window,
     palettes: Palettes,
@@ -110,21 +188,30 @@ pub struct Ppu {
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
     ly_eq_lyc: bool,
     stat_line_was_high: bool,
-    pending_write: Option<PendingWrite>,
 }
 
 pub struct Window {
     y: u8,
-    x_plus_7: u8,
+    x_plus_7: DffLatch,
 }
 
 impl Ppu {
     pub fn new() -> Self {
+        let control = Control::default();
         Self {
             registers: Registers {
-                control: Control::default(),
-                background_viewport: BackgroundViewportPosition { x: 0, y: 0 },
-                window: Window { y: 0, x_plus_7: 0 },
+                control_bg_en: DffLatch::new(
+                    control.bits() & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits(),
+                ),
+                control,
+                background_viewport: BackgroundViewportPosition {
+                    x: 0,
+                    y: DffLatch::new(0),
+                },
+                window: Window {
+                    y: 0,
+                    x_plus_7: DffLatch::new(0),
+                },
                 palettes: Palettes::default(),
             },
             oam: Oam::new(),
@@ -137,7 +224,6 @@ impl Ppu {
             },
             ly_eq_lyc: true,
             stat_line_was_high: false,
-            pending_write: None,
         }
     }
 
@@ -162,10 +248,10 @@ impl Ppu {
                 let line_compare = if ly_eq_lyc { 0b00000100 } else { 0 };
                 0x80 | (self.interrupts.flags.bits() & 0b01111000) | line_compare | mode
             }
-            Register::BackgroundViewportY => self.registers.background_viewport.y,
+            Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
             Register::BackgroundViewportX => self.registers.background_viewport.x,
             Register::WindowY => self.registers.window.y,
-            Register::WindowX => self.registers.window.x_plus_7,
+            Register::WindowX => self.registers.window.x_plus_7.output(),
             Register::CurrentScanline => {
                 if let Some(ppu) = &self.pixel_pipeline {
                     ppu.current_line()
@@ -174,9 +260,9 @@ impl Ppu {
                 }
             }
             Register::InterruptOnScanline => self.interrupts.current_line_compare,
-            Register::BackgroundPalette => self.registers.palettes.background.0,
-            Register::Sprite0Palette => self.registers.palettes.sprite0.0,
-            Register::Sprite1Palette => self.registers.palettes.sprite1.0,
+            Register::BackgroundPalette => self.registers.palettes.background.output(),
+            Register::Sprite0Palette => self.registers.palettes.sprite0.output(),
+            Register::Sprite1Palette => self.registers.palettes.sprite1.output(),
         }
     }
 
@@ -206,14 +292,18 @@ impl Ppu {
 
                 return glitch_edge || final_edge;
             }
-            Register::BackgroundViewportY => self.registers.background_viewport.y = value,
+            Register::BackgroundViewportY => {
+                self.registers.background_viewport.y.write_immediate(value)
+            }
             Register::BackgroundViewportX => self.registers.background_viewport.x = value,
             Register::WindowY => self.registers.window.y = value,
-            Register::WindowX => self.registers.window.x_plus_7 = value,
+            Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
             Register::InterruptOnScanline => self.interrupts.current_line_compare = value,
-            Register::BackgroundPalette => self.registers.palettes.background = PaletteMap(value),
-            Register::Sprite0Palette => self.registers.palettes.sprite0 = PaletteMap(value),
-            Register::Sprite1Palette => self.registers.palettes.sprite1 = PaletteMap(value),
+            Register::BackgroundPalette => {
+                self.registers.palettes.background.write_immediate(value)
+            }
+            Register::Sprite0Palette => self.registers.palettes.sprite0.write_immediate(value),
+            Register::Sprite1Palette => self.registers.palettes.sprite1.write_immediate(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
         false
@@ -228,20 +318,13 @@ impl Ppu {
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
                 if is_drawing {
-                    // DFF8 master-slave transparency: output is `old | new`
-                    // (transitional) until the slave settles.
-                    let old = match register {
-                        Register::BackgroundPalette => self.registers.palettes.background.0,
-                        Register::Sprite0Palette => self.registers.palettes.sprite0.0,
-                        Register::Sprite1Palette => self.registers.palettes.sprite1.0,
+                    let latch = match register {
+                        Register::BackgroundPalette => &mut self.registers.palettes.background,
+                        Register::Sprite0Palette => &mut self.registers.palettes.sprite0,
+                        Register::Sprite1Palette => &mut self.registers.palettes.sprite1,
                         _ => unreachable!(),
                     };
-                    self.write_register_immediate(&register, old | value);
-                    self.pending_write = Some(PendingWrite {
-                        register,
-                        final_value: value,
-                        phase: WriteConflictPhase::Transitional,
-                    });
+                    latch.write_dff8(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -258,24 +341,24 @@ impl Ppu {
                     let immediate = (value & !ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits())
                         | transitional_bg_en;
                     self.write_register_immediate(&Register::Control, immediate);
-                    self.pending_write = Some(PendingWrite {
-                        register,
-                        final_value: value,
-                        phase: WriteConflictPhase::Transitional,
-                    });
+                    self.registers.control_bg_en.output = immediate;
+                    self.registers.control_bg_en.state =
+                        Some(LatchState::Transitional { final_value: value });
                     false
                 } else {
-                    self.write_register_immediate(&register, value)
+                    self.write_register_immediate(&register, value);
+                    self.registers
+                        .control_bg_en
+                        .write_immediate(value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
+                    false
                 }
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
-                    // SCY: 1-dot propagation delay through DFF9 routing.
-                    self.pending_write = Some(PendingWrite {
-                        register,
-                        final_value: value,
-                        phase: WriteConflictPhase::Propagating { delay: 1 },
-                    });
+                    self.registers
+                        .background_viewport
+                        .y
+                        .write_propagating(value, 1);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -283,12 +366,7 @@ impl Ppu {
             }
             Register::WindowX => {
                 if is_drawing {
-                    // WX: 2-dot propagation delay through DFF9 routing.
-                    self.pending_write = Some(PendingWrite {
-                        register,
-                        final_value: value,
-                        phase: WriteConflictPhase::Propagating { delay: 2 },
-                    });
+                    self.registers.window.x_plus_7.write_propagating(value, 2);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -611,37 +689,16 @@ impl Ppu {
                 self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
-            // Advance write-conflict resolution before pixel output.
-            match &self.pending_write {
-                Some(PendingWrite {
-                    phase: WriteConflictPhase::Transitional,
-                    ..
-                }) => {
-                    self.pending_write.as_mut().unwrap().phase = WriteConflictPhase::Settling;
-                }
-                Some(PendingWrite {
-                    phase: WriteConflictPhase::Settling,
-                    ..
-                }) => {
-                    let pw = self.pending_write.take().unwrap();
-                    self.write_register_immediate(&pw.register, pw.final_value);
-                }
-                Some(PendingWrite {
-                    phase: WriteConflictPhase::Propagating { delay },
-                    ..
-                }) => {
-                    let remaining = *delay;
-                    if remaining <= 1 {
-                        let pw = self.pending_write.take().unwrap();
-                        self.write_register_immediate(&pw.register, pw.final_value);
-                    } else {
-                        self.pending_write.as_mut().unwrap().phase =
-                            WriteConflictPhase::Propagating {
-                                delay: remaining - 1,
-                            };
-                    }
-                }
-                None => {}
+            // Advance DFF latches before pixel output.
+            self.registers.palettes.background.tick();
+            self.registers.palettes.sprite0.tick();
+            self.registers.palettes.sprite1.tick();
+            self.registers.background_viewport.y.tick();
+            self.registers.window.x_plus_7.tick();
+            if self.registers.control_bg_en.tick() {
+                self.registers.control = Control::new(ControlFlags::from_bits_retain(
+                    self.registers.control_bg_en.output,
+                ));
             }
 
             // Normal path: tick PPU immediately, one dot per T-cycle.
@@ -668,7 +725,12 @@ impl Ppu {
             }
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
-                self.pending_write = None;
+                self.registers.palettes.background.clear();
+                self.registers.palettes.sprite0.clear();
+                self.registers.palettes.sprite1.clear();
+                self.registers.background_viewport.y.clear();
+                self.registers.window.x_plus_7.clear();
+                self.registers.control_bg_en.clear();
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock

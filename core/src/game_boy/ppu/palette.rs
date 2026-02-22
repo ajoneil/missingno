@@ -84,18 +84,20 @@ impl PaletteMap {
     }
 }
 
+use super::DffLatch;
+
 pub struct Palettes {
-    pub background: PaletteMap,
-    pub sprite0: PaletteMap,
-    pub sprite1: PaletteMap,
+    pub background: DffLatch,
+    pub sprite0: DffLatch,
+    pub sprite1: DffLatch,
 }
 
 impl Default for Palettes {
     fn default() -> Self {
         Self {
-            background: PaletteMap(0xfc),
-            sprite0: PaletteMap(0),
-            sprite1: PaletteMap(0),
+            background: DffLatch::new(0xfc),
+            sprite0: DffLatch::new(0),
+            sprite1: DffLatch::new(0),
         }
     }
 }

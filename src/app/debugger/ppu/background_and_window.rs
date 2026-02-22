@@ -8,7 +8,10 @@ use crate::app::{
     core::sizes::{m, s},
     debugger::ppu::{palette::palette4, tile_maps::tile_map_choice},
 };
-use missingno_core::game_boy::ppu::{Ppu, palette::Palette};
+use missingno_core::game_boy::ppu::{
+    Ppu,
+    palette::{Palette, PaletteMap},
+};
 
 pub fn background_and_window(ppu: &Ppu, palette: &Palette) -> Element<'static, Message> {
     column![
@@ -19,7 +22,7 @@ pub fn background_and_window(ppu: &Ppu, palette: &Palette) -> Element<'static, M
         .spacing(m()),
         row![
             text("Palette"),
-            palette4(&ppu.palettes().background, palette)
+            palette4(&PaletteMap(ppu.palettes().background.output()), palette)
         ]
         .spacing(m()),
         tile_map_choice("Background Tile Map", ppu.control().background_tile_map()),

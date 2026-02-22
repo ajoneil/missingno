@@ -3,7 +3,7 @@ use core::fmt;
 use crate::game_boy::ppu::{
     Registers,
     memory::{Oam, Vram},
-    palette::PaletteIndex,
+    palette::{PaletteIndex, PaletteMap},
     screen::{self, Screen},
 };
 
@@ -965,7 +965,7 @@ impl Rendering {
     /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
     fn bg_tilemap_coords(&self, data: &Registers) -> (u8, u8) {
         let scx = data.background_viewport.x;
-        let scy = data.background_viewport.y;
+        let scy = data.background_viewport.y.output();
         (
             ((self.pixel_counter.wrapping_add(scx)) >> 3) & 31,
             (self.line_number.wrapping_add(scy) / 8) & 31,
@@ -996,7 +996,9 @@ impl Rendering {
 
     /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
     fn bg_fine_y(&self, data: &Registers) -> u8 {
-        self.line_number.wrapping_add(data.background_viewport.y) % 8
+        self.line_number
+            .wrapping_add(data.background_viewport.y.output())
+            % 8
     }
 
     /// Window fine Y offset (page 27): which row within the tile, from
@@ -1241,9 +1243,9 @@ impl Rendering {
                     let spr_color = (spr_hi << 1) | spr_lo;
                     if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                         let sprite_palette = if spr_pal == 0 {
-                            &data.palettes.sprite0
+                            PaletteMap(data.palettes.sprite0.output())
                         } else {
-                            &data.palettes.sprite1
+                            PaletteMap(data.palettes.sprite1.output())
                         };
                         let mapped = sprite_palette.map(PaletteIndex(spr_color));
                         self.screen.set_pixel(x, y, mapped);
@@ -1252,7 +1254,7 @@ impl Rendering {
                 }
             }
 
-            let mapped = data.palettes.background.map(PaletteIndex(bg_color));
+            let mapped = PaletteMap(data.palettes.background.output()).map(PaletteIndex(bg_color));
             self.screen.set_pixel(x, y, mapped);
             return;
         }
@@ -1302,9 +1304,9 @@ impl Rendering {
                 if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                     // Sprite pixel wins
                     let sprite_palette = if spr_pal == 0 {
-                        &data.palettes.sprite0
+                        PaletteMap(data.palettes.sprite0.output())
                     } else {
-                        &data.palettes.sprite1
+                        PaletteMap(data.palettes.sprite1.output())
                     };
                     let mapped = sprite_palette.map(PaletteIndex(spr_color));
                     self.screen.set_pixel(x, y, mapped);
@@ -1314,7 +1316,7 @@ impl Rendering {
         }
 
         // Background pixel
-        let mapped = data.palettes.background.map(PaletteIndex(bg_color));
+        let mapped = PaletteMap(data.palettes.background.output()).map(PaletteIndex(bg_color));
         self.screen.set_pixel(x, y, mapped);
     }
 
@@ -1328,7 +1330,7 @@ impl Rendering {
         if self.line_number < data.window.y {
             return;
         }
-        if self.pixel_counter != data.window.x_plus_7 {
+        if self.pixel_counter != data.window.x_plus_7.output() {
             return;
         }
 

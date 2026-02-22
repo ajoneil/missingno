@@ -20,7 +20,7 @@ use crate::app::{
 use missingno_core::game_boy::ppu::{
     Ppu,
     memory::Vram,
-    palette::Palette,
+    palette::{Palette, PaletteMap},
     sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     tiles::{TileAddressMode, TileIndex},
 };
@@ -70,12 +70,12 @@ impl SpritesPane {
                     self.sprite_size(ppu.control().sprite_size()),
                     row![
                         text::m("Palette 0"),
-                        palette3(&ppu.palettes().sprite0, palette)
+                        palette3(&PaletteMap(ppu.palettes().sprite0.output()), palette)
                     ]
                     .spacing(m()),
                     row![
                         text::m("Palette 1"),
-                        palette3(&ppu.palettes().sprite1, palette)
+                        palette3(&PaletteMap(ppu.palettes().sprite1.output()), palette)
                     ]
                     .spacing(m()),
                     toggler(self.on_screen_only)
