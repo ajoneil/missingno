@@ -20,7 +20,6 @@ enum OamBugKind {
 impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
-        self.cpu.ei_delay_consumed = false;
 
         let cold_start;
         let mut processor = if self.pending_interrupt.take().is_some() {
@@ -253,10 +252,12 @@ impl GameBoy {
             // halt_bug, which would bleed into the handler's first fetch.
             self.cpu.program_counter -= 1;
             self.cpu.halted = false;
+            self.cpu.ei_delay_consumed = false;
         }
     }
 
     fn check_for_interrupt(&mut self) -> Option<Interrupt> {
+        self.cpu.ei_delay_consumed = false;
         match self.cpu.interrupt_master_enable {
             InterruptMasterEnable::EnableAfterNextInstruction => {
                 self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
