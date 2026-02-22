@@ -18,44 +18,6 @@ enum OamBugKind {
     Write,
 }
 
-/// Returns true if the address maps to a PPU register (FF40-FF4B,
-/// excluding FF46 which is DMA). Used to determine whether a write
-/// needs PPU dot deferral for write conflict timing.
-fn is_ppu_register(address: u16) -> bool {
-    matches!(address, 0xFF40..=0xFF4B if address != 0xFF46)
-}
-
-/// Returns the target address if this opcode's first post-decode
-/// action is a write and the address can be determined from the opcode
-/// and current register state. Returns `None` if the instruction
-/// doesn't write memory, or if the address depends on operand bytes
-/// not yet read (e.g. LD [a16], A).
-fn opcode_write_address(opcode: u8, cpu: &super::cpu::Cpu) -> Option<u16> {
-    use super::cpu::registers::{Register8, Register16};
-    match opcode {
-        // LD [C], A — target is 0xFF00 + C
-        0xE2 => Some(0xFF00 + cpu.get_register8(Register8::C) as u16),
-        // LD [HL], r — target is HL
-        0x70..=0x75 | 0x77 => Some(cpu.get_register16(Register16::Hl)),
-        // LD [HL], d8 — target is HL (has 1 operand, write is step 0)
-        0x36 => Some(cpu.get_register16(Register16::Hl)),
-        _ => None,
-    }
-}
-
-/// Returns true if this opcode is a 2-operand instruction whose first
-/// post-decode action is a memory write. The target address won't be
-/// known until both operands are read.
-fn opcode_is_deferred_address_write(opcode: u8) -> bool {
-    match opcode {
-        // LD [a16], A
-        0xEA => true,
-        // LD [a16], SP (Write16 — two consecutive writes)
-        0x08 => true,
-        _ => false,
-    }
-}
-
 /// Returns the number of operand bytes following a given opcode (0, 1, or 2).
 fn operand_count(opcode: u8) -> u8 {
     match opcode {
@@ -106,17 +68,6 @@ impl GameBoy {
             // deferred until after the read.
 
             // Read opcode byte
-            //
-            // Write conflict: tentatively start accumulating PPU dots
-            // at T0 of the opcode fetch if the PPU is drawing. This
-            // captures T0 in case the instruction turns out to be a
-            // 0-operand PPU register write (like LD [HL],r or LD [C],A),
-            // giving 4 fetch dots + 1 write T0 = 5 pending for conflict
-            // splitting. Cancelled after reading the opcode if not needed.
-            let tentative = self.ppu.ppu_is_drawing();
-            if tentative {
-                self.ppu.start_accumulating();
-            }
             // Phases 0–5: tick 3 dots (at phases 0, 2, 4)
             for _ in 0..6 {
                 new_screen |= self.tick_hardware_phase();
@@ -135,27 +86,9 @@ impl GameBoy {
             }
             let op_count = operand_count(opcode);
 
-            // Determine whether this instruction's first post-decode
-            // action writes to a PPU register.
-            let known_ppu_write =
-                opcode_write_address(opcode, &self.cpu).is_some_and(|addr| is_ppu_register(addr));
-            let deferred_addr_write = opcode_is_deferred_address_write(opcode);
-            let defer_for_write = known_ppu_write || deferred_addr_write;
-
-            if tentative && !(op_count == 0 && known_ppu_write) {
-                // Not a 0-operand PPU write — cancel tentative
-                // accumulation and flush the captured T0 dot.
-                self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
-            }
-
             // Read operand bytes
             let mut bytes = [opcode, 0, 0];
             for i in 0..op_count {
-                if i == op_count - 1 && defer_for_write {
-                    // Last operand M-cycle: start accumulating from
-                    // T0 so the full M-cycle (4 dots) is deferred.
-                    self.ppu.start_accumulating();
-                }
                 // Phases 0–5: tick 3 dots (at phases 0, 2, 4)
                 for _ in 0..6 {
                     new_screen |= self.tick_hardware_phase();
@@ -168,16 +101,6 @@ impl GameBoy {
                 bytes[1 + i as usize] = self.cpu_read(self.cpu.program_counter);
                 self.cpu.program_counter += 1;
                 self.tick_fetch_deferred_mcycle();
-            }
-
-            // For deferred-address writes, check the actual target now
-            // that operands have been read. Cancel accumulation if the
-            // target isn't a PPU register.
-            if deferred_addr_write {
-                let target = (bytes[2] as u16) << 8 | bytes[1] as u16;
-                if !is_ppu_register(target) {
-                    self.ppu.stop_accumulating_and_flush(&self.vram_bus.vram);
-                }
             }
 
             // Decode from buffered bytes
@@ -264,7 +187,7 @@ impl GameBoy {
                     }
                 }
 
-                // Phase 0: IDU OAM bug check + write conflict lookahead.
+                // Phase 0: IDU OAM bug check.
                 if phase_in_mcycle == 0 {
                     // IDU OAM bug: record the pending corruption kind.
                     if let Some(addr) = processor.oam_bug_address() {
@@ -275,15 +198,6 @@ impl GameBoy {
                                     pending_oam_bug = Some(OamBugKind::Write);
                                 }
                             }
-                        }
-                    }
-
-                    // Write conflict: check if the NEXT M-cycle will write
-                    // a PPU register. Start accumulating dots so this
-                    // M-cycle's 4 dots are deferred.
-                    if let Some(addr) = processor.peek_next_write_address() {
-                        if is_ppu_register(addr) && self.ppu.ppu_is_drawing() {
-                            self.ppu.start_accumulating();
                         }
                     }
                 }

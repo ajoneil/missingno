@@ -23,7 +23,7 @@ pub mod sprites;
 pub mod tile_maps;
 pub mod tiles;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Register {
     Control,
     Status,
@@ -38,60 +38,27 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// How the PPU observes a mid-rendering CPU write to this register.
+/// A pending palette register write in the DFF8 master-slave transition.
 ///
-/// On hardware, the CPU write pulse spans the first 3 of 8 sub-dot
-/// phases per M-cycle. The PPU may sample the register before the
-/// DFF latches the new value, observing the old value for 1-2 extra
-/// dots. Some registers also exhibit a 1-dot transitional value
-/// where old and new bits are OR'd together.
-enum WriteConflict {
-    /// PPU sees the new value immediately (0 dots early).
-    /// Used by: WY, WX, LYC, STAT (sampled at or after the DFF latch point).
-    Immediate,
-
-    /// PPU sees the old value for 1 extra dot, then the new value.
-    /// Used by: SCY (sampled 1 dot before the DFF latch point).
-    OneDotEarly,
-
-    /// PPU sees the old value for 2 extra dots, then the new value.
-    /// Used by: SCX (sampled 2 dots before the DFF latch point).
-    TwoDotsEarly,
-
-    /// PPU sees a transitional `old | new` value for 1 dot, then the
-    /// new value, starting 2 dots early.
-    /// Used by: BGP, OBP0, OBP1 (palette registers use DFF8 cells
-    /// whose master-slave transition is visible through the pixel pipeline).
-    PaletteDmg,
-
-    /// PPU sees a transitional value for 1 dot (old OR'd with the
-    /// BG_EN bit of the new value), then the new value, starting
-    /// 2 dots early.
-    /// Used by: LCDC (similar master-slave visibility as palettes,
-    /// but only the BG_EN bit propagates through the master stage).
-    LcdcDmg,
+/// DFF8 cells (BGP, OBP0, OBP1) latch on the rising edge of the CPU
+/// write pulse. During the transition, both master (new) and slave (old)
+/// stages are visible through the combinational pixel pipeline, producing
+/// `old | new` for approximately 1 dot. After 1 dot the slave settles
+/// and only the new value is visible.
+struct PalettePending {
+    register: Register,
+    final_value: u8,
+    dots_remaining: u8,
 }
 
-impl Register {
-    fn write_conflict(&self) -> WriteConflict {
-        match self {
-            Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
-                WriteConflict::PaletteDmg
-            }
-
-            Register::Control => WriteConflict::LcdcDmg,
-
-            Register::BackgroundViewportX => WriteConflict::TwoDotsEarly,
-
-            Register::BackgroundViewportY => WriteConflict::OneDotEarly,
-
-            Register::WindowY
-            | Register::WindowX
-            | Register::InterruptOnScanline
-            | Register::Status
-            | Register::CurrentScanline => WriteConflict::Immediate,
-        }
-    }
+/// A pending LCDC register write with transitional BG_EN bit.
+///
+/// Similar to palette DFF8 behavior: the BG_EN bit of the new value
+/// OR'd with the old LCDC appears for ~1 dot before the full new value
+/// takes effect.
+struct LcdcPending {
+    final_value: u8,
+    dots_remaining: u8,
 }
 
 struct BackgroundViewportPosition {
@@ -135,19 +102,8 @@ pub struct Ppu {
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
     ly_eq_lyc: bool,
     stat_line_was_high: bool,
-    /// PPU dots accumulated but not yet processed. When
-    /// `accumulating` is true, T-cycle ticks increment this counter
-    /// instead of advancing the PPU, deferring dots for write
-    /// conflict splitting.
-    pending_dots: u8,
-    /// When true, `tcycle()` accumulates dots instead of ticking the
-    /// PPU. Set by the execute loop when it knows a PPU register
-    /// write is coming and needs deferred dots for conflict splitting.
-    accumulating: bool,
-
-    /// Screen completed during a deferred PPU flush, delivered on
-    /// the next `tcycle()` return.
-    pending_screen: Option<Screen>,
+    palette_pending: Option<PalettePending>,
+    lcdc_pending: Option<LcdcPending>,
 }
 
 pub struct Window {
@@ -174,9 +130,8 @@ impl Ppu {
             },
             ly_eq_lyc: true,
             stat_line_was_high: false,
-            pending_dots: 0,
-            accumulating: false,
-            pending_screen: None,
+            palette_pending: None,
+            lcdc_pending: None,
         }
     }
 
@@ -219,21 +174,6 @@ impl Ppu {
         }
     }
 
-    /// Flush `count` pending PPU dots. Ticks the PPU that many times,
-    /// stashing any completed screen. Does NOT run interrupt edge
-    /// detection or LYC comparison — those only run at M-cycle
-    /// boundaries in the main `tcycle()` path.
-    fn flush_dots(&mut self, count: u8, vram: &Vram) {
-        if let Some(ppu) = self.pixel_pipeline.as_mut() {
-            for _ in 0..count {
-                if let Some(screen) = ppu.tcycle(&self.registers, &self.oam, vram) {
-                    self.pending_screen = Some(screen);
-                }
-            }
-        }
-        self.pending_dots -= count;
-    }
-
     /// Write a value directly to the register backing store.
     ///
     /// Returns true if the write triggered a STAT interrupt request
@@ -273,95 +213,56 @@ impl Ppu {
         false
     }
 
-    /// Returns true if the PPU is actively drawing pixels (Mode 3),
-    /// meaning register writes may conflict with PPU reads.
-    pub fn ppu_is_drawing(&self) -> bool {
-        matches!(&self.pixel_pipeline, Some(ppu) if ppu.is_rendering())
-    }
+    pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
+        let is_drawing = self
+            .pixel_pipeline
+            .as_ref()
+            .map_or(false, |p| p.is_rendering());
 
-    pub fn write_register(&mut self, register: Register, value: u8, vram: &Vram) -> bool {
-        // Write conflict splitting requires enough deferred dots
-        // (pending_dots >= 5) and the PPU actively drawing (Mode 3).
-        // The execute loop sets accumulating=true for the M-cycle
-        // before a PPU register write, giving 4 deferred dots + 1
-        // from T0 of the write M-cycle = 5 pending at T1.
-        if self.pending_dots < 5 || !self.ppu_is_drawing() {
-            let stat = self.write_register_immediate(&register, value);
-            // Stop accumulating — the write is done.
-            self.accumulating = false;
-            return stat;
+        match register {
+            Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
+                if is_drawing {
+                    // DFF8 transitional: write old|new now, schedule final in 1 dot
+                    let old = match register {
+                        Register::BackgroundPalette => self.registers.palettes.background.0,
+                        Register::Sprite0Palette => self.registers.palettes.sprite0.0,
+                        Register::Sprite1Palette => self.registers.palettes.sprite1.0,
+                        _ => unreachable!(),
+                    };
+                    self.write_register_immediate(&register, old | value);
+                    self.palette_pending = Some(PalettePending {
+                        register,
+                        final_value: value,
+                        dots_remaining: 1,
+                    });
+                    false
+                } else {
+                    self.write_register_immediate(&register, value)
+                }
+            }
+            Register::Control => {
+                if is_drawing {
+                    // LCDC DFF transitional: old | (new & BG_EN) for 1 dot
+                    let old = self.registers.control.bits();
+                    let transitional =
+                        old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
+                    self.write_register_immediate(&Register::Control, transitional);
+                    self.lcdc_pending = Some(LcdcPending {
+                        final_value: value,
+                        dots_remaining: 1,
+                    });
+                    false
+                } else {
+                    self.write_register_immediate(&register, value)
+                }
+            }
+            _ => {
+                // DFF9 registers: atomic latch, no transitional value.
+                // The CPU write at phase 4 naturally places the new value
+                // between dot 2 and dot 3 of the write M-cycle.
+                self.write_register_immediate(&register, value)
+            }
         }
-
-        // Stop accumulating — all pending dots will be flushed during
-        // the split below. After the split, pending_dots is 0 and
-        // normal per-T-cycle ticking resumes.
-        self.accumulating = false;
-
-        // Split pending dots around the register write. With 5 pending
-        // (4 from opcode fetch + 1 from write T0), the split matches
-        // SameBoy's cycle_write advance(pending_cycles - N). Our PPU
-        // position matches SameBoy's (both at the dot before the opcode
-        // fetch), so we flush the same count: 4-N = pending_dots-1-N.
-        //
-        // After the split, flush all remaining pending dots with the
-        // final value so the PPU is caught up before normal ticking.
-        let stat = match register.write_conflict() {
-            WriteConflict::Immediate => {
-                // SameBoy READ_OLD (N=0): advance(4). flush(4).
-                self.flush_dots(self.pending_dots - 1, vram);
-                let stat = self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots, vram);
-                stat
-            }
-
-            WriteConflict::OneDotEarly => {
-                // SameBoy READ_NEW (N=1): advance(3). flush(3).
-                self.flush_dots(self.pending_dots - 2, vram);
-                let stat = self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots, vram);
-                stat
-            }
-
-            WriteConflict::TwoDotsEarly => {
-                // SameBoy SCX_DMG (N=2): advance(2). flush(2).
-                self.flush_dots(self.pending_dots - 3, vram);
-                let stat = self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots, vram);
-                stat
-            }
-
-            WriteConflict::PaletteDmg => {
-                // SameBoy PALETTE_DMG (N=2): advance(2), write
-                // transitional (old|new), advance(1), write final.
-                let old = match &register {
-                    Register::BackgroundPalette => self.registers.palettes.background.0,
-                    Register::Sprite0Palette => self.registers.palettes.sprite0.0,
-                    Register::Sprite1Palette => self.registers.palettes.sprite1.0,
-                    _ => unreachable!(),
-                };
-                self.flush_dots(self.pending_dots - 3, vram);
-                self.write_register_immediate(&register, old | value);
-                self.flush_dots(1, vram);
-                let stat = self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots, vram);
-                stat
-            }
-
-            WriteConflict::LcdcDmg => {
-                // SameBoy DMG_LCDC (N=2): same as PALETTE_DMG but
-                // transitional = old | BG_EN bit of new.
-                let old = self.registers.control.bits();
-                let transitional =
-                    old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
-                self.flush_dots(self.pending_dots - 3, vram);
-                self.write_register_immediate(&register, transitional);
-                self.flush_dots(1, vram);
-                let stat = self.write_register_immediate(&register, value);
-                self.flush_dots(self.pending_dots, vram);
-                stat
-            }
-        };
-        stat
     }
 
     pub fn read_oam(&self, address: OamAddress) -> u8 {
@@ -649,29 +550,7 @@ impl Ppu {
                 && self.ly_eq_lyc)
     }
 
-    /// Begin accumulating PPU dots instead of ticking. Called by the
-    /// execute loop when it knows a PPU register write is coming and
-    /// needs deferred dots for write conflict splitting.
-    pub fn start_accumulating(&mut self) {
-        self.accumulating = true;
-    }
-
-    /// Stop accumulating and flush all pending dots. Called by the
-    /// execute loop when a tentative accumulation is cancelled (the
-    /// instruction turned out not to write a PPU register).
-    pub fn stop_accumulating_and_flush(&mut self, vram: &Vram) {
-        self.accumulating = false;
-        if self.pending_dots > 0 {
-            self.flush_dots(self.pending_dots, vram);
-        }
-    }
-
     /// Advance PPU by one dot. Call once per T-cycle.
-    ///
-    /// When `accumulating` is true, dots are counted but not
-    /// processed — they stay pending for `write_register()` to split
-    /// around a register write. When false, the PPU ticks normally
-    /// (one dot per call).
     ///
     /// Interrupt edge detection and LYC comparison only run on
     /// M-cycle boundaries (when `is_mcycle` is true).
@@ -687,36 +566,38 @@ impl Ppu {
                 self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
-            if self.accumulating {
-                // Dots are deferred for write conflict splitting.
-                self.pending_dots += 1;
-            } else if let Some(screen) =
+            // Normal path: tick PPU immediately, one dot per T-cycle.
+            if let Some(screen) =
                 self.pixel_pipeline
                     .as_mut()
                     .unwrap()
                     .tcycle(&self.registers, &self.oam, vram)
             {
-                // Normal path: tick PPU immediately.
                 result.screen = Some(screen);
                 result.request_vblank = true;
+            }
+
+            // Resolve DFF8 pending writes (palette and LCDC transitional values)
+            if let Some(ref mut pending) = self.palette_pending {
+                pending.dots_remaining -= 1;
+                if pending.dots_remaining == 0 {
+                    let reg = pending.register;
+                    let val = pending.final_value;
+                    self.palette_pending = None;
+                    self.write_register_immediate(&reg, val);
+                }
+            }
+            if let Some(ref mut pending) = self.lcdc_pending {
+                pending.dots_remaining -= 1;
+                if pending.dots_remaining == 0 {
+                    let val = pending.final_value;
+                    self.lcdc_pending = None;
+                    self.write_register_immediate(&Register::Control, val);
+                }
             }
 
             if !is_mcycle {
                 return result;
-            }
-
-            // M-cycle boundary: flush any pending dots and deliver
-            // deferred results. Accumulating boundaries skip the
-            // flush — the execute loop will flush via write_register
-            // or stop_accumulating_and_flush.
-            if !self.accumulating && self.pending_dots > 0 {
-                self.flush_dots(self.pending_dots, vram);
-            }
-
-            // Deliver any screen completed during flush.
-            if let Some(screen) = self.pending_screen.take() {
-                result.screen = Some(screen);
-                result.request_vblank = true;
             }
 
             // Update comparison clock (runs while PPU is on)
@@ -728,8 +609,8 @@ impl Ppu {
             }
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
-                self.pending_dots = 0;
-                self.accumulating = false;
+                self.palette_pending = None;
+                self.lcdc_pending = None;
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock
