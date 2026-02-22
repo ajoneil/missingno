@@ -335,6 +335,7 @@ impl Processor {
     /// (IE push bug).
     pub fn interrupt(cpu: &mut Cpu) -> Self {
         cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
+        cpu.ei_delay = false;
         cpu.halted = false;
 
         let pc = cpu.program_counter;

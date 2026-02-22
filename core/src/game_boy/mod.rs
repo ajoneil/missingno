@@ -37,7 +37,7 @@ pub struct GameBoy {
     vram_bus: VramBus,
 
     prefetched_opcode: Option<u8>,
-    pending_interrupt: Option<interrupts::Interrupt>,
+    interrupt_latch: Option<interrupts::Interrupt>,
 }
 
 impl GameBoy {
@@ -64,7 +64,7 @@ impl GameBoy {
             sgb,
             vram_bus: VramBus::new(),
             prefetched_opcode: None,
-            pending_interrupt: None,
+            interrupt_latch: None,
         }
     }
 
@@ -89,7 +89,7 @@ impl GameBoy {
             None
         };
         self.prefetched_opcode = None;
-        self.pending_interrupt = None;
+        self.interrupt_latch = None;
     }
 
     pub fn cartridge(&self) -> &Cartridge {

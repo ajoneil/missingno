@@ -53,7 +53,7 @@ impl Processor {
         match instr {
             InterruptInstruction::Enable => {
                 if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled {
-                    cpu.interrupt_master_enable = InterruptMasterEnable::EnableAfterNextInstruction;
+                    cpu.ei_delay = true;
                 }
             }
             InterruptInstruction::Disable => {

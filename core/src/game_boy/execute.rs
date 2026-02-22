@@ -22,7 +22,7 @@ impl GameBoy {
         let mut new_screen = false;
 
         let cold_start;
-        let mut processor = if self.pending_interrupt.take().is_some() {
+        let mut processor = if self.interrupt_latch.take().is_some() {
             cold_start = false;
             Processor::interrupt(&mut self.cpu)
         } else if let Some(opcode) = self.prefetched_opcode.take() {
@@ -59,21 +59,16 @@ impl GameBoy {
             let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
                 Some(action) => action,
                 None => {
-                    // Instruction complete.
                     self.check_halt_bug();
-
-                    // The interrupt check runs before the trailing fetch's
-                    // hardware ticks. On real hardware, the sequencer DFF
-                    // pipeline (clocked by CLK9) delays IF visibility by
-                    // one M-cycle, so the dispatch decision uses IF state
-                    // from before the current fetch M-cycle's ticks.
-                    self.pending_interrupt = self.check_for_interrupt();
 
                     // Run trailing fetch M-cycle: 4 dots of hardware ticks
                     // followed by an opcode bus read from PC. On cold start
                     // (first step after reset), skip the ticks to avoid
                     // double-counting the fetch M-cycle that
                     // Processor::begin() already ran.
+                    //
+                    // tick_dot() updates interrupt_latch at the M-cycle
+                    // boundary, modeling the sequencer DFF pipeline.
                     let fetch_addr = self.cpu.program_counter;
                     if !cold_start {
                         for dot in 0u8..4 {
@@ -87,6 +82,12 @@ impl GameBoy {
                     } else {
                         self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
                     }
+
+                    // Advance the EI delay pipeline after the trailing fetch.
+                    // IME promotion takes effect at instruction completion but
+                    // the sequencer latch (updated during ticks above) doesn't
+                    // see it until the NEXT trailing fetch's M-cycle boundary.
+                    self.advance_ei_delay();
 
                     return new_screen;
                 }
@@ -232,6 +233,24 @@ impl GameBoy {
             self.external.tick_decay();
 
             self.audio.mcycle(self.timers.internal_counter());
+
+            // Sequencer interrupt latch: captures IF & IE at each M-cycle
+            // boundary, modeling DFF g42 (clocked by CLK9). The dispatch
+            // decision at instruction completion reads this latch, producing
+            // the one-M-cycle delay seen on hardware.
+            self.interrupt_latch = match self.cpu.interrupt_master_enable {
+                InterruptMasterEnable::Enabled => self.interrupts.triggered(),
+                InterruptMasterEnable::Disabled => None,
+            };
+
+            // HALT wakeup: even with IME=Disabled, a pending interrupt
+            // wakes the CPU from HALT (without dispatching).
+            if self.cpu.halted
+                && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
+                && self.interrupts.triggered().is_some()
+            {
+                self.cpu.halted = false;
+            }
         }
 
         new_screen
@@ -245,36 +264,29 @@ impl GameBoy {
             return;
         }
         if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
-            self.cpu.halted = false;
-            self.cpu.halt_bug = true;
-        } else if self.cpu.ei_delay_consumed {
-            // EI immediately before HALT: on real hardware IME was still
-            // 0 when HALT checked it, so the halt bug triggers. The
-            // interrupt will be dispatched (IME is now Enabled), but the
-            // return address must point to HALT so the CPU re-enters
-            // halt after the handler. Rewind PC instead of setting
-            // halt_bug, which would bleed into the handler's first fetch.
-            self.cpu.program_counter -= 1;
-            self.cpu.halted = false;
-            self.cpu.ei_delay_consumed = false;
+            if self.cpu.ei_delay {
+                // EI immediately before HALT: on real hardware IME was
+                // still 0 when HALT checked it, so the halt bug triggers.
+                // advance_ei_delay() will promote IME to Enabled, so the
+                // interrupt will dispatch, but the return address must
+                // point to HALT so the CPU re-enters halt after the
+                // handler.
+                self.cpu.program_counter -= 1;
+                self.cpu.halted = false;
+                self.cpu.ei_delay = false;
+            } else {
+                self.cpu.halted = false;
+                self.cpu.halt_bug = true;
+            }
         }
     }
 
-    fn check_for_interrupt(&mut self) -> Option<Interrupt> {
-        self.cpu.ei_delay_consumed = false;
-        match self.cpu.interrupt_master_enable {
-            InterruptMasterEnable::EnableAfterNextInstruction => {
-                self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
-                self.cpu.ei_delay_consumed = true;
-                None
-            }
-            InterruptMasterEnable::Enabled => self.interrupts.triggered(),
-            InterruptMasterEnable::Disabled => {
-                if self.cpu.halted && self.interrupts.triggered().is_some() {
-                    self.cpu.halted = false;
-                }
-                None
-            }
+    /// Advance the EI delay pipeline: if EI was executed last
+    /// instruction, promote IME from Disabled to Enabled now.
+    fn advance_ei_delay(&mut self) {
+        if self.cpu.ei_delay {
+            self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
+            self.cpu.ei_delay = false;
         }
     }
 }

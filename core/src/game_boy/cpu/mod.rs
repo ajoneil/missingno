@@ -9,7 +9,6 @@ pub mod registers;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum InterruptMasterEnable {
     Disabled,
-    EnableAfterNextInstruction,
     Enabled,
 }
 
@@ -29,17 +28,16 @@ pub struct Cpu {
     pub flags: Flags,
 
     pub interrupt_master_enable: InterruptMasterEnable,
+    /// EI delay pipeline — models the one-instruction delay between
+    /// executing EI and IME going high. On hardware this is a DFF
+    /// that captures the EI signal and propagates one instruction later.
+    pub ei_delay: bool,
     pub halted: bool,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
     /// immediately but fails to increment PC on the next opcode fetch,
     /// causing that byte to be read twice.
     pub halt_bug: bool,
-    /// Set when check_for_interrupt() consumes the EI delay
-    /// (EnableAfterNextInstruction → Enabled) this step. Used by the
-    /// halt bug check to detect the ei+halt edge case where HALT should
-    /// trigger the halt bug even though IME is now Enabled.
-    pub ei_delay_consumed: bool,
 }
 
 impl Cpu {
@@ -63,9 +61,9 @@ impl Cpu {
             },
 
             interrupt_master_enable: InterruptMasterEnable::Disabled,
+            ei_delay: false,
             halted: false,
             halt_bug: false,
-            ei_delay_consumed: false,
         }
     }
 
