@@ -242,33 +242,15 @@ pub struct Processor {
 }
 
 impl Processor {
-    /// Start the next instruction cycle. Checks for pending interrupts,
-    /// handles halt state, or begins opcode fetch.
+    /// Create a processor for a halted CPU. The CPU is idling — it
+    /// drives PC onto the address bus (one Read M-cycle) but discards
+    /// the result. Hardware ticks during this M-cycle may wake the CPU.
     pub fn begin(cpu: &mut Cpu) -> Self {
-        if cpu.halted {
-            Self::halted_nop(cpu.program_counter)
-        } else {
-            Self::fetch(cpu.program_counter)
-        }
-    }
-
-    /// Create a processor that begins fetching at the given PC.
-    fn fetch(pc: u16) -> Self {
-        Self {
-            instruction: Instruction::NoOperation,
-            step: 0,
-            phase: Phase::Fetch {
-                pc,
-                bytes: [0; 3],
-                bytes_read: 0,
-                bytes_needed: 0,
-            },
-            scratch: 0,
-            dot_in_mcycle: 0,
-            current_action: None,
-            mcycle_active: false,
-            needs_vector_resolve: false,
-        }
+        debug_assert!(
+            cpu.halted,
+            "begin() called with CPU not halted — prefetched_opcode should be set"
+        );
+        Self::halted_nop(cpu.program_counter)
     }
 
     /// Create a processor for a halted NOP (CPU is halted, ticks once).
@@ -309,22 +291,6 @@ impl Processor {
             proc.mcycle_active = true;
         }
         proc
-    }
-
-    /// Create a processor for a halted NOP that skips the fetch M-cycle.
-    /// Used when the opcode fetch was already performed as the previous
-    /// step()'s trailing fetch. The CPU is halted, so no decode occurs.
-    pub fn halted_nop_no_fetch() -> Self {
-        Self {
-            instruction: Instruction::NoOperation,
-            step: 0,
-            phase: Phase::Empty,
-            scratch: 0,
-            dot_in_mcycle: 0,
-            current_action: None,
-            mcycle_active: false,
-            needs_vector_resolve: false,
-        }
     }
 
     /// Create a processor for hardware interrupt dispatch.

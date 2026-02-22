@@ -49,7 +49,7 @@ impl GameBoy {
             None
         };
 
-        GameBoy {
+        let mut gb = GameBoy {
             cpu,
             screen: Screen::new(),
             external: ExternalBus::new(cartridge),
@@ -65,7 +65,10 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             prefetched_opcode: None,
             interrupt_latch: None,
-        }
+        };
+        let pc = gb.cpu.program_counter;
+        gb.prefetched_opcode = Some(gb.cpu_read(pc));
+        gb
     }
 
     pub fn reset(&mut self) {
@@ -88,7 +91,8 @@ impl GameBoy {
         } else {
             None
         };
-        self.prefetched_opcode = None;
+        let pc = self.cpu.program_counter;
+        self.prefetched_opcode = Some(self.cpu_read(pc));
         self.interrupt_latch = None;
     }
 

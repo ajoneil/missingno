@@ -21,19 +21,11 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let cold_start;
         let mut processor = if self.interrupt_latch.take().is_some() {
-            cold_start = false;
             Processor::interrupt(&mut self.cpu)
         } else if let Some(opcode) = self.prefetched_opcode.take() {
-            cold_start = false;
-            if self.cpu.halted {
-                Processor::halted_nop_no_fetch()
-            } else {
-                Processor::fetch_with_opcode(&mut self.cpu, opcode)
-            }
+            Processor::fetch_with_opcode(&mut self.cpu, opcode)
         } else {
-            cold_start = true;
             Processor::begin(&mut self.cpu)
         };
 
@@ -61,27 +53,28 @@ impl GameBoy {
                 None => {
                     self.check_halt_bug();
 
+                    // HALT: skip the trailing fetch entirely. A halted CPU
+                    // doesn't drive the bus — it idles until woken. The
+                    // next step() will use Processor::begin() which creates
+                    // a HaltedNop phase with its own M-cycle of ticks and
+                    // bus activity handled through the normal loop body.
+                    if self.cpu.halted {
+                        self.prefetched_opcode = None;
+                        self.advance_ei_delay();
+                        return new_screen;
+                    }
+
                     // Run trailing fetch M-cycle: 4 dots of hardware ticks
-                    // followed by an opcode bus read from PC. On cold start
-                    // (first step after reset), skip the ticks to avoid
-                    // double-counting the fetch M-cycle that
-                    // Processor::begin() already ran.
+                    // followed by an opcode bus read from PC.
                     //
                     // tick_dot() updates interrupt_latch at the M-cycle
                     // boundary, modeling the sequencer DFF pipeline.
                     let fetch_addr = self.cpu.program_counter;
-                    if !cold_start {
-                        for dot in 0u8..4 {
-                            let is_mcycle_boundary = dot == 3;
-                            new_screen |= self.tick_dot(is_mcycle_boundary);
-                        }
+                    for dot in 0u8..4 {
+                        let is_mcycle_boundary = dot == 3;
+                        new_screen |= self.tick_dot(is_mcycle_boundary);
                     }
-                    if self.cpu.halted {
-                        let _ = self.cpu_read(fetch_addr);
-                        self.prefetched_opcode = None;
-                    } else {
-                        self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
-                    }
+                    self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
 
                     // Advance the EI delay pipeline after the trailing fetch.
                     // IME promotion takes effect at instruction completion but
