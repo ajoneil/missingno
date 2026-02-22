@@ -1,7 +1,7 @@
 use super::{
     GameBoy,
     cpu::{
-        InterruptMasterEnable,
+        EiDelay, InterruptMasterEnable,
         mcycle::{DotAction, Processor},
     },
     interrupts::Interrupt,
@@ -263,30 +263,32 @@ impl GameBoy {
         if !self.cpu.halted || self.interrupts.triggered().is_none() {
             return;
         }
-        if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
-            if self.cpu.ei_delay {
-                // EI immediately before HALT: on real hardware IME was
-                // still 0 when HALT checked it, so the halt bug triggers.
-                // advance_ei_delay() will promote IME to Enabled, so the
-                // interrupt will dispatch, but the return address must
-                // point to HALT so the CPU re-enters halt after the
-                // handler.
-                self.cpu.program_counter -= 1;
-                self.cpu.halted = false;
-                self.cpu.ei_delay = false;
-            } else {
-                self.cpu.halted = false;
-                self.cpu.halt_bug = true;
-            }
+        if self.cpu.ei_delay == Some(EiDelay::Fired) {
+            // EI immediately before HALT: IME was promoted by EI's
+            // advance_ei_delay, but on real hardware HALT saw IME=0
+            // (the DFF pipeline hadn't propagated yet). The halt bug
+            // triggers — PC is not incremented. The interrupt will
+            // dispatch (IME is Enabled), but returns into HALT.
+            self.cpu.program_counter -= 1;
+            self.cpu.halted = false;
+            self.cpu.ei_delay = None;
+        } else if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
+            self.cpu.halted = false;
+            self.cpu.halt_bug = true;
         }
     }
 
-    /// Advance the EI delay pipeline: if EI was executed last
-    /// instruction, promote IME from Disabled to Enabled now.
+    /// Advance the EI delay pipeline one stage per instruction
+    /// completion, modeling the DFF cascade from EI's decode signal
+    /// to the IME flip-flop.
     fn advance_ei_delay(&mut self) {
-        if self.cpu.ei_delay {
-            self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
-            self.cpu.ei_delay = false;
-        }
+        self.cpu.ei_delay = match self.cpu.ei_delay {
+            Some(EiDelay::Pending) => {
+                self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                Some(EiDelay::Fired)
+            }
+            Some(EiDelay::Fired) => None,
+            None => None,
+        };
     }
 }

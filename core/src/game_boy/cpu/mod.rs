@@ -12,6 +12,24 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
+/// Models the EI instruction's one-instruction delay DFF pipeline.
+///
+/// On hardware, EI sets an intermediate RS latch in the sequencer.
+/// That latch propagates through a DFF chain (clocked by CLK9) before
+/// reaching the IME flip-flop, introducing a one-instruction delay.
+/// This enum represents the pipeline stages visible at instruction
+/// boundaries.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum EiDelay {
+    /// EI was executed this instruction. IME will be promoted to
+    /// Enabled at this instruction's completion boundary.
+    Pending,
+
+    /// IME was promoted by the previous instruction's EI delay.
+    /// `check_halt_bug` can see this to detect the EI→HALT edge case.
+    Fired,
+}
+
 #[derive(Clone)]
 pub struct Cpu {
     pub a: u8,
@@ -28,10 +46,10 @@ pub struct Cpu {
     pub flags: Flags,
 
     pub interrupt_master_enable: InterruptMasterEnable,
-    /// EI delay pipeline — models the one-instruction delay between
-    /// executing EI and IME going high. On hardware this is a DFF
-    /// that captures the EI signal and propagates one instruction later.
-    pub ei_delay: bool,
+    /// EI delay pipeline — models the DFF cascade between EI's
+    /// decode signal and the IME flip-flop. Advances one stage per
+    /// instruction completion in `advance_ei_delay()`.
+    pub ei_delay: Option<EiDelay>,
     pub halted: bool,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
@@ -61,7 +79,7 @@ impl Cpu {
             },
 
             interrupt_master_enable: InterruptMasterEnable::Disabled,
-            ei_delay: false,
+            ei_delay: None,
             halted: false,
             halt_bug: false,
         }

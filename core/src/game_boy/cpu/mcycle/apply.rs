@@ -1,5 +1,5 @@
 use super::super::{
-    Cpu, InterruptMasterEnable,
+    Cpu, EiDelay, InterruptMasterEnable,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
     instructions::{CarryFlag, Interrupt as InterruptInstruction},
@@ -53,7 +53,7 @@ impl Processor {
         match instr {
             InterruptInstruction::Enable => {
                 if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled {
-                    cpu.ei_delay = true;
+                    cpu.ei_delay = Some(EiDelay::Pending);
                 }
             }
             InterruptInstruction::Disable => {
