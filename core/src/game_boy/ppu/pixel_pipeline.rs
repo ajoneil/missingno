@@ -43,6 +43,29 @@ const FIRST_VISIBLE_PIXEL: u8 = 8;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
+/// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
+/// and WODU (hblank gate) hardware signals on page 21.
+///
+/// On hardware, WODU fires combinationally when the pixel counter reaches
+/// 167, then VOGA latches WODU on the next even phase to clear XYMU.
+/// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
+/// sees HBlank one phase before XYMU clears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderPhase {
+    /// Not drawing — before Mode 3 starts or after line-end reset.
+    Idle,
+    /// Mode 3: pixel pipeline active, fetcher running, pixels shifting out.
+    /// Hardware: XYMU set, WODU clear.
+    Drawing,
+    /// WODU fired (PX≥167, no sprite match): STAT sees mode=0 via TARU,
+    /// pixel clock stops, VRAM/OAM unlocked. XYMU clears next dot.
+    /// Hardware: XYMU set, WODU set. Lasts 1 dot.
+    WoduFired,
+    /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
+    /// Hardware: XYMU clear, WODU set.
+    HBlank,
+}
+
 // --- Pixel shift registers ---
 //
 // On hardware (pages 32-34), each pixel layer uses separate 8-bit shift
@@ -501,13 +524,9 @@ pub struct Rendering {
     /// through the scan completing (FETO_SCAN_DONE at entry 39). Gates
     /// CPU OAM access independently of the rendering latch (XYMU).
     scanning: bool,
-    /// Hardware rendering latch (XYMU, page 21). True = Mode 3 active.
-    /// Gates VRAM/OAM access, pixel pipeline clocks.
-    rendering: bool,
-    /// Hardware HBlank gate (WODU, page 21). True = pixel counter reached
-    /// 160 and no sprite match active. Pixel clock stops immediately;
-    /// rendering latch clears on the next dot.
-    hblank_gate: bool,
+    /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
+    /// (hblank gate). See `RenderPhase` for hardware signal mapping.
+    render_phase: RenderPhase,
     /// Current scanline number (0-143 during rendering).
     line_number: u8,
     /// Dot position within the current scanline (0..456).
@@ -557,8 +576,7 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: false,
             scanning: true,
-            rendering: false,
-            hblank_gate: false,
+            render_phase: RenderPhase::Idle,
             line_number: 0,
             dot: 0,
             sprites: SpriteStore::new(),
@@ -582,8 +600,7 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: true,
             scanning: false,
-            rendering: false,
-            hblank_gate: false,
+            render_phase: RenderPhase::Idle,
             line_number: 0,
             dot: 0,
             sprites: SpriteStore::new(),
@@ -602,12 +619,10 @@ impl Rendering {
     }
 
     fn mode(&self) -> Mode {
-        if self.rendering {
-            Mode::DrawingPixels
-        } else if self.scanning && self.scanner.is_some() {
-            Mode::PreparingScanline
-        } else {
-            Mode::BetweenLines
+        match self.render_phase {
+            RenderPhase::Drawing | RenderPhase::WoduFired => Mode::DrawingPixels,
+            _ if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
+            _ => Mode::BetweenLines,
         }
     }
 
@@ -616,16 +631,13 @@ impl Rendering {
     }
 
     /// Mode for STAT interrupt edge detection. Mode 0 fires from
-    /// WODU (hblank_gate) directly — one dot before XYMU clears.
+    /// WODU (hblank_gate) directly — one phase before XYMU clears.
     fn interrupt_mode(&self) -> Mode {
-        if self.hblank_gate {
-            Mode::BetweenLines
-        } else if self.rendering {
-            Mode::DrawingPixels
-        } else if self.scanning && self.scanner.is_some() {
-            Mode::PreparingScanline
-        } else {
-            Mode::BetweenLines
+        match self.render_phase {
+            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
+            RenderPhase::Drawing => Mode::DrawingPixels,
+            RenderPhase::Idle if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
+            RenderPhase::Idle => Mode::BetweenLines,
         }
     }
 
@@ -638,21 +650,23 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        self.scanning || (self.rendering && !self.hblank_gate)
+        self.scanning || self.render_phase == RenderPhase::Drawing
     }
 
     fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp, cleared when WODU fires.
-        // Same signal as the XYMU component of OAM blocking.
-        self.rendering && !self.hblank_gate
+        self.render_phase == RenderPhase::Drawing
     }
 
     fn oam_write_locked(&self) -> bool {
-        self.scanning || (self.rendering && !self.hblank_gate)
+        self.scanning || self.render_phase == RenderPhase::Drawing
     }
 
     fn vram_write_locked(&self) -> bool {
-        self.rendering
+        matches!(
+            self.render_phase,
+            RenderPhase::Drawing | RenderPhase::WoduFired
+        )
     }
 
     /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
@@ -674,19 +688,27 @@ impl Rendering {
             return;
         }
 
+        // VOGA latch (DELTA_EVEN). On hardware, VOGA captures WODU on the
+        // even phase following the odd phase when WODU fired. This cascades
+        // through WEGO to clear XYMU (rendering).
+        if self.render_phase == RenderPhase::WoduFired {
+            self.render_phase = RenderPhase::HBlank;
+        }
+
         // Mode 3 EVEN-phase processing
-        if self.rendering {
+        if self.render_phase == RenderPhase::Drawing {
             self.mode3_even(data, vram);
         }
 
-        // WODU hblank gate and XYMU rendering end (DELTA_EVEN). On hardware,
-        // WODU fires on the even half-cycle when pix_count (from the previous
-        // odd half-cycle) reaches 167. XYMU clears on the same DELTA_EVEN —
-        // there is no extra dot delay between WODU detection and rendering end.
-        // WODU = AND(XENA_STORE_MATCHn, XANO_PX167p)
-        if self.rendering && self.pixel_counter >= WODU_PIXEL_COUNT && self.sprite_fetch.is_none() {
-            self.hblank_gate = true;
-            self.rendering = false;
+        // WODU hblank gate (DELTA_EVEN). On hardware, WODU fires when
+        // pix_count reaches 167 and no sprite match is active. The STAT
+        // mode 0 interrupt condition (TARU) uses WODU directly. XYMU
+        // clears on the next dot via the VOGA DFF latch.
+        if self.render_phase == RenderPhase::Drawing
+            && self.pixel_counter >= WODU_PIXEL_COUNT
+            && self.sprite_fetch.is_none()
+        {
+            self.render_phase = RenderPhase::WoduFired;
         }
 
         // SANU scanning trigger (DELTA_EVEN). On hardware, SANU fires
@@ -716,7 +738,7 @@ impl Rendering {
                 self.scanner = None;
                 self.scanning = false;
                 self.lcd_turning_on = false;
-                self.rendering = true;
+                self.render_phase = RenderPhase::Drawing;
 
                 // AVAP: On hardware, scan_done fires on DELTA_EVEN and
                 // resets phase_tfetch to 0. The first increment happens on
@@ -725,16 +747,15 @@ impl Rendering {
                 self.advance_bg_fetcher(data, vram);
             }
         } else {
-            // Mode 3 (drawing) and Mode 0 (HBlank)
-            if self.rendering {
+            // Mode 3 (drawing) — pixel output phase
+            if self.render_phase == RenderPhase::Drawing {
                 self.mode3_odd(data, oam, vram);
             }
 
             self.dot += 1;
 
             if self.dot == SCANLINE_TOTAL_DOTS {
-                self.rendering = false;
-                self.hblank_gate = false;
+                self.render_phase = RenderPhase::Idle;
                 if self.window_rendered {
                     self.window_line_counter += 1;
                 }
@@ -1487,7 +1508,12 @@ impl PixelPipeline {
 
     pub fn is_rendering(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) => rendering.rendering,
+            PixelPipeline::Rendering(rendering) => {
+                matches!(
+                    rendering.render_phase,
+                    RenderPhase::Drawing | RenderPhase::WoduFired
+                )
+            }
             PixelPipeline::BetweenFrames(_) => false,
         }
     }
