@@ -54,13 +54,10 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
     Idle,
-    /// Mode 2→3 transition: STAT reports mode 3, VRAM/OAM locked, but the
-    /// pixel pipeline hasn't started yet. On hardware, this corresponds to
-    /// the 4 T-cycles between FETO_SCAN_DONEp and AVAP (rendering active).
-    /// The counter tracks dots remaining in the transition.
-    Mode3Startup(u8),
-    /// Mode 3: pixel pipeline active, fetcher running, pixels shifting out.
-    /// Hardware: XYMU set, WODU clear.
+    /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
+    /// period from AVAP (scan done) through WODU (PX≥167). During
+    /// startup, the `StartupFetch` cascade gates the pixel clock until
+    /// the first tile fetch completes and POKY latches.
     Drawing,
     /// WODU fired (PX≥167, no sprite match): STAT sees mode=0 via TARU,
     /// pixel clock stops, VRAM/OAM unlocked. XYMU clears next dot.
@@ -625,9 +622,7 @@ impl Rendering {
 
     fn mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::Mode3Startup(_) | RenderPhase::Drawing | RenderPhase::WoduFired => {
-                Mode::DrawingPixels
-            }
+            RenderPhase::Drawing | RenderPhase::WoduFired => Mode::DrawingPixels,
             _ if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
             _ => Mode::BetweenLines,
         }
@@ -642,7 +637,7 @@ impl Rendering {
     fn interrupt_mode(&self) -> Mode {
         match self.render_phase {
             RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
-            RenderPhase::Mode3Startup(_) | RenderPhase::Drawing => Mode::DrawingPixels,
+            RenderPhase::Drawing => Mode::DrawingPixels,
             RenderPhase::Idle if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
             RenderPhase::Idle => Mode::BetweenLines,
         }
@@ -657,33 +652,22 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        self.scanning
-            || matches!(
-                self.render_phase,
-                RenderPhase::Mode3Startup(_) | RenderPhase::Drawing
-            )
+        self.scanning || matches!(self.render_phase, RenderPhase::Drawing)
     }
 
     fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp, cleared when WODU fires.
-        matches!(
-            self.render_phase,
-            RenderPhase::Mode3Startup(_) | RenderPhase::Drawing
-        )
+        matches!(self.render_phase, RenderPhase::Drawing)
     }
 
     fn oam_write_locked(&self) -> bool {
-        self.scanning
-            || matches!(
-                self.render_phase,
-                RenderPhase::Mode3Startup(_) | RenderPhase::Drawing
-            )
+        self.scanning || matches!(self.render_phase, RenderPhase::Drawing)
     }
 
     fn vram_write_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::Mode3Startup(_) | RenderPhase::Drawing | RenderPhase::WoduFired
+            RenderPhase::Drawing | RenderPhase::WoduFired
         )
     }
 
@@ -745,20 +729,13 @@ impl Rendering {
                 self.scanner = None;
                 self.scanning = false;
                 self.lcd_turning_on = false;
-                self.render_phase = RenderPhase::Mode3Startup(4);
+                // AVAP: scan complete, rendering active. The fetcher
+                // starts immediately; StartupFetch gates pixel output
+                // until the NYKA→PORY→POKY cascade completes.
+                self.render_phase = RenderPhase::Drawing;
+                self.advance_bg_fetcher(data, vram);
             }
         } else {
-            // Mode 2→3 transition countdown
-            if let RenderPhase::Mode3Startup(ref mut remaining) = self.render_phase {
-                *remaining -= 1;
-                if *remaining == 0 {
-                    // AVAP: transition complete, begin rendering. Give the
-                    // fetcher its first sub-step to match hardware timing.
-                    self.render_phase = RenderPhase::Drawing;
-                    self.advance_bg_fetcher(data, vram);
-                }
-            }
-
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
                 self.mode3_odd(data, oam, vram);
@@ -1536,7 +1513,7 @@ impl PixelPipeline {
             PixelPipeline::Rendering(rendering) => {
                 matches!(
                     rendering.render_phase,
-                    RenderPhase::Mode3Startup(_) | RenderPhase::Drawing | RenderPhase::WoduFired
+                    RenderPhase::Drawing | RenderPhase::WoduFired
                 )
             }
             PixelPipeline::BetweenFrames(_) => false,
