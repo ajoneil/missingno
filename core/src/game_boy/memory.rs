@@ -493,7 +493,7 @@ impl GameBoy {
                     self.interrupts.enabled = InterruptFlags::from_bits_retain(value)
                 }
                 interrupts::Register::RequestedInterrupts => {
-                    self.interrupts.requested = InterruptFlags::from_bits_retain(value)
+                    self.interrupts.requested = InterruptFlags::from_bits_retain(value);
                 }
             },
 

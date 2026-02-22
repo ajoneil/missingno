@@ -37,7 +37,7 @@ impl GameBoy {
         let mut dot_in_mcycle: u8 = 0;
 
         // Safety budget: longest instruction is 6 M-cycles = 24 dots
-        // (3 fetch + 3 execute). Interrupt dispatch is 5+1 = 24 dots.
+        // (3 fetch + 3 execute). Interrupt dispatch is 4+1 = 20 dots.
         // Budget of 48 dots gives generous margin for debugging.
         const DOT_BUDGET: u32 = 48;
         let mut dots_remaining = DOT_BUDGET;
