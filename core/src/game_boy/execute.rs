@@ -32,7 +32,6 @@ impl GameBoy {
         // DotAction per dot with bus operations at dot 3 (end of M-cycle).
         let mut read_value: u8 = 0;
         let mut vector_resolved = false;
-        let mut halt_bug_checked = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
         let mut dot_in_mcycle: u8 = 0;
 
@@ -47,7 +46,14 @@ impl GameBoy {
             dots_remaining -= 1;
             let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
                 Some(action) => action,
-                None => return new_screen,
+                None => {
+                    // Instruction complete. Check for HALT bug: if the
+                    // instruction was HALT and an interrupt is pending,
+                    // the CPU resumes but skips PC increment on the next
+                    // fetch (or rewinds PC for EI+HALT).
+                    self.check_halt_bug();
+                    return new_screen;
+                }
             };
 
             // IE push bug: resolve the interrupt vector after the
@@ -59,26 +65,6 @@ impl GameBoy {
                     self.cpu.program_counter = interrupt.vector();
                 } else {
                     self.cpu.program_counter = 0x0000;
-                }
-            }
-
-            // HALT bug check: after fetch+decode, if the CPU just set
-            // halted=true and an interrupt is pending, handle the halt
-            // bug. Only check once (the transition from not-halted to
-            // halted happens during decode_and_transition inside next_dot).
-            if !halt_bug_checked && self.cpu.halted && self.interrupts.triggered().is_some() {
-                halt_bug_checked = true;
-                if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
-                    self.cpu.halted = false;
-                    self.cpu.halt_bug = true;
-                } else if self.cpu.ei_delay_consumed {
-                    // EI immediately before HALT: on real hardware IME
-                    // was still 0 when HALT checked it, so the halt bug
-                    // triggers. The interrupt will be dispatched (IME is
-                    // now Enabled), but the return address must point to
-                    // HALT so the CPU re-enters halt after the handler.
-                    self.cpu.program_counter -= 1;
-                    self.cpu.halted = false;
                 }
             }
 
@@ -209,6 +195,28 @@ impl GameBoy {
         }
 
         new_screen
+    }
+
+    /// HALT bug: if HALT was just executed with IME=0 and an interrupt
+    /// is already pending, the CPU doesn't truly halt. It resumes
+    /// immediately but fails to increment PC on the next opcode fetch.
+    fn check_halt_bug(&mut self) {
+        if !self.cpu.halted || self.interrupts.triggered().is_none() {
+            return;
+        }
+        if self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled {
+            self.cpu.halted = false;
+            self.cpu.halt_bug = true;
+        } else if self.cpu.ei_delay_consumed {
+            // EI immediately before HALT: on real hardware IME was still
+            // 0 when HALT checked it, so the halt bug triggers. The
+            // interrupt will be dispatched (IME is now Enabled), but the
+            // return address must point to HALT so the CPU re-enters
+            // halt after the handler. Rewind PC instead of setting
+            // halt_bug, which would bleed into the handler's first fetch.
+            self.cpu.program_counter -= 1;
+            self.cpu.halted = false;
+        }
     }
 
     fn check_for_interrupt(&mut self) -> Option<Interrupt> {
