@@ -45,8 +45,9 @@ pub enum Register {
 /// signal routing delays that defer the new value by one or more dots.
 /// This enum models both behaviors.
 enum WriteConflictPhase {
-    /// DFF8/LCDC: a transitional value (`old | new` or `old | (new & BG_EN)`)
-    /// is visible to the pixel pipeline. Next tcycle advances to Settling.
+    /// DFF8 palettes: `old | new` visible. LCDC: only BG_EN bit has
+    /// `old | new` transitional; other bits already at final value.
+    /// Next tcycle advances to Settling.
     Transitional,
     /// Last dot of transitional visibility.
     /// Next tcycle writes the final value and clears the pending state.
@@ -248,12 +249,15 @@ impl Ppu {
             }
             Register::Control => {
                 if is_drawing {
-                    // LCDC write conflict: BG_EN bit of new value OR'd with
-                    // old LCDC is visible as a transitional before settling.
-                    let old = self.registers.control.bits();
-                    let transitional =
-                        old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
-                    self.write_register_immediate(&Register::Control, transitional);
+                    // LCDC is DFF9: bits 1-7 latch atomically. Only BG_EN
+                    // (bit 0) has a transitional `old | new` phase.
+                    let old_bg_en = self.registers.control.bits()
+                        & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
+                    let new_bg_en = value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
+                    let transitional_bg_en = old_bg_en | new_bg_en;
+                    let immediate = (value & !ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits())
+                        | transitional_bg_en;
+                    self.write_register_immediate(&Register::Control, immediate);
                     self.pending_write = Some(PendingWrite {
                         register,
                         final_value: value,
