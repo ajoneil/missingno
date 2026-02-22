@@ -304,20 +304,24 @@ enum FetcherStep {
 
 /// Mode 3 starts with one BG tile fetch before any pixels shift out.
 /// On hardware, AVAP fires at Mode 3 entry and the fetcher begins
-/// immediately. After the first tile fetch completes, a 3-DFF cascade
-/// (LYRY is combinational, NYKA→PORY→POKY are DFFs) propagates the
+/// immediately. After the first tile fetch completes, the LYRY
+/// combinational signal and NYKA→PORY→POKY DFF cascade propagate the
 /// "fetch done" signal across alternating clock phases before enabling
 /// the pixel clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StartupFetch {
-    /// Single tile fetch in progress. The fetcher runs on DELTA_EVEN only
-    /// (LEBO clock). When the BG shifter becomes non-empty, LYRY fires
-    /// combinationally and NYKA captures it on the same DELTA_EVEN,
-    /// transitioning directly to NykaFired.
+    /// First tile fetch in progress. The fetcher runs on DELTA_EVEN only
+    /// (LEBO clock). When the fetcher fills the BG shifter, LYRY fires
+    /// combinationally → transitions to LyryFired.
     FirstTile,
 
-    /// NYKA_FETCH_DONEp_evn has captured LYRY. PORY will capture NYKA on
-    /// the next DELTA_ODD.
+    /// LYRY_BFETCH_DONEn has fired (combinational — the fetcher filled
+    /// the shifter this DELTA_EVEN). NYKA will capture it on the *next*
+    /// DELTA_EVEN.
+    LyryFired,
+
+    /// NYKA_FETCH_DONEp_evn has captured LYRY. PORY will capture NYKA
+    /// on the next DELTA_ODD.
     NykaFired,
 
     /// PORY_FETCH_DONEp_odd has captured NYKA. POKY will latch on the
@@ -729,11 +733,12 @@ impl Rendering {
                 self.scanner = None;
                 self.scanning = false;
                 self.lcd_turning_on = false;
-                // AVAP: scan complete, rendering active. The fetcher
-                // starts immediately; StartupFetch gates pixel output
-                // until the NYKA→PORY→POKY cascade completes.
+                // AVAP: scan complete, rendering active. StartupFetch
+                // gates pixel output until the LYRY→NYKA→PORY→POKY
+                // cascade completes. Fetcher's first advance comes from
+                // mode3_even on the next DELTA_EVEN (LEBO clock is
+                // EVEN-only on hardware).
                 self.render_phase = RenderPhase::Drawing;
-                self.advance_bg_fetcher(data, vram);
             }
         } else {
             // Mode 3 (drawing) — pixel output phase
@@ -793,6 +798,21 @@ impl Rendering {
     /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
     /// all fire on DELTA_EVEN.
     fn mode3_even(&mut self, data: &Registers, vram: &Vram) {
+        // Startup cascade DFF captures on DELTA_EVEN. Each arm reads
+        // state set by the *previous* DELTA_EVEN or DELTA_ODD — the
+        // DFF capture delay is explicit in the state machine.
+        match self.startup_fetch {
+            Some(StartupFetch::LyryFired) => {
+                // NYKA captures LYRY on this DELTA_EVEN.
+                self.startup_fetch = Some(StartupFetch::NykaFired);
+            }
+            Some(StartupFetch::PoryFired) => {
+                // POKY latches from PORY — enables pixel clock.
+                self.startup_fetch = None;
+            }
+            _ => {}
+        }
+
         // Fetcher advances every half-cycle (DELTA_EVEN phase).
         // The BG fetcher is frozen only during sprite data fetch
         // (FetchingData phase). It continues during startup, sprite
@@ -808,18 +828,12 @@ impl Rendering {
             self.advance_bg_fetcher(data, vram);
         }
 
-        // Startup cascade — each match arm is one DFF capture on DELTA_EVEN.
-        match self.startup_fetch {
-            Some(StartupFetch::FirstTile) if !self.bg_shifter.is_empty() => {
-                // LYRY is combinational — fires the same cycle the shifter fills.
-                // NYKA captures LYRY on this DELTA_EVEN.
-                self.startup_fetch = Some(StartupFetch::NykaFired);
-            }
-            Some(StartupFetch::PoryFired) => {
-                // POKY latches from PORY — enables pixel clock.
-                self.startup_fetch = None;
-            }
-            _ => {}
+        // LYRY fires combinationally when the first tile fetch fills
+        // the BG shifter. This is a combinational signal, not a DFF —
+        // it fires in the same DELTA_EVEN as the advance that fills
+        // the shifter.
+        if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
+            self.startup_fetch = Some(StartupFetch::LyryFired);
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
@@ -837,9 +851,8 @@ impl Rendering {
     /// DELTA_ODD Mode 3 pixel pipeline processing.
     fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
-            Some(StartupFetch::FirstTile) => {
-                // During fetch phase, no pixel processing.
-                // Fetcher does NOT advance on ODD (LEBO clock is EVEN-only).
+            Some(StartupFetch::FirstTile) | Some(StartupFetch::LyryFired) => {
+                // During fetch/cascade phase, no pixel processing.
                 return;
             }
             Some(StartupFetch::NykaFired) => {
