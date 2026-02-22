@@ -62,12 +62,18 @@ impl GameBoy {
                     // Instruction complete.
                     self.check_halt_bug();
 
-                    // Run trailing fetch M-cycle: 4 dots of an opcode
-                    // read from PC. This matches hardware where the fetch
-                    // is the last M-cycle of the instruction and the
-                    // interrupt check follows. On cold start (first step
-                    // after reset), skip the ticks to avoid double-counting
-                    // the fetch M-cycle that Processor::begin() already ran.
+                    // The interrupt check runs before the trailing fetch's
+                    // hardware ticks. On real hardware, the sequencer DFF
+                    // pipeline (clocked by CLK9) delays IF visibility by
+                    // one M-cycle, so the dispatch decision uses IF state
+                    // from before the current fetch M-cycle's ticks.
+                    self.pending_interrupt = self.check_for_interrupt();
+
+                    // Run trailing fetch M-cycle: 4 dots of hardware ticks
+                    // followed by an opcode bus read from PC. On cold start
+                    // (first step after reset), skip the ticks to avoid
+                    // double-counting the fetch M-cycle that
+                    // Processor::begin() already ran.
                     let fetch_addr = self.cpu.program_counter;
                     if !cold_start {
                         for dot in 0u8..4 {
@@ -81,8 +87,6 @@ impl GameBoy {
                     } else {
                         self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
                     }
-
-                    self.pending_interrupt = self.check_for_interrupt();
 
                     return new_screen;
                 }
