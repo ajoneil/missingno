@@ -22,15 +22,19 @@ impl GameBoy {
         let mut new_screen = false;
         self.cpu.ei_delay_consumed = false;
 
+        let cold_start;
         let mut processor = if self.pending_interrupt.take().is_some() {
+            cold_start = false;
             Processor::interrupt(&mut self.cpu)
         } else if let Some(opcode) = self.prefetched_opcode.take() {
+            cold_start = false;
             if self.cpu.halted {
                 Processor::halted_nop_no_fetch()
             } else {
                 Processor::fetch_with_opcode(&mut self.cpu, opcode)
             }
         } else {
+            cold_start = true;
             Processor::begin(&mut self.cpu)
         };
 
@@ -62,11 +66,15 @@ impl GameBoy {
                     // Run trailing fetch M-cycle: 4 dots of an opcode
                     // read from PC. This matches hardware where the fetch
                     // is the last M-cycle of the instruction and the
-                    // interrupt check follows.
+                    // interrupt check follows. On cold start (first step
+                    // after reset), skip the ticks to avoid double-counting
+                    // the fetch M-cycle that Processor::begin() already ran.
                     let fetch_addr = self.cpu.program_counter;
-                    for dot in 0u8..4 {
-                        let is_mcycle_boundary = dot == 3;
-                        new_screen |= self.tick_dot(is_mcycle_boundary);
+                    if !cold_start {
+                        for dot in 0u8..4 {
+                            let is_mcycle_boundary = dot == 3;
+                            new_screen |= self.tick_dot(is_mcycle_boundary);
+                        }
                     }
                     if self.cpu.halted {
                         let _ = self.cpu_read(fetch_addr);
