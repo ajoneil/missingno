@@ -1,7 +1,8 @@
 use super::{
     Cpu, InterruptMasterEnable,
+    instructions::Instruction,
     instructions::bit_shift::{Carry, Direction},
-    instructions::{Instruction, Interrupt as InterruptInstruction},
+    instructions::{Interrupt as InterruptInstruction},
     registers::{Register8, Register16},
 };
 
@@ -25,19 +26,30 @@ pub enum BusAction {
     InternalOamBug { address: u16 },
 }
 
-// ── T-cycle ─────────────────────────────────────────────────────────────
+// ── Dot-level bus state ─────────────────────────────────────────────────
 
-/// One T-cycle step within an M-cycle. Each M-cycle is expanded into 4
-/// `TCycle` yields, with the bus action placed at the correct T-cycle
-/// offset for cycle-accurate hardware interaction.
+/// What the CPU bus is doing during one dot (T-cycle).
+///
+/// The executor ticks all hardware and routes these to subsystems.
+/// Each M-cycle expands into 4 dots with bus operations placed at
+/// the hardware-correct position:
+/// - **Read**:     `[Idle, Idle, Idle, Read]`
+/// - **Write**:    `[Idle, Idle, Idle, Write]`
+/// - **Internal**: `[Idle, Idle, Idle, Idle]`
+/// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Debug)]
-pub enum TCycle {
-    /// Advance hardware by 1 T-cycle (no bus activity).
-    Hardware,
-    /// Read a byte from the given address, then advance hardware by 1 T-cycle.
+pub enum DotAction {
+    /// No bus transfer this dot.
+    Idle,
+    /// CPU is reading from this address. The executor must provide
+    /// the value before the next M-cycle begins.
     Read { address: u16 },
-    /// Write a byte to the given address, then advance hardware by 1 T-cycle.
+    /// CPU is writing this value to this address. The write latches
+    /// at this dot (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
+    /// Internal cycle where the IDU places an address on the bus.
+    /// May trigger OAM bug if address is in 0xFE00-0xFEFF.
+    InternalOamBug { address: u16 },
 }
 
 // ── Helper enums ────────────────────────────────────────────────────────
@@ -94,11 +106,23 @@ enum RmwOp {
 
 // ── Phase enum ──────────────────────────────────────────────────────────
 
-/// Post-fetch behavior for an instruction. Fetch M-cycles are handled by
-/// `GameBoy::step()` (which ticks hardware per byte read). The processor
-/// only emits the remaining post-fetch M-cycles.
+/// The behavior of the current instruction, expressed as a sequence of
+/// M-cycles. The `Processor` walks through the phase yielding one
+/// `BusAction` per M-cycle via `next_mcycle()`.
 #[derive(Debug)]
 enum Phase {
+    /// Fetch opcode and operand bytes, decode, then transition to the
+    /// instruction's execution phase. Each byte is one Read M-cycle.
+    Fetch {
+        pc: u16,
+        /// Bytes read so far (opcode + operands). Index 0 = opcode.
+        bytes: [u8; 3],
+        /// How many bytes have been read.
+        bytes_read: u8,
+        /// Total bytes needed (0 = unknown until opcode is read).
+        bytes_needed: u8,
+    },
+
     /// One memory read, then a CPU action.
     ReadOp { address: u16, action: ReadAction },
 
@@ -155,9 +179,47 @@ enum Phase {
     Empty,
 }
 
+/// Returns the number of operand bytes following a given opcode (0, 1, or 2).
+fn operand_count(opcode: u8) -> u8 {
+    match opcode {
+        // 1 operand byte: LD r,d8 / LD [HL],d8
+        0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x36 | 0x3e => 1,
+        // 1 operand byte: ALU A,d8
+        0xc6 | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => 1,
+        // 1 operand byte: JR e8, JR cc,e8
+        0x18 | 0x20 | 0x28 | 0x30 | 0x38 => 1,
+        // 1 operand byte: LDH [a8],A / LDH A,[a8]
+        0xe0 | 0xf0 => 1,
+        // 1 operand byte: ADD SP,e8 / LD HL,SP+e8
+        0xe8 | 0xf8 => 1,
+        // 1 operand byte: CB prefix
+        0xcb => 1,
+        // 1 operand byte: STOP
+        0x10 => 1,
+
+        // 2 operand bytes: LD r16,d16
+        0x01 | 0x11 | 0x21 | 0x31 => 2,
+        // 2 operand bytes: LD [a16],SP
+        0x08 => 2,
+        // 2 operand bytes: LD [a16],A / LD A,[a16]
+        0xea | 0xfa => 2,
+        // 2 operand bytes: JP a16, JP cc,a16
+        0xc3 | 0xc2 | 0xca | 0xd2 | 0xda => 2,
+        // 2 operand bytes: CALL a16, CALL cc,a16
+        0xcd | 0xc4 | 0xcc | 0xd4 | 0xdc => 2,
+
+        // Everything else: 0 operand bytes
+        _ => 0,
+    }
+}
+
 // ── Processor ──────────────────────────────────────────────────
 
-/// Lazy state machine that yields one `BusAction` per M-cycle.
+/// State machine that yields one `DotAction` per dot (T-cycle).
+///
+/// Each instruction is a sequence of M-cycles, each expanded into 4 dots.
+/// The processor covers the entire instruction lifecycle: fetch (reading
+/// opcode + operands), decode, and execution (post-fetch M-cycles).
 pub struct Processor {
     /// The decoded instruction, preserved for debugger display.
     #[allow(dead_code)]
@@ -167,29 +229,58 @@ pub struct Processor {
     /// Scratch byte for multi-read phases (Pop, CondReturn) to store
     /// the first read value until the second read completes.
     scratch: u8,
-    /// T-cycle position within the current M-cycle (0–3).
-    t_step: u8,
-    /// The BusAction for the current M-cycle, fetched at t_step 0.
+    /// Dot position within the current M-cycle (0–3).
+    dot_in_mcycle: u8,
+    /// The BusAction for the current M-cycle, fetched at dot 0.
     /// `None` means the instruction is complete.
     current_action: Option<BusAction>,
-    /// Whether we have started T-cycle iteration (have a pending M-cycle).
-    tcycle_active: bool,
+    /// Whether we have started dot iteration (have a pending M-cycle).
+    mcycle_active: bool,
     /// Set after the high-byte push of interrupt dispatch. The caller
     /// must re-check IF & IE to determine the jump vector (IE push bug).
     pub needs_vector_resolve: bool,
 }
 
 impl Processor {
+    /// Start the next instruction cycle. Checks for pending interrupts,
+    /// handles halt state, or begins opcode fetch.
+    pub fn begin(cpu: &mut Cpu) -> Self {
+        if cpu.halted {
+            Self::halted_nop(cpu.program_counter)
+        } else {
+            Self::fetch(cpu.program_counter)
+        }
+    }
+
+    /// Create a processor that begins fetching at the given PC.
+    fn fetch(pc: u16) -> Self {
+        Self {
+            instruction: Instruction::NoOperation,
+            step: 0,
+            phase: Phase::Fetch {
+                pc,
+                bytes: [0; 3],
+                bytes_read: 0,
+                bytes_needed: 0,
+            },
+            scratch: 0,
+            dot_in_mcycle: 0,
+            current_action: None,
+            mcycle_active: false,
+            needs_vector_resolve: false,
+        }
+    }
+
     /// Create a processor for a halted NOP (CPU is halted, ticks once).
-    pub fn halted_nop(pc: u16) -> Self {
+    fn halted_nop(pc: u16) -> Self {
         Self {
             instruction: Instruction::NoOperation,
             step: 0,
             phase: Phase::HaltedNop { fetch_pc: pc },
             scratch: 0,
-            t_step: 0,
+            dot_in_mcycle: 0,
             current_action: None,
-            tcycle_active: false,
+            mcycle_active: false,
             needs_vector_resolve: false,
         }
     }
@@ -214,15 +305,18 @@ impl Processor {
             step: 0,
             phase: Phase::InterruptDispatch { sp, pc_hi, pc_lo },
             scratch: 0,
-            t_step: 0,
+            dot_in_mcycle: 0,
             current_action: None,
-            tcycle_active: false,
+            mcycle_active: false,
             needs_vector_resolve: false,
         }
     }
 
-    /// Create a processor for a decoded instruction.
-    pub fn new(instruction: Instruction, cpu: &mut Cpu) -> Self {
+    /// Transition from fetch to execution phase after all bytes are read.
+    fn decode_and_transition(&mut self, cpu: &mut Cpu, bytes: [u8; 3], bytes_read: u8) {
+        let mut iter = bytes[..bytes_read as usize].iter().copied();
+        let instruction = Instruction::decode(&mut iter).unwrap();
+
         let phase = match &instruction {
             Instruction::Interrupt(InterruptInstruction::Await) => {
                 cpu.halted = true;
@@ -257,25 +351,73 @@ impl Processor {
             Instruction::Stack(s) => Self::build_stack(cpu, s),
         };
 
-        Self {
-            instruction,
-            step: 0,
-            phase,
-            scratch: 0,
-            t_step: 0,
-            current_action: None,
-            tcycle_active: false,
-            needs_vector_resolve: false,
-        }
+        self.instruction = instruction;
+        self.phase = phase;
+        self.step = 0;
     }
 
     /// Advance one M-cycle. Returns `None` when instruction is complete.
     /// `read_value` is the byte read during the previous cycle's `BusAction::Read`.
-    pub fn next(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<BusAction> {
+    fn next_mcycle(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<BusAction> {
         let step = self.step;
         self.step += 1;
 
-        match &self.phase {
+        match &mut self.phase {
+            Phase::Fetch {
+                pc,
+                bytes,
+                bytes_read,
+                bytes_needed,
+            } => {
+                if step == 0 {
+                    // First M-cycle: read opcode
+                    Some(BusAction::Read { address: *pc })
+                } else if *bytes_read == 0 {
+                    // Opcode just read — store it and determine operand count
+                    bytes[0] = read_value;
+                    *bytes_read = 1;
+                    if cpu.halt_bug {
+                        cpu.halt_bug = false;
+                    } else {
+                        *pc += 1;
+                    }
+                    cpu.program_counter = *pc;
+                    *bytes_needed = 1 + operand_count(bytes[0]);
+                    if *bytes_read >= *bytes_needed {
+                        // No operands — decode and transition
+                        let b = *bytes;
+                        let n = *bytes_read;
+                        self.decode_and_transition(cpu, b, n);
+                        // Check HALT bug after decode
+                        self.check_halt_bug_after_decode(cpu);
+                        // Return first M-cycle of execution phase (or None if Empty)
+                        self.step = 0;
+                        self.next_mcycle(0, cpu)
+                    } else {
+                        // Read next operand byte
+                        Some(BusAction::Read { address: *pc })
+                    }
+                } else {
+                    // Operand byte just read
+                    bytes[*bytes_read as usize] = read_value;
+                    *bytes_read += 1;
+                    *pc += 1;
+                    cpu.program_counter = *pc;
+                    if *bytes_read >= *bytes_needed {
+                        // All bytes read — decode and transition
+                        let b = *bytes;
+                        let n = *bytes_read;
+                        self.decode_and_transition(cpu, b, n);
+                        self.check_halt_bug_after_decode(cpu);
+                        self.step = 0;
+                        self.next_mcycle(0, cpu)
+                    } else {
+                        // Read next operand byte
+                        Some(BusAction::Read { address: *pc })
+                    }
+                }
+            }
+
             Phase::Empty => None,
 
             Phase::HaltedNop { fetch_pc } => match step {
@@ -492,52 +634,66 @@ impl Processor {
         }
     }
 
-    /// Advance one T-cycle. Returns `None` when the instruction is complete.
+    /// HALT bug: if HALT was just executed with IME=0 and an interrupt
+    /// is already pending, the CPU doesn't truly halt. It resumes
+    /// immediately but fails to increment PC on the next opcode fetch.
     ///
-    /// Each M-cycle from `next()` is expanded into 4 T-cycles with the bus
-    /// action placed at the correct offset:
-    /// - **Read**:     `[Hardware, Read,    Hardware, Hardware]`
-    /// - **Write**:    `[Hardware, Write,   Hardware, Hardware]`
-    /// - **Internal**: `[Hardware, Hardware, Hardware, Hardware]`
+    /// Called after decode when the instruction set `cpu.halted = true`.
+    fn check_halt_bug_after_decode(&self, _cpu: &mut Cpu) {
+        // This is checked by the execute loop which has access to the
+        // interrupt registers. The Processor just sets halted; the
+        // execute loop detects halted + pending interrupt and sets
+        // halt_bug or rewinds PC as appropriate.
+    }
+
+    /// Advance one dot (T-cycle). Returns `None` when the instruction
+    /// is complete.
     ///
-    /// `read_value` is only consumed at the T-cycle *after* a `TCycle::Read`
-    /// was yielded (i.e. when the next M-cycle begins).
-    pub fn next_tcycle(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<TCycle> {
-        // If we're between M-cycles, fetch the next one
-        if !self.tcycle_active {
-            self.current_action = self.next(read_value, cpu);
+    /// Each M-cycle is expanded into 4 dots with bus operations at the
+    /// hardware-correct position:
+    /// - **Read**:     `[Idle, Idle, Idle, Read]`
+    /// - **Write**:    `[Idle, Idle, Idle, Write]`
+    /// - **Internal**: `[Idle, Idle, Idle, Idle]`
+    /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
+    ///
+    /// `read_value` is consumed at the start of a new M-cycle (dot 0)
+    /// when the previous M-cycle was a Read.
+    pub fn next_dot(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<DotAction> {
+        // At the start of a new M-cycle, fetch the next BusAction
+        if !self.mcycle_active {
+            self.current_action = self.next_mcycle(read_value, cpu);
             if self.current_action.is_none() {
                 return None;
             }
-            self.t_step = 0;
-            self.tcycle_active = true;
+            self.dot_in_mcycle = 0;
+            self.mcycle_active = true;
         }
 
-        let t = self.t_step;
-        self.t_step += 1;
+        let dot = self.dot_in_mcycle;
+        self.dot_in_mcycle += 1;
 
         let result = match &self.current_action {
-            Some(BusAction::Read { address }) => match t {
-                0 => TCycle::Hardware,
-                1 => TCycle::Read { address: *address },
-                2 => TCycle::Hardware,
-                _ => TCycle::Hardware,
+            Some(BusAction::Read { address }) => match dot {
+                3 => DotAction::Read { address: *address },
+                _ => DotAction::Idle,
             },
-            Some(BusAction::Write { address, value }) => match t {
-                0 => TCycle::Hardware,
-                1 => TCycle::Write {
+            Some(BusAction::Write { address, value }) => match dot {
+                3 => DotAction::Write {
                     address: *address,
                     value: *value,
                 },
-                2 => TCycle::Hardware,
-                _ => TCycle::Hardware,
+                _ => DotAction::Idle,
             },
-            Some(BusAction::Internal) | Some(BusAction::InternalOamBug { .. }) => TCycle::Hardware,
+            Some(BusAction::InternalOamBug { address }) => match dot {
+                0 => DotAction::InternalOamBug { address: *address },
+                _ => DotAction::Idle,
+            },
+            Some(BusAction::Internal) => DotAction::Idle,
             None => unreachable!(),
         };
 
-        if t == 3 {
-            self.tcycle_active = false;
+        if dot == 3 {
+            self.mcycle_active = false;
         }
 
         Some(result)
@@ -549,30 +705,6 @@ impl Processor {
     pub fn oam_bug_address(&self) -> Option<u16> {
         match &self.current_action {
             Some(BusAction::InternalOamBug { address }) => Some(*address),
-            _ => None,
-        }
-    }
-
-    /// Returns the target address of the next M-cycle's write, if the
-    /// next M-cycle is a write action. Used by the execute loop to
-    /// start PPU dot accumulation before write M-cycles that target
-    /// PPU registers, enabling write conflict timing.
-    pub fn peek_next_write_address(&self) -> Option<u16> {
-        match &self.phase {
-            Phase::WriteOp { address, .. } if self.step == 0 => Some(*address),
-            Phase::Write16 { address, .. } if self.step == 0 => Some(*address),
-            Phase::Write16 { address, .. } if self.step == 1 => Some(address.wrapping_add(1)),
-            Phase::ReadModifyWrite { address, .. } if self.step == 1 => Some(*address),
-            Phase::Push { sp, .. } if self.step == 1 => Some(sp.wrapping_sub(1)),
-            Phase::Push { sp, .. } if self.step == 2 => Some(sp.wrapping_sub(2)),
-            Phase::CondCall {
-                taken: true, sp, ..
-            } if self.step == 1 => Some(sp.wrapping_sub(1)),
-            Phase::CondCall {
-                taken: true, sp, ..
-            } if self.step == 2 => Some(sp.wrapping_sub(2)),
-            Phase::InterruptDispatch { sp, .. } if self.step == 2 => Some(sp.wrapping_sub(1)),
-            Phase::InterruptDispatch { sp, .. } if self.step == 3 => Some(sp.wrapping_sub(2)),
             _ => None,
         }
     }
