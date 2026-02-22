@@ -38,37 +38,32 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// Which phase of the DFF8 write pulse the palette register is in.
+/// Resolution phase of a register write that hasn't fully settled.
 ///
-/// DFF8 cells have a master-slave structure. During a CPU write, the
-/// master latches the new value on the rising edge while the slave
-/// still holds the old value — the combinational pixel pipeline sees
-/// `old | new` (transitional). On the falling edge the slave settles
-/// and only the new value is visible (final).
-enum Dff8WritePhase {
-    /// Rising edge just fired. The register holds `old | new`.
-    /// Next tcycle will advance to `Settling`.
-    RisingEdge,
-    /// Master-slave transition complete after this dot.
-    /// Next tcycle will write the final value and clear the pending.
+/// On hardware, some DFF cells expose a transitional output during the
+/// CPU write pulse before settling to the final value. DFF8 (palette)
+/// cells have a master-slave structure: the master latches on the rising
+/// edge while the slave still holds the old value, producing `old | new`.
+/// LCDC has a similar transitional: `old | (new & BG_EN)`. The phase
+/// enum tracks how far through this process the register has progressed.
+enum WriteConflictPhase {
+    /// Transitional value is visible to the pixel pipeline.
+    /// Next tcycle advances to Settling.
+    Transitional,
+    /// Last dot of transitional visibility.
+    /// Next tcycle writes the final value and clears the pending state.
     Settling,
 }
 
-/// A pending palette register write in the DFF8 master-slave transition.
-struct PalettePending {
+/// A register write that is resolving over multiple dots during Mode 3.
+///
+/// Created when the CPU writes a register whose DFF cell produces a
+/// transitional output (palettes, LCDC). The tcycle resolution advances
+/// Transitional → Settling → resolved, writing the final value when done.
+struct PendingWrite {
     register: Register,
     final_value: u8,
-    phase: Dff8WritePhase,
-}
-
-/// A pending LCDC register write with transitional BG_EN bit.
-///
-/// Similar to palette DFF8 behavior: the BG_EN bit of the new value
-/// OR'd with the old LCDC appears for ~1 dot before the full new value
-/// takes effect.
-struct LcdcPending {
-    final_value: u8,
-    dots_remaining: u8,
+    phase: WriteConflictPhase,
 }
 
 struct BackgroundViewportPosition {
@@ -112,8 +107,7 @@ pub struct Ppu {
     /// PPU is on. Frozen when the PPU is off (comparison clock stops).
     ly_eq_lyc: bool,
     stat_line_was_high: bool,
-    palette_pending: Option<PalettePending>,
-    lcdc_pending: Option<LcdcPending>,
+    pending_write: Option<PendingWrite>,
 }
 
 pub struct Window {
@@ -140,8 +134,7 @@ impl Ppu {
             },
             ly_eq_lyc: true,
             stat_line_was_high: false,
-            palette_pending: None,
-            lcdc_pending: None,
+            pending_write: None,
         }
     }
 
@@ -232,17 +225,8 @@ impl Ppu {
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
                 if is_drawing {
-                    if matches!(
-                        self.palette_pending,
-                        Some(PalettePending {
-                            phase: Dff8WritePhase::RisingEdge,
-                            ..
-                        })
-                    ) {
-                        // Already staged via stage_dff8_write — skip.
-                        return false;
-                    }
-                    // Not staged: apply transitional directly.
+                    // DFF8 master-slave transparency: output is `old | new`
+                    // (transitional) until the slave settles.
                     let old = match register {
                         Register::BackgroundPalette => self.registers.palettes.background.0,
                         Register::Sprite0Palette => self.registers.palettes.sprite0.0,
@@ -250,10 +234,10 @@ impl Ppu {
                         _ => unreachable!(),
                     };
                     self.write_register_immediate(&register, old | value);
-                    self.palette_pending = Some(PalettePending {
+                    self.pending_write = Some(PendingWrite {
                         register,
                         final_value: value,
-                        phase: Dff8WritePhase::Settling,
+                        phase: WriteConflictPhase::Transitional,
                     });
                     false
                 } else {
@@ -262,14 +246,16 @@ impl Ppu {
             }
             Register::Control => {
                 if is_drawing {
-                    // LCDC DFF transitional: old | (new & BG_EN) for 1 dot
+                    // LCDC write conflict: BG_EN bit of new value OR'd with
+                    // old LCDC is visible as a transitional before settling.
                     let old = self.registers.control.bits();
                     let transitional =
                         old | (value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
                     self.write_register_immediate(&Register::Control, transitional);
-                    self.lcdc_pending = Some(LcdcPending {
+                    self.pending_write = Some(PendingWrite {
+                        register,
                         final_value: value,
-                        dots_remaining: 1,
+                        phase: WriteConflictPhase::Transitional,
                     });
                     false
                 } else {
@@ -277,9 +263,8 @@ impl Ppu {
                 }
             }
             _ => {
-                // DFF9 registers: atomic latch, no transitional value.
-                // The CPU write at phase 4 naturally places the new value
-                // between dot 2 and dot 3 of the write M-cycle.
+                // DFF9 registers with no transitional: atomic latch at
+                // the write point (G→H boundary, after all 4 PPU dots).
                 self.write_register_immediate(&register, value)
             }
         }
@@ -337,27 +322,6 @@ impl Ppu {
 
     /// Stage a DFF8 palette write at the rising-edge latch point.
     ///
-    /// Called from execute.rs before tick_dot when the current dot's
-    /// bus action writes to a DFF8 palette register during Mode 3.
-    /// Applies the transitional `old|new` immediately (so the pixel
-    /// pipeline sees it this dot) and sets palette_pending in the
-    /// RisingEdge phase. The tcycle resolution will advance through
-    /// RisingEdge → Settling → resolved over the next two tcycles.
-    pub fn stage_dff8_write(&mut self, register: Register, value: u8) {
-        let old = match register {
-            Register::BackgroundPalette => self.registers.palettes.background.0,
-            Register::Sprite0Palette => self.registers.palettes.sprite0.0,
-            Register::Sprite1Palette => self.registers.palettes.sprite1.0,
-            _ => unreachable!(),
-        };
-        self.write_register_immediate(&register, old | value);
-        self.palette_pending = Some(PalettePending {
-            register,
-            final_value: value,
-            phase: Dff8WritePhase::RisingEdge,
-        });
-    }
-
     // --- OAM corruption bug ---
     //
     // On DMG hardware, a design flaw in the OAM SRAM clock generation
@@ -615,35 +579,26 @@ impl Ppu {
                 self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
             }
 
-            // Advance the DFF8 write pulse phase before pixel output.
-            // RisingEdge → Settling: transitional old|new remains visible.
+            // Advance write-conflict resolution before pixel output.
+            // Transitional → Settling: transitional value remains visible.
             // Settling → resolved: final value written, pending cleared.
-            match self.palette_pending {
-                Some(PalettePending {
-                    phase: Dff8WritePhase::RisingEdge,
+            match self.pending_write {
+                Some(PendingWrite {
+                    phase: WriteConflictPhase::Transitional,
                     ..
                 }) => {
-                    self.palette_pending.as_mut().unwrap().phase = Dff8WritePhase::Settling;
+                    self.pending_write.as_mut().unwrap().phase = WriteConflictPhase::Settling;
                 }
-                Some(PalettePending {
-                    phase: Dff8WritePhase::Settling,
+                Some(PendingWrite {
+                    phase: WriteConflictPhase::Settling,
                     ..
                 }) => {
-                    let reg = self.palette_pending.as_ref().unwrap().register;
-                    let val = self.palette_pending.as_ref().unwrap().final_value;
-                    self.palette_pending = None;
+                    let reg = self.pending_write.as_ref().unwrap().register;
+                    let val = self.pending_write.as_ref().unwrap().final_value;
+                    self.pending_write = None;
                     self.write_register_immediate(&reg, val);
                 }
                 None => {}
-            }
-
-            if let Some(ref mut pending) = self.lcdc_pending {
-                pending.dots_remaining -= 1;
-                if pending.dots_remaining == 0 {
-                    let val = pending.final_value;
-                    self.lcdc_pending = None;
-                    self.write_register_immediate(&Register::Control, val);
-                }
             }
 
             // Normal path: tick PPU immediately, one dot per T-cycle.
@@ -670,8 +625,7 @@ impl Ppu {
             }
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
-                self.palette_pending = None;
-                self.lcdc_pending = None;
+                self.pending_write = None;
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock
