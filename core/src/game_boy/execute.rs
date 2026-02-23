@@ -21,7 +21,7 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let mut processor = if self.interrupt_latch.take().is_some() {
+        let mut processor = if !self.cpu.halted && self.interrupt_latch.take().is_some() {
             Processor::interrupt(&mut self.cpu)
         } else if let Some(opcode) = self.prefetched_opcode.take() {
             Processor::fetch_with_opcode(&mut self.cpu, opcode)
@@ -53,12 +53,17 @@ impl GameBoy {
                 None => {
                     self.check_halt_bug();
 
-                    // HALT: skip the trailing fetch entirely. A halted CPU
-                    // doesn't drive the bus — it idles until woken. The
-                    // next step() will use Processor::begin() which creates
-                    // a HaltedNop phase with its own M-cycle of ticks and
-                    // bus activity handled through the normal loop body.
                     if self.cpu.halted {
+                        if self.interrupt_latch.take().is_some() {
+                            // HALT wakeup → interrupt dispatch: the HaltedNop
+                            // M-cycle that just completed IS the wakeup dummy
+                            // fetch. Transition directly into ISR dispatch
+                            // within the same step() — no trailing fetch.
+                            processor = Processor::interrupt(&mut self.cpu);
+                            continue;
+                        }
+                        // Still halted, no interrupt pending. No trailing fetch —
+                        // a halted CPU idles until woken.
                         self.prefetched_opcode = None;
                         self.advance_ei_delay();
                         return new_screen;
