@@ -666,11 +666,38 @@ impl Ppu {
                 && self.ly_eq_lyc)
     }
 
-    /// Advance PPU by one dot. Call once per T-cycle.
-    ///
-    /// Interrupt edge detection and LYC comparison only run on
-    /// M-cycle boundaries (when `is_mcycle` is true).
-    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// DELTA_EVEN phase: DFF latch advance and pixel pipeline even-phase
+    /// setup (fetcher control, mode transitions).
+    pub fn tcycle_even(&mut self, vram: &Vram) {
+        if !self.control().video_enabled() {
+            return;
+        }
+
+        if self.pixel_pipeline.is_none() {
+            self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
+        }
+
+        // Advance DFF latches before pixel output.
+        self.registers.palettes.background.tick();
+        self.registers.palettes.sprite0.tick();
+        self.registers.palettes.sprite1.tick();
+        self.registers.background_viewport.y.tick();
+        self.registers.window.x_plus_7.tick();
+        if self.registers.control_bg_en.tick() {
+            self.registers.control = Control::new(ControlFlags::from_bits_retain(
+                self.registers.control_bg_en.output,
+            ));
+        }
+
+        self.pixel_pipeline
+            .as_mut()
+            .unwrap()
+            .tcycle_even(&self.registers, vram);
+    }
+
+    /// DELTA_ODD phase: pixel output, counter increment, M-cycle-rate
+    /// interrupt edge detection and LYC comparison.
+    pub fn tcycle_odd(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -678,28 +705,8 @@ impl Ppu {
         };
 
         if self.control().video_enabled() {
-            if self.pixel_pipeline.is_none() {
-                self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
-            }
-
-            // Advance DFF latches before pixel output.
-            self.registers.palettes.background.tick();
-            self.registers.palettes.sprite0.tick();
-            self.registers.palettes.sprite1.tick();
-            self.registers.background_viewport.y.tick();
-            self.registers.window.x_plus_7.tick();
-            if self.registers.control_bg_en.tick() {
-                self.registers.control = Control::new(ControlFlags::from_bits_retain(
-                    self.registers.control_bg_en.output,
-                ));
-            }
-
-            // Normal path: tick PPU immediately, one dot per T-cycle.
-            if let Some(screen) =
-                self.pixel_pipeline
-                    .as_mut()
-                    .unwrap()
-                    .tcycle(&self.registers, &self.oam, vram)
+            if let Some(pipeline) = self.pixel_pipeline.as_mut()
+                && let Some(screen) = pipeline.tcycle_odd(&self.registers, &self.oam, vram)
             {
                 result.screen = Some(screen);
                 result.request_vblank = true;
@@ -710,8 +717,9 @@ impl Ppu {
             }
 
             // Update comparison clock (runs while PPU is on)
-            self.ly_eq_lyc = self.pixel_pipeline.as_ref().unwrap().current_line()
-                == self.interrupts.current_line_compare;
+            if let Some(pipeline) = self.pixel_pipeline.as_ref() {
+                self.ly_eq_lyc = pipeline.current_line() == self.interrupts.current_line_compare;
+            }
         } else {
             if !is_mcycle {
                 return result;
@@ -739,6 +747,15 @@ impl Ppu {
         self.stat_line_was_high = stat_line_high;
 
         result
+    }
+
+    /// Advance PPU by one dot. Call once per T-cycle.
+    ///
+    /// Interrupt edge detection and LYC comparison only run on
+    /// M-cycle boundaries (when `is_mcycle` is true).
+    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+        self.tcycle_even(vram);
+        self.tcycle_odd(is_mcycle, vram)
     }
 
     pub fn palettes(&self) -> &Palettes {

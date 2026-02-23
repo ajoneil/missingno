@@ -113,23 +113,23 @@ impl GameBoy {
                 }
             }
 
-            // Tick hardware (one dot).
+            // Even phase (DELTA_EF): timer tick, DFF latch advance, PPU half_even.
             let is_mcycle_boundary = dot_in_mcycle == 3;
-            new_screen |= self.tick_dot(is_mcycle_boundary);
+            new_screen |= self.tick_dot_even(is_mcycle_boundary);
 
-            // After dot 2 tick (before dot 3): fire OAM bug.
+            // After dot 2 even tick (before dot 3): fire OAM bug.
             // This preserves the timing where OAM corruption fires
             // after 3 dot ticks within the M-cycle.
-            if dot_in_mcycle == 2 {
-                if let Some(kind) = pending_oam_bug.take() {
-                    match kind {
-                        OamBugKind::Read => self.ppu.oam_bug_read(),
-                        OamBugKind::Write => self.ppu.oam_bug_write(),
-                    }
+            if dot_in_mcycle == 2
+                && let Some(kind) = pending_oam_bug.take()
+            {
+                match kind {
+                    OamBugKind::Read => self.ppu.oam_bug_read(),
+                    OamBugKind::Write => self.ppu.oam_bug_write(),
                 }
             }
 
-            // Route bus action.
+            // Bus action (DELTA_GH): CPU read/write routes between phases.
             match dot_action {
                 DotAction::Idle => {}
                 DotAction::InternalOamBug { .. } => {
@@ -151,6 +151,9 @@ impl GameBoy {
                 }
             }
 
+            // Odd phase (DELTA_HA): PPU half_odd, M-cycle subsystems.
+            new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+
             // Advance dot counter, wrapping at M-cycle boundary.
             dot_in_mcycle = if is_mcycle_boundary {
                 0
@@ -160,22 +163,28 @@ impl GameBoy {
         }
     }
 
-    /// Tick hardware for one dot.
-    ///
-    /// Timer and PPU tick every dot. M-cycle-rate subsystems (serial,
-    /// DMA, audio) tick once when `is_mcycle_boundary` is true (every
-    /// 4th dot).
-    fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
-        let mut new_screen = false;
-
+    /// Even phase (DELTA_EF) of one dot: timer tick, DFF latch
+    /// advance, PPU half_even.
+    fn tick_dot_even(&mut self, is_mcycle_boundary: bool) -> bool {
         // Timer ticks every T-cycle for DIV resolution
         if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
             self.interrupts.request(interrupt);
         }
 
-        // PPU ticks every T-cycle (1 dot per T-cycle); interrupt edge
-        // detection and LYC comparison only run on M-cycle boundaries.
-        let video_result = self.ppu.tcycle(is_mcycle_boundary, &self.vram_bus.vram);
+        // PPU even phase: DFF latch advance, fetcher control, mode transitions.
+        self.ppu.tcycle_even(&self.vram_bus.vram);
+
+        false
+    }
+
+    /// Odd phase (DELTA_HA) of one dot: PPU half_odd (pixel output),
+    /// M-cycle-rate subsystems (serial, DMA, audio).
+    fn tick_dot_odd(&mut self, is_mcycle_boundary: bool) -> bool {
+        let mut new_screen = false;
+
+        // PPU odd phase: pixel output, counter increment, interrupt
+        // edge detection (M-cycle boundaries only).
+        let video_result = self.ppu.tcycle_odd(is_mcycle_boundary, &self.vram_bus.vram);
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -247,6 +256,16 @@ impl GameBoy {
         }
 
         new_screen
+    }
+
+    /// Tick hardware for one dot (both phases).
+    ///
+    /// Convenience wrapper for callers that don't need to route bus
+    /// actions between phases (e.g. the trailing fetch loop).
+    fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
+        let s1 = self.tick_dot_even(is_mcycle_boundary);
+        let s2 = self.tick_dot_odd(is_mcycle_boundary);
+        s1 || s2
     }
 
     /// HALT bug: if HALT was just executed with IME=0 and an interrupt

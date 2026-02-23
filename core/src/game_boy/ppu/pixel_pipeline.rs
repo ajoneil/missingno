@@ -724,18 +724,12 @@ impl Rendering {
         )
     }
 
-    /// Advance by one dot (T-cycle). Returns true when a full frame is complete.
-    fn dot_tick(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
-        self.half_even(data, vram);
-        self.half_odd(data, oam, vram)
-    }
-
     /// DELTA_EVEN half-cycle: setup phase.
     ///
     /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
     /// match (PUXA), and window WX match (PYCO).
-    fn half_even(&mut self, data: &Registers, vram: &Vram) {
+    pub(super) fn half_even(&mut self, data: &Registers, vram: &Vram) {
         if self.scanner.is_some() {
             // Mode 2: OAM scan uses M-cycle sub-phases, not simple
             // EVEN/ODD. Full scan processing deferred to half_odd
@@ -772,7 +766,7 @@ impl Rendering {
     /// On hardware, DELTA_ODD handles pixel counter increment,
     /// fine counter increment, pipe shift, and sprite X matching.
     /// Returns true when a full frame is complete.
-    fn half_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
+    pub(super) fn half_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
             scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
@@ -1619,14 +1613,23 @@ impl PixelPipeline {
         }
     }
 
-    /// Advance the PPU by one dot (T-cycle). Returns a completed screen
-    /// when a full frame finishes rendering.
-    pub fn tcycle(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
-        let mut screen = None;
-
+    /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
+    pub fn tcycle_even(&mut self, data: &Registers, vram: &Vram) {
         match self {
             PixelPipeline::Rendering(rendering) => {
-                if rendering.dot_tick(data, oam, vram) {
+                rendering.half_even(data, vram);
+            }
+            PixelPipeline::BetweenFrames(_) => {}
+        }
+    }
+
+    /// DELTA_ODD half of a dot tick: pixel output, counter increment.
+    /// Returns a completed screen when a full frame finishes rendering.
+    pub fn tcycle_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
+        let mut screen = None;
+        match self {
+            PixelPipeline::Rendering(rendering) => {
+                if rendering.half_odd(data, oam, vram) {
                     screen = Some(rendering.screen.clone());
                     *self = PixelPipeline::BetweenFrames(0);
                 }
@@ -1637,8 +1640,14 @@ impl PixelPipeline {
                     *self = PixelPipeline::Rendering(Rendering::new());
                 }
             }
-        };
-
+        }
         screen
+    }
+
+    /// Advance the PPU by one dot (T-cycle). Returns a completed screen
+    /// when a full frame finishes rendering.
+    pub fn tcycle(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
+        self.tcycle_even(data, vram);
+        self.tcycle_odd(data, oam, vram)
     }
 }
