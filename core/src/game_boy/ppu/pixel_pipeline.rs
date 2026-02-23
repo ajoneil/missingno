@@ -299,7 +299,9 @@ enum FetcherStep {
     GetTile,
     GetTileDataLow,
     GetTileDataHigh,
-    Load,
+    /// The fetcher has completed all three VRAM reads and is frozen,
+    /// waiting for the SEKO-triggered reload (fine_count == 7).
+    Idle,
 }
 
 /// Mode 3 starts with one BG tile fetch before any pixels shift out.
@@ -813,10 +815,9 @@ impl Rendering {
             _ => {}
         }
 
-        // Fetcher advances every half-cycle (DELTA_EVEN phase).
-        // The BG fetcher is frozen only during sprite data fetch
-        // (FetchingData phase). It continues during startup, sprite
-        // wait (WaitingForFetcher), and normal rendering.
+        // During startup, the fetcher advances on DELTA_EVEN (LEBO clock).
+        // After startup, the fetcher advances only on DELTA_ODD (line 952).
+        // The BG fetcher is frozen during sprite data fetch (FetchingData).
         let sprite_data_fetch = matches!(
             self.sprite_fetch,
             Some(SpriteFetch {
@@ -824,8 +825,19 @@ impl Rendering {
                 ..
             })
         );
-        if !sprite_data_fetch {
+        if !sprite_data_fetch && self.startup_fetch.is_some() {
             self.advance_bg_fetcher(data, vram);
+        }
+
+        // TAVE preload: when the startup fetch first reaches Idle
+        // (GetTileDataHigh complete), load the pipe immediately. This is
+        // the one-shot preload trigger (TAVE on hardware) — it fires once
+        // during startup and never again after POKY latches.
+        if self.startup_fetch == Some(StartupFetch::FirstTile)
+            && self.fetcher.step == FetcherStep::Idle
+            && self.bg_shifter.is_empty()
+        {
+            self.load_bg_tile();
         }
 
         // LYRY fires combinationally when the first tile fetch fills
@@ -879,10 +891,10 @@ impl Rendering {
                     self.advance_bg_fetcher(data, vram);
 
                     // Wait exits when BOTH conditions are met:
-                    // 1. The fetcher has completed GetTileDataHigh (reached Load)
+                    // 1. The fetcher has completed GetTileDataHigh (reached Idle)
                     // 2. The BG shifter is non-empty
                     // This is an AND condition — both must be true simultaneously.
-                    let fetcher_past_data = self.fetcher.step == FetcherStep::Load;
+                    let fetcher_past_data = self.fetcher.step == FetcherStep::Idle;
                     let wait_done = fetcher_past_data && !self.bg_shifter.is_empty();
 
                     if wait_done {
@@ -930,13 +942,12 @@ impl Rendering {
                 self.check_sprite_trigger(data);
             }
 
-            // SEKO pre-load (change C). On hardware, when fine_count==7
-            // the async SET/RST pipe load overwrites the shift register
-            // contents before the clock-driven shift on the same dot.
-            if self.fine_scroll.count == 7
-                && self.fetcher.step == FetcherStep::Load
-                && self.bg_shifter.len() == 1
-            {
+            // SEKO reload. On hardware, when fine_count==7 the async
+            // SET/RST pipe load overwrites the shift register contents
+            // before the clock-driven shift on the same dot. This is the
+            // primary reload mechanism in steady-state — the fetcher sits
+            // in Idle until SEKO fires.
+            if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
                 self.load_bg_tile();
             }
 
@@ -1053,24 +1064,15 @@ impl Rendering {
                     self.fetcher.dot_in_step = 1;
                 } else {
                     self.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
-
-                    // Load is instant when the shifter is empty (no
-                    // additional dot cost). Otherwise enter the Load
-                    // step to wait for it to drain.
-                    if self.bg_shifter.is_empty() {
-                        self.load_bg_tile();
-                    } else {
-                        self.fetcher.dot_in_step = 0;
-                        self.fetcher.step = FetcherStep::Load;
-                    }
+                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.step = FetcherStep::Idle;
                 }
             }
-            FetcherStep::Load => {
-                // Shifter was not empty when DataHigh completed. Wait here
-                // until it drains, then load.
-                if self.bg_shifter.is_empty() {
-                    self.load_bg_tile();
-                }
+            FetcherStep::Idle => {
+                // The fetcher is frozen — it waits here until the
+                // SEKO-triggered reload (fine_count == 7) fires from
+                // mode3_odd, which calls load_bg_tile() and resets
+                // the fetcher to GetTile.
             }
         }
     }
