@@ -20,6 +20,48 @@ pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
 
+/// Models the sequencer DFF (g42) pipeline for interrupt dispatch.
+///
+/// On hardware, an IF flag set during M-cycle N is captured in the
+/// sequencer DFF at N's boundary but doesn't reach the dispatch
+/// decision until M-cycle N+1. For non-halted instructions this
+/// delay is implicit in the step() boundary (the latch is set during
+/// trailing fetch ticks, consumed at the NEXT step's entry). For
+/// HALT, the delay must be explicit because the latch is checked
+/// mid-step at HaltedNop completion.
+#[derive(Clone, Copy)]
+enum InterruptLatch {
+    /// No interrupt pending in the sequencer pipeline.
+    Empty,
+    /// Interrupt captured during this step's M-cycle boundary ticks.
+    /// The DFF has latched the value but it hasn't propagated to the
+    /// dispatch output yet.
+    Fresh(interrupts::Interrupt),
+    /// Interrupt that has propagated through the DFF pipeline (carried
+    /// over from a previous step). Dispatch can consume it.
+    Ready(interrupts::Interrupt),
+}
+
+impl InterruptLatch {
+    /// Advance the DFF pipeline: Fresh becomes Ready.
+    fn promote(&mut self) {
+        if let InterruptLatch::Fresh(interrupt) = *self {
+            *self = InterruptLatch::Ready(interrupt);
+        }
+    }
+
+    /// Take the interrupt if it has propagated (Ready). Returns None
+    /// and leaves the latch unchanged for Fresh and Empty.
+    fn take_ready(&mut self) -> Option<interrupts::Interrupt> {
+        if let InterruptLatch::Ready(interrupt) = *self {
+            *self = InterruptLatch::Empty;
+            Some(interrupt)
+        } else {
+            None
+        }
+    }
+}
+
 pub struct GameBoy {
     cpu: Cpu,
     screen: Screen,
@@ -37,7 +79,7 @@ pub struct GameBoy {
     vram_bus: VramBus,
 
     prefetched_opcode: Option<u8>,
-    interrupt_latch: Option<interrupts::Interrupt>,
+    interrupt_latch: InterruptLatch,
 }
 
 impl GameBoy {
@@ -64,7 +106,7 @@ impl GameBoy {
             sgb,
             vram_bus: VramBus::new(),
             prefetched_opcode: None,
-            interrupt_latch: None,
+            interrupt_latch: InterruptLatch::Empty,
         };
         let pc = gb.cpu.program_counter;
         gb.prefetched_opcode = Some(gb.cpu_read(pc));
@@ -93,7 +135,7 @@ impl GameBoy {
         };
         let pc = self.cpu.program_counter;
         self.prefetched_opcode = Some(self.cpu_read(pc));
-        self.interrupt_latch = None;
+        self.interrupt_latch = InterruptLatch::Empty;
     }
 
     pub fn cartridge(&self) -> &Cartridge {

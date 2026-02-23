@@ -1,5 +1,5 @@
 use super::{
-    GameBoy,
+    GameBoy, InterruptLatch,
     cpu::{
         EiDelay, InterruptMasterEnable,
         mcycle::{DotAction, Processor},
@@ -21,7 +21,11 @@ impl GameBoy {
     pub fn step(&mut self) -> bool {
         let mut new_screen = false;
 
-        let mut processor = if !self.cpu.halted && self.interrupt_latch.take().is_some() {
+        // Advance the sequencer DFF pipeline: a Fresh interrupt from
+        // the previous step's M-cycle boundary becomes Ready (dispatchable).
+        self.interrupt_latch.promote();
+
+        let mut processor = if !self.cpu.halted && self.interrupt_latch.take_ready().is_some() {
             Processor::interrupt(&mut self.cpu)
         } else if let Some(opcode) = self.prefetched_opcode.take() {
             Processor::fetch_with_opcode(&mut self.cpu, opcode)
@@ -54,7 +58,7 @@ impl GameBoy {
                     self.check_halt_bug();
 
                     if self.cpu.halted {
-                        if self.interrupt_latch.take().is_some() {
+                        if self.interrupt_latch.take_ready().is_some() {
                             // HALT wakeup → interrupt dispatch: the HaltedNop
                             // M-cycle that just completed IS the wakeup dummy
                             // fetch. Transition directly into ISR dispatch
@@ -242,12 +246,19 @@ impl GameBoy {
             self.audio.mcycle(self.timers.internal_counter());
 
             // Sequencer interrupt latch: captures IF & IE at each M-cycle
-            // boundary, modeling DFF g42 (clocked by CLK9). The dispatch
-            // decision at instruction completion reads this latch, producing
-            // the one-M-cycle delay seen on hardware.
+            // boundary, modeling DFF g42 (clocked by CLK9). New captures
+            // are Fresh (not yet dispatchable); Ready values from a prior
+            // step keep their propagation state so the wakeup NOP's own
+            // boundary tick doesn't regress a Ready back to Fresh.
             self.interrupt_latch = match self.cpu.interrupt_master_enable {
-                InterruptMasterEnable::Enabled => self.interrupts.triggered(),
-                InterruptMasterEnable::Disabled => None,
+                InterruptMasterEnable::Enabled => match self.interrupts.triggered() {
+                    Some(interrupt) => match self.interrupt_latch {
+                        InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
+                        _ => InterruptLatch::Fresh(interrupt),
+                    },
+                    None => InterruptLatch::Empty,
+                },
+                InterruptMasterEnable::Disabled => InterruptLatch::Empty,
             };
 
             // HALT wakeup: even with IME=Disabled, a pending interrupt
