@@ -245,6 +245,30 @@ impl ObjShifter {
     }
 }
 
+// --- Window hit (RYDY pixel clock gate) ---
+
+/// RYDY NOR latch state — the window hit signal.
+///
+/// On hardware, RYDY is SET when the window X match fires (NUKO_WX_MATCHp)
+/// and RESET when the window fetch completes (SUZU/MOSU path clears it).
+/// While active, RYDY gates TYFA (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)),
+/// freezing the entire pixel clock chain:
+///   TYFA=0 → ROXO=0 (fine counter clock frozen)
+///           → SEGU=1 → SACU=1 (pixel counter clock frozen)
+///
+/// The BG fetcher is NOT gated — it runs on LEBO (the half-cycle clock),
+/// independent of TYFA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowHit {
+    /// RYDY=0: no active window fetch stall. The pixel clock chain
+    /// runs normally (subject to other gates like ROXY and POKY).
+    Inactive,
+    /// RYDY=1: window fetch in progress. The pixel clock chain is
+    /// frozen — fine counter and pixel counter do not advance.
+    /// Cleared when the fetcher reaches Idle (SUZU fires).
+    Active,
+}
+
 // --- Fine scroll (ROXY pixel clock gate) ---
 
 /// ROXY NOR latch state. On hardware, ROXY gates the pixel clock
@@ -571,6 +595,10 @@ pub struct Rendering {
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
+    /// RYDY NOR latch — window hit signal. Gates TYFA, freezing both
+    /// the fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
+    /// during a window fetch stall.
+    window_hit: WindowHit,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -608,6 +636,7 @@ impl Rendering {
             fetcher: TileFetcher::new(),
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
+            window_hit: WindowHit::Inactive,
             pixel_counter: 0,
             sprite_fetch: None,
             sprite_resuming: false,
@@ -632,6 +661,7 @@ impl Rendering {
             fetcher: TileFetcher::new(),
             startup_fetch: Some(StartupFetch::FirstTile),
             fine_scroll: FineScroll::new(),
+            window_hit: WindowHit::Inactive,
             pixel_counter: 0,
             sprite_fetch: None,
             sprite_resuming: false,
@@ -793,6 +823,7 @@ impl Rendering {
                 self.fetcher = TileFetcher::new();
                 self.startup_fetch = Some(StartupFetch::FirstTile);
                 self.fine_scroll = FineScroll::new();
+                self.window_hit = WindowHit::Inactive;
                 self.pixel_counter = 0;
                 self.sprite_fetch = None;
                 self.sprite_resuming = false;
@@ -939,6 +970,15 @@ impl Rendering {
                 }
             }
         } else {
+            // SUZU/MOSU: when the window fetch completes (fetcher reaches Idle
+            // while RYDY is active), load the first window tile and clear the
+            // window hit signal. This is the hardware's dedicated window tile
+            // load path — independent of fine_count.
+            if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
+                self.load_bg_tile();
+                self.window_hit = WindowHit::Inactive;
+            }
+
             // SEKO reload (async). On hardware, the SEKO-triggered pipe
             // load is asynchronous — it fires before the clock-driven pipe
             // shift and pixel counter increment on the same dot. Evaluating
@@ -949,10 +989,12 @@ impl Rendering {
             }
 
             // Pixel counter increment. On hardware, SACU (pixel clock) is
-            // gated by ROXY (fine scroll), FIFO readiness (shifter non-empty),
-            // and sprite resumption (PX stays frozen on the first dot after a
-            // sprite fetch so the pixel at PX=N is output before PX advances).
-            if self.fine_scroll.pixel_clock_active()
+            // gated by TYFA (window hit via SEGU), ROXY (fine scroll), FIFO
+            // readiness (shifter non-empty), and sprite resumption (PX stays
+            // frozen on the first dot after a sprite fetch so the pixel at
+            // PX=N is output before PX advances).
+            if self.window_hit == WindowHit::Inactive
+                && self.fine_scroll.pixel_clock_active()
                 && !self.bg_shifter.is_empty()
                 && !self.sprite_resuming
             {
@@ -974,7 +1016,14 @@ impl Rendering {
             }
 
             self.advance_bg_fetcher(data, vram);
-            self.fine_scroll.tick();
+
+            // PECU (fine counter clock) derives from ROXO, which derives from
+            // TYFA. TYFA is gated by RYDY (window hit), so the fine counter
+            // freezes during window fetch stalls. It does NOT freeze during
+            // ROXY fine scroll discard (different gating point in the chain).
+            if self.window_hit == WindowHit::Inactive {
+                self.fine_scroll.tick();
+            }
         }
     }
 
@@ -1369,6 +1418,7 @@ impl Rendering {
         self.bg_shifter.clear();
         self.obj_shifter.clear();
         self.fine_scroll.reset_for_window();
+        self.window_hit = WindowHit::Active;
         self.fetcher.step = FetcherStep::GetTile;
         self.fetcher.dot_in_step = 0;
         self.fetcher.window_tile_x = 0;
