@@ -42,17 +42,14 @@ pub enum Register {
 ///
 /// On hardware, the CPU write pulse sets D on the master latch.
 /// What happens next depends on the cell type:
-/// - DFF8: master-slave transparency produces `old | new` for one dot
-///   before the slave settles to the final value.
+/// - DFF8: master-slave transparency produces `old | new` briefly,
+///   then the slave settles to the final value on the next dot.
 /// - DFF9: the value latches atomically, but internal signal routing
 ///   may delay when the new value appears on the output pin.
 enum LatchState {
     /// DFF8 transitional: output is `old | new` while the master latch
-    /// is transparent. Next dot advances to Settling.
+    /// is transparent. Next tick applies the final value.
     Transitional { final_value: u8 },
-    /// DFF8 settling: last dot of `old | new` visibility. Next dot
-    /// applies the final value and clears the latch.
-    Settling { final_value: u8 },
     /// DFF9 propagation: the old value persists on the output while
     /// the new value routes through internal wiring. When delay
     /// reaches zero, the final value is applied.
@@ -89,10 +86,6 @@ impl DffLatch {
     fn tick(&mut self) -> bool {
         match self.state {
             Some(LatchState::Transitional { final_value }) => {
-                self.state = Some(LatchState::Settling { final_value });
-                false
-            }
-            Some(LatchState::Settling { final_value }) => {
                 self.output = final_value;
                 self.state = None;
                 true
@@ -115,7 +108,7 @@ impl DffLatch {
     }
 
     /// DFF8 write during Mode 3. Sets the transitional `old | new`
-    /// output and begins the settling sequence.
+    /// output and begins the transitional phase.
     fn write_dff8(&mut self, new_value: u8) {
         self.output = self.output | new_value;
         self.state = Some(LatchState::Transitional {
