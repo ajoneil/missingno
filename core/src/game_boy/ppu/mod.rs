@@ -50,10 +50,10 @@ enum LatchState {
     /// DFF8 transitional: output is `old | new` while the master latch
     /// is transparent. Next tick applies the final value.
     Transitional { final_value: u8 },
-    /// DFF9 propagation: the old value persists on the output while
-    /// the new value routes through internal wiring. When delay
-    /// reaches zero, the final value is applied.
-    Propagating { final_value: u8, delay: u8 },
+    /// DFF9 propagation: the old value persists on the output for one
+    /// dot while the new value routes through internal wiring. Next
+    /// tick applies the final value.
+    Propagating { final_value: u8 },
 }
 
 /// A DFF register cell that holds its output value and any pending latch.
@@ -90,18 +90,10 @@ impl DffLatch {
                 self.state = None;
                 true
             }
-            Some(LatchState::Propagating { final_value, delay }) => {
-                if delay <= 1 {
-                    self.output = final_value;
-                    self.state = None;
-                    true
-                } else {
-                    self.state = Some(LatchState::Propagating {
-                        final_value,
-                        delay: delay - 1,
-                    });
-                    false
-                }
+            Some(LatchState::Propagating { final_value }) => {
+                self.output = final_value;
+                self.state = None;
+                true
             }
             None => false,
         }
@@ -116,12 +108,11 @@ impl DffLatch {
         });
     }
 
-    /// DFF9 write during Mode 3 with propagation delay. The old value
-    /// persists on the output until the delay expires.
-    fn write_propagating(&mut self, new_value: u8, delay: u8) {
+    /// DFF9 write during Mode 3. The old value persists on the output
+    /// for one dot while the new value propagates through internal wiring.
+    fn write_propagating(&mut self, new_value: u8) {
         self.state = Some(LatchState::Propagating {
             final_value: new_value,
-            delay,
         });
     }
 
@@ -356,7 +347,7 @@ impl Ppu {
             }
             Register::WindowX => {
                 if is_drawing {
-                    self.registers.window.x_plus_7.write_propagating(value, 1);
+                    self.registers.window.x_plus_7.write_propagating(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
