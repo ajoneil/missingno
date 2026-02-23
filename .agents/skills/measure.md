@@ -29,6 +29,30 @@ Based on the caller's request, add targeted `eprintln!` tracing that captures:
 - Use a consistent tag format: `[SUBSYSTEM] context: key=value key=value`
 - **Every log line must include enough context to interpret in isolation.** A line that says `mode=0` is useless without knowing which line, which dot, which frame, and which phase of the test ROM produced it. Include: LY, dot counter, and whatever discriminates "measurement I care about" from "background noise."
 
+### Frame-level gating
+
+**Always gate diagnostic output to a specific frame (or narrow frame range).** The same LY value repeats every frame. A test ROM that runs for 60 frames produces 60 copies of LY=6, and filtering the log after the fact to find the right one is error-prone and wastes investigation time. Instead, add a temporary frame counter and gate on it.
+
+The PPU has no built-in frame counter. When you need frame-level gating, add a temporary `frame_count: u32` field to the relevant struct (e.g. `Rendering` or `PixelProcessingUnit`) and increment it at the frame boundary (when `Rendering` is constructed from `BetweenFrames`, or at the start of line 0). This is diagnostic scaffolding — it gets removed with the rest of the logging after measurement.
+
+**Pattern:**
+```rust
+// In the struct (temporary diagnostic field):
+frame_count: u32,
+
+// At the frame boundary (e.g. start of new Rendering):
+self.frame_count += 1;
+
+// In the diagnostic logging:
+if self.frame_count == 2 && self.line_number == 6 {
+    eprintln!("[PPU] frame={} LY=6 dot={}: ...", self.frame_count, self.dot);
+}
+```
+
+**Include the frame number in every log line**, even when gating to a single frame. This makes it immediately obvious which frame produced each line and confirms the gating is working correctly.
+
+**Choose the right frame to gate on.** Mealybug tearoom tests typically compare a screenshot taken after the test ROM signals a breakpoint. The test ROM usually sets up state in early frames and the measurement frame is often frame 2 or later. If unsure which frame matters, start by logging a single line per frame (e.g. at LY=0 dot=0) with the frame number, to identify which frame the interesting behavior occurs in. Then narrow the gate to that specific frame.
+
 ## Review before running
 
 **Before running the test, review your log lines and ask: "Will this output directly confirm or refute the hypothesis?"** Bad instrumentation wastes a test run. Common mistakes:
@@ -38,8 +62,9 @@ Based on the caller's request, add targeted `eprintln!` tracing that captures:
 - **Logging at the wrong granularity.** If the test checks a CPU register value after a sequence of instructions, logging PPU state at every dot produces thousands of irrelevant lines. Log at the decision point. Conversely, if the test measures a 1-2 dot timing window, logging at M-cycle boundaries (every 4 dots) might miss the critical transition.
 - **Not logging what the test actually checks.** If the test compares register B against a constant, log B at the comparison point. Don't just log the subsystem state and hope you can reconstruct what B was.
 - **Assuming which code path executes.** If the test ROM has sync code, setup code, and measurement code that all read the same register, your log lines capture ALL of them. Add context to distinguish which reads belong to the measurement phase.
+- **Not gating to a specific frame.** If your log condition is `if LY == 6 { eprintln!(...) }` and the test runs for 60 frames, you get 60 copies of the same scanline from different frames interleaved in the output. You then have to manually figure out which block belongs to which frame. Always add a frame counter and gate to the specific frame(s) you care about (see "Frame-level gating" above).
 
-**The review question is: "If I see this log output, can I state with certainty what the emulator did?"** If the answer is "I'll need to reason about timing to interpret it," your instrumentation isn't targeted enough. Refine it before running.
+**The review question is: "If I see this log output, can I state with certainty what the emulator did?"** If the answer is "I'll need to reason about timing to interpret it," or "I'll need to figure out which frame this line came from," your instrumentation isn't targeted enough. Refine it before running.
 
 ## How to run
 
