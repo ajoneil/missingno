@@ -926,6 +926,15 @@ impl Rendering {
                 }
             }
         } else {
+            // SEKO reload (async). On hardware, the SEKO-triggered pipe
+            // load is asynchronous — it fires before the clock-driven pipe
+            // shift and pixel counter increment on the same dot. Evaluating
+            // it first ensures the shifter is non-empty for the subsequent
+            // clock-driven operations when fine_count wraps from 7→0.
+            if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
+                self.load_bg_tile();
+            }
+
             // Pixel counter increment. On hardware, SACU (pixel clock) is
             // gated by ROXY (fine scroll), FIFO readiness (shifter non-empty),
             // and sprite resumption (PX stays frozen on the first dot after a
@@ -940,15 +949,6 @@ impl Rendering {
             // Sprite trigger check — now uses pixel_counter (change A).
             if self.sprite_fetch.is_none() {
                 self.check_sprite_trigger(data);
-            }
-
-            // SEKO reload. On hardware, when fine_count==7 the async
-            // SET/RST pipe load overwrites the shift register contents
-            // before the clock-driven shift on the same dot. This is the
-            // primary reload mechanism in steady-state — the fetcher sits
-            // in Idle until SEKO fires.
-            if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
-                self.load_bg_tile();
             }
 
             // On hardware, the pixel clock freezes when a sprite triggers
