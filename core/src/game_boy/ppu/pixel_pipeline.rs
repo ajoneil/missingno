@@ -247,28 +247,41 @@ impl ObjShifter {
 
 // --- Fine scroll (ROXY pixel clock gate) ---
 
+/// ROXY NOR latch state. On hardware, ROXY gates the pixel clock
+/// (SACU = or2(SEGU, ROXY)) until the fine scroll counter matches
+/// SCX & 7. SET between lines (PAHA_RENDERINGn), RESET on fine
+/// scroll match (POVA_FINE_MATCH_TRIGp_evn). One-shot per line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Roxy {
+    /// ROXY=1: pixel clock gated. The fine counter is still counting
+    /// toward the SCX & 7 target.
+    Gating,
+    /// ROXY=0: pixel clock active. Fine scroll discard is complete
+    /// for this line.
+    Done,
+}
+
 /// Hardware fine scroll counter (RYKU/ROGA/RUBU) and pixel clock
 /// gate (ROXY). The ROXY latch gates the pixel clock (SACU) until
 /// the counter matches SCX & 7, implementing sub-tile fine scrolling.
 struct FineScroll {
     /// 3-bit counter (0–7).
     count: u8,
-    /// ROXY latch. true = pixel clock gated (scrolling not done).
-    /// Clears when count == SCX & 7 (one-shot per line).
-    gating: bool,
+    /// ROXY NOR latch — gates SACU until fine scroll match fires.
+    roxy: Roxy,
 }
 
 impl FineScroll {
     fn new() -> Self {
         Self {
             count: 0,
-            gating: true,
+            roxy: Roxy::Gating,
         }
     }
 
     /// Whether the pixel clock is active (SACU ungated).
     fn pixel_clock_active(&self) -> bool {
-        !self.gating
+        self.roxy == Roxy::Done
     }
 
     /// Advance the fine counter by one dot (PECU clock).
@@ -279,8 +292,8 @@ impl FineScroll {
     /// Check and clear the gating latch if count matches SCX & 7.
     /// One-shot: once cleared, stays cleared for the rest of the line.
     fn check_scroll_match(&mut self, scx: u8) {
-        if self.gating && self.count == (scx & 7) {
-            self.gating = false;
+        if self.roxy == Roxy::Gating && self.count == (scx & 7) {
+            self.roxy = Roxy::Done;
         }
     }
 
@@ -288,7 +301,7 @@ impl FineScroll {
     /// (window has no fine scroll).
     fn reset_for_window(&mut self) {
         self.count = 0;
-        self.gating = false;
+        self.roxy = Roxy::Done;
     }
 }
 
