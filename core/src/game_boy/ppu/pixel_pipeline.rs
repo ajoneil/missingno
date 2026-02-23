@@ -267,6 +267,10 @@ enum WindowHit {
     /// frozen — fine counter and pixel counter do not advance.
     /// Cleared when the fetcher reaches Idle (SUZU fires).
     Active,
+    /// RYDY just cleared (SUZU fired): pipe is loaded with window tile data,
+    /// but `clkpipe_gate` still reads the old RYDY=1 value. Pixel clock
+    /// remains frozen for this 1 tick. Transitions to Inactive on next tick.
+    Clearing,
 }
 
 // --- Fine scroll (ROXY pixel clock gate) ---
@@ -970,13 +974,19 @@ impl Rendering {
                 }
             }
         } else {
+            // Clearing → Inactive: on the tick after SUZU fires, the pixel
+            // clock gate sees RYDY=0 and resumes normal operation.
+            if self.window_hit == WindowHit::Clearing {
+                self.window_hit = WindowHit::Inactive;
+            }
+
             // SUZU/MOSU: when the window fetch completes (fetcher reaches Idle
             // while RYDY is active), load the first window tile and clear the
             // window hit signal. This is the hardware's dedicated window tile
             // load path — independent of fine_count.
             if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
                 self.load_bg_tile();
-                self.window_hit = WindowHit::Inactive;
+                self.window_hit = WindowHit::Clearing;
             }
 
             // SEKO reload (async). On hardware, the SEKO-triggered pipe
