@@ -348,10 +348,7 @@ impl Ppu {
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
-                    self.registers
-                        .background_viewport
-                        .y
-                        .write_propagating(value, 1);
+                    self.registers.background_viewport.y.write_immediate(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -359,7 +356,7 @@ impl Ppu {
             }
             Register::WindowX => {
                 if is_drawing {
-                    self.registers.window.x_plus_7.write_propagating(value, 2);
+                    self.registers.window.x_plus_7.write_propagating(value, 1);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
