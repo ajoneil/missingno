@@ -54,7 +54,6 @@ impl GameBoy {
         // Run dots. Each M-cycle is 4 dots; the processor yields one
         // DotAction per dot with bus operations at dot 3 (end of M-cycle).
         let mut read_value: u8 = 0;
-        let mut vector_resolved = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
         let mut dot_in_mcycle: u8 = 0;
 
@@ -138,10 +137,11 @@ impl GameBoy {
                 }
             };
 
-            // IE push bug: resolve the interrupt vector after the
-            // high byte push completes but before the low byte push.
-            if processor.needs_vector_resolve && !vector_resolved {
-                vector_resolved = true;
+            // IE push bug: the interrupt controller samples IF & IE
+            // between the high-byte and low-byte push writes of interrupt
+            // dispatch. The high-byte push may have landed on 0xFFFF (IE),
+            // altering which interrupt (if any) is still triggered.
+            if processor.take_pending_vector_resolve() {
                 if let Some(interrupt) = self.interrupts.triggered() {
                     self.interrupts.clear(interrupt);
                     self.cpu.program_counter = interrupt.vector();

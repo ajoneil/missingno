@@ -236,9 +236,12 @@ pub struct Processor {
     current_action: Option<BusAction>,
     /// Whether we have started dot iteration (have a pending M-cycle).
     mcycle_active: bool,
-    /// Set after the high-byte push of interrupt dispatch. The caller
-    /// must re-check IF & IE to determine the jump vector (IE push bug).
-    pub needs_vector_resolve: bool,
+    /// IE push bug: set between the high-byte and low-byte push of
+    /// interrupt dispatch. The high-byte push may have written to the
+    /// IE register at 0xFFFF, so the caller must sample IF & IE at
+    /// this point to determine the jump vector — before the low-byte
+    /// push, which must not affect the vector.
+    pending_vector_resolve: bool,
 }
 
 impl Processor {
@@ -263,7 +266,7 @@ impl Processor {
             dot_in_mcycle: 0,
             current_action: None,
             mcycle_active: false,
-            needs_vector_resolve: false,
+            pending_vector_resolve: false,
         }
     }
 
@@ -283,7 +286,7 @@ impl Processor {
             dot_in_mcycle: 0,
             current_action: None,
             mcycle_active: false,
-            needs_vector_resolve: false,
+            pending_vector_resolve: false,
         }
     }
 
@@ -304,7 +307,7 @@ impl Processor {
             dot_in_mcycle: 0,
             current_action: None,
             mcycle_active: false,
-            needs_vector_resolve: false,
+            pending_vector_resolve: false,
         };
         proc.current_action = proc.next_mcycle(opcode, cpu);
         if proc.current_action.is_some() {
@@ -315,10 +318,10 @@ impl Processor {
 
     /// Create a processor for hardware interrupt dispatch.
     ///
-    /// Neither the IF bit nor the jump vector are resolved here — both are
-    /// deferred until after the high-byte push so that writes landing on
-    /// the IE register (0xFFFF) can cancel or redirect the dispatch
-    /// (IE push bug).
+    /// The jump vector is not resolved here — it is deferred until after
+    /// the high-byte push via `take_pending_vector_resolve()`, because
+    /// the push may land on the IE register at 0xFFFF and alter which
+    /// interrupt is triggered (IE push bug).
     pub fn interrupt(cpu: &mut Cpu) -> Self {
         cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
         cpu.ei_delay = None;
@@ -337,7 +340,7 @@ impl Processor {
             dot_in_mcycle: 0,
             current_action: None,
             mcycle_active: false,
-            needs_vector_resolve: false,
+            pending_vector_resolve: false,
         }
     }
 
@@ -644,11 +647,11 @@ impl Processor {
                         })
                     }
                     3 => {
-                        // Signal the caller to resolve the vector now, after
-                        // the high byte push (step 2) but before the low byte
-                        // push. The high byte write may have modified IE at
-                        // 0xFFFF (IE push bug).
-                        self.needs_vector_resolve = true;
+                        // IE push bug: the vector must be resolved after
+                        // the high-byte push (step 2) but before this
+                        // low-byte push. The high-byte write may have
+                        // landed on IE at 0xFFFF.
+                        self.pending_vector_resolve = true;
                         let addr = sp.wrapping_sub(2);
                         cpu.stack_pointer = addr;
                         Some(BusAction::Write {
@@ -734,6 +737,22 @@ impl Processor {
         match &self.current_action {
             Some(BusAction::InternalOamBug { address }) => Some(*address),
             _ => None,
+        }
+    }
+
+    /// IE push bug: consume the pending vector resolution request.
+    ///
+    /// During interrupt dispatch, the high-byte push (to `[SP-1]`) may
+    /// land on the IE register at 0xFFFF. The hardware samples IF & IE
+    /// after this write but before the low-byte push to determine the
+    /// jump vector. Returns `true` exactly once, at the M-cycle
+    /// boundary between the two push writes.
+    pub fn take_pending_vector_resolve(&mut self) -> bool {
+        if self.pending_vector_resolve {
+            self.pending_vector_resolve = false;
+            true
+        } else {
+            false
         }
     }
 }
