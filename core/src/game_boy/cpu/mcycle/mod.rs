@@ -1,5 +1,5 @@
 use super::{
-    Cpu, InterruptMasterEnable,
+    Cpu, HaltState, InterruptMasterEnable,
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
     instructions::bit_shift::{Carry, Direction},
@@ -247,7 +247,7 @@ impl Processor {
     /// the result. Hardware ticks during this M-cycle may wake the CPU.
     pub fn begin(cpu: &mut Cpu) -> Self {
         debug_assert!(
-            cpu.halted,
+            cpu.halt_state == HaltState::Halted,
             "begin() called with CPU not halted — prefetched_opcode should be set"
         );
         Self::halted_nop(cpu.program_counter)
@@ -259,6 +259,26 @@ impl Processor {
             instruction: Instruction::NoOperation,
             step: 0,
             phase: Phase::HaltedNop { fetch_pc: pc },
+            scratch: 0,
+            dot_in_mcycle: 0,
+            current_action: None,
+            mcycle_active: false,
+            needs_vector_resolve: false,
+        }
+    }
+
+    /// Create a processor that begins a fresh fetch from PC.
+    /// Used when resuming from HALT with IME=Disabled (no prefetched opcode).
+    pub fn fetch(cpu: &Cpu) -> Self {
+        Self {
+            instruction: Instruction::NoOperation,
+            step: 0,
+            phase: Phase::Fetch {
+                pc: cpu.program_counter,
+                bytes: [0; 3],
+                bytes_read: 0,
+                bytes_needed: 0,
+            },
             scratch: 0,
             dot_in_mcycle: 0,
             current_action: None,
@@ -302,7 +322,7 @@ impl Processor {
     pub fn interrupt(cpu: &mut Cpu) -> Self {
         cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
         cpu.ei_delay = None;
-        cpu.halted = false;
+        cpu.halt_state = HaltState::Running;
 
         let pc = cpu.program_counter;
         let pc_hi = (pc >> 8) as u8;
@@ -328,11 +348,11 @@ impl Processor {
 
         let phase = match &instruction {
             Instruction::Interrupt(InterruptInstruction::Await) => {
-                cpu.halted = true;
+                cpu.halt_state = HaltState::Halted;
                 Phase::Empty
             }
             Instruction::Stop => {
-                cpu.halted = true;
+                cpu.halt_state = HaltState::Halted;
                 Phase::Empty
             }
             Instruction::Invalid(op) => panic!("Invalid instruction {:02x}", op),

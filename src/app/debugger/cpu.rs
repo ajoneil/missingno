@@ -34,7 +34,7 @@ impl CpuPane {
 
     pub fn content(&self, debugger: &Debugger) -> pane_grid::Content<'_, app::Message> {
         pane(
-            checkbox_title_bar("CPU", !debugger.game_boy().cpu().halted, DebuggerPane::Cpu),
+            checkbox_title_bar("CPU", debugger.game_boy().cpu().halt_state == missingno_core::game_boy::cpu::HaltState::Running, DebuggerPane::Cpu),
             scrollable(
                 column![
                     self.cpu(debugger.game_boy().cpu()),

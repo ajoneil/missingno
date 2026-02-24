@@ -12,6 +12,27 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
+/// Models the CPU's execution state with respect to the HALT instruction.
+///
+/// On hardware, HALT puts the CPU into a low-power idle loop where it
+/// continues to tick hardware (PPU, timers, etc.) each M-cycle but
+/// doesn't execute instructions. When `(IF & IE) != 0`, the combinational
+/// wakeup signal fires and the CPU transitions to the Woken state: the
+/// next step() entry dispatches the interrupt (if IME=Enabled) or resumes
+/// normal execution (if IME=Disabled) without running another idle M-cycle.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum HaltState {
+    /// Normal execution — CPU fetches and executes instructions.
+    Running,
+    /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
+    Halted,
+    /// Interrupt detected during idle — the idle M-cycle that captured
+    /// the interrupt is the structural equivalent of a trailing fetch.
+    /// The next step() entry promotes the DFF pipeline and dispatches
+    /// without running additional ticks.
+    Woken,
+}
+
 /// Models the EI instruction's one-instruction delay DFF pipeline.
 ///
 /// On hardware, EI sets an intermediate RS latch in the sequencer.
@@ -50,7 +71,7 @@ pub struct Cpu {
     /// decode signal and the IME flip-flop. Advances one stage per
     /// instruction completion in `advance_ei_delay()`.
     pub ei_delay: Option<EiDelay>,
-    pub halted: bool,
+    pub halt_state: HaltState,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
     /// immediately but fails to increment PC on the next opcode fetch,
@@ -80,7 +101,7 @@ impl Cpu {
 
             interrupt_master_enable: InterruptMasterEnable::Disabled,
             ei_delay: None,
-            halted: false,
+            halt_state: HaltState::Running,
             halt_bug: false,
         }
     }

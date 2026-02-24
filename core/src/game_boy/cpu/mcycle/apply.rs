@@ -1,5 +1,5 @@
 use super::super::{
-    Cpu, EiDelay, InterruptMasterEnable,
+    Cpu, EiDelay, HaltState, InterruptMasterEnable,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
     instructions::{CarryFlag, Interrupt as InterruptInstruction},
@@ -60,7 +60,7 @@ impl Processor {
                 cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
             }
             InterruptInstruction::Await => {
-                cpu.halted = true;
+                cpu.halt_state = HaltState::Halted;
             }
         }
     }
