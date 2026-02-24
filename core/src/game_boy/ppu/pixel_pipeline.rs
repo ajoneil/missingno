@@ -53,7 +53,14 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
+    /// On line 0, the OAM scan runs with `Idle` render phase (BESU
+    /// is never set on line 0, so STAT reads mode 0).
     Idle,
+    /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
+    /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
+    /// for lines 1+, cleared by AVAP when the scan completes.
+    /// Line 0 skips this phase (BESU never set on first line).
+    Scanning,
     /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
     /// period from AVAP (scan done) through WODU (PX≥167). During
     /// startup, the `StartupFetch` cascade gates the pixel clock until
@@ -676,13 +683,21 @@ impl Rendering {
     fn mode(&self) -> Mode {
         match self.render_phase {
             RenderPhase::Drawing | RenderPhase::WoduFired => Mode::DrawingPixels,
+            RenderPhase::Scanning => Mode::PreparingScanline,
             _ if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
             _ => Mode::BetweenLines,
         }
     }
 
+    /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
+    /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     fn stat_mode(&self) -> Mode {
-        self.interrupt_mode()
+        match self.render_phase {
+            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
+            RenderPhase::Drawing => Mode::DrawingPixels,
+            RenderPhase::Scanning => Mode::PreparingScanline,
+            RenderPhase::Idle => Mode::BetweenLines,
+        }
     }
 
     /// Mode for STAT interrupt edge detection. Mode 0 fires from
@@ -691,6 +706,7 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
             RenderPhase::Drawing => Mode::DrawingPixels,
+            RenderPhase::Scanning => Mode::PreparingScanline,
             RenderPhase::Idle if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
             RenderPhase::Idle => Mode::BetweenLines,
         }
@@ -705,7 +721,11 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        self.scanning || matches!(self.render_phase, RenderPhase::Drawing)
+        self.scanning
+            || matches!(
+                self.render_phase,
+                RenderPhase::Scanning | RenderPhase::Drawing
+            )
     }
 
     fn vram_locked(&self) -> bool {
@@ -714,7 +734,11 @@ impl Rendering {
     }
 
     fn oam_write_locked(&self) -> bool {
-        self.scanning || matches!(self.render_phase, RenderPhase::Drawing)
+        self.scanning
+            || matches!(
+                self.render_phase,
+                RenderPhase::Scanning | RenderPhase::Drawing
+            )
     }
 
     fn vram_write_locked(&self) -> bool {
@@ -730,6 +754,13 @@ impl Rendering {
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
     /// match (PUXA), and window WX match (PYCO).
     pub(super) fn half_even(&mut self, data: &Registers, vram: &Vram) {
+        // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
+        // BESU_SCAN_DONEn NOR latch → RenderPhase::Scanning.
+        // BESU is never set on line 0 (hardware special case).
+        if self.dot == 1 && self.line_number != 0 {
+            self.render_phase = RenderPhase::Scanning;
+        }
+
         if self.scanner.is_some() {
             // Mode 2: OAM scan uses M-cycle sub-phases, not simple
             // EVEN/ODD. Full scan processing deferred to half_odd
