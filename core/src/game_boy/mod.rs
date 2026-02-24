@@ -24,10 +24,11 @@ pub mod timers;
 ///
 /// On hardware, an IF flag set during M-cycle N is captured in the
 /// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. Both Running and Halted paths check
-/// for a Ready latch at step() entry (after `promote()`), unifying
-/// the dispatch point. The mid-step check at HaltedNop completion
-/// serves as a fallback for interrupts that fire during the wakeup
+/// decision until M-cycle N+1. `promote()` at step entry advances
+/// Fresh→Ready; when `take_ready()` succeeds, a 4-dot tick loop
+/// models the DFF propagation M-cycle (generic fetch) before ISR
+/// dispatch begins. The mid-step check at HaltedNop completion
+/// serves as a fallback for interrupts captured during the wakeup
 /// NOP's own M-cycle.
 #[derive(Clone, Copy)]
 enum InterruptLatch {
