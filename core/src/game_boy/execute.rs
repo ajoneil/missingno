@@ -35,7 +35,7 @@ impl GameBoy {
                     unreachable!("Running CPU must have a prefetched opcode")
                 }
             }
-            HaltState::Halted => Processor::begin(&mut self.cpu),
+            HaltState::Halted | HaltState::Halting => Processor::begin(&mut self.cpu),
             HaltState::Woken => {
                 // The idle M-cycle that captured the interrupt was the
                 // structural equivalent of a trailing fetch. promote()
@@ -74,6 +74,24 @@ impl GameBoy {
                 Some(action) => action,
                 None => {
                     self.check_halt_bug();
+
+                    if self.cpu.halt_state == HaltState::Halting {
+                        // HALT's dummy fetch: read [PC] without incrementing.
+                        // Run 4 dots of hardware ticking (same as any trailing
+                        // fetch), then transition to Halted.
+                        let fetch_addr = self.cpu.program_counter;
+                        for dot in 0u8..4 {
+                            let is_mcycle_boundary = dot == 3;
+                            new_screen |= self.tick_dot(is_mcycle_boundary);
+                        }
+                        // Dummy fetch: read the bus but discard the result.
+                        // PC is not incremented — the byte is thrown away.
+                        let _ = self.cpu_read(fetch_addr);
+                        self.cpu.halt_state = HaltState::Halted;
+                        self.prefetched_opcode = None;
+                        self.advance_ei_delay();
+                        return new_screen;
+                    }
 
                     if self.cpu.halt_state == HaltState::Halted {
                         if self.interrupt_latch.take_ready().is_some() {
@@ -313,7 +331,9 @@ impl GameBoy {
     /// is already pending, the CPU doesn't truly halt. It resumes
     /// immediately but fails to increment PC on the next opcode fetch.
     fn check_halt_bug(&mut self) {
-        if self.cpu.halt_state != HaltState::Halted || self.interrupts.triggered().is_none() {
+        if !matches!(self.cpu.halt_state, HaltState::Halted | HaltState::Halting)
+            || self.interrupts.triggered().is_none()
+        {
             return;
         }
         if self.cpu.ei_delay == Some(EiDelay::Fired) {

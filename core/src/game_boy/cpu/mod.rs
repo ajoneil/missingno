@@ -24,6 +24,11 @@ pub enum InterruptMasterEnable {
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
     Running,
+    /// HALT instruction decoded — the trailing fetch runs as a dummy
+    /// fetch (read [PC] without incrementing), then transitions to
+    /// Halted. Models the hardware's 1 M-cycle transition from HALT
+    /// execution to idle mode.
+    Halting,
     /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
     Halted,
     /// Interrupt detected during idle — the idle M-cycle that captured

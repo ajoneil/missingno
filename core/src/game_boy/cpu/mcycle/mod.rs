@@ -247,7 +247,7 @@ impl Processor {
     /// the result. Hardware ticks during this M-cycle may wake the CPU.
     pub fn begin(cpu: &mut Cpu) -> Self {
         debug_assert!(
-            cpu.halt_state == HaltState::Halted,
+            matches!(cpu.halt_state, HaltState::Halted | HaltState::Halting),
             "begin() called with CPU not halted — prefetched_opcode should be set"
         );
         Self::halted_nop(cpu.program_counter)
@@ -348,11 +348,11 @@ impl Processor {
 
         let phase = match &instruction {
             Instruction::Interrupt(InterruptInstruction::Await) => {
-                cpu.halt_state = HaltState::Halted;
+                cpu.halt_state = HaltState::Halting;
                 Phase::Empty
             }
             Instruction::Stop => {
-                cpu.halt_state = HaltState::Halted;
+                cpu.halt_state = HaltState::Halting;
                 Phase::Empty
             }
             Instruction::Invalid(op) => panic!("Invalid instruction {:02x}", op),
