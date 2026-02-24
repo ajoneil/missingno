@@ -16,10 +16,11 @@ pub enum InterruptMasterEnable {
 ///
 /// On hardware, HALT puts the CPU into a low-power idle loop where it
 /// continues to tick hardware (PPU, timers, etc.) each M-cycle but
-/// doesn't execute instructions. When `(IF & IE) != 0`, the combinational
-/// wakeup signal fires and the CPU transitions to the Woken state: the
-/// next step() entry dispatches the interrupt (if IME=Enabled) or resumes
-/// normal execution (if IME=Disabled) without running another idle M-cycle.
+/// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
+/// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
+/// resume until the next M-cycle — the wakeup NOP. The `InterruptLatch`
+/// enum's Fresh→Ready promotion at step() entry naturally models this
+/// 1 M-cycle propagation delay.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -31,11 +32,6 @@ pub enum HaltState {
     Halting,
     /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
     Halted,
-    /// Interrupt detected during idle — the idle M-cycle that captured
-    /// the interrupt is the structural equivalent of a trailing fetch.
-    /// The next step() entry promotes the DFF pipeline and dispatches
-    /// without running additional ticks.
-    Woken,
 }
 
 /// Models the EI instruction's one-instruction delay DFF pipeline.

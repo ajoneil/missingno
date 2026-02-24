@@ -36,19 +36,6 @@ impl GameBoy {
                 }
             }
             HaltState::Halted | HaltState::Halting => Processor::begin(&mut self.cpu),
-            HaltState::Woken => {
-                // The idle M-cycle that captured the interrupt was the
-                // structural equivalent of a trailing fetch. promote()
-                // above advanced Fresh→Ready; now dispatch.
-                self.cpu.halt_state = HaltState::Running;
-                if self.interrupt_latch.take_ready().is_some() {
-                    Processor::interrupt(&mut self.cpu)
-                } else {
-                    // Woken by IME=Disabled path (no dispatch), or the
-                    // interrupt condition vanished. Resume normal fetch.
-                    Processor::fetch(&self.cpu)
-                }
-            }
         };
 
         // Run dots. Each M-cycle is 4 dots; the processor yields one
@@ -101,15 +88,10 @@ impl GameBoy {
                             processor = Processor::interrupt(&mut self.cpu);
                             continue;
                         }
-                        if matches!(self.interrupt_latch, InterruptLatch::Fresh(_)) {
-                            // The idle HaltedNop's boundary tick captured an
-                            // interrupt (Fresh). On hardware, this idle M-cycle
-                            // is the structural equivalent of a trailing fetch:
-                            // the DFF latched the interrupt, and the next step
-                            // boundary promotes Fresh→Ready and dispatches
-                            // without extra ticks, matching NOP sled timing.
-                            self.cpu.halt_state = HaltState::Woken;
-                        }
+                        // Fresh capture or still idle — stay halted. Fresh
+                        // will promote to Ready at next step() entry via
+                        // promote(), modeling the DFF cascade's 1 M-cycle
+                        // propagation delay (CLK_ENA→PHI resumption).
                         self.prefetched_opcode = None;
                         self.advance_ei_delay();
                         return new_screen;
@@ -305,12 +287,18 @@ impl GameBoy {
             };
 
             // HALT wakeup: even with IME=Disabled, a pending interrupt
-            // wakes the CPU from HALT (without dispatching).
+            // wakes the CPU from HALT (without dispatching). Setting
+            // Running here causes the HaltedNop completion to fall
+            // through to the trailing fetch, resuming normal execution.
+            // check_halt_bug() (which runs after the processor yields
+            // None) sees Running and no-ops, avoiding a spurious halt
+            // bug flag — the halt bug only fires at HALT entry, not
+            // during idle wakeup.
             if self.cpu.halt_state == HaltState::Halted
                 && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
                 && self.interrupts.triggered().is_some()
             {
-                self.cpu.halt_state = HaltState::Woken;
+                self.cpu.halt_state = HaltState::Running;
             }
         }
 

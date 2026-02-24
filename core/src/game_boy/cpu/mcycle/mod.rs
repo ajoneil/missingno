@@ -270,26 +270,6 @@ impl Processor {
         }
     }
 
-    /// Create a processor that begins a fresh fetch from PC.
-    /// Used when resuming from HALT with IME=Disabled (no prefetched opcode).
-    pub fn fetch(cpu: &Cpu) -> Self {
-        Self {
-            instruction: Instruction::NoOperation,
-            step: 0,
-            phase: Phase::Fetch {
-                pc: cpu.program_counter,
-                bytes: [0; 3],
-                bytes_read: 0,
-                bytes_needed: 0,
-            },
-            scratch: 0,
-            dot_in_mcycle: 0,
-            current_action: None,
-            mcycle_active: false,
-            pending_vector_resolve: false,
-        }
-    }
-
     /// Create a processor that skips the opcode read M-cycle.
     /// The opcode has already been fetched; the Processor starts at the
     /// point where it would consume `read_value` as the opcode byte.
