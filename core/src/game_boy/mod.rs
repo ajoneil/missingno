@@ -24,11 +24,11 @@ pub mod timers;
 ///
 /// On hardware, an IF flag set during M-cycle N is captured in the
 /// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. For non-halted instructions this
-/// delay is implicit in the step() boundary (the latch is set during
-/// trailing fetch ticks, consumed at the NEXT step's entry). For
-/// HALT, the delay must be explicit because the latch is checked
-/// mid-step at HaltedNop completion.
+/// decision until M-cycle N+1. Both Running and Halted paths check
+/// for a Ready latch at step() entry (after `promote()`), unifying
+/// the dispatch point. The mid-step check at HaltedNop completion
+/// serves as a fallback for interrupts that fire during the wakeup
+/// NOP's own M-cycle.
 #[derive(Clone, Copy)]
 enum InterruptLatch {
     /// No interrupt pending in the sequencer pipeline.

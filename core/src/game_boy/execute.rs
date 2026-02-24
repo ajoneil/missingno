@@ -23,6 +23,9 @@ impl GameBoy {
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
         // the previous step's M-cycle boundary becomes Ready (dispatchable).
+        // Both Running and Halted paths check take_ready() below, unifying
+        // the dispatch point. POST_HALTED_NOP remains as a fallback for
+        // interrupts captured during the HaltedNop's own M-cycle.
         self.interrupt_latch.promote();
 
         let mut processor = match self.cpu.halt_state {
@@ -35,7 +38,14 @@ impl GameBoy {
                     unreachable!("Running CPU must have a prefetched opcode")
                 }
             }
-            HaltState::Halted | HaltState::Halting => Processor::begin(&mut self.cpu),
+            HaltState::Halted => {
+                if self.interrupt_latch.take_ready().is_some() {
+                    Processor::interrupt(&mut self.cpu)
+                } else {
+                    Processor::begin(&mut self.cpu)
+                }
+            }
+            HaltState::Halting => Processor::begin(&mut self.cpu),
         };
 
         // Run dots. Each M-cycle is 4 dots; the processor yields one
