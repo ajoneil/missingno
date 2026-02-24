@@ -576,10 +576,6 @@ pub struct Rendering {
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     lcd_turning_on: bool,
-    /// Hardware scanning signal (ACYL). True from dot 452 (SANU LX=113)
-    /// through the scan completing (FETO_SCAN_DONE at entry 39). Gates
-    /// CPU OAM access independently of the rendering latch (XYMU).
-    scanning: bool,
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
     render_phase: RenderPhase,
@@ -635,7 +631,6 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
-            scanning: true,
             render_phase: RenderPhase::Idle,
             line_number: 0,
             dot: 0,
@@ -660,7 +655,6 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: true,
-            scanning: false,
             render_phase: RenderPhase::Idle,
             line_number: 0,
             dot: 0,
@@ -684,7 +678,7 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::Drawing | RenderPhase::WoduFired => Mode::DrawingPixels,
             RenderPhase::Scanning => Mode::PreparingScanline,
-            _ if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
+            _ if self.scanner.is_some() => Mode::PreparingScanline,
             _ => Mode::BetweenLines,
         }
     }
@@ -707,7 +701,7 @@ impl Rendering {
             RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
             RenderPhase::Drawing => Mode::DrawingPixels,
             RenderPhase::Scanning => Mode::PreparingScanline,
-            RenderPhase::Idle if self.scanning && self.scanner.is_some() => Mode::PreparingScanline,
+            RenderPhase::Idle if self.scanner.is_some() => Mode::PreparingScanline,
             RenderPhase::Idle => Mode::BetweenLines,
         }
     }
@@ -721,11 +715,10 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
-        self.scanning
-            || matches!(
-                self.render_phase,
-                RenderPhase::Scanning | RenderPhase::Drawing
-            )
+        matches!(
+            self.render_phase,
+            RenderPhase::Scanning | RenderPhase::Drawing
+        )
     }
 
     fn vram_locked(&self) -> bool {
@@ -734,11 +727,10 @@ impl Rendering {
     }
 
     fn oam_write_locked(&self) -> bool {
-        self.scanning
-            || matches!(
-                self.render_phase,
-                RenderPhase::Scanning | RenderPhase::Drawing
-            )
+        matches!(
+            self.render_phase,
+            RenderPhase::Scanning | RenderPhase::Drawing
+        )
     }
 
     fn vram_write_locked(&self) -> bool {
@@ -779,17 +771,6 @@ impl Rendering {
         if self.render_phase == RenderPhase::Drawing {
             self.mode3_even(data, vram);
         }
-
-        // SANU scanning trigger (DELTA_EVEN). On hardware, SANU fires
-        // combinationally at LX=113 (dot 452). The ACYL scanning signal
-        // activates after the SANU→RUTU→CATU→BESU pipeline (~3 half-
-        // cycles), but we set scanning here directly. This regresses
-        // oam_bug tests because the empirical OAM corruption formulas
-        // are calibrated to the old timing — the OAM bug model needs
-        // updating, not this signal placement.
-        if self.dot == SCANLINE_TOTAL_DOTS - 4 {
-            self.scanning = true;
-        }
     }
 
     /// DELTA_ODD half-cycle: output phase.
@@ -805,7 +786,6 @@ impl Rendering {
             if scanner.done() {
                 // FETO_SCAN_DONE — scan complete, begin Mode 2→3 transition.
                 self.scanner = None;
-                self.scanning = false;
                 self.lcd_turning_on = false;
                 // AVAP: scan complete, rendering active. StartupFetch
                 // gates pixel output until the LYRY→NYKA→PORY→POKY
@@ -1528,12 +1508,9 @@ impl PixelPipeline {
     pub fn current_line(&self) -> u8 {
         match self {
             PixelPipeline::Rendering(Rendering {
-                line_number,
-                scanning,
-                scanner,
-                ..
+                line_number, dot, ..
             }) => {
-                if *scanning && scanner.is_none() {
+                if *dot >= SCANLINE_TOTAL_DOTS - 4 {
                     line_number + 1
                 } else {
                     *line_number
