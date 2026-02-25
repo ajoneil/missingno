@@ -40,6 +40,9 @@ const WODU_PIXEL_COUNT: u8 = 167;
 /// On hardware, the LCD X coordinate is `pix_count - 8`. Pixels at
 /// PX 0–7 shift the first tile's data through the pipe invisibly.
 const FIRST_VISIBLE_PIXEL: u8 = 8;
+/// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
+/// This clocks the LY register and triggers line-end processing.
+const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
 const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
@@ -602,8 +605,14 @@ pub struct Rendering {
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
     render_phase: RenderPhase,
-    /// Current scanline number (0-143 during rendering).
+    /// LY register — current scanline number, clocked by the RUTU line-end
+    /// signal at dot 452. Increments 4 dots before the scanline boundary,
+    /// matching the hardware's LY ripple counter (MUWY-LAFO, page 21).
     line_number: u8,
+    /// True during the dot when LY was just incremented by the RUTU event.
+    /// The LYC coincidence comparator output is invalid during this dot
+    /// (hardware: ROPO_LY_MATCH_SYNCp hasn't captured the new LY yet).
+    ly_just_incremented: bool,
     /// Dot position within the current scanline (0..456).
     dot: u32,
     /// Sprites on this line, stored as hardware register file entries.
@@ -651,6 +660,7 @@ impl Rendering {
             lcd_turning_on: false,
             render_phase: RenderPhase::Idle,
             line_number: 0,
+            ly_just_incremented: false,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -674,6 +684,7 @@ impl Rendering {
             lcd_turning_on: true,
             render_phase: RenderPhase::Idle,
             line_number: 0,
+            ly_just_incremented: false,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -795,6 +806,8 @@ impl Rendering {
     /// fine counter increment, pipe shift, and sprite X matching.
     /// Returns true when a full frame is complete.
     pub(super) fn half_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
+        self.ly_just_incremented = false;
+
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
             scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
@@ -831,14 +844,22 @@ impl Rendering {
 
             self.dot += 1;
 
+            // RUTU line-end event: LY register increments (MUWY-LAFO
+            // ripple counter clocked by RUTU_LINE_ENDp).
+            if self.dot == RUTU_LINE_END_DOT {
+                self.line_number += 1;
+                self.ly_just_incremented = true;
+            }
+
             if self.dot == SCANLINE_TOTAL_DOTS {
                 self.render_phase = RenderPhase::Idle;
                 if self.window_rendered {
                     self.window_line_counter += 1;
                 }
 
-                // Line transition — reset per-line state
-                self.line_number += 1;
+                // Scanline boundary — reset per-line state.
+                // line_number already holds the next line's value
+                // (incremented at RUTU_LINE_END_DOT).
                 self.dot = 0;
                 self.sprites = SpriteStore::new();
                 self.scanner = Some(OamScanner::new());
@@ -1008,9 +1029,7 @@ impl Rendering {
                 // while RYDY is active), load the first window tile and clear the
                 // window hit signal. This is the hardware's dedicated window tile
                 // load path — independent of fine_count.
-                if self.window_hit == WindowHit::Active
-                    && self.fetcher.step == FetcherStep::Idle
-                {
+                if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
                     self.load_bg_tile();
                     self.window_hit = WindowHit::Clearing;
                 }
@@ -1537,29 +1556,20 @@ impl PixelPipeline {
 
     pub fn current_line(&self) -> u8 {
         match self {
-            PixelPipeline::Rendering(Rendering {
-                line_number, dot, ..
-            }) => {
-                if *dot >= SCANLINE_TOTAL_DOTS - 4 {
-                    line_number + 1
-                } else {
-                    *line_number
-                }
-            }
+            PixelPipeline::Rendering(Rendering { line_number, .. }) => *line_number,
             PixelPipeline::BetweenFrames(dots) => {
                 screen::NUM_SCANLINES + (dots / SCANLINE_TOTAL_DOTS) as u8
             }
         }
     }
 
-    /// True on the exact dot where LY increments early (4 dots before
-    /// standard scanline end).
-    pub fn ly_transitioning(&self) -> bool {
+    /// True during the dot when LY was just incremented by the RUTU
+    /// line-end event. The LYC coincidence comparator is invalid during
+    /// this dot (ROPO_LY_MATCH_SYNCp hasn't captured the new LY yet).
+    pub fn ly_just_incremented(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(Rendering { dot, .. }) => *dot == SCANLINE_TOTAL_DOTS - 4,
-            PixelPipeline::BetweenFrames(dots) => {
-                dots % SCANLINE_TOTAL_DOTS == SCANLINE_TOTAL_DOTS - 4
-            }
+            PixelPipeline::Rendering(rendering) => rendering.ly_just_incremented,
+            PixelPipeline::BetweenFrames(dots) => dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT,
         }
     }
 

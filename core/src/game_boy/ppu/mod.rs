@@ -221,7 +221,7 @@ impl Ppu {
                     0
                 };
                 let ly_eq_lyc = if let Some(ppu) = &self.pixel_pipeline {
-                    if ppu.ly_transitioning() {
+                    if ppu.ly_just_incremented() {
                         false
                     } else {
                         ppu.current_line() == self.interrupts.current_line_compare
