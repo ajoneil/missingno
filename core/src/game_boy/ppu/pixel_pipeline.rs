@@ -1,7 +1,7 @@
 use core::fmt;
 
 use crate::game_boy::ppu::{
-    Registers,
+    RegisterBus,
     memory::{Oam, Vram},
     palette::{PaletteIndex, PaletteMap},
     screen::{self, Screen},
@@ -501,7 +501,7 @@ impl OamScanner {
         &mut self,
         line_number: u8,
         sprites: &mut SpriteStore,
-        data: &Registers,
+        data: &RegisterBus,
         oam: &Oam,
     ) {
         if self.tick == FetcherTick::T1 {
@@ -605,14 +605,6 @@ pub struct Rendering {
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
     render_phase: RenderPhase,
-    /// LY register — current scanline number, clocked by the RUTU line-end
-    /// signal at dot 452. Increments 4 dots before the scanline boundary,
-    /// matching the hardware's LY ripple counter (MUWY-LAFO, page 21).
-    line_number: u8,
-    /// True during the dot when LY was just incremented by the RUTU event.
-    /// The LYC coincidence comparator output is invalid during this dot
-    /// (hardware: ROPO_LY_MATCH_SYNCp hasn't captured the new LY yet).
-    ly_just_incremented: bool,
     /// Dot position within the current scanline (0..456).
     dot: u32,
     /// Sprites on this line, stored as hardware register file entries.
@@ -659,8 +651,6 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: false,
             render_phase: RenderPhase::Idle,
-            line_number: 0,
-            ly_just_incremented: false,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -683,8 +673,6 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: true,
             render_phase: RenderPhase::Idle,
-            line_number: 0,
-            ly_just_incremented: false,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -734,11 +722,11 @@ impl Rendering {
     }
 
     /// Whether the mode 2 STAT interrupt condition is active.
-    fn mode2_interrupt_active(&self) -> bool {
+    fn mode2_interrupt_active(&self, data: &RegisterBus) -> bool {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::PreparingScanline && (self.line_number != 0 || self.dot >= 4)
+        self.mode() == Mode::PreparingScanline && (data.ly() != 0 || self.dot >= 4)
     }
 
     fn oam_locked(&self) -> bool {
@@ -772,11 +760,11 @@ impl Rendering {
     /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
     /// match (PUXA), and window WX match (PYCO).
-    pub(super) fn half_even(&mut self, data: &Registers, vram: &Vram) {
+    pub(super) fn half_even(&mut self, data: &RegisterBus, vram: &Vram) {
         // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
         // BESU_SCAN_DONEn NOR latch → RenderPhase::Scanning.
         // BESU is never set on line 0 (hardware special case).
-        if self.dot == 1 && self.line_number != 0 {
+        if self.dot == 1 && data.ly() != 0 {
             self.render_phase = RenderPhase::Scanning;
         }
 
@@ -805,12 +793,10 @@ impl Rendering {
     /// On hardware, DELTA_ODD handles pixel counter increment,
     /// fine counter increment, pipe shift, and sprite X matching.
     /// Returns true when a full frame is complete.
-    pub(super) fn half_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> bool {
-        self.ly_just_incremented = false;
-
+    pub(super) fn half_odd(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> bool {
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
-            scanner.scan_next_entry(self.line_number, &mut self.sprites, data, oam);
+            scanner.scan_next_entry(data.ly(), &mut self.sprites, data, oam);
             self.dot += 1;
             if scanner.done() {
                 // FETO_SCAN_DONE — scan complete, begin Mode 2→3 transition.
@@ -847,8 +833,7 @@ impl Rendering {
             // RUTU line-end event: LY register increments (MUWY-LAFO
             // ripple counter clocked by RUTU_LINE_ENDp).
             if self.dot == RUTU_LINE_END_DOT {
-                self.line_number += 1;
-                self.ly_just_incremented = true;
+                data.write_ly(data.ly() + 1);
             }
 
             if self.dot == SCANLINE_TOTAL_DOTS {
@@ -858,7 +843,7 @@ impl Rendering {
                 }
 
                 // Scanline boundary — reset per-line state.
-                // line_number already holds the next line's value
+                // LY on the bus already holds the next line's value
                 // (incremented at RUTU_LINE_END_DOT).
                 self.dot = 0;
                 self.sprites = SpriteStore::new();
@@ -874,7 +859,7 @@ impl Rendering {
                 self.sprite_state = SpriteState::Idle;
                 self.window_zero_pixel = false;
 
-                if self.line_number == screen::NUM_SCANLINES {
+                if data.ly() == screen::NUM_SCANLINES {
                     return true;
                 }
             }
@@ -888,7 +873,7 @@ impl Rendering {
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
     /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
     /// all fire on DELTA_EVEN.
-    fn mode3_even(&mut self, data: &Registers, vram: &Vram) {
+    fn mode3_even(&mut self, data: &RegisterBus, vram: &Vram) {
         // Startup cascade DFF captures on DELTA_EVEN. Each arm reads
         // state set by the *previous* DELTA_EVEN or DELTA_ODD — the
         // DFF capture delay is explicit in the state machine.
@@ -950,7 +935,7 @@ impl Rendering {
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
-    fn mode3_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) {
+    fn mode3_odd(&mut self, data: &RegisterBus, oam: &Oam, vram: &Vram) {
         match self.startup_fetch {
             Some(StartupFetch::FirstTile) | Some(StartupFetch::LyryFired) => {
                 // During fetch/cascade phase, no pixel processing.
@@ -1095,12 +1080,12 @@ impl Rendering {
 
     /// BG tilemap coordinate computation (page 26).
     /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
-    fn bg_tilemap_coords(&self, data: &Registers) -> (u8, u8) {
+    fn bg_tilemap_coords(&self, data: &RegisterBus) -> (u8, u8) {
         let scx = data.background_viewport.x;
         let scy = data.background_viewport.y.output();
         (
             ((self.pixel_counter.wrapping_add(scx)) >> 3) & 31,
-            (self.line_number.wrapping_add(scy) / 8) & 31,
+            (data.ly().wrapping_add(scy) / 8) & 31,
         )
     }
 
@@ -1111,7 +1096,7 @@ impl Rendering {
     }
 
     /// Read the tile index from the tilemap for the current fetch position.
-    fn read_tile_index(&self, data: &Registers, vram: &Vram) -> u8 {
+    fn read_tile_index(&self, data: &RegisterBus, vram: &Vram) -> u8 {
         let (map_x, map_y) = if self.fetcher.fetching_window {
             self.window_tilemap_coords()
         } else {
@@ -1127,10 +1112,8 @@ impl Rendering {
     }
 
     /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
-    fn bg_fine_y(&self, data: &Registers) -> u8 {
-        self.line_number
-            .wrapping_add(data.background_viewport.y.output())
-            % 8
+    fn bg_fine_y(&self, data: &RegisterBus) -> u8 {
+        data.ly().wrapping_add(data.background_viewport.y.output()) % 8
     }
 
     /// Window fine Y offset (page 27): which row within the tile, from
@@ -1145,7 +1128,7 @@ impl Rendering {
     /// The tile data address combines the tile index (cached from the
     /// tilemap read) with the fine Y offset from the appropriate
     /// address generator. The VRAM interface (page 25) performs the read.
-    fn read_tile_data(&self, data: &Registers, vram: &Vram, high: bool) -> u8 {
+    fn read_tile_data(&self, data: &RegisterBus, vram: &Vram, high: bool) -> u8 {
         let tile_index = TileIndex(self.fetcher.tile_index);
         let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
 
@@ -1160,7 +1143,7 @@ impl Rendering {
     }
 
     /// Advance the background tile fetcher by one dot.
-    fn advance_bg_fetcher(&mut self, data: &Registers, vram: &Vram) {
+    fn advance_bg_fetcher(&mut self, data: &RegisterBus, vram: &Vram) {
         match self.fetcher.step {
             FetcherStep::GetTile => {
                 if self.fetcher.tick == FetcherTick::T1 {
@@ -1218,7 +1201,7 @@ impl Rendering {
     /// and flip flags. The VRAM interface (page 25) performs the read.
     fn read_sprite_tile_data(
         sf: &SpriteFetch,
-        data: &Registers,
+        data: &RegisterBus,
         oam: &Oam,
         vram: &Vram,
         high: bool,
@@ -1251,7 +1234,7 @@ impl Rendering {
     /// the fetch is complete (GetTileDataHigh T2 has fired).
     fn advance_sprite_fetch(
         sf: &mut SpriteFetch,
-        data: &Registers,
+        data: &RegisterBus,
         oam: &Oam,
         vram: &Vram,
     ) -> bool {
@@ -1344,7 +1327,7 @@ impl Rendering {
     /// Shifts one bit from each shift register, forms the 2-bit color
     /// indices, applies priority logic, selects the winning pixel, and
     /// maps it through the appropriate palette to the LCD.
-    fn shift_pixel_out(&mut self, data: &Registers) {
+    fn shift_pixel_out(&mut self, data: &RegisterBus) {
         // Window reactivation zero pixel: substitute color 0 for the BG
         // pixel without popping the BG shifter. The OBJ shifter is still
         // popped so sprite pixels mix against the zero pixel.
@@ -1363,7 +1346,7 @@ impl Rendering {
             }
 
             let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-            let y = self.line_number;
+            let y = data.ly();
             let bg_color: u8 = 0;
 
             if data.control.sprites_enabled() {
@@ -1416,7 +1399,7 @@ impl Rendering {
         }
 
         let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-        let y = self.line_number;
+        let y = data.ly();
 
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
         let bg_color = if data.control.background_and_window_enabled() {
@@ -1451,11 +1434,11 @@ impl Rendering {
     /// Check if the window should start rendering at the current pixel position.
     /// Also detects window reactivation zero pixel conditions when the window
     /// is already active.
-    fn check_window_trigger(&mut self, data: &Registers) {
+    fn check_window_trigger(&mut self, data: &RegisterBus) {
         if !data.control.window_enabled() {
             return;
         }
-        if self.line_number < data.window.y {
+        if data.ly() < data.window.y {
             return;
         }
         if self.pixel_counter != data.window.x_plus_7.output() {
@@ -1496,7 +1479,7 @@ impl Rendering {
     /// Check if a sprite should start fetching at the current pixel position.
     /// Scans all store slots in parallel, matching the hardware's 10
     /// independent X comparators. The lowest-indexed matching slot wins.
-    fn check_sprite_trigger(&mut self, data: &Registers) {
+    fn check_sprite_trigger(&mut self, data: &RegisterBus) {
         if !data.control.sprites_enabled() {
             return;
         }
@@ -1554,25 +1537,6 @@ impl PixelPipeline {
         Self::Rendering(Rendering::new_lcd_on())
     }
 
-    pub fn current_line(&self) -> u8 {
-        match self {
-            PixelPipeline::Rendering(Rendering { line_number, .. }) => *line_number,
-            PixelPipeline::BetweenFrames(dots) => {
-                screen::NUM_SCANLINES + (dots / SCANLINE_TOTAL_DOTS) as u8
-            }
-        }
-    }
-
-    /// True during the dot when LY was just incremented by the RUTU
-    /// line-end event. The LYC coincidence comparator is invalid during
-    /// this dot (ROPO_LY_MATCH_SYNCp hasn't captured the new LY yet).
-    pub fn ly_just_incremented(&self) -> bool {
-        match self {
-            PixelPipeline::Rendering(rendering) => rendering.ly_just_incremented,
-            PixelPipeline::BetweenFrames(dots) => dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT,
-        }
-    }
-
     pub fn mode(&self) -> Mode {
         match self {
             PixelPipeline::Rendering(rendering) => rendering.mode(),
@@ -1600,10 +1564,10 @@ impl PixelPipeline {
         }
     }
 
-    pub fn mode2_interrupt_active(&self) -> bool {
+    pub fn mode2_interrupt_active(&self, data: &RegisterBus) -> bool {
         match self {
             PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(),
+            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(data),
             PixelPipeline::BetweenFrames(_) => false,
         }
     }
@@ -1662,7 +1626,7 @@ impl PixelPipeline {
     }
 
     /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
-    pub fn tcycle_even(&mut self, data: &Registers, vram: &Vram) {
+    pub fn tcycle_even(&mut self, data: &RegisterBus, vram: &Vram) {
         match self {
             PixelPipeline::Rendering(rendering) => {
                 rendering.half_even(data, vram);
@@ -1673,7 +1637,7 @@ impl PixelPipeline {
 
     /// DELTA_ODD half of a dot tick: pixel output, counter increment.
     /// Returns a completed screen when a full frame finishes rendering.
-    pub fn tcycle_odd(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
+    pub fn tcycle_odd(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> Option<Screen> {
         let mut screen = None;
         match self {
             PixelPipeline::Rendering(rendering) => {
@@ -1684,7 +1648,13 @@ impl PixelPipeline {
             }
             PixelPipeline::BetweenFrames(dots) => {
                 *dots += 1;
+                // RUTU line-end event within VBlank scanlines:
+                // LY increments at the same dot offset as during Rendering.
+                if *dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT {
+                    data.write_ly(data.ly() + 1);
+                }
                 if *dots >= BETWEEN_FRAMES_DOTS {
+                    data.write_ly(0);
                     *self = PixelPipeline::Rendering(Rendering::new());
                 }
             }
@@ -1694,7 +1664,7 @@ impl PixelPipeline {
 
     /// Advance the PPU by one dot (T-cycle). Returns a completed screen
     /// when a full frame finishes rendering.
-    pub fn tcycle(&mut self, data: &Registers, oam: &Oam, vram: &Vram) -> Option<Screen> {
+    pub fn tcycle(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> Option<Screen> {
         self.tcycle_even(data, vram);
         self.tcycle_odd(data, oam, vram)
     }

@@ -144,33 +144,60 @@ bitflags! {
     }
 }
 
-struct Interrupts {
-    flags: InterruptFlags,
-    current_line_compare: u8,
-}
-
-/// The PPU register file: values the pixel pipeline reads each dot.
-///
-/// On hardware, these are DFF cells (pages 23, 36) whose outputs are
-/// routed as signals to the pipeline blocks. The CPU writes them via
-/// the register bus; the pixel pipeline only reads.
-pub struct Registers {
+/// The PPU register bus: shared interface between CPU, pixel pipeline,
+/// and interrupt logic. On hardware, these are DFF cells whose outputs
+/// are routed as signals between blocks. The CPU writes via the register
+/// address bus; the pixel pipeline reads inputs and writes LY; the ROPO
+/// DFF latches the LY==LYC comparison on the M-cycle clock.
+pub struct RegisterBus {
+    // --- CPU-writable, pipeline-readable ---
     control: Control,
     /// DFF8-style latch for LCDC bit 0 (BG_EN) only.
     control_bg_en: DffLatch,
     background_viewport: BackgroundViewportPosition,
     window: Window,
     palettes: Palettes,
+
+    // --- Pipeline-writable, CPU-readable ---
+    /// LY register (MUWY-LAFO, page 21). Written by the pixel pipeline
+    /// at the RUTU line-end event (dot 452). Read by CPU at FF44.
+    ly: u8,
+
+    // --- CPU-writable, interrupt-readable ---
+    /// LYC register (FF45). CPU-writable comparison value.
+    lyc: u8,
+
+    // --- ROPO comparison latch ---
+    /// Latched LY==LYC comparison result (ROPO_LY_MATCH_SYNCp, page 21).
+    /// Updated each M-cycle by `latch_ly_comparison()`. The STAT register
+    /// read and STAT interrupt LYC condition both use this latched value.
+    /// Frozen when the PPU is off (comparison clock stops).
+    ly_eq_lyc: bool,
+}
+
+impl RegisterBus {
+    pub fn write_ly(&mut self, value: u8) {
+        self.ly = value;
+    }
+
+    pub fn latch_ly_comparison(&mut self) {
+        self.ly_eq_lyc = self.ly == self.lyc;
+    }
+
+    pub fn ly(&self) -> u8 {
+        self.ly
+    }
+
+    pub fn ly_eq_lyc(&self) -> bool {
+        self.ly_eq_lyc
+    }
 }
 
 pub struct Ppu {
     pixel_pipeline: Option<PixelPipeline>,
-    registers: Registers,
+    bus: RegisterBus,
     pub(super) oam: Oam,
-    interrupts: Interrupts,
-    /// Cached LY=LYC comparison result, updated each M-cycle while the
-    /// PPU is on. Frozen when the PPU is off (comparison clock stops).
-    ly_eq_lyc: bool,
+    stat_flags: InterruptFlags,
     stat_line_was_high: bool,
 }
 
@@ -183,7 +210,7 @@ impl Ppu {
     pub fn new() -> Self {
         let control = Control::default();
         Self {
-            registers: Registers {
+            bus: RegisterBus {
                 control_bg_en: DffLatch::new(
                     control.bits() & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits(),
                 ),
@@ -197,56 +224,39 @@ impl Ppu {
                     x_plus_7: DffLatch::new(0),
                 },
                 palettes: Palettes::default(),
+                ly: 0,
+                lyc: 0,
+                ly_eq_lyc: true,
             },
             oam: Oam::new(),
-
             pixel_pipeline: Some(PixelPipeline::new()),
-            interrupts: Interrupts {
-                // The first bit is unused, but is set at boot time
-                flags: InterruptFlags::DUMMY,
-                current_line_compare: 0,
-            },
-            ly_eq_lyc: true,
+            // The first bit is unused, but is set at boot time
+            stat_flags: InterruptFlags::DUMMY,
             stat_line_was_high: false,
         }
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::Control => self.registers.control.bits(),
+            Register::Control => self.bus.control.bits(),
             Register::Status => {
                 let mode = if let Some(ppu) = &self.pixel_pipeline {
                     ppu.stat_mode() as u8
                 } else {
                     0
                 };
-                let ly_eq_lyc = if let Some(ppu) = &self.pixel_pipeline {
-                    if ppu.ly_just_incremented() {
-                        false
-                    } else {
-                        ppu.current_line() == self.interrupts.current_line_compare
-                    }
-                } else {
-                    self.ly_eq_lyc
-                };
-                let line_compare = if ly_eq_lyc { 0b00000100 } else { 0 };
-                0x80 | (self.interrupts.flags.bits() & 0b01111000) | line_compare | mode
+                let line_compare = if self.bus.ly_eq_lyc() { 0b00000100 } else { 0 };
+                0x80 | (self.stat_flags.bits() & 0b01111000) | line_compare | mode
             }
-            Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
-            Register::BackgroundViewportX => self.registers.background_viewport.x,
-            Register::WindowY => self.registers.window.y,
-            Register::WindowX => self.registers.window.x_plus_7.output(),
-            Register::CurrentScanline => {
-                if let Some(ppu) = &self.pixel_pipeline {
-                    ppu.current_line()
-                } else {
-                    0
-                }
-            }
-            Register::InterruptOnScanline => self.interrupts.current_line_compare,
-            Register::BackgroundPalette => self.registers.palettes.background.output(),
-            Register::Sprite0Palette => self.registers.palettes.sprite0.output(),
-            Register::Sprite1Palette => self.registers.palettes.sprite1.output(),
+            Register::BackgroundViewportY => self.bus.background_viewport.y.output(),
+            Register::BackgroundViewportX => self.bus.background_viewport.x,
+            Register::WindowY => self.bus.window.y,
+            Register::WindowX => self.bus.window.x_plus_7.output(),
+            Register::CurrentScanline => self.bus.ly(),
+            Register::InterruptOnScanline => self.bus.lyc,
+            Register::BackgroundPalette => self.bus.palettes.background.output(),
+            Register::Sprite0Palette => self.bus.palettes.sprite0.output(),
+            Register::Sprite1Palette => self.bus.palettes.sprite1.output(),
         }
     }
 
@@ -258,36 +268,32 @@ impl Ppu {
     fn write_register_immediate(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
-                self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
+                self.bus.control = Control::new(ControlFlags::from_bits_retain(value))
             }
             Register::Status => {
                 // DMG STAT write quirk: briefly set all enable bits high.
                 // If any condition is active, this produces a rising edge.
-                self.interrupts.flags = InterruptFlags::all();
+                self.stat_flags = InterruptFlags::all();
                 let glitch_line = self.stat_line_active();
                 let glitch_edge = glitch_line && !self.stat_line_was_high;
                 self.stat_line_was_high = glitch_line;
 
                 // Now apply the real value.
-                self.interrupts.flags = InterruptFlags::from_bits_truncate(value);
+                self.stat_flags = InterruptFlags::from_bits_truncate(value);
                 let final_line = self.stat_line_active();
                 let final_edge = final_line && !self.stat_line_was_high;
                 self.stat_line_was_high = final_line;
 
                 return glitch_edge || final_edge;
             }
-            Register::BackgroundViewportY => {
-                self.registers.background_viewport.y.write_immediate(value)
-            }
-            Register::BackgroundViewportX => self.registers.background_viewport.x = value,
-            Register::WindowY => self.registers.window.y = value,
-            Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
-            Register::InterruptOnScanline => self.interrupts.current_line_compare = value,
-            Register::BackgroundPalette => {
-                self.registers.palettes.background.write_immediate(value)
-            }
-            Register::Sprite0Palette => self.registers.palettes.sprite0.write_immediate(value),
-            Register::Sprite1Palette => self.registers.palettes.sprite1.write_immediate(value),
+            Register::BackgroundViewportY => self.bus.background_viewport.y.write_immediate(value),
+            Register::BackgroundViewportX => self.bus.background_viewport.x = value,
+            Register::WindowY => self.bus.window.y = value,
+            Register::WindowX => self.bus.window.x_plus_7.write_immediate(value),
+            Register::InterruptOnScanline => self.bus.lyc = value,
+            Register::BackgroundPalette => self.bus.palettes.background.write_immediate(value),
+            Register::Sprite0Palette => self.bus.palettes.sprite0.write_immediate(value),
+            Register::Sprite1Palette => self.bus.palettes.sprite1.write_immediate(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
         false
@@ -303,9 +309,9 @@ impl Ppu {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
                 if is_drawing {
                     let latch = match register {
-                        Register::BackgroundPalette => &mut self.registers.palettes.background,
-                        Register::Sprite0Palette => &mut self.registers.palettes.sprite0,
-                        Register::Sprite1Palette => &mut self.registers.palettes.sprite1,
+                        Register::BackgroundPalette => &mut self.bus.palettes.background,
+                        Register::Sprite0Palette => &mut self.bus.palettes.sprite0,
+                        Register::Sprite1Palette => &mut self.bus.palettes.sprite1,
                         _ => unreachable!(),
                     };
                     latch.write_dff8(value);
@@ -318,20 +324,20 @@ impl Ppu {
                 if is_drawing {
                     // LCDC is DFF9: bits 1-7 latch atomically. Only BG_EN
                     // (bit 0) has a transitional `old | new` phase.
-                    let old_bg_en = self.registers.control.bits()
-                        & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
+                    let old_bg_en =
+                        self.bus.control.bits() & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
                     let new_bg_en = value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
                     let transitional_bg_en = old_bg_en | new_bg_en;
                     let immediate = (value & !ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits())
                         | transitional_bg_en;
                     self.write_register_immediate(&Register::Control, immediate);
-                    self.registers.control_bg_en.output = immediate;
-                    self.registers.control_bg_en.state =
+                    self.bus.control_bg_en.output = immediate;
+                    self.bus.control_bg_en.state =
                         Some(LatchState::Transitional { final_value: value });
                     false
                 } else {
                     self.write_register_immediate(&register, value);
-                    self.registers
+                    self.bus
                         .control_bg_en
                         .write_immediate(value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
                     false
@@ -339,7 +345,7 @@ impl Ppu {
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
-                    self.registers.background_viewport.y.write_immediate(value);
+                    self.bus.background_viewport.y.write_immediate(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -347,7 +353,7 @@ impl Ppu {
             }
             Register::WindowX => {
                 if is_drawing {
-                    self.registers.window.x_plus_7.write_propagating(value);
+                    self.bus.window.x_plus_7.write_propagating(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -402,7 +408,7 @@ impl Ppu {
     }
 
     pub fn control(&self) -> Control {
-        self.registers.control
+        self.bus.control
     }
 
     pub fn is_rendering(&self) -> bool {
@@ -632,26 +638,15 @@ impl Ppu {
 
         // Mode 0 interrupt fires on the actual mode transition, not the
         // early stat_mode prediction (which is only for STAT register reads).
-        (self
-            .interrupts
-            .flags
-            .contains(InterruptFlags::FINISHING_SCANLINE)
-            && mode == Mode::BetweenLines)
-            || (self
-                .interrupts
-                .flags
-                .contains(InterruptFlags::BETWEEN_FRAMES)
+        (self.stat_flags.contains(InterruptFlags::FINISHING_SCANLINE) && mode == Mode::BetweenLines)
+            || (self.stat_flags.contains(InterruptFlags::BETWEEN_FRAMES)
                 && mode == Mode::BetweenFrames)
+            || (self.stat_flags.contains(InterruptFlags::PREPARING_SCANLINE)
+                && (ppu.mode2_interrupt_active(&self.bus) || vblank_line_144))
             || (self
-                .interrupts
-                .flags
-                .contains(InterruptFlags::PREPARING_SCANLINE)
-                && (ppu.mode2_interrupt_active() || vblank_line_144))
-            || (self
-                .interrupts
-                .flags
+                .stat_flags
                 .contains(InterruptFlags::CURRENT_LINE_COMPARE)
-                && self.ly_eq_lyc)
+                && self.bus.ly_eq_lyc())
     }
 
     /// DELTA_EVEN phase: DFF latch advance and pixel pipeline even-phase
@@ -662,25 +657,26 @@ impl Ppu {
         }
 
         if self.pixel_pipeline.is_none() {
+            self.bus.write_ly(0);
             self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
         }
 
         // Advance DFF latches before pixel output.
-        self.registers.palettes.background.tick();
-        self.registers.palettes.sprite0.tick();
-        self.registers.palettes.sprite1.tick();
-        self.registers.background_viewport.y.tick();
-        self.registers.window.x_plus_7.tick();
-        if self.registers.control_bg_en.tick() {
-            self.registers.control = Control::new(ControlFlags::from_bits_retain(
-                self.registers.control_bg_en.output,
+        self.bus.palettes.background.tick();
+        self.bus.palettes.sprite0.tick();
+        self.bus.palettes.sprite1.tick();
+        self.bus.background_viewport.y.tick();
+        self.bus.window.x_plus_7.tick();
+        if self.bus.control_bg_en.tick() {
+            self.bus.control = Control::new(ControlFlags::from_bits_retain(
+                self.bus.control_bg_en.output,
             ));
         }
 
         self.pixel_pipeline
             .as_mut()
             .unwrap()
-            .tcycle_even(&self.registers, vram);
+            .tcycle_even(&self.bus, vram);
     }
 
     /// DELTA_ODD phase: pixel output, counter increment, M-cycle-rate
@@ -694,7 +690,7 @@ impl Ppu {
 
         if self.control().video_enabled() {
             if let Some(pipeline) = self.pixel_pipeline.as_mut()
-                && let Some(screen) = pipeline.tcycle_odd(&self.registers, &self.oam, vram)
+                && let Some(screen) = pipeline.tcycle_odd(&mut self.bus, &self.oam, vram)
             {
                 result.screen = Some(screen);
                 result.request_vblank = true;
@@ -705,21 +701,19 @@ impl Ppu {
             }
 
             // Update comparison clock (runs while PPU is on)
-            if let Some(pipeline) = self.pixel_pipeline.as_ref() {
-                self.ly_eq_lyc = pipeline.current_line() == self.interrupts.current_line_compare;
-            }
+            self.bus.latch_ly_comparison();
         } else {
             if !is_mcycle {
                 return result;
             }
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
-                self.registers.palettes.background.clear();
-                self.registers.palettes.sprite0.clear();
-                self.registers.palettes.sprite1.clear();
-                self.registers.background_viewport.y.clear();
-                self.registers.window.x_plus_7.clear();
-                self.registers.control_bg_en.clear();
+                self.bus.palettes.background.clear();
+                self.bus.palettes.sprite0.clear();
+                self.bus.palettes.sprite1.clear();
+                self.bus.background_viewport.y.clear();
+                self.bus.window.x_plus_7.clear();
+                self.bus.control_bg_en.clear();
                 result.screen = Some(Screen::new());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock
@@ -747,7 +741,7 @@ impl Ppu {
     }
 
     pub fn palettes(&self) -> &Palettes {
-        &self.registers.palettes
+        &self.bus.palettes
     }
 
     pub fn sprite(&self, sprite: SpriteId) -> &Sprite {
