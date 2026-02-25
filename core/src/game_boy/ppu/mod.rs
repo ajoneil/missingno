@@ -310,7 +310,7 @@ impl Ppu {
             Register::Control => self.registers.control.bits(),
             Register::Status => {
                 let mode = if let Some(ppu) = &self.pixel_pipeline {
-                    ppu.stat_mode() as u8
+                    ppu.stat_mode(&self.video) as u8
                 } else {
                     0
                 };

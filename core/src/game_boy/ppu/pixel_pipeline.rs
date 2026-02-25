@@ -56,7 +56,8 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
     /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
-    /// is never set on line 0, so STAT reads mode 0).
+    /// is never set on line 0). STAT reads mode 0 for dots 0-3, then
+    /// mode 2 from dot 4 onward (matching TCAGBD section 8.11.1).
     LineStart,
     /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
     /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
@@ -695,11 +696,12 @@ impl Rendering {
 
     /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
-    fn stat_mode(&self) -> Mode {
+    fn stat_mode(&self, video: &VideoControl) -> Mode {
         match self.render_phase {
             RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
+            RenderPhase::LineStart if self.scanner.is_some() && video.dot() >= 4 => Mode::OamScan,
             RenderPhase::LineStart => Mode::HorizontalBlank,
         }
     }
@@ -1543,12 +1545,12 @@ impl FramePhase {
         }
     }
 
-    pub fn stat_mode(&self) -> Mode {
+    pub fn stat_mode(&self, video: &VideoControl) -> Mode {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
                 Mode::HorizontalBlank
             }
-            FramePhase::ActiveDisplay(rendering) => rendering.stat_mode(),
+            FramePhase::ActiveDisplay(rendering) => rendering.stat_mode(video),
             FramePhase::VerticalBlank => Mode::VerticalBlank,
         }
     }
