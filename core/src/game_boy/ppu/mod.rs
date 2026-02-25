@@ -768,6 +768,14 @@ impl Ppu {
         };
 
         if self.control().video_enabled() {
+            // When video is enabled but the pipeline hasn't been created yet
+            // (LCDC was just written, tcycle_even hasn't run), skip all
+            // M-cycle-rate work. The comparison clock and edge detector
+            // don't start until the pipeline is initialized.
+            if self.pixel_pipeline.is_none() {
+                return result;
+            }
+
             if let Some(pipeline) = self.pixel_pipeline.as_mut() {
                 pipeline.tcycle_odd(&self.registers, &self.video, &self.oam, vram);
             }
