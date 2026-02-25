@@ -577,6 +577,20 @@ struct SpriteFetch {
     tile_data_high: u8,
 }
 
+/// Sprite fetch lifecycle. On hardware, FEPO (sprite X match) freezes
+/// the pixel clock, the fetch runs, then the pixel clock resumes with
+/// PX still at the trigger value so the composited pixel outputs first.
+enum SpriteState {
+    /// No sprite activity. Pixel clock runs normally.
+    Idle,
+    /// Sprite fetch in progress (wait + data phases).
+    Fetching(SpriteFetch),
+    /// One-dot post-fetch: pixel clock resumes but PX stays frozen
+    /// so the first pixel at the trigger position includes the sprite.
+    /// Cleared after shift_pixel_out on this dot.
+    Resuming,
+}
+
 // --- Rendering ---
 
 pub struct Rendering {
@@ -620,13 +634,8 @@ pub struct Rendering {
     /// at PX=167. Not reset on window trigger — PX is a monotonic
     /// per-line counter.
     pixel_counter: u8,
-    /// Active sprite fetch, if any.
-    sprite_fetch: Option<SpriteFetch>,
-    /// Set when a sprite fetch completes (sprite_fetch → None). On the
-    /// next dot in the normal rendering path, suppresses the pixel_counter
-    /// increment so the first sprite pixel is output at PX=N (the frozen
-    /// trigger value). Cleared after the resumption dot's shift_pixel_out.
-    sprite_resuming: bool,
+    /// Sprite fetch lifecycle — Idle, Fetching, or Resuming.
+    sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
     /// while the window is active with specific fetcher/FIFO conditions.
     /// Causes the next pixel output to use bg_color=0 without popping
@@ -653,8 +662,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
-            sprite_fetch: None,
-            sprite_resuming: false,
+            sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
         }
     }
@@ -677,8 +685,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
-            sprite_fetch: None,
-            sprite_resuming: false,
+            sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
         }
     }
@@ -817,7 +824,7 @@ impl Rendering {
             // clearing XYMU (handled in half_even).
             if self.render_phase == RenderPhase::Drawing
                 && self.pixel_counter >= WODU_PIXEL_COUNT
-                && self.sprite_fetch.is_none()
+                && !matches!(self.sprite_state, SpriteState::Fetching(_))
             {
                 self.render_phase = RenderPhase::WoduFired;
             }
@@ -843,8 +850,7 @@ impl Rendering {
                 self.fine_scroll = FineScroll::new();
                 self.window_hit = WindowHit::Inactive;
                 self.pixel_counter = 0;
-                self.sprite_fetch = None;
-                self.sprite_resuming = false;
+                self.sprite_state = SpriteState::Idle;
                 self.window_zero_pixel = false;
 
                 if self.line_number == screen::NUM_SCANLINES {
@@ -881,8 +887,8 @@ impl Rendering {
         // After startup, the fetcher advances only on DELTA_ODD (line 952).
         // The BG fetcher is frozen during sprite data fetch (FetchingData).
         let sprite_data_fetch = matches!(
-            self.sprite_fetch,
-            Some(SpriteFetch {
+            self.sprite_state,
+            SpriteState::Fetching(SpriteFetch {
                 phase: SpriteFetchPhase::FetchingData,
                 ..
             })
@@ -943,110 +949,120 @@ impl Rendering {
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
 
-        if let Some(ref mut sf) = self.sprite_fetch {
-            match sf.phase {
-                SpriteFetchPhase::WaitingForFetcher => {
-                    // The BG fetcher continues advancing during the wait.
-                    // This is the hardware behavior: the fetcher keeps
-                    // stepping through its enum states, doing real tile
-                    // fetches that may load pixels into the shifter.
-                    self.advance_bg_fetcher(data, vram);
+        match self.sprite_state {
+            SpriteState::Fetching(ref mut sf) => {
+                match sf.phase {
+                    SpriteFetchPhase::WaitingForFetcher => {
+                        // The BG fetcher continues advancing during the wait.
+                        // This is the hardware behavior: the fetcher keeps
+                        // stepping through its enum states, doing real tile
+                        // fetches that may load pixels into the shifter.
+                        self.advance_bg_fetcher(data, vram);
 
-                    // Wait exits when BOTH conditions are met:
-                    // 1. The fetcher has completed GetTileDataHigh (reached Idle)
-                    // 2. The BG shifter is non-empty
-                    // This is an AND condition — both must be true simultaneously.
-                    let fetcher_past_data = self.fetcher.step == FetcherStep::Idle;
-                    let wait_done = fetcher_past_data && !self.bg_shifter.is_empty();
+                        // Wait exits when BOTH conditions are met:
+                        // 1. The fetcher has completed GetTileDataHigh (reached Idle)
+                        // 2. The BG shifter is non-empty
+                        // This is an AND condition — both must be true simultaneously.
+                        let fetcher_past_data = self.fetcher.step == FetcherStep::Idle;
+                        let wait_done = fetcher_past_data && !self.bg_shifter.is_empty();
 
-                    if wait_done {
-                        // Freeze the BG fetcher at its current position.
-                        // It stays wherever the wait left it (typically Load)
-                        // and resumes from there after the sprite data fetch.
+                        if wait_done {
+                            // Freeze the BG fetcher at its current position.
+                            // It stays wherever the wait left it (typically Load)
+                            // and resumes from there after the sprite data fetch.
 
-                        // Transition to sprite data fetch. The first sprite
-                        // fetch step happens on the same dot as the wait
-                        // exit — the transition itself does not consume a dot.
-                        let sf = self.sprite_fetch.as_mut().unwrap();
-                        sf.phase = SpriteFetchPhase::FetchingData;
-                        Self::advance_sprite_fetch(sf, data, oam, vram);
+                            // Transition to sprite data fetch. The first sprite
+                            // fetch step happens on the same dot as the wait
+                            // exit — the transition itself does not consume a dot.
+                            let sf = match self.sprite_state {
+                                SpriteState::Fetching(ref mut sf) => sf,
+                                _ => unreachable!(),
+                            };
+                            sf.phase = SpriteFetchPhase::FetchingData;
+                            Self::advance_sprite_fetch(sf, data, oam, vram);
+                        }
+                    }
+                    SpriteFetchPhase::FetchingData => {
+                        // BG fetcher is frozen. Advance the sprite data pipeline.
+                        let done = Self::advance_sprite_fetch(sf, data, oam, vram);
+                        if done {
+                            Self::merge_sprite_into_obj_shifter(
+                                sf,
+                                oam,
+                                &self.bg_shifter,
+                                &mut self.obj_shifter,
+                            );
+                            self.sprite_state = SpriteState::Resuming;
+                        }
                     }
                 }
-                SpriteFetchPhase::FetchingData => {
-                    // BG fetcher is frozen. Advance the sprite data pipeline.
-                    let done = Self::advance_sprite_fetch(sf, data, oam, vram);
-                    if done {
-                        Self::merge_sprite_into_obj_shifter(
-                            sf,
-                            oam,
-                            &self.bg_shifter,
-                            &mut self.obj_shifter,
-                        );
-                        self.sprite_fetch = None;
-                        self.sprite_resuming = true;
-                    }
+            }
+            SpriteState::Idle | SpriteState::Resuming => {
+                // Clearing → Inactive: on the tick after SUZU fires, the pixel
+                // clock gate sees RYDY=0 and resumes normal operation.
+                if self.window_hit == WindowHit::Clearing {
+                    self.window_hit = WindowHit::Inactive;
                 }
-            }
-        } else {
-            // Clearing → Inactive: on the tick after SUZU fires, the pixel
-            // clock gate sees RYDY=0 and resumes normal operation.
-            if self.window_hit == WindowHit::Clearing {
-                self.window_hit = WindowHit::Inactive;
-            }
 
-            // SUZU/MOSU: when the window fetch completes (fetcher reaches Idle
-            // while RYDY is active), load the first window tile and clear the
-            // window hit signal. This is the hardware's dedicated window tile
-            // load path — independent of fine_count.
-            if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
-                self.load_bg_tile();
-                self.window_hit = WindowHit::Clearing;
-            }
+                // SUZU/MOSU: when the window fetch completes (fetcher reaches Idle
+                // while RYDY is active), load the first window tile and clear the
+                // window hit signal. This is the hardware's dedicated window tile
+                // load path — independent of fine_count.
+                if self.window_hit == WindowHit::Active
+                    && self.fetcher.step == FetcherStep::Idle
+                {
+                    self.load_bg_tile();
+                    self.window_hit = WindowHit::Clearing;
+                }
 
-            // SEKO reload (async). On hardware, the SEKO-triggered pipe
-            // load is asynchronous — it fires before the clock-driven pipe
-            // shift and pixel counter increment on the same dot. Evaluating
-            // it first ensures the shifter is non-empty for the subsequent
-            // clock-driven operations when fine_count wraps from 7→0.
-            if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
-                self.load_bg_tile();
-            }
+                // SEKO reload (async). On hardware, the SEKO-triggered pipe
+                // load is asynchronous — it fires before the clock-driven pipe
+                // shift and pixel counter increment on the same dot. Evaluating
+                // it first ensures the shifter is non-empty for the subsequent
+                // clock-driven operations when fine_count wraps from 7→0.
+                if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
+                    self.load_bg_tile();
+                }
 
-            // Pixel counter increment. On hardware, SACU (pixel clock) is
-            // gated by TYFA (window hit via SEGU), ROXY (fine scroll), FIFO
-            // readiness (shifter non-empty), and sprite resumption (PX stays
-            // frozen on the first dot after a sprite fetch so the pixel at
-            // PX=N is output before PX advances).
-            if self.window_hit == WindowHit::Inactive
-                && self.fine_scroll.pixel_clock_active()
-                && !self.bg_shifter.is_empty()
-                && !self.sprite_resuming
-            {
-                self.pixel_counter += 1;
-            }
+                // Pixel counter increment. On hardware, SACU (pixel clock) is
+                // gated by TYFA (window hit via SEGU), ROXY (fine scroll), FIFO
+                // readiness (shifter non-empty), and sprite resumption (PX stays
+                // frozen on the first dot after a sprite fetch so the pixel at
+                // PX=N is output before PX advances).
+                let resuming = matches!(self.sprite_state, SpriteState::Resuming);
+                if self.window_hit == WindowHit::Inactive
+                    && self.fine_scroll.pixel_clock_active()
+                    && !self.bg_shifter.is_empty()
+                    && !resuming
+                {
+                    self.pixel_counter += 1;
+                }
 
-            // Sprite trigger check — now uses pixel_counter (change A).
-            if self.sprite_fetch.is_none() {
-                self.check_sprite_trigger(data);
-            }
+                // Sprite trigger check.
+                if !matches!(self.sprite_state, SpriteState::Fetching(_)) {
+                    self.check_sprite_trigger(data);
+                }
 
-            // On hardware, the pixel clock freezes when a sprite triggers
-            // (FEPO match). No pixel is output on the trigger dot — PX
-            // stays at the trigger value and the first pixel at that PX is
-            // the sprite-composited pixel on the resumption dot.
-            if !self.bg_shifter.is_empty() && self.sprite_fetch.is_none() {
-                self.shift_pixel_out(data);
-                self.sprite_resuming = false;
-            }
+                // On hardware, the pixel clock freezes when a sprite triggers
+                // (FEPO match). No pixel is output on the trigger dot — PX
+                // stays at the trigger value and the first pixel at that PX is
+                // the sprite-composited pixel on the resumption dot.
+                if !self.bg_shifter.is_empty()
+                    && !matches!(self.sprite_state, SpriteState::Fetching(_))
+                {
+                    self.shift_pixel_out(data);
+                    self.sprite_state = SpriteState::Idle;
+                }
 
-            self.advance_bg_fetcher(data, vram);
+                self.advance_bg_fetcher(data, vram);
 
-            // PECU (fine counter clock) derives from ROXO, which derives from
-            // TYFA. TYFA is gated by RYDY (window hit), so the fine counter
-            // freezes during window fetch stalls. It does NOT freeze during
-            // ROXY fine scroll discard (different gating point in the chain).
-            if self.window_hit == WindowHit::Inactive {
-                self.fine_scroll.tick();
+                // PECU (fine counter clock) derives from ROXO, which derives from
+                // TYFA. TYFA is gated by RYDY (window hit), so the fine counter
+                // freezes during window fetch stalls. It does NOT freeze during
+                // ROXY fine scroll discard (different gating point in the chain).
+                if self.window_hit == WindowHit::Inactive {
+                    self.fine_scroll.tick();
+                }
             }
         }
     }
@@ -1487,7 +1503,7 @@ impl Rendering {
 
             // Match found — trigger sprite fetch, mark slot as fetched
             self.sprites.fetched |= 1 << i;
-            self.sprite_fetch = Some(SpriteFetch {
+            self.sprite_state = SpriteState::Fetching(SpriteFetch {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
                 step: SpriteStep::GetTile,
