@@ -25,11 +25,10 @@ pub mod timers;
 /// On hardware, an IF flag set during M-cycle N is captured in the
 /// sequencer DFF at N's boundary but doesn't reach the dispatch
 /// decision until M-cycle N+1. `promote()` at step entry advances
-/// Fresh→Ready; when `take_ready()` succeeds, a 4-dot tick loop
-/// models the DFF propagation M-cycle (generic fetch) before ISR
-/// dispatch begins. The mid-step check at HaltedNop completion
-/// serves as a fallback for interrupts captured during the wakeup
-/// NOP's own M-cycle.
+/// Fresh→Ready. The DFF propagation delay is naturally provided by
+/// the trailing fetch (Running path) or HaltedNop (Halted path) —
+/// no separate propagation M-cycle is needed. When `take_ready()`
+/// succeeds, ISR dispatch begins immediately.
 #[derive(Clone, Copy)]
 enum InterruptLatch {
     /// No interrupt pending in the sequencer pipeline.

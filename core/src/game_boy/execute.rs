@@ -23,22 +23,13 @@ impl GameBoy {
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
         // the previous step's M-cycle boundary becomes Ready (dispatchable).
-        // When take_ready() succeeds, tick 4 dots (DFF propagation M-cycle)
-        // before creating Processor::interrupt(). POST_HALTED_NOP remains
-        // as a fallback for interrupts captured during a HaltedNop's tick.
+        // No separate propagation M-cycle is needed — for the Running path,
+        // the trailing fetch at the end of the previous step() already
+        // provided the DFF delay. For the Halted path, the HaltedNop's
+        // M-cycle serves as the wakeup NOP. ISR dispatch begins immediately
+        // when take_ready() succeeds.
         self.interrupt_latch.promote();
         let dispatch_interrupt = self.interrupt_latch.take_ready().is_some();
-
-        // DFF propagation M-cycle: when promote() yields a Ready interrupt,
-        // hardware runs one M-cycle (generic fetch) during which the
-        // sequencer detects the interrupt and routes to ISR. This M-cycle
-        // ticks all hardware subsystems before ISR dispatch begins.
-        if dispatch_interrupt {
-            for dot in 0u8..4 {
-                let is_mcycle_boundary = dot == 3;
-                new_screen |= self.tick_dot(is_mcycle_boundary);
-            }
-        }
 
         let mut processor = match self.cpu.halt_state {
             HaltState::Running => {
@@ -67,8 +58,8 @@ impl GameBoy {
         let mut dot_in_mcycle: u8 = 0;
 
         // Safety budget: longest instruction is 6 M-cycles = 24 dots
-        // (3 fetch + 3 execute). Interrupt dispatch is now 4 (DFF
-        // propagation) + 20 (ISR) = 24 dots. Budget of 52 gives margin.
+        // (3 fetch + 3 execute). Interrupt dispatch is 20 dots (5 ISR
+        // M-cycles). Budget of 52 gives margin.
         const DOT_BUDGET: u32 = 52;
         let mut dots_remaining = DOT_BUDGET;
 
@@ -103,13 +94,9 @@ impl GameBoy {
 
                     if self.cpu.halt_state == HaltState::Halted {
                         if self.interrupt_latch.take_ready().is_some() {
-                            // DFF propagation M-cycle for mid-step interrupt
-                            // detection (interrupt captured during this HaltedNop's
-                            // own M-cycle boundary tick).
-                            for dot in 0u8..4 {
-                                let is_mcycle_boundary = dot == 3;
-                                new_screen |= self.tick_dot(is_mcycle_boundary);
-                            }
+                            // Interrupt was already Ready when this step began but
+                            // the CPU was halted — the HaltedNop's M-cycle served
+                            // as the wakeup NOP. ISR dispatch begins immediately.
                             processor = Processor::interrupt(&mut self.cpu);
                             continue;
                         }
