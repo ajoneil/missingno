@@ -56,14 +56,14 @@ const MAX_SPRITES_PER_LINE: usize = 10;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
-    /// On line 0, the OAM scan runs with `Idle` render phase (BESU
+    /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
     /// is never set on line 0, so STAT reads mode 0).
-    Idle,
+    LineStart,
     /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
     /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
     /// for lines 1+, cleared by AVAP when the scan completes.
     /// Line 0 skips this phase (BESU never set on first line).
-    Scanning,
+    OamScan,
     /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
     /// period from AVAP (scan done) through WODU (PX≥167). During
     /// startup, the `StartupFetch` cascade gates the pixel clock until
@@ -72,10 +72,10 @@ enum RenderPhase {
     /// WODU fired (PX≥167, no sprite match): STAT sees mode=0 via TARU,
     /// pixel clock stops, VRAM/OAM unlocked. XYMU clears next dot.
     /// Hardware: XYMU set, WODU set. Lasts 1 dot.
-    WoduFired,
+    DrawingComplete,
     /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
     /// Hardware: XYMU clear, WODU set.
-    HBlank,
+    HorizontalBlank,
 }
 
 // --- Pixel shift registers ---
@@ -650,7 +650,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
-            render_phase: RenderPhase::Idle,
+            render_phase: RenderPhase::LineStart,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -672,7 +672,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: true,
-            render_phase: RenderPhase::Idle,
+            render_phase: RenderPhase::LineStart,
             dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
@@ -691,8 +691,8 @@ impl Rendering {
 
     fn mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::Drawing | RenderPhase::WoduFired => Mode::Drawing,
-            RenderPhase::Scanning => Mode::OamScan,
+            RenderPhase::Drawing | RenderPhase::DrawingComplete => Mode::Drawing,
+            RenderPhase::OamScan => Mode::OamScan,
             _ if self.scanner.is_some() => Mode::OamScan,
             _ => Mode::HorizontalBlank,
         }
@@ -702,10 +702,10 @@ impl Rendering {
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     fn stat_mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::HorizontalBlank,
+            RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::Scanning => Mode::OamScan,
-            RenderPhase::Idle => Mode::HorizontalBlank,
+            RenderPhase::OamScan => Mode::OamScan,
+            RenderPhase::LineStart => Mode::HorizontalBlank,
         }
     }
 
@@ -713,11 +713,11 @@ impl Rendering {
     /// WODU (hblank_gate) directly — one phase before XYMU clears.
     fn interrupt_mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::HorizontalBlank,
+            RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::Scanning => Mode::OamScan,
-            RenderPhase::Idle if self.scanner.is_some() => Mode::OamScan,
-            RenderPhase::Idle => Mode::HorizontalBlank,
+            RenderPhase::OamScan => Mode::OamScan,
+            RenderPhase::LineStart if self.scanner.is_some() => Mode::OamScan,
+            RenderPhase::LineStart => Mode::HorizontalBlank,
         }
     }
 
@@ -732,7 +732,7 @@ impl Rendering {
     fn oam_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::Scanning | RenderPhase::Drawing
+            RenderPhase::OamScan | RenderPhase::Drawing
         )
     }
 
@@ -744,14 +744,14 @@ impl Rendering {
     fn oam_write_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::Scanning | RenderPhase::Drawing
+            RenderPhase::OamScan | RenderPhase::Drawing
         )
     }
 
     fn vram_write_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::Drawing | RenderPhase::WoduFired
+            RenderPhase::Drawing | RenderPhase::DrawingComplete
         )
     }
 
@@ -767,10 +767,10 @@ impl Rendering {
         vram: &Vram,
     ) {
         // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
-        // BESU_SCAN_DONEn NOR latch → RenderPhase::Scanning.
+        // BESU_SCAN_DONEn NOR latch → RenderPhase::OamScan.
         // BESU is never set on line 0 (hardware special case).
         if self.dot == 1 && video.ly() != 0 {
-            self.render_phase = RenderPhase::Scanning;
+            self.render_phase = RenderPhase::OamScan;
         }
 
         if self.scanner.is_some() {
@@ -783,8 +783,8 @@ impl Rendering {
         // VOGA latch (DELTA_EVEN). On hardware, VOGA captures WODU on the
         // even phase following the odd phase when WODU fired. This cascades
         // through WEGO to clear XYMU (rendering).
-        if self.render_phase == RenderPhase::WoduFired {
-            self.render_phase = RenderPhase::HBlank;
+        if self.render_phase == RenderPhase::DrawingComplete {
+            self.render_phase = RenderPhase::HorizontalBlank;
         }
 
         // Mode 3 EVEN-phase processing
@@ -836,7 +836,7 @@ impl Rendering {
                 && self.pixel_counter >= WODU_PIXEL_COUNT
                 && !matches!(self.sprite_state, SpriteState::Fetching(_))
             {
-                self.render_phase = RenderPhase::WoduFired;
+                self.render_phase = RenderPhase::DrawingComplete;
             }
 
             self.dot += 1;
@@ -848,7 +848,7 @@ impl Rendering {
             }
 
             if self.dot == SCANLINE_TOTAL_DOTS {
-                self.render_phase = RenderPhase::Idle;
+                self.render_phase = RenderPhase::LineStart;
                 if self.window_rendered {
                     self.window_line_counter += 1;
                 }
@@ -1632,7 +1632,7 @@ impl FramePhase {
             FramePhase::ActiveDisplay(rendering) => {
                 matches!(
                     rendering.render_phase,
-                    RenderPhase::Drawing | RenderPhase::WoduFired
+                    RenderPhase::Drawing | RenderPhase::DrawingComplete
                 )
             }
             FramePhase::VerticalBlank(_) => false,
