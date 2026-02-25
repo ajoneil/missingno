@@ -15,19 +15,19 @@ use super::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Mode {
-    BetweenFrames = 1,
-    PreparingScanline = 2,
-    DrawingPixels = 3,
-    BetweenLines = 0,
+    HorizontalBlank = 0,
+    VerticalBlank = 1,
+    OamScan = 2,
+    Drawing = 3,
 }
 
 impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Mode::BetweenFrames => write!(f, "Between Frames"),
-            Mode::PreparingScanline => write!(f, "Preparing Scanline"),
-            Mode::DrawingPixels => write!(f, "Drawing Pixels"),
-            Mode::BetweenLines => write!(f, "Between Scanlines"),
+            Mode::HorizontalBlank => write!(f, "HBlank"),
+            Mode::VerticalBlank => write!(f, "VBlank"),
+            Mode::OamScan => write!(f, "OAM Scan"),
+            Mode::Drawing => write!(f, "Drawing"),
         }
     }
 }
@@ -691,10 +691,10 @@ impl Rendering {
 
     fn mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::Drawing | RenderPhase::WoduFired => Mode::DrawingPixels,
-            RenderPhase::Scanning => Mode::PreparingScanline,
-            _ if self.scanner.is_some() => Mode::PreparingScanline,
-            _ => Mode::BetweenLines,
+            RenderPhase::Drawing | RenderPhase::WoduFired => Mode::Drawing,
+            RenderPhase::Scanning => Mode::OamScan,
+            _ if self.scanner.is_some() => Mode::OamScan,
+            _ => Mode::HorizontalBlank,
         }
     }
 
@@ -702,10 +702,10 @@ impl Rendering {
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     fn stat_mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
-            RenderPhase::Drawing => Mode::DrawingPixels,
-            RenderPhase::Scanning => Mode::PreparingScanline,
-            RenderPhase::Idle => Mode::BetweenLines,
+            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::HorizontalBlank,
+            RenderPhase::Drawing => Mode::Drawing,
+            RenderPhase::Scanning => Mode::OamScan,
+            RenderPhase::Idle => Mode::HorizontalBlank,
         }
     }
 
@@ -713,11 +713,11 @@ impl Rendering {
     /// WODU (hblank_gate) directly — one phase before XYMU clears.
     fn interrupt_mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::BetweenLines,
-            RenderPhase::Drawing => Mode::DrawingPixels,
-            RenderPhase::Scanning => Mode::PreparingScanline,
-            RenderPhase::Idle if self.scanner.is_some() => Mode::PreparingScanline,
-            RenderPhase::Idle => Mode::BetweenLines,
+            RenderPhase::WoduFired | RenderPhase::HBlank => Mode::HorizontalBlank,
+            RenderPhase::Drawing => Mode::Drawing,
+            RenderPhase::Scanning => Mode::OamScan,
+            RenderPhase::Idle if self.scanner.is_some() => Mode::OamScan,
+            RenderPhase::Idle => Mode::HorizontalBlank,
         }
     }
 
@@ -726,7 +726,7 @@ impl Rendering {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::PreparingScanline && (video.ly() != 0 || self.dot >= 4)
+        self.mode() == Mode::OamScan && (video.ly() != 0 || self.dot >= 4)
     }
 
     fn oam_locked(&self) -> bool {
@@ -1563,27 +1563,27 @@ impl PixelPipeline {
     pub fn mode(&self) -> Mode {
         match self {
             PixelPipeline::Rendering(rendering) => rendering.mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::BetweenFrames(_) => Mode::VerticalBlank,
         }
     }
 
     pub fn stat_mode(&self) -> Mode {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
             PixelPipeline::Rendering(rendering) => rendering.stat_mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::BetweenFrames,
+            PixelPipeline::BetweenFrames(_) => Mode::VerticalBlank,
         }
     }
 
     pub fn interrupt_mode(&self) -> Mode {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::BetweenLines,
+            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
             PixelPipeline::Rendering(rendering) => rendering.interrupt_mode(),
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
-            PixelPipeline::BetweenFrames(dots) if *dots >= 4 => Mode::BetweenFrames,
-            PixelPipeline::BetweenFrames(_) => Mode::BetweenLines,
+            PixelPipeline::BetweenFrames(dots) if *dots >= 4 => Mode::VerticalBlank,
+            PixelPipeline::BetweenFrames(_) => Mode::HorizontalBlank,
         }
     }
 

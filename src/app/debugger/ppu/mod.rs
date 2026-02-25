@@ -34,12 +34,12 @@ impl PpuPane {
             scrollable(
                 column![
                     row![
-                        self.mode_radio(ppu.mode(), Mode::BetweenFrames),
-                        self.mode_radio(ppu.mode(), Mode::PreparingScanline)
+                        self.mode_radio(ppu.mode(), Mode::VerticalBlank),
+                        self.mode_radio(ppu.mode(), Mode::OamScan)
                     ],
                     row![
-                        self.mode_radio(ppu.mode(), Mode::DrawingPixels),
-                        self.mode_radio(ppu.mode(), Mode::BetweenLines),
+                        self.mode_radio(ppu.mode(), Mode::Drawing),
+                        self.mode_radio(ppu.mode(), Mode::HorizontalBlank),
                     ],
                     tile_address_mode(ppu.control()),
                     rule::horizontal(1),

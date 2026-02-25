@@ -138,9 +138,9 @@ bitflags! {
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
         const CURRENT_LINE_COMPARE = 0b01000000;
-        const PREPARING_SCANLINE   = 0b00100000;
-        const BETWEEN_FRAMES       = 0b00010000;
-        const FINISHING_SCANLINE   = 0b00001000;
+        const OAM_SCAN             = 0b00100000;
+        const VERTICAL_BLANK       = 0b00010000;
+        const HORIZONTAL_BLANK     = 0b00001000;
     }
 }
 
@@ -423,7 +423,7 @@ impl Ppu {
         if let Some(ppu) = &self.pixel_pipeline {
             ppu.mode()
         } else {
-            pixel_pipeline::Mode::BetweenFrames
+            pixel_pipeline::Mode::VerticalBlank
         }
     }
 
@@ -685,17 +685,17 @@ impl Ppu {
         (self
             .video
             .stat_flags
-            .contains(InterruptFlags::FINISHING_SCANLINE)
-            && mode == Mode::BetweenLines)
+            .contains(InterruptFlags::HORIZONTAL_BLANK)
+            && mode == Mode::HorizontalBlank)
             || (self
                 .video
                 .stat_flags
-                .contains(InterruptFlags::BETWEEN_FRAMES)
-                && mode == Mode::BetweenFrames)
+                .contains(InterruptFlags::VERTICAL_BLANK)
+                && mode == Mode::VerticalBlank)
             || (self
                 .video
                 .stat_flags
-                .contains(InterruptFlags::PREPARING_SCANLINE)
+                .contains(InterruptFlags::OAM_SCAN)
                 && (ppu.mode2_interrupt_active(&self.video) || vblank_line_144))
             || (self
                 .video
