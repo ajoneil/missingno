@@ -6,7 +6,7 @@ use sprites::{Sprite, SpriteId};
 use control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
 use palette::Palettes;
-use pixel_pipeline::FramePhase;
+use pixel_pipeline::{FramePhase, Rendering};
 
 pub struct PpuTickResult {
     pub screen: Option<Screen>,
@@ -190,6 +190,11 @@ impl PipelineRegisters {
 /// interrupt logic reads the latched comparison result. These signals
 /// sit together on the die's video control section.
 pub struct VideoControl {
+    /// Scanline dot counter (XODO-XYNY flip-flop chain, page 21).
+    /// Counts 0–455 every scanline, in both active display and VBlank.
+    /// Drives RUTU (line-end event that clocks LY) at dot 452.
+    dot: u32,
+
     /// LY register (MUWY-LAFO, page 21). Written by the pixel pipeline
     /// at the RUTU line-end event (dot 452). Read by CPU at FF44.
     ly: u8,
@@ -211,12 +216,8 @@ pub struct VideoControl {
 }
 
 impl VideoControl {
-    pub fn write_ly(&mut self, value: u8) {
-        self.ly = value;
-    }
-
-    pub fn latch_ly_comparison(&mut self) {
-        self.ly_eq_lyc = self.ly == self.lyc;
+    pub fn dot(&self) -> u32 {
+        self.dot
     }
 
     pub fn ly(&self) -> u8 {
@@ -225,6 +226,37 @@ impl VideoControl {
 
     pub fn ly_eq_lyc(&self) -> bool {
         self.ly_eq_lyc
+    }
+
+    pub fn write_ly(&mut self, value: u8) {
+        self.ly = value;
+    }
+
+    pub fn latch_ly_comparison(&mut self) {
+        self.ly_eq_lyc = self.ly == self.lyc;
+    }
+
+    /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),
+    /// fires the RUTU event: LY increments (or wraps 153→0). At
+    /// SCANLINE_TOTAL_DOTS (456), resets dot to 0 and returns true.
+    pub fn advance_dot(&mut self) -> bool {
+        self.dot += 1;
+
+        if self.dot == pixel_pipeline::RUTU_LINE_END_DOT {
+            // RUTU line-end event: clock the LY ripple counter.
+            if self.ly == 153 {
+                self.ly = 0;
+            } else {
+                self.ly += 1;
+            }
+        }
+
+        if self.dot == pixel_pipeline::SCANLINE_TOTAL_DOTS {
+            self.dot = 0;
+            return true;
+        }
+
+        false
     }
 }
 
@@ -260,6 +292,7 @@ impl Ppu {
                 palettes: Palettes::default(),
             },
             video: VideoControl {
+                dot: 0,
                 ly: 0,
                 lyc: 0,
                 ly_eq_lyc: true,
@@ -674,11 +707,13 @@ impl Ppu {
             None => return false,
         };
 
-        let mode = ppu.interrupt_mode();
+        let mode = ppu.interrupt_mode(&self.video);
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 = matches!(ppu, FramePhase::VerticalBlank(dots) if *dots < 4);
+        let vblank_line_144 = matches!(ppu, FramePhase::VerticalBlank)
+            && self.video.ly() == 144
+            && self.video.dot() < 4;
 
         // Mode 0 interrupt fires on the actual mode transition, not the
         // early stat_mode prediction (which is only for STAT register reads).
@@ -692,10 +727,7 @@ impl Ppu {
                 .stat_flags
                 .contains(InterruptFlags::VERTICAL_BLANK)
                 && mode == Mode::VerticalBlank)
-            || (self
-                .video
-                .stat_flags
-                .contains(InterruptFlags::OAM_SCAN)
+            || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
                 && (ppu.mode2_interrupt_active(&self.video) || vblank_line_144))
             || (self
                 .video
@@ -712,6 +744,7 @@ impl Ppu {
         }
 
         if self.pixel_pipeline.is_none() {
+            self.video.dot = 0;
             self.video.write_ly(0);
             self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
@@ -735,12 +768,29 @@ impl Ppu {
         };
 
         if self.control().video_enabled() {
-            if let Some(pipeline) = self.pixel_pipeline.as_mut()
-                && let Some(screen) =
-                    pipeline.tcycle_odd(&self.registers, &mut self.video, &self.oam, vram)
-            {
-                result.screen = Some(screen);
-                result.request_vblank = true;
+            if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+                pipeline.tcycle_odd(&self.registers, &self.video, &self.oam, vram);
+            }
+
+            if self.video.advance_dot() {
+                // Scanline boundary — dot counter wrapped to 0.
+                match self.pixel_pipeline.as_mut() {
+                    Some(FramePhase::ActiveDisplay(rendering)) => {
+                        if self.video.ly() == screen::NUM_SCANLINES {
+                            result.screen = Some(rendering.screen.clone());
+                            result.request_vblank = true;
+                            self.pixel_pipeline = Some(FramePhase::VerticalBlank);
+                        } else {
+                            rendering.reset_scanline();
+                        }
+                    }
+                    Some(FramePhase::VerticalBlank) => {
+                        if self.video.ly() == 0 {
+                            self.pixel_pipeline = Some(FramePhase::ActiveDisplay(Rendering::new()));
+                        }
+                    }
+                    None => {}
+                }
             }
 
             if !is_mcycle {

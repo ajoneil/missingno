@@ -32,7 +32,7 @@ impl fmt::Display for Mode {
     }
 }
 
-const SCANLINE_TOTAL_DOTS: u32 = 456;
+pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
@@ -42,8 +42,7 @@ const WODU_PIXEL_COUNT: u8 = 167;
 const FIRST_VISIBLE_PIXEL: u8 = 8;
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
-const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
-const VERTICAL_BLANK_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
+pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
 /// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
@@ -597,7 +596,7 @@ enum SpriteState {
 // --- Rendering ---
 
 pub struct Rendering {
-    screen: Screen,
+    pub(super) screen: Screen,
     window_line_counter: u8,
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
@@ -605,8 +604,6 @@ pub struct Rendering {
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
     render_phase: RenderPhase,
-    /// Dot position within the current scanline (0..456).
-    dot: u32,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
     /// OAM scanner — active during Mode 2, consumed when scan completes.
@@ -645,13 +642,12 @@ pub struct Rendering {
 }
 
 impl Rendering {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
             render_phase: RenderPhase::LineStart,
-            dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
             window_rendered: false,
@@ -673,7 +669,6 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: true,
             render_phase: RenderPhase::LineStart,
-            dot: 0,
             sprites: SpriteStore::new(),
             scanner: Some(OamScanner::new()),
             window_rendered: false,
@@ -726,7 +721,7 @@ impl Rendering {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::OamScan && (video.ly() != 0 || self.dot >= 4)
+        self.mode() == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
     }
 
     fn oam_locked(&self) -> bool {
@@ -769,7 +764,7 @@ impl Rendering {
         // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
         // BESU_SCAN_DONEn NOR latch → RenderPhase::OamScan.
         // BESU is never set on line 0 (hardware special case).
-        if self.dot == 1 && video.ly() != 0 {
+        if video.dot() == 1 && video.ly() != 0 {
             self.render_phase = RenderPhase::OamScan;
         }
 
@@ -797,18 +792,16 @@ impl Rendering {
     ///
     /// On hardware, DELTA_ODD handles pixel counter increment,
     /// fine counter increment, pipe shift, and sprite X matching.
-    /// Returns true when a full frame is complete.
     pub(super) fn half_odd(
         &mut self,
         regs: &PipelineRegisters,
-        video: &mut VideoControl,
+        video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-    ) -> bool {
+    ) {
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
             scanner.scan_next_entry(video.ly(), &mut self.sprites, regs, oam);
-            self.dot += 1;
             if scanner.done() {
                 // FETO_SCAN_DONE — scan complete, begin Mode 2→3 transition.
                 self.scanner = None;
@@ -838,45 +831,28 @@ impl Rendering {
             {
                 self.render_phase = RenderPhase::DrawingComplete;
             }
-
-            self.dot += 1;
-
-            // RUTU line-end event: LY register increments (MUWY-LAFO
-            // ripple counter clocked by RUTU_LINE_ENDp).
-            if self.dot == RUTU_LINE_END_DOT {
-                video.write_ly(video.ly() + 1);
-            }
-
-            if self.dot == SCANLINE_TOTAL_DOTS {
-                self.render_phase = RenderPhase::LineStart;
-                if self.window_rendered {
-                    self.window_line_counter += 1;
-                }
-
-                // Scanline boundary — reset per-line state.
-                // LY on the bus already holds the next line's value
-                // (incremented at RUTU_LINE_END_DOT).
-                self.dot = 0;
-                self.sprites = SpriteStore::new();
-                self.scanner = Some(OamScanner::new());
-                self.window_rendered = false;
-                self.bg_shifter = BgShifter::new();
-                self.obj_shifter = ObjShifter::new();
-                self.fetcher = TileFetcher::new();
-                self.startup_fetch = Some(StartupFetch::FirstTile);
-                self.fine_scroll = FineScroll::new();
-                self.window_hit = WindowHit::Inactive;
-                self.pixel_counter = 0;
-                self.sprite_state = SpriteState::Idle;
-                self.window_zero_pixel = false;
-
-                if video.ly() == screen::NUM_SCANLINES {
-                    return true;
-                }
-            }
         }
+    }
 
-        false
+    /// Reset per-line state at the scanline boundary. Called by
+    /// `Ppu::tcycle_odd` when `advance_dot` signals a new scanline.
+    pub(super) fn reset_scanline(&mut self) {
+        self.render_phase = RenderPhase::LineStart;
+        if self.window_rendered {
+            self.window_line_counter += 1;
+        }
+        self.sprites = SpriteStore::new();
+        self.scanner = Some(OamScanner::new());
+        self.window_rendered = false;
+        self.bg_shifter = BgShifter::new();
+        self.obj_shifter = ObjShifter::new();
+        self.fetcher = TileFetcher::new();
+        self.startup_fetch = Some(StartupFetch::FirstTile);
+        self.fine_scroll = FineScroll::new();
+        self.window_hit = WindowHit::Inactive;
+        self.pixel_counter = 0;
+        self.sprite_state = SpriteState::Idle;
+        self.window_zero_pixel = false;
     }
 
     /// DELTA_EVEN Mode 3 processing.
@@ -1545,7 +1521,7 @@ impl Rendering {
 
 pub enum FramePhase {
     ActiveDisplay(Rendering),
-    VerticalBlank(u32),
+    VerticalBlank,
 }
 
 impl FramePhase {
@@ -1563,27 +1539,33 @@ impl FramePhase {
     pub fn mode(&self) -> Mode {
         match self {
             FramePhase::ActiveDisplay(rendering) => rendering.mode(),
-            FramePhase::VerticalBlank(_) => Mode::VerticalBlank,
+            FramePhase::VerticalBlank => Mode::VerticalBlank,
         }
     }
 
     pub fn stat_mode(&self) -> Mode {
         match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
+                Mode::HorizontalBlank
+            }
             FramePhase::ActiveDisplay(rendering) => rendering.stat_mode(),
-            FramePhase::VerticalBlank(_) => Mode::VerticalBlank,
+            FramePhase::VerticalBlank => Mode::VerticalBlank,
         }
     }
 
-    pub fn interrupt_mode(&self) -> Mode {
+    pub fn interrupt_mode(&self, video: &VideoControl) -> Mode {
         match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
+                Mode::HorizontalBlank
+            }
             FramePhase::ActiveDisplay(rendering) => rendering.interrupt_mode(),
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
-            FramePhase::VerticalBlank(dots) if *dots >= 4 => Mode::VerticalBlank,
-            FramePhase::VerticalBlank(_) => Mode::HorizontalBlank,
+            FramePhase::VerticalBlank if video.ly() == 144 && video.dot() < 4 => {
+                Mode::HorizontalBlank
+            }
+            FramePhase::VerticalBlank => Mode::VerticalBlank,
         }
     }
 
@@ -1591,7 +1573,7 @@ impl FramePhase {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
             FramePhase::ActiveDisplay(rendering) => rendering.mode2_interrupt_active(video),
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1599,7 +1581,7 @@ impl FramePhase {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
             FramePhase::ActiveDisplay(rendering) => rendering.oam_locked(),
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1607,7 +1589,7 @@ impl FramePhase {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
             FramePhase::ActiveDisplay(rendering) => rendering.vram_locked(),
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1615,7 +1597,7 @@ impl FramePhase {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
             FramePhase::ActiveDisplay(rendering) => rendering.oam_write_locked(),
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1623,7 +1605,7 @@ impl FramePhase {
         match self {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
             FramePhase::ActiveDisplay(rendering) => rendering.vram_write_locked(),
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1635,7 +1617,7 @@ impl FramePhase {
                     RenderPhase::Drawing | RenderPhase::DrawingComplete
                 )
             }
-            FramePhase::VerticalBlank(_) => false,
+            FramePhase::VerticalBlank => false,
         }
     }
 
@@ -1644,7 +1626,7 @@ impl FramePhase {
             FramePhase::ActiveDisplay(rendering) => {
                 rendering.scanner.as_ref().map(|s| s.oam_address())
             }
-            FramePhase::VerticalBlank(_) => None,
+            FramePhase::VerticalBlank => None,
         }
     }
 
@@ -1654,53 +1636,23 @@ impl FramePhase {
             FramePhase::ActiveDisplay(rendering) => {
                 rendering.half_even(regs, video, vram);
             }
-            FramePhase::VerticalBlank(_) => {}
+            FramePhase::VerticalBlank => {}
         }
     }
 
-    /// DELTA_ODD half of a dot tick: pixel output, counter increment.
-    /// Returns a completed screen when a full frame finishes rendering.
+    /// DELTA_ODD half of a dot tick: pixel output phase.
     pub fn tcycle_odd(
         &mut self,
         regs: &PipelineRegisters,
-        video: &mut VideoControl,
+        video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-    ) -> Option<Screen> {
-        let mut screen = None;
+    ) {
         match self {
             FramePhase::ActiveDisplay(rendering) => {
-                if rendering.half_odd(regs, video, oam, vram) {
-                    screen = Some(rendering.screen.clone());
-                    *self = FramePhase::VerticalBlank(0);
-                }
+                rendering.half_odd(regs, video, oam, vram);
             }
-            FramePhase::VerticalBlank(dots) => {
-                *dots += 1;
-                // RUTU line-end event within VBlank scanlines:
-                // LY increments at the same dot offset as during Rendering.
-                if *dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT {
-                    video.write_ly(video.ly() + 1);
-                }
-                if *dots >= VERTICAL_BLANK_DOTS {
-                    video.write_ly(0);
-                    *self = FramePhase::ActiveDisplay(Rendering::new());
-                }
-            }
+            FramePhase::VerticalBlank => {}
         }
-        screen
-    }
-
-    /// Advance the PPU by one dot (T-cycle). Returns a completed screen
-    /// when a full frame finishes rendering.
-    pub fn tcycle(
-        &mut self,
-        regs: &PipelineRegisters,
-        video: &mut VideoControl,
-        oam: &Oam,
-        vram: &Vram,
-    ) -> Option<Screen> {
-        self.tcycle_even(regs, video, vram);
-        self.tcycle_odd(regs, video, oam, vram)
     }
 }
