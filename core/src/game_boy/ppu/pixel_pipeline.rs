@@ -379,10 +379,20 @@ enum StartupFetch {
     PoryFired,
 }
 
+/// Which half of LEBO's 2-dot clock cycle the fetcher is in.
+/// The fetcher (and OAM scanner) are clocked at half the dot rate.
+/// T1 is the first dot (LEBO low → high edge); T2 is the second
+/// (LEBO high → low edge, when the actual work fires).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FetcherTick {
+    T1,
+    T2,
+}
+
 struct TileFetcher {
     step: FetcherStep,
-    /// Sub-dot counter within the current step (0 or 1 for 2-dot steps).
-    dot_in_step: u8,
+    /// Which half of the 2-dot fetcher clock cycle we're in.
+    tick: FetcherTick,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     window_tile_x: u8,
@@ -400,7 +410,7 @@ impl TileFetcher {
     fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
-            dot_in_step: 0,
+            tick: FetcherTick::T1,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -465,16 +475,15 @@ impl SpriteStore {
 struct OamScanner {
     /// Which OAM entry to process next (0-39). Increments every 2 dots.
     entry: u8,
-    /// Sub-tick within the current entry (0 or 1). The hardware clocks
-    /// once per 2 dots; we model this as two dots per entry.
-    dot_in_entry: u8,
+    /// Which half of the 2-dot scanner clock cycle we're in.
+    tick: FetcherTick,
 }
 
 impl OamScanner {
     fn new() -> Self {
         Self {
             entry: 0,
-            dot_in_entry: 0,
+            tick: FetcherTick::T1,
         }
     }
 
@@ -492,8 +501,8 @@ impl OamScanner {
         data: &Registers,
         oam: &Oam,
     ) {
-        if self.dot_in_entry == 0 {
-            self.dot_in_entry = 1;
+        if self.tick == FetcherTick::T1 {
+            self.tick = FetcherTick::T2;
         } else {
             if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
                 // OAM bus read: only Y (byte 0) and X (byte 1).
@@ -518,7 +527,7 @@ impl OamScanner {
                 }
             }
             self.entry += 1;
-            self.dot_in_entry = 0;
+            self.tick = FetcherTick::T1;
         }
     }
 
@@ -563,7 +572,7 @@ struct SpriteFetch {
     entry: SpriteStoreEntry,
     phase: SpriteFetchPhase,
     step: SpriteStep,
-    dot_in_step: u8,
+    tick: FetcherTick,
     tile_data_low: u8,
     tile_data_high: u8,
 }
@@ -965,8 +974,8 @@ impl Rendering {
                 }
                 SpriteFetchPhase::FetchingData => {
                     // BG fetcher is frozen. Advance the sprite data pipeline.
-                    Self::advance_sprite_fetch(sf, data, oam, vram);
-                    if sf.step == SpriteStep::GetTileDataHigh && sf.dot_in_step == 2 {
+                    let done = Self::advance_sprite_fetch(sf, data, oam, vram);
+                    if done {
                         Self::merge_sprite_into_obj_shifter(
                             sf,
                             oam,
@@ -1119,29 +1128,29 @@ impl Rendering {
     fn advance_bg_fetcher(&mut self, data: &Registers, vram: &Vram) {
         match self.fetcher.step {
             FetcherStep::GetTile => {
-                if self.fetcher.dot_in_step == 0 {
-                    self.fetcher.dot_in_step = 1;
+                if self.fetcher.tick == FetcherTick::T1 {
+                    self.fetcher.tick = FetcherTick::T2;
                 } else {
                     self.fetcher.tile_index = self.read_tile_index(data, vram);
-                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::GetTileDataLow;
                 }
             }
             FetcherStep::GetTileDataLow => {
-                if self.fetcher.dot_in_step == 0 {
-                    self.fetcher.dot_in_step = 1;
+                if self.fetcher.tick == FetcherTick::T1 {
+                    self.fetcher.tick = FetcherTick::T2;
                 } else {
                     self.fetcher.tile_data_low = self.read_tile_data(data, vram, false);
-                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::GetTileDataHigh;
                 }
             }
             FetcherStep::GetTileDataHigh => {
-                if self.fetcher.dot_in_step == 0 {
-                    self.fetcher.dot_in_step = 1;
+                if self.fetcher.tick == FetcherTick::T1 {
+                    self.fetcher.tick = FetcherTick::T2;
                 } else {
                     self.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
-                    self.fetcher.dot_in_step = 0;
+                    self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::Idle;
                 }
             }
@@ -1163,7 +1172,7 @@ impl Rendering {
             self.fetcher.window_tile_x = self.fetcher.window_tile_x.wrapping_add(1);
         }
         self.fetcher.step = FetcherStep::GetTile;
-        self.fetcher.dot_in_step = 0;
+        self.fetcher.tick = FetcherTick::T1;
     }
 
     /// Read one byte of sprite tile data (low or high bitplane).
@@ -1203,38 +1212,43 @@ impl Rendering {
         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
     }
 
-    /// Advance the sprite fetch pipeline by one dot.
-    fn advance_sprite_fetch(sf: &mut SpriteFetch, data: &Registers, oam: &Oam, vram: &Vram) {
+    /// Advance the sprite fetch pipeline by one dot. Returns `true` when
+    /// the fetch is complete (GetTileDataHigh T2 has fired).
+    fn advance_sprite_fetch(
+        sf: &mut SpriteFetch,
+        data: &Registers,
+        oam: &Oam,
+        vram: &Vram,
+    ) -> bool {
         match sf.step {
             SpriteStep::GetTile => {
-                if sf.dot_in_step == 0 {
-                    sf.dot_in_step = 1;
+                if sf.tick == FetcherTick::T1 {
+                    sf.tick = FetcherTick::T2;
                 } else {
                     // Tile index comes from OAM via the sprite store's oam_index
-                    sf.dot_in_step = 0;
+                    sf.tick = FetcherTick::T1;
                     sf.step = SpriteStep::GetTileDataLow;
                 }
             }
             SpriteStep::GetTileDataLow => {
-                if sf.dot_in_step == 0 {
-                    sf.dot_in_step = 1;
+                if sf.tick == FetcherTick::T1 {
+                    sf.tick = FetcherTick::T2;
                 } else {
                     sf.tile_data_low = Self::read_sprite_tile_data(sf, data, oam, vram, false);
-                    sf.dot_in_step = 0;
+                    sf.tick = FetcherTick::T1;
                     sf.step = SpriteStep::GetTileDataHigh;
                 }
             }
             SpriteStep::GetTileDataHigh => {
-                if sf.dot_in_step == 0 {
-                    sf.dot_in_step = 1;
+                if sf.tick == FetcherTick::T1 {
+                    sf.tick = FetcherTick::T2;
                 } else {
                     sf.tile_data_high = Self::read_sprite_tile_data(sf, data, oam, vram, true);
-                    // Signal completion. Use dot_in_step = 2 to distinguish
-                    // from the initial entry state (dot_in_step = 0).
-                    sf.dot_in_step = 2;
+                    return true;
                 }
             }
         }
+        false
     }
 
     /// Merge fetched sprite pixels into the OBJ shifter.
@@ -1420,7 +1434,7 @@ impl Rendering {
         if self.fetcher.fetching_window {
             if self.startup_fetch.is_none()
                 && self.fetcher.step == FetcherStep::GetTile
-                && self.fetcher.dot_in_step == 1
+                && self.fetcher.tick == FetcherTick::T2
                 && self.bg_shifter.len() == 8
             {
                 self.window_zero_pixel = true;
@@ -1435,7 +1449,7 @@ impl Rendering {
         self.fine_scroll.reset_for_window();
         self.window_hit = WindowHit::Active;
         self.fetcher.step = FetcherStep::GetTile;
-        self.fetcher.dot_in_step = 0;
+        self.fetcher.tick = FetcherTick::T1;
         self.fetcher.window_tile_x = 0;
         self.fetcher.fetching_window = true;
         if self.startup_fetch.is_some() {
@@ -1477,7 +1491,7 @@ impl Rendering {
                 entry: *entry,
                 phase: SpriteFetchPhase::WaitingForFetcher,
                 step: SpriteStep::GetTile,
-                dot_in_step: 0,
+                tick: FetcherTick::T1,
                 tile_data_low: 0,
                 tile_data_high: 0,
             });
