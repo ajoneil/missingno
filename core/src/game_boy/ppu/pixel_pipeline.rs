@@ -1,7 +1,7 @@
 use core::fmt;
 
 use crate::game_boy::ppu::{
-    RegisterBus,
+    PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
     palette::{PaletteIndex, PaletteMap},
     screen::{self, Screen},
@@ -501,7 +501,7 @@ impl OamScanner {
         &mut self,
         line_number: u8,
         sprites: &mut SpriteStore,
-        data: &RegisterBus,
+        regs: &PipelineRegisters,
         oam: &Oam,
     ) {
         if self.tick == FetcherTick::T1 {
@@ -518,7 +518,7 @@ impl OamScanner {
                 // Bits 0–3 of delta are the sprite line offset — the
                 // same value drives the sprite store's line register.
                 let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
-                let height = data.control.sprite_size().height();
+                let height = regs.control.sprite_size().height();
                 if delta < height {
                     let line_offset = delta;
                     sprites.entries[sprites.count as usize] = SpriteStoreEntry {
@@ -722,11 +722,11 @@ impl Rendering {
     }
 
     /// Whether the mode 2 STAT interrupt condition is active.
-    fn mode2_interrupt_active(&self, data: &RegisterBus) -> bool {
+    fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::PreparingScanline && (data.ly() != 0 || self.dot >= 4)
+        self.mode() == Mode::PreparingScanline && (video.ly() != 0 || self.dot >= 4)
     }
 
     fn oam_locked(&self) -> bool {
@@ -760,11 +760,16 @@ impl Rendering {
     /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
     /// match (PUXA), and window WX match (PYCO).
-    pub(super) fn half_even(&mut self, data: &RegisterBus, vram: &Vram) {
+    pub(super) fn half_even(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        vram: &Vram,
+    ) {
         // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
         // BESU_SCAN_DONEn NOR latch → RenderPhase::Scanning.
         // BESU is never set on line 0 (hardware special case).
-        if self.dot == 1 && data.ly() != 0 {
+        if self.dot == 1 && video.ly() != 0 {
             self.render_phase = RenderPhase::Scanning;
         }
 
@@ -784,7 +789,7 @@ impl Rendering {
 
         // Mode 3 EVEN-phase processing
         if self.render_phase == RenderPhase::Drawing {
-            self.mode3_even(data, vram);
+            self.mode3_even(regs, video, vram);
         }
     }
 
@@ -793,10 +798,16 @@ impl Rendering {
     /// On hardware, DELTA_ODD handles pixel counter increment,
     /// fine counter increment, pipe shift, and sprite X matching.
     /// Returns true when a full frame is complete.
-    pub(super) fn half_odd(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> bool {
+    pub(super) fn half_odd(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &mut VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) -> bool {
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
-            scanner.scan_next_entry(data.ly(), &mut self.sprites, data, oam);
+            scanner.scan_next_entry(video.ly(), &mut self.sprites, regs, oam);
             self.dot += 1;
             if scanner.done() {
                 // FETO_SCAN_DONE — scan complete, begin Mode 2→3 transition.
@@ -812,7 +823,7 @@ impl Rendering {
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
-                self.mode3_odd(data, oam, vram);
+                self.mode3_odd(regs, video, oam, vram);
             }
 
             // WODU hblank gate (DELTA_ODD). On hardware, WODU fires
@@ -833,7 +844,7 @@ impl Rendering {
             // RUTU line-end event: LY register increments (MUWY-LAFO
             // ripple counter clocked by RUTU_LINE_ENDp).
             if self.dot == RUTU_LINE_END_DOT {
-                data.write_ly(data.ly() + 1);
+                video.write_ly(video.ly() + 1);
             }
 
             if self.dot == SCANLINE_TOTAL_DOTS {
@@ -859,7 +870,7 @@ impl Rendering {
                 self.sprite_state = SpriteState::Idle;
                 self.window_zero_pixel = false;
 
-                if data.ly() == screen::NUM_SCANLINES {
+                if video.ly() == screen::NUM_SCANLINES {
                     return true;
                 }
             }
@@ -873,7 +884,7 @@ impl Rendering {
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
     /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
     /// all fire on DELTA_EVEN.
-    fn mode3_even(&mut self, data: &RegisterBus, vram: &Vram) {
+    fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
         // Startup cascade DFF captures on DELTA_EVEN. Each arm reads
         // state set by the *previous* DELTA_EVEN or DELTA_ODD — the
         // DFF capture delay is explicit in the state machine.
@@ -900,7 +911,7 @@ impl Rendering {
             })
         );
         if !sprite_data_fetch && self.startup_fetch.is_some() {
-            self.advance_bg_fetcher(data, vram);
+            self.advance_bg_fetcher(regs, video, vram);
         }
 
         // TAVE preload: when the startup fetch first reaches Idle
@@ -926,16 +937,22 @@ impl Rendering {
         // No fine scroll processing during startup fetch.
         if self.startup_fetch.is_none() {
             self.fine_scroll
-                .check_scroll_match(data.background_viewport.x);
+                .check_scroll_match(regs.background_viewport.x);
         }
 
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
         // Active during both startup fetch and normal rendering.
-        self.check_window_trigger(data);
+        self.check_window_trigger(regs, video);
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
-    fn mode3_odd(&mut self, data: &RegisterBus, oam: &Oam, vram: &Vram) {
+    fn mode3_odd(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) {
         match self.startup_fetch {
             Some(StartupFetch::FirstTile) | Some(StartupFetch::LyryFired) => {
                 // During fetch/cascade phase, no pixel processing.
@@ -963,7 +980,7 @@ impl Rendering {
                         // This is the hardware behavior: the fetcher keeps
                         // stepping through its enum states, doing real tile
                         // fetches that may load pixels into the shifter.
-                        self.advance_bg_fetcher(data, vram);
+                        self.advance_bg_fetcher(regs, video, vram);
 
                         // Wait exits when BOTH conditions are met:
                         // 1. The fetcher has completed GetTileDataHigh (reached Idle)
@@ -985,12 +1002,12 @@ impl Rendering {
                                 _ => unreachable!(),
                             };
                             sf.phase = SpriteFetchPhase::FetchingData;
-                            Self::advance_sprite_fetch(sf, data, oam, vram);
+                            Self::advance_sprite_fetch(sf, regs, oam, vram);
                         }
                     }
                     SpriteFetchPhase::FetchingData => {
                         // BG fetcher is frozen. Advance the sprite data pipeline.
-                        let done = Self::advance_sprite_fetch(sf, data, oam, vram);
+                        let done = Self::advance_sprite_fetch(sf, regs, oam, vram);
                         if done {
                             Self::merge_sprite_into_obj_shifter(
                                 sf,
@@ -1044,7 +1061,7 @@ impl Rendering {
 
                 // Sprite trigger check.
                 if !matches!(self.sprite_state, SpriteState::Fetching(_)) {
-                    self.check_sprite_trigger(data);
+                    self.check_sprite_trigger(regs);
                 }
 
                 // On hardware, the pixel clock freezes when a sprite triggers
@@ -1054,11 +1071,11 @@ impl Rendering {
                 if !self.bg_shifter.is_empty()
                     && !matches!(self.sprite_state, SpriteState::Fetching(_))
                 {
-                    self.shift_pixel_out(data);
+                    self.shift_pixel_out(regs, video);
                     self.sprite_state = SpriteState::Idle;
                 }
 
-                self.advance_bg_fetcher(data, vram);
+                self.advance_bg_fetcher(regs, video, vram);
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit), so the fine counter
@@ -1080,12 +1097,12 @@ impl Rendering {
 
     /// BG tilemap coordinate computation (page 26).
     /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
-    fn bg_tilemap_coords(&self, data: &RegisterBus) -> (u8, u8) {
-        let scx = data.background_viewport.x;
-        let scy = data.background_viewport.y.output();
+    fn bg_tilemap_coords(&self, regs: &PipelineRegisters, video: &VideoControl) -> (u8, u8) {
+        let scx = regs.background_viewport.x;
+        let scy = regs.background_viewport.y.output();
         (
             ((self.pixel_counter.wrapping_add(scx)) >> 3) & 31,
-            (data.ly().wrapping_add(scy) / 8) & 31,
+            (video.ly().wrapping_add(scy) / 8) & 31,
         )
     }
 
@@ -1096,24 +1113,24 @@ impl Rendering {
     }
 
     /// Read the tile index from the tilemap for the current fetch position.
-    fn read_tile_index(&self, data: &RegisterBus, vram: &Vram) -> u8 {
+    fn read_tile_index(&self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) -> u8 {
         let (map_x, map_y) = if self.fetcher.fetching_window {
             self.window_tilemap_coords()
         } else {
-            self.bg_tilemap_coords(data)
+            self.bg_tilemap_coords(regs, video)
         };
 
         let map_id = if self.fetcher.fetching_window {
-            data.control.window_tile_map()
+            regs.control.window_tile_map()
         } else {
-            data.control.background_tile_map()
+            regs.control.background_tile_map()
         };
         vram.tile_map(map_id).get_tile(map_x, map_y).0
     }
 
     /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
-    fn bg_fine_y(&self, data: &RegisterBus) -> u8 {
-        data.ly().wrapping_add(data.background_viewport.y.output()) % 8
+    fn bg_fine_y(&self, regs: &PipelineRegisters, video: &VideoControl) -> u8 {
+        video.ly().wrapping_add(regs.background_viewport.y.output()) % 8
     }
 
     /// Window fine Y offset (page 27): which row within the tile, from
@@ -1128,14 +1145,20 @@ impl Rendering {
     /// The tile data address combines the tile index (cached from the
     /// tilemap read) with the fine Y offset from the appropriate
     /// address generator. The VRAM interface (page 25) performs the read.
-    fn read_tile_data(&self, data: &RegisterBus, vram: &Vram, high: bool) -> u8 {
+    fn read_tile_data(
+        &self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        vram: &Vram,
+        high: bool,
+    ) -> u8 {
         let tile_index = TileIndex(self.fetcher.tile_index);
-        let (block_id, mapped_idx) = data.control.tile_address_mode().tile(tile_index);
+        let (block_id, mapped_idx) = regs.control.tile_address_mode().tile(tile_index);
 
         let fine_y = if self.fetcher.fetching_window {
             self.window_fine_y()
         } else {
-            self.bg_fine_y(data)
+            self.bg_fine_y(regs, video)
         };
 
         let block = vram.tile_block(block_id);
@@ -1143,13 +1166,13 @@ impl Rendering {
     }
 
     /// Advance the background tile fetcher by one dot.
-    fn advance_bg_fetcher(&mut self, data: &RegisterBus, vram: &Vram) {
+    fn advance_bg_fetcher(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
         match self.fetcher.step {
             FetcherStep::GetTile => {
                 if self.fetcher.tick == FetcherTick::T1 {
                     self.fetcher.tick = FetcherTick::T2;
                 } else {
-                    self.fetcher.tile_index = self.read_tile_index(data, vram);
+                    self.fetcher.tile_index = self.read_tile_index(regs, video, vram);
                     self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::GetTileDataLow;
                 }
@@ -1158,7 +1181,7 @@ impl Rendering {
                 if self.fetcher.tick == FetcherTick::T1 {
                     self.fetcher.tick = FetcherTick::T2;
                 } else {
-                    self.fetcher.tile_data_low = self.read_tile_data(data, vram, false);
+                    self.fetcher.tile_data_low = self.read_tile_data(regs, video, vram, false);
                     self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::GetTileDataHigh;
                 }
@@ -1167,7 +1190,7 @@ impl Rendering {
                 if self.fetcher.tick == FetcherTick::T1 {
                     self.fetcher.tick = FetcherTick::T2;
                 } else {
-                    self.fetcher.tile_data_high = self.read_tile_data(data, vram, true);
+                    self.fetcher.tile_data_high = self.read_tile_data(regs, video, vram, true);
                     self.fetcher.tick = FetcherTick::T1;
                     self.fetcher.step = FetcherStep::Idle;
                 }
@@ -1201,13 +1224,13 @@ impl Rendering {
     /// and flip flags. The VRAM interface (page 25) performs the read.
     fn read_sprite_tile_data(
         sf: &SpriteFetch,
-        data: &RegisterBus,
+        regs: &PipelineRegisters,
         oam: &Oam,
         vram: &Vram,
         high: bool,
     ) -> u8 {
         let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
-        let tile_index = if data.control.sprite_size() == SpriteSize::Double {
+        let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
             TileIndex(sprite.tile.0 & 0xFE)
         } else {
             sprite.tile
@@ -1215,7 +1238,7 @@ impl Rendering {
         let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
 
         let flipped_y = if sprite.attributes.flip_y() {
-            (data.control.sprite_size().height() as i16 - 1 - sf.entry.line_offset as i16) as u8
+            (regs.control.sprite_size().height() as i16 - 1 - sf.entry.line_offset as i16) as u8
         } else {
             sf.entry.line_offset
         };
@@ -1234,7 +1257,7 @@ impl Rendering {
     /// the fetch is complete (GetTileDataHigh T2 has fired).
     fn advance_sprite_fetch(
         sf: &mut SpriteFetch,
-        data: &RegisterBus,
+        regs: &PipelineRegisters,
         oam: &Oam,
         vram: &Vram,
     ) -> bool {
@@ -1252,7 +1275,7 @@ impl Rendering {
                 if sf.tick == FetcherTick::T1 {
                     sf.tick = FetcherTick::T2;
                 } else {
-                    sf.tile_data_low = Self::read_sprite_tile_data(sf, data, oam, vram, false);
+                    sf.tile_data_low = Self::read_sprite_tile_data(sf, regs, oam, vram, false);
                     sf.tick = FetcherTick::T1;
                     sf.step = SpriteStep::GetTileDataHigh;
                 }
@@ -1261,7 +1284,7 @@ impl Rendering {
                 if sf.tick == FetcherTick::T1 {
                     sf.tick = FetcherTick::T2;
                 } else {
-                    sf.tile_data_high = Self::read_sprite_tile_data(sf, data, oam, vram, true);
+                    sf.tile_data_high = Self::read_sprite_tile_data(sf, regs, oam, vram, true);
                     return true;
                 }
             }
@@ -1327,7 +1350,7 @@ impl Rendering {
     /// Shifts one bit from each shift register, forms the 2-bit color
     /// indices, applies priority logic, selects the winning pixel, and
     /// maps it through the appropriate palette to the LCD.
-    fn shift_pixel_out(&mut self, data: &RegisterBus) {
+    fn shift_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
         // Window reactivation zero pixel: substitute color 0 for the BG
         // pixel without popping the BG shifter. The OBJ shifter is still
         // popped so sprite pixels mix against the zero pixel.
@@ -1346,17 +1369,17 @@ impl Rendering {
             }
 
             let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-            let y = data.ly();
+            let y = video.ly();
             let bg_color: u8 = 0;
 
-            if data.control.sprites_enabled() {
+            if regs.control.sprites_enabled() {
                 if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
                     let spr_color = (spr_hi << 1) | spr_lo;
                     if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                         let sprite_palette = if spr_pal == 0 {
-                            PaletteMap(data.palettes.sprite0.output())
+                            PaletteMap(regs.palettes.sprite0.output())
                         } else {
-                            PaletteMap(data.palettes.sprite1.output())
+                            PaletteMap(regs.palettes.sprite1.output())
                         };
                         let mapped = sprite_palette.map(PaletteIndex(spr_color));
                         self.screen.set_pixel(x, y, mapped);
@@ -1365,7 +1388,7 @@ impl Rendering {
                 }
             }
 
-            let mapped = PaletteMap(data.palettes.background.output()).map(PaletteIndex(bg_color));
+            let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
             self.screen.set_pixel(x, y, mapped);
             return;
         }
@@ -1399,25 +1422,25 @@ impl Rendering {
         }
 
         let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-        let y = data.ly();
+        let y = video.ly();
 
         // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
-        let bg_color = if data.control.background_and_window_enabled() {
+        let bg_color = if regs.control.background_and_window_enabled() {
             (bg_hi << 1) | bg_lo
         } else {
             0
         };
 
         // Sprite priority mixing
-        if data.control.sprites_enabled() {
+        if regs.control.sprites_enabled() {
             if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
                 let spr_color = (spr_hi << 1) | spr_lo;
                 if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                     // Sprite pixel wins
                     let sprite_palette = if spr_pal == 0 {
-                        PaletteMap(data.palettes.sprite0.output())
+                        PaletteMap(regs.palettes.sprite0.output())
                     } else {
-                        PaletteMap(data.palettes.sprite1.output())
+                        PaletteMap(regs.palettes.sprite1.output())
                     };
                     let mapped = sprite_palette.map(PaletteIndex(spr_color));
                     self.screen.set_pixel(x, y, mapped);
@@ -1427,21 +1450,21 @@ impl Rendering {
         }
 
         // Background pixel
-        let mapped = PaletteMap(data.palettes.background.output()).map(PaletteIndex(bg_color));
+        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
         self.screen.set_pixel(x, y, mapped);
     }
 
     /// Check if the window should start rendering at the current pixel position.
     /// Also detects window reactivation zero pixel conditions when the window
     /// is already active.
-    fn check_window_trigger(&mut self, data: &RegisterBus) {
-        if !data.control.window_enabled() {
+    fn check_window_trigger(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
+        if !regs.control.window_enabled() {
             return;
         }
-        if data.ly() < data.window.y {
+        if video.ly() < regs.window.y {
             return;
         }
-        if self.pixel_counter != data.window.x_plus_7.output() {
+        if self.pixel_counter != regs.window.x_plus_7.output() {
             return;
         }
 
@@ -1479,8 +1502,8 @@ impl Rendering {
     /// Check if a sprite should start fetching at the current pixel position.
     /// Scans all store slots in parallel, matching the hardware's 10
     /// independent X comparators. The lowest-indexed matching slot wins.
-    fn check_sprite_trigger(&mut self, data: &RegisterBus) {
-        if !data.control.sprites_enabled() {
+    fn check_sprite_trigger(&mut self, regs: &PipelineRegisters) {
+        if !regs.control.sprites_enabled() {
             return;
         }
 
@@ -1564,10 +1587,10 @@ impl PixelPipeline {
         }
     }
 
-    pub fn mode2_interrupt_active(&self, data: &RegisterBus) -> bool {
+    pub fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         match self {
             PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(data),
+            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(video),
             PixelPipeline::BetweenFrames(_) => false,
         }
     }
@@ -1626,10 +1649,10 @@ impl PixelPipeline {
     }
 
     /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
-    pub fn tcycle_even(&mut self, data: &RegisterBus, vram: &Vram) {
+    pub fn tcycle_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
         match self {
             PixelPipeline::Rendering(rendering) => {
-                rendering.half_even(data, vram);
+                rendering.half_even(regs, video, vram);
             }
             PixelPipeline::BetweenFrames(_) => {}
         }
@@ -1637,11 +1660,17 @@ impl PixelPipeline {
 
     /// DELTA_ODD half of a dot tick: pixel output, counter increment.
     /// Returns a completed screen when a full frame finishes rendering.
-    pub fn tcycle_odd(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> Option<Screen> {
+    pub fn tcycle_odd(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &mut VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) -> Option<Screen> {
         let mut screen = None;
         match self {
             PixelPipeline::Rendering(rendering) => {
-                if rendering.half_odd(data, oam, vram) {
+                if rendering.half_odd(regs, video, oam, vram) {
                     screen = Some(rendering.screen.clone());
                     *self = PixelPipeline::BetweenFrames(0);
                 }
@@ -1651,10 +1680,10 @@ impl PixelPipeline {
                 // RUTU line-end event within VBlank scanlines:
                 // LY increments at the same dot offset as during Rendering.
                 if *dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT {
-                    data.write_ly(data.ly() + 1);
+                    video.write_ly(video.ly() + 1);
                 }
                 if *dots >= BETWEEN_FRAMES_DOTS {
-                    data.write_ly(0);
+                    video.write_ly(0);
                     *self = PixelPipeline::Rendering(Rendering::new());
                 }
             }
@@ -1664,8 +1693,14 @@ impl PixelPipeline {
 
     /// Advance the PPU by one dot (T-cycle). Returns a completed screen
     /// when a full frame finishes rendering.
-    pub fn tcycle(&mut self, data: &mut RegisterBus, oam: &Oam, vram: &Vram) -> Option<Screen> {
-        self.tcycle_even(data, vram);
-        self.tcycle_odd(data, oam, vram)
+    pub fn tcycle(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &mut VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) -> Option<Screen> {
+        self.tcycle_even(regs, video, vram);
+        self.tcycle_odd(regs, video, oam, vram)
     }
 }
