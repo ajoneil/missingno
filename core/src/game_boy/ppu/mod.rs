@@ -6,7 +6,7 @@ use sprites::{Sprite, SpriteId};
 use control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
 use palette::Palettes;
-use pixel_pipeline::PixelPipeline;
+use pixel_pipeline::FramePhase;
 
 pub struct PpuTickResult {
     pub screen: Option<Screen>,
@@ -229,7 +229,7 @@ impl VideoControl {
 }
 
 pub struct Ppu {
-    pixel_pipeline: Option<PixelPipeline>,
+    pixel_pipeline: Option<FramePhase>,
     registers: PipelineRegisters,
     video: VideoControl,
     pub(super) oam: Oam,
@@ -268,7 +268,7 @@ impl Ppu {
                 stat_line_was_high: false,
             },
             oam: Oam::new(),
-            pixel_pipeline: Some(PixelPipeline::new()),
+            pixel_pipeline: Some(FramePhase::new()),
         }
     }
 
@@ -678,7 +678,7 @@ impl Ppu {
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 = matches!(ppu, PixelPipeline::BetweenFrames(dots) if *dots < 4);
+        let vblank_line_144 = matches!(ppu, FramePhase::VerticalBlank(dots) if *dots < 4);
 
         // Mode 0 interrupt fires on the actual mode transition, not the
         // early stat_mode prediction (which is only for STAT register reads).
@@ -713,7 +713,7 @@ impl Ppu {
 
         if self.pixel_pipeline.is_none() {
             self.video.write_ly(0);
-            self.pixel_pipeline = Some(PixelPipeline::new_lcd_on());
+            self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
 
         // Advance DFF latches before pixel output.

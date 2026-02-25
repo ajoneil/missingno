@@ -43,7 +43,7 @@ const FIRST_VISIBLE_PIXEL: u8 = 8;
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
 const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
-const BETWEEN_FRAMES_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
+const VERTICAL_BLANK_DOTS: u32 = SCANLINE_TOTAL_DOTS * 10;
 const MAX_SPRITES_PER_LINE: usize = 10;
 
 /// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
@@ -1541,120 +1541,120 @@ impl Rendering {
     }
 }
 
-// --- PixelPipeline enum ---
+// --- FramePhase enum ---
 
-pub enum PixelPipeline {
-    Rendering(Rendering),
-    BetweenFrames(u32),
+pub enum FramePhase {
+    ActiveDisplay(Rendering),
+    VerticalBlank(u32),
 }
 
-impl PixelPipeline {
+impl FramePhase {
     pub fn new() -> Self {
-        Self::Rendering(Rendering::new())
+        Self::ActiveDisplay(Rendering::new())
     }
 
     /// Create a PPU for an LCD-on transition (LCDC bit 7 set after being
     /// clear). The first line reports mode 0 in STAT until the OAM scan
     /// begins internally.
     pub fn new_lcd_on() -> Self {
-        Self::Rendering(Rendering::new_lcd_on())
+        Self::ActiveDisplay(Rendering::new_lcd_on())
     }
 
     pub fn mode(&self) -> Mode {
         match self {
-            PixelPipeline::Rendering(rendering) => rendering.mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::VerticalBlank,
+            FramePhase::ActiveDisplay(rendering) => rendering.mode(),
+            FramePhase::VerticalBlank(_) => Mode::VerticalBlank,
         }
     }
 
     pub fn stat_mode(&self) -> Mode {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
-            PixelPipeline::Rendering(rendering) => rendering.stat_mode(),
-            PixelPipeline::BetweenFrames(_) => Mode::VerticalBlank,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
+            FramePhase::ActiveDisplay(rendering) => rendering.stat_mode(),
+            FramePhase::VerticalBlank(_) => Mode::VerticalBlank,
         }
     }
 
     pub fn interrupt_mode(&self) -> Mode {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
-            PixelPipeline::Rendering(rendering) => rendering.interrupt_mode(),
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank,
+            FramePhase::ActiveDisplay(rendering) => rendering.interrupt_mode(),
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
-            PixelPipeline::BetweenFrames(dots) if *dots >= 4 => Mode::VerticalBlank,
-            PixelPipeline::BetweenFrames(_) => Mode::HorizontalBlank,
+            FramePhase::VerticalBlank(dots) if *dots >= 4 => Mode::VerticalBlank,
+            FramePhase::VerticalBlank(_) => Mode::HorizontalBlank,
         }
     }
 
     pub fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.mode2_interrupt_active(video),
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
+            FramePhase::ActiveDisplay(rendering) => rendering.mode2_interrupt_active(video),
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn oam_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.oam_locked(),
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
+            FramePhase::ActiveDisplay(rendering) => rendering.oam_locked(),
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn vram_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.vram_locked(),
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
+            FramePhase::ActiveDisplay(rendering) => rendering.vram_locked(),
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn oam_write_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.oam_write_locked(),
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
+            FramePhase::ActiveDisplay(rendering) => rendering.oam_write_locked(),
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn vram_write_locked(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) if rendering.lcd_turning_on => false,
-            PixelPipeline::Rendering(rendering) => rendering.vram_write_locked(),
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
+            FramePhase::ActiveDisplay(rendering) => rendering.vram_write_locked(),
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn is_rendering(&self) -> bool {
         match self {
-            PixelPipeline::Rendering(rendering) => {
+            FramePhase::ActiveDisplay(rendering) => {
                 matches!(
                     rendering.render_phase,
                     RenderPhase::Drawing | RenderPhase::WoduFired
                 )
             }
-            PixelPipeline::BetweenFrames(_) => false,
+            FramePhase::VerticalBlank(_) => false,
         }
     }
 
     pub fn scanner_oam_address(&self) -> Option<u8> {
         match self {
-            PixelPipeline::Rendering(rendering) => {
+            FramePhase::ActiveDisplay(rendering) => {
                 rendering.scanner.as_ref().map(|s| s.oam_address())
             }
-            PixelPipeline::BetweenFrames(_) => None,
+            FramePhase::VerticalBlank(_) => None,
         }
     }
 
     /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
     pub fn tcycle_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
         match self {
-            PixelPipeline::Rendering(rendering) => {
+            FramePhase::ActiveDisplay(rendering) => {
                 rendering.half_even(regs, video, vram);
             }
-            PixelPipeline::BetweenFrames(_) => {}
+            FramePhase::VerticalBlank(_) => {}
         }
     }
 
@@ -1669,22 +1669,22 @@ impl PixelPipeline {
     ) -> Option<Screen> {
         let mut screen = None;
         match self {
-            PixelPipeline::Rendering(rendering) => {
+            FramePhase::ActiveDisplay(rendering) => {
                 if rendering.half_odd(regs, video, oam, vram) {
                     screen = Some(rendering.screen.clone());
-                    *self = PixelPipeline::BetweenFrames(0);
+                    *self = FramePhase::VerticalBlank(0);
                 }
             }
-            PixelPipeline::BetweenFrames(dots) => {
+            FramePhase::VerticalBlank(dots) => {
                 *dots += 1;
                 // RUTU line-end event within VBlank scanlines:
                 // LY increments at the same dot offset as during Rendering.
                 if *dots % SCANLINE_TOTAL_DOTS == RUTU_LINE_END_DOT {
                     video.write_ly(video.ly() + 1);
                 }
-                if *dots >= BETWEEN_FRAMES_DOTS {
+                if *dots >= VERTICAL_BLANK_DOTS {
                     video.write_ly(0);
-                    *self = PixelPipeline::Rendering(Rendering::new());
+                    *self = FramePhase::ActiveDisplay(Rendering::new());
                 }
             }
         }
