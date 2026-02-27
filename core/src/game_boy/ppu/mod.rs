@@ -1,12 +1,17 @@
-use bitflags::bitflags;
 use pixel_pipeline::Mode;
 use screen::Screen;
 use sprites::{Sprite, SpriteId};
 
 use control::{Control, ControlFlags};
+use dff::LatchState;
 use memory::{Oam, OamAddress, Vram};
 use palette::Palettes;
 use pixel_pipeline::{FramePhase, Rendering};
+use registers::BackgroundViewportPosition;
+
+pub use dff::DffLatch;
+pub use registers::{PipelineRegisters, Window};
+pub use video_control::{InterruptFlags, VideoControl};
 
 pub struct PpuTickResult {
     pub screen: Option<Screen>,
@@ -15,13 +20,17 @@ pub struct PpuTickResult {
 }
 
 pub mod control;
+mod dff;
 pub mod memory;
+mod oam_corruption;
 pub mod palette;
 pub mod pixel_pipeline;
+mod registers;
 pub mod screen;
 pub mod sprites;
 pub mod tile_maps;
 pub mod tiles;
+mod video_control;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Register {
@@ -38,238 +47,11 @@ pub enum Register {
     Sprite1Palette,
 }
 
-/// The propagation state of a value moving through a DFF cell.
-///
-/// On hardware, the CPU write pulse sets D on the master latch.
-/// What happens next depends on the cell type:
-/// - DFF8: master-slave transparency produces `old | new` briefly,
-///   then the slave settles to the final value on the next dot.
-/// - DFF9: the value latches atomically, but internal signal routing
-///   may delay when the new value appears on the output pin.
-enum LatchState {
-    /// DFF8 transitional: output is `old | new` while the master latch
-    /// is transparent. Next tick applies the final value.
-    Transitional { final_value: u8 },
-    /// DFF9 propagation: the old value persists on the output for one
-    /// dot while the new value routes through internal wiring. Next
-    /// tick applies the final value.
-    Propagating { final_value: u8 },
-}
-
-/// A DFF register cell that holds its output value and any pending latch.
-///
-/// On hardware, each register is a physical DFF cell whose output feeds
-/// the pixel pipeline. The CPU writes to the cell's input; the latch
-/// state tracks how the new value propagates to the output.
-///
-/// Outside Mode 3, writes go directly to `output` (no latch state).
-/// During Mode 3, the write behavior depends on the cell type.
-pub struct DffLatch {
-    output: u8,
-    state: Option<LatchState>,
-}
-
-impl DffLatch {
-    fn new(initial: u8) -> Self {
-        Self {
-            output: initial,
-            state: None,
-        }
-    }
-
-    pub fn output(&self) -> u8 {
-        self.output
-    }
-
-    /// Advance the latch state by one dot. Returns true if the latch
-    /// resolved (final value applied) on this tick.
-    fn tick(&mut self) -> bool {
-        match self.state {
-            Some(LatchState::Transitional { final_value }) => {
-                self.output = final_value;
-                self.state = None;
-                true
-            }
-            Some(LatchState::Propagating { final_value }) => {
-                self.output = final_value;
-                self.state = None;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// DFF8 write during Mode 3. Sets the transitional `old | new`
-    /// output and begins the transitional phase.
-    fn write_dff8(&mut self, new_value: u8) {
-        self.output = self.output | new_value;
-        self.state = Some(LatchState::Transitional {
-            final_value: new_value,
-        });
-    }
-
-    /// DFF9 write during Mode 3. The old value persists on the output
-    /// for one dot while the new value propagates through internal wiring.
-    fn write_propagating(&mut self, new_value: u8) {
-        self.state = Some(LatchState::Propagating {
-            final_value: new_value,
-        });
-    }
-
-    /// Direct write — sets the output immediately and clears any
-    /// pending latch state.
-    fn write_immediate(&mut self, new_value: u8) {
-        self.output = new_value;
-        self.state = None;
-    }
-
-    /// Clear pending latch state without applying the final value.
-    fn clear(&mut self) {
-        self.state = None;
-    }
-}
-
-struct BackgroundViewportPosition {
-    x: u8,
-    y: DffLatch,
-}
-
-bitflags! {
-    pub struct InterruptFlags: u8 {
-        const DUMMY                = 0b10000000;
-        const CURRENT_LINE_COMPARE = 0b01000000;
-        const OAM_SCAN             = 0b00100000;
-        const VERTICAL_BLANK       = 0b00010000;
-        const HORIZONTAL_BLANK     = 0b00001000;
-    }
-}
-
-/// Pipeline registers (schematic pages 23/36): the DFF register file
-/// that the CPU writes and the pixel pipeline reads. One-directional —
-/// CPU → pipeline. These cells sit together on the die as a register
-/// bank, and their DFF8/DFF9 write-conflict behavior during Mode 3
-/// is specific to this group.
-pub struct PipelineRegisters {
-    control: Control,
-    /// DFF8-style latch for LCDC bit 0 (BG_EN) only.
-    control_bg_en: DffLatch,
-    background_viewport: BackgroundViewportPosition,
-    window: Window,
-    palettes: Palettes,
-}
-
-impl PipelineRegisters {
-    /// Advance all DFF latches by one dot. On hardware, the master-slave
-    /// DFF cells resolve their pending values on the clock edge each dot.
-    fn tick_latches(&mut self) {
-        self.palettes.background.tick();
-        self.palettes.sprite0.tick();
-        self.palettes.sprite1.tick();
-        self.background_viewport.y.tick();
-        self.window.x_plus_7.tick();
-        if self.control_bg_en.tick() {
-            self.control = Control::new(ControlFlags::from_bits_retain(self.control_bg_en.output));
-        }
-    }
-
-    /// Clear all pending DFF latch state without applying final values.
-    /// Called when the PPU turns off — latches freeze at their current output.
-    fn clear_latches(&mut self) {
-        self.palettes.background.clear();
-        self.palettes.sprite0.clear();
-        self.palettes.sprite1.clear();
-        self.background_viewport.y.clear();
-        self.window.x_plus_7.clear();
-        self.control_bg_en.clear();
-    }
-}
-
-/// Video control (schematic page 21): the LY counter, LYC comparator,
-/// ROPO comparison latch, and STAT interrupt enable flags. Bidirectional —
-/// the pipeline writes LY, the CPU writes LYC and STAT flags, and the
-/// interrupt logic reads the latched comparison result. These signals
-/// sit together on the die's video control section.
-pub struct VideoControl {
-    /// Scanline dot counter (XODO-XYNY flip-flop chain, page 21).
-    /// Counts 0–455 every scanline, in both active display and VBlank.
-    /// Drives RUTU (line-end event that clocks LY) at dot 452.
-    dot: u32,
-
-    /// LY register (MUWY-LAFO, page 21). Written by the pixel pipeline
-    /// at the RUTU line-end event (dot 452). Read by CPU at FF44.
-    ly: u8,
-
-    /// LYC register (FF45). CPU-writable comparison value.
-    lyc: u8,
-
-    /// Latched LY==LYC comparison result (ROPO_LY_MATCH_SYNCp, page 21).
-    /// Updated each M-cycle by `latch_ly_comparison()`. The STAT register
-    /// read and STAT interrupt LYC condition both use this latched value.
-    /// Frozen when the PPU is off (comparison clock stops).
-    ly_eq_lyc: bool,
-
-    /// STAT interrupt enable flags (FF41 bits 3-6).
-    stat_flags: InterruptFlags,
-
-    /// Previous STAT line state for rising-edge detection.
-    stat_line_was_high: bool,
-}
-
-impl VideoControl {
-    pub fn dot(&self) -> u32 {
-        self.dot
-    }
-
-    pub fn ly(&self) -> u8 {
-        self.ly
-    }
-
-    pub fn ly_eq_lyc(&self) -> bool {
-        self.ly_eq_lyc
-    }
-
-    pub fn write_ly(&mut self, value: u8) {
-        self.ly = value;
-    }
-
-    pub fn latch_ly_comparison(&mut self) {
-        self.ly_eq_lyc = self.ly == self.lyc;
-    }
-
-    /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),
-    /// fires the RUTU event: LY increments (or wraps 153→0). At
-    /// SCANLINE_TOTAL_DOTS (456), resets dot to 0 and returns true.
-    pub fn advance_dot(&mut self) -> bool {
-        self.dot += 1;
-
-        if self.dot == pixel_pipeline::RUTU_LINE_END_DOT {
-            // RUTU line-end event: clock the LY ripple counter.
-            if self.ly == 153 {
-                self.ly = 0;
-            } else {
-                self.ly += 1;
-            }
-        }
-
-        if self.dot == pixel_pipeline::SCANLINE_TOTAL_DOTS {
-            self.dot = 0;
-            return true;
-        }
-
-        false
-    }
-}
-
 pub struct Ppu {
     pixel_pipeline: Option<FramePhase>,
     registers: PipelineRegisters,
     video: VideoControl,
     pub(super) oam: Oam,
-}
-
-pub struct Window {
-    y: u8,
-    x_plus_7: DffLatch,
 }
 
 impl Ppu {
@@ -492,213 +274,6 @@ impl Ppu {
         self.pixel_pipeline
             .as_ref()
             .map_or(false, |p| p.is_rendering())
-    }
-
-    /// Stage a DFF8 palette write at the rising-edge latch point.
-    ///
-    // --- OAM corruption bug ---
-    //
-    // On DMG hardware, a design flaw in the OAM SRAM clock generation
-    // causes corruption when the CPU accesses OAM during Mode 2
-    // (scanning). The OAM clock signal CUFE is derived from the CPU's
-    // internal address bus — not the OAM address bus. ASAM blocks the
-    // CPU from driving the OAM *address* bus during scanning, but CUFE
-    // still sees the CPU address and generates spurious SRAM clock edges.
-    // This clocks the SRAM while the scanner owns the address/data
-    // buses, producing garbled reads and writes.
-    //
-    // The corruption formulas below are empirical — they describe the
-    // analog result of SRAM cells being disturbed during bus contention.
-    // The exact formulas depend on the physical SRAM cell layout (bit
-    // line routing, parasitic capacitance) and vary by die revision.
-    // They cannot be derived from a digital gate-level model; GateBoy's
-    // tri_bus asserts on the collision and fails the oam_bug tests.
-    //
-    // OAM is organized as 20 rows of 8 bytes (4 words of 16 bits).
-    // The scanner advances through one row pair (2 entries = 8 bytes)
-    // per M-cycle. Corruption targets the row the scanner is currently
-    // accessing, with effects spilling into adjacent rows.
-    //
-    // Sources:
-    //   Trigger mechanism: GateBoy die analysis (CUFE, BYCU, ASAM)
-    //   Corruption formulas: Pan Docs "OAM Corruption Bug"
-    //   Position-dependent read variants: SameBoy (Core/memory.c)
-
-    /// Trigger OAM bug write corruption during Mode 2.
-    ///
-    /// Fires when the CPU's IDU or a CPU write places an OAM-range
-    /// address on the bus while the scanner owns the OAM SRAM.
-    /// The spurious SRAM clock causes a garbled write to the
-    /// scanner's current row.
-    pub fn oam_bug_write(&mut self) {
-        let row = match self.corrupted_oam_row() {
-            Some(row) if row >= 8 && row < 160 => row,
-            _ => return,
-        };
-
-        let oam = &mut self.oam;
-
-        // Corruption of the first word in the row. The three inputs
-        // are the row's own first word and two words from the
-        // preceding row (its first and third words). The formula
-        // models the SRAM cell output under bus contention.
-        let row_word0 = oam.oam_word(row);
-        let prev_word0 = oam.oam_word(row - 8);
-        let prev_word2 = oam.oam_word(row - 4);
-
-        let glitched = ((row_word0 ^ prev_word2) & (prev_word0 ^ prev_word2)) ^ prev_word2;
-        oam.set_oam_word(row, glitched);
-
-        // The last 3 words of the row are overwritten with the
-        // preceding row's last 3 words (bytes 2–7 copied).
-        for i in 2..8u8 {
-            let val = oam.oam_byte(row - 8 + i);
-            oam.set_oam_byte(row + i, val);
-        }
-    }
-
-    /// Trigger OAM bug read corruption during Mode 2.
-    ///
-    /// Read corruption has position-dependent variants because
-    /// different SRAM row positions have different physical bit line
-    /// routing, producing different parasitic coupling patterns.
-    /// The variant is selected by `row & 0x18` (which 8-row group
-    /// the row falls into within the SRAM array).
-    ///
-    /// These variants are revision-specific and even unit-specific.
-    /// The formulas here target DMG behaviour.
-    pub fn oam_bug_read(&mut self) {
-        let row = match self.corrupted_oam_row() {
-            Some(row) if row >= 8 && row < 160 => row,
-            _ => return,
-        };
-
-        let oam = &mut self.oam;
-
-        match row & 0x18 {
-            0x10 => {
-                // Secondary read corruption.
-                // The 4-input formula corrupts the preceding row's
-                // first word, then the preceding row is copied to
-                // both the current row and two rows back.
-                if row < 0x98 {
-                    let two_back_word0 = oam.oam_word(row - 16);
-                    let prev_word0 = oam.oam_word(row - 8);
-                    let row_word0 = oam.oam_word(row);
-                    let prev_word2 = oam.oam_word(row - 4);
-
-                    let glitched = (prev_word0 & (two_back_word0 | row_word0 | prev_word2))
-                        | (two_back_word0 & row_word0 & prev_word2);
-                    oam.set_oam_word(row - 8, glitched);
-
-                    for i in 0..8u8 {
-                        let val = oam.oam_byte(row - 8 + i);
-                        oam.set_oam_byte(row - 16 + i, val);
-                        oam.set_oam_byte(row + i, val);
-                    }
-                }
-            }
-            0x00 => {
-                // Tertiary/quaternary read corruption.
-                // These involve more distant rows due to the SRAM
-                // physical layout at these addresses. The formulas
-                // are DMG-specific and vary even between DMG units.
-                if row < 0x98 {
-                    if row == 0x40 {
-                        // Quaternary (8 inputs). Some DMG units produce
-                        // non-deterministic results here; we emulate
-                        // the units that produce deterministic output.
-                        let row_word0 = oam.oam_word(row);
-                        let prev_word2 = oam.oam_word(row - 4);
-                        let prev_word1 = oam.oam_word(row - 6);
-                        let prev_word0 = oam.oam_word(row - 8);
-                        let two_back_word3 = oam.oam_word(row - 14);
-                        let two_back_word0 = oam.oam_word(row - 16);
-                        let four_back_word0 = oam.oam_word(row - 32);
-
-                        let glitched = (prev_word0
-                            & (four_back_word0
-                                | two_back_word0
-                                | (!prev_word1 & two_back_word3)
-                                | prev_word2
-                                | row_word0))
-                            | (prev_word2 & two_back_word0 & four_back_word0);
-                        oam.set_oam_word(row - 8, glitched);
-                    } else {
-                        // Tertiary (5 inputs). The exact formula varies
-                        // by row position within the SRAM array.
-                        let row_word0 = oam.oam_word(row);
-                        let prev_word2 = oam.oam_word(row - 4);
-                        let prev_word0 = oam.oam_word(row - 8);
-                        let two_back_word0 = oam.oam_word(row - 16);
-                        let four_back_word0 = oam.oam_word(row - 32);
-
-                        let glitched = match row {
-                            0x20 => {
-                                (prev_word0
-                                    & (row_word0 | prev_word2 | two_back_word0 | four_back_word0))
-                                    | (row_word0 & prev_word2 & two_back_word0 & four_back_word0)
-                            }
-                            0x60 => {
-                                (prev_word0
-                                    & (row_word0 | prev_word2 | two_back_word0 | four_back_word0))
-                                    | (prev_word2 & two_back_word0 & four_back_word0)
-                            }
-                            _ => {
-                                prev_word0
-                                    | (row_word0 & prev_word2 & two_back_word0 & four_back_word0)
-                            }
-                        };
-                        oam.set_oam_word(row - 8, glitched);
-                    }
-
-                    for i in 0..8u8 {
-                        let val = oam.oam_byte(row - 8 + i);
-                        oam.set_oam_byte(row - 16 + i, val);
-                        oam.set_oam_byte(row + i, val);
-                    }
-                }
-            }
-            _ => {
-                // Simple read corruption (rows where `row & 0x18`
-                // is 0x08 or 0x18). This is the Pan Docs "read"
-                // formula — the simplest coupling pattern.
-                let row_word0 = oam.oam_word(row);
-                let prev_word0 = oam.oam_word(row - 8);
-                let prev_word2 = oam.oam_word(row - 4);
-
-                let glitched = prev_word0 | (row_word0 & prev_word2);
-                oam.set_oam_word(row - 8, glitched);
-                oam.set_oam_word(row, glitched);
-
-                for i in 0..8u8 {
-                    let val = oam.oam_byte(row - 8 + i);
-                    oam.set_oam_byte(row + i, val);
-                }
-            }
-        }
-
-        // Row 0x80 additionally copies to row 0 — an SRAM array
-        // wraparound effect at the physical layout boundary.
-        if row == 0x80 {
-            for i in 0..8u8 {
-                let val = oam.oam_byte(row + i);
-                oam.set_oam_byte(i, val);
-            }
-        }
-    }
-
-    /// Which OAM row the scanner is currently accessing.
-    ///
-    /// OAM is organized as 8-byte rows (2 entries per row). The
-    /// scanner's byte address is rounded to the next row boundary.
-    /// The corruption fires at T2 of the M-cycle (matching the
-    /// hardware CUFE clock).
-    fn corrupted_oam_row(&self) -> Option<u8> {
-        self.pixel_pipeline
-            .as_ref()
-            .and_then(|ppu| ppu.scanner_oam_address())
-            .map(|address| (address / 8 + 1) * 8)
     }
 
     fn stat_line_active(&self) -> bool {
