@@ -35,15 +35,11 @@ pub(super) struct SpriteFetch {
 }
 
 /// Sprite fetch lifecycle. On hardware, FEPO (sprite X match) freezes
-/// the pixel clock, the fetch runs, then the pixel clock resumes with
-/// PX still at the trigger value so the composited pixel outputs first.
+/// the pixel clock, the fetch runs, then the pixel clock resumes
+/// normally on the next dot (state_old.FEPO=0).
 pub(super) enum SpriteState {
     /// No sprite activity. Pixel clock runs normally.
     Idle,
     /// Sprite fetch in progress (wait + data phases).
     Fetching(SpriteFetch),
-    /// One-dot post-fetch: pixel clock resumes but PX stays frozen
-    /// so the first pixel at the trigger position includes the sprite.
-    /// Cleared after shift_pixel_out on this dot.
-    Resuming,
 }

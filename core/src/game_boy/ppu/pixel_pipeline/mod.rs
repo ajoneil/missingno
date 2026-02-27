@@ -125,7 +125,7 @@ pub struct Rendering {
     /// at PX=167. Not reset on window trigger — PX is a monotonic
     /// per-line counter.
     pixel_counter: u8,
-    /// Sprite fetch lifecycle — Idle, Fetching, or Resuming.
+    /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
     /// while the window is active with specific fetcher/FIFO conditions.
@@ -500,12 +500,12 @@ impl Rendering {
                                 &self.bg_shifter,
                                 &mut self.obj_shifter,
                             );
-                            self.sprite_state = SpriteState::Resuming;
+                            self.sprite_state = SpriteState::Idle;
                         }
                     }
                 }
             }
-            SpriteState::Idle | SpriteState::Resuming => {
+            SpriteState::Idle => {
                 // Clearing → Inactive: on the tick after SUZU fires, the pixel
                 // clock gate sees RYDY=0 and resumes normal operation.
                 if self.window_hit == WindowHit::Clearing {
@@ -531,15 +531,11 @@ impl Rendering {
                 }
 
                 // Pixel counter increment. On hardware, SACU (pixel clock) is
-                // gated by TYFA (window hit via SEGU), ROXY (fine scroll), FIFO
-                // readiness (shifter non-empty), and sprite resumption (PX stays
-                // frozen on the first dot after a sprite fetch so the pixel at
-                // PX=N is output before PX advances).
-                let resuming = matches!(self.sprite_state, SpriteState::Resuming);
+                // gated by TYFA (window hit via SEGU), ROXY (fine scroll), and
+                // FIFO readiness (shifter non-empty).
                 if self.window_hit == WindowHit::Inactive
                     && self.fine_scroll.pixel_clock_active()
                     && !self.bg_shifter.is_empty()
-                    && !resuming
                 {
                     self.pixel_counter += 1;
                 }
@@ -558,16 +554,13 @@ impl Rendering {
                     && !matches!(self.sprite_state, SpriteState::Fetching(_))
                 {
                     self.shift_pixel_out(regs, video);
-                    self.sprite_state = SpriteState::Idle;
                 }
 
                 self.advance_bg_fetcher(regs, video, vram);
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
-                // TYFA. TYFA is gated by RYDY (window hit) and frozen during
-                // sprite resumption (same as SACU), so the fine counter freezes
-                // during both window fetch stalls and sprite resumption.
-                if self.window_hit == WindowHit::Inactive && !resuming {
+                // TYFA. TYFA is gated by RYDY (window hit).
+                if self.window_hit == WindowHit::Inactive {
                     self.fine_scroll.tick();
                 }
             }
