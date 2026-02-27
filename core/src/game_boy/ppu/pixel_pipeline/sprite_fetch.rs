@@ -3,7 +3,7 @@
 use super::fetcher::FetcherTick;
 use super::oam_scan::SpriteStoreEntry;
 
-/// The two phases of a sprite fetch on real hardware.
+/// The phases of a sprite fetch on real hardware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SpriteFetchPhase {
     /// The BG fetcher continues advancing through its normal steps.
@@ -15,6 +15,10 @@ pub(super) enum SpriteFetchPhase {
     /// The BG fetcher is frozen at its current position. Sprite tile
     /// data is read through the SpriteStep state machine (6 dots total).
     FetchingData,
+    /// Data fetch complete. Pixel clock still frozen (hardware: state_old.FEPO=1).
+    /// Sprite data is merged into the OBJ shifter on this dot.
+    /// Transitions to Idle on the next dot.
+    Done,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

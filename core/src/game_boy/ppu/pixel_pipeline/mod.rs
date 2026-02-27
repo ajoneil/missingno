@@ -500,8 +500,16 @@ impl Rendering {
                                 &self.bg_shifter,
                                 &mut self.obj_shifter,
                             );
-                            self.sprite_state = SpriteState::Idle;
+                            sf.phase = SpriteFetchPhase::Done;
                         }
+                    }
+                    SpriteFetchPhase::Done => {
+                        // sfetch-done dot: pixel clock is still frozen (this is
+                        // SpriteState::Fetching, so all FEPO-gated operations are
+                        // suppressed). On hardware, store_x clears on this dot,
+                        // setting state_new.FEPO=0. Transition to Idle — the next
+                        // dot will be the resume dot with normal pixel clock operation.
+                        self.sprite_state = SpriteState::Idle;
                     }
                 }
             }
