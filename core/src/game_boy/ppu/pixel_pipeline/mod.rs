@@ -538,7 +538,8 @@ impl Rendering {
                 // (FEPO match). No pixel is output on the trigger dot — PX
                 // stays at the trigger value and the first pixel at that PX is
                 // the sprite-composited pixel on the resumption dot.
-                if !self.bg_shifter.is_empty()
+                if self.window_hit == WindowHit::Inactive
+                    && !self.bg_shifter.is_empty()
                     && !matches!(self.sprite_state, SpriteState::Fetching(_))
                 {
                     self.shift_pixel_out(regs, video);
@@ -548,10 +549,10 @@ impl Rendering {
                 self.advance_bg_fetcher(regs, video, vram);
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
-                // TYFA. TYFA is gated by RYDY (window hit), so the fine counter
-                // freezes during window fetch stalls. It does NOT freeze during
-                // ROXY fine scroll discard (different gating point in the chain).
-                if self.window_hit == WindowHit::Inactive {
+                // TYFA. TYFA is gated by RYDY (window hit) and frozen during
+                // sprite resumption (same as SACU), so the fine counter freezes
+                // during both window fetch stalls and sprite resumption.
+                if self.window_hit == WindowHit::Inactive && !resuming {
                     self.fine_scroll.tick();
                 }
             }
