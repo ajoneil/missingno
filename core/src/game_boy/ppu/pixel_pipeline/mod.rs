@@ -548,21 +548,18 @@ impl Rendering {
                     self.pixel_counter += 1;
                 }
 
-                // Sprite trigger check.
-                if !matches!(self.sprite_state, SpriteState::Fetching(_)) {
-                    self.check_sprite_trigger(regs);
-                }
-
-                // On hardware, the pixel clock freezes when a sprite triggers
-                // (FEPO match). No pixel is output on the trigger dot — PX
-                // stays at the trigger value and the first pixel at that PX is
-                // the sprite-composited pixel on the resumption dot.
-                if self.window_hit == WindowHit::Inactive
-                    && !self.bg_shifter.is_empty()
-                    && !matches!(self.sprite_state, SpriteState::Fetching(_))
-                {
+                // Pixel output. On hardware, the pixel clock uses
+                // state_old.FEPO — on the trigger dot, state_old.FEPO=0,
+                // so PX increments, the pipe shifts, and a pixel outputs.
+                // FEPO only becomes 1 in state_new, freezing clocks on
+                // subsequent dots. Running pixel output before the sprite
+                // trigger check models this registered-signal timing.
+                if self.window_hit == WindowHit::Inactive && !self.bg_shifter.is_empty() {
                     self.shift_pixel_out(regs, video);
                 }
+
+                // Sprite trigger check.
+                self.check_sprite_trigger(regs);
 
                 self.advance_bg_fetcher(regs, video, vram);
 
