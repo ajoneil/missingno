@@ -132,6 +132,15 @@ pub struct Rendering {
     /// Causes the next pixel output to use bg_color=0 without popping
     /// the BG shifter. The OBJ shifter is popped normally.
     window_zero_pixel: bool,
+    /// WX comparator suppression latch. Models the hardware behavior where
+    /// the RYDY latch prevents the WX comparator (PYCO) from re-firing
+    /// after the window has already triggered on this scanline. Cleared
+    /// when WX is written mid-scanline, allowing reactivation with a new
+    /// WX value.
+    wx_triggered: bool,
+    /// Last observed WX output value, used to detect mid-scanline WX changes
+    /// that should clear the wx_triggered latch.
+    last_wx_value: u8,
 }
 
 impl Rendering {
@@ -153,6 +162,8 @@ impl Rendering {
             pixel_counter: 0,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
+            wx_triggered: false,
+            last_wx_value: 0xFF,
         }
     }
 
@@ -174,6 +185,8 @@ impl Rendering {
             pixel_counter: 0,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
+            wx_triggered: false,
+            last_wx_value: 0xFF,
         }
     }
 
@@ -347,6 +360,8 @@ impl Rendering {
         self.pixel_counter = 0;
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
+        self.wx_triggered = false;
+        self.last_wx_value = 0xFF;
     }
 
     /// DELTA_EVEN Mode 3 processing.
@@ -935,7 +950,15 @@ impl Rendering {
         if video.ly() < regs.window.y {
             return;
         }
-        if self.pixel_counter != regs.window.x_plus_7.output() {
+
+        // Detect mid-scanline WX changes to clear the trigger suppression latch.
+        let current_wx = regs.window.x_plus_7.output();
+        if current_wx != self.last_wx_value {
+            self.wx_triggered = false;
+            self.last_wx_value = current_wx;
+        }
+
+        if self.pixel_counter != current_wx {
             return;
         }
 
@@ -943,8 +966,11 @@ impl Rendering {
         // The hardware condition is GetTile T1 (first tick). Since our WX check
         // runs after advance_bg_fetcher in mode3_even, the fetcher has already
         // been ticked: what was dot=0 (T1) is now dot=1. So we check dot=1.
+        // Reactivation requires the initial window fetch to have completed
+        // (window_hit == Inactive), modeling hardware's !window_is_being_fetched.
         if self.fetcher.fetching_window {
-            if self.startup_fetch.is_none()
+            if self.window_hit == WindowHit::Inactive
+                && self.startup_fetch.is_none()
                 && self.fetcher.step == FetcherStep::GetTile
                 && self.fetcher.tick == FetcherTick::T2
                 && self.bg_shifter.len() == 8
@@ -954,8 +980,14 @@ impl Rendering {
             return;
         }
 
+        // WX already matched this line — suppress the comparator.
+        if self.wx_triggered {
+            return;
+        }
+
         // Window trigger: clear shifters, reset fine scroll, restart fetcher,
         // and reset cascade DFFs so a new startup fetch begins.
+        self.wx_triggered = true;
         self.bg_shifter.clear();
         self.obj_shifter.clear();
         self.fine_scroll.reset_for_window();

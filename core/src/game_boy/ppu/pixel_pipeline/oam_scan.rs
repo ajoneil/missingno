@@ -1,9 +1,6 @@
 // --- Sprite store and OAM scanner ---
 
-use crate::game_boy::ppu::{
-    PipelineRegisters,
-    memory::Oam,
-};
+use crate::game_boy::ppu::{PipelineRegisters, memory::Oam};
 
 use super::fetcher::FetcherTick;
 
