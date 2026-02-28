@@ -1,28 +1,27 @@
 mod fetcher;
 mod fine_scroll;
+mod frame_phase;
 mod oam_scan;
+mod pixel_output;
 mod shifters;
 mod sprite_fetch;
+mod window;
+
+pub use frame_phase::FramePhase;
 
 use core::fmt;
 
 use crate::game_boy::ppu::{
     PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
-    palette::{PaletteIndex, PaletteMap},
-    screen::{self, Screen},
+    screen::Screen,
 };
 
-use super::{
-    sprites::{self, SpriteId, SpriteSize},
-    tiles::{TileAddressMode, TileIndex},
-};
-
-use fetcher::{FetcherStep, FetcherTick, StartupFetch, TileFetcher};
+use fetcher::{FetcherStep, StartupFetch, TileFetcher};
 use fine_scroll::{FineScroll, WindowHit};
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
-use sprite_fetch::{SpriteFetch, SpriteFetchPhase, SpriteState, SpriteStep};
+use sprite_fetch::{SpriteFetch, SpriteFetchPhase, SpriteState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -63,7 +62,7 @@ pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
 /// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
 /// sees HBlank one phase before XYMU clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderPhase {
+pub(super) enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
     /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
     /// is never set on line 0). STAT reads mode 0 for dots 0-3, then
@@ -93,10 +92,10 @@ pub struct Rendering {
     window_line_counter: u8,
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
-    lcd_turning_on: bool,
+    pub(super) lcd_turning_on: bool,
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
-    render_phase: RenderPhase,
+    pub(super) render_phase: RenderPhase,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
     /// OAM scanner — active during Mode 2, consumed when scan completes.
@@ -229,6 +228,10 @@ impl Rendering {
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
         self.mode() == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
+    }
+
+    pub(super) fn scanner_oam_address(&self) -> Option<u8> {
+        self.scanner.as_ref().map(|s| s.oam_address())
     }
 
     fn oam_locked(&self) -> bool {
@@ -396,7 +399,13 @@ impl Rendering {
             })
         );
         if !sprite_data_fetch && self.startup_fetch.is_some() {
-            self.advance_bg_fetcher(regs, video, vram);
+            self.fetcher.advance(
+                self.pixel_counter,
+                self.window_line_counter,
+                regs,
+                video,
+                vram,
+            );
         }
 
         // TAVE preload: when the startup fetch first reaches Idle
@@ -407,7 +416,7 @@ impl Rendering {
             && self.fetcher.step == FetcherStep::Idle
             && self.bg_shifter.is_empty()
         {
-            self.load_bg_tile();
+            self.fetcher.load_into(&mut self.bg_shifter);
         }
 
         // LYRY fires combinationally when the first tile fetch fills
@@ -427,7 +436,21 @@ impl Rendering {
 
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
         // Active during both startup fetch and normal rendering.
-        self.check_window_trigger(regs, video);
+        window::check_window_trigger(
+            &mut self.window_hit,
+            &mut self.fetcher,
+            &mut self.startup_fetch,
+            &mut self.bg_shifter,
+            &mut self.obj_shifter,
+            &mut self.fine_scroll,
+            &mut self.window_zero_pixel,
+            &mut self.wx_triggered,
+            &mut self.window_rendered,
+            self.pixel_counter,
+            &mut self.last_wx_value,
+            regs,
+            video,
+        );
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -465,7 +488,13 @@ impl Rendering {
                         // This is the hardware behavior: the fetcher keeps
                         // stepping through its enum states, doing real tile
                         // fetches that may load pixels into the shifter.
-                        self.advance_bg_fetcher(regs, video, vram);
+                        self.fetcher.advance(
+                            self.pixel_counter,
+                            self.window_line_counter,
+                            regs,
+                            video,
+                            vram,
+                        );
 
                         // Wait exits when BOTH conditions are met:
                         // 1. The fetcher has completed GetTileDataHigh (reached Idle)
@@ -487,14 +516,14 @@ impl Rendering {
                                 _ => unreachable!(),
                             };
                             sf.phase = SpriteFetchPhase::FetchingData;
-                            Self::advance_sprite_fetch(sf, regs, oam, vram);
+                            sf.advance(regs, oam, vram);
                         }
                     }
                     SpriteFetchPhase::FetchingData => {
                         // BG fetcher is frozen. Advance the sprite data pipeline.
-                        let done = Self::advance_sprite_fetch(sf, regs, oam, vram);
+                        let done = sf.advance(regs, oam, vram);
                         if done {
-                            Self::merge_sprite_into_obj_shifter(sf, oam, &mut self.obj_shifter);
+                            sf.merge_into(&mut self.obj_shifter, oam);
                             sf.phase = SpriteFetchPhase::Done;
                         }
                     }
@@ -505,7 +534,15 @@ impl Rendering {
                         // and writes to the same screen position as the trigger
                         // dot, overwriting it. The pipes do NOT shift (FEPO
                         // blocks clkpipe_gate).
-                        self.peek_pixel_out(regs, video);
+                        pixel_output::peek_pixel_out(
+                            &self.bg_shifter,
+                            &self.obj_shifter,
+                            &self.fine_scroll,
+                            self.pixel_counter,
+                            &mut self.screen,
+                            regs,
+                            video,
+                        );
                         self.sprite_state = SpriteState::Idle;
                     }
                 }
@@ -535,7 +572,7 @@ impl Rendering {
                 // window hit signal. This is the hardware's dedicated window tile
                 // load path — independent of fine_count.
                 if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
-                    self.load_bg_tile();
+                    self.fetcher.load_into(&mut self.bg_shifter);
                     self.window_hit = WindowHit::Clearing;
                 }
 
@@ -544,7 +581,7 @@ impl Rendering {
                 // result on the same tick. Because the shift already fired
                 // above, the load naturally wins (matching DFF22 behavior).
                 if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
-                    self.load_bg_tile();
+                    self.fetcher.load_into(&mut self.bg_shifter);
                 }
 
                 // Pixel counter increment. On hardware, SACU (pixel clock) is
@@ -564,13 +601,28 @@ impl Rendering {
                 // subsequent dots. Running pixel output before the sprite
                 // trigger check models this registered-signal timing.
                 if self.window_hit == WindowHit::Inactive && !self.bg_shifter.is_empty() {
-                    self.shift_pixel_out(regs, video);
+                    pixel_output::shift_pixel_out(
+                        &self.bg_shifter,
+                        &self.obj_shifter,
+                        &self.fine_scroll,
+                        self.pixel_counter,
+                        &mut self.window_zero_pixel,
+                        &mut self.screen,
+                        regs,
+                        video,
+                    );
                 }
 
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                self.advance_bg_fetcher(regs, video, vram);
+                self.fetcher.advance(
+                    self.pixel_counter,
+                    self.window_line_counter,
+                    regs,
+                    video,
+                    vram,
+                );
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit).
@@ -579,457 +631,6 @@ impl Rendering {
                 }
             }
         }
-    }
-
-    // --- Address generation (pages 26-27) ---
-    //
-    // On the die, BG and window have separate address generators:
-    //   Page 26 (BACKGROUND): tilemap coords from pixel_counter, SCX, SCY, LY
-    //   Page 27 (WINDOW MAP LOOKUP): tilemap coords from window_tile_x, window_line_counter
-    // Both feed into the shared VRAM interface (page 25).
-
-    /// BG tilemap coordinate computation (page 26).
-    /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
-    fn bg_tilemap_coords(&self, regs: &PipelineRegisters, video: &VideoControl) -> (u8, u8) {
-        let scx = regs.background_viewport.x;
-        let scy = regs.background_viewport.y.output();
-        (
-            ((self.pixel_counter.wrapping_add(scx)) >> 3) & 31,
-            (video.ly().wrapping_add(scy) / 8) & 31,
-        )
-    }
-
-    /// Window tilemap coordinate computation (page 27).
-    /// Uses the window's internal line counter, no scroll offset.
-    fn window_tilemap_coords(&self) -> (u8, u8) {
-        (self.fetcher.window_tile_x, self.window_line_counter / 8)
-    }
-
-    /// Read the tile index from the tilemap for the current fetch position.
-    fn read_tile_index(&self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) -> u8 {
-        let (map_x, map_y) = if self.fetcher.fetching_window {
-            self.window_tilemap_coords()
-        } else {
-            self.bg_tilemap_coords(regs, video)
-        };
-
-        let map_id = if self.fetcher.fetching_window {
-            regs.control.window_tile_map()
-        } else {
-            regs.control.background_tile_map()
-        };
-        vram.tile_map(map_id).get_tile(map_x, map_y).0
-    }
-
-    /// BG fine Y offset (page 26): which row within the tile, from SCY + LY.
-    fn bg_fine_y(&self, regs: &PipelineRegisters, video: &VideoControl) -> u8 {
-        video.ly().wrapping_add(regs.background_viewport.y.output()) % 8
-    }
-
-    /// Window fine Y offset (page 27): which row within the tile, from
-    /// the window's internal line counter.
-    fn window_fine_y(&self) -> u8 {
-        self.window_line_counter % 8
-    }
-
-    /// Read one byte of tile data (low or high bitplane) for the
-    /// current BG/window fetch.
-    ///
-    /// The tile data address combines the tile index (cached from the
-    /// tilemap read) with the fine Y offset from the appropriate
-    /// address generator. The VRAM interface (page 25) performs the read.
-    fn read_tile_data(
-        &self,
-        regs: &PipelineRegisters,
-        video: &VideoControl,
-        vram: &Vram,
-        high: bool,
-    ) -> u8 {
-        let tile_index = TileIndex(self.fetcher.tile_index);
-        let (block_id, mapped_idx) = regs.control.tile_address_mode().tile(tile_index);
-
-        let fine_y = if self.fetcher.fetching_window {
-            self.window_fine_y()
-        } else {
-            self.bg_fine_y(regs, video)
-        };
-
-        let block = vram.tile_block(block_id);
-        block.data[mapped_idx.0 as usize * 16 + fine_y as usize * 2 + high as usize]
-    }
-
-    /// Advance the background tile fetcher by one dot.
-    fn advance_bg_fetcher(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
-        match self.fetcher.step {
-            FetcherStep::GetTile => {
-                if self.fetcher.tick == FetcherTick::T1 {
-                    self.fetcher.tick = FetcherTick::T2;
-                } else {
-                    self.fetcher.tile_index = self.read_tile_index(regs, video, vram);
-                    self.fetcher.tick = FetcherTick::T1;
-                    self.fetcher.step = FetcherStep::GetTileDataLow;
-                }
-            }
-            FetcherStep::GetTileDataLow => {
-                if self.fetcher.tick == FetcherTick::T1 {
-                    self.fetcher.tick = FetcherTick::T2;
-                } else {
-                    self.fetcher.tile_data_low = self.read_tile_data(regs, video, vram, false);
-                    self.fetcher.tick = FetcherTick::T1;
-                    self.fetcher.step = FetcherStep::GetTileDataHigh;
-                }
-            }
-            FetcherStep::GetTileDataHigh => {
-                if self.fetcher.tick == FetcherTick::T1 {
-                    self.fetcher.tick = FetcherTick::T2;
-                } else {
-                    self.fetcher.tile_data_high = self.read_tile_data(regs, video, vram, true);
-                    self.fetcher.tick = FetcherTick::T1;
-                    self.fetcher.step = FetcherStep::Idle;
-                }
-            }
-            FetcherStep::Idle => {
-                // The fetcher is frozen — it waits here until the
-                // SEKO-triggered reload (fine_count == 7) fires from
-                // mode3_odd, which calls load_bg_tile() and resets
-                // the fetcher to GetTile.
-            }
-        }
-    }
-
-    /// Load fetched tile data into the BG shifter and reset the fetcher to
-    /// GetTile for the next tile.
-    fn load_bg_tile(&mut self) {
-        self.bg_shifter
-            .load(self.fetcher.tile_data_low, self.fetcher.tile_data_high);
-        if self.fetcher.fetching_window {
-            self.fetcher.window_tile_x = self.fetcher.window_tile_x.wrapping_add(1);
-        }
-        self.fetcher.step = FetcherStep::GetTile;
-        self.fetcher.tick = FetcherTick::T1;
-    }
-
-    /// Read one byte of sprite tile data (low or high bitplane).
-    ///
-    /// On the die, the sprite fetcher (page 29) uses the OAM index
-    /// from the sprite store to look up the tile index and attributes,
-    /// then generates a VRAM address from the tile index, line offset,
-    /// and flip flags. The VRAM interface (page 25) performs the read.
-    fn read_sprite_tile_data(
-        sf: &SpriteFetch,
-        regs: &PipelineRegisters,
-        oam: &Oam,
-        vram: &Vram,
-        high: bool,
-    ) -> u8 {
-        let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
-        let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
-            TileIndex(sprite.tile.0 & 0xFE)
-        } else {
-            sprite.tile
-        };
-        let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
-
-        let flipped_y = if sprite.attributes.flip_y() {
-            (regs.control.sprite_size().height() as i16 - 1 - sf.entry.line_offset as i16) as u8
-        } else {
-            sf.entry.line_offset
-        };
-
-        let (final_block, final_idx, final_y) = if flipped_y < 8 {
-            (block_id, mapped_idx, flipped_y)
-        } else {
-            (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
-        };
-
-        let block = vram.tile_block(final_block);
-        block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
-    }
-
-    /// Advance the sprite fetch pipeline by one dot. Returns `true` when
-    /// the fetch is complete (GetTileDataHigh T2 has fired).
-    fn advance_sprite_fetch(
-        sf: &mut SpriteFetch,
-        regs: &PipelineRegisters,
-        oam: &Oam,
-        vram: &Vram,
-    ) -> bool {
-        match sf.step {
-            SpriteStep::GetTile => {
-                if sf.tick == FetcherTick::T1 {
-                    sf.tick = FetcherTick::T2;
-                } else {
-                    // Tile index comes from OAM via the sprite store's oam_index
-                    sf.tick = FetcherTick::T1;
-                    sf.step = SpriteStep::GetTileDataLow;
-                }
-            }
-            SpriteStep::GetTileDataLow => {
-                if sf.tick == FetcherTick::T1 {
-                    sf.tick = FetcherTick::T2;
-                } else {
-                    sf.tile_data_low = Self::read_sprite_tile_data(sf, regs, oam, vram, false);
-                    sf.tick = FetcherTick::T1;
-                    sf.step = SpriteStep::GetTileDataHigh;
-                }
-            }
-            SpriteStep::GetTileDataHigh => {
-                if sf.tick == FetcherTick::T1 {
-                    sf.tick = FetcherTick::T2;
-                } else {
-                    sf.tile_data_high = Self::read_sprite_tile_data(sf, regs, oam, vram, true);
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Merge fetched sprite pixels into the OBJ shifter.
-    fn merge_sprite_into_obj_shifter(sf: &SpriteFetch, oam: &Oam, obj_shifter: &mut ObjShifter) {
-        let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
-
-        // X-flip: hardware reverses the bit order when loading the shift
-        // register. For normal sprites, MSB shifts out first (leftmost pixel).
-        // For flipped sprites, LSB shifts out first — achieved by reversing
-        // the byte's bit order before loading.
-        let sprite_low = if sprite.attributes.flip_x() {
-            sf.tile_data_low.reverse_bits()
-        } else {
-            sf.tile_data_low
-        };
-        let sprite_high = if sprite.attributes.flip_x() {
-            sf.tile_data_high.reverse_bits()
-        } else {
-            sf.tile_data_high
-        };
-
-        let palette_bit = if sprite.attributes.contains(sprites::Attributes::PALETTE) {
-            1
-        } else {
-            0
-        };
-        let priority_bit = if sprite.attributes.contains(sprites::Attributes::PRIORITY) {
-            1
-        } else {
-            0
-        };
-
-        obj_shifter.merge(sprite_low, sprite_high, palette_bit, priority_bit);
-    }
-
-    /// Pixel mux (page 35 on the die).
-    ///
-    /// Reads the MSB from each shift register (already shifted in
-    /// mode3_odd), forms the 2-bit color indices, applies priority
-    /// logic, selects the winning pixel, and maps it through the
-    /// appropriate palette to the LCD.
-    fn shift_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
-        // Window reactivation zero pixel: substitute color 0 for the BG
-        // pixel without popping the BG shifter. The OBJ shifter is still
-        // popped so sprite pixels mix against the zero pixel.
-        if self.window_zero_pixel {
-            self.window_zero_pixel = false;
-            let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
-
-            if !self.fine_scroll.pixel_clock_active() {
-                return;
-            }
-            if self.pixel_counter < FIRST_VISIBLE_PIXEL {
-                return;
-            }
-            if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
-                return;
-            }
-
-            let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-            let y = video.ly();
-            let bg_color: u8 = 0;
-
-            if regs.control.sprites_enabled() {
-                let spr_color = (spr_hi << 1) | spr_lo;
-                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                    let sprite_palette = if spr_pal == 0 {
-                        PaletteMap(regs.palettes.sprite0.output())
-                    } else {
-                        PaletteMap(regs.palettes.sprite1.output())
-                    };
-                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                    self.screen.set_pixel(x, y, mapped);
-                    return;
-                }
-            }
-
-            let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-            self.screen.set_pixel(x, y, mapped);
-            return;
-        }
-
-        // Shift registers have already been advanced in mode3_odd
-        // (SACU clock edge fires before LOZE load). Read the post-
-        // shift/post-load MSB for pixel output.
-        let (bg_lo, bg_hi) = self.bg_shifter.read();
-        let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
-
-        // During fine scroll gating (ROXY active), the pixel clock is
-        // frozen on hardware — no LCD output. The shifters already
-        // advanced in mode3_odd (they shift regardless of fine scroll).
-        if !self.fine_scroll.pixel_clock_active() {
-            return;
-        }
-
-        // PX 1 through FIRST_VISIBLE_PIXEL-1 are invisible — the first
-        // tile shifts through the pipe without writing to the framebuffer.
-        // On hardware, the LCD clock gate (WUSA) doesn't open until PX=8.
-        if self.pixel_counter < FIRST_VISIBLE_PIXEL {
-            return;
-        }
-
-        // Past the visible region — safety guard for dots between WODU
-        // and rendering latch clearing.
-        if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
-            return;
-        }
-
-        let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-        let y = video.ly();
-
-        // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
-        let bg_color = if regs.control.background_and_window_enabled() {
-            (bg_hi << 1) | bg_lo
-        } else {
-            0
-        };
-
-        // Sprite priority mixing
-        if regs.control.sprites_enabled() {
-            let spr_color = (spr_hi << 1) | spr_lo;
-            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(regs.palettes.sprite0.output())
-                } else {
-                    PaletteMap(regs.palettes.sprite1.output())
-                };
-                let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                self.screen.set_pixel(x, y, mapped);
-                return;
-            }
-        }
-
-        // Background pixel
-        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        self.screen.set_pixel(x, y, mapped);
-    }
-
-    /// Pixel output without pipe shift (sfetch_done dot).
-    ///
-    /// On hardware, pixel output is unconditional — every dot reads the pipe
-    /// MSBs and writes to lcd_x = pix_count - 8. On the sfetch_done dot, the
-    /// pipes do NOT shift (FEPO blocks clkpipe_gate), but the pixel output
-    /// still fires, reading the newly-merged sprite data from the OBJ pipe MSB.
-    /// Since pix_count hasn't changed since the trigger dot, this overwrites
-    /// the trigger dot's pixel at the same screen position.
-    fn peek_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
-        let (bg_lo, bg_hi) = self.bg_shifter.read();
-        let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
-
-        if !self.fine_scroll.pixel_clock_active() {
-            return;
-        }
-        if self.pixel_counter < FIRST_VISIBLE_PIXEL {
-            return;
-        }
-        if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
-            return;
-        }
-
-        let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
-        let y = video.ly();
-
-        let bg_color = if regs.control.background_and_window_enabled() {
-            (bg_hi << 1) | bg_lo
-        } else {
-            0
-        };
-
-        if regs.control.sprites_enabled() {
-            let spr_color = (spr_hi << 1) | spr_lo;
-            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(regs.palettes.sprite0.output())
-                } else {
-                    PaletteMap(regs.palettes.sprite1.output())
-                };
-                let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                self.screen.set_pixel(x, y, mapped);
-                return;
-            }
-        }
-
-        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        self.screen.set_pixel(x, y, mapped);
-    }
-
-    /// Check if the window should start rendering at the current pixel position.
-    /// Also detects window reactivation zero pixel conditions when the window
-    /// is already active.
-    fn check_window_trigger(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
-        if !regs.control.window_enabled() {
-            return;
-        }
-        if video.ly() < regs.window.y {
-            return;
-        }
-
-        // Detect mid-scanline WX changes to clear the trigger suppression latch.
-        let current_wx = regs.window.x_plus_7.output();
-        if current_wx != self.last_wx_value {
-            self.wx_triggered = false;
-            self.last_wx_value = current_wx;
-        }
-
-        if self.pixel_counter != current_wx {
-            return;
-        }
-
-        // Window already active — check for reactivation zero pixel (DMG only).
-        // The hardware condition is GetTile T1 (first tick). Since our WX check
-        // runs after advance_bg_fetcher in mode3_even, the fetcher has already
-        // been ticked: what was dot=0 (T1) is now dot=1. So we check dot=1.
-        // Reactivation requires the initial window fetch to have completed
-        // (window_hit == Inactive), modeling hardware's !window_is_being_fetched.
-        if self.fetcher.fetching_window {
-            if self.window_hit == WindowHit::Inactive
-                && self.startup_fetch.is_none()
-                && self.fetcher.step == FetcherStep::GetTile
-                && self.fetcher.tick == FetcherTick::T2
-                && !self.bg_shifter.is_empty()
-            {
-                self.window_zero_pixel = true;
-            }
-            return;
-        }
-
-        // WX already matched this line — suppress the comparator.
-        if self.wx_triggered {
-            return;
-        }
-
-        // Window trigger: clear shifters, reset fine scroll, restart fetcher,
-        // and reset cascade DFFs so a new startup fetch begins.
-        self.wx_triggered = true;
-        self.bg_shifter.clear();
-        self.obj_shifter.clear();
-        self.fine_scroll.reset_for_window();
-        self.window_hit = WindowHit::Active;
-        self.fetcher.step = FetcherStep::GetTile;
-        self.fetcher.tick = FetcherTick::T1;
-        self.fetcher.window_tile_x = 0;
-        self.fetcher.fetching_window = true;
-        if self.startup_fetch.is_some() {
-            self.startup_fetch = Some(StartupFetch::FirstTile);
-        }
-        self.window_rendered = true;
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
@@ -1061,155 +662,8 @@ impl Rendering {
 
             // Match found — trigger sprite fetch, mark slot as fetched
             self.sprites.fetched |= 1 << i;
-            self.sprite_state = SpriteState::Fetching(SpriteFetch {
-                entry: *entry,
-                phase: SpriteFetchPhase::WaitingForFetcher,
-                step: SpriteStep::GetTile,
-                tick: FetcherTick::T1,
-                tile_data_low: 0,
-                tile_data_high: 0,
-            });
+            self.sprite_state = SpriteState::Fetching(SpriteFetch::new(*entry));
             break; // Only one sprite fetch at a time
-        }
-    }
-}
-
-// --- FramePhase enum ---
-
-pub enum FramePhase {
-    ActiveDisplay(Rendering),
-    VerticalBlank,
-}
-
-impl FramePhase {
-    pub fn new() -> Self {
-        Self::ActiveDisplay(Rendering::new())
-    }
-
-    /// Create a PPU for an LCD-on transition (LCDC bit 7 set after being
-    /// clear). The first line reports mode 0 in STAT until the OAM scan
-    /// begins internally.
-    pub fn new_lcd_on() -> Self {
-        Self::ActiveDisplay(Rendering::new_lcd_on())
-    }
-
-    pub fn mode(&self) -> Mode {
-        match self {
-            FramePhase::ActiveDisplay(rendering) => rendering.mode(),
-            FramePhase::VerticalBlank => Mode::VerticalBlank,
-        }
-    }
-
-    pub fn stat_mode(&self, video: &VideoControl) -> Mode {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
-                Mode::HorizontalBlank
-            }
-            FramePhase::ActiveDisplay(rendering) => rendering.stat_mode(video),
-            FramePhase::VerticalBlank => Mode::VerticalBlank,
-        }
-    }
-
-    pub fn interrupt_mode(&self, video: &VideoControl) -> Mode {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
-                Mode::HorizontalBlank
-            }
-            FramePhase::ActiveDisplay(rendering) => rendering.interrupt_mode(),
-            // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
-            // The internal mode-for-interrupt doesn't transition to Mode 1 until
-            // 4 dots after VBlank entry.
-            FramePhase::VerticalBlank if video.ly() == 144 && video.dot() < 4 => {
-                Mode::HorizontalBlank
-            }
-            FramePhase::VerticalBlank => Mode::VerticalBlank,
-        }
-    }
-
-    pub fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
-            FramePhase::ActiveDisplay(rendering) => rendering.mode2_interrupt_active(video),
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn oam_locked(&self) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
-            FramePhase::ActiveDisplay(rendering) => rendering.oam_locked(),
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn vram_locked(&self) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
-            FramePhase::ActiveDisplay(rendering) => rendering.vram_locked(),
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn oam_write_locked(&self) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
-            FramePhase::ActiveDisplay(rendering) => rendering.oam_write_locked(),
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn vram_write_locked(&self) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => false,
-            FramePhase::ActiveDisplay(rendering) => rendering.vram_write_locked(),
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn is_rendering(&self) -> bool {
-        match self {
-            FramePhase::ActiveDisplay(rendering) => {
-                matches!(
-                    rendering.render_phase,
-                    RenderPhase::Drawing | RenderPhase::DrawingComplete
-                )
-            }
-            FramePhase::VerticalBlank => false,
-        }
-    }
-
-    pub fn scanner_oam_address(&self) -> Option<u8> {
-        match self {
-            FramePhase::ActiveDisplay(rendering) => {
-                rendering.scanner.as_ref().map(|s| s.oam_address())
-            }
-            FramePhase::VerticalBlank => None,
-        }
-    }
-
-    /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
-    pub fn tcycle_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
-        match self {
-            FramePhase::ActiveDisplay(rendering) => {
-                rendering.half_even(regs, video, vram);
-            }
-            FramePhase::VerticalBlank => {}
-        }
-    }
-
-    /// DELTA_ODD half of a dot tick: pixel output phase.
-    pub fn tcycle_odd(
-        &mut self,
-        regs: &PipelineRegisters,
-        video: &VideoControl,
-        oam: &Oam,
-        vram: &Vram,
-    ) {
-        match self {
-            FramePhase::ActiveDisplay(rendering) => {
-                rendering.half_odd(regs, video, oam, vram);
-            }
-            FramePhase::VerticalBlank => {}
         }
     }
 }
