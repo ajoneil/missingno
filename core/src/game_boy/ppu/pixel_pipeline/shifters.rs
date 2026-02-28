@@ -8,13 +8,18 @@
 /// Background pixel shift register (page 32 on the die).
 ///
 /// Two 8-bit shift registers, one per bitplane (BgwPipeA/BgwPipeB).
-/// Loaded in parallel from a BG/window tile fetch, shifted out one
-/// bit per dot. The "FIFO is empty" condition from Pan Docs corresponds
-/// to `len == 0` (all bits have been shifted out).
+/// On hardware, this is always 8 DFF22 flip-flops that shift on every
+/// SACU clock edge unconditionally. Zero shifts in from bit 0. Tile
+/// data is loaded in parallel via async SET/RST (SEKO signal).
+///
+/// The `loaded` flag models the POKY_PRELOAD_LATCHp signal on hardware,
+/// which gates SACU_CLKPIPE (pixel clock) until the first tile load
+/// completes. Once latched, it stays set until a window trigger or
+/// scanline reset clears it.
 pub(super) struct BgShifter {
     low: u8,
     high: u8,
-    len: u8,
+    loaded: bool,
 }
 
 impl BgShifter {
@@ -22,29 +27,29 @@ impl BgShifter {
         Self {
             low: 0,
             high: 0,
-            len: 0,
+            loaded: false,
         }
     }
 
+    /// Whether the pipe has been loaded since the last clear/reset.
+    /// Models POKY_PRELOAD_LATCHp — false before the first tile load,
+    /// true after. Gates pixel clock and pixel output.
     pub(super) fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    pub(super) fn len(&self) -> u8 {
-        self.len
+        !self.loaded
     }
 
     pub(super) fn clear(&mut self) {
-        self.len = 0;
+        self.loaded = false;
     }
 
     /// Parallel load from a tile fetch. On hardware, the DFF22 shift
     /// register cells use async SET/RST pins, so a load unconditionally
     /// overwrites the current contents (SEKO pre-load at tile boundaries).
+    /// Sets the POKY preload latch.
     pub(super) fn load(&mut self, low: u8, high: u8) {
         self.low = low;
         self.high = high;
-        self.len = 8;
+        self.loaded = true;
     }
 
     /// Read the MSB bitplane values — the shift register's output pins.
@@ -56,12 +61,11 @@ impl BgShifter {
     }
 
     /// Shift the register left by one position (SACU clock edge).
-    /// Pure side effect — use `read()` afterward to get the post-shift output.
+    /// On hardware, the BG pipe shifts unconditionally — zero fills
+    /// in from bit 0 on every clock edge.
     pub(super) fn shift(&mut self) {
-        debug_assert!(self.len > 0);
         self.low <<= 1;
         self.high <<= 1;
-        self.len -= 1;
     }
 }
 

@@ -1008,7 +1008,7 @@ impl Rendering {
                 && self.startup_fetch.is_none()
                 && self.fetcher.step == FetcherStep::GetTile
                 && self.fetcher.tick == FetcherTick::T2
-                && self.bg_shifter.len() == 8
+                && !self.bg_shifter.is_empty()
             {
                 self.window_zero_pixel = true;
             }
