@@ -51,6 +51,8 @@ impl GameBoy {
             HaltState::Halting => Processor::begin(&mut self.cpu),
         };
 
+        let was_halted = self.cpu.halt_state == HaltState::Halted;
+
         // Run dots. Each M-cycle is 4 dots; the processor yields one
         // DotAction per dot with bus operations at dot 3 (end of M-cycle).
         let mut read_value: u8 = 0;
@@ -105,6 +107,17 @@ impl GameBoy {
                         // promote(), modeling the DFF cascade's 1 M-cycle
                         // propagation delay (CLK_ENA→PHI resumption).
                         self.prefetched_opcode = None;
+                        self.advance_ei_delay();
+                        return new_screen;
+                    }
+
+                    // IME=0 HALT wakeup: the HaltedNop's M-cycle already served
+                    // as the trailing fetch — it read the opcode at [PC]. On
+                    // hardware, the wakeup NOP IS the generic fetch. Capturing
+                    // read_value as the prefetched opcode and returning avoids
+                    // an extra M-cycle of hardware ticking.
+                    if was_halted && self.cpu.halt_state == HaltState::Running {
+                        self.prefetched_opcode = Some(read_value);
                         self.advance_ei_delay();
                         return new_screen;
                     }
@@ -300,8 +313,9 @@ impl GameBoy {
 
             // HALT wakeup: even with IME=Disabled, a pending interrupt
             // wakes the CPU from HALT (without dispatching). Setting
-            // Running here causes the HaltedNop completion to fall
-            // through to the trailing fetch, resuming normal execution.
+            // Running here causes the HaltedNop completion to capture
+            // its bus read as the prefetched opcode and return — the
+            // wakeup NOP IS the trailing fetch (1 M-cycle total, not 2).
             // check_halt_bug() (which runs after the processor yields
             // None) sees Running and no-ops, avoiding a spurious halt
             // bug flag — the halt bug only fires at HALT entry, not
