@@ -843,7 +843,7 @@ impl Rendering {
         if self.window_zero_pixel {
             self.window_zero_pixel = false;
             self.obj_shifter.shift();
-            let obj_bits = self.obj_shifter.peek();
+            let obj_bits = self.obj_shifter.read();
 
             if !self.fine_scroll.pixel_clock_active() {
                 return;
@@ -880,13 +880,13 @@ impl Rendering {
             return;
         }
 
-        // Shift one bit from each BG bitplane
-        let (bg_lo, bg_hi) = self.bg_shifter.shift();
+        // Hardware within-tick ordering: shift registers shift left (SACU
+        // clock edge), then pixel output reads the post-shift MSB.
+        self.bg_shifter.shift();
+        let (bg_lo, bg_hi) = self.bg_shifter.read();
 
-        // Hardware: OBJ pipe shifts left first, then pixel output reads the
-        // new MSB. Shift advances the pipe, then peek reads post-shift value.
         self.obj_shifter.shift();
-        let obj_bits = self.obj_shifter.peek();
+        let obj_bits = self.obj_shifter.read();
 
         // During fine scroll gating (ROXY active), the pixel clock is
         // frozen on hardware — SACU is held high, PX does not increment,
@@ -952,8 +952,8 @@ impl Rendering {
     /// Since pix_count hasn't changed since the trigger dot, this overwrites
     /// the trigger dot's pixel at the same screen position.
     fn peek_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
-        let (bg_lo, bg_hi) = self.bg_shifter.peek();
-        let obj_bits = self.obj_shifter.peek();
+        let (bg_lo, bg_hi) = self.bg_shifter.read();
+        let obj_bits = self.obj_shifter.read();
 
         if !self.fine_scroll.pixel_clock_active() {
             return;
