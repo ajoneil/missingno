@@ -23,6 +23,8 @@ pub enum CpuRegister {
 pub enum WatchCondition {
     BusRead { address: u16 },
     BusWrite { address: u16 },
+    DmaRead { address: u16 },
+    DmaWrite { address: u16 },
     Scanline(u8),
     PpuMode(Mode),
     PpuRegister { register: ppu::Register, value: u8 },
@@ -33,7 +35,10 @@ pub enum WatchCondition {
 impl WatchCondition {
     fn needs_bus_trace(&self) -> bool {
         match self {
-            WatchCondition::BusRead { .. } | WatchCondition::BusWrite { .. } => true,
+            WatchCondition::BusRead { .. }
+            | WatchCondition::BusWrite { .. }
+            | WatchCondition::DmaRead { .. }
+            | WatchCondition::DmaWrite { .. } => true,
             WatchCondition::All(conditions) => conditions.iter().any(|c| c.needs_bus_trace()),
             _ => false,
         }
@@ -203,6 +208,12 @@ impl Debugger {
             WatchCondition::BusWrite { address } => trace
                 .iter()
                 .any(|a| a.kind == BusAccessKind::Write && a.address == *address),
+            WatchCondition::DmaRead { address } => trace
+                .iter()
+                .any(|a| a.kind == BusAccessKind::DmaRead && a.address == *address),
+            WatchCondition::DmaWrite { address } => trace
+                .iter()
+                .any(|a| a.kind == BusAccessKind::DmaWrite && a.address == *address),
             WatchCondition::Scanline(target) => {
                 ppu.read_register(ppu::Register::CurrentScanline) == *target
             }

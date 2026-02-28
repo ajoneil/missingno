@@ -1,5 +1,5 @@
 use super::{
-    BusAccess, ExecutionState, GameBoy, InterruptLatch,
+    BusAccess, BusAccessKind, ExecutionState, GameBoy, InterruptLatch,
     cpu::{
         EiDelay, HaltState, InterruptMasterEnable,
         mcycle::{DotAction, Processor},
@@ -511,11 +511,16 @@ impl GameBoy {
             // bus latch so that CPU reads from the same bus see this value.
             if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
                 let byte = self.read_dma_source(src_addr);
-                let oam_addr = match ppu::memory::MappedAddress::map(0xfe00 + dst_offset as u16) {
+                let dst_addr = 0xfe00 + dst_offset as u16;
+                let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
                     ppu::memory::MappedAddress::Oam(addr) => addr,
                     _ => unreachable!(),
                 };
                 self.ppu.write_oam(oam_addr, byte);
+                if let Some(trace) = &mut self.bus_trace {
+                    trace.push(BusAccess { address: src_addr, value: byte, kind: BusAccessKind::DmaRead });
+                    trace.push(BusAccess { address: dst_addr, value: byte, kind: BusAccessKind::DmaWrite });
+                }
                 match Bus::of(src_addr) {
                     Some(Bus::External) => {
                         self.external.drive(byte);

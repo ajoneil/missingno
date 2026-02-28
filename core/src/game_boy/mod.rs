@@ -92,6 +92,8 @@ enum ExecutionState {
 pub enum BusAccessKind {
     Read,
     Write,
+    DmaRead,
+    DmaWrite,
 }
 
 #[derive(Clone, Copy, Debug)]

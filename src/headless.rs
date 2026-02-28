@@ -190,6 +190,46 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                 Err(_) => respond_error(request, 400, "invalid hex address"),
             }
         }
+        _ if path.starts_with("/watchpoints/dma-read/") => {
+            let addr_str = &path["/watchpoints/dma-read/".len()..];
+            match u16::from_str_radix(addr_str, 16) {
+                Ok(addr) => {
+                    let condition = WatchCondition::DmaRead { address: addr };
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
+                    }
+                }
+                Err(_) => respond_error(request, 400, "invalid hex address"),
+            }
+        }
+        _ if path.starts_with("/watchpoints/dma-write/") => {
+            let addr_str = &path["/watchpoints/dma-write/".len()..];
+            match u16::from_str_radix(addr_str, 16) {
+                Ok(addr) => {
+                    let condition = WatchCondition::DmaWrite { address: addr };
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
+                    }
+                }
+                Err(_) => respond_error(request, 400, "invalid hex address"),
+            }
+        }
         _ if path.starts_with("/watchpoints/scanline/") => {
             let val_str = &path["/watchpoints/scanline/".len()..];
             match val_str.parse::<u8>() {
@@ -473,6 +513,14 @@ fn watchpoint_json(condition: &WatchCondition) -> serde_json::Value {
             "type": "bus_write",
             "address": format!("{address:04x}"),
         }),
+        WatchCondition::DmaRead { address } => serde_json::json!({
+            "type": "dma_read",
+            "address": format!("{address:04x}"),
+        }),
+        WatchCondition::DmaWrite { address } => serde_json::json!({
+            "type": "dma_write",
+            "address": format!("{address:04x}"),
+        }),
         WatchCondition::Scanline(ly) => serde_json::json!({
             "type": "scanline",
             "value": ly,
@@ -519,6 +567,14 @@ fn parse_watchpoint_json(json: &serde_json::Value) -> Result<WatchCondition, Str
         "bus_write" => {
             let addr = parse_hex_field(json, "address")?;
             Ok(WatchCondition::BusWrite { address: addr })
+        }
+        "dma_read" => {
+            let addr = parse_hex_field(json, "address")?;
+            Ok(WatchCondition::DmaRead { address: addr })
+        }
+        "dma_write" => {
+            let addr = parse_hex_field(json, "address")?;
+            Ok(WatchCondition::DmaWrite { address: addr })
         }
         "scanline" => {
             let value = json["value"]
