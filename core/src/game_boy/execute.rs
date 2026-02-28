@@ -221,6 +221,9 @@ impl GameBoy {
                 DotAction::InternalOamBug { .. } => {
                     // Already handled above at dot 0.
                 }
+                DotAction::EarlyWrite { address, value } => {
+                    self.early_ppu_write(address, value);
+                }
                 DotAction::Read { address } => {
                     // Detect OAM bug from CPU reads to the OAM region.
                     if (0xFE00..=0xFEFF).contains(&address) {
@@ -395,6 +398,9 @@ impl GameBoy {
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
+                    DotAction::EarlyWrite { address, value } => {
+                        self.early_ppu_write(address, value);
+                    }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {
                             pending_oam_bug = Some(OamBugKind::Read);

@@ -211,7 +211,10 @@ impl Ppu {
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
-                    self.registers.background_viewport.y.write_immediate(value);
+                    self.registers
+                        .background_viewport
+                        .y
+                        .write_propagating(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)

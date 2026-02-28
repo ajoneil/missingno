@@ -423,6 +423,17 @@ impl GameBoy {
         }
     }
 
+    /// Early DFF latch: on hardware, PPU register cells begin sampling
+    /// the data bus at the rising edge (dot 1), before the bus write
+    /// completes (dot 3). This applies the register write to the PPU's
+    /// DFF latches without any bus-level side effects.
+    pub fn early_ppu_write(&mut self, address: u16, value: u8) {
+        if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
+            self.ppu
+                .write_register(register, value, &self.vram_bus.vram);
+        }
+    }
+
     pub fn write_byte(&mut self, address: u16, value: u8) {
         if let Some(trace) = &mut self.bus_trace {
             trace.push(BusAccess {
