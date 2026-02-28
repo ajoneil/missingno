@@ -87,6 +87,10 @@ impl Ppu {
         }
     }
 
+    pub fn dot(&self) -> u32 {
+        self.video.dot()
+    }
+
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Control => self.registers.control.bits(),

@@ -25,7 +25,13 @@ This API operates at instruction/frame granularity. It **cannot** observe:
 - **Audio channel internals** (sample values, timer counters, sweep state)
 - **Memory bus conflicts** (DMA bus contention, OAM/VRAM locking during specific modes)
 
-If the investigation needs any of the above, **stop and tell the user**: "The headless debugger can't observe [specific thing] — it would need a new endpoint or `/measure` with code instrumentation." The user will decide whether to add an endpoint or fall back to `/measure`.
+If the question you've been asked requires observing any of the above, you **must** stop immediately and report this to the user — do not attempt a partial answer, do not substitute a coarser measurement and hope it's "close enough", and do not silently return results that don't actually answer the question. The report must be specific:
+
+- **What you were asked**: restate the question.
+- **What you can't observe**: name the specific limitation (e.g., "dot-level timing within a scanline", "pixel pipeline FIFO state").
+- **What would be needed**: either a new debugger endpoint or `/measure` with code instrumentation.
+
+The user will decide whether to extend the debugger or fall back to `/measure`. Do not make that decision yourself.
 
 ## Prerequisites
 
@@ -48,7 +54,7 @@ It listens on `http://127.0.0.1:3333`. All responses are JSON.
 | Endpoint | Method | Returns |
 |----------|--------|---------|
 | `/cpu` | GET | Registers (a-l), SP, PC, flags (zero/negative/half_carry/carry), IME, halted |
-| `/ppu` | GET | LCDC (decoded flags), STAT (mode name + number), LY, LYC, SCX, SCY, WX, WY, palettes (BGP/OBP0/OBP1 with color index breakdown) |
+| `/ppu` | GET | LCDC (decoded flags), STAT (mode name + number), LY, dot (0-455 within scanline), LYC, SCX, SCY, WX, WY, palettes (BGP/OBP0/OBP1 with color index breakdown) |
 | `/screen` | GET | 144x160 array of palette indices (0-3) — large, prefer `/screen/ascii` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest — compact, readable |
 | `/sprites` | GET | All 40 OAM entries: id, screen x/y, tile, priority (above_bg/behind_bg), flip_x, flip_y, palette (obp0/obp1), visible |
