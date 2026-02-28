@@ -221,8 +221,10 @@ impl GameBoy {
                 DotAction::InternalOamBug { .. } => {
                     // Already handled above at dot 0.
                 }
-                DotAction::EarlyWrite { address, value } => {
-                    self.early_ppu_write(address, value);
+                DotAction::DriveBus { address, value } => {
+                    if self.drive_ppu_bus(address, value) {
+                        self.interrupts.request(Interrupt::VideoStatus);
+                    }
                 }
                 DotAction::Read { address } => {
                     // Detect OAM bug from CPU reads to the OAM region.
@@ -398,8 +400,10 @@ impl GameBoy {
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
-                    DotAction::EarlyWrite { address, value } => {
-                        self.early_ppu_write(address, value);
+                    DotAction::DriveBus { address, value } => {
+                        if self.drive_ppu_bus(address, value) {
+                            self.interrupts.request(Interrupt::VideoStatus);
+                        }
                     }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {

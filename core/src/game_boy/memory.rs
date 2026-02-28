@@ -423,14 +423,15 @@ impl GameBoy {
         }
     }
 
-    /// Early DFF latch: on hardware, PPU register cells begin sampling
-    /// the data bus at the rising edge (dot 1), before the bus write
-    /// completes (dot 3). This applies the register write to the PPU's
-    /// DFF latches without any bus-level side effects.
-    pub fn early_ppu_write(&mut self, address: u16, value: u8) {
+    /// Write pulse: on hardware, the CPU write pulse (phases E,F,G) drives
+    /// the data bus. PPU register DFF cells latch from the bus during this
+    /// pulse. Returns true if a STAT interrupt was triggered (FF41 write quirk).
+    pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
             self.ppu
-                .write_register(register, value, &self.vram_bus.vram);
+                .write_register(register, value, &self.vram_bus.vram)
+        } else {
+            false
         }
     }
 
@@ -483,7 +484,10 @@ impl GameBoy {
             None => {}
         }
 
-        self.write_mapped(MappedAddress::map(address), value);
+        let mapped = MappedAddress::map(address);
+        if !matches!(mapped, MappedAddress::PpuRegister(_)) {
+            self.write_mapped(mapped, value);
+        }
     }
 
     pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {

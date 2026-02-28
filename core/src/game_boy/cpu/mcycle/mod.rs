@@ -34,7 +34,7 @@ pub enum BusAction {
 /// Each M-cycle expands into 4 dots with bus operations placed at
 /// the hardware-correct position:
 /// - **Read**:     `[Idle, Idle, Idle, Read]`
-/// - **Write**:    `[Idle, EarlyWrite, Idle, Write]`
+/// - **Write**:    `[Idle, DriveBus, Idle, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Debug)]
@@ -47,10 +47,11 @@ pub enum DotAction {
     /// CPU is writing this value to this address. The write latches
     /// at this dot (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
-    /// The CPU data bus is being driven with the write value. DFF register
-    /// cells in the PPU begin latching from the bus at dot 1 (rising edge),
-    /// before the actual bus write completes at dot 3 (falling edge).
-    EarlyWrite { address: u16, value: u8 },
+    /// The CPU write pulse is active — the data bus is being driven with
+    /// the write value. PPU register DFF cells latch from the bus at this
+    /// dot (phases E,F,G of the write M-cycle). The bus write completes
+    /// at dot 3 via `Write`.
+    DriveBus { address: u16, value: u8 },
     /// Internal cycle where the IDU places an address on the bus.
     /// May trigger OAM bug if address is in 0xFE00-0xFEFF.
     InternalOamBug { address: u16 },
@@ -693,7 +694,7 @@ impl Processor {
                 _ => DotAction::Idle,
             },
             Some(BusAction::Write { address, value }) => match dot {
-                1 => DotAction::EarlyWrite {
+                1 => DotAction::DriveBus {
                     address: *address,
                     value: *value,
                 },
