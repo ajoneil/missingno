@@ -511,15 +511,6 @@ impl Rendering {
                         // dot, overwriting it. The pipes do NOT shift (FEPO
                         // blocks clkpipe_gate).
                         self.peek_pixel_out(regs, video);
-
-                        // Consume the OBJ pixel just output by peek. On hardware,
-                        // the trigger dot's pipe shift advanced the OBJ pipe by
-                        // one position, but the pipe was empty so the shift was a
-                        // no-op. After sprite merge loads pixel 0 at MSB, this
-                        // consume accounts for that missed advance — ensuring the
-                        // next Idle dot's shift_pixel_out starts at pixel 1.
-                        self.obj_shifter.shift();
-
                         self.sprite_state = SpriteState::Idle;
                     }
                 }
@@ -851,7 +842,8 @@ impl Rendering {
         // popped so sprite pixels mix against the zero pixel.
         if self.window_zero_pixel {
             self.window_zero_pixel = false;
-            let obj_bits = self.obj_shifter.shift();
+            self.obj_shifter.shift();
+            let obj_bits = self.obj_shifter.peek();
 
             if !self.fine_scroll.pixel_clock_active() {
                 return;
@@ -891,8 +883,10 @@ impl Rendering {
         // Shift one bit from each BG bitplane
         let (bg_lo, bg_hi) = self.bg_shifter.shift();
 
-        // Shift OBJ in lockstep (if it has pixels)
-        let obj_bits = self.obj_shifter.shift();
+        // Hardware: OBJ pipe shifts left first, then pixel output reads the
+        // new MSB. Shift advances the pipe, then peek reads post-shift value.
+        self.obj_shifter.shift();
+        let obj_bits = self.obj_shifter.peek();
 
         // During fine scroll gating (ROXY active), the pixel clock is
         // frozen on hardware — SACU is held high, PX does not increment,

@@ -48,10 +48,10 @@ impl BgShifter {
     }
 
     /// Read the MSB bitplane values without shifting (pure read).
-    /// Used on the sfetch_done dot where hardware outputs a pixel
-    /// but the pipe shift is blocked by FEPO.
+    /// On hardware, the shift register always has 8 bits — reading
+    /// an "empty" register returns 0. Used both for sfetch_done dot
+    /// peek and for post-shift pixel output reads.
     pub(super) fn peek(&self) -> (u8, u8) {
-        debug_assert!(self.len > 0);
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
         (lo, hi)
