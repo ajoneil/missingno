@@ -1,5 +1,5 @@
 use super::{
-    ExecutionState, GameBoy, InterruptLatch,
+    BusAccess, ExecutionState, GameBoy, InterruptLatch,
     cpu::{
         EiDelay, HaltState, InterruptMasterEnable,
         mcycle::{DotAction, Processor},
@@ -19,6 +19,16 @@ pub(super) enum OamBugKind {
 
 impl GameBoy {
     pub fn step(&mut self) -> bool {
+        self.step_traced(false).0
+    }
+
+    /// Step one instruction, optionally recording all bus accesses.
+    /// Returns (new_screen, trace). Trace is empty when `trace` is false.
+    pub fn step_traced(&mut self, trace: bool) -> (bool, Vec<BusAccess>) {
+        if trace {
+            self.bus_trace = Some(Vec::new());
+        }
+
         // Drain any mid-instruction state left by step_dot().
         let mut new_screen = false;
         while !matches!(self.execution, ExecutionState::Ready) {
@@ -27,14 +37,15 @@ impl GameBoy {
 
         // Now at an instruction boundary — run one full instruction.
         new_screen |= self.step_instruction();
-        new_screen
+
+        let trace = self.bus_trace.take().unwrap_or_default();
+        (new_screen, trace)
     }
 
     /// Run one complete instruction from start to finish (including
     /// trailing fetch). This is the original `step()` logic, factored
     /// out so `step()` can drain mid-instruction state first.
     fn step_instruction(&mut self) -> bool {
-        self.bus_trace.clear();
         let mut new_screen = false;
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
@@ -242,7 +253,6 @@ impl GameBoy {
     /// frame was produced. The execution state machine tracks where
     /// we are in the instruction lifecycle across calls.
     pub fn step_dot(&mut self) -> bool {
-        self.bus_trace.clear();
         match std::mem::replace(&mut self.execution, ExecutionState::Ready) {
             ExecutionState::Ready => {
                 // Start a new instruction.

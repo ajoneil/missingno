@@ -86,12 +86,38 @@ impl Debugger {
         last_screen
     }
 
+    fn has_watchpoints(&self) -> bool {
+        !self.watchpoints_read.is_empty() || !self.watchpoints_write.is_empty()
+    }
+
     pub fn step_frame(&mut self) -> Option<Screen> {
         self.last_watchpoint_hit = None;
+        if self.has_watchpoints() {
+            self.step_frame_watched()
+        } else {
+            self.step_frame_simple()
+        }
+    }
+
+    fn step_frame_simple(&mut self) -> Option<Screen> {
         loop {
             let screen = self.step();
+            if screen.is_some() || self.breakpoint_triggered() {
+                return screen;
+            }
+        }
+    }
 
-            if let Some(hit) = self.check_watchpoints() {
+    fn step_frame_watched(&mut self) -> Option<Screen> {
+        loop {
+            let (new_screen, trace) = self.game_boy.step_traced(true);
+            let screen = if new_screen {
+                Some(self.game_boy.screen().clone())
+            } else {
+                None
+            };
+
+            if let Some(hit) = self.check_watchpoints(&trace) {
                 self.last_watchpoint_hit = Some(hit);
                 return screen;
             }
@@ -107,8 +133,8 @@ impl Debugger {
             .contains(&self.game_boy.cpu().program_counter)
     }
 
-    fn check_watchpoints(&self) -> Option<BusAccess> {
-        for access in self.game_boy.bus_trace() {
+    fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<BusAccess> {
+        for access in trace {
             match access.kind {
                 BusAccessKind::Read if self.watchpoints_read.contains(&access.address) => {
                     return Some(*access);
