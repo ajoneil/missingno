@@ -504,11 +504,13 @@ impl Rendering {
                         }
                     }
                     SpriteFetchPhase::Done => {
-                        // sfetch-done dot: pixel clock is still frozen (this is
-                        // SpriteState::Fetching, so all FEPO-gated operations are
-                        // suppressed). On hardware, store_x clears on this dot,
-                        // setting state_new.FEPO=0. Transition to Idle — the next
-                        // dot will be the resume dot with normal pixel clock operation.
+                        // sfetch-done dot: pixel clock is still frozen, but on
+                        // hardware pixel output is unconditional — it reads the
+                        // pipe MSBs (now containing the newly-merged sprite data)
+                        // and writes to the same screen position as the trigger
+                        // dot, overwriting it. The pipes do NOT shift (FEPO
+                        // blocks clkpipe_gate).
+                        self.peek_pixel_out(regs, video);
                         self.sprite_state = SpriteState::Idle;
                     }
                 }
@@ -934,6 +936,57 @@ impl Rendering {
         }
 
         // Background pixel
+        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
+        self.screen.set_pixel(x, y, mapped);
+    }
+
+    /// Pixel output without pipe shift (sfetch_done dot).
+    ///
+    /// On hardware, pixel output is unconditional — every dot reads the pipe
+    /// MSBs and writes to lcd_x = pix_count - 8. On the sfetch_done dot, the
+    /// pipes do NOT shift (FEPO blocks clkpipe_gate), but the pixel output
+    /// still fires, reading the newly-merged sprite data from the OBJ pipe MSB.
+    /// Since pix_count hasn't changed since the trigger dot, this overwrites
+    /// the trigger dot's pixel at the same screen position.
+    fn peek_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
+        let (bg_lo, bg_hi) = self.bg_shifter.peek();
+        let obj_bits = self.obj_shifter.peek();
+
+        if !self.fine_scroll.pixel_clock_active() {
+            return;
+        }
+        if self.pixel_counter < FIRST_VISIBLE_PIXEL {
+            return;
+        }
+        if self.pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+            return;
+        }
+
+        let x = self.pixel_counter - FIRST_VISIBLE_PIXEL;
+        let y = video.ly();
+
+        let bg_color = if regs.control.background_and_window_enabled() {
+            (bg_hi << 1) | bg_lo
+        } else {
+            0
+        };
+
+        if regs.control.sprites_enabled() {
+            if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
+                let spr_color = (spr_hi << 1) | spr_lo;
+                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                    let sprite_palette = if spr_pal == 0 {
+                        PaletteMap(regs.palettes.sprite0.output())
+                    } else {
+                        PaletteMap(regs.palettes.sprite1.output())
+                    };
+                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                    self.screen.set_pixel(x, y, mapped);
+                    return;
+                }
+            }
+        }
+
         let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
         self.screen.set_pixel(x, y, mapped);
     }

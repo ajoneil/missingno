@@ -47,6 +47,16 @@ impl BgShifter {
         self.len = 8;
     }
 
+    /// Read the MSB bitplane values without shifting (pure read).
+    /// Used on the sfetch_done dot where hardware outputs a pixel
+    /// but the pipe shift is blocked by FEPO.
+    pub(super) fn peek(&self) -> (u8, u8) {
+        debug_assert!(self.len > 0);
+        let lo = (self.low >> 7) & 1;
+        let hi = (self.high >> 7) & 1;
+        (lo, hi)
+    }
+
     /// Shift out one pixel's bitplane values (MSB first, matching hardware).
     /// Returns (low_bit, high_bit) — the 2-bit color is `(high << 1) | low`.
     pub(super) fn shift(&mut self) -> (u8, u8) {
@@ -96,6 +106,20 @@ impl ObjShifter {
         self.palette = 0;
         self.priority = 0;
         self.len = 0;
+    }
+
+    /// Read the MSB data without shifting (pure read). Returns None if empty.
+    /// Used on the sfetch_done dot where hardware outputs a pixel
+    /// but the pipe shift is blocked by FEPO.
+    pub(super) fn peek(&self) -> Option<(u8, u8, u8, u8)> {
+        if self.len == 0 {
+            return None;
+        }
+        let lo = (self.low >> 7) & 1;
+        let hi = (self.high >> 7) & 1;
+        let pal = (self.palette >> 7) & 1;
+        let pri = (self.priority >> 7) & 1;
+        Some((lo, hi, pal, pri))
     }
 
     /// Shift out one pixel's data (MSB first). Returns None if empty.
