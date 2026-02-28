@@ -149,10 +149,13 @@ MissingNo. is a Game Boy emulator and debugger written in Rust.
 
 ## Build and Run Commands
 
+**Do not use `--release` unless explicitly asked.** Release builds are slow to compile. Debug builds are the default for development, testing, and debugging.
+
 ```bash
-cargo run --release                          # Build and run
-cargo run --release -- path/to/rom.gb        # Load a ROM
-cargo run --release -- path/to/rom.gb --debugger  # Load with debugger
+cargo run                                    # Build and run (debug)
+cargo run -- path/to/rom.gb                  # Load a ROM
+cargo run -- path/to/rom.gb --debugger       # Load with debugger
+cargo run -- path/to/rom.gb --headless       # Headless debugger (HTTP API)
 cargo check                                  # Type check
 cargo test -p missingno-core                 # Run core tests (fast, no GUI deps)
 cargo test                                   # Run all workspace tests

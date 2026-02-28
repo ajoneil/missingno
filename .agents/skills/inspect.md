@@ -35,6 +35,8 @@ The headless server must be running. If it isn't, start it:
 cargo run -- <rom_path> --headless &
 ```
 
+**Do not use `--release` unless the user explicitly asks for it.** Debug builds compile much faster and are sufficient for inspection.
+
 It listens on `http://127.0.0.1:3333`. All responses are JSON.
 
 ## API reference
