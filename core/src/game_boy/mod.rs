@@ -88,6 +88,19 @@ enum ExecutionState {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BusAccessKind {
+    Read,
+    Write,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BusAccess {
+    pub address: u16,
+    pub value: u8,
+    pub kind: BusAccessKind,
+}
+
 pub struct GameBoy {
     cpu: Cpu,
     screen: Screen,
@@ -107,6 +120,7 @@ pub struct GameBoy {
     prefetched_opcode: Option<u8>,
     interrupt_latch: InterruptLatch,
     execution: ExecutionState,
+    bus_trace: Vec<BusAccess>,
 }
 
 impl GameBoy {
@@ -135,9 +149,11 @@ impl GameBoy {
             prefetched_opcode: None,
             interrupt_latch: InterruptLatch::Empty,
             execution: ExecutionState::Ready,
+            bus_trace: Vec::new(),
         };
         let pc = gb.cpu.program_counter;
         gb.prefetched_opcode = Some(gb.cpu_read(pc));
+        gb.bus_trace.clear(); // Don't trace the initial prefetch
         gb
     }
 
@@ -165,6 +181,7 @@ impl GameBoy {
         self.prefetched_opcode = Some(self.cpu_read(pc));
         self.interrupt_latch = InterruptLatch::Empty;
         self.execution = ExecutionState::Ready;
+        self.bus_trace.clear();
     }
 
     pub fn cartridge(&self) -> &Cartridge {
@@ -209,6 +226,10 @@ impl GameBoy {
 
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
         self.sgb.as_ref()
+    }
+
+    pub fn bus_trace(&self) -> &[BusAccess] {
+        &self.bus_trace
     }
 
     #[allow(dead_code)]

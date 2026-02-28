@@ -3,13 +3,13 @@ use std::process;
 
 use missingno_core::debugger::Debugger;
 use missingno_core::debugger::instructions::InstructionsIterator;
-use missingno_core::game_boy::GameBoy;
 use missingno_core::game_boy::cartridge::Cartridge;
 use missingno_core::game_boy::cpu::flags::Flags;
 use missingno_core::game_boy::cpu::instructions::Instruction;
 use missingno_core::game_boy::interrupts;
 use missingno_core::game_boy::ppu;
 use missingno_core::game_boy::ppu::sprites::{Attributes, SpriteId};
+use missingno_core::game_boy::{BusAccessKind, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -92,7 +92,18 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
         }
         (&Method::Post, "/step-frame") => {
             debugger.step_frame();
-            respond_json(request, cpu_state(debugger.game_boy()));
+            let mut response = serde_json::to_value(cpu_state(debugger.game_boy())).unwrap();
+            if let Some(hit) = debugger.last_watchpoint_hit() {
+                response["watchpoint_hit"] = serde_json::json!({
+                    "address": format!("{:04x}", hit.address),
+                    "value": hit.value,
+                    "kind": match hit.kind {
+                        BusAccessKind::Read => "read",
+                        BusAccessKind::Write => "write",
+                    },
+                });
+            }
+            respond_json(request, response);
         }
         (&Method::Post, "/step-over") => {
             debugger.step_over();
@@ -115,6 +126,65 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
                         respond_json(
                             request,
                             serde_json::json!({ "cleared": format!("{addr:04x}") }),
+                        );
+                    }
+                    _ => respond_error(request, 405, "method not allowed"),
+                },
+                Err(_) => respond_error(request, 400, "invalid hex address"),
+            }
+        }
+        (&Method::Get, "/watchpoints") => {
+            let read: Vec<String> = debugger
+                .watchpoints_read()
+                .iter()
+                .map(|a| format!("{a:04x}"))
+                .collect();
+            let write: Vec<String> = debugger
+                .watchpoints_write()
+                .iter()
+                .map(|a| format!("{a:04x}"))
+                .collect();
+            respond_json(request, serde_json::json!({ "read": read, "write": write }));
+        }
+        _ if path.starts_with("/watchpoints/read/") => {
+            let addr_str = &path["/watchpoints/read/".len()..];
+            match u16::from_str_radix(addr_str, 16) {
+                Ok(addr) => match &method {
+                    &Method::Put => {
+                        debugger.set_watchpoint_read(addr);
+                        respond_json(
+                            request,
+                            serde_json::json!({ "set_read": format!("{addr:04x}") }),
+                        );
+                    }
+                    &Method::Delete => {
+                        debugger.clear_watchpoint_read(addr);
+                        respond_json(
+                            request,
+                            serde_json::json!({ "cleared_read": format!("{addr:04x}") }),
+                        );
+                    }
+                    _ => respond_error(request, 405, "method not allowed"),
+                },
+                Err(_) => respond_error(request, 400, "invalid hex address"),
+            }
+        }
+        _ if path.starts_with("/watchpoints/write/") => {
+            let addr_str = &path["/watchpoints/write/".len()..];
+            match u16::from_str_radix(addr_str, 16) {
+                Ok(addr) => match &method {
+                    &Method::Put => {
+                        debugger.set_watchpoint_write(addr);
+                        respond_json(
+                            request,
+                            serde_json::json!({ "set_write": format!("{addr:04x}") }),
+                        );
+                    }
+                    &Method::Delete => {
+                        debugger.clear_watchpoint_write(addr);
+                        respond_json(
+                            request,
+                            serde_json::json!({ "cleared_write": format!("{addr:04x}") }),
                         );
                     }
                     _ => respond_error(request, 405, "method not allowed"),

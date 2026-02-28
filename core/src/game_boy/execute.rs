@@ -34,6 +34,7 @@ impl GameBoy {
     /// trailing fetch). This is the original `step()` logic, factored
     /// out so `step()` can drain mid-instruction state first.
     fn step_instruction(&mut self) -> bool {
+        self.bus_trace.clear();
         let mut new_screen = false;
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
@@ -241,6 +242,7 @@ impl GameBoy {
     /// frame was produced. The execution state machine tracks where
     /// we are in the instruction lifecycle across calls.
     pub fn step_dot(&mut self) -> bool {
+        self.bus_trace.clear();
         match std::mem::replace(&mut self.execution, ExecutionState::Ready) {
             ExecutionState::Ready => {
                 // Start a new instruction.

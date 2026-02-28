@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use crate::game_boy::{GameBoy, cpu::instructions::Instruction, ppu::screen::Screen};
+use crate::game_boy::{
+    BusAccess, BusAccessKind, GameBoy, cpu::instructions::Instruction, ppu::screen::Screen,
+};
 use instructions::InstructionsIterator;
 
 pub mod instructions;
@@ -8,6 +10,9 @@ pub mod instructions;
 pub struct Debugger {
     game_boy: GameBoy,
     breakpoints: BTreeSet<u16>,
+    watchpoints_read: BTreeSet<u16>,
+    watchpoints_write: BTreeSet<u16>,
+    last_watchpoint_hit: Option<BusAccess>,
 }
 
 impl Debugger {
@@ -15,6 +20,9 @@ impl Debugger {
         Self {
             game_boy,
             breakpoints: BTreeSet::new(),
+            watchpoints_read: BTreeSet::new(),
+            watchpoints_write: BTreeSet::new(),
+            last_watchpoint_hit: None,
         }
     }
 
@@ -79,8 +87,14 @@ impl Debugger {
     }
 
     pub fn step_frame(&mut self) -> Option<Screen> {
+        self.last_watchpoint_hit = None;
         loop {
             let screen = self.step();
+
+            if let Some(hit) = self.check_watchpoints() {
+                self.last_watchpoint_hit = Some(hit);
+                return screen;
+            }
 
             if screen.is_some() || self.breakpoint_triggered() {
                 return screen;
@@ -91,6 +105,25 @@ impl Debugger {
     fn breakpoint_triggered(&self) -> bool {
         self.breakpoints
             .contains(&self.game_boy.cpu().program_counter)
+    }
+
+    fn check_watchpoints(&self) -> Option<BusAccess> {
+        for access in self.game_boy.bus_trace() {
+            match access.kind {
+                BusAccessKind::Read if self.watchpoints_read.contains(&access.address) => {
+                    return Some(*access);
+                }
+                BusAccessKind::Write if self.watchpoints_write.contains(&access.address) => {
+                    return Some(*access);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    pub fn last_watchpoint_hit(&self) -> Option<&BusAccess> {
+        self.last_watchpoint_hit.as_ref()
     }
 
     pub fn reset(&mut self) {
@@ -107,5 +140,29 @@ impl Debugger {
 
     pub fn clear_breakpoint(&mut self, address: u16) {
         self.breakpoints.remove(&address);
+    }
+
+    pub fn watchpoints_read(&self) -> &BTreeSet<u16> {
+        &self.watchpoints_read
+    }
+
+    pub fn watchpoints_write(&self) -> &BTreeSet<u16> {
+        &self.watchpoints_write
+    }
+
+    pub fn set_watchpoint_read(&mut self, address: u16) {
+        self.watchpoints_read.insert(address);
+    }
+
+    pub fn set_watchpoint_write(&mut self, address: u16) {
+        self.watchpoints_write.insert(address);
+    }
+
+    pub fn clear_watchpoint_read(&mut self, address: u16) {
+        self.watchpoints_read.remove(&address);
+    }
+
+    pub fn clear_watchpoint_write(&mut self, address: u16) {
+        self.watchpoints_write.remove(&address);
     }
 }

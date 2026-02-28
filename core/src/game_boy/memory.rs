@@ -1,5 +1,5 @@
 use crate::game_boy::{
-    GameBoy, audio,
+    BusAccess, BusAccessKind, GameBoy, audio,
     interrupts::{self, InterruptFlags},
     ppu, serial_transfer, timers,
 };
@@ -251,6 +251,16 @@ impl GameBoy {
     /// physical bus. Use [`read`] for non-emulation reads (debugger,
     /// tests) that should not mutate bus state.
     pub fn cpu_read(&mut self, address: u16) -> u8 {
+        let value = self.cpu_read_inner(address);
+        self.bus_trace.push(BusAccess {
+            address,
+            value,
+            kind: BusAccessKind::Read,
+        });
+        value
+    }
+
+    fn cpu_read_inner(&mut self, address: u16) -> u8 {
         if let Some(bus) = self.dma.is_active_on_bus() {
             // OAM is being written to by DMA; CPU reads return $FF.
             if (0xFE00..=0xFE9F).contains(&address) {
@@ -403,6 +413,11 @@ impl GameBoy {
     }
 
     pub fn write_byte(&mut self, address: u16, value: u8) {
+        self.bus_trace.push(BusAccess {
+            address,
+            value,
+            kind: BusAccessKind::Write,
+        });
         if let Some(bus) = self.dma.is_active_on_bus() {
             // OAM is being written to by DMA; CPU writes are ignored.
             if (0xFE00..=0xFE9F).contains(&address) {
