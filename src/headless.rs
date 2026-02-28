@@ -107,6 +107,60 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             debugger.reset();
             respond_json(request, cpu_state(debugger.game_boy()));
         }
+        (&Method::Get, "/vram") => {
+            respond_json(request, vram_state(debugger.game_boy()));
+        }
+        _ if path.starts_with("/memory/") => {
+            if method != Method::Get {
+                respond_error(request, 405, "method not allowed");
+                return;
+            }
+            let rest = &path["/memory/".len()..];
+            let parts: Vec<&str> = rest.splitn(2, '/').collect();
+            let addr = match u16::from_str_radix(parts[0], 16) {
+                Ok(a) => a,
+                Err(_) => {
+                    respond_error(request, 400, "invalid hex address");
+                    return;
+                }
+            };
+            let length: u16 = if parts.len() > 1 {
+                match parts[1].parse() {
+                    Ok(n) if n >= 1 && n <= 0x1000 => n,
+                    _ => {
+                        respond_error(request, 400, "invalid length (1-4096)");
+                        return;
+                    }
+                }
+            } else {
+                1
+            };
+            let gb = debugger.game_boy();
+            let bytes: Vec<u8> = (0..length)
+                .map(|i| gb.peek(addr.wrapping_add(i)))
+                .collect();
+            if length == 1 {
+                respond_json(
+                    request,
+                    serde_json::json!({
+                        "address": format!("{addr:04x}"),
+                        "value": bytes[0],
+                        "hex": format!("{:02x}", bytes[0]),
+                    }),
+                );
+            } else {
+                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                respond_json(
+                    request,
+                    serde_json::json!({
+                        "address": format!("{addr:04x}"),
+                        "length": length,
+                        "bytes": bytes,
+                        "hex": hex,
+                    }),
+                );
+            }
+        }
         _ if path.starts_with("/breakpoints/") => {
             let addr_str = &path["/breakpoints/".len()..];
             match u16::from_str_radix(addr_str, 16) {
@@ -491,6 +545,65 @@ fn interrupts_state(gb: &GameBoy) -> InterruptsState {
         serial: check(interrupts::Interrupt::Serial),
         joypad: check(interrupts::Interrupt::Joypad),
     }
+}
+
+fn vram_state(gb: &GameBoy) -> serde_json::Value {
+    let vram = gb.vram();
+    let mut tile_blocks = Vec::with_capacity(3);
+    for block_id in 0..3u8 {
+        let block = vram.tile_block(ppu::tiles::TileBlockId(block_id));
+        let base_addr = 0x8000u16 + block_id as u16 * 0x800;
+        let mut tiles = Vec::with_capacity(128);
+        for tile_idx in 0..128u8 {
+            let tile = block.tile(ppu::tiles::TileIndex(tile_idx));
+            let offset = tile_idx as usize * 16;
+            let raw: Vec<u8> = block.data[offset..offset + 16].to_vec();
+            let hex: Vec<String> = raw.iter().map(|b| format!("{b:02x}")).collect();
+            // Decode 8x8 pixel grid
+            let mut pixels = Vec::with_capacity(8);
+            for y in 0..8u8 {
+                let mut row = Vec::with_capacity(8);
+                for x in 0..8u8 {
+                    row.push(tile.pixel(x, y).0);
+                }
+                pixels.push(row);
+            }
+            let non_zero = raw.iter().any(|&b| b != 0);
+            tiles.push(serde_json::json!({
+                "index": tile_idx,
+                "address": format!("{:04x}", base_addr + offset as u16),
+                "raw": hex,
+                "pixels": pixels,
+                "non_zero": non_zero,
+            }));
+        }
+        tile_blocks.push(serde_json::json!({
+            "block": block_id,
+            "address": format!("{base_addr:04x}"),
+            "tiles": tiles,
+        }));
+    }
+
+    let mut maps = Vec::with_capacity(2);
+    for map_id in 0..2u8 {
+        let tile_map = vram.tile_map(ppu::tile_maps::TileMapId(map_id));
+        let base_addr = 0x9800u16 + map_id as u16 * 0x400;
+        let mut rows = Vec::with_capacity(32);
+        for y in 0..32u8 {
+            let row: Vec<u8> = (0..32u8).map(|x| tile_map.get_tile(x, y).0).collect();
+            rows.push(row);
+        }
+        maps.push(serde_json::json!({
+            "map": map_id,
+            "address": format!("{base_addr:04x}"),
+            "rows": rows,
+        }));
+    }
+
+    serde_json::json!({
+        "tile_blocks": tile_blocks,
+        "tile_maps": maps,
+    })
 }
 
 fn respond_json(request: tiny_http::Request, body: impl Serialize) {

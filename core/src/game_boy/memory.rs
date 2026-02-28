@@ -349,6 +349,15 @@ impl GameBoy {
         self.read_mapped(MappedAddress::map(address))
     }
 
+    /// Read a byte bypassing all bus conflicts and PPU mode gating.
+    ///
+    /// Returns the actual value stored in memory regardless of DMA
+    /// state or PPU locking. Used by the debugger to inspect memory
+    /// contents that would normally be hidden.
+    pub fn peek(&self, address: u16) -> u8 {
+        self.read_mapped(MappedAddress::map(address))
+    }
+
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {

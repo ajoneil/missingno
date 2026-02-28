@@ -56,11 +56,15 @@ It listens on `http://127.0.0.1:3333`. All responses are JSON.
 |----------|--------|---------|
 | `/cpu` | GET | Registers (a-l), SP, PC, flags (zero/negative/half_carry/carry), IME, halted |
 | `/ppu` | GET | LCDC (decoded flags), STAT (mode name + number), LY, dot (0-455 within scanline), LYC, SCX, SCY, WX, WY, palettes (BGP/OBP0/OBP1 with color index breakdown) |
+| `/ppu/pipeline` | GET | Pixel pipeline internals: bg_shifter (low/high/loaded), obj_shifter (low/high/palette/priority), pixel_counter, render_phase, sprite_fetch phase, sprite_tile_data |
 | `/screen` | GET | 144x160 array of palette indices (0-3) — large, prefer `/screen/ascii` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest — compact, readable |
 | `/sprites` | GET | All 40 OAM entries: id, screen x/y, tile, priority (above_bg/behind_bg), flip_x, flip_y, palette (obp0/obp1), visible |
 | `/interrupts` | GET | IE and IF raw values + per-line breakdown (vblank/stat/timer/serial/joypad) with enabled/requested bools |
 | `/instructions` | GET | 20 disassembled instructions from current PC (address + mnemonic) |
+| `/memory/{hex_addr}` | GET | Single byte at address: value (decimal), hex |
+| `/memory/{hex_addr}/{length}` | GET | Range of bytes (1-4096): bytes array, hex array. Bypasses DMA/PPU locking |
+| `/vram` | GET | Full VRAM contents: 3 tile blocks (128 tiles each with raw hex, 8x8 pixel grid, non_zero flag) + 2 tile maps (32x32 tile indices) |
 | `/breakpoints` | GET | List of breakpoint addresses (hex strings) |
 
 ### Execution control
@@ -86,6 +90,8 @@ Watchpoints are conditions that stop `step-frame` when matched. Non-bus watchpoi
 | `/watchpoints` | DELETE | Clear all watchpoints |
 | `/watchpoints/bus-read/{hex_addr}` | PUT/DELETE | Bus read watchpoint |
 | `/watchpoints/bus-write/{hex_addr}` | PUT/DELETE | Bus write watchpoint |
+| `/watchpoints/dma-read/{hex_addr}` | PUT/DELETE | DMA source read watchpoint |
+| `/watchpoints/dma-write/{hex_addr}` | PUT/DELETE | DMA destination write watchpoint |
 | `/watchpoints/scanline/{n}` | PUT/DELETE | Scanline (LY) watchpoint |
 | `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint (hblank/vblank/oam_scan/drawing or 0/1/2/3) |
 
