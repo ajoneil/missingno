@@ -134,9 +134,16 @@ impl Debugger {
     }
 
     fn step_frame_watched(&mut self) -> Option<Screen> {
-        let needs_trace = self.watchpoints.iter().any(|w| w.needs_bus_trace());
+        if self.watchpoints.iter().any(|w| w.needs_bus_trace()) {
+            self.step_frame_watched_traced()
+        } else {
+            self.step_frame_watched_dots()
+        }
+    }
+
+    fn step_frame_watched_traced(&mut self) -> Option<Screen> {
         loop {
-            let (new_screen, trace) = self.game_boy.step_traced(needs_trace);
+            let (new_screen, trace) = self.game_boy.step_traced(true);
             let screen = if new_screen {
                 Some(self.game_boy.screen().clone())
             } else {
@@ -144,6 +151,21 @@ impl Debugger {
             };
 
             if let Some(hit) = self.check_watchpoints(&trace) {
+                self.last_watchpoint_hit = Some(hit);
+                return screen;
+            }
+
+            if screen.is_some() || self.breakpoint_triggered() {
+                return screen;
+            }
+        }
+    }
+
+    fn step_frame_watched_dots(&mut self) -> Option<Screen> {
+        loop {
+            let screen = self.step_dot();
+
+            if let Some(hit) = self.check_watchpoints(&[]) {
                 self.last_watchpoint_hit = Some(hit);
                 return screen;
             }
