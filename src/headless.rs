@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_core::debugger::Debugger;
+use missingno_core::debugger::{Debugger, WatchCondition};
 use missingno_core::debugger::instructions::InstructionsIterator;
+use missingno_core::game_boy::GameBoy;
 use missingno_core::game_boy::cartridge::Cartridge;
 use missingno_core::game_boy::cpu::flags::Flags;
 use missingno_core::game_boy::cpu::instructions::Instruction;
 use missingno_core::game_boy::interrupts;
 use missingno_core::game_boy::ppu;
+use missingno_core::game_boy::ppu::pixel_pipeline::Mode;
 use missingno_core::game_boy::ppu::sprites::{Attributes, SpriteId};
-use missingno_core::game_boy::{BusAccessKind, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -94,14 +95,7 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
             debugger.step_frame();
             let mut response = serde_json::to_value(cpu_state(debugger.game_boy())).unwrap();
             if let Some(hit) = debugger.last_watchpoint_hit() {
-                response["watchpoint_hit"] = serde_json::json!({
-                    "address": format!("{:04x}", hit.address),
-                    "value": hit.value,
-                    "kind": match hit.kind {
-                        BusAccessKind::Read => "read",
-                        BusAccessKind::Write => "write",
-                    },
-                });
+                response["watchpoint_hit"] = watchpoint_json(hit);
             }
             respond_json(request, response);
         }
@@ -134,62 +128,102 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
             }
         }
         (&Method::Get, "/watchpoints") => {
-            let read: Vec<String> = debugger
-                .watchpoints_read()
+            let conditions: Vec<serde_json::Value> = debugger
+                .watchpoints()
                 .iter()
-                .map(|a| format!("{a:04x}"))
+                .map(watchpoint_json)
                 .collect();
-            let write: Vec<String> = debugger
-                .watchpoints_write()
-                .iter()
-                .map(|a| format!("{a:04x}"))
-                .collect();
-            respond_json(request, serde_json::json!({ "read": read, "write": write }));
+            respond_json(request, conditions);
         }
-        _ if path.starts_with("/watchpoints/read/") => {
-            let addr_str = &path["/watchpoints/read/".len()..];
+        (&Method::Delete, "/watchpoints") => {
+            debugger.clear_watchpoints();
+            respond_json(request, serde_json::json!({ "cleared": "all" }));
+        }
+        _ if path.starts_with("/watchpoints/bus-read/") => {
+            let addr_str = &path["/watchpoints/bus-read/".len()..];
             match u16::from_str_radix(addr_str, 16) {
-                Ok(addr) => match &method {
-                    &Method::Put => {
-                        debugger.set_watchpoint_read(addr);
-                        respond_json(
-                            request,
-                            serde_json::json!({ "set_read": format!("{addr:04x}") }),
-                        );
+                Ok(addr) => {
+                    let condition = WatchCondition::BusRead { address: addr };
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
                     }
-                    &Method::Delete => {
-                        debugger.clear_watchpoint_read(addr);
-                        respond_json(
-                            request,
-                            serde_json::json!({ "cleared_read": format!("{addr:04x}") }),
-                        );
-                    }
-                    _ => respond_error(request, 405, "method not allowed"),
-                },
+                }
                 Err(_) => respond_error(request, 400, "invalid hex address"),
             }
         }
-        _ if path.starts_with("/watchpoints/write/") => {
-            let addr_str = &path["/watchpoints/write/".len()..];
+        _ if path.starts_with("/watchpoints/bus-write/") => {
+            let addr_str = &path["/watchpoints/bus-write/".len()..];
             match u16::from_str_radix(addr_str, 16) {
-                Ok(addr) => match &method {
-                    &Method::Put => {
-                        debugger.set_watchpoint_write(addr);
-                        respond_json(
-                            request,
-                            serde_json::json!({ "set_write": format!("{addr:04x}") }),
-                        );
+                Ok(addr) => {
+                    let condition = WatchCondition::BusWrite { address: addr };
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
                     }
-                    &Method::Delete => {
-                        debugger.clear_watchpoint_write(addr);
-                        respond_json(
-                            request,
-                            serde_json::json!({ "cleared_write": format!("{addr:04x}") }),
-                        );
-                    }
-                    _ => respond_error(request, 405, "method not allowed"),
-                },
+                }
                 Err(_) => respond_error(request, 400, "invalid hex address"),
+            }
+        }
+        _ if path.starts_with("/watchpoints/scanline/") => {
+            let val_str = &path["/watchpoints/scanline/".len()..];
+            match val_str.parse::<u8>() {
+                Ok(ly) => {
+                    let condition = WatchCondition::Scanline(ly);
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
+                    }
+                }
+                Err(_) => respond_error(request, 400, "invalid scanline number"),
+            }
+        }
+        _ if path.starts_with("/watchpoints/ppu-mode/") => {
+            let mode_str = &path["/watchpoints/ppu-mode/".len()..];
+            let mode = match mode_str {
+                "hblank" | "0" => Some(Mode::HorizontalBlank),
+                "vblank" | "1" => Some(Mode::VerticalBlank),
+                "oam_scan" | "2" => Some(Mode::OamScan),
+                "drawing" | "3" => Some(Mode::Drawing),
+                _ => None,
+            };
+            match mode {
+                Some(mode) => {
+                    let condition = WatchCondition::PpuMode(mode);
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
+                    }
+                }
+                None => respond_error(request, 400, "invalid mode: use hblank/vblank/oam_scan/drawing or 0/1/2/3"),
             }
         }
         _ => respond_error(request, 404, "not found"),
@@ -416,6 +450,42 @@ fn respond_json(request: tiny_http::Request, body: impl Serialize) {
             .unwrap(),
     );
     let _ = request.respond(response);
+}
+
+fn watchpoint_json(condition: &WatchCondition) -> serde_json::Value {
+    match condition {
+        WatchCondition::BusRead { address } => serde_json::json!({
+            "type": "bus_read",
+            "address": format!("{address:04x}"),
+        }),
+        WatchCondition::BusWrite { address } => serde_json::json!({
+            "type": "bus_write",
+            "address": format!("{address:04x}"),
+        }),
+        WatchCondition::Scanline(ly) => serde_json::json!({
+            "type": "scanline",
+            "value": ly,
+        }),
+        WatchCondition::PpuMode(mode) => serde_json::json!({
+            "type": "ppu_mode",
+            "mode": match mode {
+                Mode::HorizontalBlank => "hblank",
+                Mode::VerticalBlank => "vblank",
+                Mode::OamScan => "oam_scan",
+                Mode::Drawing => "drawing",
+            },
+        }),
+        WatchCondition::PpuRegister { register, value } => serde_json::json!({
+            "type": "ppu_register",
+            "register": format!("{register:?}"),
+            "value": value,
+        }),
+        WatchCondition::CpuRegister { register, value } => serde_json::json!({
+            "type": "cpu_register",
+            "register": format!("{register:?}"),
+            "value": value,
+        }),
+    }
 }
 
 fn respond_error(request: tiny_http::Request, code: u16, message: &str) {

@@ -1,18 +1,48 @@
 use std::collections::BTreeSet;
 
 use crate::game_boy::{
-    BusAccess, BusAccessKind, GameBoy, cpu::instructions::Instruction, ppu::screen::Screen,
+    BusAccess, BusAccessKind, GameBoy, cpu::instructions::Instruction,
+    ppu::{self, pixel_pipeline::Mode, screen::Screen},
 };
 use instructions::InstructionsIterator;
 
 pub mod instructions;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CpuRegister {
+    A,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchCondition {
+    BusRead { address: u16 },
+    BusWrite { address: u16 },
+    Scanline(u8),
+    PpuMode(Mode),
+    PpuRegister { register: ppu::Register, value: u8 },
+    CpuRegister { register: CpuRegister, value: u8 },
+}
+
+impl WatchCondition {
+    fn needs_bus_trace(&self) -> bool {
+        matches!(
+            self,
+            WatchCondition::BusRead { .. } | WatchCondition::BusWrite { .. }
+        )
+    }
+}
+
 pub struct Debugger {
     game_boy: GameBoy,
     breakpoints: BTreeSet<u16>,
-    watchpoints_read: BTreeSet<u16>,
-    watchpoints_write: BTreeSet<u16>,
-    last_watchpoint_hit: Option<BusAccess>,
+    watchpoints: Vec<WatchCondition>,
+    last_watchpoint_hit: Option<WatchCondition>,
 }
 
 impl Debugger {
@@ -20,8 +50,7 @@ impl Debugger {
         Self {
             game_boy,
             breakpoints: BTreeSet::new(),
-            watchpoints_read: BTreeSet::new(),
-            watchpoints_write: BTreeSet::new(),
+            watchpoints: Vec::new(),
             last_watchpoint_hit: None,
         }
     }
@@ -86,16 +115,12 @@ impl Debugger {
         last_screen
     }
 
-    fn has_watchpoints(&self) -> bool {
-        !self.watchpoints_read.is_empty() || !self.watchpoints_write.is_empty()
-    }
-
     pub fn step_frame(&mut self) -> Option<Screen> {
         self.last_watchpoint_hit = None;
-        if self.has_watchpoints() {
-            self.step_frame_watched()
-        } else {
+        if self.watchpoints.is_empty() {
             self.step_frame_simple()
+        } else {
+            self.step_frame_watched()
         }
     }
 
@@ -109,8 +134,9 @@ impl Debugger {
     }
 
     fn step_frame_watched(&mut self) -> Option<Screen> {
+        let needs_trace = self.watchpoints.iter().any(|w| w.needs_bus_trace());
         loop {
-            let (new_screen, trace) = self.game_boy.step_traced(true);
+            let (new_screen, trace) = self.game_boy.step_traced(needs_trace);
             let screen = if new_screen {
                 Some(self.game_boy.screen().clone())
             } else {
@@ -133,22 +159,47 @@ impl Debugger {
             .contains(&self.game_boy.cpu().program_counter)
     }
 
-    fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<BusAccess> {
-        for access in trace {
-            match access.kind {
-                BusAccessKind::Read if self.watchpoints_read.contains(&access.address) => {
-                    return Some(*access);
+    fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<WatchCondition> {
+        let ppu = self.game_boy.ppu();
+        let cpu = self.game_boy.cpu();
+        let mode = ppu.mode();
+
+        for condition in &self.watchpoints {
+            let matched = match condition {
+                WatchCondition::BusRead { address } => trace
+                    .iter()
+                    .any(|a| a.kind == BusAccessKind::Read && a.address == *address),
+                WatchCondition::BusWrite { address } => trace
+                    .iter()
+                    .any(|a| a.kind == BusAccessKind::Write && a.address == *address),
+                WatchCondition::Scanline(target) => {
+                    ppu.read_register(ppu::Register::CurrentScanline) == *target
                 }
-                BusAccessKind::Write if self.watchpoints_write.contains(&access.address) => {
-                    return Some(*access);
+                WatchCondition::PpuMode(target) => mode == *target,
+                WatchCondition::PpuRegister { register, value } => {
+                    ppu.read_register(*register) == *value
                 }
-                _ => {}
+                WatchCondition::CpuRegister { register, value } => {
+                    let actual = match register {
+                        CpuRegister::A => cpu.a,
+                        CpuRegister::B => cpu.b,
+                        CpuRegister::C => cpu.c,
+                        CpuRegister::D => cpu.d,
+                        CpuRegister::E => cpu.e,
+                        CpuRegister::H => cpu.h,
+                        CpuRegister::L => cpu.l,
+                    };
+                    actual == *value
+                }
+            };
+            if matched {
+                return Some(condition.clone());
             }
         }
         None
     }
 
-    pub fn last_watchpoint_hit(&self) -> Option<&BusAccess> {
+    pub fn last_watchpoint_hit(&self) -> Option<&WatchCondition> {
         self.last_watchpoint_hit.as_ref()
     }
 
@@ -168,27 +219,21 @@ impl Debugger {
         self.breakpoints.remove(&address);
     }
 
-    pub fn watchpoints_read(&self) -> &BTreeSet<u16> {
-        &self.watchpoints_read
+    pub fn watchpoints(&self) -> &[WatchCondition] {
+        &self.watchpoints
     }
 
-    pub fn watchpoints_write(&self) -> &BTreeSet<u16> {
-        &self.watchpoints_write
+    pub fn add_watchpoint(&mut self, condition: WatchCondition) {
+        if !self.watchpoints.contains(&condition) {
+            self.watchpoints.push(condition);
+        }
     }
 
-    pub fn set_watchpoint_read(&mut self, address: u16) {
-        self.watchpoints_read.insert(address);
+    pub fn remove_watchpoint(&mut self, condition: &WatchCondition) {
+        self.watchpoints.retain(|w| w != condition);
     }
 
-    pub fn set_watchpoint_write(&mut self, address: u16) {
-        self.watchpoints_write.insert(address);
-    }
-
-    pub fn clear_watchpoint_read(&mut self, address: u16) {
-        self.watchpoints_read.remove(&address);
-    }
-
-    pub fn clear_watchpoint_write(&mut self, address: u16) {
-        self.watchpoints_write.remove(&address);
+    pub fn clear_watchpoints(&mut self) {
+        self.watchpoints.clear();
     }
 }

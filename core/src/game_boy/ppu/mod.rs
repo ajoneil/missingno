@@ -33,7 +33,7 @@ pub mod tile_maps;
 pub mod tiles;
 mod video_control;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register {
     Control,
     Status,
