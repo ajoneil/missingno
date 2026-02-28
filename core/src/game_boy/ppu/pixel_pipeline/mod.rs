@@ -497,7 +497,6 @@ impl Rendering {
                             Self::merge_sprite_into_obj_shifter(
                                 sf,
                                 oam,
-                                &self.bg_shifter,
                                 &mut self.obj_shifter,
                             );
                             sf.phase = SpriteFetchPhase::Done;
@@ -782,7 +781,6 @@ impl Rendering {
     fn merge_sprite_into_obj_shifter(
         sf: &SpriteFetch,
         oam: &Oam,
-        bg_shifter: &BgShifter,
         obj_shifter: &mut ObjShifter,
     ) {
         let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
@@ -813,21 +811,11 @@ impl Rendering {
             0
         };
 
-        // Sprites partially off-screen left: skip the clipped pixels
-        let sprite_screen_x = sf.entry.x as i16 - 8;
-        let pixels_clipped_left = if sprite_screen_x < 0 {
-            (-sprite_screen_x) as u8
-        } else {
-            0
-        };
-
         obj_shifter.merge(
             sprite_low,
             sprite_high,
             palette_bit,
             priority_bit,
-            pixels_clipped_left,
-            bg_shifter.len(),
         );
     }
 
@@ -843,7 +831,7 @@ impl Rendering {
         if self.window_zero_pixel {
             self.window_zero_pixel = false;
             self.obj_shifter.shift();
-            let obj_bits = self.obj_shifter.read();
+            let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
 
             if !self.fine_scroll.pixel_clock_active() {
                 return;
@@ -860,18 +848,16 @@ impl Rendering {
             let bg_color: u8 = 0;
 
             if regs.control.sprites_enabled() {
-                if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
-                    let spr_color = (spr_hi << 1) | spr_lo;
-                    if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                        let sprite_palette = if spr_pal == 0 {
-                            PaletteMap(regs.palettes.sprite0.output())
-                        } else {
-                            PaletteMap(regs.palettes.sprite1.output())
-                        };
-                        let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                        self.screen.set_pixel(x, y, mapped);
-                        return;
-                    }
+                let spr_color = (spr_hi << 1) | spr_lo;
+                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                    let sprite_palette = if spr_pal == 0 {
+                        PaletteMap(regs.palettes.sprite0.output())
+                    } else {
+                        PaletteMap(regs.palettes.sprite1.output())
+                    };
+                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                    self.screen.set_pixel(x, y, mapped);
+                    return;
                 }
             }
 
@@ -886,7 +872,7 @@ impl Rendering {
         let (bg_lo, bg_hi) = self.bg_shifter.read();
 
         self.obj_shifter.shift();
-        let obj_bits = self.obj_shifter.read();
+        let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
 
         // During fine scroll gating (ROXY active), the pixel clock is
         // frozen on hardware — SACU is held high, PX does not increment,
@@ -922,19 +908,16 @@ impl Rendering {
 
         // Sprite priority mixing
         if regs.control.sprites_enabled() {
-            if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
-                let spr_color = (spr_hi << 1) | spr_lo;
-                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                    // Sprite pixel wins
-                    let sprite_palette = if spr_pal == 0 {
-                        PaletteMap(regs.palettes.sprite0.output())
-                    } else {
-                        PaletteMap(regs.palettes.sprite1.output())
-                    };
-                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                    self.screen.set_pixel(x, y, mapped);
-                    return;
-                }
+            let spr_color = (spr_hi << 1) | spr_lo;
+            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                let sprite_palette = if spr_pal == 0 {
+                    PaletteMap(regs.palettes.sprite0.output())
+                } else {
+                    PaletteMap(regs.palettes.sprite1.output())
+                };
+                let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                self.screen.set_pixel(x, y, mapped);
+                return;
             }
         }
 
@@ -953,7 +936,7 @@ impl Rendering {
     /// the trigger dot's pixel at the same screen position.
     fn peek_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
         let (bg_lo, bg_hi) = self.bg_shifter.read();
-        let obj_bits = self.obj_shifter.read();
+        let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
 
         if !self.fine_scroll.pixel_clock_active() {
             return;
@@ -975,18 +958,16 @@ impl Rendering {
         };
 
         if regs.control.sprites_enabled() {
-            if let Some((spr_lo, spr_hi, spr_pal, spr_pri)) = obj_bits {
-                let spr_color = (spr_hi << 1) | spr_lo;
-                if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                    let sprite_palette = if spr_pal == 0 {
-                        PaletteMap(regs.palettes.sprite0.output())
-                    } else {
-                        PaletteMap(regs.palettes.sprite1.output())
-                    };
-                    let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                    self.screen.set_pixel(x, y, mapped);
-                    return;
-                }
+            let spr_color = (spr_hi << 1) | spr_lo;
+            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                let sprite_palette = if spr_pal == 0 {
+                    PaletteMap(regs.palettes.sprite0.output())
+                } else {
+                    PaletteMap(regs.palettes.sprite1.output())
+                };
+                let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                self.screen.set_pixel(x, y, mapped);
+                return;
             }
         }
 
