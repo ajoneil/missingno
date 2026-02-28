@@ -29,14 +29,14 @@ The caller provides:
    - **Hardware behavior**: A factual claim about what the silicon does — not about code, not about other emulators. This is the core of the hypothesis.
    - **Model divergence**: How the emulator's specific data structures (name the struct, enum, state machine) differ from this hardware behavior, and how.
    - **Prediction**: A specific, falsifiable observation — what you'd see in a measurement or research result if the hardware behavior claim is true.
-   - **Test**: What `/measure` should measure or `/research` should answer.
+   - **Test**: What `/instrument` should measure or `/research` should answer.
 4. **Validate each hypothesis.** Before including it, check:
    - Does the hardware behavior field describe the silicon, or does it describe a code change? If it says "add", "remove", "change", "set" — it's a fix, not a hypothesis. Reframe it.
    - Does the model divergence field name a specific struct/enum/field? If it says "the code" or "the emulator" generically, it's too vague. Find the specific data model element.
    - Could the prediction be wrong? If not, it's not falsifiable.
    - Has this already been ruled out? Check the RCA tree.
 5. **Rank by leverage.** Order hypotheses by how much confirming or refuting them would advance the investigation. The best hypothesis is one where either outcome (confirmed or refuted) narrows the problem significantly. Avoid hypotheses where confirmation would tell you nothing new.
-6. **For each hypothesis, state the test.** Briefly describe what `/measure` should measure or what `/research` should answer to test it. This helps the caller dispatch immediately.
+6. **For each hypothesis, state the test.** Briefly describe what `/instrument` should measure or what `/research` should answer to test it. This helps the caller dispatch immediately.
 
 ## Output
 

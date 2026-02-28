@@ -2,7 +2,7 @@
 
 Query the headless debugger HTTP API to inspect emulator state without modifying code.
 
-## When to use this instead of `/measure`
+## When to use this instead of `/instrument`
 
 Use this skill when the question can be answered by inspecting state at instruction or frame boundaries:
 
@@ -29,9 +29,9 @@ If the question you've been asked requires observing any of the above, you **mus
 
 - **What you were asked**: restate the question.
 - **What you can't observe**: name the specific limitation (e.g., "dot-level timing within a scanline", "pixel pipeline FIFO state").
-- **What would be needed**: either a new debugger endpoint or `/measure` with code instrumentation.
+- **What would be needed**: either a new debugger endpoint or `/instrument` with code instrumentation.
 
-The user will decide whether to extend the debugger or fall back to `/measure`. Do not make that decision yourself.
+The user will decide whether to extend the debugger or fall back to `/instrument`. Do not make that decision yourself.
 
 ## Prerequisites
 
@@ -75,7 +75,7 @@ It listens on `http://127.0.0.1:3333`. All responses are JSON.
 
 ## Scope discipline
 
-**You are an observation tool, not a problem-solver.** Follow the same reporting contract as `/measure`. Your report must contain measurements, not interpretation. If you catch yourself writing "this means..." or "the fix should be..." — stop, delete it, and return to reporting observations.
+**You are an observation tool, not a problem-solver.** Follow the same reporting contract as `/instrument`. Your report must contain measurements, not interpretation. If you catch yourself writing "this means..." or "the fix should be..." — stop, delete it, and return to reporting observations.
 
 ## How to use
 
@@ -132,7 +132,7 @@ diff /tmp/before.json /tmp/after.json
 
 ## Reporting results
 
-Write a measurement receipt to the investigation's `measurements/` folder using the same format as `/measure`:
+Write a measurement receipt to the investigation's `measurements/` folder using the same format as `/instrument`:
 
 ```markdown
 # Measurement: <short title>

@@ -19,7 +19,7 @@ You do NOT autonomously loop through hypothesize→measure→analyze cycles. You
 
 - "The research shows the hardware uses a 3-stage fetch pipeline, but the code models it as 2 stages. Want to dig deeper into the third stage, or redesign the enum to match?"
 - "This enum's variant names don't match the hardware terminology. Want me to rename them, or should we first research whether the state transitions are also wrong?"
-- "The code looks faithful to the hardware here. Want to move on to the next area, or verify with `/measure`?"
+- "The code looks faithful to the hardware here. Want to move on to the next area, or verify with `/instrument`?"
 
 **The developer can also direct you.** The developer may ask questions, point at specific code, or request specific actions at any time. Respond to what they ask — don't redirect them into the workflow if they want to explore something specific.
 
@@ -28,12 +28,12 @@ You do NOT autonomously loop through hypothesize→measure→analyze cycles. You
 These rules override default agent behavior. Follow them exactly:
 
 1. **Use `/research` for all hardware questions.** All external information gathering — documentation, specifications, other projects' source code, blog posts — goes through `/research`. Do not fetch URLs, clone repos, or search external sources yourself. Format every research request using the skill invocation protocol defined in AGENTS.md. One question, one context block, no hypotheses.
-2. **Use `/measure` for all runtime behavior questions.** If you need to know what the code actually does at runtime — what values a variable has, what state a machine is in, what output a test produces — invoke `/measure`. Do not run `cargo test` or other diagnostic commands directly. Do not trace execution in your head.
-3. **Use `/analyze` to interpret complex data.** When `/measure` or `/research` returns data that requires interpretation — comparing measurements against hardware specs, reconciling multiple sources, understanding what a divergence means — invoke `/analyze`. For straightforward findings (e.g., "research says the hardware has 3 states, the enum has 3 variants, they match"), you can summarize directly to the developer without invoking `/analyze`.
+2. **Use `/instrument` for all runtime behavior questions.** If you need to know what the code actually does at runtime — what values a variable has, what state a machine is in, what output a test produces — invoke `/instrument`. Do not run `cargo test` or other diagnostic commands directly. Do not trace execution in your head.
+3. **Use `/analyze` to interpret complex data.** When `/instrument` or `/research` returns data that requires interpretation — comparing measurements against hardware specs, reconciling multiple sources, understanding what a divergence means — invoke `/analyze`. For straightforward findings (e.g., "research says the hardware has 3 states, the enum has 3 variants, they match"), you can summarize directly to the developer without invoking `/analyze`.
 4. **Use `/design` → `/implement` for behavioral changes.** Any change that affects the emulator's behavior — different state transitions, new states, changed timing, modified output — must go through `/design` and then `/implement`. The design skill produces a receipt; the implement skill applies it and runs verification. Do not make behavioral changes directly.
 5. **Direct edits are allowed for pure clarity improvements.** Renaming an enum variant to match hardware terminology, improving a comment, restructuring code for readability — these can be done directly without `/design` → `/implement`, provided they do not change behavior. The test: if you renamed `Step5` to `GetTileDataHigh`, would every match arm still do the same thing? If yes, it's a clarity edit. If no, it's a behavioral change — use `/design` → `/implement`. **Always verify clarity edits compile.** Run `cargo check` after direct edits. If a rename touches many call sites, use `/implement` instead — it handles verification and rollback.
 6. **Never skip session.md updates.** Update session.md after every subroutine return and before every subroutine invocation. The test: if context were compacted right now, would session.md tell the developer exactly where the session stands? If not, update it now.
-7. **Never trace behavior in your head.** Do not manually step through state machines, count cycles, or simulate execution. If you want to know what a piece of code does at runtime, invoke `/measure`. If you want to know what the hardware does, invoke `/research`.
+7. **Never trace behavior in your head.** Do not manually step through state machines, count cycles, or simulate execution. If you want to know what a piece of code does at runtime, invoke `/instrument`. If you want to know what the hardware does, invoke `/research`.
 8. **Never read reference implementation source directly.** Formulate a hardware behavior question and invoke `/research`. The research skill handles source consultation with scope discipline.
 9. **Hardware is the source of truth.** Frame everything in terms of what the real hardware does, not what other emulators do. When presenting findings to the developer, describe the hardware behavior first, then how the code models it.
 10. **Never cargo-cult values from reference emulators.** Before using any externally-sourced value, understand what it controls in this codebase. Invoke `/research` with a question about the emulator's mechanism if needed.
@@ -46,7 +46,7 @@ These rules override default agent behavior. Follow them exactly:
 1. **Is my progress on disk?** If context were compacted right now, could the session continue from session.md alone? If not, update it.
 2. **Am I carrying stale context?** Re-read session.md and this skill file. Work from the file state, not conversation memory.
 3. **Am I doing subroutine work inline?** If you've written more than ~3 sentences interpreting data, you should have invoked `/analyze`. If you've written more than ~3 sentences planning code changes, you should have invoked `/design`. If you're reading external sources or reference code, you should have invoked `/research`.
-4. **Am I tracing behavior in my head?** If you want to know what the code does at a specific point, invoke `/measure`. Do not simulate execution mentally.
+4. **Am I tracing behavior in my head?** If you want to know what the code does at a specific point, invoke `/instrument`. Do not simulate execution mentally.
 5. **Am I proceeding without the developer?** After presenting findings, did you wait for the developer to choose the next step? If you've dispatched two subroutines in a row without developer input between them, you're driving — slow down and present.
 6. **Has the scope drifted?** Is the current line of inquiry still related to the session's stated area? If not, propose a spin-off.
 7. **Am I framing things in terms of hardware?** Research questions and findings should be about what the hardware does, not what other emulators do.
@@ -74,7 +74,7 @@ The developer then picks what to do — and the cycle repeats from wherever they
 
 **Fidelity improvements** — changing the code to more accurately model the hardware. These are behavioral changes and go through `/design` → `/implement`. These happen when the code diverges from the hardware.
 
-**Verification** — confirming that changes (especially behavioral ones) don't break things. Use `/measure` to run tests and diagnostics.
+**Verification** — confirming that changes (especially behavioral ones) don't break things. Use `/instrument` to run tests and diagnostics.
 
 **session.md is owned exclusively by the study skill.** No subroutine skill writes to it. After every subroutine return, you (study) read the receipt and update session.md.
 
@@ -112,7 +112,7 @@ This is the core loop. The developer steers; you dispatch subroutines and presen
 - **When the developer asks about hardware behavior**: Invoke `/research` with a specific question. Present the findings. Propose whether to compare against the code, dig deeper, or move on.
 - **When you or the developer notice a potential divergence**: Invoke `/analyze` (or summarize directly for simple cases) to compare the hardware model against the code. Present: what matches, what diverges, and how significant the divergence is.
 - **When the developer wants to improve something**: Determine whether it's a clarity edit (direct) or behavioral change (`/design` → `/implement`). For clarity edits, propose the specific change and make it after approval. For behavioral changes, invoke `/design` with the hardware model and divergence analysis, then `/implement`.
-- **When the developer wants to verify behavior**: Invoke `/measure` to instrument and observe. Present the results.
+- **When the developer wants to verify behavior**: Invoke `/instrument` to instrument and observe. Present the results.
 
 **Always present findings before proposing action.** Don't jump from "research says X" to "let's change the code." Present the finding, let the developer absorb it, then propose options.
 

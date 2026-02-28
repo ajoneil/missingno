@@ -121,7 +121,7 @@ This block serves three purposes:
 
 **Callee isolation.** After a subroutine is invoked, the callee MUST operate exclusively within its own skill's rules and methodology. The callee does NOT inherit the caller's tools, habits, or context. Specifically:
 - The callee re-reads its own skill file from `.agents/skills/` and follows only those instructions.
-- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/measure`'s logging patterns; `/measure` does not do `/research`'s web fetching).
+- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/instrument`'s logging patterns; `/instrument` does not do `/research`'s web fetching).
 - If the callee reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
 
 **Callee handoff.** When the callee finishes:

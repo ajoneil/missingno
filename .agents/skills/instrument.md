@@ -1,6 +1,6 @@
-# Measure
+# Instrument
 
-Add targeted diagnostic logging, run the diagnostic, and report what the output shows.
+Add targeted diagnostic logging to the code, run the diagnostic, and report what the output shows.
 
 ## Scope discipline
 
