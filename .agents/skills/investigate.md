@@ -119,21 +119,34 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 
 ### 5. Instrument and diagnose
 
-**Do not guess at changes. Do not reason through behavior in your head.** The goal is to collect precise information about what the system is actually doing vs what it should do. If you're unsure what the system is doing at a particular point, invoke `/measure` — don't try to trace through the code mentally.
+**Do not guess at changes. Do not reason through behavior in your head.** The goal is to collect precise information about what the system is actually doing vs what it should do. If you're unsure what the system is doing at a particular point, observe it — don't try to trace through the code mentally.
 
-**Use the `measure` skill** (`/measure`) for all diagnostic work. This includes:
+#### Prefer `/debugger` over `/measure`
+
+**Try the `debugger` skill first** (`/debugger`) for observing emulator state. The headless debugger lets you set breakpoints, step instructions/frames, and read CPU, PPU, interrupt, sprite, and screen state — all without modifying code. Use it when:
+- You need register values, flags, or PC at a specific point in execution
+- You need to see what the screen looks like after some execution
+- You need PPU register state (mode, scanline, scroll positions, palettes)
+- You need interrupt enable/request state
+- You need to trace instruction execution flow
+- You need to observe sprite/OAM state
+
+**Fall back to `/measure` when `/debugger` is insufficient.** The debugger operates at instruction/frame granularity and cannot observe sub-instruction timing, mid-scanline state, DFF latch propagation, pixel pipeline internals, or audio internals. If the investigation requires that level of detail, `/debugger` will report that it can't answer the question — then invoke `/measure` with code instrumentation. **If `/debugger` reports that it's too limited for the question, tell the user** — they may want to add new endpoints to the debugger API rather than falling back to `/measure`.
+
+**Use the `measure` skill** (`/measure`) for diagnostic work that requires code instrumentation:
 - Adding targeted logging (`eprintln!`, `dbg!`, print statements, etc.)
 - Running tests/benchmarks/diagnostics and capturing output to log files
 - Reporting what the output shows
 - Baseline comparisons (running the same measurement on a known-good vs current state)
+- Any observation that requires sub-instruction or sub-scanline timing precision
 
-**Format every `/measure` request using the protocol in AGENTS.md.** The Question is your hypothesis (what you expect to observe and where). The Context is which files/subsystems to instrument. The Log path is where to save output. Do not include your reasoning about what the answer might mean.
+**Format every `/measure` or `/debugger` request using the protocol in AGENTS.md.** The Question is your hypothesis (what you expect to observe and where). The Context is which files/subsystems to observe. The Log path is where to save output (for `/measure`).
 
-**Instrumentation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/measure`.
+**Observation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/debugger` or `/measure`.
 
-**Invoke `/analyze` to interpret.** When `/measure` returns, invoke `/analyze` with the log file path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret measure results inline.
+**Invoke `/analyze` to interpret.** When `/debugger` or `/measure` returns, invoke `/analyze` with the receipt path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret results inline.
 
-**Every diagnostic command goes through `/measure`**, which handles log file capture. Do not run diagnostics directly.
+**Every diagnostic observation goes through `/debugger` or `/measure`**, not directly. Do not run diagnostics yourself.
 
 ### 6. Analyze and fix
 
