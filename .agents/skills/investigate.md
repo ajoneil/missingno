@@ -38,7 +38,7 @@ These rules override default agent behavior. Follow them exactly:
 9. **Have I tried more than 2 implementations without updating the hardware model?** Count the `impl/` branches since the last update to `## Hardware model` in summary.md. If more than 2, the hardware model is wrong. Stop implementing entirely and go back to `/research`. No new designs or implementations until the hardware model is updated with new research findings.
 10. **Am I changing a value without understanding what it controls in our code?** If the design says "change X from A to B" and you cannot explain — without reading the code right now — what functions consume X, what conditionals depend on it, and what downstream behavior changes when X changes, you are cargo-culting. The value may be correct for the hardware, but if you don't know what it does in *our* architecture, you can't predict whether the change will work or what side effects it will have. Invoke `/research` with a question about our emulator's mechanism before proceeding. This is especially dangerous when the value comes from a reference emulator — their code may use the value differently than ours does.
 
-**The default action when uncertain is: invoke `/debugger`.** Not: read more source code. Not: reason about behavior. Not: check another implementation. Observe with the debugger first. Only fall back to `/measure` if the debugger can't answer the question, and ask the user before doing so.
+**The default action when uncertain is: invoke `/inspect`.** Not: read more source code. Not: reason about behavior. Not: check another implementation. Observe with `/inspect` first. Only fall back to `/measure` if `/inspect` can't answer the question, and ask the user before doing so.
 
 ## Working style: hypothesize, measure, analyze
 
@@ -121,9 +121,9 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 
 **Do not guess at changes. Do not reason through behavior in your head.** The goal is to collect precise information about what the system is actually doing vs what it should do. If you're unsure what the system is doing at a particular point, observe it — don't try to trace through the code mentally.
 
-#### Prefer `/debugger` over `/measure`
+#### Prefer `/inspect` over `/measure`
 
-**Try the `debugger` skill first** (`/debugger`) for observing emulator state. The headless debugger lets you set breakpoints, step instructions/frames, and read CPU, PPU, interrupt, sprite, and screen state — all without modifying code. Use it when:
+**Try `/inspect` first** for observing emulator state. The headless debugger lets you set breakpoints, step instructions/frames, and read CPU, PPU, interrupt, sprite, and screen state — all without modifying code. Use it when:
 - You need register values, flags, or PC at a specific point in execution
 - You need to see what the screen looks like after some execution
 - You need PPU register state (mode, scanline, scroll positions, palettes)
@@ -131,22 +131,22 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 - You need to trace instruction execution flow
 - You need to observe sprite/OAM state
 
-**Fall back to `/measure` only as a last resort, and ask the user first.** The debugger operates at instruction/frame granularity and cannot observe sub-instruction timing, mid-scanline state, DFF latch propagation, pixel pipeline internals, or audio internals. If the investigation requires that level of detail, `/debugger` will report that it can't answer the question. **Before falling back to `/measure`, tell the user what the debugger can't do and ask whether they'd prefer to extend the debugger API or fall back to code instrumentation.** Do not silently fall back to `/measure` — the user should always be aware of and approve the decision to instrument code.
+**Fall back to `/measure` only as a last resort, and ask the user first.** `/inspect` operates at instruction/frame granularity and cannot observe sub-instruction timing, mid-scanline state, DFF latch propagation, pixel pipeline internals, or audio internals. If the investigation requires that level of detail, `/inspect` will report that it can't answer the question. **Before falling back to `/measure`, tell the user what `/inspect` can't do and ask whether they'd prefer to extend the debugger API or fall back to code instrumentation.** Do not silently fall back to `/measure` — the user should always be aware of and approve the decision to instrument code.
 
-**Use the `measure` skill** (`/measure`) only after `/debugger` has been tried and found insufficient, **and the user has approved the fallback**. `/measure` is for diagnostic work that requires code instrumentation:
+**Use the `measure` skill** (`/measure`) only after `/inspect` has been tried and found insufficient, **and the user has approved the fallback**. `/measure` is for diagnostic work that requires code instrumentation:
 - Adding targeted logging (`eprintln!`, `dbg!`, print statements, etc.)
 - Running tests/benchmarks/diagnostics and capturing output to log files
 - Reporting what the output shows
 - Baseline comparisons (running the same measurement on a known-good vs current state)
 - Any observation that requires sub-instruction or sub-scanline timing precision
 
-**Format every `/measure` or `/debugger` request using the protocol in AGENTS.md.** The Question is your hypothesis (what you expect to observe and where). The Context is which files/subsystems to observe. The Log path is where to save output (for `/measure`).
+**Format every `/measure` or `/inspect` request using the protocol in AGENTS.md.** The Question is your hypothesis (what you expect to observe and where). The Context is which files/subsystems to observe. The Log path is where to save output (for `/measure`).
 
-**Observation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/debugger` or `/measure`.
+**Observation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/inspect` or `/measure`.
 
-**Invoke `/analyze` to interpret.** When `/debugger` or `/measure` returns, invoke `/analyze` with the receipt path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret results inline.
+**Invoke `/analyze` to interpret.** When `/inspect` or `/measure` returns, invoke `/analyze` with the receipt path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret results inline.
 
-**Every diagnostic observation goes through `/debugger` or `/measure`**, not directly. Do not run diagnostics yourself.
+**Every diagnostic observation goes through `/inspect` or `/measure`**, not directly. Do not run diagnostics yourself.
 
 ### 6. Analyze and fix
 
@@ -154,16 +154,16 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 
 **Stuck means: you've spent more than one hypothesis-test cycle without making progress.** Symptoms:
 
-- You're mentally tracing through state transitions to predict what should happen at a specific point. **Stop. Invoke `/debugger`** (or `/measure` if debugger is insufficient).
-- You're counting steps or cycles by hand to figure out when something executes. **Stop. Invoke `/debugger`** to observe the actual value at that point.
+- You're mentally tracing through state transitions to predict what should happen at a specific point. **Stop. Invoke `/inspect`** (or `/measure` if `/inspect` is insufficient).
+- You're counting steps or cycles by hand to figure out when something executes. **Stop. Invoke `/inspect`** to observe the actual value at that point.
 - You're unsure what value something should have at a particular point. **Stop. Formulate the question and invoke `/research`.**
-- You've written more than ~4 lines of behavioral analysis without citing log output. **Stop. You are guessing. Invoke `/debugger`** (or `/measure` if debugger is insufficient).
-- Your change attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Invoke `/debugger`** with targeted observation on the area that surprised you.
+- You've written more than ~4 lines of behavioral analysis without citing log output. **Stop. You are guessing. Invoke `/inspect`** (or `/measure` if `/inspect` is insufficient).
+- Your change attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Invoke `/inspect`** with targeted observation on the area that surprised you.
 - You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Write down what specific hardware behavior you need to understand, and invoke `/research` with that question.** Frame it as "what does the real hardware do when X?" not "what does emulator Y do when X?"
 - Your existing research documents contradict each other, or diagnostic output contradicts what a research document says. **Stop. Formulate the specific contradiction as a question and invoke `/research` to get the authoritative answer, then correct the wrong document.**
 - You've made more than one fix attempt without new diagnostic data between them. **Stop. The second attempt is a guess.** Go back to the hypothesis→measure loop. Invoke `/measure` to measure what the first attempt actually changed, then invoke `/research` if the measurements reveal a domain knowledge gap.
 
-The fix for every kind of stuck is the same: either invoke `/debugger` (preferred) or `/measure` (last resort, with user approval) to observe what the system is doing, or invoke `/research` to learn what it should do. Never reason your way out of being stuck — and never send vague requests to any skill. Write the specific question or hypothesis down first.
+The fix for every kind of stuck is the same: either invoke `/inspect` (preferred) or `/measure` (last resort, with user approval) to observe what the system is doing, or invoke `/research` to learn what it should do. Never reason your way out of being stuck — and never send vague requests to any skill. Write the specific question or hypothesis down first.
 
 #### Root cause analysis
 

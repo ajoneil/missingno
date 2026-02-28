@@ -1,4 +1,4 @@
-# Debugger
+# Inspect
 
 Query the headless debugger HTTP API to inspect emulator state without modifying code.
 
