@@ -498,21 +498,11 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        match self.startup_fetch {
-            Some(StartupFetch::FirstTile) | Some(StartupFetch::LyryFired) => {
-                // During fetch/cascade phase, no pixel processing.
-                return;
-            }
-            Some(StartupFetch::NykaFired) => {
-                // PORY captures NYKA on DELTA_ODD.
-                self.startup_fetch = Some(StartupFetch::PoryFired);
-                return;
-            }
-            Some(StartupFetch::PoryFired) => {
-                // Waiting for POKY on next EVEN. No pixel processing yet.
-                return;
-            }
-            None => {}
+        // PORY captures NYKA on DELTA_ODD. This is the only cascade
+        // transition that fires on the odd phase — it must happen
+        // regardless of whether pixel processing runs this tick.
+        if self.startup_fetch == Some(StartupFetch::NykaFired) {
+            self.startup_fetch = Some(StartupFetch::PoryFired);
         }
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
@@ -657,17 +647,19 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                self.fetcher.advance(
-                    self.pixel_counter,
-                    self.window_line_counter,
-                    regs,
-                    video,
-                    vram,
-                );
+                if self.startup_fetch.is_none() {
+                    self.fetcher.advance(
+                        self.pixel_counter,
+                        self.window_line_counter,
+                        regs,
+                        video,
+                        vram,
+                    );
+                }
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit).
-                if self.window_hit == WindowHit::Inactive {
+                if self.startup_fetch.is_none() && self.window_hit == WindowHit::Inactive {
                     self.fine_scroll.tick();
                 }
             }
