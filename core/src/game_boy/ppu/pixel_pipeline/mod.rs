@@ -494,11 +494,7 @@ impl Rendering {
                         // BG fetcher is frozen. Advance the sprite data pipeline.
                         let done = Self::advance_sprite_fetch(sf, regs, oam, vram);
                         if done {
-                            Self::merge_sprite_into_obj_shifter(
-                                sf,
-                                oam,
-                                &mut self.obj_shifter,
-                            );
+                            Self::merge_sprite_into_obj_shifter(sf, oam, &mut self.obj_shifter);
                             sf.phase = SpriteFetchPhase::Done;
                         }
                     }
@@ -521,6 +517,19 @@ impl Rendering {
                     self.window_hit = WindowHit::Inactive;
                 }
 
+                // Hardware within-tick ordering for DFF22 shift register cells:
+                // 1. Synchronous shift (SACU clock edge)
+                // 2. Async parallel load (LOZE SET/RST — overwrites shift)
+                // 3. Pixel output reads final state
+                //
+                // The shift fires whenever the pipe is non-empty, including
+                // during fine scroll discard ticks (the pipe advances even
+                // though no pixel is output to the LCD).
+                if !self.bg_shifter.is_empty() {
+                    self.bg_shifter.shift();
+                    self.obj_shifter.shift();
+                }
+
                 // SUZU/MOSU: when the window fetch completes (fetcher reaches Idle
                 // while RYDY is active), load the first window tile and clear the
                 // window hit signal. This is the hardware's dedicated window tile
@@ -531,10 +540,9 @@ impl Rendering {
                 }
 
                 // SEKO reload (async). On hardware, the SEKO-triggered pipe
-                // load is asynchronous — it fires before the clock-driven pipe
-                // shift and pixel counter increment on the same dot. Evaluating
-                // it first ensures the shifter is non-empty for the subsequent
-                // clock-driven operations when fine_count wraps from 7→0.
+                // load is asynchronous — LOZE SET/RST overwrites the shift
+                // result on the same tick. Because the shift already fired
+                // above, the load naturally wins (matching DFF22 behavior).
                 if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
                     self.load_bg_tile();
                 }
@@ -778,11 +786,7 @@ impl Rendering {
     }
 
     /// Merge fetched sprite pixels into the OBJ shifter.
-    fn merge_sprite_into_obj_shifter(
-        sf: &SpriteFetch,
-        oam: &Oam,
-        obj_shifter: &mut ObjShifter,
-    ) {
+    fn merge_sprite_into_obj_shifter(sf: &SpriteFetch, oam: &Oam, obj_shifter: &mut ObjShifter) {
         let sprite = oam.sprite(SpriteId(sf.entry.oam_index));
 
         // X-flip: hardware reverses the bit order when loading the shift
@@ -811,26 +815,21 @@ impl Rendering {
             0
         };
 
-        obj_shifter.merge(
-            sprite_low,
-            sprite_high,
-            palette_bit,
-            priority_bit,
-        );
+        obj_shifter.merge(sprite_low, sprite_high, palette_bit, priority_bit);
     }
 
     /// Pixel mux (page 35 on the die).
     ///
-    /// Shifts one bit from each shift register, forms the 2-bit color
-    /// indices, applies priority logic, selects the winning pixel, and
-    /// maps it through the appropriate palette to the LCD.
+    /// Reads the MSB from each shift register (already shifted in
+    /// mode3_odd), forms the 2-bit color indices, applies priority
+    /// logic, selects the winning pixel, and maps it through the
+    /// appropriate palette to the LCD.
     fn shift_pixel_out(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
         // Window reactivation zero pixel: substitute color 0 for the BG
         // pixel without popping the BG shifter. The OBJ shifter is still
         // popped so sprite pixels mix against the zero pixel.
         if self.window_zero_pixel {
             self.window_zero_pixel = false;
-            self.obj_shifter.shift();
             let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
 
             if !self.fine_scroll.pixel_clock_active() {
@@ -866,19 +865,15 @@ impl Rendering {
             return;
         }
 
-        // Hardware within-tick ordering: shift registers shift left (SACU
-        // clock edge), then pixel output reads the post-shift MSB.
-        self.bg_shifter.shift();
+        // Shift registers have already been advanced in mode3_odd
+        // (SACU clock edge fires before LOZE load). Read the post-
+        // shift/post-load MSB for pixel output.
         let (bg_lo, bg_hi) = self.bg_shifter.read();
-
-        self.obj_shifter.shift();
         let (spr_lo, spr_hi, spr_pal, spr_pri) = self.obj_shifter.read();
 
         // During fine scroll gating (ROXY active), the pixel clock is
-        // frozen on hardware — SACU is held high, PX does not increment,
-        // no LCD output. The shifters still advance here (unlike true
-        // hardware gating) to keep sprite alignment consistent with the
-        // existing sprite fetch model.
+        // frozen on hardware — no LCD output. The shifters already
+        // advanced in mode3_odd (they shift regardless of fine scroll).
         if !self.fine_scroll.pixel_clock_active() {
             return;
         }
