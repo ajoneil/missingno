@@ -59,6 +59,9 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Get, "/screen") => {
             respond_json(request, screen_state(debugger.game_boy()));
         }
+        (&Method::Get, "/screen/ascii") => {
+            respond_json(request, screen_ascii(debugger.game_boy()));
+        }
         (&Method::Get, "/sprites") => {
             respond_json(request, sprites_state(debugger.game_boy()));
         }
@@ -225,6 +228,20 @@ fn screen_state(gb: &GameBoy) -> ScreenState {
     ScreenState { pixels: lines }
 }
 
+fn screen_ascii(gb: &GameBoy) -> ScreenAscii {
+    let screen = gb.screen();
+    let shades = [' ', '.', 'o', '#'];
+    let mut lines = Vec::with_capacity(144);
+    for y in 0..144u8 {
+        let mut row = String::with_capacity(160);
+        for x in 0..160u8 {
+            row.push(shades[screen.pixel(x, y).0 as usize]);
+        }
+        lines.push(row);
+    }
+    ScreenAscii { lines }
+}
+
 fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {
     let ppu = gb.ppu();
     let sprite_size = ppu.control().sprite_size();
@@ -366,6 +383,11 @@ struct PaletteState {
 #[derive(Serialize)]
 struct ScreenState {
     pixels: Vec<Vec<u8>>,
+}
+
+#[derive(Serialize)]
+struct ScreenAscii {
+    lines: Vec<String>,
 }
 
 #[derive(Serialize)]
