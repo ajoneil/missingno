@@ -10,6 +10,8 @@ Use this skill when the question can be answered by inspecting state at instruct
 - **What does the screen look like after N frames?** Step N frames, read `/screen/ascii`.
 - **What is the PPU mode/scanline/scroll position at a given PC?** Set a breakpoint, step, read `/ppu`.
 - **What is the pixel pipeline state at a specific scanline and mode?** Set a compound watchpoint (e.g. scanline=N AND mode=drawing), step-frame, read `/ppu/pipeline`.
+- **What is the pixel pipeline state at a specific dot within a scanline?** Navigate to Mode 3, then use `step-dot` to advance one dot at a time, reading `/ppu/pipeline` after each.
+- **When does a mid-scanline register write occur?** Set a bus-write watchpoint, step-frame to catch it, then read `/ppu` for the exact dot/LY/mode at that instruction.
 - **Which interrupts are enabled/pending?** Read `/interrupts` at any point.
 - **What sprites are active?** Read `/sprites`.
 - **What instructions execute from a given address?** Read `/instructions`.
@@ -17,19 +19,16 @@ Use this skill when the question can be answered by inspecting state at instruct
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at instruction/dot/frame granularity. It **cannot** observe:
+This API operates at dot and instruction granularity. With `step-dot`, bus watchpoints, and `/ppu/pipeline`, most mid-scanline observations are possible. It **cannot** observe:
 
-- **Sub-instruction timing** (T-cycle or dot-level behavior within a single instruction)
-- **Mid-scanline state changes** (what happens at dot 80 vs dot 252 within one scanline)
-- **DFF latch propagation** (transitional values that exist for a single dot)
-- **FIFO/fetcher internals** (pixel pipeline state that isn't exposed through registers)
+- **Sub-dot timing** (what happens within a single dot tick — e.g., the order of operations inside one PPU clock)
 - **Audio channel internals** (sample values, timer counters, sweep state)
 - **Memory bus conflicts** (DMA bus contention, OAM/VRAM locking during specific modes)
 
 If the question you've been asked requires observing any of the above, you **must** stop immediately and report this to the user — do not attempt a partial answer, do not substitute a coarser measurement and hope it's "close enough", and do not silently return results that don't actually answer the question. The report must be specific:
 
 - **What you were asked**: restate the question.
-- **What you can't observe**: name the specific limitation (e.g., "dot-level timing within a scanline", "pixel pipeline FIFO state").
+- **What you can't observe**: name the specific limitation.
 - **What would be needed**: either a new debugger endpoint or `/instrument` with code instrumentation.
 
 The user will decide whether to extend the debugger or fall back to `/instrument`. Do not make that decision yourself.
