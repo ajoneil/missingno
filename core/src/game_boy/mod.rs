@@ -153,6 +153,7 @@ impl GameBoy {
             execution: ExecutionState::Ready,
             bus_trace: None,
         };
+        gb.init_post_boot_vram();
         let pc = gb.cpu.program_counter;
         gb.prefetched_opcode = Some(gb.cpu_read(pc));
         gb
@@ -178,6 +179,7 @@ impl GameBoy {
         } else {
             None
         };
+        self.init_post_boot_vram();
         let pc = self.cpu.program_counter;
         self.prefetched_opcode = Some(self.cpu_read(pc));
         self.interrupt_latch = InterruptLatch::Empty;
@@ -232,5 +234,59 @@ impl GameBoy {
     #[allow(dead_code)]
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.serial.output)
+    }
+
+    /// Populate VRAM with the data the DMG boot ROM would have left:
+    /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
+    /// and tile map entries for the logo display.
+    fn init_post_boot_vram(&mut self) {
+        use ppu::tiles::TileIndex;
+
+        // 1. Decompress Nintendo logo from cartridge header (0x0104-0x0133)
+        // into tiles 1-24 in tile block 0.
+        //
+        // Each of the 48 logo bytes contains two nibbles. Each nibble is
+        // expanded horizontally (each bit doubled to 2 pixels = 1 byte)
+        // and vertically (each row written twice), producing 4 VRAM bytes
+        // per nibble (low bitplane only, high bitplane stays zero).
+        let mut vram_offset: usize = 0x10; // tile 1 starts at byte 16
+        for addr in 0x0104u16..=0x0133 {
+            let logo_byte = self.external.cartridge.read(addr);
+            for &nibble in &[logo_byte >> 4, logo_byte & 0x0F] {
+                let expanded = (((nibble >> 3) & 1) * 0xC0)
+                    | (((nibble >> 2) & 1) * 0x30)
+                    | (((nibble >> 1) & 1) * 0x0C)
+                    | ((nibble & 1) * 0x03);
+                // Row A: low bitplane
+                self.vram_bus.vram.tiles[0].data[vram_offset] = expanded;
+                // Row A: high bitplane (zero, skip)
+                // Row B (vertical double): low bitplane
+                self.vram_bus.vram.tiles[0].data[vram_offset + 2] = expanded;
+                // Row B: high bitplane (zero, skip)
+                vram_offset += 4;
+            }
+        }
+
+        // 2. Write ® symbol into tile 25 (offset 0x190 in tile block 0).
+        const REGISTERED_SYMBOL: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
+        let tile_25_offset: usize = 25 * 16;
+        for (i, &byte) in REGISTERED_SYMBOL.iter().enumerate() {
+            self.vram_bus.vram.tiles[0].data[tile_25_offset + i * 2] = byte;
+            // High bitplane (odd offset) stays zero
+        }
+
+        // 3. Write tile map entries for the logo display.
+        // Row 8, cols 4-15: tiles 1-12
+        for col in 0u16..12 {
+            let map_offset = (8 * 32 + 4 + col) as usize;
+            self.vram_bus.vram.tile_maps[0].data[map_offset] = TileIndex((col + 1) as u8);
+        }
+        // Row 8, col 16: tile 25 (® symbol)
+        self.vram_bus.vram.tile_maps[0].data[(8 * 32 + 16) as usize] = TileIndex(25);
+        // Row 9, cols 4-15: tiles 13-24
+        for col in 0u16..12 {
+            let map_offset = (9 * 32 + 4 + col) as usize;
+            self.vram_bus.vram.tile_maps[0].data[map_offset] = TileIndex((col + 13) as u8);
+        }
     }
 }

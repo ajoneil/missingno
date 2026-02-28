@@ -7,8 +7,8 @@ use super::{
 /// VRAM: tile data and tile maps. Physically on the VRAM data bus
 /// (0x8000–0x9FFF), separate from OAM.
 pub struct Vram {
-    tiles: [TileBlock; 3],
-    tile_maps: [TileMap; 2],
+    pub(crate) tiles: [TileBlock; 3],
+    pub(crate) tile_maps: [TileMap; 2],
 }
 
 impl Vram {
