@@ -33,70 +33,166 @@ If the question you've been asked requires observing any of the above, you **mus
 
 The user will decide whether to extend the debugger or fall back to `/instrument`. Do not make that decision yourself.
 
-## Prerequisites
+## Observation plan (mandatory first step)
 
-The headless server must be running. If it isn't, start it:
+**Before making any API calls**, write the following plan as a preamble in the measurement receipt file:
 
-```bash
-cargo run -- <rom_path> --headless &
+```markdown
+## Observation plan
+
+### Question
+<What specific question is this measurement answering? One sentence.>
+
+### Strategy
+<What navigation steps will answer it? Be specific:>
+- Start server with: gb_start <rom_path>
+- Navigate to: gb_goto <scanline> <mode> (or gb_run_frames <n>, etc.)
+- Read state with: gb_ppu, gb_pipeline, gb_sprites_on <scanline>, etc.
+- If stepping dots: how many dots, and what data to capture at each?
+
+### Expected data shape
+<What fields from which endpoints? What values would confirm vs refute?>
+- Endpoint X returns field Y — expecting value Z if hypothesis is correct
+- If Y != Z, hypothesis is refuted because...
+
+### Confounds to check
+<What could interfere with the measurement? Check BEFORE collecting data.>
+- Sprites overlapping the area of interest?
+- Window enabled on this scanline?
+- SCX/SCY shifting tiles away from expected positions?
 ```
 
-**Do not use `--release` unless the user explicitly asks for it.** Debug builds compile much faster and are sufficient for inspection.
+**Write this plan to the receipt file first, then execute it.** The plan prevents wasted round-trips — you catch problems (like sprite overlays, wrong scanline, missing tile data) before burning API calls on them.
 
-**ROM paths**: Test ROMs live under `core/tests/game_boy/roms/` (e.g. `core/tests/game_boy/roms/mooneye/acceptance/foo.gb`). Note that test source code references paths relative to the `roms/` directory (e.g. `mooneye/acceptance/foo.gb`), but `cargo run` needs the full path from the project root. Always verify the path exists before starting the server.
+If the plan reveals a confound (e.g. sprites cover the area of interest), adjust the strategy in the plan before proceeding. If no clean observation is possible, report that in the receipt — do not collect data that can't answer the question.
 
-It listens on `http://127.0.0.1:3333`. All responses are JSON.
+## Server management
+
+**Always use the helper library** for server lifecycle. Source it at the start of every inspect session:
+
+```bash
+. scripts/debugger.sh
+```
+
+### Starting a server
+
+```bash
+gb_start core/tests/game_boy/roms/dmg-acid2.gb
+# Prints: ready (pid 12345)
+```
+
+`gb_start` handles everything: kills any existing server on the port, starts a new headless server, waits for it to be ready (polls `/cpu` with retries), and prints "ready" or fails with an error. **Never manage the server process manually** — no `cargo run &`, no `pkill`, no `lsof`.
+
+### Checking and stopping
+
+```bash
+gb_ensure          # Returns 0 if server is running, 1 if not
+gb_stop            # Kills the server cleanly
+```
+
+### ROM paths
+
+Test ROMs live under `core/tests/game_boy/roms/` (e.g. `core/tests/game_boy/roms/dmg-acid2.gb`). Always verify the path exists before starting the server.
+
+## Helper functions reference
+
+The helper library (`scripts/debugger.sh`) provides functions for all common operations. **Always use these instead of raw curl commands.** They handle JSON parsing with `jq` — no inline Python.
+
+### Navigation
+
+| Function | Description |
+|----------|-------------|
+| `gb_reset` | Reset the Game Boy and clear all watchpoints |
+| `gb_run_frames <n>` | Step N frames silently |
+| `gb_goto <scanline> <mode>` | Set compound watchpoint, step to it, clear watchpoint, print PPU state. Mode: `oam_scan`, `drawing`, `hblank`, `vblank` |
+| `gb_step_dots <n>` | Step N dots, print table: step, dot, pixel_counter, loaded, lo, hi, sprite |
+
+### State reading
+
+| Function | Output |
+|----------|--------|
+| `gb_ppu` | `LY=N dot=N mode=N SCX=N SCY=N WX=N WY=N BGP=[...]` |
+| `gb_pipeline` | `pc=N loaded=T/F lo=N hi=N phase=X sprite=X` |
+| `gb_cpu` | `A=N B=N C=N D=N E=N H=N L=N PC=N SP=N IME=N halted=T/F` |
+| `gb_screen_row <row>` | Space-separated color indices (0-3) for one screen row |
+| `gb_sprites_on <scanline>` | Sprites visible on that scanline: `id=N x=N y=N tile=N prio=X` |
+| `gb_tile_data <tile_id> [row]` | Decoded tile pixels (2bpp → color indices). All 8 rows, or one row if specified |
+| `gb_tile_map_row <row>` | Tile indices for one BG tile map row: `col:tile_id` pairs |
+
+### Raw API access
+
+For operations not covered by helpers (breakpoints, bus watchpoints, memory reads), use curl directly with `$GB_URL`:
+
+```bash
+# Set a breakpoint
+curl -s -X PUT "$GB_URL/breakpoints/0150"
+
+# Read a memory range
+curl -s "$GB_URL/memory/9800/32" | jq '.bytes'
+
+# Set a bus-write watchpoint
+curl -s -X PUT "$GB_URL/watchpoints/bus-write/FF4B"
+```
+
+**Always use `jq` for JSON parsing**, not Python. The `jq` filters are tested against the actual response shapes and won't break on field name mismatches.
 
 ## API reference
 
-### State inspection
+### JSON field names
+
+These are the exact field names in API responses. Use these in `jq` filters — do not guess.
+
+**`/cpu`**: `a`, `b`, `c`, `d`, `e`, `h`, `l`, `sp`, `pc`, `zero`, `negative`, `half_carry`, `carry`, `ime`, `halted`
+
+**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `dot`, `lyc`, `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
+
+**`/ppu/pipeline`**: `pixel_counter`, `render_phase`, `bg_shifter` (object with `low`, `high`, `loaded` (bool)), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (string or null), `sprite_tile_data`
+
+**`/sprites`**: Bare JSON array (not `{"sprites": [...]}`). Each entry: `id`, `x`, `y`, `tile`, `priority` (`"above_bg"` or `"behind_bg"`), `flip_x`, `flip_y`, `palette` (`"obp0"` or `"obp1"`), `visible`
+
+**`/screen`**: `pixels` (144-element array of 160-element arrays of ints 0-3)
+
+**`/screen/ascii`**: `lines` (144-element array of 160-char strings)
+
+**`/memory/{addr}/{len}`**: `bytes` (array of ints), `hex` (array of hex strings). Length parameter is **decimal** (e.g. `/memory/8000/16` for 16 bytes, not `/memory/8000/10`).
+
+**`/step-dot`**: Same shape as `/ppu/pipeline` — returns pipeline state after the dot.
+
+### Endpoints
 
 | Endpoint | Method | Returns |
 |----------|--------|---------|
-| `/cpu` | GET | Registers (a-l), SP, PC, flags (zero/negative/half_carry/carry), IME, halted |
-| `/ppu` | GET | LCDC (decoded flags), STAT (mode name + number), LY, dot (0-455 within scanline), LYC, SCX, SCY, WX, WY, palettes (BGP/OBP0/OBP1 with color index breakdown) |
-| `/ppu/pipeline` | GET | Pixel pipeline internals: bg_shifter (low/high/loaded), obj_shifter (low/high/palette/priority), pixel_counter, render_phase, sprite_fetch phase, sprite_tile_data |
-| `/screen` | GET | 144x160 array of **post-palette color indices** (0-3) — large, prefer `/screen/ascii` |
-| `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest — compact, readable |
-| `/sprites` | GET | All 40 OAM entries: id, screen x/y, tile, priority (above_bg/behind_bg), flip_x, flip_y, palette (obp0/obp1), visible |
-| `/interrupts` | GET | IE and IF raw values + per-line breakdown (vblank/stat/timer/serial/joypad) with enabled/requested bools |
-| `/instructions` | GET | 20 disassembled instructions from current PC (address + mnemonic) |
-| `/memory/{hex_addr}` | GET | Single byte at address: value (decimal), hex |
-| `/memory/{hex_addr}/{length}` | GET | Range of bytes (1-4096): bytes array, hex array. Bypasses DMA/PPU locking |
-| `/vram` | GET | Full VRAM contents: 3 tile blocks (128 tiles each with raw hex, 8x8 pixel grid, non_zero flag) + 2 tile maps (32x32 tile indices) |
-| `/breakpoints` | GET | List of breakpoint addresses (hex strings) |
-
-### Execution control
-
-| Endpoint | Method | Returns |
-|----------|--------|---------|
+| `/cpu` | GET | Registers, flags, IME, halted |
+| `/ppu` | GET | LCDC, STAT, LY, dot, LYC, scroll/window regs, palettes |
+| `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, render_phase, sprite_fetch |
+| `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` |
+| `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |
+| `/sprites` | GET | All 40 OAM entries (bare array) |
+| `/interrupts` | GET | IE and IF values + per-interrupt enabled/requested flags |
+| `/instructions` | GET | 20 disassembled instructions from current PC |
+| `/memory/{hex_addr}` | GET | Single byte: value + hex |
+| `/memory/{hex_addr}/{length}` | GET | Byte range (length is decimal, 1-4096) |
+| `/vram` | GET | Full VRAM: 3 tile blocks (decoded) + 2 tile maps |
+| `/breakpoints` | GET | List of breakpoint addresses |
 | `/step` | POST | Execute one instruction, return CPU state |
 | `/step-dot` | POST | Execute one PPU dot, return pipeline state |
-| `/step-frame` | POST | Execute until frame boundary, breakpoint, or watchpoint hit. Returns CPU state + `watchpoint_hit` if triggered |
-| `/step-over` | POST | Step over current instruction (past CALLs), return CPU state |
-| `/reset` | POST | Reset the Game Boy, return CPU state |
-| `/breakpoints/{hex_addr}` | PUT | Set breakpoint at address |
-| `/breakpoints/{hex_addr}` | DELETE | Clear breakpoint at address |
-
-### Watchpoints
-
-Watchpoints are conditions that stop `step-frame` when matched. Non-bus watchpoints (scanline, mode, registers) check at **dot** granularity. Bus watchpoints check at instruction granularity.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/watchpoints` | GET | List all active watchpoints |
-| `/watchpoints` | POST | Add watchpoint from JSON body (supports compound `all` type) |
-| `/watchpoints` | DELETE | Clear all watchpoints |
+| `/step-frame` | POST | Run to frame/breakpoint/watchpoint, return CPU state + `watchpoint_hit` |
+| `/step-over` | POST | Step over current instruction |
+| `/reset` | POST | Reset the Game Boy |
+| `/breakpoints/{hex_addr}` | PUT/DELETE | Set/clear breakpoint |
+| `/watchpoints` | GET/POST/DELETE | List/add/clear watchpoints |
 | `/watchpoints/bus-read/{hex_addr}` | PUT/DELETE | Bus read watchpoint |
 | `/watchpoints/bus-write/{hex_addr}` | PUT/DELETE | Bus write watchpoint |
 | `/watchpoints/dma-read/{hex_addr}` | PUT/DELETE | DMA source read watchpoint |
 | `/watchpoints/dma-write/{hex_addr}` | PUT/DELETE | DMA destination write watchpoint |
-| `/watchpoints/scanline/{n}` | PUT/DELETE | Scanline (LY) watchpoint |
-| `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint (hblank/vblank/oam_scan/drawing or 0/1/2/3) |
+| `/watchpoints/scanline/{n}` | PUT/Delete | Scanline watchpoint |
+| `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint |
 
-**Compound watchpoints** (all conditions must match simultaneously):
+### Compound watchpoints
+
+All conditions must match simultaneously:
 ```bash
-curl -s -X POST http://127.0.0.1:3333/watchpoints \
+curl -s -X POST "$GB_URL/watchpoints" \
   -d '{"type":"all","conditions":[{"type":"scanline","value":58},{"type":"ppu_mode","mode":"drawing"}]}'
 ```
 
@@ -104,11 +200,11 @@ curl -s -X POST http://127.0.0.1:3333/watchpoints \
 
 ## Understanding screen color values
 
-The `/screen` endpoint returns **post-palette color indices** (0-3), not raw tile data. The PPU applies the palette register (BGP/OBP0/OBP1) before writing to the screen buffer. These are the final rendered colors — what the player sees.
+The `/screen` endpoint returns **post-palette color indices** (0-3), not raw tile data. The PPU applies the palette register (BGP/OBP0/OBP1) before writing to the screen buffer.
 
 The color index scale is: **0 = lightest (white), 3 = darkest (black).**
 
-The test harness (`screen_to_greyscale`) converts these to 8-bit greyscale: `0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00`. So a screen value of 3 corresponds to test greyscale `0x00`, and a screen value of 0 corresponds to `0xFF`. Do not confuse the two scales — screen index 3 is greyscale 0x00 (black), not 0xFF.
+The test harness (`screen_to_greyscale`) converts these to 8-bit greyscale: `0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00`. So a screen value of 3 corresponds to test greyscale `0x00` (black), not `0xFF`.
 
 ## Scope discipline
 
@@ -123,139 +219,56 @@ Do NOT write loops that step dot-by-dot or instruction-by-instruction looking fo
 ```bash
 # BAD — slow, fragile, wastes API calls
 for i in $(seq 1 200); do
-  result=$(curl -s -X POST http://127.0.0.1:3333/step-dot)
+  result=$(curl -s -X POST "$GB_URL/step-dot")
   pc=$(echo "$result" | jq '.pixel_counter')
   if [ "$pc" -ge 112 ]; then break; fi
 done
 ```
 
-### Correct pattern: targeted navigation
-Use watchpoints to land exactly where you need, then read state:
+### Correct pattern: use helpers
 ```bash
-# GOOD — jump directly to the state of interest
-curl -s -X POST http://127.0.0.1:3333/watchpoints \
-  -d '{"type":"all","conditions":[{"type":"scanline","value":60},{"type":"ppu_mode","mode":"drawing"}]}'
-curl -s -X POST http://127.0.0.1:3333/step-frame
-curl -s http://127.0.0.1:3333/ppu
-curl -s -X DELETE http://127.0.0.1:3333/watchpoints
+. scripts/debugger.sh
+gb_start core/tests/game_boy/roms/dmg-acid2.gb
+gb_run_frames 10
+gb_goto 60 drawing        # Jump directly to scanline 60, Mode 3
+gb_step_dots 5             # Step 5 dots, print pipeline table
+gb_sprites_on 60           # Check for sprite confounds
 ```
 
 ### When to use bus watchpoints
 Bus watchpoints are the most powerful tool for answering "when does X happen":
-- **When is a register written?** `bus-write/{addr}` — catches the exact instruction that writes to a PPU register, VRAM address, or I/O port. Read `/ppu` immediately after to see the scanline, dot, and mode.
-- **When is VRAM read?** `bus-read/{addr}` — catches tile data fetches. Useful for understanding what the PPU is reading during Mode 3.
-- **When does a DMA transfer touch an address?** `dma-read` / `dma-write` — catches OAM DMA source/destination accesses.
-
-### Combine watchpoints for precision
-Use compound watchpoints to narrow down to exactly the event you care about:
-```bash
-# Stop when the ROM writes to WX (FF4B) during scanline 55
-curl -s -X POST http://127.0.0.1:3333/watchpoints \
-  -d '{"type":"all","conditions":[{"type":"scanline","value":55},{"type":"bus_write","address":"FF4B"}]}'
-```
-
-### Reading VRAM and tile maps directly
-Instead of stepping to observe tile fetches, read the tile map and tile data directly:
-```bash
-# Read BG tile map row (32 bytes per row, base $9800)
-curl -s http://127.0.0.1:3333/memory/9800/20  # first 32 bytes = row 0
-
-# Read a specific tile's data (16 bytes per tile, base $8000)
-curl -s http://127.0.0.1:3333/memory/8000/10  # tile 0 data (16 bytes)
-
-# Read the full VRAM dump with decoded tiles and tile maps
-curl -s http://127.0.0.1:3333/vram
-```
+- **When is a register written?** `bus-write/{addr}` — catches the exact instruction that writes to a PPU register, VRAM address, or I/O port. Read `gb_ppu` immediately after.
+- **When is VRAM read?** `bus-read/{addr}` — catches tile data fetches.
+- **When does a DMA transfer touch an address?** `dma-read` / `dma-write`.
 
 ### The only valid uses of step-dot
-`step-dot` should be used **sparingly** and only when you need to observe how the pipeline state changes dot-by-dot within a very small window (< 10 dots) — for example, observing the exact dot where a sprite fetch begins, or watching a tile boundary transition. Always navigate to the area of interest with a watchpoint first, then use step-dot for the final few dots.
+`step-dot` (via `gb_step_dots`) should be used **sparingly** and only when you need to observe how the pipeline state changes dot-by-dot within a very small window (< 10 dots). Always navigate to the area of interest with `gb_goto` first, then use `gb_step_dots` for the final few dots.
 
-## How to use
-
-### Basic pattern: observe state at a point of interest
-
-```bash
-# Set a breakpoint where you want to observe
-curl -s -X PUT http://127.0.0.1:3333/breakpoints/0150
-
-# Run until the breakpoint
-curl -s -X POST http://127.0.0.1:3333/step-frame
-
-# Read state
-curl -s http://127.0.0.1:3333/cpu
-curl -s http://127.0.0.1:3333/ppu
-curl -s http://127.0.0.1:3333/interrupts
-
-# Clean up breakpoint
-curl -s -X DELETE http://127.0.0.1:3333/breakpoints/0150
-```
-
-### Catching a register write
-
-```bash
-# When does the ROM write to WX (FF4B)?
-curl -s -X PUT http://127.0.0.1:3333/watchpoints/bus-write/FF4B
-curl -s -X POST http://127.0.0.1:3333/step-frame
-# Now stopped at the instruction that wrote to WX
-curl -s http://127.0.0.1:3333/ppu    # see LY, dot, mode, and the new WX value
-curl -s http://127.0.0.1:3333/cpu    # see PC, registers — what code did this?
-curl -s -X DELETE http://127.0.0.1:3333/watchpoints
-```
-
-### Observing screen output
-
-```bash
-# Step several frames to let the ROM initialize
-for i in $(seq 1 60); do curl -s -X POST http://127.0.0.1:3333/step-frame > /dev/null; done
-
-# Read the screen
-curl -s http://127.0.0.1:3333/screen/ascii | jq -r '.lines[]'
-```
-
-### Navigating to a specific scanline and mode
-
-```bash
-# Set compound watchpoint: stop at first dot of drawing mode on scanline 58
-curl -s -X POST http://127.0.0.1:3333/watchpoints \
-  -d '{"type":"all","conditions":[{"type":"scanline","value":58},{"type":"ppu_mode","mode":"drawing"}]}'
-
-# Step until it hits
-curl -s -X POST http://127.0.0.1:3333/step-frame
-
-# Read PPU state — LY, dot, mode, scroll positions, palettes
-curl -s http://127.0.0.1:3333/ppu
-
-# If needed, step a few dots to observe a transition
-curl -s -X POST http://127.0.0.1:3333/step-dot
-curl -s http://127.0.0.1:3333/ppu/pipeline
-
-# Clean up
-curl -s -X DELETE http://127.0.0.1:3333/watchpoints
-```
-
-### Comparing state before and after
-
-```bash
-# Capture state before
-curl -s http://127.0.0.1:3333/cpu > /tmp/before.json
-
-# Do something
-curl -s -X POST http://127.0.0.1:3333/step-frame > /dev/null
-
-# Capture state after and diff
-curl -s http://127.0.0.1:3333/cpu > /tmp/after.json
-diff /tmp/before.json /tmp/after.json
-```
+**Before stepping dots**, the observation plan must state:
+1. Exactly how many dots to step
+2. What pipeline fields to watch at each dot
+3. What transition or value would confirm/refute the hypothesis
 
 ## Reporting results
 
-Write a measurement receipt to the investigation's `measurements/` folder using the same format as `/instrument`:
+Write a measurement receipt to the investigation's `measurements/` folder:
 
 ```markdown
 # Measurement: <short title>
 
-## Question
-<the question being tested>
+## Observation plan
+
+### Question
+<What specific question is this measurement answering?>
+
+### Strategy
+<Navigation and data collection steps>
+
+### Expected data shape
+<What fields, what values would confirm vs refute>
+
+### Confounds to check
+<Potential interference — sprites, window, scroll — and results of checking>
 
 ## Test result
 <what was observed>
