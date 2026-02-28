@@ -3,7 +3,7 @@ use super::dff::DffLatch;
 use super::palette::Palettes;
 
 pub(super) struct BackgroundViewportPosition {
-    pub(super) x: u8,
+    pub(super) x: DffLatch,
     pub(super) y: DffLatch,
 }
 
@@ -33,6 +33,7 @@ impl PipelineRegisters {
         self.palettes.background.tick();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
+        self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();
         if self.control_bg_en.tick() {
@@ -46,6 +47,7 @@ impl PipelineRegisters {
         self.palettes.background.clear();
         self.palettes.sprite0.clear();
         self.palettes.sprite1.clear();
+        self.background_viewport.x.clear();
         self.background_viewport.y.clear();
         self.window.x_plus_7.clear();
         self.control_bg_en.clear();

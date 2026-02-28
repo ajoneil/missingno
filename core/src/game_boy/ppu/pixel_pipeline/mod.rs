@@ -431,7 +431,7 @@ impl Rendering {
         // No fine scroll processing during startup fetch.
         if self.startup_fetch.is_none() {
             self.fine_scroll
-                .check_scroll_match(regs.background_viewport.x);
+                .check_scroll_match(regs.background_viewport.x.output());
         }
 
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).

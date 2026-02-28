@@ -97,7 +97,7 @@ impl TileFetcher {
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> (u8, u8) {
-        let scx = regs.background_viewport.x;
+        let scx = regs.background_viewport.x.output();
         let scy = regs.background_viewport.y.output();
         (
             ((pixel_counter.wrapping_add(scx)) >> 3) & 31,

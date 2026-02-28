@@ -64,7 +64,7 @@ impl Ppu {
                 ),
                 control,
                 background_viewport: BackgroundViewportPosition {
-                    x: 0,
+                    x: DffLatch::new(0),
                     y: DffLatch::new(0),
                 },
                 window: Window {
@@ -104,7 +104,7 @@ impl Ppu {
                 0x80 | (self.video.stat_flags.bits() & 0b01111000) | line_compare | mode
             }
             Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
-            Register::BackgroundViewportX => self.registers.background_viewport.x,
+            Register::BackgroundViewportX => self.registers.background_viewport.x.output(),
             Register::WindowY => self.registers.window.y,
             Register::WindowX => self.registers.window.x_plus_7.output(),
             Register::CurrentScanline => self.video.ly(),
@@ -144,7 +144,9 @@ impl Ppu {
             Register::BackgroundViewportY => {
                 self.registers.background_viewport.y.write_immediate(value)
             }
-            Register::BackgroundViewportX => self.registers.background_viewport.x = value,
+            Register::BackgroundViewportX => {
+                self.registers.background_viewport.x.write_immediate(value)
+            }
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
             Register::InterruptOnScanline => self.video.lyc = value,
@@ -205,6 +207,17 @@ impl Ppu {
             Register::BackgroundViewportY => {
                 if is_drawing {
                     self.registers.background_viewport.y.write_immediate(value);
+                    false
+                } else {
+                    self.write_register_immediate(&register, value)
+                }
+            }
+            Register::BackgroundViewportX => {
+                if is_drawing {
+                    self.registers
+                        .background_viewport
+                        .x
+                        .write_propagating(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
