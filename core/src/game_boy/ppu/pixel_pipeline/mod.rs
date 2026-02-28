@@ -99,6 +99,7 @@ pub struct PipelineSnapshot {
     pub obj_palette: u8,
     pub obj_priority: u8,
     pub sprite_fetch_phase: Option<SpriteFetchPhase>,
+    pub sprite_tile_data: Option<(u8, u8)>,
 }
 
 pub struct Rendering {
@@ -251,9 +252,9 @@ impl Rendering {
     pub fn pipeline_state(&self) -> PipelineSnapshot {
         let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
-        let sprite_fetch_phase = match &self.sprite_state {
-            SpriteState::Fetching(sf) => Some(sf.phase),
-            SpriteState::Idle => None,
+        let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
+            SpriteState::Fetching(sf) => (Some(sf.phase), Some(sf.tile_data())),
+            SpriteState::Idle => (None, None),
         };
         PipelineSnapshot {
             pixel_counter: self.pixel_counter,
@@ -266,6 +267,7 @@ impl Rendering {
             obj_palette,
             obj_priority,
             sprite_fetch_phase,
+            sprite_tile_data,
         }
     }
 

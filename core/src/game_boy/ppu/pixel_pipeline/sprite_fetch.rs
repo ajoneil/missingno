@@ -58,6 +58,10 @@ impl SpriteFetch {
         }
     }
 
+    pub(super) fn tile_data(&self) -> (u8, u8) {
+        (self.tile_data_low, self.tile_data_high)
+    }
+
     /// Read one byte of sprite tile data (low or high bitplane).
     ///
     /// On the die, the sprite fetcher (page 29) uses the OAM index

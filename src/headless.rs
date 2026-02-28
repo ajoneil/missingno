@@ -245,6 +245,10 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
                 Some(ppu::SpriteFetchPhase::Done) => serde_json::Value::String("done".into()),
                 None => serde_json::Value::Null,
             },
+            "sprite_tile_data": match snap.sprite_tile_data {
+                Some((low, high)) => serde_json::json!({"low": low, "high": high}),
+                None => serde_json::Value::Null,
+            },
         }),
         None => serde_json::Value::Null,
     }
