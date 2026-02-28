@@ -37,6 +37,8 @@ cargo run -- <rom_path> --headless &
 
 **Do not use `--release` unless the user explicitly asks for it.** Debug builds compile much faster and are sufficient for inspection.
 
+**ROM paths**: Test ROMs live under `core/tests/game_boy/roms/` (e.g. `core/tests/game_boy/roms/mooneye/acceptance/foo.gb`). Note that test source code references paths relative to the `roms/` directory (e.g. `mooneye/acceptance/foo.gb`), but `cargo run` needs the full path from the project root. Always verify the path exists before starting the server.
+
 It listens on `http://127.0.0.1:3333`. All responses are JSON.
 
 ## API reference
