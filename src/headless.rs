@@ -46,7 +46,7 @@ pub fn run(rom_path: Option<PathBuf>) {
     }
 }
 
-fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
+fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
     let method = request.method().clone();
     let path = request.url().to_string();
 
@@ -134,6 +134,17 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
                 .map(watchpoint_json)
                 .collect();
             respond_json(request, conditions);
+        }
+        (&Method::Post, "/watchpoints") => {
+            let mut body = String::new();
+            request.as_reader().read_to_string(&mut body).unwrap();
+            match parse_watchpoint_body(&body) {
+                Ok(condition) => {
+                    debugger.add_watchpoint(condition.clone());
+                    respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                }
+                Err(err) => respond_error(request, 400, &err),
+            }
         }
         (&Method::Delete, "/watchpoints") => {
             debugger.clear_watchpoints();
@@ -485,7 +496,64 @@ fn watchpoint_json(condition: &WatchCondition) -> serde_json::Value {
             "register": format!("{register:?}"),
             "value": value,
         }),
+        WatchCondition::All(conditions) => serde_json::json!({
+            "type": "all",
+            "conditions": conditions.iter().map(watchpoint_json).collect::<Vec<_>>(),
+        }),
     }
+}
+
+fn parse_watchpoint_body(body: &str) -> Result<WatchCondition, String> {
+    let json: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+    parse_watchpoint_json(&json)
+}
+
+fn parse_watchpoint_json(json: &serde_json::Value) -> Result<WatchCondition, String> {
+    let typ = json["type"].as_str().ok_or("missing \"type\" field")?;
+    match typ {
+        "bus_read" => {
+            let addr = parse_hex_field(json, "address")?;
+            Ok(WatchCondition::BusRead { address: addr })
+        }
+        "bus_write" => {
+            let addr = parse_hex_field(json, "address")?;
+            Ok(WatchCondition::BusWrite { address: addr })
+        }
+        "scanline" => {
+            let value = json["value"]
+                .as_u64()
+                .ok_or("missing \"value\" field")? as u8;
+            Ok(WatchCondition::Scanline(value))
+        }
+        "ppu_mode" => {
+            let mode_str = json["mode"].as_str().ok_or("missing \"mode\" field")?;
+            let mode = match mode_str {
+                "hblank" | "0" => Mode::HorizontalBlank,
+                "vblank" | "1" => Mode::VerticalBlank,
+                "oam_scan" | "2" => Mode::OamScan,
+                "drawing" | "3" => Mode::Drawing,
+                _ => return Err(format!("invalid mode: {mode_str}")),
+            };
+            Ok(WatchCondition::PpuMode(mode))
+        }
+        "all" => {
+            let conditions = json["conditions"]
+                .as_array()
+                .ok_or("missing \"conditions\" array")?;
+            let parsed: Result<Vec<_>, _> =
+                conditions.iter().map(parse_watchpoint_json).collect();
+            Ok(WatchCondition::All(parsed?))
+        }
+        other => Err(format!("unknown type: {other}")),
+    }
+}
+
+fn parse_hex_field(json: &serde_json::Value, field: &str) -> Result<u16, String> {
+    let s = json[field]
+        .as_str()
+        .ok_or(format!("missing \"{field}\" field"))?;
+    u16::from_str_radix(s, 16).map_err(|_| format!("invalid hex in \"{field}\": {s}"))
 }
 
 fn respond_error(request: tiny_http::Request, code: u16, message: &str) {

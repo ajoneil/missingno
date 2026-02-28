@@ -27,14 +27,16 @@ pub enum WatchCondition {
     PpuMode(Mode),
     PpuRegister { register: ppu::Register, value: u8 },
     CpuRegister { register: CpuRegister, value: u8 },
+    All(Vec<WatchCondition>),
 }
 
 impl WatchCondition {
     fn needs_bus_trace(&self) -> bool {
-        matches!(
-            self,
-            WatchCondition::BusRead { .. } | WatchCondition::BusWrite { .. }
-        )
+        match self {
+            WatchCondition::BusRead { .. } | WatchCondition::BusWrite { .. } => true,
+            WatchCondition::All(conditions) => conditions.iter().any(|c| c.needs_bus_trace()),
+            _ => false,
+        }
     }
 }
 
@@ -182,43 +184,48 @@ impl Debugger {
     }
 
     fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<WatchCondition> {
-        let ppu = self.game_boy.ppu();
-        let cpu = self.game_boy.cpu();
-        let mode = ppu.mode();
-
         for condition in &self.watchpoints {
-            let matched = match condition {
-                WatchCondition::BusRead { address } => trace
-                    .iter()
-                    .any(|a| a.kind == BusAccessKind::Read && a.address == *address),
-                WatchCondition::BusWrite { address } => trace
-                    .iter()
-                    .any(|a| a.kind == BusAccessKind::Write && a.address == *address),
-                WatchCondition::Scanline(target) => {
-                    ppu.read_register(ppu::Register::CurrentScanline) == *target
-                }
-                WatchCondition::PpuMode(target) => mode == *target,
-                WatchCondition::PpuRegister { register, value } => {
-                    ppu.read_register(*register) == *value
-                }
-                WatchCondition::CpuRegister { register, value } => {
-                    let actual = match register {
-                        CpuRegister::A => cpu.a,
-                        CpuRegister::B => cpu.b,
-                        CpuRegister::C => cpu.c,
-                        CpuRegister::D => cpu.d,
-                        CpuRegister::E => cpu.e,
-                        CpuRegister::H => cpu.h,
-                        CpuRegister::L => cpu.l,
-                    };
-                    actual == *value
-                }
-            };
-            if matched {
+            if self.condition_matches(condition, trace) {
                 return Some(condition.clone());
             }
         }
         None
+    }
+
+    fn condition_matches(&self, condition: &WatchCondition, trace: &[BusAccess]) -> bool {
+        let ppu = self.game_boy.ppu();
+        let cpu = self.game_boy.cpu();
+
+        match condition {
+            WatchCondition::BusRead { address } => trace
+                .iter()
+                .any(|a| a.kind == BusAccessKind::Read && a.address == *address),
+            WatchCondition::BusWrite { address } => trace
+                .iter()
+                .any(|a| a.kind == BusAccessKind::Write && a.address == *address),
+            WatchCondition::Scanline(target) => {
+                ppu.read_register(ppu::Register::CurrentScanline) == *target
+            }
+            WatchCondition::PpuMode(target) => ppu.mode() == *target,
+            WatchCondition::PpuRegister { register, value } => {
+                ppu.read_register(*register) == *value
+            }
+            WatchCondition::CpuRegister { register, value } => {
+                let actual = match register {
+                    CpuRegister::A => cpu.a,
+                    CpuRegister::B => cpu.b,
+                    CpuRegister::C => cpu.c,
+                    CpuRegister::D => cpu.d,
+                    CpuRegister::E => cpu.e,
+                    CpuRegister::H => cpu.h,
+                    CpuRegister::L => cpu.l,
+                };
+                actual == *value
+            }
+            WatchCondition::All(conditions) => {
+                conditions.iter().all(|c| self.condition_matches(c, trace))
+            }
+        }
     }
 
     pub fn last_watchpoint_hit(&self) -> Option<&WatchCondition> {
