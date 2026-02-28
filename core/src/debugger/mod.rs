@@ -38,6 +38,14 @@ impl Debugger {
         }
     }
 
+    pub fn step_dot(&mut self) -> Option<Screen> {
+        if self.game_boy.step_dot() {
+            Some(self.game_boy.screen().clone())
+        } else {
+            None
+        }
+    }
+
     pub fn step_over(&mut self) -> Option<Screen> {
         let mut it = InstructionsIterator::new(self.game_boy.cpu().program_counter, &self.game_boy);
         Instruction::decode(&mut it);

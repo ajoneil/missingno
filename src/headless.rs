@@ -86,6 +86,10 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
             debugger.step();
             respond_json(request, cpu_state(debugger.game_boy()));
         }
+        (&Method::Post, "/step-dot") => {
+            debugger.step_dot();
+            respond_json(request, pipeline_state(debugger.game_boy()));
+        }
         (&Method::Post, "/step-frame") => {
             debugger.step_frame();
             respond_json(request, cpu_state(debugger.game_boy()));

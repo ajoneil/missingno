@@ -1,6 +1,7 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
+use cpu::mcycle::Processor;
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -62,6 +63,31 @@ impl InterruptLatch {
     }
 }
 
+/// Where the CPU is in its instruction execution lifecycle.
+/// Used by `step_dot()` to pause and resume between individual dots.
+enum ExecutionState {
+    /// Between instructions. The next `step_dot()` promotes the
+    /// interrupt latch and builds a new Processor.
+    Ready,
+    /// Mid-instruction: the Processor is yielding dots.
+    Running {
+        processor: Processor,
+        read_value: u8,
+        dot_in_mcycle: u8,
+        pending_oam_bug: Option<execute::OamBugKind>,
+        was_halted: bool,
+    },
+    /// Instruction complete, ticking the trailing fetch (or HALT
+    /// dummy fetch). Hardware ticks for 4 dots, then a bus read.
+    TrailingFetch {
+        dot: u8,
+        fetch_addr: u16,
+        /// True for HALT dummy fetch: discard result, transition to
+        /// Halted. False for normal: store result as prefetched opcode.
+        halting: bool,
+    },
+}
+
 pub struct GameBoy {
     cpu: Cpu,
     screen: Screen,
@@ -80,6 +106,7 @@ pub struct GameBoy {
 
     prefetched_opcode: Option<u8>,
     interrupt_latch: InterruptLatch,
+    execution: ExecutionState,
 }
 
 impl GameBoy {
@@ -107,6 +134,7 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             prefetched_opcode: None,
             interrupt_latch: InterruptLatch::Empty,
+            execution: ExecutionState::Ready,
         };
         let pc = gb.cpu.program_counter;
         gb.prefetched_opcode = Some(gb.cpu_read(pc));
@@ -136,6 +164,7 @@ impl GameBoy {
         let pc = self.cpu.program_counter;
         self.prefetched_opcode = Some(self.cpu_read(pc));
         self.interrupt_latch = InterruptLatch::Empty;
+        self.execution = ExecutionState::Ready;
     }
 
     pub fn cartridge(&self) -> &Cartridge {

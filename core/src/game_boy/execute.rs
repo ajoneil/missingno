@@ -1,5 +1,5 @@
 use super::{
-    GameBoy, InterruptLatch,
+    ExecutionState, GameBoy, InterruptLatch,
     cpu::{
         EiDelay, HaltState, InterruptMasterEnable,
         mcycle::{DotAction, Processor},
@@ -12,13 +12,28 @@ use super::{
 /// Whether the OAM bug corruption uses the read or write formula.
 /// Determined by the CPU operation type, not by the OAM control
 /// signals at the moment of the spurious SRAM clock.
-enum OamBugKind {
+pub(super) enum OamBugKind {
     Read,
     Write,
 }
 
 impl GameBoy {
     pub fn step(&mut self) -> bool {
+        // Drain any mid-instruction state left by step_dot().
+        let mut new_screen = false;
+        while !matches!(self.execution, ExecutionState::Ready) {
+            new_screen |= self.step_dot();
+        }
+
+        // Now at an instruction boundary — run one full instruction.
+        new_screen |= self.step_instruction();
+        new_screen
+    }
+
+    /// Run one complete instruction from start to finish (including
+    /// trailing fetch). This is the original `step()` logic, factored
+    /// out so `step()` can drain mid-instruction state first.
+    fn step_instruction(&mut self) -> bool {
         let mut new_screen = false;
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
@@ -219,6 +234,218 @@ impl GameBoy {
             } else {
                 dot_in_mcycle + 1
             };
+        }
+    }
+
+    /// Advance exactly one dot (T-cycle). Returns true if a new
+    /// frame was produced. The execution state machine tracks where
+    /// we are in the instruction lifecycle across calls.
+    pub fn step_dot(&mut self) -> bool {
+        match std::mem::replace(&mut self.execution, ExecutionState::Ready) {
+            ExecutionState::Ready => {
+                // Start a new instruction.
+                self.interrupt_latch.promote();
+                let dispatch_interrupt = self.interrupt_latch.take_ready().is_some();
+
+                let processor = match self.cpu.halt_state {
+                    HaltState::Running => {
+                        if dispatch_interrupt {
+                            Processor::interrupt(&mut self.cpu)
+                        } else if let Some(opcode) = self.prefetched_opcode.take() {
+                            Processor::fetch_with_opcode(&mut self.cpu, opcode)
+                        } else {
+                            unreachable!("Running CPU must have a prefetched opcode")
+                        }
+                    }
+                    HaltState::Halted => {
+                        if dispatch_interrupt {
+                            Processor::interrupt(&mut self.cpu)
+                        } else {
+                            Processor::begin(&mut self.cpu)
+                        }
+                    }
+                    HaltState::Halting => Processor::begin(&mut self.cpu),
+                };
+
+                let was_halted = self.cpu.halt_state == HaltState::Halted;
+
+                self.execution = ExecutionState::Running {
+                    processor,
+                    read_value: 0,
+                    dot_in_mcycle: 0,
+                    pending_oam_bug: None,
+                    was_halted,
+                };
+
+                // Run the first dot of this new instruction.
+                self.step_dot()
+            }
+            ExecutionState::Running {
+                mut processor,
+                mut read_value,
+                mut dot_in_mcycle,
+                mut pending_oam_bug,
+                was_halted,
+            } => {
+                let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
+                    Some(action) => action,
+                    None => {
+                        // Instruction complete — handle post-instruction
+                        // transitions and determine next state.
+                        self.check_halt_bug();
+
+                        if self.cpu.halt_state == HaltState::Halting {
+                            self.execution = ExecutionState::TrailingFetch {
+                                dot: 0,
+                                fetch_addr: self.cpu.program_counter,
+                                halting: true,
+                            };
+                            return self.step_dot();
+                        }
+
+                        if self.cpu.halt_state == HaltState::Halted {
+                            if self.interrupt_latch.take_ready().is_some() {
+                                // Restart with interrupt dispatch.
+                                self.execution = ExecutionState::Running {
+                                    processor: Processor::interrupt(&mut self.cpu),
+                                    read_value: 0,
+                                    dot_in_mcycle: 0,
+                                    pending_oam_bug: None,
+                                    was_halted,
+                                };
+                                return self.step_dot();
+                            }
+                            // Stay halted, no trailing fetch needed.
+                            self.prefetched_opcode = None;
+                            self.advance_ei_delay();
+                            self.execution = ExecutionState::Ready;
+                            return false;
+                        }
+
+                        // IME=0 HALT wakeup: wakeup NOP IS the trailing
+                        // fetch. read_value is the prefetched opcode.
+                        if was_halted && self.cpu.halt_state == HaltState::Running {
+                            self.prefetched_opcode = Some(read_value);
+                            self.advance_ei_delay();
+                            self.execution = ExecutionState::Ready;
+                            return false;
+                        }
+
+                        // Normal: enter trailing fetch.
+                        self.execution = ExecutionState::TrailingFetch {
+                            dot: 0,
+                            fetch_addr: self.cpu.program_counter,
+                            halting: false,
+                        };
+                        return self.step_dot();
+                    }
+                };
+
+                // IE push bug.
+                if processor.take_pending_vector_resolve() {
+                    if let Some(interrupt) = self.interrupts.triggered() {
+                        self.interrupts.clear(interrupt);
+                        self.cpu.program_counter = interrupt.vector();
+                    } else {
+                        self.cpu.program_counter = 0x0000;
+                    }
+                }
+
+                // Dot 0: record OAM bug.
+                if dot_in_mcycle == 0 {
+                    if let DotAction::InternalOamBug { address } = &dot_action {
+                        if (0xFE00..=0xFEFF).contains(address) {
+                            match pending_oam_bug {
+                                Some(OamBugKind::Read) => {}
+                                _ => {
+                                    pending_oam_bug = Some(OamBugKind::Write);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Even phase.
+                let is_mcycle_boundary = dot_in_mcycle == 3;
+                let mut new_screen = self.tick_dot_even(is_mcycle_boundary);
+
+                // After dot 2 even tick: fire OAM bug.
+                if dot_in_mcycle == 2 {
+                    if let Some(kind) = pending_oam_bug.take() {
+                        match kind {
+                            OamBugKind::Read => self.ppu.oam_bug_read(),
+                            OamBugKind::Write => self.ppu.oam_bug_write(),
+                        }
+                    }
+                }
+
+                // Bus action.
+                match dot_action {
+                    DotAction::Idle => {}
+                    DotAction::InternalOamBug { .. } => {}
+                    DotAction::Read { address } => {
+                        if (0xFE00..=0xFEFF).contains(&address) {
+                            pending_oam_bug = Some(OamBugKind::Read);
+                        }
+                        read_value = self.cpu_read(address);
+                    }
+                    DotAction::Write { address, value } => {
+                        if (0xFE00..=0xFEFF).contains(&address) {
+                            pending_oam_bug = Some(OamBugKind::Write);
+                        }
+                        self.write_byte(address, value);
+                    }
+                }
+
+                // Odd phase.
+                new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+
+                // Advance dot counter.
+                dot_in_mcycle = if is_mcycle_boundary {
+                    0
+                } else {
+                    dot_in_mcycle + 1
+                };
+
+                self.execution = ExecutionState::Running {
+                    processor,
+                    read_value,
+                    dot_in_mcycle,
+                    pending_oam_bug,
+                    was_halted,
+                };
+
+                new_screen
+            }
+            ExecutionState::TrailingFetch {
+                dot,
+                fetch_addr,
+                halting,
+            } => {
+                let is_mcycle_boundary = dot == 3;
+                let new_screen = self.tick_dot(is_mcycle_boundary);
+
+                if is_mcycle_boundary {
+                    // Final dot of the trailing fetch M-cycle.
+                    let bus_value = self.cpu_read(fetch_addr);
+                    if halting {
+                        self.cpu.halt_state = HaltState::Halted;
+                        self.prefetched_opcode = None;
+                    } else {
+                        self.prefetched_opcode = Some(bus_value);
+                    }
+                    self.advance_ei_delay();
+                    self.execution = ExecutionState::Ready;
+                } else {
+                    self.execution = ExecutionState::TrailingFetch {
+                        dot: dot + 1,
+                        fetch_addr,
+                        halting,
+                    };
+                }
+
+                new_screen
+            }
         }
     }
 
