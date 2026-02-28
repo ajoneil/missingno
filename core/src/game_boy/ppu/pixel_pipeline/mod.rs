@@ -596,10 +596,14 @@ impl Rendering {
                 // 2. Async parallel load (LOZE SET/RST — overwrites shift)
                 // 3. Pixel output reads final state
                 //
-                // The shift fires whenever the pipe is non-empty, including
-                // during fine scroll discard ticks (the pipe advances even
-                // though no pixel is output to the LCD).
-                if !self.bg_shifter.is_empty() {
+                // SACU clocks both the pipe shift registers and the pixel
+                // counter. SACU = or2(SEGU, ROXY) — frozen when either
+                // SEGU=1 (window hit active) or ROXY=1 (fine scroll not
+                // done). Gate matches the pixel counter increment below.
+                if self.window_hit == WindowHit::Inactive
+                    && self.fine_scroll.pixel_clock_active()
+                    && !self.bg_shifter.is_empty()
+                {
                     self.bg_shifter.shift();
                     self.obj_shifter.shift();
                 }
