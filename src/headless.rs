@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_core::debugger::{Debugger, WatchCondition};
 use missingno_core::debugger::instructions::InstructionsIterator;
+use missingno_core::debugger::{Debugger, WatchCondition};
 use missingno_core::game_boy::GameBoy;
 use missingno_core::game_boy::cartridge::Cartridge;
 use missingno_core::game_boy::cpu::flags::Flags;
@@ -136,9 +136,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                 1
             };
             let gb = debugger.game_boy();
-            let bytes: Vec<u8> = (0..length)
-                .map(|i| gb.peek(addr.wrapping_add(i)))
-                .collect();
+            let bytes: Vec<u8> = (0..length).map(|i| gb.peek(addr.wrapping_add(i))).collect();
             if length == 1 {
                 respond_json(
                     request,
@@ -182,11 +180,8 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             }
         }
         (&Method::Get, "/watchpoints") => {
-            let conditions: Vec<serde_json::Value> = debugger
-                .watchpoints()
-                .iter()
-                .map(watchpoint_json)
-                .collect();
+            let conditions: Vec<serde_json::Value> =
+                debugger.watchpoints().iter().map(watchpoint_json).collect();
             respond_json(request, conditions);
         }
         (&Method::Post, "/watchpoints") => {
@@ -195,7 +190,10 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             match parse_watchpoint_body(&body) {
                 Ok(condition) => {
                     debugger.add_watchpoint(condition.clone());
-                    respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                    respond_json(
+                        request,
+                        serde_json::json!({ "added": watchpoint_json(&condition) }),
+                    );
                 }
                 Err(err) => respond_error(request, 400, &err),
             }
@@ -212,11 +210,17 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
@@ -232,11 +236,17 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
@@ -252,11 +262,17 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
@@ -272,11 +288,17 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
@@ -292,11 +314,17 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
@@ -319,16 +347,26 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                     match &method {
                         &Method::Put => {
                             debugger.add_watchpoint(condition.clone());
-                            respond_json(request, serde_json::json!({ "added": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
                         }
                         &Method::Delete => {
                             debugger.remove_watchpoint(&condition);
-                            respond_json(request, serde_json::json!({ "removed": watchpoint_json(&condition) }));
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
                         }
                         _ => respond_error(request, 405, "method not allowed"),
                     }
                 }
-                None => respond_error(request, 400, "invalid mode: use hblank/vblank/oam_scan/drawing or 0/1/2/3"),
+                None => respond_error(
+                    request,
+                    400,
+                    "invalid mode: use hblank/vblank/oam_scan/drawing or 0/1/2/3",
+                ),
             }
         }
         _ => respond_error(request, 404, "not found"),
@@ -690,9 +728,7 @@ fn parse_watchpoint_json(json: &serde_json::Value) -> Result<WatchCondition, Str
             Ok(WatchCondition::DmaWrite { address: addr })
         }
         "scanline" => {
-            let value = json["value"]
-                .as_u64()
-                .ok_or("missing \"value\" field")? as u8;
+            let value = json["value"].as_u64().ok_or("missing \"value\" field")? as u8;
             Ok(WatchCondition::Scanline(value))
         }
         "ppu_mode" => {
@@ -710,8 +746,7 @@ fn parse_watchpoint_json(json: &serde_json::Value) -> Result<WatchCondition, Str
             let conditions = json["conditions"]
                 .as_array()
                 .ok_or("missing \"conditions\" array")?;
-            let parsed: Result<Vec<_>, _> =
-                conditions.iter().map(parse_watchpoint_json).collect();
+            let parsed: Result<Vec<_>, _> = conditions.iter().map(parse_watchpoint_json).collect();
             Ok(WatchCondition::All(parsed?))
         }
         other => Err(format!("unknown type: {other}")),

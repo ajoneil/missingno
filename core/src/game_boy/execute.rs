@@ -518,8 +518,16 @@ impl GameBoy {
                 };
                 self.ppu.write_oam(oam_addr, byte);
                 if let Some(trace) = &mut self.bus_trace {
-                    trace.push(BusAccess { address: src_addr, value: byte, kind: BusAccessKind::DmaRead });
-                    trace.push(BusAccess { address: dst_addr, value: byte, kind: BusAccessKind::DmaWrite });
+                    trace.push(BusAccess {
+                        address: src_addr,
+                        value: byte,
+                        kind: BusAccessKind::DmaRead,
+                    });
+                    trace.push(BusAccess {
+                        address: dst_addr,
+                        value: byte,
+                        kind: BusAccessKind::DmaWrite,
+                    });
                 }
                 match Bus::of(src_addr) {
                     Some(Bus::External) => {
