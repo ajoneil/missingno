@@ -56,6 +56,9 @@ fn handle_request(request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Get, "/ppu") => {
             respond_json(request, ppu_state(debugger.game_boy()));
         }
+        (&Method::Get, "/ppu/pipeline") => {
+            respond_json(request, pipeline_state(debugger.game_boy()));
+        }
         (&Method::Get, "/screen") => {
             respond_json(request, screen_state(debugger.game_boy()));
         }
@@ -209,6 +212,40 @@ fn ppu_state(gb: &GameBoy) -> PpuState {
     }
 }
 
+fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
+    let ppu = gb.ppu();
+    match ppu.pipeline_state() {
+        Some(snap) => serde_json::json!({
+            "pixel_counter": snap.pixel_counter,
+            "render_phase": match snap.render_phase {
+                ppu::RenderPhase::LineStart => "line_start",
+                ppu::RenderPhase::OamScan => "oam_scan",
+                ppu::RenderPhase::Drawing => "drawing",
+                ppu::RenderPhase::DrawingComplete => "drawing_complete",
+                ppu::RenderPhase::HorizontalBlank => "hblank",
+            },
+            "bg_shifter": {
+                "low": snap.bg_low,
+                "high": snap.bg_high,
+                "loaded": snap.bg_loaded,
+            },
+            "obj_shifter": {
+                "low": snap.obj_low,
+                "high": snap.obj_high,
+                "palette": snap.obj_palette,
+                "priority": snap.obj_priority,
+            },
+            "sprite_fetch": match snap.sprite_fetch_phase {
+                Some(ppu::SpriteFetchPhase::WaitingForFetcher) => serde_json::Value::String("waiting".into()),
+                Some(ppu::SpriteFetchPhase::FetchingData) => serde_json::Value::String("fetching_data".into()),
+                Some(ppu::SpriteFetchPhase::Done) => serde_json::Value::String("done".into()),
+                None => serde_json::Value::Null,
+            },
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
 fn palette_breakdown(raw: u8) -> PaletteState {
     PaletteState {
         raw,
@@ -276,13 +313,12 @@ fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {
 
 fn interrupts_state(gb: &GameBoy) -> InterruptsState {
     let regs = gb.interrupts();
-    let check =
-        |flag: interrupts::Interrupt| -> InterruptLine {
-            InterruptLine {
-                enabled: regs.enabled(flag),
-                requested: regs.requested(flag),
-            }
-        };
+    let check = |flag: interrupts::Interrupt| -> InterruptLine {
+        InterruptLine {
+            enabled: regs.enabled(flag),
+            requested: regs.requested(flag),
+        }
+    };
     InterruptsState {
         ie_raw: regs.enabled.bits() & 0x1F,
         if_raw: regs.requested.bits() & 0x1F,
@@ -296,8 +332,11 @@ fn interrupts_state(gb: &GameBoy) -> InterruptsState {
 
 fn respond_json(request: tiny_http::Request, body: impl Serialize) {
     let json = serde_json::to_string_pretty(&body).unwrap();
-    let response = Response::from_string(json)
-        .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
+    let response = Response::from_string(json).with_header(
+        "Content-Type: application/json"
+            .parse::<tiny_http::Header>()
+            .unwrap(),
+    );
     let _ = request.respond(response);
 }
 
@@ -306,7 +345,11 @@ fn respond_error(request: tiny_http::Request, code: u16, message: &str) {
     let json = serde_json::to_string(&body).unwrap();
     let response = Response::from_string(json)
         .with_status_code(StatusCode(code))
-        .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
+        .with_header(
+            "Content-Type: application/json"
+                .parse::<tiny_http::Header>()
+                .unwrap(),
+        );
     let _ = request.respond(response);
 }
 

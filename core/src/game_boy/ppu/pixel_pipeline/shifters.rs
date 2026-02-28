@@ -67,6 +67,10 @@ impl BgShifter {
         self.low <<= 1;
         self.high <<= 1;
     }
+
+    pub(super) fn registers(&self) -> (u8, u8, bool) {
+        (self.low, self.high, self.loaded)
+    }
 }
 
 /// Sprite pixel shift register (pages 33-34 on the die).
@@ -128,6 +132,10 @@ impl ObjShifter {
         self.high <<= 1;
         self.palette <<= 1;
         self.priority <<= 1;
+    }
+
+    pub(super) fn registers(&self) -> (u8, u8, u8, u8) {
+        (self.low, self.high, self.palette, self.priority)
     }
 
     /// Merge sprite tile data into the shifter at fixed positions

@@ -8,6 +8,7 @@ mod sprite_fetch;
 mod window;
 
 pub use frame_phase::FramePhase;
+pub use sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
 
@@ -21,7 +22,7 @@ use fetcher::{FetcherStep, StartupFetch, TileFetcher};
 use fine_scroll::{FineScroll, WindowHit};
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
-use sprite_fetch::{SpriteFetch, SpriteFetchPhase, SpriteState};
+use sprite_fetch::{SpriteFetch, SpriteState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -62,7 +63,7 @@ pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
 /// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
 /// sees HBlank one phase before XYMU clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RenderPhase {
+pub enum RenderPhase {
     /// Not drawing — before Mode 3 starts or after line-end reset.
     /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
     /// is never set on line 0). STAT reads mode 0 for dots 0-3, then
@@ -85,6 +86,19 @@ pub(super) enum RenderPhase {
     /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
     /// Hardware: XYMU clear, WODU set.
     HorizontalBlank,
+}
+
+pub struct PipelineSnapshot {
+    pub pixel_counter: u8,
+    pub render_phase: RenderPhase,
+    pub bg_low: u8,
+    pub bg_high: u8,
+    pub bg_loaded: bool,
+    pub obj_low: u8,
+    pub obj_high: u8,
+    pub obj_palette: u8,
+    pub obj_priority: u8,
+    pub sprite_fetch_phase: Option<SpriteFetchPhase>,
 }
 
 pub struct Rendering {
@@ -232,6 +246,27 @@ impl Rendering {
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
         self.scanner.as_ref().map(|s| s.oam_address())
+    }
+
+    pub fn pipeline_state(&self) -> PipelineSnapshot {
+        let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
+        let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
+        let sprite_fetch_phase = match &self.sprite_state {
+            SpriteState::Fetching(sf) => Some(sf.phase),
+            SpriteState::Idle => None,
+        };
+        PipelineSnapshot {
+            pixel_counter: self.pixel_counter,
+            render_phase: self.render_phase,
+            bg_low,
+            bg_high,
+            bg_loaded,
+            obj_low,
+            obj_high,
+            obj_palette,
+            obj_priority,
+            sprite_fetch_phase,
+        }
     }
 
     fn oam_locked(&self) -> bool {

@@ -5,7 +5,7 @@ use crate::game_boy::ppu::{
     memory::{Oam, Vram},
 };
 
-use super::{Mode, RenderPhase, Rendering};
+use super::{Mode, PipelineSnapshot, RenderPhase, Rendering};
 
 pub enum FramePhase {
     ActiveDisplay(Rendering),
@@ -112,6 +112,13 @@ impl FramePhase {
     pub fn scanner_oam_address(&self) -> Option<u8> {
         match self {
             FramePhase::ActiveDisplay(rendering) => rendering.scanner_oam_address(),
+            FramePhase::VerticalBlank => None,
+        }
+    }
+
+    pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
+        match self {
+            FramePhase::ActiveDisplay(rendering) => Some(rendering.pipeline_state()),
             FramePhase::VerticalBlank => None,
         }
     }

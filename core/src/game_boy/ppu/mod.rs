@@ -10,6 +10,7 @@ use pixel_pipeline::{FramePhase, Rendering};
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
+pub use pixel_pipeline::{PipelineSnapshot, RenderPhase, SpriteFetchPhase};
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
@@ -438,5 +439,11 @@ impl Ppu {
 
     pub fn sprite(&self, sprite: SpriteId) -> &Sprite {
         self.oam.sprite(sprite)
+    }
+
+    pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
+        self.pixel_pipeline
+            .as_ref()
+            .and_then(|p| p.pipeline_state())
     }
 }

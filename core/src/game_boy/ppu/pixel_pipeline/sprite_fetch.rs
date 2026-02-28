@@ -13,7 +13,7 @@ use super::shifters::ObjShifter;
 
 /// The phases of a sprite fetch on real hardware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SpriteFetchPhase {
+pub enum SpriteFetchPhase {
     /// The BG fetcher continues advancing through its normal steps.
     /// The wait ends when the fetcher has completed GetTileDataHigh
     /// (reached Load) AND the BG shifter is non-empty — both conditions
