@@ -4,11 +4,12 @@ Query the headless debugger HTTP API to inspect emulator state without modifying
 
 ## When to use this instead of `/instrument`
 
-Use this skill when the question can be answered by inspecting state at instruction or frame boundaries:
+Use this skill when the question can be answered by inspecting state at instruction, dot, or frame boundaries:
 
 - **What are the CPU registers at a given point?** Step to a breakpoint, read `/cpu`.
 - **What does the screen look like after N frames?** Step N frames, read `/screen/ascii`.
 - **What is the PPU mode/scanline/scroll position at a given PC?** Set a breakpoint, step, read `/ppu`.
+- **What is the pixel pipeline state at a specific scanline and mode?** Set a compound watchpoint (e.g. scanline=N AND mode=drawing), step-frame, read `/ppu/pipeline`.
 - **Which interrupts are enabled/pending?** Read `/interrupts` at any point.
 - **What sprites are active?** Read `/sprites`.
 - **What instructions execute from a given address?** Read `/instructions`.
@@ -16,7 +17,7 @@ Use this skill when the question can be answered by inspecting state at instruct
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at instruction/frame granularity. It **cannot** observe:
+This API operates at instruction/dot/frame granularity. It **cannot** observe:
 
 - **Sub-instruction timing** (T-cycle or dot-level behavior within a single instruction)
 - **Mid-scanline state changes** (what happens at dot 80 vs dot 252 within one scanline)
@@ -67,11 +68,34 @@ It listens on `http://127.0.0.1:3333`. All responses are JSON.
 | Endpoint | Method | Returns |
 |----------|--------|---------|
 | `/step` | POST | Execute one instruction, return CPU state |
-| `/step-frame` | POST | Execute until frame boundary or breakpoint, return CPU state |
+| `/step-dot` | POST | Execute one PPU dot, return pipeline state |
+| `/step-frame` | POST | Execute until frame boundary, breakpoint, or watchpoint hit. Returns CPU state + `watchpoint_hit` if triggered |
 | `/step-over` | POST | Step over current instruction (past CALLs), return CPU state |
 | `/reset` | POST | Reset the Game Boy, return CPU state |
 | `/breakpoints/{hex_addr}` | PUT | Set breakpoint at address |
 | `/breakpoints/{hex_addr}` | DELETE | Clear breakpoint at address |
+
+### Watchpoints
+
+Watchpoints are conditions that stop `step-frame` when matched. Non-bus watchpoints (scanline, mode, registers) check at **dot** granularity. Bus watchpoints check at instruction granularity.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/watchpoints` | GET | List all active watchpoints |
+| `/watchpoints` | POST | Add watchpoint from JSON body (supports compound `all` type) |
+| `/watchpoints` | DELETE | Clear all watchpoints |
+| `/watchpoints/bus-read/{hex_addr}` | PUT/DELETE | Bus read watchpoint |
+| `/watchpoints/bus-write/{hex_addr}` | PUT/DELETE | Bus write watchpoint |
+| `/watchpoints/scanline/{n}` | PUT/DELETE | Scanline (LY) watchpoint |
+| `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint (hblank/vblank/oam_scan/drawing or 0/1/2/3) |
+
+**Compound watchpoints** (all conditions must match simultaneously):
+```bash
+curl -s -X POST http://127.0.0.1:3333/watchpoints \
+  -d '{"type":"all","conditions":[{"type":"scanline","value":58},{"type":"ppu_mode","mode":"drawing"}]}'
+```
+
+**Note on LY timing**: LY increments a few dots before OAM scan begins. A scanline-only watchpoint stops at the first dot where LY matches, which is in the previous scanline's hblank. To stop at the start of actual rendering, use a compound watchpoint: `scanline=N AND mode=oam_scan` or `scanline=N AND mode=drawing`.
 
 ## Scope discipline
 
@@ -114,6 +138,23 @@ for i in $(seq 1 60); do curl -s -X POST http://127.0.0.1:3333/step-frame > /dev
 
 # Read the screen
 curl -s http://127.0.0.1:3333/screen/ascii | jq -r '.lines[]'
+```
+
+### Navigating to a specific scanline and mode
+
+```bash
+# Set compound watchpoint: stop at first dot of drawing mode on scanline 58
+curl -s -X POST http://127.0.0.1:3333/watchpoints \
+  -d '{"type":"all","conditions":[{"type":"scanline","value":58},{"type":"ppu_mode","mode":"drawing"}]}'
+
+# Step until it hits
+curl -s -X POST http://127.0.0.1:3333/step-frame
+
+# Now at LY=58, dot=80, mode=drawing — step dots to observe pixel pipeline
+curl -s -X POST http://127.0.0.1:3333/step-dot
+
+# Clean up
+curl -s -X DELETE http://127.0.0.1:3333/watchpoints
 ```
 
 ### Comparing state before and after
