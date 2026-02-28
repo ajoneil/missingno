@@ -105,6 +105,7 @@ The helper library (`scripts/debugger.sh`) provides functions for all common ope
 | `gb_reset` | Reset the Game Boy and clear all watchpoints |
 | `gb_run_frames <n>` | Step N frames silently |
 | `gb_goto <scanline> <mode>` | Set compound watchpoint, step to it, clear watchpoint, print PPU state. Mode: `oam_scan`, `drawing`, `hblank`, `vblank` |
+| `gb_step_to_px <value>` | Jump to a specific pixel_counter value on the current scanline (sets compound watchpoint: scanline + drawing + pixel_counter, step-frame, clears). Prints pipeline state |
 | `gb_step_dots <n>` | Step N dots, print table: step, dot, pixel_counter, loaded, lo, hi, sprite |
 
 ### State reading
@@ -186,6 +187,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/watchpoints/dma-read/{hex_addr}` | PUT/DELETE | DMA source read watchpoint |
 | `/watchpoints/dma-write/{hex_addr}` | PUT/DELETE | DMA destination write watchpoint |
 | `/watchpoints/scanline/{n}` | PUT/Delete | Scanline watchpoint |
+| `/watchpoints/pixel-counter/{n}` | PUT/DELETE | Pixel counter watchpoint (matches during Mode 3 only) |
 | `/watchpoints/ppu-mode/{mode}` | PUT/DELETE | PPU mode watchpoint |
 
 ### Compound watchpoints
@@ -214,25 +216,47 @@ The test harness (`screen_to_greyscale`) converts these to 8-bit greyscale: `0 �
 
 **Prefer targeted watchpoints over stepping.** The debugger has powerful watchpoint support — use it to jump directly to the state you need to observe rather than stepping through hundreds of dots or instructions manually.
 
-### Anti-pattern: step loops
-Do NOT write loops that step dot-by-dot or instruction-by-instruction looking for a condition:
+### Anti-pattern: step loops and guess-stepping
+Do NOT write loops that step dot-by-dot looking for a condition, and do NOT step an estimated number of dots hoping to land near a target:
 ```bash
-# BAD — slow, fragile, wastes API calls
+# BAD — step loop looking for a condition
 for i in $(seq 1 200); do
   result=$(curl -s -X POST "$GB_URL/step-dot")
   pc=$(echo "$result" | jq '.pixel_counter')
   if [ "$pc" -ge 112 ]; then break; fi
 done
+
+# BAD — guess-stepping: estimating dot count to reach a pixel_counter value
+for i in $(seq 1 60); do curl -s -X POST "$GB_URL/step-dot" > /dev/null; done
+# "should be near PX=85..." — no, use a watchpoint
 ```
 
-### Correct pattern: use helpers
+### Correct pattern: use helpers and watchpoints
 ```bash
 . scripts/debugger.sh
 gb_start core/tests/game_boy/roms/dmg-acid2.gb
 gb_run_frames 10
 gb_goto 60 drawing        # Jump directly to scanline 60, Mode 3
-gb_step_dots 5             # Step 5 dots, print pipeline table
+gb_step_to_px 85           # Jump directly to pixel_counter=85
+gb_step_dots 5             # Step 5 dots from here for fine observation
 gb_sprites_on 60           # Check for sprite confounds
+```
+
+### Navigating to a specific pixel_counter value
+Use `gb_step_to_px` to jump directly to a pixel_counter value. It sets a compound watchpoint (scanline + drawing + pixel_counter) and uses step-frame. **Never estimate dot counts to reach a pixel_counter value** — sprite fetches, window stalls, and fine scroll all affect the mapping between dots and pixel_counter, making estimates unreliable.
+
+```bash
+gb_goto 40 drawing        # Navigate to scanline 40, start of Mode 3
+gb_step_to_px 88          # Jump to pixel_counter=88
+gb_pipeline               # Read pipeline state at that point
+gb_step_dots 3            # Step 3 more dots for fine observation
+```
+
+You can also use pixel_counter in compound watchpoints directly:
+```bash
+curl -s -X POST "$GB_URL/watchpoints" \
+  -d '{"type":"all","conditions":[{"type":"scanline","value":40},{"type":"ppu_mode","mode":"drawing"},{"type":"pixel_counter","value":88}]}'
+curl -s -X POST "$GB_URL/step-frame"
 ```
 
 ### When to use bus watchpoints
@@ -241,8 +265,8 @@ Bus watchpoints are the most powerful tool for answering "when does X happen":
 - **When is VRAM read?** `bus-read/{addr}` — catches tile data fetches.
 - **When does a DMA transfer touch an address?** `dma-read` / `dma-write`.
 
-### The only valid uses of step-dot
-`step-dot` (via `gb_step_dots`) should be used **sparingly** and only when you need to observe how the pipeline state changes dot-by-dot within a very small window (< 10 dots). Always navigate to the area of interest with `gb_goto` first, then use `gb_step_dots` for the final few dots.
+### When to use step-dot
+`step-dot` (via `gb_step_dots`) is for observing how the pipeline state changes dot-by-dot within a small window. Always navigate to the area of interest first with `gb_goto` or `gb_step_to_px`, then use `gb_step_dots` for the final few dots of fine observation.
 
 **Before stepping dots**, the observation plan must state:
 1. Exactly how many dots to step

@@ -84,6 +84,18 @@ gb_goto() {
   gb_ppu
 }
 
+gb_step_to_px() {
+  local target="${1:?usage: gb_step_to_px <pixel_counter_value>}"
+  local ly
+  ly=$(curl -s "$GB_URL/ppu" | jq '.ly')
+  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
+  curl -s -X POST "$GB_URL/watchpoints" \
+    -d "{\"type\":\"all\",\"conditions\":[{\"type\":\"scanline\",\"value\":$ly},{\"type\":\"ppu_mode\",\"mode\":\"drawing\"},{\"type\":\"pixel_counter\",\"value\":$target}]}" >/dev/null
+  curl -s -X POST "$GB_URL/step-frame" >/dev/null
+  curl -s -X DELETE "$GB_URL/watchpoints" >/dev/null
+  gb_pipeline
+}
+
 gb_step_dots() {
   local n="${1:?usage: gb_step_dots <count>}"
   printf "%-4s  %-4s  %-3s  %-6s  %-5s  %-5s  %s\n" \

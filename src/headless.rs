@@ -332,6 +332,32 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                 Err(_) => respond_error(request, 400, "invalid scanline number"),
             }
         }
+        _ if path.starts_with("/watchpoints/pixel-counter/") => {
+            let val_str = &path["/watchpoints/pixel-counter/".len()..];
+            match val_str.parse::<u8>() {
+                Ok(pc) => {
+                    let condition = WatchCondition::PixelCounter(pc);
+                    match &method {
+                        &Method::Put => {
+                            debugger.add_watchpoint(condition.clone());
+                            respond_json(
+                                request,
+                                serde_json::json!({ "added": watchpoint_json(&condition) }),
+                            );
+                        }
+                        &Method::Delete => {
+                            debugger.remove_watchpoint(&condition);
+                            respond_json(
+                                request,
+                                serde_json::json!({ "removed": watchpoint_json(&condition) }),
+                            );
+                        }
+                        _ => respond_error(request, 405, "method not allowed"),
+                    }
+                }
+                Err(_) => respond_error(request, 400, "invalid pixel counter value"),
+            }
+        }
         _ if path.starts_with("/watchpoints/ppu-mode/") => {
             let mode_str = &path["/watchpoints/ppu-mode/".len()..];
             let mode = match mode_str {
@@ -685,6 +711,10 @@ fn watchpoint_json(condition: &WatchCondition) -> serde_json::Value {
                 Mode::Drawing => "drawing",
             },
         }),
+        WatchCondition::PixelCounter(pc) => serde_json::json!({
+            "type": "pixel_counter",
+            "value": pc,
+        }),
         WatchCondition::PpuRegister { register, value } => serde_json::json!({
             "type": "ppu_register",
             "register": format!("{register:?}"),
@@ -730,6 +760,10 @@ fn parse_watchpoint_json(json: &serde_json::Value) -> Result<WatchCondition, Str
         "scanline" => {
             let value = json["value"].as_u64().ok_or("missing \"value\" field")? as u8;
             Ok(WatchCondition::Scanline(value))
+        }
+        "pixel_counter" => {
+            let value = json["value"].as_u64().ok_or("missing \"value\" field")? as u8;
+            Ok(WatchCondition::PixelCounter(value))
         }
         "ppu_mode" => {
             let mode_str = json["mode"].as_str().ok_or("missing \"mode\" field")?;

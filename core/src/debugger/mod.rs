@@ -28,6 +28,7 @@ pub enum WatchCondition {
     DmaWrite { address: u16 },
     Scanline(u8),
     PpuMode(Mode),
+    PixelCounter(u8),
     PpuRegister { register: ppu::Register, value: u8 },
     CpuRegister { register: CpuRegister, value: u8 },
     All(Vec<WatchCondition>),
@@ -219,6 +220,9 @@ impl Debugger {
                 ppu.read_register(ppu::Register::CurrentScanline) == *target
             }
             WatchCondition::PpuMode(target) => ppu.mode() == *target,
+            WatchCondition::PixelCounter(target) => ppu
+                .pipeline_state()
+                .is_some_and(|snap| snap.pixel_counter == *target),
             WatchCondition::PpuRegister { register, value } => {
                 ppu.read_register(*register) == *value
             }
