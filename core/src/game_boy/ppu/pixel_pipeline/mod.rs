@@ -428,27 +428,23 @@ impl Rendering {
         }
 
         // LYRY fires combinationally when the first tile fetch fills
-        // the BG shifter. This is a combinational signal, not a DFF —
-        // it fires in the same DELTA_EVEN as the advance that fills
-        // the shifter.
+        // the BG shifter. Start the cascade countdown — 1 half-cycle
+        // of propagation delay. The cascade and fine scroll match both
+        // complete in this EVEN phase, so the pixel clock starts on
+        // the immediately following ODD phase.
         if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
-            self.startup_fetch = Some(StartupFetch::LyryFired);
+            self.startup_fetch = Some(StartupFetch::Cascade(1));
         }
 
-        // Startup cascade DFF captures on DELTA_EVEN. NYKA captures
-        // LYRY on the same DELTA_EVEN — both are independently driven
-        // by phase_tfetch >= 10 on hardware. POKY reads state set by
-        // the previous DELTA_ODD (PORY).
-        match self.startup_fetch {
-            Some(StartupFetch::LyryFired) => {
-                // NYKA captures LYRY on this DELTA_EVEN.
-                self.startup_fetch = Some(StartupFetch::NykaFired);
-            }
-            Some(StartupFetch::PoryFired) => {
-                // POKY latches from PORY — enables pixel clock.
+        // Startup cascade DFF countdown on DELTA_EVEN. Decrements each
+        // half-cycle; when it reaches 0, POKY latches and the pixel
+        // clock starts.
+        if let Some(StartupFetch::Cascade(n)) = self.startup_fetch {
+            if n <= 1 {
                 self.startup_fetch = None;
+            } else {
+                self.startup_fetch = Some(StartupFetch::Cascade(n - 1));
             }
-            _ => {}
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
@@ -485,11 +481,13 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // PORY captures NYKA on DELTA_ODD. This is the only cascade
-        // transition that fires on the odd phase — it must happen
-        // regardless of whether pixel processing runs this tick.
-        if self.startup_fetch == Some(StartupFetch::NykaFired) {
-            self.startup_fetch = Some(StartupFetch::PoryFired);
+        // Startup cascade countdown on DELTA_ODD (same logic as EVEN).
+        if let Some(StartupFetch::Cascade(n)) = self.startup_fetch {
+            if n <= 1 {
+                self.startup_fetch = None;
+            } else {
+                self.startup_fetch = Some(StartupFetch::Cascade(n - 1));
+            }
         }
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
