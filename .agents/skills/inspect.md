@@ -212,6 +212,8 @@ The test harness (`screen_to_greyscale`) converts these to 8-bit greyscale: `0 �
 
 **You are an observation tool, not a problem-solver.** Follow the same reporting contract as `/instrument`. Your report must contain measurements, not interpretation. If you catch yourself writing "this means..." or "the fix should be..." — stop, delete it, and return to reporting observations.
 
+**Never read source code.** You have the complete API reference above — endpoint names, JSON field names, helper functions. Do not read `.rs` files, `grep` through the codebase, or explore the code structure. If you catch yourself opening a source file to understand how an endpoint works, stop. The API reference in this skill file is your single source of truth. If an endpoint doesn't exist in the reference, it doesn't exist.
+
 ## Debugging strategy: use watchpoints, not step loops
 
 **Prefer targeted watchpoints over stepping.** The debugger has powerful watchpoint support — use it to jump directly to the state you need to observe rather than stepping through hundreds of dots or instructions manually.
