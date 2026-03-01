@@ -206,7 +206,7 @@ impl Rendering {
 
     fn mode(&self) -> Mode {
         match self.render_phase {
-            RenderPhase::Drawing | RenderPhase::DrawingComplete => Mode::Drawing,
+            RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
             _ if self.scanner.is_some() => Mode::OamScan,
             _ => Mode::HorizontalBlank,
@@ -225,17 +225,6 @@ impl Rendering {
         }
     }
 
-    /// Mode for STAT interrupt edge detection. Mode 0 fires from
-    /// WODU (hblank_gate) directly — one phase before XYMU clears.
-    fn interrupt_mode(&self) -> Mode {
-        match self.render_phase {
-            RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
-            RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanner.is_some() => Mode::OamScan,
-            RenderPhase::LineStart => Mode::HorizontalBlank,
-        }
-    }
 
     /// Whether the mode 2 STAT interrupt condition is active.
     fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
@@ -291,10 +280,8 @@ impl Rendering {
     }
 
     fn vram_write_locked(&self) -> bool {
-        matches!(
-            self.render_phase,
-            RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
+        matches!(self.render_phase, RenderPhase::Drawing)
     }
 
     /// DELTA_EVEN half-cycle: setup phase.

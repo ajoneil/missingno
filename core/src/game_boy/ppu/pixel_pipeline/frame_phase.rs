@@ -46,14 +46,13 @@ impl FramePhase {
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
                 Mode::HorizontalBlank
             }
-            FramePhase::ActiveDisplay(rendering) => rendering.interrupt_mode(),
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
             FramePhase::VerticalBlank if video.ly() == 144 && video.dot() < 4 => {
                 Mode::HorizontalBlank
             }
-            FramePhase::VerticalBlank => Mode::VerticalBlank,
+            _ => self.mode(),
         }
     }
 
