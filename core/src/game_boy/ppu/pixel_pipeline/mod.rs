@@ -18,7 +18,7 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
-use fetcher::{FetcherStep, StartupFetch, TileFetcher};
+use fetcher::{FetcherStep, FetcherTick, StartupFetch, TileFetcher};
 use fine_scroll::{FineScroll, WindowHit};
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
@@ -345,6 +345,12 @@ impl Rendering {
                 // mode3_even on the next DELTA_EVEN (LEBO clock is
                 // EVEN-only on hardware).
                 self.render_phase = RenderPhase::Drawing;
+                // LEBO clock edge head start: AVAP fires on ODD, resetting
+                // the fetcher counter to 0. The first LEBO rising edge (next
+                // EVEN) advances the counter from 0 to 1 before mode3_even
+                // runs. Model this by setting the tick to T2 so the first
+                // mode3_even advance reads the tile index immediately.
+                self.fetcher.tick = FetcherTick::T2;
             }
         } else {
             // Mode 3 (drawing) — pixel output phase
