@@ -225,7 +225,6 @@ impl Rendering {
         }
     }
 
-
     /// Whether the mode 2 STAT interrupt condition is active.
     fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
@@ -397,21 +396,6 @@ impl Rendering {
     /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
     /// all fire on DELTA_EVEN.
     fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
-        // Startup cascade DFF captures on DELTA_EVEN. Each arm reads
-        // state set by the *previous* DELTA_EVEN or DELTA_ODD — the
-        // DFF capture delay is explicit in the state machine.
-        match self.startup_fetch {
-            Some(StartupFetch::LyryFired) => {
-                // NYKA captures LYRY on this DELTA_EVEN.
-                self.startup_fetch = Some(StartupFetch::NykaFired);
-            }
-            Some(StartupFetch::PoryFired) => {
-                // POKY latches from PORY — enables pixel clock.
-                self.startup_fetch = None;
-            }
-            _ => {}
-        }
-
         // During startup, the fetcher advances on DELTA_EVEN (LEBO clock).
         // After startup, the fetcher advances only on DELTA_ODD (line 952).
         // The BG fetcher is frozen during sprite data fetch (FetchingData).
@@ -449,6 +433,22 @@ impl Rendering {
         // the shifter.
         if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
             self.startup_fetch = Some(StartupFetch::LyryFired);
+        }
+
+        // Startup cascade DFF captures on DELTA_EVEN. NYKA captures
+        // LYRY on the same DELTA_EVEN — both are independently driven
+        // by phase_tfetch >= 10 on hardware. POKY reads state set by
+        // the previous DELTA_ODD (PORY).
+        match self.startup_fetch {
+            Some(StartupFetch::LyryFired) => {
+                // NYKA captures LYRY on this DELTA_EVEN.
+                self.startup_fetch = Some(StartupFetch::NykaFired);
+            }
+            Some(StartupFetch::PoryFired) => {
+                // POKY latches from PORY — enables pixel clock.
+                self.startup_fetch = None;
+            }
+            _ => {}
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).

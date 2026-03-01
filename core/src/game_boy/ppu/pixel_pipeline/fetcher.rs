@@ -29,8 +29,9 @@ pub(super) enum StartupFetch {
     FirstTile,
 
     /// LYRY_BFETCH_DONEn has fired (combinational — the fetcher filled
-    /// the shifter this DELTA_EVEN). NYKA will capture it on the *next*
-    /// DELTA_EVEN.
+    /// the shifter this DELTA_EVEN). NYKA captures it on the same
+    /// DELTA_EVEN (both are independently driven by `phase_tfetch >= 10`
+    /// on hardware).
     LyryFired,
 
     /// NYKA_FETCH_DONEp_evn has captured LYRY. PORY will capture NYKA
