@@ -66,8 +66,16 @@ impl FineScroll {
     }
 
     /// Advance the fine counter by one dot (PECU clock).
+    /// Self-stops at 7 (ROZE gate: nand3(CNT2, CNT1, CNT0)).
     pub(super) fn tick(&mut self) {
-        self.count = (self.count + 1) & 7;
+        if self.count < 7 {
+            self.count += 1;
+        }
+    }
+
+    /// TEVO → PASO: reset the fine counter to 0.
+    pub(super) fn reset_counter(&mut self) {
+        self.count = 0;
     }
 
     /// Check and clear the gating latch if count matches SCX & 7.

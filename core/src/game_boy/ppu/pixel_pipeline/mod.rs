@@ -607,11 +607,19 @@ impl Rendering {
                     self.window_hit = WindowHit::Clearing;
                 }
 
-                // SEKO reload (async). On hardware, the SEKO-triggered pipe
-                // load is asynchronous — LOZE SET/RST overwrites the shift
-                // result on the same tick. Because the shift already fired
-                // above, the load naturally wins (matching DFF22 behavior).
-                if self.fine_scroll.count == 7 && self.fetcher.step == FetcherStep::Idle {
+                // RYFA DFF captures (count==7 && !nuko_wx_match) on each dot.
+                // SEKO is the rising-edge detector on RYFA — it fires one dot
+                // after count reaches 7. Reading count HERE (before tick)
+                // naturally models this one-dot DFF delay. PANY gates RYFA
+                // on !NUKO_WX_MATCHp (modeled by window_hit == Inactive).
+                let seko_fire =
+                    self.fine_scroll.count == 7 && self.window_hit == WindowHit::Inactive;
+
+                // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
+                // overwrites the shift result on the same tick — the load
+                // naturally wins because the shift already fired above
+                // (matching DFF22 behavior).
+                if seko_fire {
                     self.fetcher.load_into(&mut self.bg_shifter);
                 }
 
@@ -661,6 +669,13 @@ impl Rendering {
                 // TYFA. TYFA is gated by RYDY (window hit).
                 if self.startup_fetch.is_none() && self.window_hit == WindowHit::Inactive {
                     self.fine_scroll.tick();
+                }
+
+                // TEVO → PASO: when SEKO fired this dot, reset the fine
+                // counter to 0. Placed after tick() because tick() self-stops
+                // at 7 (ROZE gate) — PASO then clears the stopped counter.
+                if seko_fire {
+                    self.fine_scroll.reset_counter();
                 }
             }
         }
