@@ -80,6 +80,8 @@ Compare the test results against the baseline (from `summary.md`):
 
 **Do not interpret why a failure occurred.** Report the test results — which tests pass, which fail, how that compares to baseline. The caller will decide whether to invoke `/analyze`, `/hypothesize`, or `/design` based on the results.
 
+**Do not debug.** If tests fail, report the failure and stop. Do not launch the headless debugger, set breakpoints, inspect PPU/CPU state, step through instructions, or use any `/inspect`-style observation to diagnose the failure. Do not trace behavior through the code to figure out what went wrong. Debugging is the caller's responsibility — the implement skill makes changes, runs verification, and reports results.
+
 ### 6. Clean up
 
 - **Remove all diagnostic logging** (`eprintln!`, `dbg!`, diagnostic print statements) that was added during the investigation. The implementation should contain only production code.
