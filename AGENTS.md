@@ -19,7 +19,7 @@ The conversation context is volatile — it will be compacted unpredictably and 
 - Diagnostic output — once recorded in a log file and referenced by a receipt, the raw output in conversation can be forgotten. Reference the log file path, not the content.
 - Investigation state — re-read `summary.md` to check current state rather than scrolling back through conversation.
 
-**Reset after every subroutine return.** When a callee (hypothesize, research, measure, analyze, design, implement) returns, the caller must: (1) read the receipt and update `summary.md` (only the investigate skill writes to summary.md), (2) re-read its own skill file and `summary.md` to re-establish context from disk, (3) continue working from the file state, not from conversation memory of what happened before the subroutine.
+**Act on every subagent return.** When a skill subagent (hypothesize, research, analyze, design, implement, instrument, inspect) returns, the caller must: (1) read the receipt file the subagent produced, (2) update `summary.md` with the findings (only the investigate skill writes to summary.md), (3) continue working from the file state. Since skills run as Task subagents, the caller's context is not displaced — no re-reading of skill files is needed.
 
 ### Staying aligned with skill directives
 
@@ -101,40 +101,11 @@ Every skill report must use the format below. Interpretation, recommendations, a
 
 #### Subroutine discipline
 
-Skills invoked as subroutines are not stopping points. A skill invocation is a function call that returns a value, not a handoff to another agent. The caller's turn does not end when the callee returns — the caller must continue working.
+Skills run as Task subagents — each skill is launched via the Task tool, operates in isolated context, writes a receipt file, and stops. The caller (investigate) reads the receipt and continues. This provides natural context isolation without any shared-context protocol.
 
-**Return context block.** Before invoking a subroutine, the caller MUST write a return context block to the active investigation's `summary.md` (or to the receipt file if there is no investigation). This block captures everything the callee needs to hand control back:
+**Callee isolation.** Each skill subagent receives the full content of its skill file in the Task prompt. It follows only those instructions. It does NOT inherit the caller's context, hypotheses, or reasoning. If a skill reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
 
-```
-## Active subroutine
-- **Callee**: <skill name being invoked>
-- **Caller**: <skill name to return to>
-- **Caller skill file**: `.agents/skills/<caller>.md`
-- **On return**: <one sentence: what the caller will do with the result>
-- **Summary file**: <path to this summary.md>
-```
-
-This block serves three purposes:
-1. **Context boundary.** Once the block is written, the callee operates with a clean slate — it follows only its own skill file, not the caller's. The caller's hypotheses, diagnostic output, and reasoning are irrelevant to the callee. If the callee catches itself reasoning about the caller's problem or reaching for tools outside its own skill's methodology, the context boundary has been violated.
-2. **Survival through compaction.** If context is compacted mid-subroutine, the return context block in summary.md tells the agent exactly where it is and how to continue.
-3. **Clean return.** When the callee finishes its report, it reads the return context block to know which skill file to re-read and what the caller's next step is.
-
-**Callee isolation.** After a subroutine is invoked, the callee MUST operate exclusively within its own skill's rules and methodology. The callee does NOT inherit the caller's tools, habits, or context. Specifically:
-- The callee re-reads its own skill file from `.agents/skills/` and follows only those instructions.
-- The callee does NOT use tools or patterns from the caller's skill (e.g., `/research` does not use `/instrument`'s logging patterns; `/instrument` does not do `/research`'s web fetching).
-- If the callee reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
-
-**Callee handoff.** When the callee finishes:
-1. Write the report/receipt in the format specified by the skill invocation protocol.
-2. Do NOT write to summary.md — only the investigate skill (top-level caller) updates summary.md from receipts.
-3. Read the return context block from summary.md.
-4. Re-read the caller's skill file (path is in the return context block).
-5. Delete the "Active subroutine" section from summary.md.
-6. **Immediately resume as the caller.** The caller reads the updated summary.md and decides what to do next.
-
-**The turn does not end at a subroutine boundary.** A skill invocation is a function call that returns a value, not a handoff to another agent. After a callee writes its report and hands back, the same turn continues with the caller acting on the result. If the turn ends after a Skill tool call with no further action, subroutine discipline has been violated.
-
-**Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (measure, analyze, hypothesize, design, research) report their output and return. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
+**Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (research, analyze, hypothesize, design, implement, instrument, inspect) report their output and stop. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
 
 ## Workflow Discipline
 

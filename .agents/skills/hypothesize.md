@@ -78,10 +78,6 @@ Use the next sequential number in the analysis folder.
 
 ## After hypotheses are generated
 
-This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
-
 1. Write the hypotheses receipt to the file.
-2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate the top hypothesis into the RCA tree.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide which hypothesis to pursue or how to test it** — the caller reads the hypotheses receipt and makes that decision.
-
-**The turn does not end here.** Do NOT stop after writing the receipt. The caller must act on the result in the same turn.
+2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the top hypothesis into the RCA tree.
+3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.

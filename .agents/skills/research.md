@@ -162,10 +162,7 @@ When called from an active investigation, check whether the research question is
 
 ## After research is complete
 
-This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
-
-1. Write your report (Findings / Sources / Confidence / See also).
-2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate the findings into the RCA tree.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the research report and makes that decision.
-
-**The turn does not end here.** Do NOT stop after writing the report. The caller must act on the result in the same turn.
+1. Write your report to the specified output path (Findings / Sources / Confidence / See also).
+2. **Re-read the report in full** and edit out thinking-out-loud, contradictions, and hedging (see "Review before finishing" above).
+3. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the findings.
+4. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.

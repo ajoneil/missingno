@@ -127,10 +127,6 @@ tested first.>
 
 ## After design is complete
 
-This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
-
 1. Write the design report to the receipt file.
-2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate the design into the RCA tree.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to implement or in what order** — the caller reads the design receipt and makes that decision.
-
-**The turn does not end here.** Do NOT stop after writing the design. The caller must act on the result in the same turn.
+2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the design.
+3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.

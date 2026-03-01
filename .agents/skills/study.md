@@ -78,7 +78,7 @@ The developer then picks what to do — and the cycle repeats from wherever they
 
 **session.md is owned exclusively by the study skill.** No subroutine skill writes to it. After every subroutine return, you (study) read the receipt and update session.md.
 
-**Before invoking any subroutine, write a return context block to session.md** (see "Subroutine discipline" in AGENTS.md). After the subroutine returns, re-read this skill file (`.agents/skills/study.md`) and the session's `session.md` to restore context.
+**All subroutines run as Task subagents** — see "Dispatch mechanism" in investigate.md. Read the skill file, launch a Task with the skill content and arguments, read the receipt when it returns, update session.md. The main context is not displaced.
 
 ## Workflow
 
@@ -198,8 +198,6 @@ a one-line summary with a receipt link for details.>
 ## Open questions
 <Questions that came up but weren't resolved. Useful for future sessions.>
 
-## Active subroutine
-<return context block when a subroutine is in flight — see AGENTS.md>
 ```
 
 #### Rules

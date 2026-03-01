@@ -158,10 +158,6 @@ When the caller asks for a baseline comparison:
 
 ## After measurement is complete
 
-This skill is a subroutine — see "Subroutine discipline" in the skill invocation protocol in AGENTS.md.
-
 1. Write the measurement receipt to the file (see "Reporting results" above).
-2. **Do not update `summary.md`.** The caller (investigate) owns summary.md and will incorporate the measurements into the RCA tree.
-3. **Resume as the caller.** Read the return context block from summary.md, re-read the caller's skill file, delete the "Active subroutine" section, and immediately continue working as the caller. **Do not decide what to do next** — the caller reads the measurement receipt and makes that decision.
-
-**The turn does not end here.** Do NOT stop after writing the receipt. The caller must act on the result in the same turn.
+2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the measurements.
+3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.
