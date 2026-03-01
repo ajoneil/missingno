@@ -15,10 +15,8 @@ fn dmg_acid2() {
     let mut mismatches = 0;
     for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
         if a != e {
-            if mismatches < 10 {
-                let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
-            }
+            let (x, y) = (i % 160, i / 160);
+            eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
             mismatches += 1;
         }
     }
