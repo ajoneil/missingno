@@ -140,12 +140,13 @@ pub(super) fn shift_pixel_out(
 
 /// Pixel output without pipe shift (sfetch_done dot).
 ///
-/// On hardware, pixel output is unconditional — every dot reads the pipe
-/// MSBs and writes to lcd_x = pix_count - 8. On the sfetch_done dot, the
-/// pipes do NOT shift (FEPO blocks clkpipe_gate), but the pixel output
-/// still fires, reading the newly-merged sprite data from the OBJ pipe MSB.
-/// Since pix_count hasn't changed since the trigger dot, this overwrites
-/// the trigger dot's pixel at the same screen position.
+/// On hardware, pixel output fires every dot, reading the pipe MSBs and
+/// writing to lcd_x derived from the pixel counter. On the sfetch_done
+/// dot, the pipes do NOT shift (FEPO blocks clkpipe_gate), but pixel
+/// output still fires. The pixel counter is frozen at the post-increment
+/// value from the trigger dot, so lcd_x is computed as
+/// `(pixel_counter - 1) - FIRST_VISIBLE_PIXEL` to match the trigger
+/// dot's pre-increment output position.
 pub(super) fn peek_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
@@ -161,14 +162,14 @@ pub(super) fn peek_pixel_out(
     if !fine_scroll.pixel_clock_active() {
         return;
     }
-    if pixel_counter < FIRST_VISIBLE_PIXEL {
+    if pixel_counter <= FIRST_VISIBLE_PIXEL {
         return;
     }
-    if pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+    if pixel_counter >= FIRST_VISIBLE_PIXEL + 1 + screen::PIXELS_PER_LINE {
         return;
     }
 
-    let x = pixel_counter - FIRST_VISIBLE_PIXEL;
+    let x = pixel_counter - FIRST_VISIBLE_PIXEL - 1;
     let y = video.ly();
 
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
