@@ -640,7 +640,7 @@ impl Rendering {
                 // done). Gate matches the pixel counter increment below.
                 if self.window_hit == WindowHit::Inactive
                     && self.fine_scroll.pixel_clock_active()
-                    && !self.bg_shifter.is_empty()
+                    && self.pygo
                 {
                     self.bg_shifter.shift();
                     self.obj_shifter.shift();
@@ -676,7 +676,7 @@ impl Rendering {
                 // FIFO readiness (shifter non-empty).
                 if self.window_hit == WindowHit::Inactive
                     && self.fine_scroll.pixel_clock_active()
-                    && !self.bg_shifter.is_empty()
+                    && self.pygo
                 {
                     self.pixel_counter += 1;
                 }
@@ -725,7 +725,7 @@ impl Rendering {
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit).
-                if !self.bg_shifter.is_empty() && self.window_hit == WindowHit::Inactive {
+                if self.pygo && self.window_hit == WindowHit::Inactive {
                     self.fine_scroll.tick();
                 }
 
