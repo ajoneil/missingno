@@ -38,10 +38,6 @@ impl BgShifter {
         !self.loaded
     }
 
-    pub(super) fn clear(&mut self) {
-        self.loaded = false;
-    }
-
     /// Parallel load from a tile fetch. On hardware, the DFF22 shift
     /// register cells use async SET/RST pins, so a load unconditionally
     /// overwrites the current contents (SEKO pre-load at tile boundaries).
@@ -103,13 +99,6 @@ impl ObjShifter {
             palette: 0,
             priority: 0,
         }
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.low = 0;
-        self.high = 0;
-        self.palette = 0;
-        self.priority = 0;
     }
 
     /// Read the MSB data — the shift register's output pins.

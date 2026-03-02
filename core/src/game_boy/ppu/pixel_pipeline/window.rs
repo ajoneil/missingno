@@ -4,7 +4,7 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
 use super::fetcher::{FetcherStep, FetcherTick, StartupFetch, TileFetcher};
 use super::fine_scroll::{FineScroll, WindowHit};
-use super::shifters::{BgShifter, ObjShifter};
+use super::shifters::BgShifter;
 
 /// Check if the window should start rendering at the current pixel position.
 /// Also detects window reactivation zero pixel conditions when the window
@@ -16,7 +16,6 @@ pub(super) fn check_window_trigger(
     fetcher: &mut TileFetcher,
     startup_fetch: &mut Option<StartupFetch>,
     bg_shifter: &mut BgShifter,
-    obj_shifter: &mut ObjShifter,
     fine_scroll: &mut FineScroll,
     window_zero_pixel: &mut bool,
     wx_triggered: &mut bool,
@@ -67,13 +66,14 @@ pub(super) fn check_window_trigger(
         return;
     }
 
-    // Window trigger: clear shifters, reset fine scroll, restart fetcher,
-    // and reset cascade DFFs so a new startup fetch begins.
+    // Window trigger: reset fine scroll, restart fetcher, and reset
+    // cascade DFFs so a new startup fetch begins. The BG/OBJ shifters
+    // are NOT cleared — hardware doesn't clear them. MOSU loads stale
+    // tile_temp into the BG pipe (never visible since the pixel clock
+    // freezes), and SUZU/TEVO later overwrites with window tile data.
     *wx_triggered = true;
-    bg_shifter.clear();
-    obj_shifter.clear();
     fine_scroll.reset_for_window();
-    *window_hit = WindowHit::Active;
+    *window_hit = WindowHit::Activating;
     fetcher.reset_for_window();
     if startup_fetch.is_some() {
         *startup_fetch = Some(StartupFetch::FirstTile);

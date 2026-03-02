@@ -467,7 +467,6 @@ impl Rendering {
             &mut self.fetcher,
             &mut self.startup_fetch,
             &mut self.bg_shifter,
-            &mut self.obj_shifter,
             &mut self.fine_scroll,
             &mut self.window_zero_pixel,
             &mut self.wx_triggered,
@@ -634,6 +633,16 @@ impl Rendering {
                     self.pixel_counter += 1;
                 }
 
+                // Activating: state_old.RYDY=0 allows the pixel counter
+                // to advance one more time on the trigger dot (SACU fires
+                // because clkpipe_gate reads the old RYDY value). Independent
+                // of bg_shifter state — on hardware SACU clocks PX regardless
+                // of pipe readiness at this point.
+                if self.window_hit == WindowHit::Activating && self.fine_scroll.pixel_clock_active()
+                {
+                    self.pixel_counter += 1;
+                }
+
                 // Pixel output. On hardware, the pixel clock uses
                 // state_old.FEPO — on the trigger dot, state_old.FEPO=0,
                 // so PX increments, the pipe shifts, and a pixel outputs.
@@ -679,6 +688,12 @@ impl Rendering {
                     self.fine_scroll.reset_counter();
                 }
             }
+        }
+
+        // state_old → state_new: latch Active now that the Activating dot's
+        // pixel clock has fired. Pixel clock frozen from the next ODD phase.
+        if self.window_hit == WindowHit::Activating {
+            self.window_hit = WindowHit::Active;
         }
     }
 
