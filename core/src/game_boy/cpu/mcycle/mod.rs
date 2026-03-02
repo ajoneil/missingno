@@ -116,7 +116,7 @@ impl BusDot {
 /// Each M-cycle expands into 4 dots with bus operations placed at
 /// the hardware-correct position:
 /// - **Read**:     `[Idle, Idle, Idle, Read]`
-/// - **Write**:    `[Idle, DriveBus, Idle, Write]`
+/// - **Write**:    `[Idle, Idle, DriveBus, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Debug)]
@@ -129,12 +129,10 @@ pub enum DotAction {
     /// CPU is writing this value to this address. The write latches
     /// at this dot (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
-    /// PPU register early-delivery: the write value is presented to PPU
-    /// register DFFs one dot before the hardware BUDE signal. This
-    /// compensates for the emulator's instant-DFF model — on hardware,
-    /// sub-dot DFF capture delays shift effective visibility past the
-    /// BUDE edge, so delivering early with instant capture produces
-    /// equivalent pixel-level timing. The bus write completes at dot 3
+    /// The CPU write pulse is active — the data bus is being driven with
+    /// the write value at dot 2 (BUDE rising, phase E). PPU register
+    /// DFF8 cells enter their master-slave transitional state; the
+    /// slave captures on the next tick. The bus write completes at dot 3
     /// via `Write`.
     DriveBus { address: u16, value: u8 },
     /// Internal cycle where the IDU places an address on the bus.
@@ -753,7 +751,7 @@ impl Processor {
     /// Each M-cycle is expanded into 4 dots with bus operations at the
     /// hardware-correct position:
     /// - **Read**:     `[Idle, Idle, Idle, Read]`
-    /// - **Write**:    `[Idle, DriveBus, Idle, Write]`
+    /// - **Write**:    `[Idle, Idle, DriveBus, Write]`
     /// - **Internal**: `[Idle, Idle, Idle, Idle]`
     /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
     ///
@@ -786,17 +784,13 @@ impl Processor {
                     DotAction::Idle
                 }
             }
-            // Write: early-deliver for PPU DFFs at dot 1, latch at AFAS falling
+            // Write: drive data at BUDE (dot 2), latch at AFAS falling (dot 3)
             Some(BusAction::Write { address, value }) => {
-                if dot.index() == 1 {
-                    // Dot 1: Drive write data for PPU register DFFs.
-                    //
-                    // Hardware places data on the bus at dot 2 (BUDE rising,
-                    // phase E), but DFF capture delays shift effective pixel
-                    // visibility by 1-2 sub-dot phases. The emulator's
-                    // instant-DFF model can't represent sub-dot timing, so
-                    // delivering one dot early compensates: dot 1 + instant
-                    // capture ≈ dot 2 + DFF delay + next-SACU-edge visibility.
+                if dot.bude() && !dot.afas_falling() {
+                    // Dot 2: BUDE rises (phase E), write data appears on bus.
+                    // PPU register DFF8 cells enter their transitional
+                    // `old | new` state; the master-slave delay resolves
+                    // on the next tick_latches call (dot 3).
                     DotAction::DriveBus {
                         address: *address,
                         value: *value,
