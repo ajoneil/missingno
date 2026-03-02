@@ -18,7 +18,7 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
-use fetcher::{FetcherStep, FetcherTick, StartupFetch, TileFetcher};
+use fetcher::{FetcherStep, StartupFetch, TileFetcher};
 use fine_scroll::{FineScroll, WindowHit};
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
@@ -155,6 +155,13 @@ pub struct Rendering {
     /// Last observed WX output value, used to detect mid-scanline WX changes
     /// that should clear the wx_triggered latch.
     last_wx_value: u8,
+    /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every ODD edge.
+    /// Reset to false on LCD-on only; free-runs across scanlines.
+    wuvu: bool,
+    /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
+    byba: bool,
+    /// DOBA_SCAN_DONEp_evn: captures BYBA on every EVEN edge.
+    doba: bool,
 }
 
 impl Rendering {
@@ -178,6 +185,9 @@ impl Rendering {
             window_zero_pixel: false,
             wx_triggered: false,
             last_wx_value: 0xFF,
+            wuvu: false,
+            byba: false,
+            doba: false,
         }
     }
 
@@ -201,6 +211,9 @@ impl Rendering {
             window_zero_pixel: false,
             wx_triggered: false,
             last_wx_value: 0xFF,
+            wuvu: false,
+            byba: false,
+            doba: false,
         }
     }
 
@@ -294,6 +307,9 @@ impl Rendering {
         video: &VideoControl,
         vram: &Vram,
     ) {
+        // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
+        self.doba = self.byba;
+
         // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
         // BESU_SCAN_DONEn NOR latch → RenderPhase::OamScan.
         // BESU is never set on line 0 (hardware special case).
@@ -332,26 +348,38 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // WUVU_ABxxEFxx: toggle DFF, unconditional on every ODD edge.
+        self.wuvu = !self.wuvu;
+        let xupy_rising = self.wuvu;
+
+        // BYBA_SCAN_DONEp_odd: capture FETO_old on XUPY rising edge.
+        // scanner.is_none() means FETO was high from the previous phase.
+        let feto_old = self.scanner.is_none();
+        if xupy_rising {
+            self.byba = feto_old;
+        }
+
+        // AVAP: combinational scan-done trigger.
+        // Fires for one half-phase when BYBA has captured but DOBA has not.
+        let avap = self.byba && !self.doba;
+
         if let Some(ref mut scanner) = self.scanner {
             // Mode 2: OAM scan — process one entry every 2 dots
             scanner.scan_next_entry(video.ly(), &mut self.sprites, regs, oam);
             if scanner.done() {
-                // FETO_SCAN_DONE — scan complete, begin Mode 2→3 transition.
+                // FETO_SCAN_DONE — scan complete. The scanner is consumed,
+                // making feto_old == true for subsequent half_odd() calls.
+                // The actual Mode 3 transition happens when AVAP fires
+                // (after BYBA captures FETO_old on the next XUPY rising edge).
                 self.scanner = None;
-                self.lcd_turning_on = false;
-                // AVAP: scan complete, rendering active. StartupFetch
-                // gates pixel output until the LYRY→NYKA→PORY→POKY
-                // cascade completes. Fetcher's first advance comes from
-                // mode3_even on the next DELTA_EVEN (LEBO clock is
-                // EVEN-only on hardware).
-                self.render_phase = RenderPhase::Drawing;
-                // LEBO clock edge head start: AVAP fires on ODD, resetting
-                // the fetcher counter to 0. The first LEBO rising edge (next
-                // EVEN) advances the counter from 0 to 1 before mode3_even
-                // runs. Model this by setting the tick to T2 so the first
-                // mode3_even advance reads the tile index immediately.
-                self.fetcher.tick = FetcherTick::T2;
             }
+        } else if avap {
+            // AVAP fires: Mode 2 → Mode 3 transition.
+            // Sets XYMU (rendering latch), clears BESU (scan flag), resets
+            // the BG fetcher (NYXU). The fetcher starts naturally at T1 —
+            // no head start needed.
+            self.render_phase = RenderPhase::Drawing;
+            self.lcd_turning_on = false;
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
@@ -394,6 +422,10 @@ impl Rendering {
         self.window_zero_pixel = false;
         self.wx_triggered = false;
         self.last_wx_value = 0xFF;
+        // WUVU free-runs across scanlines (no reset). BYBA and DOBA are
+        // cleared by LINE_RST at the scanline boundary.
+        self.byba = false;
+        self.doba = false;
     }
 
     /// DELTA_EVEN Mode 3 processing.
