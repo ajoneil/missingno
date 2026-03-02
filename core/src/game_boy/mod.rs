@@ -1,7 +1,7 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
-use cpu::mcycle::Processor;
+use cpu::mcycle::{BusDot, Processor};
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -73,14 +73,14 @@ enum ExecutionState {
     Running {
         processor: Processor,
         read_value: u8,
-        dot_in_mcycle: u8,
+        dot: BusDot,
         pending_oam_bug: Option<execute::OamBugKind>,
         was_halted: bool,
     },
     /// Instruction complete, ticking the trailing fetch (or HALT
     /// dummy fetch). Hardware ticks for 4 dots, then a bus read.
     TrailingFetch {
-        dot: u8,
+        dot: BusDot,
         fetch_addr: u16,
         /// True for HALT dummy fetch: discard result, transition to
         /// Halted. False for normal: store result as prefetched opcode.

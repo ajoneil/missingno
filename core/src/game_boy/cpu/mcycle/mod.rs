@@ -26,6 +26,88 @@ pub enum BusAction {
     InternalOamBug { address: u16 },
 }
 
+// ── Bus dot (ring counter phase model) ────────────────────────────────
+
+/// The CPU bus timing signals for the current dot within an M-cycle.
+///
+/// In hardware, AFUR/ALEF/APUK/ADYK form a 4-DFF ring counter producing
+/// 8 phases (A-H) per M-cycle. Each emulator dot spans 2 phases. The
+/// named signals here are the same combinational outputs that hardware
+/// derives from the ring counter DFF states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BusDot(u8);
+
+impl BusDot {
+    /// Dot 0 (phases A,B). First dot of the M-cycle.
+    pub const ZERO: BusDot = BusDot(0);
+
+    pub fn advance(self) -> BusDot {
+        debug_assert!(self.0 < 3, "cannot advance past dot 3");
+        BusDot(self.0 + 1)
+    }
+
+    /// BOGA_Axxxxxxx: M-cycle boundary. Active during phase A only.
+    /// Rising edge at H->A marks the transition between M-cycles.
+    ///
+    /// In the emulator's dot model, this fires at dot 3 because the
+    /// M-cycle boundary work (interrupt latch, DMA, serial, audio)
+    /// must complete before the next M-cycle's dot 0 begins.
+    pub fn boga(self) -> bool {
+        self.0 == 3
+    }
+
+    /// BOWA_Axxxxxxx: Address latch clock. The CPU places the address
+    /// on the bus during phase A.
+    ///
+    /// Used for: OAM bug address recording (IDU address on bus).
+    pub fn bowa(self) -> bool {
+        self.0 == 0
+    }
+
+    /// BUDE_xxxxEFGH: Write data window. The CPU drives write data
+    /// onto the bus during phases E-H (dots 2-3).
+    ///
+    /// Used for: DriveBus timing -- PPU register DFFs see the write
+    /// data during this window.
+    pub fn bude(self) -> bool {
+        self.0 >= 2
+    }
+
+    /// MOPA_xxxxEFGH: Second half of the M-cycle. Rising edge at
+    /// D->E (start of dot 2).
+    ///
+    /// Used for: OAM bug fire timing (CUFE_OAM_CLKp fires when
+    /// MOPA goes high while SARO_ADDR_OAMp is active).
+    pub fn mopa(self) -> bool {
+        self.0 >= 2
+    }
+
+    /// AFAS_xxxxEFGx: Write pulse window. Active during phases E,F,G.
+    /// Falling edge at G->H is the DFF latch point for register writes.
+    ///
+    /// Used for: Write action placement (the actual bus write that
+    /// latches at the G->H boundary = end of dot 3).
+    pub fn afas_falling(self) -> bool {
+        self.0 == 3
+    }
+
+    /// BUKE_AxxxxxGH: Data latch window. The data latch accumulates
+    /// bus data during phases G,H,A. CPU reads the latch at H->A.
+    ///
+    /// Used for: Read action placement (data capture at end of
+    /// M-cycle, coinciding with BOGA).
+    pub fn buke(self) -> bool {
+        self.0 == 0 || self.0 == 3
+    }
+
+    /// Raw dot index (0-3). Escape hatch for the rare cases where
+    /// a named signal doesn't exist (e.g., TrailingFetch counter).
+    /// Prefer named signals in all other contexts.
+    pub fn index(self) -> u8 {
+        self.0
+    }
+}
+
 // ── Dot-level bus state ─────────────────────────────────────────────────
 
 /// What the CPU bus is doing during one dot (T-cycle).
@@ -34,7 +116,7 @@ pub enum BusAction {
 /// Each M-cycle expands into 4 dots with bus operations placed at
 /// the hardware-correct position:
 /// - **Read**:     `[Idle, Idle, Idle, Read]`
-/// - **Write**:    `[Idle, DriveBus, Idle, Write]`
+/// - **Write**:    `[Idle, Idle, DriveBus, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Debug)]
@@ -235,7 +317,7 @@ pub struct Processor {
     /// the first read value until the second read completes.
     scratch: u8,
     /// Dot position within the current M-cycle (0–3).
-    dot_in_mcycle: u8,
+    dot: BusDot,
     /// The BusAction for the current M-cycle, fetched at dot 0.
     /// `None` means the instruction is complete.
     current_action: Option<BusAction>,
@@ -268,7 +350,7 @@ impl Processor {
             step: 0,
             phase: Phase::HaltedNop { fetch_pc: pc },
             scratch: 0,
-            dot_in_mcycle: 0,
+            dot: BusDot::ZERO,
             current_action: None,
             mcycle_active: false,
             pending_vector_resolve: false,
@@ -289,7 +371,7 @@ impl Processor {
                 bytes_needed: 0,
             },
             scratch: 0,
-            dot_in_mcycle: 0,
+            dot: BusDot::ZERO,
             current_action: None,
             mcycle_active: false,
             pending_vector_resolve: false,
@@ -322,7 +404,7 @@ impl Processor {
             step: 0,
             phase: Phase::InterruptDispatch { sp, pc_hi, pc_lo },
             scratch: 0,
-            dot_in_mcycle: 0,
+            dot: BusDot::ZERO,
             current_action: None,
             mcycle_active: false,
             pending_vector_resolve: false,
@@ -668,7 +750,7 @@ impl Processor {
     /// Each M-cycle is expanded into 4 dots with bus operations at the
     /// hardware-correct position:
     /// - **Read**:     `[Idle, Idle, Idle, Read]`
-    /// - **Write**:    `[Idle, Idle, Idle, Write]`
+    /// - **Write**:    `[Idle, Idle, DriveBus, Write]`
     /// - **Internal**: `[Idle, Idle, Idle, Idle]`
     /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
     ///
@@ -681,38 +763,57 @@ impl Processor {
             if self.current_action.is_none() {
                 return None;
             }
-            self.dot_in_mcycle = 0;
+            self.dot = BusDot::ZERO;
             self.mcycle_active = true;
         }
 
-        let dot = self.dot_in_mcycle;
-        self.dot_in_mcycle += 1;
+        let dot = self.dot;
+        self.dot = if dot.boga() {
+            BusDot::ZERO
+        } else {
+            dot.advance()
+        };
 
         let result = match &self.current_action {
-            Some(BusAction::Read { address }) => match dot {
-                3 => DotAction::Read { address: *address },
-                _ => DotAction::Idle,
-            },
-            Some(BusAction::Write { address, value }) => match dot {
-                1 => DotAction::DriveBus {
-                    address: *address,
-                    value: *value,
-                },
-                3 => DotAction::Write {
-                    address: *address,
-                    value: *value,
-                },
-                _ => DotAction::Idle,
-            },
-            Some(BusAction::InternalOamBug { address }) => match dot {
-                0 => DotAction::InternalOamBug { address: *address },
-                _ => DotAction::Idle,
-            },
+            // Read: data capture at BOGA (M-cycle boundary, dot 3)
+            Some(BusAction::Read { address }) => {
+                if dot.boga() {
+                    DotAction::Read { address: *address }
+                } else {
+                    DotAction::Idle
+                }
+            }
+            // Write: drive data at BUDE, latch at AFAS falling
+            Some(BusAction::Write { address, value }) => {
+                if dot.bude() && !dot.afas_falling() {
+                    // Dot 2: BUDE rises, write data appears on bus
+                    DotAction::DriveBus {
+                        address: *address,
+                        value: *value,
+                    }
+                } else if dot.afas_falling() {
+                    // Dot 3: AFAS falls at G->H, register DFFs latch
+                    DotAction::Write {
+                        address: *address,
+                        value: *value,
+                    }
+                } else {
+                    DotAction::Idle
+                }
+            }
+            // OAM bug: IDU address on bus at BOWA
+            Some(BusAction::InternalOamBug { address }) => {
+                if dot.bowa() {
+                    DotAction::InternalOamBug { address: *address }
+                } else {
+                    DotAction::Idle
+                }
+            }
             Some(BusAction::Internal) => DotAction::Idle,
             None => unreachable!(),
         };
 
-        if dot == 3 {
+        if dot.boga() {
             self.mcycle_active = false;
         }
 
