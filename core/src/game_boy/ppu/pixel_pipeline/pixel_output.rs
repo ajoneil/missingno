@@ -54,7 +54,9 @@ fn resolve_pixel(
 /// Reads the MSB from each shift register (already shifted in
 /// mode3_odd), forms the 2-bit color indices, applies priority
 /// logic, selects the winning pixel, and maps it through the
-/// appropriate palette to the LCD.
+/// appropriate palette to the LCD. The pixel counter has already
+/// been incremented before this call — lcd_x is derived from the
+/// post-increment value.
 pub(super) fn shift_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
@@ -118,9 +120,9 @@ pub(super) fn shift_pixel_out(
         return;
     }
 
-    // PX 1 through FIRST_VISIBLE_PIXEL-1 are invisible — the first
-    // tile shifts through the pipe without writing to the framebuffer.
-    // On hardware, the LCD clock gate (WUSA) doesn't open until PX=8.
+    // PX 1 through 7 are invisible — the first tile shifts through the
+    // pipe without writing to the framebuffer. The WUSA LCD gate opens
+    // at PX=8 (FIRST_VISIBLE_PIXEL), producing lcd_x = 0.
     if pixel_counter < FIRST_VISIBLE_PIXEL {
         return;
     }
@@ -143,10 +145,10 @@ pub(super) fn shift_pixel_out(
 /// On hardware, pixel output fires every dot, reading the pipe MSBs and
 /// writing to lcd_x derived from the pixel counter. On the sfetch_done
 /// dot, the pipes do NOT shift (FEPO blocks clkpipe_gate), but pixel
-/// output still fires. The pixel counter is frozen at the post-increment
-/// value from the trigger dot, so lcd_x is computed as
-/// `(pixel_counter - 1) - FIRST_VISIBLE_PIXEL` to match the trigger
-/// dot's pre-increment output position.
+/// output still fires. The pixel counter holds the same post-increment
+/// value used by the trigger dot's pixel output (no increment occurs
+/// during sprite fetch), so `lcd_x = pixel_counter - FIRST_VISIBLE_PIXEL`
+/// directly gives the trigger dot's screen position.
 pub(super) fn peek_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
@@ -162,14 +164,14 @@ pub(super) fn peek_pixel_out(
     if !fine_scroll.pixel_clock_active() {
         return;
     }
-    if pixel_counter <= FIRST_VISIBLE_PIXEL {
+    if pixel_counter < FIRST_VISIBLE_PIXEL {
         return;
     }
-    if pixel_counter >= FIRST_VISIBLE_PIXEL + 1 + screen::PIXELS_PER_LINE {
+    if pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
         return;
     }
 
-    let x = pixel_counter - FIRST_VISIBLE_PIXEL - 1;
+    let x = pixel_counter - FIRST_VISIBLE_PIXEL;
     let y = video.ly();
 
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);

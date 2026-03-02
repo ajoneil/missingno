@@ -48,10 +48,11 @@ pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
-/// First pixel counter value (pre-increment) that produces a visible LCD pixel.
-/// On hardware, the pipe shifts 7 invisible pixels (counter values 0-6)
-/// before the LCD gate opens at counter value 7, producing lcd_x = 0.
-const FIRST_VISIBLE_PIXEL: u8 = 7;
+/// First pixel counter value that produces a visible LCD pixel.
+/// On hardware, the pipe shifts 8 invisible pixels (counter values 0-7,
+/// with the counter incrementing before output) before the LCD gate
+/// (WUSA) opens at counter value 8, producing lcd_x = 0.
+const FIRST_VISIBLE_PIXEL: u8 = 8;
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
 pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
@@ -691,9 +692,19 @@ impl Rendering {
                     self.fetcher.load_into(&mut self.bg_shifter);
                 }
 
-                // Pixel output. On hardware, SACU clocks the counter and pixel
-                // output on the same edge — output reads Q (pre-increment value).
-                // Placed before the counter increment to model this.
+                // Pixel counter increment (SACU clock). On hardware, SACU
+                // clocks the counter and pixel output on the same edge. The
+                // counter's Q output updates first; pixel output reads the
+                // post-increment value. Placed before pixel output to model this.
+                if self.window_hit == WindowHit::Inactive
+                    && self.fine_scroll.pixel_clock_active()
+                    && self.pygo
+                {
+                    self.pixel_counter += 1;
+                }
+
+                // Pixel output. Reads the post-increment pixel counter to
+                // compute lcd_x = pixel_counter - FIRST_VISIBLE_PIXEL.
                 if self.window_hit == WindowHit::Inactive && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,
@@ -705,17 +716,6 @@ impl Rendering {
                         regs,
                         video,
                     );
-                }
-
-                // Pixel counter increment (SACU clock). Placed after pixel output
-                // so output reads the pre-increment value, modeling the hardware's
-                // simultaneous clock-edge behavior where Q_next does not appear
-                // on the counter output pins until the next edge.
-                if self.window_hit == WindowHit::Inactive
-                    && self.fine_scroll.pixel_clock_active()
-                    && self.pygo
-                {
-                    self.pixel_counter += 1;
                 }
 
                 // Sprite trigger check.
