@@ -16,6 +16,10 @@ pub(super) enum WindowHit {
     /// RYDY=0: no active window fetch stall. The pixel clock chain
     /// runs normally (subject to other gates like ROXY and POKY).
     Inactive,
+    /// RYDY just activated this tick. `clkpipe_gate` reads
+    /// state_old.RYDY=0, so the pixel counter advances once more.
+    /// Transitions to Active at end of mode3_odd.
+    Activating,
     /// RYDY=1: window fetch in progress. The pixel clock chain is
     /// frozen — fine counter and pixel counter do not advance.
     /// Cleared when the fetcher reaches Idle (SUZU fires).
