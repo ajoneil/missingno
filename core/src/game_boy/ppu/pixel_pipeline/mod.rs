@@ -701,16 +701,6 @@ impl Rendering {
                     self.pixel_counter += 1;
                 }
 
-                // Activating: state_old.RYDY=0 allows the pixel counter
-                // to advance one more time on the trigger dot (SACU fires
-                // because clkpipe_gate reads the old RYDY value). Independent
-                // of bg_shifter state — on hardware SACU clocks PX regardless
-                // of pipe readiness at this point.
-                if self.window_hit == WindowHit::Activating && self.fine_scroll.pixel_clock_active()
-                {
-                    self.pixel_counter += 1;
-                }
-
                 // Pixel output. On hardware, the pixel clock uses
                 // state_old.FEPO — on the trigger dot, state_old.FEPO=0,
                 // so PX increments, the pipe shifts, and a pixel outputs.

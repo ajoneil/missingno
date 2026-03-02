@@ -76,13 +76,10 @@ pub(super) fn check_window_trigger(
     fine_scroll.reset_for_window();
     *window_hit = WindowHit::Activating;
     fetcher.reset_for_window();
-    // NAFY: window mode trigger resets NYKA and PORY, aborting the
-    // startup cascade if it's still propagating. The pipe load hasn't
-    // happened yet (bg_shifter still empty), so a fresh startup fetch
-    // begins for the window tile.
-    if bg_shifter.is_empty() {
-        *nyka = false;
-        *pory = false;
-    }
+    // NAFY: window mode trigger always resets NYKA and PORY, forcing the
+    // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
+    // tile fetch completes before the pixel clock can resume.
+    *nyka = false;
+    *pory = false;
     *window_rendered = true;
 }
