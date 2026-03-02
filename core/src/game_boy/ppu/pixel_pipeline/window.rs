@@ -2,7 +2,7 @@
 
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
-use super::fetcher::{FetcherStep, FetcherTick, StartupFetch, TileFetcher};
+use super::fetcher::{FetcherStep, FetcherTick, TileFetcher};
 use super::fine_scroll::{FineScroll, WindowHit};
 use super::shifters::BgShifter;
 
@@ -14,7 +14,8 @@ use super::shifters::BgShifter;
 pub(super) fn check_window_trigger(
     window_hit: &mut WindowHit,
     fetcher: &mut TileFetcher,
-    startup_fetch: &mut Option<StartupFetch>,
+    nyka: &mut bool,
+    pory: &mut bool,
     bg_shifter: &mut BgShifter,
     fine_scroll: &mut FineScroll,
     window_zero_pixel: &mut bool,
@@ -51,7 +52,7 @@ pub(super) fn check_window_trigger(
     // (window_hit == Inactive), modeling hardware's !window_is_being_fetched.
     if fetcher.fetching_window {
         if *window_hit == WindowHit::Inactive
-            && startup_fetch.is_none()
+            && !bg_shifter.is_empty()
             && fetcher.step == FetcherStep::GetTile
             && fetcher.tick == FetcherTick::T2
             && !bg_shifter.is_empty()
@@ -75,8 +76,13 @@ pub(super) fn check_window_trigger(
     fine_scroll.reset_for_window();
     *window_hit = WindowHit::Activating;
     fetcher.reset_for_window();
-    if startup_fetch.is_some() {
-        *startup_fetch = Some(StartupFetch::FirstTile);
+    // NAFY: window mode trigger resets NYKA and PORY, aborting the
+    // startup cascade if it's still propagating. The pipe load hasn't
+    // happened yet (bg_shifter still empty), so a fresh startup fetch
+    // begins for the window tile.
+    if bg_shifter.is_empty() {
+        *nyka = false;
+        *pory = false;
     }
     *window_rendered = true;
 }

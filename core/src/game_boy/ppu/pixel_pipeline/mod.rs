@@ -18,7 +18,7 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
-use fetcher::{FetcherStep, StartupFetch, TileFetcher};
+use fetcher::{FetcherStep, TileFetcher};
 use fine_scroll::{FineScroll, WindowHit};
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
@@ -76,8 +76,8 @@ pub enum RenderPhase {
     OamScan,
     /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
     /// period from AVAP (scan done) through WODU (PX≥167). During
-    /// startup, the `StartupFetch` cascade gates the pixel clock until
-    /// the first tile fetch completes and POKY latches.
+    /// startup, the NYKA/PORY/PYGO cascade DFFs propagate while the
+    /// pixel clock waits for POKY (bg_shifter.loaded) to latch.
     Drawing,
     /// WODU fired (PX≥167, no sprite match): STAT sees mode=0 via TARU,
     /// pixel clock stops, VRAM/OAM unlocked. XYMU clears next dot.
@@ -123,10 +123,18 @@ pub struct Rendering {
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
-    /// Tracks the two startup tile fetches at the beginning of mode 3.
-    /// Hardware performs one BG tile fetch (6 dots) before any
-    /// pixels shift out. `None` once startup is complete.
-    startup_fetch: Option<StartupFetch>,
+    /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (EVEN edge).
+    /// Goes high when the first BG tile fetch completes (LYRY fires).
+    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
+    nyka: bool,
+    /// PORY_FETCH_DONEp_odd: DFF17, latches on MYVO (ODD edge).
+    /// Captures NYKA one half-phase after NYKA goes high.
+    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
+    pory: bool,
+    /// PYGO_FETCH_DONEp_evn: DFF17, latches on ALET (EVEN edge).
+    /// Captures PORY one half-phase after PORY goes high.
+    /// Reset at scanline boundaries (XYMU_RENDERINGn).
+    pygo: bool,
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
@@ -177,7 +185,9 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            startup_fetch: Some(StartupFetch::FirstTile),
+            nyka: false,
+            pory: false,
+            pygo: false,
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
@@ -203,7 +213,9 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            startup_fetch: Some(StartupFetch::FirstTile),
+            nyka: false,
+            pory: false,
+            pygo: false,
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
@@ -414,7 +426,9 @@ impl Rendering {
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
-        self.startup_fetch = Some(StartupFetch::FirstTile);
+        self.nyka = false;
+        self.pory = false;
+        self.pygo = false;
         self.fine_scroll = FineScroll::new();
         self.window_hit = WindowHit::Inactive;
         self.pixel_counter = 0;
@@ -431,12 +445,9 @@ impl Rendering {
     /// DELTA_EVEN Mode 3 processing.
     ///
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
-    /// POKY), fine scroll match (PUXA), and window WX match (PYCO)
+    /// PYGO), fine scroll match (PUXA), and window WX match (PYCO)
     /// all fire on DELTA_EVEN.
     fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
-        // During startup, the fetcher advances on DELTA_EVEN (LEBO clock).
-        // After startup, the fetcher advances only on DELTA_ODD (line 952).
-        // The BG fetcher is frozen during sprite data fetch (FetchingData).
         let sprite_data_fetch = matches!(
             self.sprite_state,
             SpriteState::Fetching(SpriteFetch {
@@ -444,7 +455,11 @@ impl Rendering {
                 ..
             })
         );
-        if !sprite_data_fetch && self.startup_fetch.is_some() {
+
+        // During startup (POKY not yet latched), the BG fetcher advances
+        // on DELTA_EVEN (LEBO clock). After startup, it advances on ODD.
+        // The BG fetcher is frozen during sprite data fetch.
+        if !sprite_data_fetch && self.bg_shifter.is_empty() {
             self.fetcher.advance(
                 self.pixel_counter,
                 self.window_line_counter,
@@ -454,40 +469,42 @@ impl Rendering {
             );
         }
 
-        // TAVE preload: when the startup fetch first reaches Idle
-        // (GetTileDataHigh complete), load the pipe immediately. This is
-        // the one-shot preload trigger (TAVE on hardware) — it fires once
-        // during startup and never again after POKY latches.
-        if self.startup_fetch == Some(StartupFetch::FirstTile)
-            && self.fetcher.step == FetcherStep::Idle
-            && self.bg_shifter.is_empty()
-        {
+        // TAVE one-shot preload: when the fetcher first completes (reaches
+        // Idle) while the BG shifter is still empty, load the tile data
+        // into the pipe. This models SUVU/TAVE on hardware. The pipe load
+        // sets POKY (bg_shifter.loaded). The one-shot guard (!nyka) ensures
+        // this only fires once per startup — after NYKA latches, the
+        // condition can't re-trigger.
+        if self.fetcher.step == FetcherStep::Idle && self.bg_shifter.is_empty() && !self.nyka {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // LYRY fires combinationally when the first tile fetch fills
-        // the BG shifter. Start the cascade countdown — 1 half-cycle
-        // of propagation delay. The cascade and fine scroll match both
-        // complete in this EVEN phase, so the pixel clock starts on
-        // the immediately following ODD phase.
-        if self.startup_fetch == Some(StartupFetch::FirstTile) && !self.bg_shifter.is_empty() {
-            self.startup_fetch = Some(StartupFetch::Cascade(1));
+        // --- Cascade DFF propagation (EVEN edge: NYKA and PYGO) ---
+        //
+        // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
+        // NYKA and PYGO are clocked on ALET (EVEN rising edge).
+        // Each DFF captures its data input from the previous half-phase.
+        let old_pory = self.pory;
+
+        // NYKA captures LYRY. LYRY is a combinational gate that is high
+        // when the fetcher has completed (step == Idle after first fetch).
+        // Since TAVE resets the fetcher to GetTile on the same phase, we
+        // detect LYRY indirectly: the BG shifter becoming loaded (POKY)
+        // is the observable consequence. NYKA latches high and stays high
+        // until reset by NAFY (window trigger) or scanline end.
+        if !self.bg_shifter.is_empty() && !self.nyka {
+            self.nyka = true;
         }
 
-        // Startup cascade DFF countdown on DELTA_EVEN. Decrements each
-        // half-cycle; when it reaches 0, POKY latches and the pixel
-        // clock starts.
-        if let Some(StartupFetch::Cascade(n)) = self.startup_fetch {
-            if n <= 1 {
-                self.startup_fetch = None;
-            } else {
-                self.startup_fetch = Some(StartupFetch::Cascade(n - 1));
-            }
+        // PYGO captures old PORY (from the preceding ODD phase).
+        // PYGO latches high and stays high until scanline end.
+        if old_pory && !self.pygo {
+            self.pygo = true;
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
-        // No fine scroll processing during startup fetch.
-        if self.startup_fetch.is_none() {
+        // Active only after startup (POKY latched).
+        if !self.bg_shifter.is_empty() {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output());
         }
@@ -497,7 +514,8 @@ impl Rendering {
         window::check_window_trigger(
             &mut self.window_hit,
             &mut self.fetcher,
-            &mut self.startup_fetch,
+            &mut self.nyka,
+            &mut self.pory,
             &mut self.bg_shifter,
             &mut self.fine_scroll,
             &mut self.window_zero_pixel,
@@ -518,13 +536,11 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // Startup cascade countdown on DELTA_ODD (same logic as EVEN).
-        if let Some(StartupFetch::Cascade(n)) = self.startup_fetch {
-            if n <= 1 {
-                self.startup_fetch = None;
-            } else {
-                self.startup_fetch = Some(StartupFetch::Cascade(n - 1));
-            }
+        // PORY captures old NYKA (ODD edge, MYVO clock).
+        // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
+        let old_nyka = self.nyka;
+        if old_nyka && !self.pory {
+            self.pory = true;
         }
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
@@ -697,7 +713,7 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                if self.startup_fetch.is_none() {
+                if !self.bg_shifter.is_empty() {
                     self.fetcher.advance(
                         self.pixel_counter,
                         self.window_line_counter,
@@ -709,7 +725,7 @@ impl Rendering {
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit).
-                if self.startup_fetch.is_none() && self.window_hit == WindowHit::Inactive {
+                if !self.bg_shifter.is_empty() && self.window_hit == WindowHit::Inactive {
                     self.fine_scroll.tick();
                 }
 

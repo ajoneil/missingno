@@ -15,28 +15,6 @@ pub(super) enum FetcherStep {
     Idle,
 }
 
-/// Mode 3 starts with one BG tile fetch before any pixels shift out.
-/// On hardware, AVAP fires at Mode 3 entry and the fetcher begins
-/// immediately. After the first tile fetch completes (LYRY fires),
-/// a single cascade half-cycle elapses before the pixel clock
-/// starts. The hardware has 3 DFF stages (NYKA→PORY→POKY), but
-/// LYRY detection and the first DFF fire in the same emulator phase
-/// as the cascade start, so Cascade(1) models the net propagation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum StartupFetch {
-    /// First tile fetch in progress. The fetcher runs on DELTA_EVEN only
-    /// (LEBO clock). When the fetcher fills the BG shifter, the cascade
-    /// countdown begins.
-    FirstTile,
-
-    /// DFF propagation delay countdown. Decremented once per half-cycle
-    /// (EVEN and ODD). When it reaches 0, the pixel clock starts
-    /// (startup_fetch → None). With the initial value of 1, the cascade
-    /// completes in the same EVEN phase as LYRY, allowing fine scroll
-    /// match and pixel output to begin immediately.
-    Cascade(u8),
-}
-
 /// Which half of LEBO's 2-dot clock cycle the fetcher is in.
 /// The fetcher (and OAM scanner) are clocked at half the dot rate.
 /// T1 is the first dot (LEBO low → high edge); T2 is the second
