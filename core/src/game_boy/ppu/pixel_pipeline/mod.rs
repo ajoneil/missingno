@@ -562,6 +562,16 @@ impl Rendering {
                             video,
                         );
                         self.sprite_state = SpriteState::Idle;
+
+                        // Re-evaluate FEPO: check if another sprite matches at
+                        // the same pixel_counter. On hardware, FEPO is the OR
+                        // of all 10 store comparators — when sfetch_done clears
+                        // the fetched sprite's store_x to 0xFF, FEPO immediately
+                        // re-evaluates against the still-frozen pix_count. If
+                        // another sprite matches, a new fetch begins without any
+                        // pixel counter advancement. This chains all same-X
+                        // sprite fetches back-to-back.
+                        self.check_sprite_trigger(regs);
                     }
                 }
             }
