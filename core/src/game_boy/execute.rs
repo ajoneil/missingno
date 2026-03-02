@@ -2,7 +2,7 @@ use super::{
     BusAccess, BusAccessKind, ExecutionState, GameBoy, InterruptLatch,
     cpu::{
         EiDelay, HaltState, InterruptMasterEnable,
-        mcycle::{DotAction, Processor},
+        mcycle::{BusDot, DotAction, Processor},
     },
     interrupts::Interrupt,
     memory::Bus,
@@ -84,7 +84,7 @@ impl GameBoy {
         // DotAction per dot with bus operations at dot 3 (end of M-cycle).
         let mut read_value: u8 = 0;
         let mut pending_oam_bug: Option<OamBugKind> = None;
-        let mut dot_in_mcycle: u8 = 0;
+        let mut dot = BusDot::ZERO;
 
         // Safety budget: longest instruction is 6 M-cycles = 24 dots
         // (3 fetch + 3 execute). Interrupt dispatch is 20 dots (5 ISR
@@ -108,9 +108,15 @@ impl GameBoy {
                         // Run 4 dots of hardware ticking (same as any trailing
                         // fetch), then transition to Halted.
                         let fetch_addr = self.cpu.program_counter;
-                        for dot in 0u8..4 {
-                            let is_mcycle_boundary = dot == 3;
+                        let mut halt_dot = BusDot::ZERO;
+                        for _ in 0u8..4 {
+                            let is_mcycle_boundary = halt_dot.boga();
                             new_screen |= self.tick_dot(is_mcycle_boundary);
+                            halt_dot = if halt_dot.boga() {
+                                BusDot::ZERO
+                            } else {
+                                halt_dot.advance()
+                            };
                         }
                         // Dummy fetch: read the bus but discard the result.
                         // PC is not incremented — the byte is thrown away.
@@ -155,9 +161,15 @@ impl GameBoy {
                     // tick_dot() updates interrupt_latch at the M-cycle
                     // boundary, modeling the sequencer DFF pipeline.
                     let fetch_addr = self.cpu.program_counter;
-                    for dot in 0u8..4 {
-                        let is_mcycle_boundary = dot == 3;
+                    let mut fetch_dot = BusDot::ZERO;
+                    for _ in 0u8..4 {
+                        let is_mcycle_boundary = fetch_dot.boga();
                         new_screen |= self.tick_dot(is_mcycle_boundary);
+                        fetch_dot = if fetch_dot.boga() {
+                            BusDot::ZERO
+                        } else {
+                            fetch_dot.advance()
+                        };
                     }
                     self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
 
@@ -184,29 +196,35 @@ impl GameBoy {
                 }
             }
 
-            // Dot 0: record OAM bug from InternalOamBug actions and
-            // from IDU address on bus.
-            if dot_in_mcycle == 0 {
-                if let DotAction::InternalOamBug { address } = &dot_action {
-                    if (0xFE00..=0xFEFF).contains(address) {
-                        match pending_oam_bug {
-                            Some(OamBugKind::Read) => {}
-                            _ => {
-                                pending_oam_bug = Some(OamBugKind::Write);
-                            }
-                        }
+            // BOWA (dot 0): record OAM bug from InternalOamBug actions
+            // and from IDU address on bus.
+            if dot.bowa()
+                && let DotAction::InternalOamBug { address } = &dot_action
+                && (0xFE00..=0xFEFF).contains(address)
+            {
+                match pending_oam_bug {
+                    Some(OamBugKind::Read) => {}
+                    _ => {
+                        pending_oam_bug = Some(OamBugKind::Write);
                     }
                 }
             }
 
+            // BUDE: drive write data onto bus before PPU even phase.
+            // Hardware: BUDE_xxxxEFGH rises at D->E; PPU DFFs see data during E,F.
+            if let DotAction::DriveBus { address, value } = &dot_action
+                && self.drive_ppu_bus(*address, *value)
+            {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
+
             // Even phase (DELTA_EF): timer tick, DFF latch advance, PPU half_even.
-            let is_mcycle_boundary = dot_in_mcycle == 3;
+            let is_mcycle_boundary = dot.boga();
             new_screen |= self.tick_dot_even(is_mcycle_boundary);
 
-            // After dot 2 even tick (before dot 3): fire OAM bug.
-            // This preserves the timing where OAM corruption fires
-            // after 3 dot ticks within the M-cycle.
-            if dot_in_mcycle == 2
+            // MOPA rising edge (dot 2): fire OAM bug corruption.
+            if dot.mopa()
+                && !dot.boga()
                 && let Some(kind) = pending_oam_bug.take()
             {
                 match kind {
@@ -215,16 +233,14 @@ impl GameBoy {
                 }
             }
 
-            // Bus action (DELTA_GH): CPU read/write routes between phases.
+            // Bus actions that occur between/after phase ticks.
             match dot_action {
                 DotAction::Idle => {}
                 DotAction::InternalOamBug { .. } => {
-                    // Already handled above at dot 0.
+                    // Already handled above at BOWA.
                 }
-                DotAction::DriveBus { address, value } => {
-                    if self.drive_ppu_bus(address, value) {
-                        self.interrupts.request(Interrupt::VideoStatus);
-                    }
+                DotAction::DriveBus { .. } => {
+                    // Already executed above before even phase.
                 }
                 DotAction::Read { address } => {
                     // Detect OAM bug from CPU reads to the OAM region.
@@ -246,10 +262,10 @@ impl GameBoy {
             new_screen |= self.tick_dot_odd(is_mcycle_boundary);
 
             // Advance dot counter, wrapping at M-cycle boundary.
-            dot_in_mcycle = if is_mcycle_boundary {
-                0
+            dot = if dot.boga() {
+                BusDot::ZERO
             } else {
-                dot_in_mcycle + 1
+                dot.advance()
             };
         }
     }
@@ -289,7 +305,7 @@ impl GameBoy {
                 self.execution = ExecutionState::Running {
                     processor,
                     read_value: 0,
-                    dot_in_mcycle: 0,
+                    dot: BusDot::ZERO,
                     pending_oam_bug: None,
                     was_halted,
                 };
@@ -300,7 +316,7 @@ impl GameBoy {
             ExecutionState::Running {
                 mut processor,
                 mut read_value,
-                mut dot_in_mcycle,
+                mut dot,
                 mut pending_oam_bug,
                 was_halted,
             } => {
@@ -313,7 +329,7 @@ impl GameBoy {
 
                         if self.cpu.halt_state == HaltState::Halting {
                             self.execution = ExecutionState::TrailingFetch {
-                                dot: 0,
+                                dot: BusDot::ZERO,
                                 fetch_addr: self.cpu.program_counter,
                                 halting: true,
                             };
@@ -326,7 +342,7 @@ impl GameBoy {
                                 self.execution = ExecutionState::Running {
                                     processor: Processor::interrupt(&mut self.cpu),
                                     read_value: 0,
-                                    dot_in_mcycle: 0,
+                                    dot: BusDot::ZERO,
                                     pending_oam_bug: None,
                                     was_halted,
                                 };
@@ -350,7 +366,7 @@ impl GameBoy {
 
                         // Normal: enter trailing fetch.
                         self.execution = ExecutionState::TrailingFetch {
-                            dot: 0,
+                            dot: BusDot::ZERO,
                             fetch_addr: self.cpu.program_counter,
                             halting: false,
                         };
@@ -368,42 +384,47 @@ impl GameBoy {
                     }
                 }
 
-                // Dot 0: record OAM bug.
-                if dot_in_mcycle == 0 {
-                    if let DotAction::InternalOamBug { address } = &dot_action {
-                        if (0xFE00..=0xFEFF).contains(address) {
-                            match pending_oam_bug {
-                                Some(OamBugKind::Read) => {}
-                                _ => {
-                                    pending_oam_bug = Some(OamBugKind::Write);
-                                }
-                            }
+                // BOWA (dot 0): record OAM bug.
+                if dot.bowa()
+                    && let DotAction::InternalOamBug { address } = &dot_action
+                    && (0xFE00..=0xFEFF).contains(address)
+                {
+                    match pending_oam_bug {
+                        Some(OamBugKind::Read) => {}
+                        _ => {
+                            pending_oam_bug = Some(OamBugKind::Write);
                         }
                     }
+                }
+
+                // BUDE: drive write data onto bus before PPU even phase.
+                if let DotAction::DriveBus { address, value } = &dot_action
+                    && self.drive_ppu_bus(*address, *value)
+                {
+                    self.interrupts.request(Interrupt::VideoStatus);
                 }
 
                 // Even phase.
-                let is_mcycle_boundary = dot_in_mcycle == 3;
+                let is_mcycle_boundary = dot.boga();
                 let mut new_screen = self.tick_dot_even(is_mcycle_boundary);
 
-                // After dot 2 even tick: fire OAM bug.
-                if dot_in_mcycle == 2 {
-                    if let Some(kind) = pending_oam_bug.take() {
-                        match kind {
-                            OamBugKind::Read => self.ppu.oam_bug_read(),
-                            OamBugKind::Write => self.ppu.oam_bug_write(),
-                        }
+                // MOPA rising edge (dot 2): fire OAM bug.
+                if dot.mopa()
+                    && !dot.boga()
+                    && let Some(kind) = pending_oam_bug.take()
+                {
+                    match kind {
+                        OamBugKind::Read => self.ppu.oam_bug_read(),
+                        OamBugKind::Write => self.ppu.oam_bug_write(),
                     }
                 }
 
-                // Bus action.
+                // Bus actions that occur between/after phase ticks.
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
-                    DotAction::DriveBus { address, value } => {
-                        if self.drive_ppu_bus(address, value) {
-                            self.interrupts.request(Interrupt::VideoStatus);
-                        }
+                    DotAction::DriveBus { .. } => {
+                        // Already executed above before even phase.
                     }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {
@@ -423,16 +444,16 @@ impl GameBoy {
                 new_screen |= self.tick_dot_odd(is_mcycle_boundary);
 
                 // Advance dot counter.
-                dot_in_mcycle = if is_mcycle_boundary {
-                    0
+                dot = if dot.boga() {
+                    BusDot::ZERO
                 } else {
-                    dot_in_mcycle + 1
+                    dot.advance()
                 };
 
                 self.execution = ExecutionState::Running {
                     processor,
                     read_value,
-                    dot_in_mcycle,
+                    dot,
                     pending_oam_bug,
                     was_halted,
                 };
@@ -444,7 +465,7 @@ impl GameBoy {
                 fetch_addr,
                 halting,
             } => {
-                let is_mcycle_boundary = dot == 3;
+                let is_mcycle_boundary = dot.boga();
                 let new_screen = self.tick_dot(is_mcycle_boundary);
 
                 if is_mcycle_boundary {
@@ -460,7 +481,7 @@ impl GameBoy {
                     self.execution = ExecutionState::Ready;
                 } else {
                     self.execution = ExecutionState::TrailingFetch {
-                        dot: dot + 1,
+                        dot: dot.advance(),
                         fetch_addr,
                         halting,
                     };
