@@ -714,17 +714,25 @@ impl Rendering {
                     self.wusa = true;
                 }
 
-                // Pixel output. On hardware, REMY/RAVO drive the LCD data
-                // pins combinationally from the pipe MSBs every phase. The
-                // LCD only captures when TOBA = AND2(WUSA, SACU) fires.
-                // For the framebuffer, we gate on TYFA (pixel clock enable)
-                // with ROXY checked inside pixel_output.
+                // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
+                // On hardware, TOBA clocks the 159-stage LCD shift register,
+                // firing from PX=9 through PX=167 (159 clock edges). The
+                // LCD input NOR latch provides a 160th pixel position at
+                // PX=8, where SACU fires but WUSA hasn't opened yet.
+                let toba = self.wusa && sacu;
+
+                // Pixel output. The outer gate uses TYFA (not TOBA) so that
+                // window_zero_pixel is consumed during fine scroll gating
+                // (when ROXY is active and SACU/TOBA are suppressed).
+                // pixel_output uses TOBA to gate LCD shift register pixels
+                // and falls back to range checks for the input latch pixel.
                 if tyfa && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
                         &self.fine_scroll,
                         self.pixel_counter,
+                        toba,
                         &mut self.window_zero_pixel,
                         &mut self.screen,
                         regs,

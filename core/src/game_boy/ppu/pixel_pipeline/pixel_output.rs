@@ -57,11 +57,17 @@ fn resolve_pixel(
 /// appropriate palette to the LCD. The pixel counter has already
 /// been incremented before this call — lcd_x is derived from the
 /// post-increment value.
+///
+/// `toba` is AND2(WUSA, SACU) — the gated LCD clock signal. When
+/// true, the LCD shift register captures a pixel (PX=9 to PX=167,
+/// 159 clock edges). The LCD input NOR latch provides a 160th pixel
+/// at PX=8, where SACU fires but WUSA hasn't yet opened.
 pub(super) fn shift_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     fine_scroll: &FineScroll,
     pixel_counter: u8,
+    toba: bool,
     window_zero_pixel: &mut bool,
     screen: &mut Screen,
     regs: &PipelineRegisters,
@@ -113,23 +119,19 @@ pub(super) fn shift_pixel_out(
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
 
-    // During fine scroll gating (ROXY active), the pixel clock is
-    // frozen on hardware — no LCD output. The shifters already
-    // advanced in mode3_odd (they shift regardless of fine scroll).
-    if !fine_scroll.pixel_clock_active() {
-        return;
+    // TOBA (gated LCD clock) fires for PX=9-167 — when TOBA is
+    // true, the LCD shift register captures and all gating checks
+    // are satisfied (WUSA open, SACU active, ROXY done). The one
+    // visible pixel outside TOBA is the input NOR latch pixel at
+    // PX=8 (lcd_x=0): SACU fires but WUSA hasn't opened yet.
+    if !toba {
+        if !fine_scroll.pixel_clock_active() || pixel_counter < LCD_X_OFFSET {
+            return;
+        }
     }
 
-    // PX 1-7 are invisible — the first tile shifts through the pipe
-    // without reaching the LCD. The WUSA gate (XAJO) opens at PX=9,
-    // but the framebuffer starts at PX=8 (LCD_X_OFFSET) to account
-    // for the LCD's input latch providing a 160th pixel position.
-    if pixel_counter < LCD_X_OFFSET {
-        return;
-    }
-
-    // Past the visible region — safety guard for dots between WODU
-    // and rendering latch clearing.
+    // Safety: WEGO clears WUSA after PX=167, naturally suppressing
+    // TOBA. This guard covers dots between WODU and latch clearing.
     if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
         return;
     }
@@ -150,6 +152,11 @@ pub(super) fn shift_pixel_out(
 /// value used by the trigger dot's pixel output (no increment occurs
 /// during sprite fetch), so `lcd_x = pixel_counter - LCD_X_OFFSET`
 /// directly gives the trigger dot's screen position.
+///
+/// TOBA is structurally false here: FEPO blocks VYBO → TYFA=0 →
+/// SACU=0 → TOBA=AND2(WUSA,SACU)=0. The LCD shift register does
+/// not clock during sprite fetch. The framebuffer overwrite at the
+/// trigger dot's lcd_x is a no-op (same pipe MSBs, same position).
 pub(super) fn peek_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
