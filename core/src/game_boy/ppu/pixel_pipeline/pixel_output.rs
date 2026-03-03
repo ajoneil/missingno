@@ -10,7 +10,7 @@ use crate::game_boy::ppu::{
     screen::{self, Screen},
 };
 
-use super::FIRST_VISIBLE_PIXEL;
+use super::LCD_X_OFFSET;
 use super::fine_scroll::FineScroll;
 use super::shifters::{BgShifter, ObjShifter};
 
@@ -77,14 +77,14 @@ pub(super) fn shift_pixel_out(
         if !fine_scroll.pixel_clock_active() {
             return;
         }
-        if pixel_counter < FIRST_VISIBLE_PIXEL {
+        if pixel_counter < LCD_X_OFFSET {
             return;
         }
-        if pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+        if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
             return;
         }
 
-        let x = pixel_counter - FIRST_VISIBLE_PIXEL;
+        let x = pixel_counter - LCD_X_OFFSET;
         let y = video.ly();
         let bg_color: u8 = 0;
 
@@ -120,20 +120,21 @@ pub(super) fn shift_pixel_out(
         return;
     }
 
-    // PX 1 through 7 are invisible — the first tile shifts through the
-    // pipe without writing to the framebuffer. The WUSA LCD gate opens
-    // at PX=8 (FIRST_VISIBLE_PIXEL), producing lcd_x = 0.
-    if pixel_counter < FIRST_VISIBLE_PIXEL {
+    // PX 1-7 are invisible — the first tile shifts through the pipe
+    // without reaching the LCD. The WUSA gate (XAJO) opens at PX=9,
+    // but the framebuffer starts at PX=8 (LCD_X_OFFSET) to account
+    // for the LCD's input latch providing a 160th pixel position.
+    if pixel_counter < LCD_X_OFFSET {
         return;
     }
 
     // Past the visible region — safety guard for dots between WODU
     // and rendering latch clearing.
-    if pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+    if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
         return;
     }
 
-    let x = pixel_counter - FIRST_VISIBLE_PIXEL;
+    let x = pixel_counter - LCD_X_OFFSET;
     let y = video.ly();
 
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
@@ -147,7 +148,7 @@ pub(super) fn shift_pixel_out(
 /// dot, the pipes do NOT shift (FEPO blocks clkpipe_gate), but pixel
 /// output still fires. The pixel counter holds the same post-increment
 /// value used by the trigger dot's pixel output (no increment occurs
-/// during sprite fetch), so `lcd_x = pixel_counter - FIRST_VISIBLE_PIXEL`
+/// during sprite fetch), so `lcd_x = pixel_counter - LCD_X_OFFSET`
 /// directly gives the trigger dot's screen position.
 pub(super) fn peek_pixel_out(
     bg_shifter: &BgShifter,
@@ -164,14 +165,14 @@ pub(super) fn peek_pixel_out(
     if !fine_scroll.pixel_clock_active() {
         return;
     }
-    if pixel_counter < FIRST_VISIBLE_PIXEL {
+    if pixel_counter < LCD_X_OFFSET {
         return;
     }
-    if pixel_counter >= FIRST_VISIBLE_PIXEL + screen::PIXELS_PER_LINE {
+    if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
         return;
     }
 
-    let x = pixel_counter - FIRST_VISIBLE_PIXEL;
+    let x = pixel_counter - LCD_X_OFFSET;
     let y = video.ly();
 
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);

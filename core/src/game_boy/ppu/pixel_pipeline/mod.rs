@@ -48,11 +48,15 @@ pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
 /// Hardware pixel counter value at which WODU fires (hblank gate).
 /// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
 const WODU_PIXEL_COUNT: u8 = 167;
-/// First pixel counter value that produces a visible LCD pixel.
-/// On hardware, the pipe shifts 8 invisible pixels (counter values 0-7,
-/// with the counter incrementing before output) before the LCD gate
-/// (WUSA) opens at counter value 8, producing lcd_x = 0.
-const FIRST_VISIBLE_PIXEL: u8 = 8;
+/// Pixel counter value at which XAJO fires (AND2 of bit 0 and bit 3),
+/// setting the WUSA NOR latch and opening the LCD clock gate (TOBA).
+/// On hardware, this is the first dot with a visible LCD pixel.
+const XAJO_PIXEL: u8 = 9;
+/// Framebuffer X offset. The LCD's 159-stage shift register + input
+/// NOR latch produces 160 pixels from 159 clock edges (PX=9 to PX=167).
+/// For the framebuffer, we start output one PX before WUSA opens (PX=8)
+/// to model the input latch's extra pixel position. lcd_x = PX - 8.
+const LCD_X_OFFSET: u8 = XAJO_PIXEL - 1;
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
 pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
@@ -148,6 +152,10 @@ pub struct Rendering {
     /// at PX=167. Not reset on window trigger — PX is a monotonic
     /// per-line counter.
     pixel_counter: u8,
+    /// WUSA NOR latch — LCD clock gate (page 24). SET by XAJO
+    /// (AND2 of pixel counter bits 0 and 3, first at PX=9). CLEAR
+    /// at hblank. Gates TOBA (LCD clock pin = AND2(WUSA, SACU)).
+    wusa: bool,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -192,6 +200,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
+            wusa: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -220,6 +229,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
+            wusa: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -433,6 +443,7 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window_hit = WindowHit::Inactive;
         self.pixel_counter = 0;
+        self.wusa = false;
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -673,8 +684,16 @@ impl Rendering {
                     self.pixel_counter += 1;
                 }
 
+                // XAJO: AND2(PX bit 0, PX bit 3). Sets the WUSA NOR latch,
+                // opening the LCD clock gate. First fires at PX=9 (0b1001).
+                // Subsequent fires (PX=11, 13, 15, 25...) are no-ops since
+                // WUSA is already set (NOR latch semantics).
+                if !self.wusa && (self.pixel_counter & 0b1001 == 0b1001) {
+                    self.wusa = true;
+                }
+
                 // Pixel output. Reads the post-increment pixel counter to
-                // compute lcd_x = pixel_counter - FIRST_VISIBLE_PIXEL.
+                // compute lcd_x = pixel_counter - LCD_X_OFFSET.
                 if !self.window_hit.pixel_clock_gated() && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,
