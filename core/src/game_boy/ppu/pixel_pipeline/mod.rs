@@ -161,6 +161,11 @@ pub struct Rendering {
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
+    /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
+    /// match signal. Computed on even phases as AND2(PUXA, !NYZE).
+    /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
+    /// providing the 160th LCD clock edge before WUSA opens.
+    pova: bool,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -207,6 +212,7 @@ impl Rendering {
             pixel_counter: 0,
             wusa: false,
             voga: false,
+            pova: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -237,6 +243,7 @@ impl Rendering {
             pixel_counter: 0,
             wusa: false,
             voga: false,
+            pova: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -462,6 +469,7 @@ impl Rendering {
         self.pixel_counter = 0;
         self.wusa = false;
         self.voga = false;
+        self.pova = false;
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -533,11 +541,15 @@ impl Rendering {
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
-        // Active only after startup (POKY latched).
-        if !self.bg_shifter.is_empty() {
+        // Active only after startup (POKY latched). POVA = AND2(PUXA,
+        // !NYZE) fires on the rising edge of the match — stored for
+        // the next odd phase to compute SEMU = OR2(TOBA, POVA).
+        self.pova = if !self.bg_shifter.is_empty() {
             self.fine_scroll
-                .check_scroll_match(regs.background_viewport.x.output());
-        }
+                .check_scroll_match(regs.background_viewport.x.output())
+        } else {
+            false
+        };
 
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
         // Active during both startup fetch and normal rendering.
@@ -716,16 +728,27 @@ impl Rendering {
 
                 // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
-                // firing from PX=9 through PX=167 (159 clock edges). The
-                // LCD input NOR latch provides a 160th pixel position at
-                // PX=8, where SACU fires but WUSA hasn't opened yet.
+                // firing from PX=9 through PX=167 (159 clock edges).
                 let toba = self.wusa && sacu;
 
-                // Pixel output. The outer gate uses TYFA (not TOBA) so that
+                // SEMU_LCD_CLOCK = OR2(TOBA, POVA). The true LCD clock
+                // signal combining the regular pixel clock (TOBA) with the
+                // fine scroll match trigger (POVA). POVA adds one LCD clock
+                // edge on the initial fine scroll match (before WUSA opens),
+                // providing the 160th clock edge. On subsequent tile
+                // boundaries, POVA overlaps with TOBA on the same dot.
+                // RYPO = NOT(SEMU) drives PIN_53_LCD_CLOCK (active low).
+                let _semu = toba || self.pova;
+
+                // Pixel output. The outer gate uses TYFA (not SEMU) so that
                 // window_zero_pixel is consumed during fine scroll gating
                 // (when ROXY is active and SACU/TOBA are suppressed).
                 // pixel_output uses TOBA to gate LCD shift register pixels
                 // and falls back to range checks for the input latch pixel.
+                // SEMU is the hardware LCD clock, but the framebuffer model
+                // cannot use it directly: POVA fires at PX≈1 (before the
+                // visible region) while the framebuffer maps PX=8 → lcd_x=0
+                // via the non-TOBA path, modeling the same 160th pixel.
                 if tyfa && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,

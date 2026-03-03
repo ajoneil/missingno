@@ -68,6 +68,10 @@ pub(super) struct FineScroll {
     pub(super) count: u8,
     /// ROXY NOR latch — gates SACU until fine scroll match fires.
     roxy: Roxy,
+    /// NYZE DFF — captures PUXA (fine scroll match) from previous
+    /// phase. Used for POVA rising-edge detection: POVA = AND2(PUXA,
+    /// !NYZE). Fires once per PUXA 0→1 transition.
+    nyze: bool,
 }
 
 impl FineScroll {
@@ -75,6 +79,7 @@ impl FineScroll {
         Self {
             count: 0,
             roxy: Roxy::Gating,
+            nyze: false,
         }
     }
 
@@ -96,12 +101,23 @@ impl FineScroll {
         self.count = 0;
     }
 
-    /// Check and clear the gating latch if count matches SCX & 7.
-    /// One-shot: once cleared, stays cleared for the rest of the line.
-    pub(super) fn check_scroll_match(&mut self, scx: u8) {
-        if self.roxy == Roxy::Gating && self.count == (scx & 7) {
+    /// Check fine scroll match (PUXA) and compute POVA trigger.
+    ///
+    /// PUXA is the combinational match (count == SCX & 7). If ROXY is
+    /// still gating and PUXA fires, ROXY clears (one-shot per line).
+    /// Returns POVA = AND2(PUXA, !NYZE) — the rising-edge trigger that
+    /// fires once per PUXA 0→1 transition. POVA generates one extra
+    /// LCD clock pulse via SEMU = OR2(TOBA, POVA).
+    pub(super) fn check_scroll_match(&mut self, scx: u8) -> bool {
+        let puxa = self.count == (scx & 7);
+        let pova = puxa && !self.nyze;
+        self.nyze = puxa;
+
+        if self.roxy == Roxy::Gating && puxa {
             self.roxy = Roxy::Done;
         }
+
+        pova
     }
 
     /// Reset for window trigger — counter resets, gating clears
