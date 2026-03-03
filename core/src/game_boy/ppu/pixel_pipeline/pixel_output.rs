@@ -80,11 +80,10 @@ pub(super) fn shift_pixel_out(
         *window_zero_pixel = false;
         let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
 
-        if !fine_scroll.pixel_clock_active() {
-            return;
-        }
-        if pixel_counter < LCD_X_OFFSET {
-            return;
+        if !toba {
+            if !fine_scroll.pixel_clock_active() || pixel_counter < LCD_X_OFFSET {
+                return;
+            }
         }
         if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
             return;
