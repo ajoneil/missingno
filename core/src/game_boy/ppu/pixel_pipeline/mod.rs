@@ -45,9 +45,9 @@ impl fmt::Display for Mode {
 }
 
 pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
-/// Hardware pixel counter value at which WODU fires (hblank gate).
-/// XUGU = NAND5(PX0, PX1, PX2, PX5, PX7) decodes 128+32+4+2+1 = 167.
-const WODU_PIXEL_COUNT: u8 = 167;
+/// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
+/// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
+const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// Pixel counter value at which XAJO fires (AND2 of bit 0 and bit 3),
 /// setting the WUSA NOR latch and opening the LCD clock gate (TOBA).
 /// On hardware, this is the first dot with a visible LCD pixel.
@@ -84,9 +84,9 @@ pub enum RenderPhase {
     /// startup, the NYKA/PORY/PYGO cascade DFFs propagate while the
     /// pixel clock waits for POKY (bg_shifter.loaded) to latch.
     Drawing,
-    /// WODU fired (PX≥167, no sprite match): STAT sees mode=0 via TARU,
-    /// pixel clock stops, VRAM/OAM unlocked. XYMU clears next dot.
-    /// Hardware: XYMU set, WODU set. Lasts 1 dot.
+    /// WODU fired (XUGU decode + !FEPO): STAT sees mode=0 via TARU,
+    /// pixel clock stops, VRAM/OAM unlocked. VOGA captures on next
+    /// even phase, clearing XYMU and WUSA via WEGO. Lasts 1 dot.
     DrawingComplete,
     /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
     /// Hardware: XYMU clear, WODU set.
@@ -154,8 +154,13 @@ pub struct Rendering {
     pixel_counter: u8,
     /// WUSA NOR latch — LCD clock gate (page 24). SET by XAJO
     /// (AND2 of pixel counter bits 0 and 3, first at PX=9). CLEAR
-    /// at hblank. Gates TOBA (LCD clock pin = AND2(WUSA, SACU)).
+    /// by WEGO (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
     wusa: bool,
+    /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
+    /// even phases (ALET). Captures WODU from the previous odd phase.
+    /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
+    /// XYMU (rendering latch). Reset by TADY (line reset).
+    voga: bool,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -201,6 +206,7 @@ impl Rendering {
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
             wusa: false,
+            voga: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -230,6 +236,7 @@ impl Rendering {
             window_hit: WindowHit::Inactive,
             pixel_counter: 0,
             wusa: false,
+            voga: false,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -347,10 +354,18 @@ impl Rendering {
             return;
         }
 
-        // VOGA latch (DELTA_EVEN). On hardware, VOGA captures WODU on the
-        // even phase following the odd phase when WODU fired. This cascades
-        // through WEGO to clear XYMU (rendering).
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures the WODU
+        // signal from the previous odd phase. DrawingComplete means WODU
+        // fired last phase.
         if self.render_phase == RenderPhase::DrawingComplete {
+            self.voga = true;
+        }
+
+        // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
+        // and XYMU (rendering latch). VID_RST is handled separately in
+        // reset_scanline; here we model the VOGA path.
+        if self.voga {
+            self.wusa = false;
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
@@ -409,16 +424,18 @@ impl Rendering {
                 self.mode3_odd(regs, video, oam, vram);
             }
 
-            // WODU hblank gate (DELTA_ODD). On hardware, WODU fires
-            // combinationally on the ODD phase when pix_count reaches
-            // 167 and no sprite match is active. TARU (STAT mode 0
-            // interrupt condition) uses WODU directly on the same
-            // phase. VOGA latches WODU on the next EVEN phase,
-            // clearing XYMU (handled in half_even).
-            if self.render_phase == RenderPhase::Drawing
-                && self.pixel_counter >= WODU_PIXEL_COUNT
-                && !matches!(self.sprite_state, SpriteState::Fetching(_))
-            {
+            // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
+            // decodes PX=167 (bits 0+1+2+5+7 all set). WODU = AND2(!FEPO, !XUGU).
+            // WODU fires combinationally when the pixel counter has all five
+            // XUGU bits set and no sprite match (FEPO) is active.
+            //
+            // TARU (STAT mode 0 interrupt) uses WODU directly on the same
+            // phase — DrawingComplete models this. VOGA latches WODU on the
+            // next EVEN phase, clearing XYMU (handled in half_even).
+            let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
+            let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
+            let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
+            if wodu {
                 self.render_phase = RenderPhase::DrawingComplete;
             }
         }
@@ -444,6 +461,7 @@ impl Rendering {
         self.window_hit = WindowHit::Inactive;
         self.pixel_counter = 0;
         self.wusa = false;
+        self.voga = false;
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
