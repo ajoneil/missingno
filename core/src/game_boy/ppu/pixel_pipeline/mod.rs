@@ -470,35 +470,6 @@ impl Rendering {
             );
         }
 
-        // During a window fetch stall (RYDY active), the BG fetcher runs
-        // on LEBO clock (EVEN), same as during startup — the fetcher is
-        // doing a startup-like fetch for window tile data. The bg_shifter
-        // is non-empty (BG data still loaded), so the startup condition
-        // above doesn't fire; this block handles the window case.
-        if !sprite_data_fetch && self.window_hit == WindowHit::Active {
-            self.fetcher.advance(
-                self.pixel_counter,
-                self.window_line_counter,
-                regs,
-                video,
-                vram,
-            );
-        }
-
-        // SUZU: when the window fetch completes (fetcher reaches Idle while
-        // RYDY is active), load the first window tile into the BG pipe and
-        // begin clearing the window hit signal. On hardware, SUZU fires on
-        // DELTA_EVEN (LEBO clock domain). The Clearing -> Inactive transition
-        // remains in mode3_odd, providing the 1-half-phase state_old.RYDY
-        // propagation delay before the pixel clock resumes.
-        //
-        // ORDERING: must follow the window-stall fetcher advance above so
-        // the fetcher has reached Idle on this EVEN before the check runs.
-        if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
-            self.fetcher.load_into(&mut self.bg_shifter);
-            self.window_hit = WindowHit::Clearing;
-        }
-
         // TAVE one-shot preload: when the fetcher first completes (reaches
         // Idle) while the BG shifter is still empty, load the tile data
         // into the pipe. This models SUVU/TAVE on hardware. The pipe load
@@ -732,6 +703,19 @@ impl Rendering {
                         video,
                         vram,
                     );
+                }
+
+                // SUZU: when the window fetch completes (fetcher reaches Idle
+                // while RYDY is active), load the first window tile into the
+                // BG pipe and begin clearing the window hit signal. Placed
+                // after the fetcher advance so the completion is detected on
+                // the same dot it occurs. The Clearing -> Inactive transition
+                // at the top of SpriteState::Idle runs BEFORE this point, so
+                // a freshly-set Clearing won't be seen until the next dot —
+                // preserving the 1-dot propagation delay.
+                if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
+                    self.fetcher.load_into(&mut self.bg_shifter);
+                    self.window_hit = WindowHit::Clearing;
                 }
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
