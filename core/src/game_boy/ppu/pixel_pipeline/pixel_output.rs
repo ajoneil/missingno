@@ -127,10 +127,16 @@ pub(super) fn semu_pixel_out(
 /// GateBoy and SameBoy capture this post-merge data at the trigger
 /// position. We overwrite the last SEMU-written position (lcd_x - 1)
 /// with the resolved pixel. Does not advance lcd_x.
+///
+/// Handles `window_zero_pixel`: if set, the last SEMU-written pixel
+/// was the window reactivation zero pixel. The sprite merge overwrites
+/// it with bg_color=0 + sprite mix (same as the original zero pixel
+/// but with merged sprite data).
 pub(super) fn sprite_overwrite_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     lcd_x: u8,
+    window_zero_pixel: &mut bool,
     screen: &mut Screen,
     regs: &PipelineRegisters,
     video: &VideoControl,
@@ -143,8 +149,34 @@ pub(super) fn sprite_overwrite_pixel_out(
         return;
     }
 
+    let y = video.ly();
+
+    if *window_zero_pixel {
+        *window_zero_pixel = false;
+        let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
+        let bg_color: u8 = 0;
+
+        if regs.control.sprites_enabled() {
+            let spr_color = (spr_hi << 1) | spr_lo;
+            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
+                let sprite_palette = if spr_pal == 0 {
+                    PaletteMap(regs.palettes.sprite0.output())
+                } else {
+                    PaletteMap(regs.palettes.sprite1.output())
+                };
+                let mapped = sprite_palette.map(PaletteIndex(spr_color));
+                screen.set_pixel(x, y, mapped);
+                return;
+            }
+        }
+
+        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
+        screen.set_pixel(x, y, mapped);
+        return;
+    }
+
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
-    screen.set_pixel(x, video.ly(), mapped);
+    screen.set_pixel(x, y, mapped);
 }

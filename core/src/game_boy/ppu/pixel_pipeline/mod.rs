@@ -569,22 +569,11 @@ impl Rendering {
             video,
         );
 
-        // POVA pixel output — the 160th LCD clock edge (before WUSA opens).
-        // On hardware, the LCD NOR latch captures pre-shift pipe MSBs at
-        // this moment. After WUSA opens, POVA overlaps with TOBA and the
-        // NOR latch tracks through to the post-shift state — TOBA handles
-        // those dots. Only output the POVA pixel on the initial POVA-only dot.
-        if self.pova && !self.wusa {
-            pixel_output::semu_pixel_out(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                &mut self.lcd_x,
-                &mut self.window_zero_pixel,
-                &mut self.screen,
-                regs,
-                video,
-            );
-        }
+        // POVA fires here but does NOT produce framebuffer output in
+        // mode3_even. The LCD NOR latch captures pre-shift pipe MSBs,
+        // but the framebuffer's first pixel (lcd_x=0) is output in
+        // mode3_odd after the shift — matching the post-shift data
+        // that hardware reference screenshots show at column 0.
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -663,6 +652,7 @@ impl Rendering {
                             &self.bg_shifter,
                             &self.obj_shifter,
                             self.lcd_x,
+                            &mut self.window_zero_pixel,
                             &mut self.screen,
                             regs,
                             video,
@@ -757,13 +747,13 @@ impl Rendering {
                 // RYPO = NOT(SEMU) drives PIN_53_LCD_CLOCK (active low).
                 let _semu = toba || self.pova;
 
-                // Pixel output. The outer gate uses TYFA (not SEMU) so that
-                // SEMU pixel output — TOBA component. When TOBA fires (WUSA
-                // open, SACU active), the LCD shift register captures the
-                // post-shift pipe MSBs. Write to the framebuffer at lcd_x
-                // and advance the counter. POVA's lcd_x=0 pixel was already
-                // output in mode3_even; TOBA provides lcd_x=1–159.
-                if toba {
+                // SEMU pixel output. TOBA provides lcd_x=1–159 (PX=9–167).
+                // The 160th pixel (lcd_x=0) is the input NOR latch pixel
+                // at PX=8 — one dot before WUSA opens. SACU fires but
+                // TOBA doesn't (WUSA=0). Reads post-shift pipe MSBs,
+                // matching hardware DMG-blob reference screenshots.
+                let input_latch_pixel = sacu && self.pixel_counter == 8;
+                if toba || input_latch_pixel {
                     pixel_output::semu_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
@@ -773,6 +763,12 @@ impl Rendering {
                         regs,
                         video,
                     );
+                } else if tyfa && !self.bg_shifter.is_empty() {
+                    // Consume window_zero_pixel during pre-visible TYFA
+                    // cycles (fine scroll gating, pre-WUSA). On hardware,
+                    // the data pins update on every TYFA edge — the window
+                    // zero pixel is consumed even when SACU/TOBA don't fire.
+                    self.window_zero_pixel = false;
                 }
 
                 // Sprite trigger check.
