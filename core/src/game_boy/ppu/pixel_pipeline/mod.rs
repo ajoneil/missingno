@@ -720,7 +720,11 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                if !self.bg_shifter.is_empty() && !self.window_hit.pixel_clock_gated() {
+                // The fetcher runs on LEBO (the half-cycle clock), NOT on
+                // TYFA/SACU. LEBO is gated only by the fetch-done condition
+                // (MOCE), not by RYDY (window hit), FEPO (sprite match),
+                // POKY (preload), or ROXY (fine scroll).
+                if !self.bg_shifter.is_empty() {
                     self.fetcher.advance(
                         self.pixel_counter,
                         self.window_line_counter,
