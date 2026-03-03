@@ -19,7 +19,7 @@ use crate::game_boy::ppu::{
 };
 
 use fetcher::{FetcherStep, TileFetcher};
-use fine_scroll::{FineScroll, WindowHit};
+use fine_scroll::FineScroll;
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
@@ -134,10 +134,22 @@ pub struct Rendering {
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
-    /// RYDY NOR latch — window hit signal. Gates TYFA, freezing both
-    /// the fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall.
-    window_hit: WindowHit,
+    /// RYDY NOR latch — window hit signal. When high, gates TYFA
+    /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
+    /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
+    /// during a window fetch stall. Set by WX match (deferred via
+    /// `rydy_pending`), cleared by SUZU (window fetch complete).
+    ///
+    /// The TOMU DFF delay is modeled by operation ordering: TYFA reads
+    /// `rydy` in mode3_odd before any modifications this dot take effect.
+    /// SET: `rydy_pending` is written in mode3_even, committed to `rydy`
+    /// at end of mode3_odd → TYFA sees old-RYDY=0, SACU fires once more.
+    /// CLEAR: SUZU writes `rydy=false` in mode3_odd after TYFA → TYFA
+    /// sees old-RYDY=1, clock stays frozen for that dot.
+    rydy: bool,
+    /// Deferred RYDY SET — WX match fired in mode3_even, will be
+    /// committed to `rydy` at end of mode3_odd. Models TOMU DFF delay.
+    rydy_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -205,7 +217,8 @@ impl Rendering {
             pory: false,
             pygo: false,
             fine_scroll: FineScroll::new(),
-            window_hit: WindowHit::Inactive,
+            rydy: false,
+            rydy_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -237,7 +250,8 @@ impl Rendering {
             pory: false,
             pygo: false,
             fine_scroll: FineScroll::new(),
-            window_hit: WindowHit::Inactive,
+            rydy: false,
+            rydy_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -464,7 +478,8 @@ impl Rendering {
         self.pory = false;
         self.pygo = false;
         self.fine_scroll = FineScroll::new();
-        self.window_hit = WindowHit::Inactive;
+        self.rydy = false;
+        self.rydy_pending = false;
         self.pixel_counter = 0;
         self.wusa = false;
         self.voga = false;
@@ -554,7 +569,8 @@ impl Rendering {
         // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
         // Active during both startup fetch and normal rendering.
         window::check_window_trigger(
-            &mut self.window_hit,
+            self.rydy,
+            &mut self.rydy_pending,
             &mut self.fetcher,
             &mut self.nyka,
             &mut self.pory,
@@ -672,20 +688,18 @@ impl Rendering {
                 }
             }
             SpriteState::Idle => {
-                // Clearing → Inactive: on the tick after SUZU fires, the pixel
-                // clock gate sees RYDY=0 and resumes normal operation.
-                if self.window_hit == WindowHit::Clearing {
-                    self.window_hit = WindowHit::Inactive;
-                }
-
                 // TYFA_CLKPIPE (page 21) = AND3(SOCY, POKY, VYBO).
-                //   SOCY = NOT(RYDY) — window hit inverted
+                //   SOCY = NOT(TOMU_WIN_HITp) — old-RYDY inverted
                 //   POKY = preload done latch (our `pygo`)
                 //   VYBO = NOR3(FEPO_old, WODU_old, MYVO) — sprite match and
                 //     hblank gate from previous phase. Both are structurally
                 //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
                 //     and RenderPhase::Drawing (no WODU).
-                let tyfa = !self.window_hit.pixel_clock_gated() && self.pygo;
+                //
+                // TOMU DFF delay modeled by operation ordering: TYFA reads
+                // `rydy` before any modifications this dot (rydy_pending is
+                // committed at end of mode3_odd, SUZU clears rydy below).
+                let tyfa = !self.rydy && self.pygo;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
@@ -702,12 +716,12 @@ impl Rendering {
                     self.obj_shifter.shift();
                 }
 
-                // RYFA DFF captures (count==7 && !nuko_wx_match) on each dot.
+                // RYFA DFF captures (count==7 && !RYDY) on each dot.
                 // SEKO is the rising-edge detector on RYFA — it fires one dot
                 // after count reaches 7. Reading count HERE (before tick)
                 // naturally models this one-dot DFF delay. PANY gates RYFA
-                // on !NUKO_WX_MATCHp (modeled by window_hit == Inactive).
-                let seko_fire = self.fine_scroll.count == 7 && !self.window_hit.pixel_clock_gated();
+                // on !RYDY (window hit blocks tile boundary detection).
+                let seko_fire = self.fine_scroll.count == 7 && !self.rydy;
 
                 // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
                 // overwrites the shift result on the same tick — the load
@@ -790,15 +804,15 @@ impl Rendering {
 
                 // SUZU: when the window fetch completes (fetcher reaches Idle
                 // while RYDY is active), load the first window tile into the
-                // BG pipe and begin clearing the window hit signal. Placed
-                // after the fetcher advance so the completion is detected on
-                // the same dot it occurs. The Clearing -> Inactive transition
-                // at the top of SpriteState::Idle runs BEFORE this point, so
-                // a freshly-set Clearing won't be seen until the next dot —
-                // preserving the 1-dot propagation delay.
-                if self.window_hit == WindowHit::Active && self.fetcher.step == FetcherStep::Idle {
+                // BG pipe and clear the window hit signal. Placed after the
+                // fetcher advance so the completion is detected on the same
+                // dot it occurs. TYFA was already computed above using the old
+                // rydy=true value, so the pixel clock stays frozen for this
+                // dot (TOMU DFF delay). Next dot: TYFA reads rydy=false →
+                // clock resumes.
+                if self.rydy && self.fetcher.step == FetcherStep::Idle {
                     self.fetcher.load_into(&mut self.bg_shifter);
-                    self.window_hit = WindowHit::Clearing;
+                    self.rydy = false;
                 }
 
                 // PECU (fine counter clock) derives from ROXO, which derives
@@ -817,10 +831,13 @@ impl Rendering {
             }
         }
 
-        // state_old → state_new: latch Active now that the Activating dot's
-        // pixel clock has fired. Pixel clock frozen from the next ODD phase.
-        if self.window_hit == WindowHit::Activating {
-            self.window_hit = WindowHit::Active;
+        // Commit deferred RYDY SET. The WX match in mode3_even set
+        // rydy_pending; now that TYFA has used the old rydy=false (allowing
+        // one more SACU fire), commit the new value. TYFA will read
+        // rydy=true on the next dot → pixel clock frozen.
+        if self.rydy_pending {
+            self.rydy = true;
+            self.rydy_pending = false;
         }
     }
 

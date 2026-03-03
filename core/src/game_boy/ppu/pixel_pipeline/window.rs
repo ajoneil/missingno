@@ -3,7 +3,7 @@
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
 use super::fetcher::{FetcherStep, FetcherTick, TileFetcher};
-use super::fine_scroll::{FineScroll, WindowHit};
+use super::fine_scroll::FineScroll;
 use super::shifters::BgShifter;
 
 /// Check if the window should start rendering at the current pixel position.
@@ -12,7 +12,8 @@ use super::shifters::BgShifter;
 ///
 /// On hardware, the PYCO_WIN_MATCHp signal fires on DELTA_EVEN.
 pub(super) fn check_window_trigger(
-    window_hit: &mut WindowHit,
+    rydy: bool,
+    rydy_pending: &mut bool,
     fetcher: &mut TileFetcher,
     nyka: &mut bool,
     pory: &mut bool,
@@ -49,9 +50,9 @@ pub(super) fn check_window_trigger(
     // runs after advance_bg_fetcher in mode3_even, the fetcher has already
     // been ticked: what was dot=0 (T1) is now dot=1. So we check dot=1.
     // Reactivation requires the initial window fetch to have completed
-    // (window_hit == Inactive), modeling hardware's !window_is_being_fetched.
+    // (RYDY=0), modeling hardware's !window_is_being_fetched.
     if fetcher.fetching_window {
-        if *window_hit == WindowHit::Inactive
+        if !rydy
             && !bg_shifter.is_empty()
             && fetcher.step == FetcherStep::GetTile
             && fetcher.tick == FetcherTick::T2
@@ -72,9 +73,13 @@ pub(super) fn check_window_trigger(
     // are NOT cleared — hardware doesn't clear them. MOSU loads stale
     // tile_temp into the BG pipe (never visible since the pixel clock
     // freezes), and SUZU/TEVO later overwrites with window tile data.
+    //
+    // RYDY SET is deferred to end of mode3_odd (via rydy_pending) to
+    // model the TOMU DFF delay: TYFA reads old-RYDY=0 on this dot,
+    // allowing one more SACU fire before the pixel clock freezes.
     *wx_triggered = true;
     fine_scroll.reset_for_window();
-    *window_hit = WindowHit::Activating;
+    *rydy_pending = true;
     fetcher.reset_for_window();
     // NAFY: window mode trigger always resets NYKA and PORY, forcing the
     // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
