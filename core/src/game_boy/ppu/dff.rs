@@ -8,10 +8,8 @@
 ///   may delay when the new value appears on the output pin.
 pub(super) enum LatchState {
     /// DFF8 transitional: output is `old | new` while the master latch
-    /// is transparent. When `fresh`, the next tick preserves the
-    /// transitional (clearing `fresh`). The following tick resolves
-    /// to the final value.
-    Transitional { final_value: u8, fresh: bool },
+    /// is transparent. The next tick resolves to the final value.
+    Transitional { final_value: u8 },
     /// DFF9 propagation: the old value persists on the output for one
     /// dot while the new value routes through internal wiring. Next
     /// tick applies the final value.
@@ -47,23 +45,8 @@ impl DffLatch {
     /// resolved (final value applied) on this tick.
     pub(super) fn tick(&mut self) -> bool {
         match self.state {
-            Some(LatchState::Transitional {
-                final_value,
-                fresh: true,
-            }) => {
-                // First tick after write: stay transitional, clear fresh.
-                // Output remains `old | new` through the next pixel output.
-                self.state = Some(LatchState::Transitional {
-                    final_value,
-                    fresh: false,
-                });
-                false
-            }
-            Some(LatchState::Transitional {
-                final_value,
-                fresh: false,
-            }) => {
-                // Second tick: slave captures, resolve to final value.
+            Some(LatchState::Transitional { final_value }) => {
+                // Next tick: slave captures, resolve to final value.
                 self.output = final_value;
                 self.state = None;
                 true
@@ -83,7 +66,6 @@ impl DffLatch {
         self.output = self.output | new_value;
         self.state = Some(LatchState::Transitional {
             final_value: new_value,
-            fresh: true,
         });
     }
 
