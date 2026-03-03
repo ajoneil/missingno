@@ -659,19 +659,26 @@ impl Rendering {
                     self.window_hit = WindowHit::Inactive;
                 }
 
+                // TYFA_CLKPIPE (page 21) = AND3(SOCY, POKY, VYBO).
+                //   SOCY = NOT(RYDY) — window hit inverted
+                //   POKY = preload done latch (our `pygo`)
+                //   VYBO = NOR3(FEPO_old, WODU_old, MYVO) — sprite match and
+                //     hblank gate from previous phase. Both are structurally
+                //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
+                //     and RenderPhase::Drawing (no WODU).
+                let tyfa = !self.window_hit.pixel_clock_gated() && self.pygo;
+
+                // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
+                // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
+                // Net: SACU fires when TYFA is high AND ROXY is done (fine
+                // scroll complete). Drives pipe shift registers and pixel counter.
+                let sacu = tyfa && self.fine_scroll.pixel_clock_active();
+
                 // Hardware within-tick ordering for DFF22 shift register cells:
                 // 1. Synchronous shift (SACU clock edge)
                 // 2. Async parallel load (LOZE SET/RST — overwrites shift)
                 // 3. Pixel output reads final state
-                //
-                // SACU clocks both the pipe shift registers and the pixel
-                // counter. SACU = or2(SEGU, ROXY) — frozen when either
-                // SEGU=1 (window hit active) or ROXY=1 (fine scroll not
-                // done). Gate matches the pixel counter increment below.
-                if !self.window_hit.pixel_clock_gated()
-                    && self.fine_scroll.pixel_clock_active()
-                    && self.pygo
-                {
+                if sacu {
                     self.bg_shifter.shift();
                     self.obj_shifter.shift();
                 }
@@ -695,10 +702,7 @@ impl Rendering {
                 // clocks the counter and pixel output on the same edge. The
                 // counter's Q output updates first; pixel output reads the
                 // post-increment value. Placed before pixel output to model this.
-                if !self.window_hit.pixel_clock_gated()
-                    && self.fine_scroll.pixel_clock_active()
-                    && self.pygo
-                {
+                if sacu {
                     self.pixel_counter += 1;
                 }
 
@@ -710,9 +714,12 @@ impl Rendering {
                     self.wusa = true;
                 }
 
-                // Pixel output. Reads the post-increment pixel counter to
-                // compute lcd_x = pixel_counter - LCD_X_OFFSET.
-                if !self.window_hit.pixel_clock_gated() && !self.bg_shifter.is_empty() {
+                // Pixel output. On hardware, REMY/RAVO drive the LCD data
+                // pins combinationally from the pipe MSBs every phase. The
+                // LCD only captures when TOBA = AND2(WUSA, SACU) fires.
+                // For the framebuffer, we gate on TYFA (pixel clock enable)
+                // with ROXY checked inside pixel_output.
+                if tyfa && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
@@ -755,9 +762,10 @@ impl Rendering {
                     self.window_hit = WindowHit::Clearing;
                 }
 
-                // PECU (fine counter clock) derives from ROXO, which derives from
-                // TYFA. TYFA is gated by RYDY (window hit).
-                if self.pygo && !self.window_hit.pixel_clock_gated() {
+                // PECU (fine counter clock) derives from ROXO, which derives
+                // from TYFA. Fine scroll ticks whenever the pixel clock is
+                // enabled, regardless of ROXY (fine scroll itself).
+                if tyfa {
                     self.fine_scroll.tick();
                 }
 
