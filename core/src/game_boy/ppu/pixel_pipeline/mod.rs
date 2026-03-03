@@ -668,7 +668,7 @@ impl Rendering {
                 // counter. SACU = or2(SEGU, ROXY) — frozen when either
                 // SEGU=1 (window hit active) or ROXY=1 (fine scroll not
                 // done). Gate matches the pixel counter increment below.
-                if self.window_hit == WindowHit::Inactive
+                if !self.window_hit.pixel_clock_gated()
                     && self.fine_scroll.pixel_clock_active()
                     && self.pygo
                 {
@@ -681,8 +681,7 @@ impl Rendering {
                 // after count reaches 7. Reading count HERE (before tick)
                 // naturally models this one-dot DFF delay. PANY gates RYFA
                 // on !NUKO_WX_MATCHp (modeled by window_hit == Inactive).
-                let seko_fire =
-                    self.fine_scroll.count == 7 && self.window_hit == WindowHit::Inactive;
+                let seko_fire = self.fine_scroll.count == 7 && !self.window_hit.pixel_clock_gated();
 
                 // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
                 // overwrites the shift result on the same tick — the load
@@ -696,7 +695,7 @@ impl Rendering {
                 // clocks the counter and pixel output on the same edge. The
                 // counter's Q output updates first; pixel output reads the
                 // post-increment value. Placed before pixel output to model this.
-                if self.window_hit == WindowHit::Inactive
+                if !self.window_hit.pixel_clock_gated()
                     && self.fine_scroll.pixel_clock_active()
                     && self.pygo
                 {
@@ -705,7 +704,7 @@ impl Rendering {
 
                 // Pixel output. Reads the post-increment pixel counter to
                 // compute lcd_x = pixel_counter - FIRST_VISIBLE_PIXEL.
-                if self.window_hit == WindowHit::Inactive && !self.bg_shifter.is_empty() {
+                if !self.window_hit.pixel_clock_gated() && !self.bg_shifter.is_empty() {
                     pixel_output::shift_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
@@ -721,7 +720,7 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                if !self.bg_shifter.is_empty() && self.window_hit == WindowHit::Inactive {
+                if !self.bg_shifter.is_empty() && !self.window_hit.pixel_clock_gated() {
                     self.fetcher.advance(
                         self.pixel_counter,
                         self.window_line_counter,
@@ -733,7 +732,7 @@ impl Rendering {
 
                 // PECU (fine counter clock) derives from ROXO, which derives from
                 // TYFA. TYFA is gated by RYDY (window hit).
-                if self.pygo && self.window_hit == WindowHit::Inactive {
+                if self.pygo && !self.window_hit.pixel_clock_gated() {
                     self.fine_scroll.tick();
                 }
 

@@ -30,6 +30,20 @@ pub(super) enum WindowHit {
     Clearing,
 }
 
+impl WindowHit {
+    /// Whether the pixel clock (SACU) is gated by the window hit signal.
+    ///
+    /// On hardware, `clkpipe_gate` reads the OLD value of RYDY due to
+    /// DFF propagation delay. SACU fires when old-RYDY=0:
+    ///   - Inactive: RYDY=0, old-RYDY=0 -> clock runs
+    ///   - Activating: RYDY=1, old-RYDY=0 -> clock runs (one last time)
+    ///   - Active: RYDY=1, old-RYDY=1 -> clock frozen
+    ///   - Clearing: RYDY=0, old-RYDY=1 -> clock frozen (one more dot)
+    pub(super) fn pixel_clock_gated(self) -> bool {
+        matches!(self, WindowHit::Active | WindowHit::Clearing)
+    }
+}
+
 // --- Fine scroll (ROXY pixel clock gate) ---
 
 /// ROXY NOR latch state. On hardware, ROXY gates the pixel clock
