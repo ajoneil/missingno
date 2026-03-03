@@ -3,6 +3,16 @@
 // The pixel mux combines the BG and OBJ shift register outputs into a
 // single color index, applies priority logic, maps through the
 // appropriate palette, and writes the result to the screen.
+//
+// Pixel output is driven by SEMU edges — the true LCD clock signal:
+//   SEMU = OR2(TOBA, POVA)
+// POVA provides one edge at fine scroll match (lcd_x=0, pre-shift pipe
+// MSBs). TOBA provides 159 edges from PX=9 to PX=167 (lcd_x=1–159,
+// post-shift pipe MSBs). Total: 160 pixels per line.
+//
+// Sprite merge uses the data-pin model: when sprite data is merged into
+// the pipe, the data pins update combinationally but no SEMU edge fires.
+// The last SEMU-written position is overwritten with post-merge data.
 
 use crate::game_boy::ppu::{
     PipelineRegisters, VideoControl,
@@ -10,8 +20,6 @@ use crate::game_boy::ppu::{
     screen::{self, Screen},
 };
 
-use super::LCD_X_OFFSET;
-use super::fine_scroll::FineScroll;
 use super::shifters::{BgShifter, ObjShifter};
 
 /// Resolve BG and OBJ pixel values into a final palette index through
@@ -49,48 +57,40 @@ fn resolve_pixel(
     PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color))
 }
 
-/// Main pixel output path (page 35 on the die).
+/// SEMU-edge pixel output (page 35 on the die).
 ///
-/// Reads the MSB from each shift register (already shifted in
-/// mode3_odd), forms the 2-bit color indices, applies priority
-/// logic, selects the winning pixel, and maps it through the
-/// appropriate palette to the LCD. The pixel counter has already
-/// been incremented before this call — lcd_x is derived from the
-/// post-increment value.
+/// Called when a SEMU edge fires — either POVA (lcd_x=0, even phase,
+/// pre-shift pipe MSBs) or TOBA (lcd_x=1–159, odd phase, post-shift
+/// pipe MSBs). Reads the current shift register MSBs, resolves the
+/// pixel through priority logic and palette mapping, writes to the
+/// framebuffer at `lcd_x`, and advances the LCD position counter.
 ///
-/// `toba` is AND2(WUSA, SACU) — the gated LCD clock signal. When
-/// true, the LCD shift register captures a pixel (PX=9 to PX=167,
-/// 159 clock edges). The LCD input NOR latch provides a 160th pixel
-/// at PX=8, where SACU fires but WUSA hasn't yet opened.
-pub(super) fn shift_pixel_out(
+/// Handles `window_zero_pixel`: when set, substitutes BG color 0
+/// without reading the BG shifter. The OBJ shifter is still read
+/// so sprite pixels mix against the zero background.
+pub(super) fn semu_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    fine_scroll: &FineScroll,
-    pixel_counter: u8,
-    toba: bool,
+    lcd_x: &mut u8,
     window_zero_pixel: &mut bool,
     screen: &mut Screen,
     regs: &PipelineRegisters,
     video: &VideoControl,
 ) {
+    let x = *lcd_x;
+    if x >= screen::PIXELS_PER_LINE {
+        return;
+    }
+    *lcd_x += 1;
+
+    let y = video.ly();
+
     // Window reactivation zero pixel: substitute color 0 for the BG
     // pixel without popping the BG shifter. The OBJ shifter is still
     // popped so sprite pixels mix against the zero pixel.
     if *window_zero_pixel {
         *window_zero_pixel = false;
         let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-
-        if !toba {
-            if !fine_scroll.pixel_clock_active() || pixel_counter < LCD_X_OFFSET {
-                return;
-            }
-        }
-        if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
-            return;
-        }
-
-        let x = pixel_counter - LCD_X_OFFSET;
-        let y = video.ly();
         let bg_color: u8 = 0;
 
         if regs.control.sprites_enabled() {
@@ -112,33 +112,39 @@ pub(super) fn shift_pixel_out(
         return;
     }
 
-    // Shift registers have already been advanced in mode3_odd
-    // (SACU clock edge fires before LOZE load). Read the post-
-    // shift/post-load MSB for pixel output.
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-
-    // TOBA (gated LCD clock) fires for PX=9-167 — when TOBA is
-    // true, the LCD shift register captures and all gating checks
-    // are satisfied (WUSA open, SACU active, ROXY done). The one
-    // visible pixel outside TOBA is the input NOR latch pixel at
-    // PX=8 (lcd_x=0): SACU fires but WUSA hasn't opened yet.
-    if !toba {
-        if !fine_scroll.pixel_clock_active() || pixel_counter < LCD_X_OFFSET {
-            return;
-        }
-    }
-
-    // Safety: WEGO clears WUSA after PX=167, naturally suppressing
-    // TOBA. This guard covers dots between WODU and latch clearing.
-    if pixel_counter >= LCD_X_OFFSET + screen::PIXELS_PER_LINE {
-        return;
-    }
-
-    let x = pixel_counter - LCD_X_OFFSET;
-    let y = video.ly();
-
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
     screen.set_pixel(x, y, mapped);
 }
 
+/// Data-pin pixel overwrite (sprite merge).
+///
+/// Called when sprite fetch completes and sprite data is merged into
+/// the pipe. No SEMU edge fires during sprite fetch (SACU frozen →
+/// TOBA=0), but the data pins (REMY/RAVO) update combinationally
+/// from the pipe MSBs — now containing merged sprite data. Both
+/// GateBoy and SameBoy capture this post-merge data at the trigger
+/// position. We overwrite the last SEMU-written position (lcd_x - 1)
+/// with the resolved pixel. Does not advance lcd_x.
+pub(super) fn sprite_overwrite_pixel_out(
+    bg_shifter: &BgShifter,
+    obj_shifter: &ObjShifter,
+    lcd_x: u8,
+    screen: &mut Screen,
+    regs: &PipelineRegisters,
+    video: &VideoControl,
+) {
+    if lcd_x == 0 {
+        return;
+    }
+    let x = lcd_x - 1;
+    if x >= screen::PIXELS_PER_LINE {
+        return;
+    }
+
+    let (bg_lo, bg_hi) = bg_shifter.read();
+    let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
+    let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
+    screen.set_pixel(x, video.ly(), mapped);
+}

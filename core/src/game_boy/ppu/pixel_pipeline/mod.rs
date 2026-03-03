@@ -48,15 +48,6 @@ pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
 /// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
 /// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
 const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
-/// Pixel counter value at which XAJO fires (AND2 of bit 0 and bit 3),
-/// setting the WUSA NOR latch and opening the LCD clock gate (TOBA).
-/// On hardware, this is the first dot with a visible LCD pixel.
-const XAJO_PIXEL: u8 = 9;
-/// Framebuffer X offset. The LCD's 159-stage shift register + input
-/// NOR latch produces 160 pixels from 159 clock edges (PX=9 to PX=167).
-/// For the framebuffer, we start output one PX before WUSA opens (PX=8)
-/// to model the input latch's extra pixel position. lcd_x = PX - 8.
-const LCD_X_OFFSET: u8 = XAJO_PIXEL - 1;
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
 pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
@@ -166,6 +157,12 @@ pub struct Rendering {
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
+    /// LCD shift register write position. Driven by SEMU edges:
+    /// POVA provides lcd_x=0 (the 160th clock edge, before WUSA opens),
+    /// then TOBA provides lcd_x=1–159 (PX=9–167, after WUSA opens).
+    /// Replaces the `pixel_counter - 8` approximation with hardware-
+    /// accurate SEMU-edge counting.
+    lcd_x: u8,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -213,6 +210,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
+            lcd_x: 0,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -244,6 +242,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
+            lcd_x: 0,
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -470,6 +469,7 @@ impl Rendering {
         self.wusa = false;
         self.voga = false;
         self.pova = false;
+        self.lcd_x = 0;
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -568,6 +568,23 @@ impl Rendering {
             regs,
             video,
         );
+
+        // POVA pixel output — the 160th LCD clock edge (before WUSA opens).
+        // On hardware, the LCD NOR latch captures pre-shift pipe MSBs at
+        // this moment. After WUSA opens, POVA overlaps with TOBA and the
+        // NOR latch tracks through to the post-shift state — TOBA handles
+        // those dots. Only output the POVA pixel on the initial POVA-only dot.
+        if self.pova && !self.wusa {
+            pixel_output::semu_pixel_out(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                &mut self.lcd_x,
+                &mut self.window_zero_pixel,
+                &mut self.screen,
+                regs,
+                video,
+            );
+        }
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -635,24 +652,17 @@ impl Rendering {
                         }
                     }
                     SpriteFetchPhase::Done => {
-                        // Data pin pixel output (sfetch-done dot).
+                        // Data-pin pixel overwrite (sfetch-done dot).
                         //
-                        // The pixel clock is frozen (FEPO blocks VYBO →
-                        // TYFA=0 → SACU=0 → TOBA=0), so no LCD shift
-                        // register clock edge fires. However, the data
-                        // pins (REMY/RAVO) are driven combinationally from
-                        // the pipe MSBs — now containing merged sprite data.
-                        // Both GateBoy (write every phase) and SameBoy
-                        // (output after merge) capture this post-merge data
-                        // at the trigger position. We do the same: re-output
-                        // at the frozen pixel_counter with toba=false.
-                        pixel_output::shift_pixel_out(
+                        // No SEMU edge fires during sprite fetch (SACU
+                        // frozen → TOBA=0), but the data pins (REMY/RAVO)
+                        // update combinationally after sprite merge.
+                        // Overwrite the last SEMU-written position with
+                        // the merged pixel data (data-pin model).
+                        pixel_output::sprite_overwrite_pixel_out(
                             &self.bg_shifter,
                             &self.obj_shifter,
-                            &self.fine_scroll,
-                            self.pixel_counter,
-                            false, // TOBA structurally false during sprite fetch
-                            &mut self.window_zero_pixel,
+                            self.lcd_x,
                             &mut self.screen,
                             regs,
                             video,
@@ -748,21 +758,16 @@ impl Rendering {
                 let _semu = toba || self.pova;
 
                 // Pixel output. The outer gate uses TYFA (not SEMU) so that
-                // window_zero_pixel is consumed during fine scroll gating
-                // (when ROXY is active and SACU/TOBA are suppressed).
-                // pixel_output uses TOBA to gate LCD shift register pixels
-                // and falls back to range checks for the input latch pixel.
-                // SEMU is the hardware LCD clock, but the framebuffer model
-                // cannot use it directly: POVA fires at PX≈1 (before the
-                // visible region) while the framebuffer maps PX=8 → lcd_x=0
-                // via the non-TOBA path, modeling the same 160th pixel.
-                if tyfa && !self.bg_shifter.is_empty() {
-                    pixel_output::shift_pixel_out(
+                // SEMU pixel output — TOBA component. When TOBA fires (WUSA
+                // open, SACU active), the LCD shift register captures the
+                // post-shift pipe MSBs. Write to the framebuffer at lcd_x
+                // and advance the counter. POVA's lcd_x=0 pixel was already
+                // output in mode3_even; TOBA provides lcd_x=1–159.
+                if toba {
+                    pixel_output::semu_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
-                        &self.fine_scroll,
-                        self.pixel_counter,
-                        toba,
+                        &mut self.lcd_x,
                         &mut self.window_zero_pixel,
                         &mut self.screen,
                         regs,
