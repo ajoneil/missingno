@@ -635,17 +635,24 @@ impl Rendering {
                         }
                     }
                     SpriteFetchPhase::Done => {
-                        // sfetch-done dot: pixel clock is still frozen, but on
-                        // hardware pixel output is unconditional — it reads the
-                        // pipe MSBs (now containing the newly-merged sprite data)
-                        // and writes to the same screen position as the trigger
-                        // dot, overwriting it. The pipes do NOT shift (FEPO
-                        // blocks clkpipe_gate).
-                        pixel_output::peek_pixel_out(
+                        // Data pin pixel output (sfetch-done dot).
+                        //
+                        // The pixel clock is frozen (FEPO blocks VYBO →
+                        // TYFA=0 → SACU=0 → TOBA=0), so no LCD shift
+                        // register clock edge fires. However, the data
+                        // pins (REMY/RAVO) are driven combinationally from
+                        // the pipe MSBs — now containing merged sprite data.
+                        // Both GateBoy (write every phase) and SameBoy
+                        // (output after merge) capture this post-merge data
+                        // at the trigger position. We do the same: re-output
+                        // at the frozen pixel_counter with toba=false.
+                        pixel_output::shift_pixel_out(
                             &self.bg_shifter,
                             &self.obj_shifter,
                             &self.fine_scroll,
                             self.pixel_counter,
+                            false, // TOBA structurally false during sprite fetch
+                            &mut self.window_zero_pixel,
                             &mut self.screen,
                             regs,
                             video,
