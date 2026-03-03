@@ -7,6 +7,7 @@ mod shifters;
 mod sprite_fetch;
 mod window;
 
+pub use fetcher::{FetcherStep, FetcherTick};
 pub use frame_phase::FramePhase;
 pub use sprite_fetch::SpriteFetchPhase;
 
@@ -18,7 +19,7 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
-use fetcher::{FetcherStep, TileFetcher};
+use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
@@ -96,6 +97,15 @@ pub struct PipelineSnapshot {
     pub obj_priority: u8,
     pub sprite_fetch_phase: Option<SpriteFetchPhase>,
     pub sprite_tile_data: Option<(u8, u8)>,
+    pub lcd_x: u8,
+    pub fetcher_step: FetcherStep,
+    pub fetcher_tick: FetcherTick,
+    pub rydy: bool,
+    pub rydy_pending: bool,
+    pub wusa: bool,
+    pub pova: bool,
+    pub pygo: bool,
+    pub wx_triggered: bool,
 }
 
 pub struct Rendering {
@@ -319,6 +329,15 @@ impl Rendering {
             obj_priority,
             sprite_fetch_phase,
             sprite_tile_data,
+            lcd_x: self.lcd_x,
+            fetcher_step: self.fetcher.step,
+            fetcher_tick: self.fetcher.tick,
+            rydy: self.rydy,
+            rydy_pending: self.rydy_pending,
+            wusa: self.wusa,
+            pova: self.pova,
+            pygo: self.pygo,
+            wx_triggered: self.wx_triggered,
         }
     }
 

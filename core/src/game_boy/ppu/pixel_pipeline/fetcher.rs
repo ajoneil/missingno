@@ -6,7 +6,7 @@ use super::super::tiles::TileIndex;
 use super::shifters::BgShifter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FetcherStep {
+pub enum FetcherStep {
     GetTile,
     GetTileDataLow,
     GetTileDataHigh,
@@ -20,7 +20,7 @@ pub(super) enum FetcherStep {
 /// T1 is the first dot (LEBO low → high edge); T2 is the second
 /// (LEBO high → low edge, when the actual work fires).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FetcherTick {
+pub enum FetcherTick {
     T1,
     T2,
 }
