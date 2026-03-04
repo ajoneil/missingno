@@ -152,13 +152,15 @@ pub struct Rendering {
     ///
     /// The TOMU DFF delay is modeled by operation ordering: TYFA reads
     /// `rydy` in mode3_odd before any modifications this dot take effect.
-    /// SET: `rydy_pending` is written in mode3_even, committed to `rydy`
-    /// at end of mode3_odd → TYFA sees old-RYDY=0, SACU fires once more.
-    /// CLEAR: SUZU writes `rydy=false` in mode3_odd after TYFA → TYFA
+    /// SET: `rydy_pending` is written in mode3_odd, committed to `rydy`
+    /// at start of the next mode3_even -> TYFA sees old-RYDY=0 on the
+    /// match dot and the next dot, allowing one more SACU fire.
+    /// CLEAR: SUZU writes `rydy=false` in mode3_odd after TYFA -> TYFA
     /// sees old-RYDY=1, clock stays frozen for that dot.
     rydy: bool,
-    /// Deferred RYDY SET — WX match fired in mode3_even, will be
-    /// committed to `rydy` at end of mode3_odd. Models TOMU DFF delay.
+    /// Deferred RYDY SET -- WX match fired in mode3_odd, will be
+    /// committed to `rydy` at start of the next mode3_even. Models
+    /// the PYCO->NUNU pipeline delay across the dot boundary.
     rydy_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
@@ -201,6 +203,12 @@ pub struct Rendering {
     /// Last observed WX output value, used to detect mid-scanline WX changes
     /// that should clear the wx_triggered latch.
     last_wx_value: u8,
+    /// Cached WX value for the NUKO comparator. On hardware, NUKO reads
+    /// the DFF8 slave output, which lags the master by one clock edge.
+    /// Updated unconditionally at the end of every mode3_odd from the
+    /// live DFF output. check_window_trigger reads this instead of the
+    /// live register, providing a 1-dot lag on mid-scanline WX writes.
+    nuko_wx: u8,
     /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every ODD edge.
     /// Reset to false on LCD-on only; free-runs across scanlines.
     wuvu: bool,
@@ -238,6 +246,7 @@ impl Rendering {
             window_zero_pixel: false,
             wx_triggered: false,
             last_wx_value: 0xFF,
+            nuko_wx: 0xFF,
             wuvu: false,
             byba: false,
             doba: false,
@@ -271,6 +280,7 @@ impl Rendering {
             window_zero_pixel: false,
             wx_triggered: false,
             last_wx_value: 0xFF,
+            nuko_wx: 0xFF,
             wuvu: false,
             byba: false,
             doba: false,
@@ -457,6 +467,13 @@ impl Rendering {
             // no head start needed.
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
+            // Seed NUKO's WX cache from the live DFF8 output at Mode 3
+            // entry. The DFF8 slave has been stable since before Mode 3,
+            // so the live output is the correct initial value. Without
+            // this, the first dot of Mode 3 would compare against 0xFF
+            // (from reset), causing a 1-dot-late trigger for WX values
+            // that should match on the first dot.
+            self.nuko_wx = regs.window.x_plus_7.output();
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
@@ -508,6 +525,7 @@ impl Rendering {
         self.window_zero_pixel = false;
         self.wx_triggered = false;
         self.last_wx_value = 0xFF;
+        self.nuko_wx = 0xFF;
         // WUVU free-runs across scanlines (no reset). BYBA and DOBA are
         // cleared by LINE_RST at the scanline boundary.
         self.byba = false;
@@ -517,9 +535,17 @@ impl Rendering {
     /// DELTA_EVEN Mode 3 processing.
     ///
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
-    /// PYGO), fine scroll match (PUXA), and window WX match (PYCO)
-    /// all fire on DELTA_EVEN.
+    /// PYGO), and fine scroll match (PUXA) fire on DELTA_EVEN.
     fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
+        // Commit deferred RYDY SET. check_window_trigger set rydy_pending
+        // in the previous mode3_odd; commit it here on DELTA_EVEN, modeling
+        // PYCO capturing NUKO. TYFA reads rydy=true on the next mode3_odd
+        // -> pixel clock frozen.
+        if self.rydy_pending {
+            self.rydy = true;
+            self.rydy_pending = false;
+        }
+
         let sprite_data_fetch = matches!(
             self.sprite_state,
             SpriteState::Fetching(SpriteFetch {
@@ -584,25 +610,6 @@ impl Rendering {
         } else {
             false
         };
-
-        // Window WX match fires on DELTA_EVEN (PYCO_WIN_MATCHp).
-        // Active during both startup fetch and normal rendering.
-        window::check_window_trigger(
-            self.rydy,
-            &mut self.rydy_pending,
-            &mut self.fetcher,
-            &mut self.nyka,
-            &mut self.pory,
-            &mut self.bg_shifter,
-            &mut self.fine_scroll,
-            &mut self.window_zero_pixel,
-            &mut self.wx_triggered,
-            &mut self.window_rendered,
-            self.pixel_counter,
-            &mut self.last_wx_value,
-            regs,
-            video,
-        );
 
         // POVA fires here but does NOT produce framebuffer output in
         // mode3_even. The LCD NOR latch captures pre-shift pipe MSBs,
@@ -850,14 +857,37 @@ impl Rendering {
             }
         }
 
-        // Commit deferred RYDY SET. The WX match in mode3_even set
-        // rydy_pending; now that TYFA has used the old rydy=false (allowing
-        // one more SACU fire), commit the new value. TYFA will read
-        // rydy=true on the next dot → pixel clock frozen.
-        if self.rydy_pending {
-            self.rydy = true;
-            self.rydy_pending = false;
-        }
+        // NUKO (combinational WX comparator) reads post-increment
+        // pixel_counter on the odd phase. Reads cached nuko_wx
+        // (DFF8 slave output) rather than the live register. Placed
+        // outside the sprite_state match because NUKO is combinational
+        // on hardware -- it fires regardless of sprite fetch state.
+        // During sprite fetch, pixel_counter is frozen, so the match
+        // just re-checks the same value each dot.
+        window::check_window_trigger(
+            self.rydy,
+            &mut self.rydy_pending,
+            &mut self.fetcher,
+            &mut self.nyka,
+            &mut self.pory,
+            &mut self.bg_shifter,
+            &mut self.fine_scroll,
+            &mut self.window_zero_pixel,
+            &mut self.wx_triggered,
+            &mut self.window_rendered,
+            self.pixel_counter,
+            &mut self.last_wx_value,
+            self.nuko_wx,
+            regs,
+            video,
+        );
+
+        // Update NUKO's WX input from the live DFF8 output. Placed
+        // unconditionally at the end of mode3_odd so the cache tracks
+        // the DFF output even during sprite fetch. On hardware, the
+        // DFF8 slave captures on every clock edge regardless of XYMU
+        // or sprite fetch state.
+        self.nuko_wx = regs.window.x_plus_7.output();
     }
 
     /// Check if a sprite should start fetching at the current pixel position.

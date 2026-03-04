@@ -10,7 +10,9 @@ use super::shifters::BgShifter;
 /// Also detects window reactivation zero pixel conditions when the window
 /// is already active.
 ///
-/// On hardware, the PYCO_WIN_MATCHp signal fires on DELTA_EVEN.
+/// On hardware, the NUKO comparator reads post-increment pixel_counter
+/// and DFF8 slave WX output on DELTA_ODD. The PYCO DFF captures the
+/// match on the next DELTA_EVEN.
 pub(super) fn check_window_trigger(
     rydy: bool,
     rydy_pending: &mut bool,
@@ -24,6 +26,7 @@ pub(super) fn check_window_trigger(
     window_rendered: &mut bool,
     pixel_counter: u8,
     last_wx_value: &mut u8,
+    nuko_wx: u8,
     regs: &PipelineRegisters,
     video: &VideoControl,
 ) {
@@ -35,20 +38,20 @@ pub(super) fn check_window_trigger(
     }
 
     // Detect mid-scanline WX changes to clear the trigger suppression latch.
-    let current_wx = regs.window.x_plus_7.output();
-    if current_wx != *last_wx_value {
+    if nuko_wx != *last_wx_value {
         *wx_triggered = false;
-        *last_wx_value = current_wx;
+        *last_wx_value = nuko_wx;
     }
 
-    if pixel_counter != current_wx {
+    if pixel_counter != nuko_wx {
         return;
     }
 
-    // Window already active — check for reactivation zero pixel (DMG only).
-    // The hardware condition is GetTile T1 (first tick). Since our WX check
-    // runs after advance_bg_fetcher in mode3_even, the fetcher has already
-    // been ticked: what was dot=0 (T1) is now dot=1. So we check dot=1.
+    // Window already active -- check for reactivation zero pixel (DMG only).
+    // The hardware condition is GetTile T1 (first tick). Our WX check
+    // runs in mode3_odd after SACU but before the ODD fetcher advance,
+    // so the fetcher has been ticked once (in mode3_even): what was
+    // dot=0 (T1) is now dot=1. So we check dot=1.
     // Reactivation requires the initial window fetch to have completed
     // (RYDY=0), modeling hardware's !window_is_being_fetched.
     if fetcher.fetching_window {
@@ -74,9 +77,10 @@ pub(super) fn check_window_trigger(
     // tile_temp into the BG pipe (never visible since the pixel clock
     // freezes), and SUZU/TEVO later overwrites with window tile data.
     //
-    // RYDY SET is deferred to end of mode3_odd (via rydy_pending) to
-    // model the TOMU DFF delay: TYFA reads old-RYDY=0 on this dot,
-    // allowing one more SACU fire before the pixel clock freezes.
+    // RYDY SET is deferred to mode3_even of the next dot (via
+    // rydy_pending), modeling the PYCO->NUNU pipeline delay. TYFA
+    // reads old-RYDY=0 on this dot and the next, allowing one more
+    // SACU fire before the pixel clock freezes.
     *wx_triggered = true;
     fine_scroll.reset_for_window();
     *rydy_pending = true;
