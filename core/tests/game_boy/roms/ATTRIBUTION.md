@@ -33,6 +33,13 @@ They were obtained from the [c-sp/game-boy-test-roms](https://github.com/c-sp/ga
 - **Copyright:** (C) 2018 Matt Currie <me@mattcurrie.com>
 - **Tests included:** PPU mid-scanline register change tests (DMG-blob reference screenshots)
 
+## gbmicrotest
+
+- **Author:** Austin Appleby (aappleby)
+- **Source:** https://github.com/aappleby/gbmicrotest
+- **License:** MIT
+- **Tests included:** Cycle-accuracy micro-tests covering PPU timing, timer/DIV, interrupts, DMA, OAM/VRAM access, power-on state, CPU bus, sprites, window, and scroll behavior. Each test checks one register at one specific cycle. Validated on DMG-CPU-08 hardware.
+
 ## SameSuite
 
 - **Author:** Lior Halphon (LIJI32)
