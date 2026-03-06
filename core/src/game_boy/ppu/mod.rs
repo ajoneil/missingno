@@ -399,11 +399,19 @@ impl Ppu {
                 }
             }
 
+            // Detect rising edge of STAT interrupt line (runs every dot,
+            // matching hardware's SUKO-clocked DFF which has phase granularity)
+            let stat_line_high = self.stat_line_active();
+            if stat_line_high && !self.video.stat_line_was_high {
+                result.request_stat = true;
+            }
+            self.video.stat_line_was_high = stat_line_high;
+
             if !is_mcycle {
                 return result;
             }
 
-            // Update comparison clock (runs while PPU is on)
+            // Update comparison clock (runs while PPU is on, M-cycle rate)
             self.video.latch_ly_comparison();
         } else {
             if !is_mcycle {
@@ -419,20 +427,13 @@ impl Ppu {
             return result;
         }
 
-        // Detect rising edge of STAT interrupt line
-        let stat_line_high = self.stat_line_active();
-        if stat_line_high && !self.video.stat_line_was_high {
-            result.request_stat = true;
-        }
-        self.video.stat_line_was_high = stat_line_high;
-
         result
     }
 
     /// Advance PPU by one dot. Call once per T-cycle.
     ///
-    /// Interrupt edge detection and LYC comparison only run on
-    /// M-cycle boundaries (when `is_mcycle` is true).
+    /// STAT interrupt edge detection runs every dot. LYC comparison
+    /// only runs on M-cycle boundaries (when `is_mcycle` is true).
     pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         self.tcycle_even(vram);
         self.tcycle_odd(is_mcycle, vram)
