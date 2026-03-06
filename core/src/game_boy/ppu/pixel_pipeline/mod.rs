@@ -490,8 +490,8 @@ impl Rendering {
         } else if avap {
             // AVAP fires: Mode 2 → Mode 3 transition.
             // Sets XYMU (rendering latch), clears BESU (scan flag), resets
-            // the BG fetcher (NYXU). The fetcher starts naturally at T1 —
-            // no head start needed.
+            // the BG fetcher (NYXU). On hardware, AVAP simultaneously resets
+            // NYXU — the fetcher begins advancing on the same dot.
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
             // Seed NUKO's WX cache from the live DFF8 output at Mode 3
@@ -501,6 +501,16 @@ impl Rendering {
             // (from reset), causing a 1-dot-late trigger for WX values
             // that should match on the first dot.
             self.nuko_wx = regs.window.x_plus_7.output();
+            // NYXU reset: the fetcher clock starts on the AVAP dot.
+            // Without this, the fetcher idles at GetTile/T1 for one dot,
+            // delaying the entire pipeline by 1 dot.
+            self.fetcher.advance(
+                self.pixel_counter,
+                self.window_line_counter,
+                regs,
+                video,
+                vram,
+            );
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {
