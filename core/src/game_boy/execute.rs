@@ -233,7 +233,13 @@ impl GameBoy {
                 }
             }
 
-            // Bus actions that occur between/after phase ticks.
+            // Odd phase (DELTA_HA): PPU half_odd, M-cycle subsystems.
+            new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+
+            // Bus actions after phase ticks. On hardware, CPU bus reads/writes
+            // see post-AVAP, post-WODU state because all signals propagate
+            // combinationally within the clock phase. Placing reads/writes
+            // after tick_dot_odd models this naturally.
             match dot_action {
                 DotAction::Idle => {}
                 DotAction::InternalOamBug { .. } => {
@@ -257,9 +263,6 @@ impl GameBoy {
                     self.write_byte(address, value);
                 }
             }
-
-            // Odd phase (DELTA_HA): PPU half_odd, M-cycle subsystems.
-            new_screen |= self.tick_dot_odd(is_mcycle_boundary);
 
             // Advance dot counter, wrapping at M-cycle boundary.
             dot = if dot.boga() {
@@ -419,7 +422,11 @@ impl GameBoy {
                     }
                 }
 
-                // Bus actions that occur between/after phase ticks.
+                // Odd phase.
+                new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+
+                // Bus actions after phase ticks. CPU reads/writes see
+                // post-tick_dot_odd state (post-AVAP, post-WODU).
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
@@ -439,9 +446,6 @@ impl GameBoy {
                         self.write_byte(address, value);
                     }
                 }
-
-                // Odd phase.
-                new_screen |= self.tick_dot_odd(is_mcycle_boundary);
 
                 // Advance dot counter.
                 dot = if dot.boga() {

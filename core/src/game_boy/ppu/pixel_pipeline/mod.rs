@@ -298,37 +298,14 @@ impl Rendering {
 
     /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
+    ///
+    /// No look-aheads needed: CPU bus reads/writes execute after
+    /// tick_dot_odd, so AVAP and WODU have already fired and
+    /// updated render_phase before stat_mode() is called.
     fn stat_mode(&self, video: &VideoControl) -> Mode {
         match self.render_phase {
             RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
-            RenderPhase::Drawing => {
-                // Combinational WODU look-ahead. On hardware, SACU fires the
-                // pixel counter, XUGU decodes PX=167, and WODU gates TARU
-                // (STAT mode 0) all within the same clock phase. The CPU sees
-                // Mode 0 on the T-cycle that PX reaches 167. Because our
-                // sequential execution runs stat_mode() before half_odd (where
-                // the counter actually increments), we predict the post-increment
-                // value here.
-                //
-                // SACU fires when: TYFA (!rydy && pygo) AND ROXY done (fine
-                // scroll complete) AND not sprite-fetching (SpriteState::Idle).
-                // XUGU decodes when post-increment PX has bits 0,1,2,5,7 all set
-                // (value 167). FEPO is false (we're in Idle, not Fetching).
-                // See mode3_odd (SpriteState::Idle arm, lines ~728-734) for the
-                // actual SACU-firing logic this prediction mirrors.
-                let sacu_would_fire = !self.rydy
-                    && self.pygo
-                    && self.fine_scroll.pixel_clock_active()
-                    && matches!(self.sprite_state, SpriteState::Idle);
-                let post_increment_px = self.pixel_counter.wrapping_add(1);
-                let xugu = post_increment_px & XUGU_MASK == XUGU_MASK;
-
-                if sacu_would_fire && xugu {
-                    Mode::HorizontalBlank
-                } else {
-                    Mode::Drawing
-                }
-            }
+            RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
             RenderPhase::LineStart if self.scanner.is_some() && video.dot() >= 4 => Mode::OamScan,
             RenderPhase::LineStart => Mode::HorizontalBlank,
@@ -381,25 +358,32 @@ impl Rendering {
     fn oam_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing
+            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
         )
     }
 
     fn vram_locked(&self) -> bool {
-        // Hardware: VRAM blocked by XYMU_RENDERINGp, cleared when WODU fires.
-        matches!(self.render_phase, RenderPhase::Drawing)
+        // Hardware: VRAM blocked by XYMU_RENDERINGp. XYMU stays set through
+        // DrawingComplete (WODU dot); VOGA clears it on the next even phase.
+        matches!(
+            self.render_phase,
+            RenderPhase::Drawing | RenderPhase::DrawingComplete
+        )
     }
 
     fn oam_write_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing
+            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
         )
     }
 
     fn vram_write_locked(&self) -> bool {
         // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
-        matches!(self.render_phase, RenderPhase::Drawing)
+        matches!(
+            self.render_phase,
+            RenderPhase::Drawing | RenderPhase::DrawingComplete
+        )
     }
 
     /// DELTA_EVEN half-cycle: setup phase.
