@@ -43,8 +43,12 @@ impl FramePhase {
 
     pub fn interrupt_mode(&self, video: &VideoControl) -> Mode {
         match self {
+            // During LCD startup, no STAT condition signal is active on hardware
+            // (TARU/TAPA/PARU/ROPO are all low). Mode::Drawing has no matching
+            // STAT enable bit, so returning it suppresses all mode-based STAT
+            // conditions without needing a special enum variant.
             FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
-                Mode::HorizontalBlank
+                Mode::Drawing
             }
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
