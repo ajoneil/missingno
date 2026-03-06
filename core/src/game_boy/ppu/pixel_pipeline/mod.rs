@@ -576,7 +576,8 @@ impl Rendering {
         );
 
         // During startup (POKY not yet latched), the BG fetcher advances
-        // on DELTA_EVEN (LEBO clock). After startup, it advances on ODD.
+        // on BOTH phases (LEBO clock runs at full speed). After startup,
+        // it advances on ODD only.
         // The BG fetcher is frozen during sprite data fetch.
         if !sprite_data_fetch && self.bg_shifter.is_empty() {
             self.fetcher.advance(
@@ -839,7 +840,24 @@ impl Rendering {
                 // TYFA/SACU. LEBO is gated only by the fetch-done condition
                 // (MOCE), not by RYDY (window hit), FEPO (sprite match),
                 // POKY (preload), or ROXY (fine scroll).
-                if !self.bg_shifter.is_empty() {
+                if self.bg_shifter.is_empty() && !self.pygo {
+                    // Startup: LEBO clock runs on both phases before PYGO
+                    // latches. The even-phase advance is in mode3_even; this
+                    // is the matching odd-phase advance. Together they give
+                    // 2 advances per dot, completing the 6-step startup fetch
+                    // (GetTile, GetTileDataLow, GetTileDataHigh) in 3 dots
+                    // instead of 5.
+                    self.fetcher.advance(
+                        self.pixel_counter,
+                        self.window_line_counter,
+                        regs,
+                        video,
+                        vram,
+                    );
+                } else if !self.bg_shifter.is_empty() {
+                    // Normal rendering: fetcher advances on odd phase only
+                    // (LEBO gated by POKY). Even-phase startup path in
+                    // mode3_even is inactive (bg_shifter non-empty).
                     self.fetcher.advance(
                         self.pixel_counter,
                         self.window_line_counter,
