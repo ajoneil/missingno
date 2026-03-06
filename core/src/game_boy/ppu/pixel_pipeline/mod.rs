@@ -85,11 +85,11 @@ pub enum RenderPhase {
     HorizontalBlank,
 }
 
-/// Phase-boundary snapshot of signals that need old-state behavior in
-/// `mode3_odd`. On hardware, DFFs output old values until the next clock
-/// edge — combinational logic within a phase reads a consistent pre-edge
-/// snapshot. This struct models that by capturing values at the top of
-/// `mode3_odd` before any sequential mutations.
+/// Within-phase snapshot of signals that are both read and written during
+/// `mode3_odd`. On hardware, combinational logic within a phase reads DFF
+/// outputs from before the clock edge. This struct captures those values
+/// at the top of `mode3_odd` before any sequential mutations within the
+/// same phase.
 struct OddPhaseInputs {
     /// RYDY value from the previous phase boundary. TYFA, SEKO, and SUZU
     /// all read this (modeling state_old.RYDY) rather than the live value.
@@ -321,8 +321,8 @@ impl Rendering {
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     ///
     /// No look-aheads needed: CPU bus reads/writes execute after
-    /// tick_dot_odd, so AVAP and WODU have already fired and
-    /// updated render_phase before stat_mode() is called.
+    /// both phases, so AVAP (ODD) and VOGA (EVEN) have already
+    /// fired and updated render_phase before stat_mode() is called.
     fn stat_mode(&self, video: &VideoControl) -> Mode {
         match self.render_phase {
             RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
@@ -406,7 +406,7 @@ impl Rendering {
         )
     }
 
-    /// DELTA_EVEN half-cycle: setup phase.
+    /// DELTA_EVEN half-cycle: setup phase (runs after DELTA_ODD).
     ///
     /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
@@ -434,9 +434,9 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures the WODU
-        // signal from the previous odd phase. DrawingComplete means WODU
-        // fired last phase.
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU from
+        // this dot's preceding ODD phase. DrawingComplete means WODU
+        // fired this dot.
         if self.render_phase == RenderPhase::DrawingComplete {
             self.voga = true;
         }
@@ -494,8 +494,8 @@ impl Rendering {
         } else if avap {
             // AVAP fires: Mode 2 → Mode 3 transition.
             // Sets XYMU (rendering latch), clears BESU (scan flag), resets
-            // the BG fetcher (NYXU). On hardware, AVAP simultaneously resets
-            // NYXU — the fetcher begins advancing on the same dot.
+            // the BG fetcher (NYXU). The fetcher begins advancing on the
+            // same dot's EVEN phase (mode3_even).
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
             // Seed NUKO's WX cache from the live DFF8 output at Mode 3
@@ -505,16 +505,10 @@ impl Rendering {
             // (from reset), causing a 1-dot-late trigger for WX values
             // that should match on the first dot.
             self.nuko_wx = regs.window.x_plus_7.output();
-            // NYXU reset: the fetcher clock starts on the AVAP dot.
-            // Without this, the fetcher idles at GetTile/T1 for one dot,
-            // delaying the entire pipeline by 1 dot.
-            self.fetcher.advance(
-                self.pixel_counter,
-                self.window_line_counter,
-                regs,
-                video,
-                vram,
-            );
+            // With ODD-before-EVEN ordering, this dot's half_even runs
+            // next and sees render_phase == Drawing, so mode3_even
+            // advances the fetcher naturally on the AVAP dot. No
+            // explicit pre-advance needed.
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {

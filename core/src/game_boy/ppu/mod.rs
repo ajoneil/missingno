@@ -334,9 +334,12 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// DELTA_EVEN phase: DFF latch advance and pixel pipeline even-phase
-    /// setup (fetcher control, mode transitions).
-    pub fn tcycle_even(&mut self, vram: &Vram) {
+    /// DELTA_EVEN phase: LCD initialization and DFF latch advance.
+    ///
+    /// The pixel pipeline's even-phase processing (fetcher control, mode
+    /// transitions) is deferred to `tcycle_odd`, where it runs after the
+    /// odd phase. This matches hardware's ODD-before-EVEN dot ordering.
+    pub fn tcycle_even(&mut self, _vram: &Vram) {
         if !self.control().video_enabled() {
             return;
         }
@@ -349,15 +352,15 @@ impl Ppu {
 
         // Advance DFF latches before pixel output.
         self.registers.tick_latches();
-
-        self.pixel_pipeline
-            .as_mut()
-            .unwrap()
-            .tcycle_even(&self.registers, &self.video, vram);
     }
 
     /// DELTA_ODD phase: pixel output, counter increment, M-cycle-rate
     /// interrupt edge detection and LYC comparison.
+    ///
+    /// Internally runs the pixel pipeline in hardware order: ODD phase
+    /// first (pixel output, WODU), then EVEN phase (fetcher control,
+    /// VOGA/mode transitions). This matches the DMG's DELTA_HA → DELTA_EF
+    /// ordering within each dot.
     pub fn tcycle_odd(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
@@ -368,14 +371,15 @@ impl Ppu {
         if self.control().video_enabled() {
             // When video is enabled but the pipeline hasn't been created yet
             // (LCDC was just written, tcycle_even hasn't run), skip all
-            // M-cycle-rate work. The comparison clock and edge detector
-            // don't start until the pipeline is initialized.
+            // work. The pipeline is initialized on the next tcycle_even.
             if self.pixel_pipeline.is_none() {
                 return result;
             }
 
             if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+                // Hardware order: ODD phase first, then EVEN phase.
                 pipeline.tcycle_odd(&self.registers, &self.video, &self.oam, vram);
+                pipeline.tcycle_even(&self.registers, &self.video, vram);
             }
 
             if self.video.advance_dot() {
