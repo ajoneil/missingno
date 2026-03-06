@@ -16,11 +16,12 @@ use super::shifters::BgShifter;
 /// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
 /// value (from `OddPhaseInputs`) to model this correctly.
 ///
-/// `rydy` is the phase-boundary snapshot (state_old); `rydy_out` is
-/// the mutable reference to the live field for SET on window trigger.
+/// `rydy` is the phase-boundary snapshot (state_old); `rydy_set_pending`
+/// is the TOMU DFF staging field. On window trigger, the function writes
+/// the staging field (not the live RYDY), giving a 2-dot SET pipeline.
 pub(super) fn check_window_trigger(
     rydy: bool,
-    rydy_out: &mut bool,
+    rydy_set_pending: &mut bool,
     fetcher: &mut TileFetcher,
     nyka: &mut bool,
     pory: &mut bool,
@@ -91,13 +92,14 @@ pub(super) fn check_window_trigger(
     // tile_temp into the BG pipe (never visible since the pixel clock
     // freezes), and SUZU/TEVO later overwrites with window tile data.
     //
-    // RYDY SET writes directly to self.rydy (via rydy_out). The TOMU
-    // DFF delay is modeled by OddPhaseInputs: TYFA/SEKO/SUZU already
-    // read inputs.rydy (the pre-edge snapshot), so this write only
-    // affects the next dot's snapshot.
+    // RYDY SET writes the TOMU staging field (rydy_set_pending). The
+    // TOMU commit block in mode3_odd propagates this into self.rydy
+    // AFTER the OddPhaseInputs snapshot on the next dot, giving a
+    // 2-dot pipeline: SET on dot N → self.rydy=true on dot N+1 →
+    // TYFA sees it on dot N+2.
     *wx_triggered = true;
     fine_scroll.reset_for_window();
-    *rydy_out = true;
+    *rydy_set_pending = true;
     fetcher.reset_for_window();
     // NAFY: window mode trigger always resets NYKA and PORY, forcing the
     // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window

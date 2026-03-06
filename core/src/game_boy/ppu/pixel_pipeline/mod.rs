@@ -161,14 +161,28 @@ pub struct Rendering {
     /// RYDY NOR latch — window hit signal. When high, gates TYFA
     /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
     /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. SET by check_window_trigger (WX
-    /// match), CLEAR by SUZU (window fetch complete).
+    /// during a window fetch stall. SET by the TOMU commit block (from
+    /// `rydy_set_pending`), CLEAR by SUZU (window fetch complete).
     ///
-    /// The TOMU DFF delay is modeled by `OddPhaseInputs`: TYFA, SEKO,
-    /// and SUZU all read `inputs.rydy` (the pre-edge snapshot), while
-    /// check_window_trigger writes `self.rydy` directly. This ensures
-    /// combinational logic sees the old value regardless of code ordering.
+    /// The TOMU DFF delay is modeled in two stages: `OddPhaseInputs`
+    /// snapshots `self.rydy` at the top of `mode3_odd`, then the TOMU
+    /// commit block propagates `rydy_set_pending` into `self.rydy`
+    /// AFTER the snapshot. This gives a 2-dot pipeline: SET on dot N,
+    /// snapshot sees false on dot N+1, snapshot sees true on dot N+2.
     rydy: bool,
+    /// TOMU DFF staging for RYDY SET. Models the 1-DFF delay between the
+    /// RYDY NOR latch output and TOMU's Q output that TYFA reads. When
+    /// check_window_trigger fires, it writes this staging field instead of
+    /// self.rydy directly. The staging field is committed to self.rydy
+    /// AFTER the OddPhaseInputs snapshot is taken (but before any other
+    /// processing), giving a 2-dot pipeline: SET on dot N, staging=true;
+    /// dot N+1 snapshot sees self.rydy=false, then staging commits
+    /// self.rydy=true; dot N+2 snapshot sees self.rydy=true.
+    ///
+    /// Only the SET path uses staging. SUZU's clear of self.rydy writes
+    /// directly (1-dot pipeline for clear), matching hardware where the
+    /// NOR latch RESET propagates through TOMU on the same edge.
+    rydy_set_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -243,6 +257,7 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
+            rydy_set_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -276,6 +291,7 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
+            rydy_set_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -540,6 +556,7 @@ impl Rendering {
         self.pygo = false;
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
+        self.rydy_set_pending = false;
         self.pixel_counter = 0;
         self.wusa = false;
         self.voga = false;
@@ -650,6 +667,18 @@ impl Rendering {
             rydy: self.rydy,
             pixel_counter: self.pixel_counter,
         };
+
+        // TOMU DFF commit: propagate staged RYDY SET into the live field.
+        // This runs AFTER the snapshot (so this dot's TYFA sees the old
+        // value) but BEFORE everything else. The NEXT dot's snapshot will
+        // see the committed value -- giving the 2-dot pipeline:
+        //   Dot N: check_window_trigger sets rydy_set_pending = true
+        //   Dot N+1: snapshot captures self.rydy = false (old); commit sets self.rydy = true
+        //   Dot N+2: snapshot captures self.rydy = true; TYFA sees it
+        if self.rydy_set_pending {
+            self.rydy = true;
+            self.rydy_set_pending = false;
+        }
 
         // PORY captures old NYKA (ODD edge, MYVO clock).
         // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
@@ -889,7 +918,7 @@ impl Rendering {
         // the same value each dot.
         window::check_window_trigger(
             inputs.rydy,
-            &mut self.rydy,
+            &mut self.rydy_set_pending,
             &mut self.fetcher,
             &mut self.nyka,
             &mut self.pory,
