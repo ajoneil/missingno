@@ -85,6 +85,21 @@ pub enum RenderPhase {
     HorizontalBlank,
 }
 
+/// Phase-boundary snapshot of signals that need old-state behavior in
+/// `mode3_odd`. On hardware, DFFs output old values until the next clock
+/// edge — combinational logic within a phase reads a consistent pre-edge
+/// snapshot. This struct models that by capturing values at the top of
+/// `mode3_odd` before any sequential mutations.
+struct OddPhaseInputs {
+    /// RYDY value from the previous phase boundary. TYFA, SEKO, and SUZU
+    /// all read this (modeling state_old.RYDY) rather than the live value.
+    rydy: bool,
+    /// Pixel counter value before SACU increment. NUKO (window trigger
+    /// comparator) reads pix_count DFF Q-outputs combinationally — the
+    /// pre-clock value, before the SACU edge advances the counter.
+    pixel_counter: u8,
+}
+
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
     pub render_phase: RenderPhase,
@@ -101,7 +116,6 @@ pub struct PipelineSnapshot {
     pub fetcher_step: FetcherStep,
     pub fetcher_tick: FetcherTick,
     pub rydy: bool,
-    pub rydy_pending: bool,
     pub wusa: bool,
     pub pova: bool,
     pub pygo: bool,
@@ -147,22 +161,14 @@ pub struct Rendering {
     /// RYDY NOR latch — window hit signal. When high, gates TYFA
     /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
     /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. Set by WX match (deferred via
-    /// `rydy_pending`), cleared by SUZU (window fetch complete).
+    /// during a window fetch stall. SET by check_window_trigger (WX
+    /// match), CLEAR by SUZU (window fetch complete).
     ///
-    /// The TOMU DFF delay is modeled by operation ordering: TYFA reads
-    /// `rydy` at the top of mode3_odd before `rydy_pending` is committed
-    /// later in the same mode3_odd phase.
-    /// SET: `rydy_pending` is written by check_window_trigger, committed
-    /// to `rydy` after TYFA but before the next check_window_trigger call
-    /// within the same mode3_odd -> TYFA sees old-RYDY=0 on the match dot.
-    /// CLEAR: SUZU writes `rydy=false` in mode3_odd after TYFA -> TYFA
-    /// sees old-RYDY=1, clock stays frozen for that dot.
+    /// The TOMU DFF delay is modeled by `OddPhaseInputs`: TYFA, SEKO,
+    /// and SUZU all read `inputs.rydy` (the pre-edge snapshot), while
+    /// check_window_trigger writes `self.rydy` directly. This ensures
+    /// combinational logic sees the old value regardless of code ordering.
     rydy: bool,
-    /// Deferred RYDY SET -- WX match fired by check_window_trigger,
-    /// committed to `rydy` later in mode3_odd after TYFA has read the
-    /// old value. Models the TOMU DFF delay within the same phase.
-    rydy_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -237,7 +243,6 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
-            rydy_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -271,7 +276,6 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
-            rydy_pending: false,
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -348,7 +352,6 @@ impl Rendering {
             fetcher_step: self.fetcher.step,
             fetcher_tick: self.fetcher.tick,
             rydy: self.rydy,
-            rydy_pending: self.rydy_pending,
             wusa: self.wusa,
             pova: self.pova,
             pygo: self.pygo,
@@ -537,7 +540,6 @@ impl Rendering {
         self.pygo = false;
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
-        self.rydy_pending = false;
         self.pixel_counter = 0;
         self.wusa = false;
         self.voga = false;
@@ -640,6 +642,15 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // Phase-boundary snapshot: capture pre-edge values of signals
+        // that are both read and written within this half-phase. All
+        // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
+        // `inputs`; all mutations go to `self`.
+        let inputs = OddPhaseInputs {
+            rydy: self.rydy,
+            pixel_counter: self.pixel_counter,
+        };
+
         // PORY captures old NYKA (ODD edge, MYVO clock).
         // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
         let old_nyka = self.nyka;
@@ -736,10 +747,10 @@ impl Rendering {
                 //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
                 //     and RenderPhase::Drawing (no WODU).
                 //
-                // TOMU DFF delay modeled by operation ordering: TYFA reads
-                // `rydy` before any modifications this dot (rydy_pending is
-                // committed at end of mode3_odd, SUZU clears rydy below).
-                let tyfa = !self.rydy && self.pygo;
+                // TOMU DFF delay: TYFA reads state_old.RYDY (the pre-edge
+                // value captured in `inputs`). Writes to self.rydy by SUZU
+                // or check_window_trigger don't affect this dot's TYFA.
+                let tyfa = !inputs.rydy && self.pygo;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
@@ -761,7 +772,7 @@ impl Rendering {
                 // after count reaches 7. Reading count HERE (before tick)
                 // naturally models this one-dot DFF delay. PANY gates RYFA
                 // on !RYDY (window hit blocks tile boundary detection).
-                let seko_fire = self.fine_scroll.count == 7 && !self.rydy;
+                let seko_fire = self.fine_scroll.count == 7 && !inputs.rydy;
 
                 // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
                 // overwrites the shift result on the same tick — the load
@@ -841,13 +852,11 @@ impl Rendering {
 
                 // SUZU: when the window fetch completes (fetcher reaches Idle
                 // while RYDY is active), load the first window tile into the
-                // BG pipe and clear the window hit signal. Placed after the
-                // fetcher advance so the completion is detected on the same
-                // dot it occurs. TYFA was already computed above using the old
-                // rydy=true value, so the pixel clock stays frozen for this
-                // dot (TOMU DFF delay). Next dot: TYFA reads rydy=false →
-                // clock resumes.
-                if self.rydy && self.fetcher.step == FetcherStep::Idle {
+                // BG pipe and clear the window hit signal. Reads inputs.rydy
+                // (state_old): TYFA already used the same old value above,
+                // so the pixel clock stays frozen this dot. Next dot: TYFA
+                // reads rydy=false → clock resumes.
+                if inputs.rydy && self.fetcher.step == FetcherStep::Idle {
                     self.fetcher.load_into(&mut self.bg_shifter);
                     self.rydy = false;
                 }
@@ -868,27 +877,19 @@ impl Rendering {
             }
         }
 
-        // Commit deferred RYDY SET. check_window_trigger set
-        // rydy_pending on a previous mode3_odd; commit it here
-        // after TYFA has already read self.rydy (modeling TOMU DFF
-        // delay). On hardware, NUNY fires on DELTA_ODD and RYDY
-        // SETs on the same phase, but TYFA reads state_old.RYDY
-        // (the pre-SET value from the previous phase boundary).
-        if self.rydy_pending {
-            self.rydy = true;
-            self.rydy_pending = false;
-        }
-
-        // NUKO (combinational WX comparator) reads post-increment
-        // pixel_counter on the odd phase. Reads cached nuko_wx
-        // (DFF8 slave output) rather than the live register. Placed
+        // NUKO (combinational WX comparator) reads pre-SACU
+        // pixel_counter (inputs.pixel_counter). On hardware, NUKO
+        // reads pix_count DFF Q-outputs combinationally; PYCO
+        // captures on the same ROCO edge that SACU increments
+        // pix_count. The pygo parameter gates the comparison
+        // (PYCO requires ROCO, which requires POKY). Placed
         // outside the sprite_state match because NUKO is combinational
-        // on hardware -- it fires regardless of sprite fetch state.
-        // During sprite fetch, pixel_counter is frozen, so the match
-        // just re-checks the same value each dot.
+        // — it fires regardless of sprite fetch state. During sprite
+        // fetch, pixel_counter is frozen, so the match just re-checks
+        // the same value each dot.
         window::check_window_trigger(
-            self.rydy,
-            &mut self.rydy_pending,
+            inputs.rydy,
+            &mut self.rydy,
             &mut self.fetcher,
             &mut self.nyka,
             &mut self.pory,
@@ -897,9 +898,10 @@ impl Rendering {
             &mut self.window_zero_pixel,
             &mut self.wx_triggered,
             &mut self.window_rendered,
-            self.pixel_counter,
+            inputs.pixel_counter,
             &mut self.last_wx_value,
             self.nuko_wx,
+            self.pygo,
             regs,
             video,
         );

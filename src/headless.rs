@@ -526,7 +526,6 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
             "fetcher_step": format!("{:?}", snap.fetcher_step),
             "fetcher_tick": format!("{:?}", snap.fetcher_tick),
             "rydy": snap.rydy,
-            "rydy_pending": snap.rydy_pending,
             "wusa": snap.wusa,
             "pova": snap.pova,
             "pygo": snap.pygo,

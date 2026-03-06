@@ -10,12 +10,17 @@ use super::shifters::BgShifter;
 /// Also detects window reactivation zero pixel conditions when the window
 /// is already active.
 ///
-/// On hardware, the NUKO comparator reads post-increment pixel_counter
-/// and DFF8 slave WX output on DELTA_ODD. The PYCO DFF captures the
-/// match on the next DELTA_EVEN.
+/// On hardware, the NUKO comparator reads pix_count DFF Q-outputs
+/// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
+/// match on ROCO, which derives from TYFA and requires POKY (modeled
+/// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
+/// value (from `OddPhaseInputs`) to model this correctly.
+///
+/// `rydy` is the phase-boundary snapshot (state_old); `rydy_out` is
+/// the mutable reference to the live field for SET on window trigger.
 pub(super) fn check_window_trigger(
     rydy: bool,
-    rydy_pending: &mut bool,
+    rydy_out: &mut bool,
     fetcher: &mut TileFetcher,
     nyka: &mut bool,
     pory: &mut bool,
@@ -27,6 +32,7 @@ pub(super) fn check_window_trigger(
     pixel_counter: u8,
     last_wx_value: &mut u8,
     nuko_wx: u8,
+    pygo: bool,
     regs: &PipelineRegisters,
     video: &VideoControl,
 ) {
@@ -44,6 +50,14 @@ pub(super) fn check_window_trigger(
     }
 
     if pixel_counter != nuko_wx {
+        return;
+    }
+
+    // PYGO gate: PYCO is clocked by ROCO (derived from TYFA), which
+    // requires POKY (pygo) to be set. Without POKY, ROCO has no edges
+    // and PYCO cannot capture the NUKO match. This prevents WX=0 from
+    // triggering before the initial BG fetch completes.
+    if !pygo {
         return;
     }
 
@@ -77,13 +91,13 @@ pub(super) fn check_window_trigger(
     // tile_temp into the BG pipe (never visible since the pixel clock
     // freezes), and SUZU/TEVO later overwrites with window tile data.
     //
-    // RYDY SET is deferred to mode3_even of the next dot (via
-    // rydy_pending), modeling the PYCO->NUNU pipeline delay. TYFA
-    // reads old-RYDY=0 on this dot and the next, allowing one more
-    // SACU fire before the pixel clock freezes.
+    // RYDY SET writes directly to self.rydy (via rydy_out). The TOMU
+    // DFF delay is modeled by OddPhaseInputs: TYFA/SEKO/SUZU already
+    // read inputs.rydy (the pre-edge snapshot), so this write only
+    // affects the next dot's snapshot.
     *wx_triggered = true;
     fine_scroll.reset_for_window();
-    *rydy_pending = true;
+    *rydy_out = true;
     fetcher.reset_for_window();
     // NAFY: window mode trigger always resets NYKA and PORY, forcing the
     // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
