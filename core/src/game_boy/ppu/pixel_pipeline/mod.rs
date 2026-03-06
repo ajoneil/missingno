@@ -151,16 +151,17 @@ pub struct Rendering {
     /// `rydy_pending`), cleared by SUZU (window fetch complete).
     ///
     /// The TOMU DFF delay is modeled by operation ordering: TYFA reads
-    /// `rydy` in mode3_odd before any modifications this dot take effect.
-    /// SET: `rydy_pending` is written in mode3_odd, committed to `rydy`
-    /// at start of the next mode3_even -> TYFA sees old-RYDY=0 on the
-    /// match dot and the next dot, allowing one more SACU fire.
+    /// `rydy` at the top of mode3_odd before `rydy_pending` is committed
+    /// later in the same mode3_odd phase.
+    /// SET: `rydy_pending` is written by check_window_trigger, committed
+    /// to `rydy` after TYFA but before the next check_window_trigger call
+    /// within the same mode3_odd -> TYFA sees old-RYDY=0 on the match dot.
     /// CLEAR: SUZU writes `rydy=false` in mode3_odd after TYFA -> TYFA
     /// sees old-RYDY=1, clock stays frozen for that dot.
     rydy: bool,
-    /// Deferred RYDY SET -- WX match fired in mode3_odd, will be
-    /// committed to `rydy` at start of the next mode3_even. Models
-    /// the PYCO->NUNU pipeline delay across the dot boundary.
+    /// Deferred RYDY SET -- WX match fired by check_window_trigger,
+    /// committed to `rydy` later in mode3_odd after TYFA has read the
+    /// old value. Models the TOMU DFF delay within the same phase.
     rydy_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
@@ -558,15 +559,6 @@ impl Rendering {
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
     /// PYGO), and fine scroll match (PUXA) fire on DELTA_EVEN.
     fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
-        // Commit deferred RYDY SET. check_window_trigger set rydy_pending
-        // in the previous mode3_odd; commit it here on DELTA_EVEN, modeling
-        // PYCO capturing NUKO. TYFA reads rydy=true on the next mode3_odd
-        // -> pixel clock frozen.
-        if self.rydy_pending {
-            self.rydy = true;
-            self.rydy_pending = false;
-        }
-
         let sprite_data_fetch = matches!(
             self.sprite_state,
             SpriteState::Fetching(SpriteFetch {
@@ -874,6 +866,17 @@ impl Rendering {
                     self.fine_scroll.reset_counter();
                 }
             }
+        }
+
+        // Commit deferred RYDY SET. check_window_trigger set
+        // rydy_pending on a previous mode3_odd; commit it here
+        // after TYFA has already read self.rydy (modeling TOMU DFF
+        // delay). On hardware, NUNY fires on DELTA_ODD and RYDY
+        // SETs on the same phase, but TYFA reads state_old.RYDY
+        // (the pre-SET value from the previous phase boundary).
+        if self.rydy_pending {
+            self.rydy = true;
+            self.rydy_pending = false;
         }
 
         // NUKO (combinational WX comparator) reads post-increment
