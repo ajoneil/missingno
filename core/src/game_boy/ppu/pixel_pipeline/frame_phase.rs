@@ -24,9 +24,9 @@ impl FramePhase {
         Self::ActiveDisplay(Rendering::new_lcd_on())
     }
 
-    pub fn mode(&self) -> Mode {
+    pub fn mode(&self, video: &VideoControl) -> Mode {
         match self {
-            FramePhase::ActiveDisplay(rendering) => rendering.mode(),
+            FramePhase::ActiveDisplay(rendering) => rendering.mode(video),
             FramePhase::VerticalBlank => Mode::VerticalBlank,
         }
     }
@@ -52,7 +52,7 @@ impl FramePhase {
             FramePhase::VerticalBlank if video.ly() == 144 && video.dot() < 4 => {
                 Mode::HorizontalBlank
             }
-            _ => self.mode(),
+            _ => self.mode(video),
         }
     }
 

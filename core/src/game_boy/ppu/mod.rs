@@ -259,7 +259,7 @@ impl Ppu {
 
     pub fn mode(&self) -> pixel_pipeline::Mode {
         if let Some(ppu) = &self.pixel_pipeline {
-            ppu.mode()
+            ppu.mode(&self.video)
         } else {
             pixel_pipeline::Mode::VerticalBlank
         }

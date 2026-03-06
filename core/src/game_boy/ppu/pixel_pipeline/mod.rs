@@ -287,11 +287,11 @@ impl Rendering {
         }
     }
 
-    fn mode(&self) -> Mode {
+    fn mode(&self, video: &VideoControl) -> Mode {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            _ if self.scanner.is_some() => Mode::OamScan,
+            RenderPhase::LineStart if self.scanner.is_some() && video.dot() >= 1 => Mode::OamScan,
             _ => Mode::HorizontalBlank,
         }
     }
@@ -317,7 +317,7 @@ impl Rendering {
         // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
         // from the previous HBlank pre-setting mode_for_interrupt. Line 0
         // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
-        self.mode() == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
+        self.mode(video) == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
