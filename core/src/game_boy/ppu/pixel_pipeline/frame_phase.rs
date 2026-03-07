@@ -47,9 +47,7 @@ impl FramePhase {
             // (TARU/TAPA/PARU/ROPO are all low). Mode::Drawing has no matching
             // STAT enable bit, so returning it suppresses all mode-based STAT
             // conditions without needing a special enum variant.
-            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => {
-                Mode::Drawing
-            }
+            FramePhase::ActiveDisplay(rendering) if rendering.lcd_turning_on => Mode::Drawing,
             // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
             // The internal mode-for-interrupt doesn't transition to Mode 1 until
             // 4 dots after VBlank entry.
@@ -127,10 +125,16 @@ impl FramePhase {
     }
 
     /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
-    pub fn tcycle_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
+    pub fn tcycle_even(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) {
         match self {
             FramePhase::ActiveDisplay(rendering) => {
-                rendering.half_even(regs, video, vram);
+                rendering.half_even(regs, video, oam, vram);
             }
             FramePhase::VerticalBlank => {}
         }

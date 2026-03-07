@@ -379,7 +379,7 @@ impl Ppu {
             if let Some(pipeline) = self.pixel_pipeline.as_mut() {
                 // Hardware order: ODD phase first, then EVEN phase.
                 pipeline.tcycle_odd(&self.registers, &self.video, &self.oam, vram);
-                pipeline.tcycle_even(&self.registers, &self.video, vram);
+                pipeline.tcycle_even(&self.registers, &self.video, &self.oam, vram);
             }
 
             if self.video.advance_dot() {

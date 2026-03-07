@@ -415,6 +415,7 @@ impl Rendering {
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
+        oam: &Oam,
         vram: &Vram,
     ) {
         // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
@@ -451,7 +452,7 @@ impl Rendering {
 
         // Mode 3 EVEN-phase processing
         if self.render_phase == RenderPhase::Drawing {
-            self.mode3_even(regs, video, vram);
+            self.mode3_even(regs, video, oam, vram);
         }
     }
 
@@ -571,7 +572,13 @@ impl Rendering {
     ///
     /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
     /// PYGO), and fine scroll match (PUXA) fire on DELTA_EVEN.
-    fn mode3_even(&mut self, regs: &PipelineRegisters, video: &VideoControl, vram: &Vram) {
+    fn mode3_even(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+    ) {
         let sprite_data_fetch = matches!(
             self.sprite_state,
             SpriteState::Fetching(SpriteFetch {
@@ -580,11 +587,9 @@ impl Rendering {
             })
         );
 
-        // During startup (bg_shifter empty), the BG fetcher advances on
-        // the even phase (LEBO clock). After startup, it advances on
-        // the odd phase only (normal rendering path in mode3_odd).
-        // The BG fetcher is frozen during sprite data fetch.
-        if !sprite_data_fetch && self.bg_shifter.is_empty() {
+        // BG fetcher advances on the even phase (LEBO clock), gated
+        // only by sprite data fetch. LEBO = NAND2(ALET, MOCE).
+        if !sprite_data_fetch {
             self.fetcher.advance(
                 self.pixel_counter,
                 self.window_line_counter,
@@ -592,6 +597,53 @@ impl Rendering {
                 video,
                 vram,
             );
+        }
+
+        // SUZU: window fetch completion. When the fetcher reaches Idle
+        // while RYDY is active, load the window tile into the BG pipe
+        // and clear the window hit signal. Co-located with the fetcher
+        // advance (both on EVEN) to preserve 0-delay relative timing.
+        //
+        // Hardware fires SUZU 2 half-phases after fetcher step 5 via
+        // the NYKA/PORY cascade. The emulator uses a 0-delay
+        // simplification (checking fetcher.step directly instead of
+        // routing through the cascade). This is safe because the
+        // simplification was already in place when checks lived in
+        // mode3_odd -- the only change is which phase both run on.
+        //
+        // self.rydy reflects the current dot's ODD phase changes
+        // (TOMU commit runs in mode3_odd before mode3_even), so the
+        // value read here is equivalent to inputs.rydy in the old
+        // mode3_odd location.
+        if self.rydy && self.fetcher.step == FetcherStep::Idle {
+            self.fetcher.load_into(&mut self.bg_shifter);
+            self.rydy = false;
+        }
+
+        // Sprite wait exit: when the BG fetcher reaches Idle during
+        // sprite wait (WaitingForFetcher) and the shifter is non-empty,
+        // transition to sprite data fetch. Co-located with the fetcher
+        // advance to preserve 0-delay relative timing.
+        //
+        // The transition sets the phase to FetchingData. The first
+        // sprite fetch advance fires on the next ODD phase (sprite
+        // data fetch runs on ODD in mode3_odd). This is a phase
+        // change from the old code where both the exit check and the
+        // first sf.advance() ran on the same ODD -- now exit is on
+        // EVEN and first advance is on next ODD. However, this is
+        // actually more correct: on hardware, the sprite fetch clock
+        // (VONU/TOBU) is separate from the BG fetcher clock (LEBO).
+        if let SpriteState::Fetching(ref mut sf) = self.sprite_state
+            && sf.phase == SpriteFetchPhase::WaitingForFetcher
+            && self.fetcher.step == FetcherStep::Idle
+            && !self.bg_shifter.is_empty()
+        {
+            sf.phase = SpriteFetchPhase::FetchingData;
+            // The first sprite fetch step fires immediately on the
+            // same dot as the wait exit. This preserves the old
+            // timing where both the exit check and first sf.advance()
+            // ran on the same phase.
+            sf.advance(regs, oam, vram);
         }
 
         // TAVE one-shot preload: when the fetcher first completes (reaches
@@ -687,40 +739,8 @@ impl Rendering {
             SpriteState::Fetching(ref mut sf) => {
                 match sf.phase {
                     SpriteFetchPhase::WaitingForFetcher => {
-                        // The BG fetcher continues advancing during the wait.
-                        // This is the hardware behavior: the fetcher keeps
-                        // stepping through its enum states, doing real tile
-                        // fetches that may load pixels into the shifter.
-                        self.fetcher.advance(
-                            self.pixel_counter,
-                            self.window_line_counter,
-                            regs,
-                            video,
-                            vram,
-                        );
-
-                        // Wait exits when BOTH conditions are met:
-                        // 1. The fetcher has completed GetTileDataHigh (reached Idle)
-                        // 2. The BG shifter is non-empty
-                        // This is an AND condition — both must be true simultaneously.
-                        let fetcher_past_data = self.fetcher.step == FetcherStep::Idle;
-                        let wait_done = fetcher_past_data && !self.bg_shifter.is_empty();
-
-                        if wait_done {
-                            // Freeze the BG fetcher at its current position.
-                            // It stays wherever the wait left it (typically Load)
-                            // and resumes from there after the sprite data fetch.
-
-                            // Transition to sprite data fetch. The first sprite
-                            // fetch step happens on the same dot as the wait
-                            // exit — the transition itself does not consume a dot.
-                            let sf = match self.sprite_state {
-                                SpriteState::Fetching(ref mut sf) => sf,
-                                _ => unreachable!(),
-                            };
-                            sf.phase = SpriteFetchPhase::FetchingData;
-                            sf.advance(regs, oam, vram);
-                        }
+                        // BG fetcher advances on EVEN (mode3_even).
+                        // Wait exit check is in mode3_even.
                     }
                     SpriteFetchPhase::FetchingData => {
                         // BG fetcher is frozen. Advance the sprite data pipeline.
@@ -862,27 +882,8 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                if !self.bg_shifter.is_empty() {
-                    // Normal rendering: fetcher advances on odd phase (LEBO).
-                    self.fetcher.advance(
-                        self.pixel_counter,
-                        self.window_line_counter,
-                        regs,
-                        video,
-                        vram,
-                    );
-                }
-
-                // SUZU: when the window fetch completes (fetcher reaches Idle
-                // while RYDY is active), load the first window tile into the
-                // BG pipe and clear the window hit signal. Reads inputs.rydy
-                // (state_old): TYFA already used the same old value above,
-                // so the pixel clock stays frozen this dot. Next dot: TYFA
-                // reads rydy=false → clock resumes.
-                if inputs.rydy && self.fetcher.step == FetcherStep::Idle {
-                    self.fetcher.load_into(&mut self.bg_shifter);
-                    self.rydy = false;
-                }
+                // BG fetcher advances on EVEN (mode3_even).
+                // SUZU check is in mode3_even.
 
                 // PECU (fine counter clock) derives from ROXO, which derives
                 // from TYFA. Fine scroll ticks whenever the pixel clock is
