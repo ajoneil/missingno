@@ -91,11 +91,6 @@ pub(super) fn check_window_trigger(
     // tile_temp into the BG pipe (never visible since the pixel clock
     // freezes), and SUZU/TEVO later overwrites with window tile data.
     //
-    // RYDY SET writes the TOMU staging field (rydy_set_pending). The
-    // TOMU commit block in mode3_odd propagates this into self.rydy
-    // AFTER the OddPhaseInputs snapshot on the next dot, giving a
-    // 2-dot pipeline: SET on dot N → self.rydy=true on dot N+1 →
-    // TYFA sees it on dot N+2.
     *wx_triggered = true;
     fine_scroll.reset_for_window();
     *rydy_set_pending = true;
