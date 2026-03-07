@@ -872,7 +872,14 @@ impl Rendering {
                 // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
                 // firing from PX=9 through PX=167 (159 clock edges).
-                let toba = self.wusa && sacu;
+                //
+                // RYDY gates SACU through the combinational chain
+                // RYDY->SOCY->TYFA->SEGU->SACU. Since this path is purely
+                // combinational (inverters, not DFFs), RYDY=1 suppresses
+                // SACU immediately — even on the dot where RYDY sets
+                // (where inputs.rydy is still false). We check self.rydy
+                // (the live post-commit value) to model this.
+                let toba = self.wusa && sacu && !self.rydy;
 
                 // LCD data pin lag model (REMY/RAVO qp_ext_old).
                 //
@@ -894,7 +901,11 @@ impl Rendering {
                 // On hardware, REMY/RAVO update combinationally every phase
                 // from the pipe MSBs. We update on every SACU edge (when
                 // the pipe shifts and new MSBs are available).
-                if sacu {
+                // Gate on !self.rydy: the combinational RYDY->SACU chain
+                // suppresses SACU immediately when RYDY sets, preventing
+                // stale BG data from entering the latch during the window
+                // fetch stall.
+                if sacu && !self.rydy {
                     self.lcd_data_latch = pixel_output::resolve_current_pixel(
                         &self.bg_shifter,
                         &self.obj_shifter,
