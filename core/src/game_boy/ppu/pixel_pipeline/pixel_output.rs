@@ -114,10 +114,5 @@ pub(super) fn sprite_overwrite_data_latch(
     window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) {
-    *lcd_data_latch = resolve_current_pixel(
-        bg_shifter,
-        obj_shifter,
-        window_zero_pixel,
-        regs,
-    );
+    *lcd_data_latch = resolve_current_pixel(bg_shifter, obj_shifter, window_zero_pixel, regs);
 }

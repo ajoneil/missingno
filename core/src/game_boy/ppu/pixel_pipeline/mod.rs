@@ -278,7 +278,7 @@ impl Rendering {
             lcd_turning_on: true,
             render_phase: RenderPhase::LineStart,
             sprites: SpriteStore::new(),
-            scanner: Some(OamScanner::new()),
+            scanner: None,
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -498,7 +498,7 @@ impl Rendering {
                 // (after BYBA captures FETO_old on the next XUPY rising edge).
                 self.scanner = None;
             }
-        } else if avap {
+        } else if avap && !self.lcd_turning_on {
             // AVAP fires: Mode 2 → Mode 3 transition.
             // Sets XYMU (rendering latch), clears BESU (scan flag), resets
             // the BG fetcher (NYXU). The fetcher begins advancing on the
@@ -516,6 +516,13 @@ impl Rendering {
             // next and sees render_phase == Drawing, so mode3_even
             // advances the fetcher naturally on the AVAP dot. No
             // explicit pre-advance needed.
+        } else if self.lcd_turning_on && video.dot() == 72 {
+            // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
+            // directly to Mode 3 at NOP 18 after the ldh that enables the LCD,
+            // skipping the OAM scan. 18 M-cycles * 4 dots = 72 dots.
+            self.render_phase = RenderPhase::Drawing;
+            self.lcd_turning_on = false;
+            self.nuko_wx = regs.window.x_plus_7.output();
         } else {
             // Mode 3 (drawing) — pixel output phase
             if self.render_phase == RenderPhase::Drawing {

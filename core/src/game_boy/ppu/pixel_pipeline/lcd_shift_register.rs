@@ -1,5 +1,5 @@
 use crate::game_boy::ppu::palette::PaletteIndex;
-use crate::game_boy::ppu::screen::{Screen, PIXELS_PER_LINE};
+use crate::game_boy::ppu::screen::{PIXELS_PER_LINE, Screen};
 
 /// 159-stage, 2-bit-wide LCD shift register with input latch.
 ///
