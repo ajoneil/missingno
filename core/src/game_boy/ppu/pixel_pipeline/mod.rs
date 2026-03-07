@@ -655,16 +655,6 @@ impl Rendering {
             sf.advance(regs, oam, vram);
         }
 
-        // TAVE one-shot preload: when the fetcher first completes (reaches
-        // Idle) while the BG shifter is still empty, load the tile data
-        // into the pipe. This models SUVU/TAVE on hardware. The pipe load
-        // sets POKY (bg_shifter.loaded). The one-shot guard (!nyka) ensures
-        // this only fires once per startup — after NYKA latches, the
-        // condition can't re-trigger.
-        if self.fetcher.step == FetcherStep::Idle && !self.bg_shifter.poky() && !self.nyka {
-            self.fetcher.load_into(&mut self.bg_shifter);
-        }
-
         // --- Cascade DFF propagation (EVEN edge: NYKA and PYGO) ---
         //
         // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
@@ -743,6 +733,17 @@ impl Rendering {
         let old_nyka = self.nyka;
         if old_nyka && !self.pory {
             self.pory = true;
+        }
+
+        // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
+        // Fires on the same ODD phase that PORY goes high, because NYKA
+        // was already latched on the preceding EVEN. The !PYGO guard
+        // models !POKY -- PYGO hasn't captured yet (it fires on the next
+        // EVEN), so !self.pygo is true at TAVE time. Once PYGO fires,
+        // !self.pygo permanently disables TAVE, matching hardware where
+        // POKY disables SUVU/TAVE.
+        if self.nyka && self.pory && !self.pygo {
+            self.fetcher.load_into(&mut self.bg_shifter);
         }
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
