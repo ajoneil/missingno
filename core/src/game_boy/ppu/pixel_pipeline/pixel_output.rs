@@ -6,20 +6,21 @@
 //
 // Pixel output is driven by SEMU edges — the true LCD clock signal:
 //   SEMU = OR2(TOBA, POVA)
-// POVA provides one edge at fine scroll match (lcd_x=0, pre-shift pipe
-// MSBs). TOBA provides 159 edges from PX=9 to PX=167 (lcd_x=1–159,
-// post-shift pipe MSBs). Total: 160 pixels per line.
+// POVA provides one edge at fine scroll match (the 160th clock edge,
+// pre-shift pipe MSBs). TOBA provides 159 edges from PX=9 to PX=167
+// (post-shift pipe MSBs). Total: 160 pixels per line.
 //
 // Sprite merge uses the data-pin model: when sprite data is merged into
 // the pipe, the data pins update combinationally but no SEMU edge fires.
-// The last SEMU-written position is overwritten with post-merge data.
+// The input latch of the LCD shift register is overwritten with
+// post-merge data.
 
 use crate::game_boy::ppu::{
-    PipelineRegisters, VideoControl,
+    PipelineRegisters,
     palette::{PaletteIndex, PaletteMap},
-    screen::{self, Screen},
 };
 
+use super::lcd_shift_register::{LcdShiftRegister, SEMU_CLOCKS_PER_LINE};
 use super::shifters::{BgShifter, ObjShifter};
 
 /// Resolve BG and OBJ pixel values into a final palette index through
@@ -59,11 +60,10 @@ fn resolve_pixel(
 
 /// SEMU-edge pixel output (page 35 on the die).
 ///
-/// Called when a SEMU edge fires — either POVA (lcd_x=0, even phase,
-/// pre-shift pipe MSBs) or TOBA (lcd_x=1–159, odd phase, post-shift
-/// pipe MSBs). Reads the current shift register MSBs, resolves the
-/// pixel through priority logic and palette mapping, writes to the
-/// framebuffer at `lcd_x`, and advances the LCD position counter.
+/// Called when a SEMU edge fires — either POVA (even phase, pre-shift
+/// pipe MSBs) or TOBA (odd phase, post-shift pipe MSBs). Reads the
+/// current shift register MSBs, resolves the pixel through priority
+/// logic and palette mapping, and shifts it into the LCD shift register.
 ///
 /// Handles `window_zero_pixel`: when set, substitutes BG color 0
 /// without reading the BG shifter. The OBJ shifter is still read
@@ -71,19 +71,13 @@ fn resolve_pixel(
 pub(super) fn semu_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    lcd_x: &mut u8,
+    shift_register: &mut LcdShiftRegister,
     window_zero_pixel: &mut bool,
-    screen: &mut Screen,
     regs: &PipelineRegisters,
-    video: &VideoControl,
 ) {
-    let x = *lcd_x;
-    if x >= screen::PIXELS_PER_LINE {
+    if shift_register.count() >= SEMU_CLOCKS_PER_LINE {
         return;
     }
-    *lcd_x += 1;
-
-    let y = video.ly();
 
     // Window reactivation zero pixel: substitute color 0 for the BG
     // pixel without popping the BG shifter. The OBJ shifter is still
@@ -102,20 +96,20 @@ pub(super) fn semu_pixel_out(
                     PaletteMap(regs.palettes.sprite1.output())
                 };
                 let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                screen.set_pixel(x, y, mapped);
+                shift_register.shift_in(mapped);
                 return;
             }
         }
 
         let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        screen.set_pixel(x, y, mapped);
+        shift_register.shift_in(mapped);
         return;
     }
 
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
-    screen.set_pixel(x, y, mapped);
+    shift_register.shift_in(mapped);
 }
 
 /// Data-pin pixel overwrite (sprite merge).
@@ -123,10 +117,9 @@ pub(super) fn semu_pixel_out(
 /// Called when sprite fetch completes and sprite data is merged into
 /// the pipe. No SEMU edge fires during sprite fetch (SACU frozen →
 /// TOBA=0), but the data pins (REMY/RAVO) update combinationally
-/// from the pipe MSBs — now containing merged sprite data. Both
-/// GateBoy and SameBoy capture this post-merge data at the trigger
-/// position. We overwrite the last SEMU-written position (lcd_x - 1)
-/// with the resolved pixel. Does not advance lcd_x.
+/// from the pipe MSBs — now containing merged sprite data. The input
+/// latch of the LCD shift register is overwritten with the resolved
+/// pixel. Does not advance the shift register count.
 ///
 /// Handles `window_zero_pixel`: if set, the last SEMU-written pixel
 /// was the window reactivation zero pixel. The sprite merge overwrites
@@ -135,21 +128,13 @@ pub(super) fn semu_pixel_out(
 pub(super) fn sprite_overwrite_pixel_out(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    lcd_x: u8,
+    shift_register: &mut LcdShiftRegister,
     window_zero_pixel: &mut bool,
-    screen: &mut Screen,
     regs: &PipelineRegisters,
-    video: &VideoControl,
 ) {
-    if lcd_x == 0 {
+    if shift_register.count() == 0 {
         return;
     }
-    let x = lcd_x - 1;
-    if x >= screen::PIXELS_PER_LINE {
-        return;
-    }
-
-    let y = video.ly();
 
     if *window_zero_pixel {
         *window_zero_pixel = false;
@@ -165,18 +150,18 @@ pub(super) fn sprite_overwrite_pixel_out(
                     PaletteMap(regs.palettes.sprite1.output())
                 };
                 let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                screen.set_pixel(x, y, mapped);
+                shift_register.overwrite_input_latch(mapped);
                 return;
             }
         }
 
         let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        screen.set_pixel(x, y, mapped);
+        shift_register.overwrite_input_latch(mapped);
         return;
     }
 
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
     let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
-    screen.set_pixel(x, y, mapped);
+    shift_register.overwrite_input_latch(mapped);
 }

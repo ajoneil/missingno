@@ -391,7 +391,7 @@ impl Ppu {
                             result.request_vblank = true;
                             self.pixel_pipeline = Some(FramePhase::VerticalBlank);
                         } else {
-                            rendering.reset_scanline();
+                            rendering.reset_scanline(self.video.ly());
                         }
                     }
                     Some(FramePhase::VerticalBlank) => {

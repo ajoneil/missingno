@@ -1,6 +1,7 @@
 mod fetcher;
 mod fine_scroll;
 mod frame_phase;
+mod lcd_shift_register;
 mod oam_scan;
 mod pixel_output;
 mod shifters;
@@ -21,6 +22,7 @@ use crate::game_boy::ppu::{
 
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
+use lcd_shift_register::LcdShiftRegister;
 use oam_scan::{OamScanner, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
@@ -202,12 +204,9 @@ pub struct Rendering {
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
-    /// LCD shift register write position. Driven by SEMU edges:
-    /// POVA provides lcd_x=0 (the 160th clock edge, before WUSA opens),
-    /// then TOBA provides lcd_x=1–159 (PX=9–167, after WUSA opens).
-    /// Replaces the `pixel_counter - 8` approximation with hardware-
-    /// accurate SEMU-edge counting.
-    lcd_x: u8,
+    /// LCD shift register — 159-stage pixel buffer between the pixel
+    /// mux and the Screen. Replaces direct framebuffer writes.
+    lcd_shift_register: LcdShiftRegister,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -262,7 +261,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
-            lcd_x: 0,
+            lcd_shift_register: LcdShiftRegister::new(),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -296,7 +295,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
-            lcd_x: 0,
+            lcd_shift_register: LcdShiftRegister::new(),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -364,7 +363,7 @@ impl Rendering {
             obj_priority,
             sprite_fetch_phase,
             sprite_tile_data,
-            lcd_x: self.lcd_x,
+            lcd_x: self.lcd_shift_register.count(),
             fetcher_step: self.fetcher.step,
             fetcher_tick: self.fetcher.tick,
             rydy: self.rydy,
@@ -447,6 +446,8 @@ impl Rendering {
         // reset_scanline; here we model the VOGA path.
         if self.voga {
             self.wusa = false;
+            // LCD_LATCH (PIN_55): transfer shift register to column drivers.
+            self.lcd_shift_register.latch_to_screen(&mut self.screen);
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
@@ -535,7 +536,7 @@ impl Rendering {
 
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_odd` when `advance_dot` signals a new scanline.
-    pub(super) fn reset_scanline(&mut self) {
+    pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.render_phase = RenderPhase::LineStart;
         if self.window_rendered {
             self.window_line_counter += 1;
@@ -556,7 +557,7 @@ impl Rendering {
         self.wusa = false;
         self.voga = false;
         self.pova = false;
-        self.lcd_x = 0;
+        self.lcd_shift_register.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -703,11 +704,9 @@ impl Rendering {
             pixel_output::semu_pixel_out(
                 &self.bg_shifter,
                 &self.obj_shifter,
-                &mut self.lcd_x,
+                &mut self.lcd_shift_register,
                 &mut self.window_zero_pixel,
-                &mut self.screen,
                 regs,
-                video,
             );
         }
     }
@@ -787,11 +786,9 @@ impl Rendering {
                         pixel_output::sprite_overwrite_pixel_out(
                             &self.bg_shifter,
                             &self.obj_shifter,
-                            self.lcd_x,
+                            &mut self.lcd_shift_register,
                             &mut self.window_zero_pixel,
-                            &mut self.screen,
                             regs,
-                            video,
                         );
                         self.sprite_state = SpriteState::Idle;
 
@@ -880,11 +877,9 @@ impl Rendering {
                     pixel_output::semu_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
-                        &mut self.lcd_x,
+                        &mut self.lcd_shift_register,
                         &mut self.window_zero_pixel,
-                        &mut self.screen,
                         regs,
-                        video,
                     );
                 } else if tyfa {
                     // Consume window_zero_pixel during pre-visible TYFA
