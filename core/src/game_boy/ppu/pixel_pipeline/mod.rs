@@ -91,6 +91,9 @@ pub enum RenderPhase {
 /// at the top of `mode3_odd` before any sequential mutations within the
 /// same phase.
 struct OddPhaseInputs {
+    /// RYDY value from the previous phase boundary. TYFA, SEKO, and SUZU
+    /// all read this (modeling state_old.RYDY) rather than the live value.
+    rydy: bool,
     /// Pixel counter value before SACU increment. NUKO (window trigger
     /// comparator) reads pix_count DFF Q-outputs combinationally — the
     /// pre-clock value, before the SACU edge advances the counter.
@@ -602,8 +605,26 @@ impl Rendering {
         // GetTile — once TAVE fires, the fetcher is no longer Idle.
         let lyry = self.fetcher.step == FetcherStep::Idle;
 
-        // SUZU (window fetch completion) fires in mode3_odd, co-located
-        // with PORY capture. See the PORY block in mode3_odd.
+        // SUZU: window fetch completion. When the fetcher reaches Idle
+        // while RYDY is active, load the window tile into the BG pipe
+        // and clear the window hit signal. Co-located with the fetcher
+        // advance (both on EVEN) to preserve 0-delay relative timing.
+        //
+        // Hardware fires SUZU 2 half-phases after fetcher step 5 via
+        // the NYKA/PORY cascade. The emulator uses a 0-delay
+        // simplification (checking fetcher.step directly instead of
+        // routing through the cascade). This is safe because the
+        // simplification was already in place when checks lived in
+        // mode3_odd -- the only change is which phase both run on.
+        //
+        // self.rydy reflects the current dot's ODD phase changes
+        // (TOMU commit runs in mode3_odd before mode3_even), so the
+        // value read here is equivalent to inputs.rydy in the old
+        // mode3_odd location.
+        if self.rydy && self.fetcher.step == FetcherStep::Idle {
+            self.fetcher.load_into(&mut self.bg_shifter);
+            self.rydy = false;
+        }
 
         // Sprite wait exit: when the BG fetcher reaches Idle during
         // sprite wait (WaitingForFetcher) and the shifter is non-empty,
@@ -686,10 +707,12 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // Phase-boundary snapshot: capture pre-edge value of pixel_counter.
-        // NUKO (window trigger comparator) reads pix_count DFF Q-outputs
-        // combinationally — the pre-clock value, before SACU increments.
+        // Phase-boundary snapshot: capture pre-edge values of signals
+        // that are both read and written within this half-phase. All
+        // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
+        // `inputs`; all mutations go to `self`.
         let inputs = OddPhaseInputs {
+            rydy: self.rydy,
             pixel_counter: self.pixel_counter,
         };
 
@@ -710,18 +733,6 @@ impl Rendering {
         let old_nyka = self.nyka;
         if old_nyka && !self.pory {
             self.pory = true;
-
-            // SUZU: window fetch completion. On hardware, SUZU fires when
-            // PORY goes high and the RYDY NOR latch is set. PORY's rising
-            // edge drops the RYDY NOR latch, and SUZU fires on that falling
-            // edge — loading the window tile into the BG pipe and clearing
-            // RYDY. Co-located with PORY capture because SUZU is triggered
-            // by PORY's rising edge. Reads live self.rydy — SUZU's gate is
-            // combinational with respect to RYDY on hardware.
-            if self.rydy {
-                self.fetcher.load_into(&mut self.bg_shifter);
-                self.rydy = false;
-            }
         }
 
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
@@ -785,18 +796,17 @@ impl Rendering {
             }
             SpriteState::Idle => {
                 // TYFA_CLKPIPE (page 21) = AND3(SOCY, POKY, VYBO).
-                //   SOCY = NOT(TOMU_WIN_HITp) — live RYDY inverted
+                //   SOCY = NOT(TOMU_WIN_HITp) — old-RYDY inverted
                 //   POKY = preload done latch (our `pygo`)
                 //   VYBO = NOR3(FEPO_old, WODU_old, MYVO) — sprite match and
                 //     hblank gate from previous phase. Both are structurally
                 //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
                 //     and RenderPhase::Drawing (no WODU).
                 //
-                // SOCY is combinational (NOT gate on RYDY NOR latch output).
-                // When SUZU clears RYDY earlier in this ODD phase, TYFA sees
-                // it immediately — no DFF delay. The 2-dot TOMU pipeline is
-                // preserved by the rydy_set_pending staging mechanism.
-                let tyfa = !self.rydy && self.pygo;
+                // TOMU DFF delay: TYFA reads state_old.RYDY (the pre-edge
+                // value captured in `inputs`). Writes to self.rydy by SUZU
+                // or check_window_trigger don't affect this dot's TYFA.
+                let tyfa = !inputs.rydy && self.pygo;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
@@ -818,7 +828,7 @@ impl Rendering {
                 // after count reaches 7. Reading count HERE (before tick)
                 // naturally models this one-dot DFF delay. PANY gates RYFA
                 // on !RYDY (window hit blocks tile boundary detection).
-                let seko_fire = self.fine_scroll.count == 7 && !self.rydy;
+                let seko_fire = self.fine_scroll.count == 7 && !inputs.rydy;
 
                 // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
                 // overwrites the shift result on the same tick — the load
@@ -886,6 +896,7 @@ impl Rendering {
                 self.check_sprite_trigger(regs);
 
                 // BG fetcher advances on EVEN (mode3_even).
+                // SUZU check is in mode3_even.
 
                 // PECU (fine counter clock) derives from ROXO, which derives
                 // from TYFA. Fine scroll ticks whenever the pixel clock is
@@ -914,7 +925,7 @@ impl Rendering {
         // fetch, pixel_counter is frozen, so the match just re-checks
         // the same value each dot.
         window::check_window_trigger(
-            self.rydy,
+            inputs.rydy,
             &mut self.rydy_set_pending,
             &mut self.fetcher,
             &mut self.nyka,
