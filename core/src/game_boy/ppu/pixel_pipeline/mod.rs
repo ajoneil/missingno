@@ -700,14 +700,6 @@ impl Rendering {
         // the next odd phase to compute SEMU = OR2(TOBA, POVA).
         // POVA gate uses PYGO (cascade DFF output) instead of POKY
         // (bg_shifter.loaded). Both go high on the same EVEN phase.
-        //
-        // Capture ROXY state before check_scroll_match (which may clear
-        // ROXY). POVA only drives the LCD shift register on the initial
-        // fine scroll match (ROXY=Gating → Done). Subsequent POVA
-        // re-fires at tile boundaries (SEKO resets count, NYZE resets
-        // between matches) do not clock the shift register — ROXY is
-        // already Done.
-        let roxy_gating = !self.fine_scroll.pixel_clock_active();
         self.pova = if self.pygo {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output())
@@ -715,28 +707,13 @@ impl Rendering {
             false
         };
 
-        // POVA fires on EVEN phase with pre-shift pipe data. On hardware,
-        // SEMU = OR2(TOBA, POVA) clocks the LCD shift register. The POVA
-        // pixel enters first (before WUSA opens at PX=9), is pushed through
-        // 159 stages by TOBA, and falls off the output end when the NOR
-        // latch fires at EOL. It is the "sacrificial" clock that establishes
-        // the correct shift register phase.
-        //
-        // Only the initial POVA (while ROXY is still Gating) drives
-        // shift_in. The NYZE rising-edge detector prevents re-fire on
-        // consecutive matches but resets between tile boundaries (SEKO
-        // resets fine_count to 0, intermediate non-matching values clear
-        // NYZE). Gating on ROXY prevents these tile-boundary re-fires
-        // from producing extra SEMU clocks.
-        if self.pova && roxy_gating {
-            let pova_pixel = pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                &mut self.window_zero_pixel,
-                regs,
-            );
-            self.lcd_shift_register.shift_in(pova_pixel);
-        }
+        // POVA fires for timing (SEMU edge, Mode 3 length) but does NOT
+        // produce a visible LCD pixel. The POVA SEMU edge clocks the LCD
+        // shift register on hardware, but the pixel it captures is
+        // overwritten: 160 subsequent TOBA-path pixels (159 TOBA edges +
+        // 1 NOR latch at EOL) push the POVA pixel off the far end.
+        // The lcd_data_latch is NOT updated here — POVA's BG data never
+        // enters the shift register in our model.
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -896,11 +873,13 @@ impl Rendering {
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
                 // firing from PX=9 through PX=167 (159 clock edges).
                 //
-                // RYDY suppresses TOBA indirectly through the TYFA→SEGU→SACU
-                // chain: TYFA reads inputs.rydy (state_old), so when RYDY=1,
-                // TYFA=0, SACU=false, and TOBA cannot fire. No explicit RYDY
-                // gate exists on TOBA in hardware.
-                let toba = self.wusa && sacu;
+                // RYDY gates TOBA indirectly via TYFA→SEGU→SACU. Since
+                // TYFA reads inputs.rydy (state_old), RYDY suppression
+                // takes effect one dot after RYDY sets. On the WX match
+                // dot itself, MYVO forces TYFA=0 on ODD regardless of
+                // RYDY, so TOBA fires one last time (outputting the
+                // lcd_data_latch's buffered BG pixel).
+                let toba = self.wusa && sacu && !self.rydy;
 
                 // LCD data pin lag model (REMY/RAVO qp_ext_old).
                 //

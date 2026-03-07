@@ -10,10 +10,10 @@
 //   value. This means each TOBA edge shifts the PREVIOUS dot's pixel
 //   into the LCD shift register, giving a 1-dot offset.
 //
-//   1 POVA edge + 159 TOBA edges + 1 NOR latch = 161 SEMU clocks.
-//   The POVA pixel enters first and is pushed off the output end
-//   by clock 161 (NOR latch). The register holds 160 visible pixels:
-//   159 TOBA pixels (PX=8–166 via lag) + 1 NOR latch pixel (PX=167).
+//   159 TOBA edges (PX=9–167) output pixels for PX=8–166.
+//   The 160th pixel (PX=167) is captured by the NOR latch at EOL.
+//   POVA fires for timing but its pixel is pushed off the register
+//   by the 160 subsequent pixels (159 TOBA + 1 NOR latch).
 //
 // Sprite merge updates the lcd_data_latch combinationally (no SEMU
 // edge), so the next TOBA captures post-merge sprite data.
@@ -114,5 +114,10 @@ pub(super) fn sprite_overwrite_data_latch(
     window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) {
-    *lcd_data_latch = resolve_current_pixel(bg_shifter, obj_shifter, window_zero_pixel, regs);
+    *lcd_data_latch = resolve_current_pixel(
+        bg_shifter,
+        obj_shifter,
+        window_zero_pixel,
+        regs,
+    );
 }

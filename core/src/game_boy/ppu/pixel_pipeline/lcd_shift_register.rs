@@ -1,5 +1,5 @@
 use crate::game_boy::ppu::palette::PaletteIndex;
-use crate::game_boy::ppu::screen::{PIXELS_PER_LINE, Screen};
+use crate::game_boy::ppu::screen::{Screen, PIXELS_PER_LINE};
 
 /// 159-stage, 2-bit-wide LCD shift register with input latch.
 ///
@@ -8,10 +8,9 @@ use crate::game_boy::ppu::screen::{PIXELS_PER_LINE, Screen};
 /// latch. At end-of-line, the 159 stages plus input latch (160 total)
 /// transfer to the column drivers (the Screen).
 ///
-/// SEMU clocks 161 times per line: 1 POVA + 159 TOBA + 1 NOR latch.
-/// The POVA pixel enters first, is pushed through 159 stages by
-/// TOBA, and falls off the output end on the 161st clock (NOR latch).
-/// The register holds exactly 160 displayable TOBA/NOR pixels.
+/// The POVA pixel enters first, then 159 TOBA pixels shift it out.
+/// After 160 clocks through 159 stages, the POVA pixel falls off
+/// the far end. Only TOBA pixels remain — no special-case discard.
 pub struct LcdShiftRegister {
     /// The 159 shift register stages plus 1 input latch = 160 slots.
     /// Index 0 is the output end (oldest pixel, shifts out first).
