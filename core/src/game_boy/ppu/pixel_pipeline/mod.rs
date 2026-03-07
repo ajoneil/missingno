@@ -683,8 +683,7 @@ impl Rendering {
         // the next odd phase to compute SEMU = OR2(TOBA, POVA).
         // POVA gate uses PYGO (cascade DFF output) instead of POKY
         // (bg_shifter.loaded). Both go high on the same EVEN phase.
-        // POVA is currently consumed only by _semu (dead code), so
-        // this has no behavioral effect.
+        let roxy_gating = !self.fine_scroll.pixel_clock_active();
         self.pova = if self.pygo {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output())
@@ -692,11 +691,25 @@ impl Rendering {
             false
         };
 
-        // POVA fires here but does NOT produce framebuffer output in
-        // mode3_even. The LCD NOR latch captures pre-shift pipe MSBs,
-        // but the framebuffer's first pixel (lcd_x=0) is output in
-        // mode3_odd after the shift — matching the post-shift data
-        // that hardware reference screenshots show at column 0.
+        // POVA pixel output: the first SEMU rising edge on this line.
+        // On hardware, SEMU = OR2(TOBA, POVA). At line start, SEMU=0
+        // (TOBA=0 because WUSA not yet open). POVA fires -> SEMU rises
+        // -> LCD captures pre-shift pipe MSBs. After this, ROXY=0
+        // prevents subsequent POVA re-fires from producing new SEMU
+        // edges (TOBA keeps SEMU high at tile boundaries). The
+        // roxy_gating check models this: ROXY is still Gating (high)
+        // only on the first fire.
+        if self.pova && roxy_gating {
+            pixel_output::semu_pixel_out(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                &mut self.lcd_x,
+                &mut self.window_zero_pixel,
+                &mut self.screen,
+                regs,
+                video,
+            );
+        }
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -859,22 +872,11 @@ impl Rendering {
                 // firing from PX=9 through PX=167 (159 clock edges).
                 let toba = self.wusa && sacu;
 
-                // SEMU_LCD_CLOCK = OR2(TOBA, POVA). The true LCD clock
-                // signal combining the regular pixel clock (TOBA) with the
-                // fine scroll match trigger (POVA). POVA adds one LCD clock
-                // edge on the initial fine scroll match (before WUSA opens),
-                // providing the 160th clock edge. On subsequent tile
-                // boundaries, POVA overlaps with TOBA on the same dot.
-                // RYPO = NOT(SEMU) drives PIN_53_LCD_CLOCK (active low).
-                let _semu = toba || self.pova;
-
-                // SEMU pixel output. TOBA provides lcd_x=1–159 (PX=9–167).
-                // The 160th pixel (lcd_x=0) is the input NOR latch pixel
-                // at PX=8 — one dot before WUSA opens. SACU fires but
-                // TOBA doesn't (WUSA=0). Reads post-shift pipe MSBs,
-                // matching hardware DMG-blob reference screenshots.
-                let input_latch_pixel = sacu && self.pixel_counter == 8;
-                if toba || input_latch_pixel {
+                // SEMU_LCD_CLOCK = OR2(TOBA, POVA). TOBA provides
+                // lcd_x=1–159 (PX=9–167). POVA (lcd_x=0) is handled in
+                // mode3_even where it outputs pre-shift pipe MSBs gated
+                // by the ROXY one-shot.
+                if toba {
                     pixel_output::semu_pixel_out(
                         &self.bg_shifter,
                         &self.obj_shifter,
