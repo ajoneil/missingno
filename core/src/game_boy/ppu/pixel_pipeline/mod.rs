@@ -684,7 +684,6 @@ impl Rendering {
         // the next odd phase to compute SEMU = OR2(TOBA, POVA).
         // POVA gate uses PYGO (cascade DFF output) instead of POKY
         // (bg_shifter.loaded). Both go high on the same EVEN phase.
-        let roxy_gating = !self.fine_scroll.pixel_clock_active();
         self.pova = if self.pygo {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output())
@@ -692,15 +691,17 @@ impl Rendering {
             false
         };
 
-        // POVA pixel output: the first SEMU rising edge on this line.
-        // On hardware, SEMU = OR2(TOBA, POVA). At line start, SEMU=0
-        // (TOBA=0 because WUSA not yet open). POVA fires -> SEMU rises
-        // -> LCD captures pre-shift pipe MSBs. After this, ROXY=0
-        // prevents subsequent POVA re-fires from producing new SEMU
-        // edges (TOBA keeps SEMU high at tile boundaries). The
-        // roxy_gating check models this: ROXY is still Gating (high)
-        // only on the first fire.
-        if self.pova && roxy_gating {
+        // POVA pixel output: SEMU = OR2(TOBA, POVA). POVA produces a
+        // SEMU rising edge (LCD clock) only when TOBA is not already
+        // driving SEMU high. TOBA = AND2(WUSA, SACU), so when WUSA is
+        // false, TOBA=0 and any POVA fire creates a new SEMU edge.
+        // This fires at: (1) initial fine scroll match at line start,
+        // and (2) window trigger boundary (fine counter reset, PUXA
+        // re-matches). During normal rendering with WUSA open, TOBA
+        // drives SEMU, so POVA doesn't create additional edges.
+        // The LCD shift register naturally handles the extra clocks —
+        // early pixels shift off the output end as new ones enter.
+        if self.pova && !self.wusa {
             pixel_output::semu_pixel_out(
                 &self.bg_shifter,
                 &self.obj_shifter,

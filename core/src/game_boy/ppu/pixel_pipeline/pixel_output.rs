@@ -20,7 +20,7 @@ use crate::game_boy::ppu::{
     palette::{PaletteIndex, PaletteMap},
 };
 
-use super::lcd_shift_register::{LcdShiftRegister, SEMU_CLOCKS_PER_LINE};
+use super::lcd_shift_register::LcdShiftRegister;
 use super::shifters::{BgShifter, ObjShifter};
 
 /// Resolve BG and OBJ pixel values into a final palette index through
@@ -75,10 +75,6 @@ pub(super) fn semu_pixel_out(
     window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) {
-    if shift_register.count() >= SEMU_CLOCKS_PER_LINE {
-        return;
-    }
-
     // Window reactivation zero pixel: substitute color 0 for the BG
     // pixel without popping the BG shifter. The OBJ shifter is still
     // popped so sprite pixels mix against the zero pixel.
