@@ -1,9 +1,6 @@
 use crate::game_boy::ppu::palette::PaletteIndex;
 use crate::game_boy::ppu::screen::{Screen, PIXELS_PER_LINE};
 
-/// Total SEMU clocks per line: 1 POVA + 159 TOBA = 160.
-pub const SEMU_CLOCKS_PER_LINE: u8 = PIXELS_PER_LINE;
-
 /// 159-stage, 2-bit-wide LCD shift register with input latch.
 ///
 /// Models the DMG LCD column driver input. On each SEMU clock edge,
@@ -46,14 +43,6 @@ impl LcdShiftRegister {
         self.stages.copy_within(1.., 0);
         self.stages[PIXELS_PER_LINE as usize - 1] = pixel;
         self.count += 1;
-    }
-
-    /// Overwrite the input latch (most recent pixel) without shifting.
-    /// Models the sprite merge data-pin update: no SEMU edge fires,
-    /// but the data pins update combinationally, changing the last
-    /// pixel that entered the register.
-    pub fn overwrite_input_latch(&mut self, pixel: PaletteIndex) {
-        self.stages[PIXELS_PER_LINE as usize - 1] = pixel;
     }
 
     /// Number of SEMU clocks received. Replaces `lcd_x` for pixel

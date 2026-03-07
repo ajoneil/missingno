@@ -4,23 +4,25 @@
 // single color index, applies priority logic, maps through the
 // appropriate palette, and writes the result to the screen.
 //
-// Pixel output is driven by SEMU edges — the true LCD clock signal:
-//   SEMU = OR2(TOBA, POVA)
-// POVA provides one edge at fine scroll match (the 160th clock edge,
-// pre-shift pipe MSBs). TOBA provides 159 edges from PX=9 to PX=167
-// (post-shift pipe MSBs). Total: 160 pixels per line.
+// LCD data pin lag model (REMY/RAVO qp_ext_old):
+//   The LCD data pins update combinationally from the pipe MSBs every
+//   phase, but the LCD captures qp_ext_old — the previous half-cycle's
+//   value. This means each TOBA edge shifts the PREVIOUS dot's pixel
+//   into the LCD shift register, giving a 1-dot offset.
 //
-// Sprite merge uses the data-pin model: when sprite data is merged into
-// the pipe, the data pins update combinationally but no SEMU edge fires.
-// The input latch of the LCD shift register is overwritten with
-// post-merge data.
+//   159 TOBA edges (PX=9–167) output pixels for PX=8–166.
+//   The 160th pixel (PX=167) is captured by the NOR latch at EOL.
+//   POVA fires for timing but its pixel is pushed off the register
+//   by the 160 subsequent pixels (159 TOBA + 1 NOR latch).
+//
+// Sprite merge updates the lcd_data_latch combinationally (no SEMU
+// edge), so the next TOBA captures post-merge sprite data.
 
 use crate::game_boy::ppu::{
     PipelineRegisters,
     palette::{PaletteIndex, PaletteMap},
 };
 
-use super::lcd_shift_register::LcdShiftRegister;
 use super::shifters::{BgShifter, ObjShifter};
 
 /// Resolve BG and OBJ pixel values into a final palette index through
@@ -58,26 +60,20 @@ fn resolve_pixel(
     PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color))
 }
 
-/// SEMU-edge pixel output (page 35 on the die).
-///
-/// Called when a SEMU edge fires — either POVA (even phase, pre-shift
-/// pipe MSBs) or TOBA (odd phase, post-shift pipe MSBs). Reads the
-/// current shift register MSBs, resolves the pixel through priority
-/// logic and palette mapping, and shifts it into the LCD shift register.
+/// Resolve the current pipe MSBs into a palette index for the LCD
+/// data latch (REMY/RAVO). Does NOT shift the LCD register — the
+/// resolved pixel is stored in the lcd_data_latch and shifted in
+/// later when a TOBA edge fires (modeling the qp_ext_old lag).
 ///
 /// Handles `window_zero_pixel`: when set, substitutes BG color 0
 /// without reading the BG shifter. The OBJ shifter is still read
 /// so sprite pixels mix against the zero background.
-pub(super) fn semu_pixel_out(
+pub(super) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    shift_register: &mut LcdShiftRegister,
     window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
-) {
-    // Window reactivation zero pixel: substitute color 0 for the BG
-    // pixel without popping the BG shifter. The OBJ shifter is still
-    // popped so sprite pixels mix against the zero pixel.
+) -> PaletteIndex {
     if *window_zero_pixel {
         *window_zero_pixel = false;
         let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
@@ -91,21 +87,16 @@ pub(super) fn semu_pixel_out(
                 } else {
                     PaletteMap(regs.palettes.sprite1.output())
                 };
-                let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                shift_register.shift_in(mapped);
-                return;
+                return sprite_palette.map(PaletteIndex(spr_color));
             }
         }
 
-        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        shift_register.shift_in(mapped);
-        return;
+        return PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
     }
 
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-    let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
-    shift_register.shift_in(mapped);
+    resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs)
 }
 
 /// Data-pin pixel overwrite (sprite merge).
@@ -113,51 +104,20 @@ pub(super) fn semu_pixel_out(
 /// Called when sprite fetch completes and sprite data is merged into
 /// the pipe. No SEMU edge fires during sprite fetch (SACU frozen →
 /// TOBA=0), but the data pins (REMY/RAVO) update combinationally
-/// from the pipe MSBs — now containing merged sprite data. The input
-/// latch of the LCD shift register is overwritten with the resolved
-/// pixel. Does not advance the shift register count.
-///
-/// Handles `window_zero_pixel`: if set, the last SEMU-written pixel
-/// was the window reactivation zero pixel. The sprite merge overwrites
-/// it with bg_color=0 + sprite mix (same as the original zero pixel
-/// but with merged sprite data).
-pub(super) fn sprite_overwrite_pixel_out(
+/// from the pipe MSBs — now containing merged sprite data. Updates
+/// the lcd_data_latch so the next TOBA edge captures the post-merge
+/// pixel instead of the pre-merge BG-only data.
+pub(super) fn sprite_overwrite_data_latch(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    shift_register: &mut LcdShiftRegister,
+    lcd_data_latch: &mut PaletteIndex,
     window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) {
-    if shift_register.count() == 0 {
-        return;
-    }
-
-    if *window_zero_pixel {
-        *window_zero_pixel = false;
-        let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-        let bg_color: u8 = 0;
-
-        if regs.control.sprites_enabled() {
-            let spr_color = (spr_hi << 1) | spr_lo;
-            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(regs.palettes.sprite0.output())
-                } else {
-                    PaletteMap(regs.palettes.sprite1.output())
-                };
-                let mapped = sprite_palette.map(PaletteIndex(spr_color));
-                shift_register.overwrite_input_latch(mapped);
-                return;
-            }
-        }
-
-        let mapped = PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
-        shift_register.overwrite_input_latch(mapped);
-        return;
-    }
-
-    let (bg_lo, bg_hi) = bg_shifter.read();
-    let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-    let mapped = resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs);
-    shift_register.overwrite_input_latch(mapped);
+    *lcd_data_latch = resolve_current_pixel(
+        bg_shifter,
+        obj_shifter,
+        window_zero_pixel,
+        regs,
+    );
 }

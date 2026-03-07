@@ -17,6 +17,7 @@ use core::fmt;
 use crate::game_boy::ppu::{
     PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
+    palette::PaletteIndex,
     screen::Screen,
 };
 
@@ -207,6 +208,13 @@ pub struct Rendering {
     /// LCD shift register — 159-stage pixel buffer between the pixel
     /// mux and the Screen. Replaces direct framebuffer writes.
     lcd_shift_register: LcdShiftRegister,
+    /// LCD data pin latch (REMY/RAVO qp_ext_old model). On hardware,
+    /// the LCD data pins are combinational from the pipe MSBs, but the
+    /// LCD captures `qp_ext_old()` — the previous half-cycle's value.
+    /// This buffer holds the resolved pixel from the previous SACU edge.
+    /// TOBA shifts this buffered value into the LCD shift register,
+    /// giving a 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
+    lcd_data_latch: PaletteIndex,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -262,6 +270,7 @@ impl Rendering {
             voga: false,
             pova: false,
             lcd_shift_register: LcdShiftRegister::new(),
+            lcd_data_latch: PaletteIndex(0),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -296,6 +305,7 @@ impl Rendering {
             voga: false,
             pova: false,
             lcd_shift_register: LcdShiftRegister::new(),
+            lcd_data_latch: PaletteIndex(0),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -446,8 +456,14 @@ impl Rendering {
         // reset_scanline; here we model the VOGA path.
         if self.voga {
             self.wusa = false;
-            // LCD_LATCH (PIN_55): transfer shift register to column drivers.
-            self.lcd_shift_register.latch_to_screen(&mut self.screen);
+            if self.render_phase == RenderPhase::DrawingComplete {
+                // LCD NOR latch provides the 160th pixel: the data pins'
+                // current value at latch time. This is the lcd_data_latch
+                // (last resolved pixel from the final SACU edge, PX=167).
+                self.lcd_shift_register.shift_in(self.lcd_data_latch);
+                // LCD_LATCH (PIN_55): transfer shift register to column drivers.
+                self.lcd_shift_register.latch_to_screen(&mut self.screen);
+            }
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
@@ -691,25 +707,13 @@ impl Rendering {
             false
         };
 
-        // POVA pixel output: SEMU = OR2(TOBA, POVA). POVA produces a
-        // SEMU rising edge (LCD clock) only when TOBA is not already
-        // driving SEMU high. TOBA = AND2(WUSA, SACU), so when WUSA is
-        // false, TOBA=0 and any POVA fire creates a new SEMU edge.
-        // This fires at: (1) initial fine scroll match at line start,
-        // and (2) window trigger boundary (fine counter reset, PUXA
-        // re-matches). During normal rendering with WUSA open, TOBA
-        // drives SEMU, so POVA doesn't create additional edges.
-        // The LCD shift register naturally handles the extra clocks —
-        // early pixels shift off the output end as new ones enter.
-        if self.pova && !self.wusa {
-            pixel_output::semu_pixel_out(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                &mut self.lcd_shift_register,
-                &mut self.window_zero_pixel,
-                regs,
-            );
-        }
+        // POVA fires for timing (SEMU edge, Mode 3 length) but does NOT
+        // produce a visible LCD pixel. The POVA SEMU edge clocks the LCD
+        // shift register on hardware, but the pixel it captures is
+        // overwritten: 160 subsequent TOBA-path pixels (159 TOBA edges +
+        // 1 NOR latch at EOL) push the POVA pixel off the far end.
+        // The lcd_data_latch is NOT updated here — POVA's BG data never
+        // enters the shift register in our model.
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -784,10 +788,10 @@ impl Rendering {
                         // update combinationally after sprite merge.
                         // Overwrite the last SEMU-written position with
                         // the merged pixel data (data-pin model).
-                        pixel_output::sprite_overwrite_pixel_out(
+                        pixel_output::sprite_overwrite_data_latch(
                             &self.bg_shifter,
                             &self.obj_shifter,
-                            &mut self.lcd_shift_register,
+                            &mut self.lcd_data_latch,
                             &mut self.window_zero_pixel,
                             regs,
                         );
@@ -870,19 +874,36 @@ impl Rendering {
                 // firing from PX=9 through PX=167 (159 clock edges).
                 let toba = self.wusa && sacu;
 
-                // SEMU_LCD_CLOCK = OR2(TOBA, POVA). TOBA provides
-                // lcd_x=1–159 (PX=9–167). POVA (lcd_x=0) is handled in
-                // mode3_even where it outputs pre-shift pipe MSBs gated
-                // by the ROXY one-shot.
+                // LCD data pin lag model (REMY/RAVO qp_ext_old).
+                //
+                // On hardware, the LCD data pins (REMY/RAVO) are combinational
+                // from the pipe MSBs, but the LCD captures qp_ext_old — the
+                // previous half-cycle's pin state. TOBA shifts the BUFFERED
+                // pixel (from the previous SACU edge) into the LCD register,
+                // then the latch updates to the current pipe state.
+                //
+                // This gives a 1-dot offset: TOBA at PX=9 outputs PX=8's
+                // pixel, TOBA at PX=10 outputs PX=9's pixel, etc. Total:
+                // 159 TOBA edges output pixels for PX=8–166. The 160th pixel
+                // (PX=167) is captured by the NOR latch at end-of-line.
                 if toba {
-                    pixel_output::semu_pixel_out(
+                    self.lcd_shift_register.shift_in(self.lcd_data_latch);
+                }
+
+                // Update the LCD data latch with the current pipe state.
+                // On hardware, REMY/RAVO update combinationally every phase
+                // from the pipe MSBs. We update on every SACU edge (when
+                // the pipe shifts and new MSBs are available).
+                if sacu {
+                    self.lcd_data_latch = pixel_output::resolve_current_pixel(
                         &self.bg_shifter,
                         &self.obj_shifter,
-                        &mut self.lcd_shift_register,
                         &mut self.window_zero_pixel,
                         regs,
                     );
-                } else if tyfa {
+                }
+
+                if !toba && tyfa {
                     // Consume window_zero_pixel during pre-visible TYFA
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window
