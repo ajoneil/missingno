@@ -15,7 +15,7 @@
 /// The `loaded` flag models the POKY_PRELOAD_LATCHp signal on hardware,
 /// which gates SACU_CLKPIPE (pixel clock) until the first tile load
 /// completes. Once latched, it stays set until a window trigger or
-/// scanline reset clears it.
+/// scanline reset clears it. Exposed via `poky()`.
 pub(super) struct BgShifter {
     low: u8,
     high: u8,
@@ -31,11 +31,11 @@ impl BgShifter {
         }
     }
 
-    /// Whether the pipe has been loaded since the last clear/reset.
-    /// Models POKY_PRELOAD_LATCHp — false before the first tile load,
-    /// true after. Gates pixel clock and pixel output.
-    pub(super) fn is_empty(&self) -> bool {
-        !self.loaded
+    /// Whether the POKY_PRELOAD_LATCHp signal is set. POKY gates the pixel
+    /// clock (TYFA/SACU) and indicates the first tile load has completed.
+    /// Set by tile load, cleared by window trigger or scanline reset.
+    pub(super) fn poky(&self) -> bool {
+        self.loaded
     }
 
     /// Parallel load from a tile fetch. On hardware, the DFF22 shift

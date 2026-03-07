@@ -71,10 +71,9 @@ pub(super) fn check_window_trigger(
     // (RYDY=0), modeling hardware's !window_is_being_fetched.
     if fetcher.fetching_window {
         if !rydy
-            && !bg_shifter.is_empty()
+            && bg_shifter.poky()
             && fetcher.step == FetcherStep::GetTile
             && fetcher.tick == FetcherTick::T2
-            && !bg_shifter.is_empty()
         {
             *window_zero_pixel = true;
         }

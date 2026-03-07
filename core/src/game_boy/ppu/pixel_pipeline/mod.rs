@@ -636,7 +636,7 @@ impl Rendering {
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
             && self.fetcher.step == FetcherStep::Idle
-            && !self.bg_shifter.is_empty()
+            && self.bg_shifter.poky()
         {
             sf.phase = SpriteFetchPhase::FetchingData;
             // The first sprite fetch step fires immediately on the
@@ -652,7 +652,7 @@ impl Rendering {
         // sets POKY (bg_shifter.loaded). The one-shot guard (!nyka) ensures
         // this only fires once per startup — after NYKA latches, the
         // condition can't re-trigger.
-        if self.fetcher.step == FetcherStep::Idle && self.bg_shifter.is_empty() && !self.nyka {
+        if self.fetcher.step == FetcherStep::Idle && !self.bg_shifter.poky() && !self.nyka {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
@@ -669,7 +669,7 @@ impl Rendering {
         // detect LYRY indirectly: the BG shifter becoming loaded (POKY)
         // is the observable consequence. NYKA latches high and stays high
         // until reset by NAFY (window trigger) or scanline end.
-        if !self.bg_shifter.is_empty() && !self.nyka {
+        if self.bg_shifter.poky() && !self.nyka {
             self.nyka = true;
         }
 
@@ -683,7 +683,7 @@ impl Rendering {
         // Active only after startup (POKY latched). POVA = AND2(PUXA,
         // !NYZE) fires on the rising edge of the match — stored for
         // the next odd phase to compute SEMU = OR2(TOBA, POVA).
-        self.pova = if !self.bg_shifter.is_empty() {
+        self.pova = if self.bg_shifter.poky() {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output())
         } else {
@@ -871,7 +871,7 @@ impl Rendering {
                         regs,
                         video,
                     );
-                } else if tyfa && !self.bg_shifter.is_empty() {
+                } else if tyfa {
                     // Consume window_zero_pixel during pre-visible TYFA
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window
