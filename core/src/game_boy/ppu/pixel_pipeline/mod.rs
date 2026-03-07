@@ -419,13 +419,6 @@ impl Rendering {
         // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
         self.doba = self.byba;
 
-        // CATU_LINE_ENDp fires at phase_lx=2 (dot 1), setting the
-        // BESU_SCAN_DONEn NOR latch → RenderPhase::OamScan.
-        // BESU is never set on line 0 (hardware special case).
-        if video.dot() == 1 && video.ly() != 0 {
-            self.render_phase = RenderPhase::OamScan;
-        }
-
         if self.scanner.is_some() {
             // Mode 2: OAM scan uses M-cycle sub-phases, not simple
             // EVEN/ODD. Full scan processing deferred to half_odd
@@ -549,7 +542,11 @@ impl Rendering {
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_odd` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.render_phase = RenderPhase::LineStart;
+        self.render_phase = if scanline == 0 {
+            RenderPhase::LineStart
+        } else {
+            RenderPhase::OamScan
+        };
         if self.window_rendered {
             self.window_line_counter += 1;
         }
@@ -679,12 +676,10 @@ impl Rendering {
             sf.advance(regs, oam, vram);
         }
 
-        // --- Cascade DFF propagation (EVEN edge: NYKA and PYGO) ---
+        // --- Cascade DFF propagation (EVEN edge: NYKA) ---
         //
         // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
-        // NYKA and PYGO are clocked on ALET (EVEN rising edge).
-        // Each DFF captures its data input from the previous half-phase.
-        let old_pory = self.pory;
+        // NYKA is clocked on ALET (EVEN rising edge).
 
         // NYKA captures LYRY (fetcher step == Idle). The `lyry` local
         // was captured after fetcher.advance() but before TAVE resets
@@ -693,12 +688,6 @@ impl Rendering {
         // trigger) or scanline end.
         if lyry && !self.nyka {
             self.nyka = true;
-        }
-
-        // PYGO captures old PORY (from the preceding ODD phase).
-        // PYGO latches high and stays high until scanline end.
-        if old_pory && !self.pygo {
-            self.pygo = true;
         }
 
         // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
@@ -762,12 +751,20 @@ impl Rendering {
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
         // Fires on the same ODD phase that PORY goes high, because NYKA
         // was already latched on the preceding EVEN. The !PYGO guard
-        // models !POKY -- PYGO hasn't captured yet (it fires on the next
-        // EVEN), so !self.pygo is true at TAVE time. Once PYGO fires,
+        // models !POKY -- PYGO is captured below (after TAVE), so
+        // !self.pygo is still true at TAVE time. Once PYGO fires,
         // !self.pygo permanently disables TAVE, matching hardware where
         // POKY disables SUVU/TAVE.
         if self.nyka && self.pory && !self.pygo {
             self.fetcher.load_into(&mut self.bg_shifter);
+        }
+
+        // PYGO captures PORY on ODD, after TAVE. On hardware, PYGO/POKY
+        // fires 1 half-phase after TAVE (EVEN vs ODD of the same dot).
+        // Placing PYGO here means TAVE reads !self.pygo (still false),
+        // then PYGO latches high, enabling TYFA on this same dot.
+        if self.pory && !self.pygo {
+            self.pygo = true;
         }
 
         // Fine scroll match already processed in mode3_even (DELTA_EVEN).
