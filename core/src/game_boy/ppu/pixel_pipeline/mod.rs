@@ -173,18 +173,7 @@ pub struct Rendering {
     /// AFTER the snapshot. This gives a 2-dot pipeline: SET on dot N,
     /// snapshot sees false on dot N+1, snapshot sees true on dot N+2.
     rydy: bool,
-    /// TOMU DFF staging for RYDY SET. Models the 1-DFF delay between the
-    /// RYDY NOR latch output and TOMU's Q output that TYFA reads. When
-    /// check_window_trigger fires, it writes this staging field instead of
-    /// self.rydy directly. The staging field is committed to self.rydy
-    /// AFTER the OddPhaseInputs snapshot is taken (but before any other
-    /// processing), giving a 2-dot pipeline: SET on dot N, staging=true;
-    /// dot N+1 snapshot sees self.rydy=false, then staging commits
-    /// self.rydy=true; dot N+2 snapshot sees self.rydy=true.
-    ///
-    /// Only the SET path uses staging. SUZU's clear of self.rydy writes
-    /// directly (1-dot pipeline for clear), matching hardware where the
-    /// NOR latch RESET propagates through TOMU on the same edge.
+    /// TOMU DFF staging for RYDY SET.
     rydy_set_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
@@ -641,6 +630,17 @@ impl Rendering {
         if self.rydy && self.fetcher.step == FetcherStep::Idle {
             self.fetcher.load_into(&mut self.bg_shifter);
             self.rydy = false;
+
+            // On hardware, REMY/RAVO (LCD data pins) are combinational
+            // from pipe MSBs — they update immediately when SUZU loads
+            // window tile data into the pipe. The first post-stall TOBA
+            // (next ODD phase) captures this via qp_ext_old.
+            self.lcd_data_latch = pixel_output::resolve_current_pixel(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                &mut self.window_zero_pixel,
+                regs,
+            );
         }
 
         // Sprite wait exit: when the BG fetcher reaches Idle during
@@ -873,12 +873,12 @@ impl Rendering {
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
                 // firing from PX=9 through PX=167 (159 clock edges).
                 //
-                // RYDY gates SACU through the combinational chain
-                // RYDY->SOCY->TYFA->SEGU->SACU. Since this path is purely
-                // combinational (inverters, not DFFs), RYDY=1 suppresses
-                // SACU immediately — even on the dot where RYDY sets
-                // (where inputs.rydy is still false). We check self.rydy
-                // (the live post-commit value) to model this.
+                // RYDY gates TOBA indirectly via TYFA→SEGU→SACU. Since
+                // TYFA reads inputs.rydy (state_old), RYDY suppression
+                // takes effect one dot after RYDY sets. On the WX match
+                // dot itself, MYVO forces TYFA=0 on ODD regardless of
+                // RYDY, so TOBA fires one last time (outputting the
+                // lcd_data_latch's buffered BG pixel).
                 let toba = self.wusa && sacu && !self.rydy;
 
                 // LCD data pin lag model (REMY/RAVO qp_ext_old).
@@ -898,21 +898,18 @@ impl Rendering {
                 }
 
                 // Update the LCD data latch with the current pipe state.
-                // On hardware, REMY/RAVO update combinationally every phase
-                // from the pipe MSBs. We update on every SACU edge (when
-                // the pipe shifts and new MSBs are available).
-                // Gate on !self.rydy: the combinational RYDY->SACU chain
-                // suppresses SACU immediately when RYDY sets, preventing
-                // stale BG data from entering the latch during the window
-                // fetch stall.
-                if sacu && !self.rydy {
-                    self.lcd_data_latch = pixel_output::resolve_current_pixel(
-                        &self.bg_shifter,
-                        &self.obj_shifter,
-                        &mut self.window_zero_pixel,
-                        regs,
-                    );
-                }
+                // On hardware, REMY/RAVO are combinational from pipe MSBs
+                // — they update every phase, not just on TYFA or SACU
+                // edges. During the RYDY stall, pipe content changes when
+                // window tile data loads (SEKO/TEVO), and the data pins
+                // reflect this immediately. The first post-stall TOBA
+                // captures window data via qp_ext_old.
+                self.lcd_data_latch = pixel_output::resolve_current_pixel(
+                    &self.bg_shifter,
+                    &self.obj_shifter,
+                    &mut self.window_zero_pixel,
+                    regs,
+                );
 
                 if !toba && tyfa {
                     // Consume window_zero_pixel during pre-visible TYFA
