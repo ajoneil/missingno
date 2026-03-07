@@ -71,8 +71,9 @@ pub enum RenderPhase {
     LineStart,
     /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
     /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
-    /// for lines 1+, cleared by AVAP when the scan completes.
-    /// Line 0 skips this phase (BESU never set on first line).
+    /// for lines 1+ (in half_even), cleared by AVAP when the scan
+    /// completes. Line 0 skips this phase (BESU never set on first
+    /// line; scanner runs under LineStart instead).
     OamScan,
     /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
     /// period from AVAP (scan done) through WODU (PX≥167). During
@@ -190,7 +191,7 @@ pub struct Rendering {
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
     /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
-    /// match signal. Computed on even phases as AND2(PUXA, !NYZE).
+    /// match signal. Computed on odd phases as AND2(PUXA, !NYZE).
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
@@ -333,9 +334,17 @@ impl Rendering {
 
     /// Whether the mode 2 STAT interrupt condition is active.
     fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
-        // On hardware, lines 1+ get an early Mode 2 pre-trigger at clock 0
-        // from the previous HBlank pre-setting mode_for_interrupt. Line 0
-        // has no previous HBlank, so Mode 2 STAT fires at clock 4 instead.
+        // On hardware, lines 1+ get an early Mode 2 pre-trigger from
+        // CATU_LINE_ENDp at the scanline boundary (dot 0). This fires
+        // from the line-boundary signal, not from BESU (the scanning
+        // latch). BESU is set at dot 1 when the scanner starts.
+        //
+        // Line 0 has no previous HBlank, so Mode 2 STAT fires at
+        // dot 4 instead (via the LineStart -> mode() -> OamScan path
+        // when scanner.is_some() && dot >= 1, gated by dot >= 4 here).
+        if video.ly() != 0 && video.dot() == 0 {
+            return true;
+        }
         self.mode(video) == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
     }
 
@@ -416,6 +425,14 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // CATU_LINE_ENDp: at dot 1 for lines 1+, CATU fires (phase_lx=2,
+        // LINE_RSTn released), setting BESU (scan latch) and starting the
+        // OAM scanner. Line 0 already has its scanner from reset_scanline.
+        if video.dot() == 1 && video.ly() != 0 {
+            self.render_phase = RenderPhase::OamScan;
+            self.scanner = Some(OamScanner::new());
+        }
+
         // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
         self.doba = self.byba;
 
@@ -542,16 +559,20 @@ impl Rendering {
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_odd` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.render_phase = if scanline == 0 {
-            RenderPhase::LineStart
-        } else {
-            RenderPhase::OamScan
-        };
+        self.render_phase = RenderPhase::LineStart;
         if self.window_rendered {
             self.window_line_counter += 1;
         }
         self.sprites = SpriteStore::new();
-        self.scanner = Some(OamScanner::new());
+        self.scanner = if scanline == 0 {
+            // Line 0: scanner created at dot 0 (boot ROM / post-boot init
+            // sets the LCD on mid-line, so the full scan runs from dot 0).
+            Some(OamScanner::new())
+        } else {
+            // Lines 1+: scanner deferred to dot 1 (CATU_LINE_ENDp fires
+            // at phase_lx=2, releasing LINE_RSTn and setting BESU).
+            None
+        };
         self.window_rendered = false;
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
@@ -689,27 +710,6 @@ impl Rendering {
         if lyry && !self.nyka {
             self.nyka = true;
         }
-
-        // Fine scroll match fires on DELTA_EVEN (PUXA_SCX_FINE_MATCH_evn).
-        // Active only after startup (POKY latched). POVA = AND2(PUXA,
-        // !NYZE) fires on the rising edge of the match — stored for
-        // the next odd phase to compute SEMU = OR2(TOBA, POVA).
-        // POVA gate uses PYGO (cascade DFF output) instead of POKY
-        // (bg_shifter.loaded). Both go high on the same EVEN phase.
-        self.pova = if self.pygo {
-            self.fine_scroll
-                .check_scroll_match(regs.background_viewport.x.output())
-        } else {
-            false
-        };
-
-        // POVA fires for timing (SEMU edge, Mode 3 length) but does NOT
-        // produce a visible LCD pixel. The POVA SEMU edge clocks the LCD
-        // shift register on hardware, but the pixel it captures is
-        // overwritten: 160 subsequent TOBA-path pixels (159 TOBA edges +
-        // 1 NOR latch at EOL) push the POVA pixel off the far end.
-        // The lcd_data_latch is NOT updated here — POVA's BG data never
-        // enters the shift register in our model.
     }
 
     /// DELTA_ODD Mode 3 pixel pipeline processing.
@@ -767,7 +767,27 @@ impl Rendering {
             self.pygo = true;
         }
 
-        // Fine scroll match already processed in mode3_even (DELTA_EVEN).
+        // Fine scroll match (PUXA/POVA).
+        //
+        // On hardware, PUXA (match capture DFF) and RYKU (fine counter)
+        // are both clocked by ROXO on the EVEN phase. DFF propagation
+        // delay means PUXA captures the comparator output computed from
+        // the pre-increment counter value. We model this by running the
+        // check BEFORE tick() within the same half-phase.
+        //
+        // POVA = AND2(PUXA, !NYZE) clears ROXY on the same edge. SACU
+        // responds combinationally: SACU = or2(SEGU, ROXY). Placing
+        // check_scroll_match before SACU lets ROXY clear before SACU
+        // is evaluated, matching hardware behavior.
+        //
+        // POVA fires for timing (Mode 3 length) but does NOT produce a
+        // visible LCD pixel. The lcd_data_latch is NOT updated here.
+        self.pova = if self.pygo {
+            self.fine_scroll
+                .check_scroll_match(regs.background_viewport.x.output())
+        } else {
+            false
+        };
 
         match self.sprite_state {
             SpriteState::Fetching(ref mut sf) => {
