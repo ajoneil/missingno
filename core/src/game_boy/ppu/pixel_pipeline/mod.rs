@@ -873,13 +873,10 @@ impl Rendering {
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
                 // firing from PX=9 through PX=167 (159 clock edges).
                 //
-                // RYDY gates TOBA indirectly via TYFA→SEGU→SACU. Since
-                // TYFA reads inputs.rydy (state_old), RYDY suppression
-                // takes effect one dot after RYDY sets. On the WX match
-                // dot itself, MYVO forces TYFA=0 on ODD regardless of
-                // RYDY, so TOBA fires one last time (outputting the
-                // lcd_data_latch's buffered BG pixel).
-                let toba = self.wusa && sacu && !self.rydy;
+                // RYDY suppresses TOBA indirectly via TYFA→SEGU→SACU:
+                // RYDY→SOCY→TYFA=0→SACU stuck. No explicit RYDY gate
+                // exists on TOBA in hardware.
+                let toba = self.wusa && sacu;
 
                 // LCD data pin lag model (REMY/RAVO qp_ext_old).
                 //
