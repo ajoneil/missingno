@@ -599,6 +599,12 @@ impl Rendering {
             );
         }
 
+        // LYRY: combinational gate, high when the fetcher has completed
+        // its current tile fetch (step == Idle). Captured here immediately
+        // after fetcher.advance() and before TAVE resets the fetcher to
+        // GetTile — once TAVE fires, the fetcher is no longer Idle.
+        let lyry = self.fetcher.step == FetcherStep::Idle;
+
         // SUZU: window fetch completion. When the fetcher reaches Idle
         // while RYDY is active, load the window tile into the BG pipe
         // and clear the window hit signal. Co-located with the fetcher
@@ -633,10 +639,13 @@ impl Rendering {
         // EVEN and first advance is on next ODD. However, this is
         // actually more correct: on hardware, the sprite fetch clock
         // (VONU/TOBU) is separate from the BG fetcher clock (LEBO).
+        // Sprite wait exit uses PYGO (cascade DFF output) instead of
+        // POKY (bg_shifter.loaded). Both go high on the same EVEN phase
+        // and remain high for the rest of the scanline.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
             && self.fetcher.step == FetcherStep::Idle
-            && self.bg_shifter.poky()
+            && self.pygo
         {
             sf.phase = SpriteFetchPhase::FetchingData;
             // The first sprite fetch step fires immediately on the
@@ -663,13 +672,12 @@ impl Rendering {
         // Each DFF captures its data input from the previous half-phase.
         let old_pory = self.pory;
 
-        // NYKA captures LYRY. LYRY is a combinational gate that is high
-        // when the fetcher has completed (step == Idle after first fetch).
-        // Since TAVE resets the fetcher to GetTile on the same phase, we
-        // detect LYRY indirectly: the BG shifter becoming loaded (POKY)
-        // is the observable consequence. NYKA latches high and stays high
-        // until reset by NAFY (window trigger) or scanline end.
-        if self.bg_shifter.poky() && !self.nyka {
+        // NYKA captures LYRY (fetcher step == Idle). The `lyry` local
+        // was captured after fetcher.advance() but before TAVE resets
+        // the fetcher, so it directly observes the hardware signal.
+        // NYKA latches high and stays high until reset by NAFY (window
+        // trigger) or scanline end.
+        if lyry && !self.nyka {
             self.nyka = true;
         }
 
@@ -683,7 +691,11 @@ impl Rendering {
         // Active only after startup (POKY latched). POVA = AND2(PUXA,
         // !NYZE) fires on the rising edge of the match — stored for
         // the next odd phase to compute SEMU = OR2(TOBA, POVA).
-        self.pova = if self.bg_shifter.poky() {
+        // POVA gate uses PYGO (cascade DFF output) instead of POKY
+        // (bg_shifter.loaded). Both go high on the same EVEN phase.
+        // POVA is currently consumed only by _semu (dead code), so
+        // this has no behavioral effect.
+        self.pova = if self.pygo {
             self.fine_scroll
                 .check_scroll_match(regs.background_viewport.x.output())
         } else {
