@@ -526,8 +526,9 @@ impl Rendering {
         // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
         // XUPY). At dot granularity, one tick compares the current
         // entry and increments the counter. Gated on XUPY rising
-        // (2-dot period) and !FETO (GAVA freeze at counter == 39).
-        if self.scanning && xupy_rising && !feto {
+        // (2-dot period). FETO only freezes the counter, not the
+        // comparison — entry 39 is still compared.
+        if self.scanning && xupy_rising {
             self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
         }
 

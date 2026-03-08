@@ -91,8 +91,9 @@ impl OamScanner {
     /// At dot granularity this collapses to: compare current entry,
     /// then increment the counter for the next tick.
     ///
-    /// The caller must gate calls on XUPY rising AND !scan_done(),
-    /// modeling GAVA freeze when FETO holds the clock high.
+    /// The caller must gate calls on XUPY rising. FETO freezes
+    /// only the counter increment, not the comparison — entry 39
+    /// is still compared even after FETO fires.
     ///
     /// Only bytes 0–1 (Y, X) are read from OAM during scanning — the
     /// hardware's 16-bit OAM bus provides both in a single access.
@@ -122,8 +123,12 @@ impl OamScanner {
             }
         }
 
-        // Counter increment (GAVA). Advances to the next entry.
-        self.entry += 1;
+        // Counter increment (GAVA), gated by FETO. When the counter
+        // reaches 39, FETO holds GAVA high — no more rising edges,
+        // counter frozen. The comparison above still ran for entry 39.
+        if !self.scan_done() {
+            self.entry += 1;
+        }
     }
 
     /// Hardware FETO_SCAN_DONE signal (combinational). AND4 of scan
