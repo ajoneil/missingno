@@ -55,6 +55,10 @@
     <color type="primary" scheme_preference="dark">#3a5a1c</color>
   </branding>
 
+  <tags>
+    <tag namespace="flathub">emulator</tag>
+  </tags>
+
   <content_rating type="oars-1.1" />
 
   <releases>
