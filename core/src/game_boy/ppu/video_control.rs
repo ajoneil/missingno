@@ -41,12 +41,6 @@ pub struct VideoControl {
 
     /// Previous STAT line state for rising-edge detection.
     pub(super) stat_line_was_high: bool,
-
-    /// First scanline after LCD enable. The video clock divider
-    /// (WUVU/VENA) starts in a misaligned phase, shortening this line
-    /// to 448 dots (vs normal 456). Set on LCD enable, cleared when
-    /// `advance_dot()` wraps the first line.
-    pub(super) lcd_on_first_line: bool,
 }
 
 impl VideoControl {
@@ -73,27 +67,10 @@ impl VideoControl {
     /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),
     /// fires the RUTU event: LY increments (or wraps 153→0). At
     /// SCANLINE_TOTAL_DOTS (456), resets dot to 0 and returns true.
-    ///
-    /// On the first line after LCD enable, the video clock divider starts
-    /// misaligned, shortening the line to 448 dots (RUTU at 444, wrap at
-    /// 448). The `lcd_on_first_line` flag is self-clearing: consumed when
-    /// the shortened line wraps.
     pub fn advance_dot(&mut self) -> bool {
         self.dot += 1;
 
-        let (rutu_dot, wrap_dot) = if self.lcd_on_first_line {
-            (
-                pixel_pipeline::RUTU_LINE_END_DOT - 8,
-                pixel_pipeline::SCANLINE_TOTAL_DOTS - 8,
-            )
-        } else {
-            (
-                pixel_pipeline::RUTU_LINE_END_DOT,
-                pixel_pipeline::SCANLINE_TOTAL_DOTS,
-            )
-        };
-
-        if self.dot == rutu_dot {
+        if self.dot == pixel_pipeline::RUTU_LINE_END_DOT {
             // RUTU line-end event: clock the LY ripple counter.
             if self.ly == 153 {
                 self.ly = 0;
@@ -102,9 +79,8 @@ impl VideoControl {
             }
         }
 
-        if self.dot == wrap_dot {
+        if self.dot == pixel_pipeline::SCANLINE_TOTAL_DOTS {
             self.dot = 0;
-            self.lcd_on_first_line = false;
             return true;
         }
 

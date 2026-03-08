@@ -572,7 +572,7 @@ impl Rendering {
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when in Drawing phase and not during a mode transition dot.
-        if self.render_phase == RenderPhase::Drawing && !avap {
+        if self.render_phase == RenderPhase::Drawing {
             self.mode3_odd(regs, video, oam, vram);
         }
 
