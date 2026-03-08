@@ -123,6 +123,7 @@ pub struct PipelineSnapshot {
     pub wusa: bool,
     pub pova: bool,
     pub pygo: bool,
+    pub poky: bool,
     pub wx_triggered: bool,
 }
 
@@ -159,6 +160,10 @@ pub struct Rendering {
     /// Captures PORY one half-phase after PORY goes high.
     /// Reset at scanline boundaries (XYMU_RENDERINGn).
     pygo: bool,
+    /// POKY NOR latch — captures PYGO on EVEN edge. TYFA reads this
+    /// instead of PYGO directly, adding 1 dot of cascade delay to the
+    /// pixel clock enable. Reset at scanline boundaries.
+    poky: bool,
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
@@ -248,6 +253,7 @@ impl Rendering {
             nyka: false,
             pory: false,
             pygo: false,
+            poky: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
 
@@ -283,6 +289,7 @@ impl Rendering {
             nyka: false,
             pory: false,
             pygo: false,
+            poky: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
 
@@ -374,6 +381,7 @@ impl Rendering {
             wusa: self.wusa,
             pova: self.pova,
             pygo: self.pygo,
+            poky: self.poky,
             wx_triggered: self.wx_triggered,
         }
     }
@@ -576,6 +584,7 @@ impl Rendering {
         self.nyka = false;
         self.pory = false;
         self.pygo = false;
+        self.poky = false;
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
 
@@ -673,6 +682,13 @@ impl Rendering {
         // trigger) or scanline end.
         if lyry && !self.nyka {
             self.nyka = true;
+        }
+
+        // POKY captures PYGO on the EVEN edge. On hardware, POKY is a
+        // NOR latch that fires on EVEN, one half-phase after PYGO latches
+        // on ODD. TYFA reads POKY, not PYGO.
+        if self.pygo && !self.poky {
+            self.poky = true;
         }
     }
 
@@ -817,7 +833,7 @@ impl Rendering {
             SpriteState::Idle => {
                 // TYFA_CLKPIPE (page 21) = AND3(SOCY, POKY, VYBO).
                 //   SOCY = NOT(TOMU_WIN_HITp) — old-RYDY inverted
-                //   POKY = preload done latch (our `pygo`)
+                //   POKY = preload done latch (our `poky`)
                 //   VYBO = NOR3(FEPO_old, WODU_old, MYVO) — sprite match and
                 //     hblank gate from previous phase. Both are structurally
                 //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
@@ -826,7 +842,7 @@ impl Rendering {
                 // Snapshot delay: TYFA reads state_old.RYDY (the pre-edge
                 // value captured in `inputs`). Writes to self.rydy by PORY
                 // clearing or check_window_trigger don't affect this dot's TYFA.
-                let tyfa = !inputs.rydy && self.pygo;
+                let tyfa = !inputs.rydy && self.poky;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
