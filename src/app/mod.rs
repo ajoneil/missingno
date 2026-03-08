@@ -51,6 +51,13 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
         default_font: fonts::default(),
         ..Default::default()
     })
+    .window(window::Settings {
+        platform_specific: window::settings::PlatformSpecific {
+            application_id: "net.andyofniall.missingno".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
     .theme(App::theme)
     .exit_on_close_request(false)
     .run()
