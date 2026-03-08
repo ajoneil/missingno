@@ -16,12 +16,14 @@ use super::shifters::BgShifter;
 /// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
 /// value (from `OddPhaseInputs`) to model this correctly.
 ///
-/// `rydy` is the phase-boundary snapshot (state_old); `rydy_set_pending`
-/// is the TOMU DFF staging field. On window trigger, the function writes
-/// the staging field (not the live RYDY), giving a 2-dot SET pipeline.
+/// `rydy` is the phase-boundary snapshot (state_old) used for the
+/// reactivation check. `rydy_live` is the mutable reference to the
+/// live RYDY field — set directly on window trigger. The snapshot
+/// already provides 1-dot delay (taken before check_window_trigger
+/// runs, so the next dot's TYFA sees rydy=true).
 pub(super) fn check_window_trigger(
     rydy: bool,
-    rydy_set_pending: &mut bool,
+    rydy_live: &mut bool,
     fetcher: &mut TileFetcher,
     nyka: &mut bool,
     pory: &mut bool,
@@ -93,7 +95,7 @@ pub(super) fn check_window_trigger(
     //
     *wx_triggered = true;
     fine_scroll.reset_for_window();
-    *rydy_set_pending = true;
+    *rydy_live = true;
     fetcher.reset_for_window();
     // NAFY: window mode trigger always resets NYKA and PORY, forcing the
     // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window

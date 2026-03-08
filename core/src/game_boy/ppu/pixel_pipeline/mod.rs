@@ -165,17 +165,13 @@ pub struct Rendering {
     /// RYDY NOR latch — window hit signal. When high, gates TYFA
     /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
     /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. SET by the TOMU commit block (from
-    /// `rydy_set_pending`), CLEAR by SUZU (window fetch complete).
+    /// during a window fetch stall. SET directly by check_window_trigger,
+    /// CLEAR by PORY (NYKA/PORY cascade after fetcher completes).
     ///
-    /// The TOMU DFF delay is modeled in two stages: `OddPhaseInputs`
-    /// snapshots `self.rydy` at the top of `mode3_odd`, then the TOMU
-    /// commit block propagates `rydy_set_pending` into `self.rydy`
-    /// AFTER the snapshot. This gives a 2-dot pipeline: SET on dot N,
-    /// snapshot sees false on dot N+1, snapshot sees true on dot N+2.
+    /// 1-dot delay: check_window_trigger sets self.rydy at the end of
+    /// mode3_odd, AFTER the OddPhaseInputs snapshot. The snapshot on
+    /// the NEXT dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
     rydy: bool,
-    /// TOMU DFF staging for RYDY SET.
-    rydy_set_pending: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
     /// the pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -254,7 +250,7 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
-            rydy_set_pending: false,
+
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -289,7 +285,7 @@ impl Rendering {
             pygo: false,
             fine_scroll: FineScroll::new(),
             rydy: false,
-            rydy_set_pending: false,
+
             pixel_counter: 0,
             wusa: false,
             voga: false,
@@ -582,7 +578,7 @@ impl Rendering {
         self.pygo = false;
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
-        self.rydy_set_pending = false;
+
         self.pixel_counter = 0;
         self.wusa = false;
         self.voga = false;
@@ -635,38 +631,6 @@ impl Rendering {
         // after fetcher.advance() and before TAVE resets the fetcher to
         // GetTile — once TAVE fires, the fetcher is no longer Idle.
         let lyry = self.fetcher.step == FetcherStep::Idle;
-
-        // SUZU: window fetch completion. When the fetcher reaches Idle
-        // while RYDY is active, load the window tile into the BG pipe
-        // and clear the window hit signal. Co-located with the fetcher
-        // advance (both on EVEN) to preserve 0-delay relative timing.
-        //
-        // Hardware fires SUZU 2 half-phases after fetcher step 5 via
-        // the NYKA/PORY cascade. The emulator uses a 0-delay
-        // simplification (checking fetcher.step directly instead of
-        // routing through the cascade). This is safe because the
-        // simplification was already in place when checks lived in
-        // mode3_odd -- the only change is which phase both run on.
-        //
-        // self.rydy reflects the current dot's ODD phase changes
-        // (TOMU commit runs in mode3_odd before mode3_even), so the
-        // value read here is equivalent to inputs.rydy in the old
-        // mode3_odd location.
-        if self.rydy && self.fetcher.step == FetcherStep::Idle {
-            self.fetcher.load_into(&mut self.bg_shifter);
-            self.rydy = false;
-
-            // On hardware, REMY/RAVO (LCD data pins) are combinational
-            // from pipe MSBs — they update immediately when SUZU loads
-            // window tile data into the pipe. The first post-stall TOBA
-            // (next ODD phase) captures this via qp_ext_old.
-            self.lcd_data_latch = pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                &mut self.window_zero_pixel,
-                regs,
-            );
-        }
 
         // Sprite wait exit: when the BG fetcher reaches Idle during
         // sprite wait (WaitingForFetcher) and the shifter is non-empty,
@@ -729,23 +693,40 @@ impl Rendering {
             pixel_counter: self.pixel_counter,
         };
 
-        // TOMU DFF commit: propagate staged RYDY SET into the live field.
-        // This runs AFTER the snapshot (so this dot's TYFA sees the old
-        // value) but BEFORE everything else. The NEXT dot's snapshot will
-        // see the committed value -- giving the 2-dot pipeline:
-        //   Dot N: check_window_trigger sets rydy_set_pending = true
-        //   Dot N+1: snapshot captures self.rydy = false (old); commit sets self.rydy = true
-        //   Dot N+2: snapshot captures self.rydy = true; TYFA sees it
-        if self.rydy_set_pending {
-            self.rydy = true;
-            self.rydy_set_pending = false;
-        }
-
         // PORY captures old NYKA (ODD edge, MYVO clock).
         // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
         let old_nyka = self.nyka;
         if old_nyka && !self.pory {
             self.pory = true;
+        }
+
+        // PORY clears RYDY: on hardware, PORY is a reset input to the
+        // RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
+        // high, RYDY clears on the same half-cycle. The NYKA→PORY
+        // cascade adds 1 dot of delay between the fetcher reaching Idle
+        // (LYRY) and RYDY clearing, matching the hardware cascade timing.
+        //
+        // SUZU falling-edge detector: AND2(!RYDY_new, SOVY). SOVY holds
+        // the pre-clear RYDY value (captured on EVEN). SUZU fires for
+        // exactly one half-cycle when RYDY transitions 1→0, triggering
+        // TEVO (pipe load + fine counter reset).
+        if self.pory && self.rydy {
+            self.rydy = false;
+
+            // SUZU → TEVO → NYXU: load window tile data into pipe.
+            self.fetcher.load_into(&mut self.bg_shifter);
+
+            // TEVO → PASO: reset fine counter.
+            self.fine_scroll.reset_counter();
+
+            // REMY/RAVO combinational update: data pins reflect the
+            // newly loaded window tile data immediately.
+            self.lcd_data_latch = pixel_output::resolve_current_pixel(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                &mut self.window_zero_pixel,
+                regs,
+            );
         }
 
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
@@ -842,9 +823,9 @@ impl Rendering {
                 //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
                 //     and RenderPhase::Drawing (no WODU).
                 //
-                // TOMU DFF delay: TYFA reads state_old.RYDY (the pre-edge
-                // value captured in `inputs`). Writes to self.rydy by SUZU
-                // or check_window_trigger don't affect this dot's TYFA.
+                // Snapshot delay: TYFA reads state_old.RYDY (the pre-edge
+                // value captured in `inputs`). Writes to self.rydy by PORY
+                // clearing or check_window_trigger don't affect this dot's TYFA.
                 let tyfa = !inputs.rydy && self.pygo;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
@@ -944,7 +925,7 @@ impl Rendering {
                 self.check_sprite_trigger(regs);
 
                 // BG fetcher advances on EVEN (mode3_even).
-                // SUZU check is in mode3_even.
+                // SUZU (window fetch completion) is triggered by PORY in mode3_odd.
 
                 // PECU (fine counter clock) derives from ROXO, which derives
                 // from TYFA. Fine scroll ticks whenever the pixel clock is
@@ -974,7 +955,7 @@ impl Rendering {
         // the same value each dot.
         window::check_window_trigger(
             inputs.rydy,
-            &mut self.rydy_set_pending,
+            &mut self.rydy,
             &mut self.fetcher,
             &mut self.nyka,
             &mut self.pory,
