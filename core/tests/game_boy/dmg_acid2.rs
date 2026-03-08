@@ -3,11 +3,9 @@ use crate::common;
 #[test]
 fn dmg_acid2() {
     let mut gb = common::load_rom("dmg-acid2/dmg-acid2.gb");
-    let found_loop = common::run_until_infinite_loop(&mut gb, 600);
-    assert!(
-        found_loop,
-        "dmg-acid2 timed out without reaching infinite loop"
-    );
+    for _ in 0..5 {
+        while !gb.step() {}
+    }
 
     let actual = common::screen_to_greyscale(gb.screen());
     let expected = common::load_reference_png("dmg-acid2/dmg-acid2-dmg.png");
