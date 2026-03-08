@@ -1,119 +1,79 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <clipPath id="bounds">
-      <rect x="0" y="0" width="128" height="128"/>
+    <clipPath id="body">
+      <rect x="24" y="8" width="80" height="112" rx="8"/>
     </clipPath>
   </defs>
 
-  <!-- Main body - intact shape but with color-channel split -->
-  <!-- Red/magenta ghost shifted left -->
-  <rect x="20" y="8" width="80" height="112" rx="8" fill="#ff00ff" opacity="0.08"/>
-  <!-- Cyan ghost shifted right -->
-  <rect x="28" y="8" width="80" height="112" rx="8" fill="#00ffff" opacity="0.08"/>
   <!-- Main body -->
-  <rect x="24" y="8" width="80" height="112" rx="8" fill="#3b3b52"/>
-
-  <!-- Horizontal glitch displacements -->
-  <g transform="translate(5, 0)">
-    <rect x="24" y="40" width="80" height="10" fill="#3b3b52"/>
-  </g>
-  <g transform="translate(-3, 0)">
-    <rect x="24" y="82" width="80" height="8" fill="#3b3b52"/>
-  </g>
+  <rect x="24" y="8" width="80" height="112" rx="8" fill="#9a7bb5"/>
 
   <!-- Screen bezel -->
-  <rect x="34" y="18" width="60" height="48" rx="4" fill="#1e1e2e"/>
+  <rect x="34" y="18" width="60" height="48" rx="4" fill="#6b4d8a"/>
 
   <!-- Screen -->
   <rect x="38" y="22" width="52" height="40" rx="2" fill="#9bba7c"/>
 
-  <!-- Pixel art creature - outline style on 4px grid, vicious -->
-  <!-- Horns - taller, sharper -->
-  <rect x="44" y="16" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="48" y="20" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="76" y="20" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="80" y="16" width="4" height="4" fill="#3a5a1c"/>
+  <!-- Pixel art creature - clipped to body so it escapes screen but not icon -->
+  <g clip-path="url(#body)">
+    <!-- Horns - poke above bezel -->
+    <rect x="44" y="16" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="48" y="20" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="76" y="20" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="80" y="16" width="4" height="4" fill="#3a5a1c"/>
 
-  <!-- Head outline - top -->
-  <rect x="52" y="24" width="24" height="4" fill="#3a5a1c"/>
+    <!-- Head outline - top -->
+    <rect x="52" y="24" width="24" height="4" fill="#3a5a1c"/>
 
-  <!-- Body outline - sides -->
-  <rect x="44" y="28" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="80" y="28" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="40" y="32" width="4" height="16" fill="#3a5a1c"/>
-  <rect x="84" y="32" width="4" height="12" fill="#3a5a1c"/>
+    <!-- Body outline - sides -->
+    <rect x="44" y="28" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="80" y="28" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="40" y="32" width="4" height="16" fill="#3a5a1c"/>
+    <rect x="84" y="32" width="4" height="12" fill="#3a5a1c"/>
 
-  <!-- Body outline - bottom -->
-  <rect x="44" y="48" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="56" y="48" width="16" height="4" fill="#3a5a1c"/>
-  <rect x="80" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <!-- Eyes - slanted brows -->
+    <rect x="48" y="32" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="52" y="36" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="56" y="36" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="76" y="32" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="72" y="36" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="68" y="36" width="4" height="4" fill="#3a5a1c"/>
 
-  <!-- Clawed feet -->
-  <rect x="44" y="48" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="48" y="52" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="56" y="52" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="68" y="52" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="76" y="52" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="80" y="48" width="4" height="4" fill="#3a5a1c"/>
+    <!-- Jagged mouth with fangs -->
+    <rect x="52" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="56" y="48" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="60" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="64" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="68" y="48" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="72" y="44" width="4" height="4" fill="#3a5a1c"/>
 
-  <!-- Spiked tail -->
-  <rect x="84" y="44" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="88" y="40" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="88" y="36" width="4" height="4" fill="#3a5a1c"/>
+    <!-- Body outline - bottom -->
+    <rect x="44" y="48" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="56" y="48" width="16" height="4" fill="#3a5a1c"/>
+    <rect x="80" y="44" width="4" height="4" fill="#3a5a1c"/>
 
-  <!-- Angry eyes - slanted brows -->
-  <rect x="48" y="32" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="52" y="36" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="56" y="36" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="76" y="32" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="72" y="36" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="68" y="36" width="4" height="4" fill="#3a5a1c"/>
+    <!-- Clawed feet -->
+    <rect x="48" y="52" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="56" y="52" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="68" y="52" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="76" y="52" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="80" y="48" width="4" height="4" fill="#3a5a1c"/>
 
-  <!-- Jagged mouth with fangs -->
-  <rect x="52" y="44" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="56" y="48" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="60" y="44" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="64" y="44" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="68" y="48" width="4" height="4" fill="#3a5a1c"/>
-  <rect x="72" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <!-- Spiked tail - extends past screen edge onto body -->
+    <rect x="84" y="44" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="88" y="40" width="4" height="4" fill="#3a5a1c"/>
+    <rect x="88" y="36" width="4" height="4" fill="#3a5a1c"/>
+  </g>
 
   <!-- D-pad -->
-  <rect x="38" y="78" width="10" height="28" rx="2" fill="#1e1e2e"/>
-  <rect x="28" y="88" width="30" height="10" rx="2" fill="#1e1e2e"/>
+  <rect x="38" y="74" width="10" height="22" rx="2" fill="#553d6b"/>
+  <rect x="32" y="80" width="22" height="10" rx="2" fill="#553d6b"/>
 
   <!-- A and B buttons -->
-  <circle cx="90" cy="84" r="7" fill="#c44b72"/>
-  <circle cx="78" cy="94" r="7" fill="#c44b72"/>
+  <circle cx="88" cy="82" r="7" fill="#8a4a6a"/>
+  <circle cx="74" cy="92" r="7" fill="#8a4a6a"/>
 
   <!-- Start/Select -->
-  <rect x="48" y="110" width="12" height="4" rx="2" fill="#2a2a3e" transform="rotate(-25 54 112)"/>
-  <rect x="66" y="110" width="12" height="4" rx="2" fill="#2a2a3e" transform="rotate(-25 72 112)"/>
-
-  <!-- Glitch tears -->
-  <g clip-path="url(#bounds)" opacity="0.6">
-    <rect x="14" y="39" width="104" height="2" fill="#a6e3a1"/>
-    <rect x="10" y="81" width="108" height="1.5" fill="#a6e3a1"/>
-  </g>
-
-  <!-- Full-body chromatic aberration bands -->
-  <g clip-path="url(#bounds)">
-    <rect x="18" y="39" width="100" height="4" fill="#00ffff" opacity="0.1"/>
-    <rect x="28" y="39" width="100" height="4" fill="#ff00ff" opacity="0.07"/>
-    <rect x="14" y="81" width="100" height="3" fill="#ff00ff" opacity="0.09"/>
-    <rect x="26" y="81" width="100" height="3" fill="#00ffff" opacity="0.07"/>
-  </g>
-
-  <!-- RGB split on the whole body outline -->
-  <g clip-path="url(#bounds)" opacity="0.06">
-    <rect x="20" y="8" width="80" height="112" rx="8" stroke="#ff0000" stroke-width="2" fill="none"/>
-    <rect x="28" y="8" width="80" height="112" rx="8" stroke="#0000ff" stroke-width="2" fill="none"/>
-  </g>
-
-  <!-- Escaped pixels -->
-  <g clip-path="url(#bounds)" opacity="0.45">
-    <rect x="12" y="20" width="4" height="6" fill="#9bba7c"/>
-    <rect x="108" y="50" width="6" height="4" fill="#4a6a2c"/>
-    <rect x="16" y="70" width="4" height="4" fill="#7b9a5c"/>
-    <rect x="110" y="96" width="4" height="6" fill="#5a7a3c"/>
-  </g>
+  <rect x="48" y="106" width="12" height="4" rx="2" fill="#7d5f9e" transform="rotate(-25 54 108)"/>
+  <rect x="66" y="106" width="12" height="4" rx="2" fill="#7d5f9e" transform="rotate(-25 72 108)"/>
 </svg>
