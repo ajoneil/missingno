@@ -50,13 +50,18 @@ impl GameBoy {
 
         // Advance the sequencer DFF pipeline: a Fresh interrupt from
         // the previous step's M-cycle boundary becomes Ready (dispatchable).
-        // No separate propagation M-cycle is needed — for the Running path,
-        // the trailing fetch at the end of the previous step() already
-        // provided the DFF delay. For the Halted path, the HaltedNop's
-        // M-cycle serves as the wakeup NOP. ISR dispatch begins immediately
-        // when take_ready() succeeds.
+        // For the Running path, the trailing fetch at the end of the
+        // previous step() already provided the DFF delay's worth of
+        // hardware ticking. For the Halted path, dispatch is deferred
+        // so that a wakeup NOP runs first — its M-cycle provides the
+        // hardware ticking that accompanies the Fresh→Ready propagation
+        // on real hardware.
         self.interrupt_latch.promote();
-        let dispatch_interrupt = self.interrupt_latch.take_ready().is_some();
+        let dispatch_interrupt = if self.cpu.halt_state == HaltState::Halted {
+            false // Defer — let the wakeup NOP run first
+        } else {
+            self.interrupt_latch.take_ready().is_some()
+        };
 
         let mut processor = match self.cpu.halt_state {
             HaltState::Running => {
@@ -78,7 +83,7 @@ impl GameBoy {
             HaltState::Halting => Processor::begin(&mut self.cpu),
         };
 
-        let was_halted = self.cpu.halt_state == HaltState::Halted;
+        let mut was_halted = self.cpu.halt_state == HaltState::Halted;
 
         // Run dots. Each M-cycle is 4 dots; the processor yields one
         // DotAction per dot with bus operations at dot 3 (end of M-cycle).
@@ -132,6 +137,9 @@ impl GameBoy {
                             // Interrupt was already Ready when this step began but
                             // the CPU was halted — the HaltedNop's M-cycle served
                             // as the wakeup NOP. ISR dispatch begins immediately.
+                            // Clear was_halted so the ISR completion takes the
+                            // normal trailing fetch path (not the IME=0 shortcut).
+                            was_halted = false;
                             processor = Processor::interrupt(&mut self.cpu);
                             continue;
                         }
@@ -281,7 +289,11 @@ impl GameBoy {
             ExecutionState::Ready => {
                 // Start a new instruction.
                 self.interrupt_latch.promote();
-                let dispatch_interrupt = self.interrupt_latch.take_ready().is_some();
+                let dispatch_interrupt = if self.cpu.halt_state == HaltState::Halted {
+                    false // Defer — let the wakeup NOP run first
+                } else {
+                    self.interrupt_latch.take_ready().is_some()
+                };
 
                 let processor = match self.cpu.halt_state {
                     HaltState::Running => {
@@ -341,13 +353,15 @@ impl GameBoy {
 
                         if self.cpu.halt_state == HaltState::Halted {
                             if self.interrupt_latch.take_ready().is_some() {
-                                // Restart with interrupt dispatch.
+                                // Restart with interrupt dispatch. Clear
+                                // was_halted so ISR completion takes the normal
+                                // trailing fetch path (not the IME=0 shortcut).
                                 self.execution = ExecutionState::Running {
                                     processor: Processor::interrupt(&mut self.cpu),
                                     read_value: 0,
                                     dot: BusDot::ZERO,
                                     pending_oam_bug: None,
-                                    was_halted,
+                                    was_halted: false,
                                 };
                                 return self.step_dot();
                             }
