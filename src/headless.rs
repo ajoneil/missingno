@@ -529,7 +529,11 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
             "wusa": snap.wusa,
             "pova": snap.pova,
             "pygo": snap.pygo,
+            "poky": snap.poky,
             "wx_triggered": snap.wx_triggered,
+            "wuvu": snap.wuvu,
+            "byba": snap.byba,
+            "doba": snap.doba,
         }),
         None => serde_json::Value::Null,
     }

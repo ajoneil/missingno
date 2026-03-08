@@ -125,6 +125,9 @@ pub struct PipelineSnapshot {
     pub pygo: bool,
     pub poky: bool,
     pub wx_triggered: bool,
+    pub wuvu: bool,
+    pub byba: bool,
+    pub doba: bool,
 }
 
 pub struct Rendering {
@@ -383,6 +386,9 @@ impl Rendering {
             pygo: self.pygo,
             poky: self.poky,
             wx_triggered: self.wx_triggered,
+            wuvu: self.wuvu,
+            byba: self.byba,
+            doba: self.doba,
         }
     }
 
