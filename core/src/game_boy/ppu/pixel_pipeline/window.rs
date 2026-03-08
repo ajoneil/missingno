@@ -14,7 +14,7 @@ use super::shifters::BgShifter;
 /// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
 /// match on ROCO, which derives from TYFA and requires POKY (modeled
 /// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
-/// value (from `OddPhaseInputs`) to model this correctly.
+/// value (from `RisingPhaseInputs`) to model this correctly.
 ///
 /// `rydy` is the phase-boundary snapshot (state_old) used for the
 /// reactivation check. `rydy_live` is the mutable reference to the
@@ -66,8 +66,8 @@ pub(super) fn check_window_trigger(
 
     // Window already active -- check for reactivation zero pixel (DMG only).
     // The hardware condition is GetTile T1 (first tick). Our WX check
-    // runs in mode3_odd after SACU but before the ODD fetcher advance,
-    // so the fetcher has been ticked once (in mode3_even): what was
+    // runs in mode3_rising after SACU but before the rising fetcher advance,
+    // so the fetcher has been ticked once (in mode3_falling): what was
     // dot=0 (T1) is now dot=1. So we check dot=1.
     // Reactivation requires the initial window fetch to have completed
     // (RYDY=0), modeling hardware's !window_is_being_fetched.

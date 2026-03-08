@@ -334,12 +334,12 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// DELTA_EVEN phase: LCD initialization and DFF latch advance.
+    /// Falling edge phase (DELTA_EVEN): LCD initialization and DFF latch advance.
     ///
-    /// The pixel pipeline's even-phase processing (fetcher control, mode
-    /// transitions) is deferred to `tcycle_odd`, where it runs after the
-    /// odd phase. This matches hardware's ODD-before-EVEN dot ordering.
-    pub fn tcycle_even(&mut self, _vram: &Vram) {
+    /// The pixel pipeline's falling-phase processing (fetcher control, mode
+    /// transitions) is deferred to `tcycle_rising`, where it runs after the
+    /// rising phase. This matches hardware's rising-before-falling dot ordering.
+    pub fn tcycle_falling(&mut self, _vram: &Vram) {
         if !self.control().video_enabled() {
             return;
         }
@@ -354,14 +354,14 @@ impl Ppu {
         self.registers.tick_latches();
     }
 
-    /// DELTA_ODD phase: pixel output, counter increment, M-cycle-rate
-    /// interrupt edge detection and LYC comparison.
+    /// Rising edge phase (DELTA_ODD): pixel output, counter increment,
+    /// M-cycle-rate interrupt edge detection and LYC comparison.
     ///
-    /// Internally runs the pixel pipeline in hardware order: ODD phase
-    /// first (pixel output, WODU), then EVEN phase (fetcher control,
-    /// VOGA/mode transitions). This matches the DMG's DELTA_HA → DELTA_EF
+    /// Internally runs the pixel pipeline in hardware order: rising phase
+    /// first (pixel output, WODU), then falling phase (fetcher control,
+    /// VOGA/mode transitions). This matches the DMG's rising-before-falling
     /// ordering within each dot.
-    pub fn tcycle_odd(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    pub fn tcycle_rising(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -370,16 +370,16 @@ impl Ppu {
 
         if self.control().video_enabled() {
             // When video is enabled but the pipeline hasn't been created yet
-            // (LCDC was just written, tcycle_even hasn't run), skip all
-            // work. The pipeline is initialized on the next tcycle_even.
+            // (LCDC was just written, falling phase hasn't run), skip all
+            // work. The pipeline is initialized on the next falling phase.
             if self.pixel_pipeline.is_none() {
                 return result;
             }
 
             if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-                // Hardware order: ODD phase first, then EVEN phase.
-                pipeline.tcycle_odd(&self.registers, &self.video, &self.oam, vram);
-                pipeline.tcycle_even(&self.registers, &self.video, &self.oam, vram);
+                // Hardware order: rising phase first, then falling phase.
+                pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
+                pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
             }
 
             if self.video.advance_dot() {
@@ -439,8 +439,8 @@ impl Ppu {
     /// STAT interrupt edge detection runs every dot. LYC comparison
     /// only runs on M-cycle boundaries (when `is_mcycle` is true).
     pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
-        self.tcycle_even(vram);
-        self.tcycle_odd(is_mcycle, vram)
+        self.tcycle_falling(vram);
+        self.tcycle_rising(is_mcycle, vram)
     }
 
     pub fn palettes(&self) -> &Palettes {

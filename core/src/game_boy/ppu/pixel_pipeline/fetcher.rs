@@ -188,7 +188,7 @@ impl TileFetcher {
             FetcherStep::Idle => {
                 // The fetcher is frozen — it waits here until the
                 // SEKO-triggered reload (fine_count == 7) fires from
-                // mode3_odd, which calls load_into() and resets
+                // mode3_rising, which calls load_into() and resets
                 // the fetcher to GetTile.
             }
         }

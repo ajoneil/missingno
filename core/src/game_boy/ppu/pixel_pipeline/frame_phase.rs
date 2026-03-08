@@ -124,8 +124,8 @@ impl FramePhase {
         }
     }
 
-    /// DELTA_EVEN half of a dot tick: fetcher control, mode transitions.
-    pub fn tcycle_even(
+    /// Falling edge half of a dot tick: fetcher control, mode transitions.
+    pub fn tcycle_falling(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -134,14 +134,14 @@ impl FramePhase {
     ) {
         match self {
             FramePhase::ActiveDisplay(rendering) => {
-                rendering.half_even(regs, video, oam, vram);
+                rendering.half_falling(regs, video, oam, vram);
             }
             FramePhase::VerticalBlank => {}
         }
     }
 
-    /// DELTA_ODD half of a dot tick: pixel output phase.
-    pub fn tcycle_odd(
+    /// Rising edge half of a dot tick: pixel output phase.
+    pub fn tcycle_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -150,7 +150,7 @@ impl FramePhase {
     ) {
         match self {
             FramePhase::ActiveDisplay(rendering) => {
-                rendering.half_odd(regs, video, oam, vram);
+                rendering.half_rising(regs, video, oam, vram);
             }
             FramePhase::VerticalBlank => {}
         }

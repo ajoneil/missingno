@@ -218,7 +218,7 @@ impl GameBoy {
                 }
             }
 
-            // BUDE: drive write data onto bus before PPU even phase.
+            // BUDE: drive write data onto bus before PPU falling phase.
             // Hardware: BUDE_xxxxEFGH rises at D->E; PPU DFFs see data during E,F.
             if let DotAction::DriveBus { address, value } = &dot_action
                 && self.drive_ppu_bus(*address, *value)
@@ -226,9 +226,9 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Even phase (DELTA_EF): timer tick, DFF latch advance, PPU half_even.
+            // Falling phase (DELTA_EF): timer tick, DFF latch advance, PPU half_falling.
             let is_mcycle_boundary = dot.boga();
-            new_screen |= self.tick_dot_even(is_mcycle_boundary);
+            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
 
             // MOPA rising edge (dot 2): fire OAM bug corruption.
             if dot.mopa()
@@ -241,20 +241,20 @@ impl GameBoy {
                 }
             }
 
-            // Odd phase (DELTA_HA): PPU half_odd, M-cycle subsystems.
-            new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+            // Rising phase (DELTA_HA): PPU half_rising, M-cycle subsystems.
+            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
 
             // Bus actions after phase ticks. On hardware, CPU bus reads/writes
             // see post-AVAP, post-WODU state because all signals propagate
             // combinationally within the clock phase. Placing reads/writes
-            // after tick_dot_odd models this naturally.
+            // after tick_dot_rising models this naturally.
             match dot_action {
                 DotAction::Idle => {}
                 DotAction::InternalOamBug { .. } => {
                     // Already handled above at BOWA.
                 }
                 DotAction::DriveBus { .. } => {
-                    // Already executed above before even phase.
+                    // Already executed above before falling phase.
                 }
                 DotAction::Read { address } => {
                     // Detect OAM bug from CPU reads to the OAM region.
@@ -414,16 +414,16 @@ impl GameBoy {
                     }
                 }
 
-                // BUDE: drive write data onto bus before PPU even phase.
+                // BUDE: drive write data onto bus before PPU falling phase.
                 if let DotAction::DriveBus { address, value } = &dot_action
                     && self.drive_ppu_bus(*address, *value)
                 {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
 
-                // Even phase.
+                // Falling phase.
                 let is_mcycle_boundary = dot.boga();
-                let mut new_screen = self.tick_dot_even(is_mcycle_boundary);
+                let mut new_screen = self.tick_dot_falling(is_mcycle_boundary);
 
                 // MOPA rising edge (dot 2): fire OAM bug.
                 if dot.mopa()
@@ -436,16 +436,16 @@ impl GameBoy {
                     }
                 }
 
-                // Odd phase.
-                new_screen |= self.tick_dot_odd(is_mcycle_boundary);
+                // Rising phase.
+                new_screen |= self.tick_dot_rising(is_mcycle_boundary);
 
                 // Bus actions after phase ticks. CPU reads/writes see
-                // post-tick_dot_odd state (post-AVAP, post-WODU).
+                // post-tick_dot_rising state (post-AVAP, post-WODU).
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
                     DotAction::DriveBus { .. } => {
-                        // Already executed above before even phase.
+                        // Already executed above before falling phase.
                     }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {
@@ -510,28 +510,30 @@ impl GameBoy {
         }
     }
 
-    /// Even phase (DELTA_EF) of one dot: timer tick, DFF latch
-    /// advance, PPU half_even.
-    fn tick_dot_even(&mut self, is_mcycle_boundary: bool) -> bool {
+    /// Falling phase (DELTA_EF) of one dot: timer tick, DFF latch
+    /// advance, PPU half_falling.
+    fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         // Timer ticks every T-cycle for DIV resolution
         if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
             self.interrupts.request(interrupt);
         }
 
-        // PPU even phase: DFF latch advance, fetcher control, mode transitions.
-        self.ppu.tcycle_even(&self.vram_bus.vram);
+        // PPU falling phase: DFF latch advance, fetcher control, mode transitions.
+        self.ppu.tcycle_falling(&self.vram_bus.vram);
 
         false
     }
 
-    /// Odd phase (DELTA_HA) of one dot: PPU half_odd (pixel output),
+    /// Rising phase (DELTA_HA) of one dot: PPU half_rising (pixel output),
     /// M-cycle-rate subsystems (serial, DMA, audio).
-    fn tick_dot_odd(&mut self, is_mcycle_boundary: bool) -> bool {
+    fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // PPU odd phase: pixel output, counter increment, interrupt
+        // PPU rising phase: pixel output, counter increment, interrupt
         // edge detection (M-cycle boundaries only).
-        let video_result = self.ppu.tcycle_odd(is_mcycle_boundary, &self.vram_bus.vram);
+        let video_result = self
+            .ppu
+            .tcycle_rising(is_mcycle_boundary, &self.vram_bus.vram);
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -637,8 +639,8 @@ impl GameBoy {
     /// Convenience wrapper for callers that don't need to route bus
     /// actions between phases (e.g. the trailing fetch loop).
     fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
-        let s1 = self.tick_dot_even(is_mcycle_boundary);
-        let s2 = self.tick_dot_odd(is_mcycle_boundary);
+        let s1 = self.tick_dot_falling(is_mcycle_boundary);
+        let s2 = self.tick_dot_rising(is_mcycle_boundary);
         s1 || s2
     }
 

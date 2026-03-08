@@ -59,7 +59,7 @@ pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
 /// and WODU (hblank gate) hardware signals on page 21.
 ///
 /// On hardware, WODU fires combinationally when the pixel counter reaches
-/// 167, then VOGA latches WODU on the next even phase to clear XYMU.
+/// 167, then VOGA latches WODU on the next falling phase to clear XYMU.
 /// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
 /// sees HBlank one phase before XYMU clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +71,7 @@ pub enum RenderPhase {
     LineStart,
     /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
     /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
-    /// for lines 1+ (in half_even), cleared by AVAP when the scan
+    /// for lines 1+ (in half_falling), cleared by AVAP when the scan
     /// completes. Line 0 skips this phase (BESU never set on first
     /// line; scanner runs under LineStart instead).
     OamScan,
@@ -82,7 +82,7 @@ pub enum RenderPhase {
     Drawing,
     /// WODU fired (XUGU decode + !FEPO): STAT sees mode=0 via TARU,
     /// pixel clock stops, VRAM/OAM unlocked. VOGA captures on next
-    /// even phase, clearing XYMU and WUSA via WEGO. Lasts 1 dot.
+    /// falling phase, clearing XYMU and WUSA via WEGO. Lasts 1 dot.
     DrawingComplete,
     /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
     /// Hardware: XYMU clear, WODU set.
@@ -90,11 +90,11 @@ pub enum RenderPhase {
 }
 
 /// Within-phase snapshot of signals that are both read and written during
-/// `mode3_odd`. On hardware, combinational logic within a phase reads DFF
-/// outputs from before the clock edge. This struct captures those values
-/// at the top of `mode3_odd` before any sequential mutations within the
-/// same phase.
-struct OddPhaseInputs {
+/// `mode3_rising`. On hardware, combinational logic within a phase reads DFF
+/// outputs from before the clock edge (rising edge). This struct captures
+/// those values at the top of `mode3_rising` before any sequential mutations
+/// within the same phase.
+struct RisingPhaseInputs {
     /// RYDY value from the previous phase boundary. TYFA, SEKO, and SUZU
     /// all read this (modeling state_old.RYDY) rather than the live value.
     rydy: bool,
@@ -156,19 +156,19 @@ pub struct Rendering {
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
-    /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (EVEN edge).
+    /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
     /// Goes high when the first BG tile fetch completes (LYRY fires).
     /// Reset by NAFY (window mode trigger) and at scanline boundaries.
     nyka: bool,
-    /// PORY_FETCH_DONEp_odd: DFF17, latches on MYVO (ODD edge).
+    /// PORY_FETCH_DONEp_odd: DFF17, latches on MYVO (rising edge).
     /// Captures NYKA one half-phase after NYKA goes high.
     /// Reset by NAFY (window mode trigger) and at scanline boundaries.
     pory: bool,
-    /// PYGO_FETCH_DONEp_evn: DFF17, latches on ALET (EVEN edge).
+    /// PYGO_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
     /// Captures PORY one half-phase after PORY goes high.
     /// Reset at scanline boundaries (XYMU_RENDERINGn).
     pygo: bool,
-    /// POKY NOR latch — captures PYGO on EVEN edge. TYFA reads this
+    /// POKY NOR latch — captures PYGO on falling edge. TYFA reads this
     /// instead of PYGO directly, adding 1 dot of cascade delay to the
     /// pixel clock enable. Reset at scanline boundaries.
     poky: bool,
@@ -182,7 +182,7 @@ pub struct Rendering {
     /// CLEAR by PORY (NYKA/PORY cascade after fetcher completes).
     ///
     /// 1-dot delay: check_window_trigger sets self.rydy at the end of
-    /// mode3_odd, AFTER the OddPhaseInputs snapshot. The snapshot on
+    /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The snapshot on
     /// the NEXT dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
     rydy: bool,
     /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
@@ -195,12 +195,12 @@ pub struct Rendering {
     /// by WEGO (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
     wusa: bool,
     /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
-    /// even phases (ALET). Captures WODU from the previous odd phase.
+    /// falling phases (ALET). Captures WODU from the previous rising phase.
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
     /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
-    /// match signal. Computed on odd phases as AND2(PUXA, !NYZE).
+    /// match signal. Computed on rising phases as AND2(PUXA, !NYZE).
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
@@ -232,16 +232,16 @@ pub struct Rendering {
     last_wx_value: u8,
     /// Cached WX value for the NUKO comparator. On hardware, NUKO reads
     /// the DFF8 slave output, which lags the master by one clock edge.
-    /// Updated unconditionally at the end of every mode3_odd from the
+    /// Updated unconditionally at the end of every mode3_rising from the
     /// live DFF output. check_window_trigger reads this instead of the
     /// live register, providing a 1-dot lag on mid-scanline WX writes.
     nuko_wx: u8,
-    /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every ODD edge.
+    /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every rising edge.
     /// Reset to false on LCD-on only; free-runs across scanlines.
     wuvu: bool,
     /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
     byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA on every EVEN edge.
+    /// DOBA_SCAN_DONEp_evn: captures BYBA on every falling edge.
     doba: bool,
 }
 
@@ -333,7 +333,7 @@ impl Rendering {
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     ///
     /// No look-aheads needed: CPU bus reads/writes execute after
-    /// both phases, so AVAP (ODD) and VOGA (EVEN) have already
+    /// both phases, so AVAP (rising) and VOGA (falling) have already
     /// fired and updated render_phase before stat_mode() is called.
     fn stat_mode(&self, video: &VideoControl) -> Mode {
         match self.render_phase {
@@ -419,7 +419,7 @@ impl Rendering {
 
     fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp. XYMU stays set through
-        // DrawingComplete (WODU dot); VOGA clears it on the next even phase.
+        // DrawingComplete (WODU dot); VOGA clears it on the next falling phase.
         matches!(
             self.render_phase,
             RenderPhase::Drawing | RenderPhase::DrawingComplete
@@ -441,30 +441,30 @@ impl Rendering {
         )
     }
 
-    /// DELTA_EVEN half-cycle: setup phase (runs after DELTA_ODD).
+    /// Falling edge half-cycle: setup phase (runs after rising edge).
     ///
-    /// On hardware, DELTA_EVEN handles fetcher control signals (NYKA,
+    /// On hardware, the falling edge handles fetcher control signals (NYKA,
     /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
     /// match (PUXA), and window WX match (PYCO).
-    pub(super) fn half_even(
+    pub(super) fn half_falling(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
     ) {
-        // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
+        // DOBA_SCAN_DONEp_evn: captures BYBA_old on every falling edge (ALET clock).
         self.doba = self.byba;
 
         if self.scanning {
             // Mode 2: OAM scan uses M-cycle sub-phases, not simple
-            // EVEN/ODD. Full scan processing deferred to half_odd
+            // falling/rising. Full scan processing deferred to half_rising
             // for step 1 behavior preservation.
             return;
         }
 
         // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU from
-        // this dot's preceding ODD phase. DrawingComplete means WODU
+        // this dot's preceding rising phase. DrawingComplete means WODU
         // fired this dot.
         if self.render_phase == RenderPhase::DrawingComplete {
             self.voga = true;
@@ -486,17 +486,17 @@ impl Rendering {
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
-        // Mode 3 EVEN-phase processing
+        // Mode 3 falling-phase processing
         if self.render_phase == RenderPhase::Drawing {
-            self.mode3_even(regs, video, oam, vram);
+            self.mode3_falling(regs, video, oam, vram);
         }
     }
 
-    /// DELTA_ODD half-cycle: output phase.
+    /// Rising edge half-cycle: output phase.
     ///
-    /// On hardware, DELTA_ODD handles pixel counter increment,
+    /// On hardware, the rising edge handles pixel counter increment,
     /// fine counter increment, pipe shift, and sprite X matching.
-    pub(super) fn half_odd(
+    pub(super) fn half_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -512,7 +512,7 @@ impl Rendering {
             self.scanner.reset();
         }
 
-        // WUVU_ABxxEFxx: toggle DFF, unconditional on every ODD edge.
+        // WUVU_ABxxEFxx: toggle DFF, unconditional on every rising edge.
         self.wuvu = !self.wuvu;
         let xupy_rising = self.wuvu;
 
@@ -543,7 +543,7 @@ impl Rendering {
             // AVAP fires: Mode 2 → Mode 3 transition.
             // Clears BESU (scan flag), sets XYMU (rendering latch),
             // resets the BG fetcher (NYXU). The fetcher begins
-            // advancing on the same dot's EVEN phase (mode3_even).
+            // advancing on the same dot's falling phase (mode3_falling).
             self.scanning = false;
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
@@ -554,8 +554,8 @@ impl Rendering {
             // (from reset), causing a 1-dot-late trigger for WX values
             // that should match on the first dot.
             self.nuko_wx = regs.window.x_plus_7.output();
-            // With ODD-before-EVEN ordering, this dot's half_even runs
-            // next and sees render_phase == Drawing, so mode3_even
+            // With rising-before-falling ordering, this dot's half_falling runs
+            // next and sees render_phase == Drawing, so mode3_falling
             // advances the fetcher naturally on the AVAP dot. No
             // explicit pre-advance needed.
         } else if self.lcd_turning_on && video.dot() == 80 {
@@ -573,7 +573,7 @@ impl Rendering {
         // Mode 3 (drawing) — pixel output phase.
         // Runs when in Drawing phase and not during a mode transition dot.
         if self.render_phase == RenderPhase::Drawing {
-            self.mode3_odd(regs, video, oam, vram);
+            self.mode3_rising(regs, video, oam, vram);
         }
 
         // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
@@ -583,7 +583,7 @@ impl Rendering {
         //
         // TARU (STAT mode 0 interrupt) uses WODU directly on the same
         // phase — DrawingComplete models this. VOGA latches WODU on the
-        // next EVEN phase, clearing XYMU (handled in half_even).
+        // next falling phase, clearing XYMU (handled in half_falling).
         let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
         let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
         let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
@@ -593,7 +593,7 @@ impl Rendering {
     }
 
     /// Reset per-line state at the scanline boundary. Called by
-    /// `Ppu::tcycle_odd` when `advance_dot` signals a new scanline.
+    /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.render_phase = RenderPhase::LineStart;
         if self.window_rendered {
@@ -637,11 +637,11 @@ impl Rendering {
         self.doba = false;
     }
 
-    /// DELTA_EVEN Mode 3 processing.
+    /// Falling edge Mode 3 processing.
     ///
-    /// Fetcher advances (phase_tfetch EVEN half), cascade DFFs (NYKA,
-    /// PYGO), and fine scroll match (PUXA) fire on DELTA_EVEN.
-    fn mode3_even(
+    /// Fetcher advances (phase_tfetch falling half), cascade DFFs (NYKA,
+    /// PYGO), and fine scroll match (PUXA) fire on the falling edge.
+    fn mode3_falling(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -656,7 +656,7 @@ impl Rendering {
             })
         );
 
-        // BG fetcher advances on the even phase (LEBO clock), gated
+        // BG fetcher advances on the falling phase (LEBO clock), gated
         // only by sprite data fetch. LEBO = NAND2(ALET, MOCE).
         if !sprite_data_fetch {
             self.fetcher.advance(
@@ -680,15 +680,15 @@ impl Rendering {
         // advance to preserve 0-delay relative timing.
         //
         // The transition sets the phase to FetchingData. The first
-        // sprite fetch advance fires on the next ODD phase (sprite
-        // data fetch runs on ODD in mode3_odd). This is a phase
+        // sprite fetch advance fires on the next rising phase (sprite
+        // data fetch runs on rising in mode3_rising). This is a phase
         // change from the old code where both the exit check and the
-        // first sf.advance() ran on the same ODD -- now exit is on
-        // EVEN and first advance is on next ODD. However, this is
+        // first sf.advance() ran on the same rising -- now exit is on
+        // falling and first advance is on next rising. However, this is
         // actually more correct: on hardware, the sprite fetch clock
         // (VONU/TOBU) is separate from the BG fetcher clock (LEBO).
         // Sprite wait exit uses PYGO (cascade DFF output) instead of
-        // POKY (bg_shifter.loaded). Both go high on the same EVEN phase
+        // POKY (bg_shifter.loaded). Both go high on the same falling phase
         // and remain high for the rest of the scanline.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
@@ -703,10 +703,10 @@ impl Rendering {
             sf.advance(regs, oam, vram);
         }
 
-        // --- Cascade DFF propagation (EVEN edge: NYKA) ---
+        // --- Cascade DFF propagation (falling edge: NYKA) ---
         //
         // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
-        // NYKA is clocked on ALET (EVEN rising edge).
+        // NYKA is clocked on ALET (falling edge of master clock).
 
         // NYKA captures LYRY (fetcher step == Idle). The `lyry` local
         // was captured after fetcher.advance() but before TAVE resets
@@ -717,16 +717,16 @@ impl Rendering {
             self.nyka = true;
         }
 
-        // POKY captures PYGO on the EVEN edge. On hardware, POKY is a
-        // NOR latch that fires on EVEN, one half-phase after PYGO latches
-        // on ODD. TYFA reads POKY, not PYGO.
+        // POKY captures PYGO on the falling edge. On hardware, POKY is a
+        // NOR latch that fires on falling, one half-phase after PYGO latches
+        // on rising. TYFA reads POKY, not PYGO.
         if self.pygo && !self.poky {
             self.poky = true;
         }
     }
 
-    /// DELTA_ODD Mode 3 pixel pipeline processing.
-    fn mode3_odd(
+    /// Rising edge Mode 3 pixel pipeline processing.
+    fn mode3_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -737,12 +737,12 @@ impl Rendering {
         // that are both read and written within this half-phase. All
         // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
         // `inputs`; all mutations go to `self`.
-        let inputs = OddPhaseInputs {
+        let inputs = RisingPhaseInputs {
             rydy: self.rydy,
             pixel_counter: self.pixel_counter,
         };
 
-        // PORY captures old NYKA (ODD edge, MYVO clock).
+        // PORY captures old NYKA (rising edge, MYVO clock).
         // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
         let old_nyka = self.nyka;
         if old_nyka && !self.pory {
@@ -756,7 +756,7 @@ impl Rendering {
         // (LYRY) and RYDY clearing, matching the hardware cascade timing.
         //
         // SUZU falling-edge detector: AND2(!RYDY_new, SOVY). SOVY holds
-        // the pre-clear RYDY value (captured on EVEN). SUZU fires for
+        // the pre-clear RYDY value (captured on falling). SUZU fires for
         // exactly one half-cycle when RYDY transitions 1→0, triggering
         // TEVO (pipe load + fine counter reset).
         if self.pory && self.rydy {
@@ -779,8 +779,8 @@ impl Rendering {
         }
 
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
-        // Fires on the same ODD phase that PORY goes high, because NYKA
-        // was already latched on the preceding EVEN. The !PYGO guard
+        // Fires on the same rising phase that PORY goes high, because NYKA
+        // was already latched on the preceding falling edge. The !PYGO guard
         // models !POKY -- PYGO is captured below (after TAVE), so
         // !self.pygo is still true at TAVE time. Once PYGO fires,
         // !self.pygo permanently disables TAVE, matching hardware where
@@ -789,8 +789,8 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // PYGO captures PORY on ODD, after TAVE. On hardware, PYGO/POKY
-        // fires 1 half-phase after TAVE (EVEN vs ODD of the same dot).
+        // PYGO captures PORY on rising, after TAVE. On hardware, PYGO/POKY
+        // fires 1 half-phase after TAVE (falling vs rising of the same dot).
         // Placing PYGO here means TAVE reads !self.pygo (still false),
         // then PYGO latches high, enabling TYFA on this same dot.
         if self.pory && !self.pygo {
@@ -800,7 +800,7 @@ impl Rendering {
         // Fine scroll match (PUXA/POVA).
         //
         // On hardware, PUXA (match capture DFF) and RYKU (fine counter)
-        // are both clocked by ROXO on the EVEN phase. DFF propagation
+        // are both clocked by ROXO on the falling phase. DFF propagation
         // delay means PUXA captures the comparator output computed from
         // the pre-increment counter value. We model this by running the
         // check BEFORE tick() within the same half-phase.
@@ -823,8 +823,8 @@ impl Rendering {
             SpriteState::Fetching(ref mut sf) => {
                 match sf.phase {
                     SpriteFetchPhase::WaitingForFetcher => {
-                        // BG fetcher advances on EVEN (mode3_even).
-                        // Wait exit check is in mode3_even.
+                        // BG fetcher advances on falling (mode3_falling).
+                        // Wait exit check is in mode3_falling.
                     }
                     SpriteFetchPhase::FetchingData => {
                         // BG fetcher is frozen. Advance the sprite data pipeline.
@@ -973,8 +973,8 @@ impl Rendering {
                 // Sprite trigger check.
                 self.check_sprite_trigger(regs);
 
-                // BG fetcher advances on EVEN (mode3_even).
-                // SUZU (window fetch completion) is triggered by PORY in mode3_odd.
+                // BG fetcher advances on falling (mode3_falling).
+                // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
 
                 // PECU (fine counter clock) derives from ROXO, which derives
                 // from TYFA. Fine scroll ticks whenever the pixel clock is
@@ -1022,7 +1022,7 @@ impl Rendering {
         );
 
         // Update NUKO's WX input from the live DFF8 output. Placed
-        // unconditionally at the end of mode3_odd so the cache tracks
+        // unconditionally at the end of mode3_rising so the cache tracks
         // the DFF output even during sprite fetch. On hardware, the
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
