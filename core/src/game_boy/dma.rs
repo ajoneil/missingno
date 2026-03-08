@@ -35,7 +35,7 @@ impl Dma {
     pub fn new() -> Self {
         Self {
             transfer: None,
-            source_register: 0,
+            source_register: 0xFF,
         }
     }
 

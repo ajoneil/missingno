@@ -96,8 +96,8 @@ impl Default for Palettes {
     fn default() -> Self {
         Self {
             background: DffLatch::new(0xfc),
-            sprite0: DffLatch::new(0),
-            sprite1: DffLatch::new(0),
+            sprite0: DffLatch::new(0xFF),
+            sprite1: DffLatch::new(0xFF),
         }
     }
 }
