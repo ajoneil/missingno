@@ -429,14 +429,6 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // CATU_LINE_ENDp: at dot 1 for lines 1+, CATU fires (phase_lx=2,
-        // LINE_RSTn released), setting BESU (scan latch) and starting the
-        // OAM scanner. Line 0 already has its scanner from reset_scanline.
-        if video.dot() == 1 && video.ly() != 0 {
-            self.render_phase = RenderPhase::OamScan;
-            self.scanner = Some(OamScanner::new());
-        }
-
         // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
         self.doba = self.byba;
 
@@ -487,6 +479,14 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // CATU_LINE_ENDp: at dot 1 for lines 1+, CATU fires (phase_lx=2,
+        // LINE_RSTn released), setting BESU (scan latch) and starting the
+        // OAM scanner. Line 0 already has its scanner from reset_scanline.
+        if video.dot() == 1 && video.ly() != 0 && self.scanner.is_none() {
+            self.render_phase = RenderPhase::OamScan;
+            self.scanner = Some(OamScanner::new());
+        }
+
         // WUVU_ABxxEFxx: toggle DFF, unconditional on every ODD edge.
         self.wuvu = !self.wuvu;
         let xupy_rising = self.wuvu;
