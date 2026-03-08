@@ -345,20 +345,27 @@ impl Rendering {
         }
     }
 
-    /// Whether the mode 2 STAT interrupt condition is active.
+    /// Whether the TAPA_INT_OAM signal is active.
+    ///
+    /// On hardware, TAPA derives from RUTU_LINE_ENDp — a DFF that pulses
+    /// high for dots 0-3 at each line boundary, gated by NOT_VBLANK.
+    /// TAPA is independent of ACYL/BESU (the scanning latch that drives
+    /// the STAT register mode bits). It fires *before* ACYL activates.
+    ///
+    /// Line 0 has no RUTU pulse (suppressed by first_line). The mode 2
+    /// interrupt on line 0 fires at dot 4 through a separate path.
     fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
-        // On hardware, lines 1+ get an early Mode 2 pre-trigger from
-        // CATU_LINE_ENDp at the scanline boundary (dot 0). This fires
-        // from the line-boundary signal, not from BESU (the scanning
-        // latch). BESU is set at dot 1 when the scanner starts.
-        //
-        // Line 0 has no previous HBlank, so Mode 2 STAT fires at
-        // dot 4 instead (via the LineStart -> mode() -> OamScan path
-        // when scanning && dot >= 1, gated by dot >= 4 here).
-        if video.ly() != 0 && video.dot() == 0 {
-            return true;
+        let ly = video.ly();
+        let dot = video.dot();
+
+        if ly == 0 {
+            // Line 0: no TAPA pulse. Mode 2 interrupt at dot 4 when
+            // OamScan mode activates (LineStart -> scanning && dot >= 4).
+            dot == 4
+        } else {
+            // Lines 1-143: TAPA pulse for dots 0-3.
+            dot <= 3
         }
-        self.mode(video) == Mode::OamScan && (video.ly() != 0 || video.dot() >= 4)
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
