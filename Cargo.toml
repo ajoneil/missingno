@@ -17,12 +17,7 @@ missingno-core = { path = "core" }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
-iced = { version = "0.14.0", features = [
-    "advanced",
-    "smol",
-    "svg",
-    "wgpu",
-] }
+iced = { version = "0.14.0", features = ["advanced", "smol", "svg", "wgpu"] }
 replace_with = "0.1.8"
 rtrb = "0.3"
 rgb = { workspace = true }
@@ -37,8 +32,8 @@ dirs = "6"
 open = "5"
 
 [workspace.dependencies]
-bitflags = "2.10.0"
-rgb = "0.8.52"
+bitflags = "2.11.0"
+rgb = "0.8.53"
 
 [profile.dev]
 opt-level = 0
