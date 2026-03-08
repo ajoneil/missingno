@@ -62,6 +62,14 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.3" date="2026-03-08">
+      <description>
+        <ul>
+          <li>Major accuracy improvements to the PPU pixel pipeline, APU, and memory bank controllers</li>
+          <li>New headless debugger mode with an HTTP API (--headless flag)</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.2" date="2026-02-10">
       <description>
         <p>Initial release with core emulation, debugger, Super Game Boy support, controller support, save RAM, and fullscreen mode.</p>

@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "missingno"
-version = "26.2.0"
+version = "26.3.0"
 dependencies = [
  "bytemuck",
  "clap",
@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "missingno-core"
-version = "26.2.0"
+version = "0.0.1"
 dependencies = [
  "bitflags 2.11.0",
  "png",
