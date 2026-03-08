@@ -141,8 +141,13 @@ pub struct Rendering {
     pub(super) render_phase: RenderPhase,
     /// Sprites on this line, stored as hardware register file entries.
     sprites: SpriteStore,
-    /// OAM scanner — active during Mode 2, consumed when scan completes.
-    scanner: Option<OamScanner>,
+    /// OAM scanner (YFEL-FONY counter). Always present — on hardware
+    /// the counter is never destroyed, just reset at line boundaries.
+    scanner: OamScanner,
+    /// BESU scanning latch. Set when OAM scan starts (dot 1 for lines 1+,
+    /// dot 0 for line 0), cleared by AVAP when scan completes. Gates
+    /// ACYL_SCANNINGp which drives STAT mode bits and OAM bus ownership.
+    scanning: bool,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
     /// Background pixel shift register (page 32).
@@ -248,7 +253,8 @@ impl Rendering {
             lcd_turning_on: false,
             render_phase: RenderPhase::LineStart,
             sprites: SpriteStore::new(),
-            scanner: Some(OamScanner::new()),
+            scanner: OamScanner::new(),
+            scanning: true,
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -284,7 +290,8 @@ impl Rendering {
             lcd_turning_on: true,
             render_phase: RenderPhase::LineStart,
             sprites: SpriteStore::new(),
-            scanner: None,
+            scanner: OamScanner::new(),
+            scanning: false,
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -317,7 +324,7 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanner.is_some() && video.dot() >= 1 => Mode::OamScan,
+            RenderPhase::LineStart if self.scanning && video.dot() >= 1 => Mode::OamScan,
             _ => Mode::HorizontalBlank,
         }
     }
@@ -333,7 +340,7 @@ impl Rendering {
             RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanner.is_some() && video.dot() >= 4 => Mode::OamScan,
+            RenderPhase::LineStart if self.scanning && video.dot() >= 4 => Mode::OamScan,
             RenderPhase::LineStart => Mode::HorizontalBlank,
         }
     }
@@ -347,7 +354,7 @@ impl Rendering {
         //
         // Line 0 has no previous HBlank, so Mode 2 STAT fires at
         // dot 4 instead (via the LineStart -> mode() -> OamScan path
-        // when scanner.is_some() && dot >= 1, gated by dot >= 4 here).
+        // when scanning && dot >= 1, gated by dot >= 4 here).
         if video.ly() != 0 && video.dot() == 0 {
             return true;
         }
@@ -355,7 +362,11 @@ impl Rendering {
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
-        self.scanner.as_ref().map(|s| s.oam_address())
+        if self.scanning {
+            Some(self.scanner.oam_address())
+        } else {
+            None
+        }
     }
 
     pub fn pipeline_state(&self) -> PipelineSnapshot {
@@ -438,7 +449,7 @@ impl Rendering {
         // DOBA_SCAN_DONEp_evn: captures BYBA_old on every EVEN edge (ALET clock).
         self.doba = self.byba;
 
-        if self.scanner.is_some() {
+        if self.scanning {
             // Mode 2: OAM scan uses M-cycle sub-phases, not simple
             // EVEN/ODD. Full scan processing deferred to half_odd
             // for step 1 behavior preservation.
@@ -486,43 +497,46 @@ impl Rendering {
         vram: &Vram,
     ) {
         // CATU_LINE_ENDp: at dot 1 for lines 1+, CATU fires (phase_lx=2,
-        // LINE_RSTn released), setting BESU (scan latch) and starting the
-        // OAM scanner. Line 0 already has its scanner from reset_scanline.
-        if video.dot() == 1 && video.ly() != 0 && self.scanner.is_none() {
+        // LINE_RSTn released), setting BESU (scan latch) and resetting
+        // the scan counter. Line 0 already has scanning=true from reset_scanline.
+        if video.dot() == 1 && video.ly() != 0 && !self.scanning {
             self.render_phase = RenderPhase::OamScan;
-            self.scanner = Some(OamScanner::new());
+            self.scanning = true;
+            self.scanner.reset();
         }
 
         // WUVU_ABxxEFxx: toggle DFF, unconditional on every ODD edge.
         self.wuvu = !self.wuvu;
         let xupy_rising = self.wuvu;
 
-        // BYBA_SCAN_DONEp_odd: capture FETO_old on XUPY rising edge.
-        // scanner.is_none() means FETO was high from the previous phase.
-        let feto_old = self.scanner.is_none();
+        // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
+        // Fires when counter reaches 39 (0b100111), before entry 39's
+        // comparison completes. On hardware this is a wire, not a latch.
+        let feto = self.scanner.scan_done();
+
+        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
         if xupy_rising {
-            self.byba = feto_old;
+            self.byba = feto;
         }
 
         // AVAP: combinational scan-done trigger.
         // Fires for one half-phase when BYBA has captured but DOBA has not.
         let avap = self.byba && !self.doba;
 
-        if let Some(ref mut scanner) = self.scanner {
-            // Mode 2: OAM scan — process one entry every 2 dots
-            scanner.scan_next_entry(video.ly(), &mut self.sprites, regs, oam);
-            if scanner.done() {
-                // FETO_SCAN_DONE — scan complete. The scanner is consumed,
-                // making feto_old == true for subsequent half_odd() calls.
-                // The actual Mode 3 transition happens when AVAP fires
-                // (after BYBA captures FETO_old on the next XUPY rising edge).
-                self.scanner = None;
-            }
-        } else if avap && !self.lcd_turning_on {
+        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
+        // XUPY). At dot granularity, one tick compares the current
+        // entry and increments the counter. Gated on XUPY rising
+        // (2-dot period) and !FETO (GAVA freeze at counter == 39).
+        if self.scanning && xupy_rising && !feto {
+            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
+        }
+
+        if avap && self.scanning && !self.lcd_turning_on {
             // AVAP fires: Mode 2 → Mode 3 transition.
-            // Sets XYMU (rendering latch), clears BESU (scan flag), resets
-            // the BG fetcher (NYXU). The fetcher begins advancing on the
-            // same dot's EVEN phase (mode3_even).
+            // Clears BESU (scan flag), sets XYMU (rendering latch),
+            // resets the BG fetcher (NYXU). The fetcher begins
+            // advancing on the same dot's EVEN phase (mode3_even).
+            self.scanning = false;
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
             // Seed NUKO's WX cache from the live DFF8 output at Mode 3
@@ -543,26 +557,27 @@ impl Rendering {
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
             self.nuko_wx = regs.window.x_plus_7.output();
-        } else {
-            // Mode 3 (drawing) — pixel output phase
-            if self.render_phase == RenderPhase::Drawing {
-                self.mode3_odd(regs, video, oam, vram);
-            }
+        }
 
-            // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
-            // decodes PX=167 (bits 0+1+2+5+7 all set). WODU = AND2(!FEPO, !XUGU).
-            // WODU fires combinationally when the pixel counter has all five
-            // XUGU bits set and no sprite match (FEPO) is active.
-            //
-            // TARU (STAT mode 0 interrupt) uses WODU directly on the same
-            // phase — DrawingComplete models this. VOGA latches WODU on the
-            // next EVEN phase, clearing XYMU (handled in half_even).
-            let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
-            let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
-            let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
-            if wodu {
-                self.render_phase = RenderPhase::DrawingComplete;
-            }
+        // Mode 3 (drawing) — pixel output phase.
+        // Runs when in Drawing phase and not during a mode transition dot.
+        if self.render_phase == RenderPhase::Drawing && !avap {
+            self.mode3_odd(regs, video, oam, vram);
+        }
+
+        // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
+        // decodes PX=167 (bits 0+1+2+5+7 all set). WODU = AND2(!FEPO, !XUGU).
+        // WODU fires combinationally when the pixel counter has all five
+        // XUGU bits set and no sprite match (FEPO) is active.
+        //
+        // TARU (STAT mode 0 interrupt) uses WODU directly on the same
+        // phase — DrawingComplete models this. VOGA latches WODU on the
+        // next EVEN phase, clearing XYMU (handled in half_even).
+        let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
+        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
+        let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
+        if wodu {
+            self.render_phase = RenderPhase::DrawingComplete;
         }
     }
 
@@ -574,15 +589,16 @@ impl Rendering {
             self.window_line_counter += 1;
         }
         self.sprites = SpriteStore::new();
-        self.scanner = if scanline == 0 {
-            // Line 0: scanner created at dot 0 (boot ROM / post-boot init
+        self.scanner.reset();
+        if scanline == 0 {
+            // Line 0: BESU set at dot 0 (boot ROM / post-boot init
             // sets the LCD on mid-line, so the full scan runs from dot 0).
-            Some(OamScanner::new())
+            self.scanning = true;
         } else {
-            // Lines 1+: scanner deferred to dot 1 (CATU_LINE_ENDp fires
+            // Lines 1+: BESU deferred to dot 1 (CATU_LINE_ENDp fires
             // at phase_lx=2, releasing LINE_RSTn and setting BESU).
-            None
-        };
+            self.scanning = false;
+        }
         self.window_rendered = false;
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();

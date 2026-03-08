@@ -2,8 +2,6 @@
 
 use crate::game_boy::ppu::{PipelineRegisters, memory::Oam};
 
-use super::fetcher::FetcherTick;
-
 use crate::game_boy::ppu::sprites::SpriteId;
 
 pub(super) const MAX_SPRITES_PER_LINE: usize = 10;
@@ -58,69 +56,82 @@ impl SpriteStore {
 /// Processes one OAM entry every 2 dots during Mode 2, reading Y and X
 /// from OAM, comparing Y against LY, and writing matches into the
 /// sprite store.
+///
+/// The scan counter is clocked by GAVA = OR(FETO_SCAN_DONE, XUPY).
+/// On hardware, GAVA provides rising edges every 2 dots (via XUPY).
+/// When FETO fires (counter == 39), GAVA stays high — no more rising
+/// edges, counter frozen. The current entry's comparison still
+/// completes because the comparison logic runs on separate clocks
+/// (COTA, WUDA) that aren't gated by FETO.
+///
+/// At the dot level, each XUPY tick compares the current entry and
+/// then increments the counter. The caller gates ticks on XUPY
+/// rising and !scan_done() (modeling GAVA freeze).
 pub(super) struct OamScanner {
-    /// Which OAM entry to process next (0-39). Increments every 2 dots.
+    /// 6-bit scan counter (YFEL-FONY). Drives OAM address and indexes
+    /// the current entry for comparison. Range 0-39, frozen at 39
+    /// once FETO fires.
     entry: u8,
-    /// Which half of the 2-dot scanner clock cycle we're in.
-    tick: FetcherTick,
 }
 
 impl OamScanner {
     pub(super) fn new() -> Self {
-        Self {
-            entry: 0,
-            tick: FetcherTick::T1,
-        }
+        Self { entry: 0 }
     }
 
-    /// Process one dot of OAM scanning. On even dots, the scan counter
-    /// drives the OAM address and OAM outputs data; on odd dots, the Y
-    /// comparison fires and matches are written to the sprite store.
+    /// Reset the scan counter to 0 (ANOM_LINE_RST). Called at scanline
+    /// boundaries — the counter is never destroyed, just reset.
+    pub(super) fn reset(&mut self) {
+        self.entry = 0;
+    }
+
+    /// Process one scan tick. On hardware, GAVA clocks the counter
+    /// and COTA latches OAM data on the same sub-phase (A/E), but
+    /// COTA latches the *previous* tick's data (pipeline delay).
+    /// At dot granularity this collapses to: compare current entry,
+    /// then increment the counter for the next tick.
+    ///
+    /// The caller must gate calls on XUPY rising AND !scan_done(),
+    /// modeling GAVA freeze when FETO holds the clock high.
     ///
     /// Only bytes 0–1 (Y, X) are read from OAM during scanning — the
-    /// hardware's 16-bit OAM bus provides both in a single access. Tile
-    /// index and attributes (bytes 2–3) are not accessed until Mode 3.
-    pub(super) fn scan_next_entry(
+    /// hardware's 16-bit OAM bus provides both in a single access.
+    /// Tile index and attributes (bytes 2–3) are not accessed until
+    /// Mode 3.
+    pub(super) fn tick(
         &mut self,
         line_number: u8,
         sprites: &mut SpriteStore,
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        if self.tick == FetcherTick::T1 {
-            self.tick = FetcherTick::T2;
-        } else {
-            if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
-                // OAM bus read: only Y (byte 0) and X (byte 1).
-                let (y_plus_16, x_plus_8) = oam.sprite_position(SpriteId(self.entry));
+        // Y comparison and sprite store write (COTA/WUDA).
+        if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
+            let (y_plus_16, x_plus_8) = oam.sprite_position(SpriteId(self.entry));
 
-                // Y comparison (hardware subtractor ERUC–WUHU):
-                // Computes delta = LY + 16 - sprite_Y using wrapping
-                // arithmetic (matching the 8-bit hardware subtractor).
-                // Match when delta < height (8 or 16 per LCDC.2).
-                // Bits 0–3 of delta are the sprite line offset — the
-                // same value drives the sprite store's line register.
-                let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
-                let height = regs.control.sprite_size().height();
-                if delta < height {
-                    let line_offset = delta;
-                    sprites.entries[sprites.count as usize] = SpriteStoreEntry {
-                        oam_index: self.entry,
-                        line_offset,
-                        x: x_plus_8,
-                    };
-                    sprites.count += 1;
-                }
+            let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
+            let height = regs.control.sprite_size().height();
+            if delta < height {
+                let line_offset = delta;
+                sprites.entries[sprites.count as usize] = SpriteStoreEntry {
+                    oam_index: self.entry,
+                    line_offset,
+                    x: x_plus_8,
+                };
+                sprites.count += 1;
             }
-            self.entry += 1;
-            self.tick = FetcherTick::T1;
         }
+
+        // Counter increment (GAVA). Advances to the next entry.
+        self.entry += 1;
     }
 
-    /// Hardware FETO_SCAN_DONE signal. Fires when the scan counter
-    /// has processed all 40 OAM entries.
-    pub(super) fn done(&self) -> bool {
-        self.entry >= 40
+    /// Hardware FETO_SCAN_DONE signal (combinational). AND4 of scan
+    /// counter bits 0, 1, 2, and 5 — fires when counter == 39
+    /// (0b100111). On hardware this is true as soon as the counter
+    /// reaches 39, before entry 39's comparison completes.
+    pub(super) fn scan_done(&self) -> bool {
+        self.entry & 0b100111 == 0b100111
     }
 
     /// The byte address the scanner is currently driving on the OAM bus.
