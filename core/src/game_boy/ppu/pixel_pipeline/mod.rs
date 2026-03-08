@@ -204,6 +204,11 @@ pub struct Rendering {
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
+    /// TYFA result computed in falling phase, consumed by rising phase. TYFA
+    /// is combinational in hardware (falling phase), but downstream SACU is
+    /// combinational in the rising phase. This bridge carries the
+    /// falling-phase TYFA result to rising-phase SACU.
+    tyfa_bridge: bool,
     /// LCD shift register — 159-stage pixel buffer between the pixel
     /// mux and the Screen. Replaces direct framebuffer writes.
     lcd_shift_register: LcdShiftRegister,
@@ -270,6 +275,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
+            tyfa_bridge: false,
             lcd_shift_register: LcdShiftRegister::new(),
             lcd_data_latch: PaletteIndex(0),
             sprite_state: SpriteState::Idle,
@@ -307,6 +313,7 @@ impl Rendering {
             wusa: false,
             voga: false,
             pova: false,
+            tyfa_bridge: false,
             lcd_shift_register: LcdShiftRegister::new(),
             lcd_data_latch: PaletteIndex(0),
             sprite_state: SpriteState::Idle,
@@ -625,6 +632,7 @@ impl Rendering {
         self.wusa = false;
         self.voga = false;
         self.pova = false;
+        self.tyfa_bridge = false;
         self.lcd_shift_register.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
@@ -640,7 +648,8 @@ impl Rendering {
     /// Falling edge Mode 3 processing.
     ///
     /// Fetcher advances (phase_tfetch falling half), cascade DFFs (NYKA,
-    /// PYGO), and fine scroll match (PUXA) fire on the falling edge.
+    /// PYGO), NOR latches (POKY), combinational signals (TYFA bridge),
+    /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(
         &mut self,
         regs: &PipelineRegisters,
@@ -717,12 +726,30 @@ impl Rendering {
             self.nyka = true;
         }
 
-        // POKY captures PYGO on the falling edge. On hardware, POKY is a
-        // NOR latch that fires on falling, one half-phase after PYGO latches
-        // on rising. TYFA reads POKY, not PYGO.
+        // PYGO captures PORY on falling edge (ALET clock). On hardware,
+        // PYGO is DFF17 clocked by ALET_xBxDxFxH. PORY was latched
+        // on the preceding rising (MYVO clock), so PYGO reads state_old.PORY.
+        if self.pory && !self.pygo {
+            self.pygo = true;
+        }
+
+        // POKY NOR latch fires on falling, reading the just-updated PYGO.
+        // Zero propagation delay from PYGO to POKY within this falling
+        // phase, matching hardware NOR latch behavior.
         if self.pygo && !self.poky {
             self.poky = true;
         }
+
+        // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
+        // SOCY = NOT(RYDY): self.rydy was set in the preceding rising by
+        // check_window_trigger and is stable during falling (rising signal,
+        // constant during falling phases per GateBoy).
+        // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
+        // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
+        self.tyfa_bridge = match self.sprite_state {
+            SpriteState::Idle => !self.rydy && self.poky,
+            _ => false,
+        };
     }
 
     /// Rising edge Mode 3 pixel pipeline processing.
@@ -787,14 +814,6 @@ impl Rendering {
         // POKY disables SUVU/TAVE.
         if self.nyka && self.pory && !self.pygo {
             self.fetcher.load_into(&mut self.bg_shifter);
-        }
-
-        // PYGO captures PORY on rising, after TAVE. On hardware, PYGO/POKY
-        // fires 1 half-phase after TAVE (falling vs rising of the same dot).
-        // Placing PYGO here means TAVE reads !self.pygo (still false),
-        // then PYGO latches high, enabling TYFA on this same dot.
-        if self.pory && !self.pygo {
-            self.pygo = true;
         }
 
         // Fine scroll match (PUXA/POVA).
@@ -864,18 +883,9 @@ impl Rendering {
                 }
             }
             SpriteState::Idle => {
-                // TYFA_CLKPIPE (page 21) = AND3(SOCY, POKY, VYBO).
-                //   SOCY = NOT(TOMU_WIN_HITp) — old-RYDY inverted
-                //   POKY = preload done latch (our `poky`)
-                //   VYBO = NOR3(FEPO_old, WODU_old, MYVO) — sprite match and
-                //     hblank gate from previous phase. Both are structurally
-                //     guaranteed false here: we're in SpriteState::Idle (no FEPO)
-                //     and RenderPhase::Drawing (no WODU).
-                //
-                // Snapshot delay: TYFA reads state_old.RYDY (the pre-edge
-                // value captured in `inputs`). Writes to self.rydy by PORY
-                // clearing or check_window_trigger don't affect this dot's TYFA.
-                let tyfa = !inputs.rydy && self.poky;
+                // TYFA was computed in falling phase and bridged. SACU is
+                // computed here in rising — hardware-correct phase for SACU.
+                let tyfa = self.tyfa_bridge;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
