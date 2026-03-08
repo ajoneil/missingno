@@ -551,10 +551,13 @@ impl Rendering {
             // next and sees render_phase == Drawing, so mode3_even
             // advances the fetcher naturally on the AVAP dot. No
             // explicit pre-advance needed.
-        } else if self.lcd_turning_on && video.dot() == 72 {
+        } else if self.lcd_turning_on && video.dot() == 80 {
             // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
-            // directly to Mode 3 at NOP 18 after the ldh that enables the LCD,
-            // skipping the OAM scan. 18 M-cycles * 4 dots = 72 dots.
+            // directly to Mode 3, skipping the OAM scan. Mode 3 starts at
+            // approximately dot 80, the same as normal scanlines. The video
+            // clock divider (WUVU/VENA) comes out of LCD-enable reset at a
+            // misaligned phase, adding ~8 dots of delay beyond the naive
+            // 18 NOP × 4 = 72 calculation from Mooneye lcdon_timing-GS.
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
             self.nuko_wx = regs.window.x_plus_7.output();
