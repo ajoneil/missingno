@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>net.andyofniall.missingno</id>
 
-  <name>MissingNo.</name>
+  <name>Missingno</name>
   <summary>Game Boy emulator and debugger</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
@@ -14,7 +14,7 @@
 
   <description>
     <p>
-      MissingNo. is a Game Boy emulator with an integrated debugger. Play Game Boy
+      Missingno is a Game Boy emulator with an integrated debugger. Play Game Boy
       games with keyboard or controller support, fullscreen mode, and save RAM
       persistence.
     </p>

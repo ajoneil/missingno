@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=MissingNo.
+Name=Missingno
 Comment=Game Boy emulator and debugger
 Exec=missingno %f
 Icon=net.andyofniall.missingno

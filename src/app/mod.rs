@@ -170,14 +170,14 @@ impl App {
         if let Game::Loaded(game) = &self.game {
             match game {
                 LoadedGame::Debugger(debugger) => {
-                    format!("{} - MissingNo.", debugger.game_boy().cartridge().title())
+                    format!("{} - Missingno", debugger.game_boy().cartridge().title())
                 }
                 LoadedGame::Emulator(emulator) => {
-                    format!("{} - MissingNo.", emulator.game_boy().cartridge().title())
+                    format!("{} - Missingno", emulator.game_boy().cartridge().title())
                 }
             }
         } else {
-            "MissingNo.".into()
+            "Missingno".into()
         }
     }
 
@@ -366,7 +366,7 @@ impl App {
                                             .width(80)
                                             .height(80)
                                             .style(|_, _| svg::Style { color: None }),
-                                        text::xl("MissingNo."),
+                                        text::xl("Missingno"),
                                         iced_text(format!(
                                             "Version {}",
                                             env!("CARGO_PKG_VERSION").trim_end_matches(".0")
@@ -426,7 +426,7 @@ impl App {
             },
             _ => {
                 let mut col = column![
-                    text::xl("Welcome to MissingNo.!"),
+                    text::xl("Welcome to Missingno!"),
                     icons::xl(Icon::GameBoy)
                         .width(200)
                         .height(200)

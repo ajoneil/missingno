@@ -1,5 +1,5 @@
-# MissingNo.
-MissingNo. is a Game Boy emulator and debugger written in Rust.
+# Missingno
+Missingno is a Game Boy emulator and debugger written in Rust.
 
 ![Debugger screenshot](screenshots/debugger.png)
 

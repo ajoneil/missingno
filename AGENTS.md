@@ -116,7 +116,7 @@ Skills run as Task subagents — each skill is launched via the Task tool, opera
 
 ## Project Overview
 
-MissingNo. is a Game Boy emulator and debugger written in Rust.
+Missingno is a Game Boy emulator and debugger written in Rust.
 
 ## Build and Run Commands
 
