@@ -395,7 +395,11 @@ impl Ppu {
                         }
                     }
                     Some(FramePhase::VerticalBlank) => {
-                        if self.video.ly() == 0 {
+                        // Use the internal counter, not ly(), because ly()
+                        // returns 0 on line 153 (MYTA early reset). The
+                        // VBlank→ActiveDisplay transition must wait for the
+                        // real ly counter to wrap 153→0 at RUTU.
+                        if self.video.ly == 0 {
                             self.pixel_pipeline = Some(FramePhase::ActiveDisplay(Rendering::new()));
                         }
                     }

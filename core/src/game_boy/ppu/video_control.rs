@@ -23,8 +23,12 @@ pub struct VideoControl {
     /// Drives RUTU (line-end event that clocks LY) at dot 452.
     pub(super) dot: u32,
 
-    /// LY register (MUWY-LAFO, page 21). Written by the pixel pipeline
-    /// at the RUTU line-end event (dot 452). Read by CPU at FF44.
+    /// LY counter (MUWY-LAFO ripple counter, page 21). Clocked by RUTU
+    /// at dot 452, counting 0–153 and wrapping. On line 153, MYTA
+    /// (frame-end DFF, clocked by NYPE one half-cycle after RUTU) drives
+    /// LAMA low, resetting all LY bits to 0. The CPU sees LY=153 only
+    /// during the first M-cycle (dots 0–3); from dot 4 onward, `ly()`
+    /// returns 0.
     pub(super) ly: u8,
 
     /// LYC register (FF45). CPU-writable comparison value.
@@ -48,8 +52,18 @@ impl VideoControl {
         self.dot
     }
 
+    /// CPU-visible LY value. On line 153, MYTA (frame-end DFF clocked
+    /// by NYPE) drives LAMA low, resetting all LY bits to 0 after
+    /// dot 4. The CPU sees LY=153 only during the first M-cycle
+    /// (dots 0–3); from dot 4 onward, `ly()` returns 0. The internal
+    /// counter remains at 153 until RUTU at dot 452 naturally wraps
+    /// it 153→0.
     pub fn ly(&self) -> u8 {
-        self.ly
+        if self.ly == 153 && self.dot >= 4 && self.dot < pixel_pipeline::RUTU_LINE_END_DOT {
+            0
+        } else {
+            self.ly
+        }
     }
 
     pub fn ly_eq_lyc(&self) -> bool {
@@ -61,18 +75,19 @@ impl VideoControl {
     }
 
     pub fn latch_ly_comparison(&mut self) {
-        self.ly_eq_lyc = self.ly == self.lyc;
+        self.ly_eq_lyc = self.ly() == self.lyc;
     }
 
     /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),
-    /// fires the RUTU event: LY increments (or wraps 153→0). At
-    /// SCANLINE_TOTAL_DOTS (456), resets dot to 0 and returns true.
+    /// fires the RUTU event: the LY ripple counter increments, wrapping
+    /// naturally from 153→0. At SCANLINE_TOTAL_DOTS (456), resets dot to
+    /// 0 and returns true.
     pub fn advance_dot(&mut self) -> bool {
         self.dot += 1;
 
         if self.dot == pixel_pipeline::RUTU_LINE_END_DOT {
             // RUTU line-end event: clock the LY ripple counter.
-            if self.ly == 153 {
+            if self.ly >= 153 {
                 self.ly = 0;
             } else {
                 self.ly += 1;
