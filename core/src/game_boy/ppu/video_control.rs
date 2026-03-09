@@ -34,10 +34,13 @@ pub struct VideoControl {
     /// LYC register (FF45). CPU-writable comparison value.
     pub(super) lyc: u8,
 
+    /// Raw LY==LYC comparison from the current M-cycle (PALY_LY_MATCHa).
+    /// On the next M-cycle, this is promoted to `ly_eq_lyc` (the ROPO
+    /// output). Models the `_old` input to ROPO DFF17 — ROPO always
+    /// samples the previous cycle's comparison result.
+    pub(super) ly_match_pending: bool,
+
     /// Latched LY==LYC comparison result (ROPO_LY_MATCH_SYNCp, page 21).
-    /// Updated each M-cycle by `latch_ly_comparison()`. The STAT register
-    /// read and STAT interrupt LYC condition both use this latched value.
-    /// Frozen when the PPU is off (comparison clock stops).
     pub(super) ly_eq_lyc: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
@@ -75,7 +78,11 @@ impl VideoControl {
     }
 
     pub fn latch_ly_comparison(&mut self) {
-        self.ly_eq_lyc = self.ly() == self.lyc;
+        // ROPO DFF17 latches PALY_LY_MATCHa_old on TALU rising edge.
+        // Promote the previous cycle's raw comparison to the STAT-visible
+        // latch, then compute the fresh comparison for next cycle.
+        self.ly_eq_lyc = self.ly_match_pending;
+        self.ly_match_pending = self.ly() == self.lyc;
     }
 
     /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),

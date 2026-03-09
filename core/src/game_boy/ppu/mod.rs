@@ -83,6 +83,7 @@ impl Ppu {
                 dot: 400,
                 ly: 153,
                 lyc: 0,
+                ly_match_pending: true,
                 ly_eq_lyc: true,
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
@@ -410,6 +411,13 @@ impl Ppu {
                 }
             }
 
+            // M-cycle-rate LYC comparison — AFTER advance_dot so the
+            // comparison sees post-increment LY, BEFORE STAT edge detection
+            // so interrupts see the freshly promoted ly_eq_lyc.
+            if is_mcycle {
+                self.video.latch_ly_comparison();
+            }
+
             // Detect rising edge of STAT interrupt line (runs every dot,
             // matching hardware's SUKO-clocked DFF which has phase granularity)
             let stat_line_high = self.stat_line_active();
@@ -417,13 +425,6 @@ impl Ppu {
                 result.request_stat = true;
             }
             self.video.stat_line_was_high = stat_line_high;
-
-            if !is_mcycle {
-                return result;
-            }
-
-            // Update comparison clock (runs while PPU is on, M-cycle rate)
-            self.video.latch_ly_comparison();
         } else {
             if !is_mcycle {
                 return result;
