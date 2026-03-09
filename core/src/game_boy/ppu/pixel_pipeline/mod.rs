@@ -420,7 +420,10 @@ impl Rendering {
     fn oam_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
+            RenderPhase::LineStart
+                | RenderPhase::OamScan
+                | RenderPhase::Drawing
+                | RenderPhase::DrawingComplete
         )
     }
 
@@ -436,7 +439,10 @@ impl Rendering {
     fn oam_write_locked(&self) -> bool {
         matches!(
             self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
+            RenderPhase::LineStart
+                | RenderPhase::OamScan
+                | RenderPhase::Drawing
+                | RenderPhase::DrawingComplete
         )
     }
 

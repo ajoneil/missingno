@@ -76,9 +76,12 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
+            // Post-boot PPU state: internal line 153, dot 400, VBlank.
+            // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
+            // Gambatte uses 396, but test evidence shows 400 (4 dots later).
             video: VideoControl {
-                dot: 0,
-                ly: 0,
+                dot: 400,
+                ly: 153,
                 lyc: 0,
                 ly_eq_lyc: true,
                 // The first bit is unused, but is set at boot time
@@ -86,7 +89,7 @@ impl Ppu {
                 stat_line_was_high: false,
             },
             oam: Oam::new(),
-            pixel_pipeline: Some(FramePhase::new()),
+            pixel_pipeline: Some(FramePhase::VerticalBlank),
         }
     }
 
