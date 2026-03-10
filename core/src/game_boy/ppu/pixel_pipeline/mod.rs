@@ -247,8 +247,7 @@ pub struct Rendering {
     /// live register, providing a 1-dot lag on mid-scanline WX writes.
     nuko_wx: u8,
     /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every rising edge.
-    /// Reset to false on LCD-on and LY=0; reset to true at LY>=1
-    /// scanline boundaries so XUPY rising edges align to odd dots.
+    /// Reset to false on LCD-on only; free-runs across scanlines.
     wuvu: bool,
     /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
     byba: bool,
@@ -651,15 +650,8 @@ impl Rendering {
         self.wx_triggered = false;
         self.last_wx_value = 0xFF;
         self.nuko_wx = 0xFF;
-        // WUVU phase: LY>=1 scanlines reset WUVU to true so that XUPY
-        // rising edges align to odd dots (1,3,...,79). This places the
-        // 40th scan tick (entry 39, FETO) at dot 79, producing AVAP at
-        // video.dot()=79 (reported dot 80). LY=0 inherits wuvu=false
-        // from Rendering::new(), keeping its Mode 3 start at dot 78
-        // (reported 79).
-        if scanline != 0 {
-            self.wuvu = true;
-        }
+        // WUVU free-runs across scanlines (no reset). BYBA and DOBA are
+        // cleared by LINE_RST at the scanline boundary.
         self.byba = false;
         self.doba = false;
     }
@@ -904,10 +896,15 @@ impl Rendering {
                 }
             }
             SpriteState::Idle => {
-                // SACU uses forward-computed TYFA (combinational from cascade
-                // DFFs within the same dot). PECU fine counter and window_zero_pixel
-                // use the bridged tyfa_bridge (DFF output from previous dot).
-                let sacu = forward_tyfa && self.fine_scroll.pixel_clock_active();
+                // TYFA was computed in falling phase and bridged. SACU is
+                // computed here in rising — hardware-correct phase for SACU.
+                let tyfa = self.tyfa_bridge;
+
+                // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
+                // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
+                // Net: SACU fires when TYFA is high AND ROXY is done (fine
+                // scroll complete). Drives pipe shift registers and pixel counter.
+                let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
                 // Hardware within-tick ordering for DFF22 shift register cells:
                 // 1. Synchronous shift (SACU clock edge)
@@ -1003,9 +1000,9 @@ impl Rendering {
                 // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
 
                 // PECU (fine counter clock) derives from ROXO, which derives
-                // from TYFA. Uses bridged TYFA (DFF output, previous dot)
-                // because PECU reads the DFF output, not the combinational wire.
-                if self.tyfa_bridge {
+                // from TYFA. Fine scroll ticks whenever the pixel clock is
+                // enabled, regardless of ROXY (fine scroll itself).
+                if tyfa {
                     self.fine_scroll.tick();
                 }
 
