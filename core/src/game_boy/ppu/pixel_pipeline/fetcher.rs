@@ -46,7 +46,7 @@ impl TileFetcher {
     pub(super) fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
-            tick: FetcherTick::T2,
+            tick: FetcherTick::T1,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -202,13 +202,13 @@ impl TileFetcher {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
+        self.tick = FetcherTick::T1;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
+        self.tick = FetcherTick::T1;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }
