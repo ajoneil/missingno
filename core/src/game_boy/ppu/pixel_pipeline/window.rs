@@ -27,6 +27,7 @@ pub(super) fn check_window_trigger(
     fetcher: &mut TileFetcher,
     nyka: &mut bool,
     pory: &mut bool,
+    lyry_prev: &mut bool,
     bg_shifter: &mut BgShifter,
     fine_scroll: &mut FineScroll,
     window_zero_pixel: &mut bool,
@@ -97,10 +98,13 @@ pub(super) fn check_window_trigger(
     fine_scroll.reset_for_window();
     *rydy_live = true;
     fetcher.reset_for_window();
-    // NAFY: window mode trigger always resets NYKA and PORY, forcing the
-    // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
-    // tile fetch completes before the pixel clock can resume.
+    // NAFY: window mode trigger always resets NYKA, PORY, and lyry_prev,
+    // forcing the startup cascade (NYKA→PORY→PYGO) to re-propagate after
+    // the window tile fetch completes before the pixel clock can resume.
+    // lyry_prev must also be cleared so the window refetch does not inherit
+    // stale LYRY state from the previous fetch.
     *nyka = false;
     *pory = false;
+    *lyry_prev = false;
     *window_rendered = true;
 }

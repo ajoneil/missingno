@@ -161,6 +161,11 @@ pub struct Rendering {
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
+    /// LYRY previous-phase latch. Models `reg_old.LYRY` (= `reg_old.phase_tfetch >= 10`)
+    /// for the NYKA DFF17 input. On hardware, NYKA reads the previous falling
+    /// phase's LYRY value, not the current one. This 1-phase delay adds 1 dot
+    /// to pipeline priming, matching the hardware cascade timing.
+    lyry_prev: bool,
     /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
     /// Goes high when the first BG tile fetch completes (LYRY fires).
     /// Reset by NAFY (window mode trigger) and at scanline boundaries.
@@ -269,6 +274,7 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
+            lyry_prev: false,
             nyka: false,
             pory: false,
             pygo: false,
@@ -307,6 +313,7 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
+            lyry_prev: false,
             nyka: false,
             pory: false,
             pygo: false,
@@ -632,6 +639,7 @@ impl Rendering {
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
+        self.lyry_prev = false;
         self.nyka = false;
         self.pory = false;
         self.pygo = false;
@@ -726,16 +734,17 @@ impl Rendering {
         // --- Cascade DFF propagation (falling edge: NYKA) ---
         //
         // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
-        // NYKA is clocked on ALET (falling edge of master clock).
+        // NYKA is a DFF17 clocked on ALET (falling edge of master clock).
+        // DFF17 reads state_old -- the PREVIOUS falling phase's LYRY value.
 
-        // NYKA captures LYRY (fetcher step == Idle). The `lyry` local
-        // was captured after fetcher.advance() but before TAVE resets
-        // the fetcher, so it directly observes the hardware signal.
-        // NYKA latches high and stays high until reset by NAFY (window
-        // trigger) or scanline end.
-        if lyry && !self.nyka {
+        // NYKA captures lyry_prev (the previous phase's LYRY), not the
+        // current lyry. This models the DFF17 state_old read.
+        if self.lyry_prev && !self.nyka {
             self.nyka = true;
         }
+
+        // Update lyry_prev for next falling phase.
+        self.lyry_prev = lyry;
 
         // PYGO captures PORY on falling edge (ALET clock). On hardware,
         // PYGO is DFF17 clocked by ALET_xBxDxFxH. PORY was latched
@@ -1031,6 +1040,7 @@ impl Rendering {
             &mut self.fetcher,
             &mut self.nyka,
             &mut self.pory,
+            &mut self.lyry_prev,
             &mut self.bg_shifter,
             &mut self.fine_scroll,
             &mut self.window_zero_pixel,
