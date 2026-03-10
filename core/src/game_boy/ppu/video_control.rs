@@ -48,6 +48,11 @@ pub struct VideoControl {
 
     /// Previous STAT line state for rising-edge detection.
     pub(super) stat_line_was_high: bool,
+
+    /// True during the first scanline after LCD enable (LCDC bit 7 set).
+    /// Line 0 after LCD-on runs 454 dots instead of 456, matching the
+    /// hardware's WUVU/VENA phase offset on initial enable.
+    pub(super) first_line_after_lcd_on: bool,
 }
 
 impl VideoControl {
@@ -92,7 +97,18 @@ impl VideoControl {
     pub fn advance_dot(&mut self) -> bool {
         self.dot += 1;
 
-        if self.dot == pixel_pipeline::RUTU_LINE_END_DOT {
+        let rutu_dot = if self.first_line_after_lcd_on {
+            pixel_pipeline::FIRST_LINE_RUTU_DOT
+        } else {
+            pixel_pipeline::RUTU_LINE_END_DOT
+        };
+        let total_dots = if self.first_line_after_lcd_on {
+            pixel_pipeline::FIRST_LINE_TOTAL_DOTS
+        } else {
+            pixel_pipeline::SCANLINE_TOTAL_DOTS
+        };
+
+        if self.dot == rutu_dot {
             // RUTU line-end event: clock the LY ripple counter.
             if self.ly >= 153 {
                 self.ly = 0;
@@ -101,8 +117,9 @@ impl VideoControl {
             }
         }
 
-        if self.dot == pixel_pipeline::SCANLINE_TOTAL_DOTS {
+        if self.dot == total_dots {
             self.dot = 0;
+            self.first_line_after_lcd_on = false;
             return true;
         }
 

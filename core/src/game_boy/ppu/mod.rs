@@ -88,6 +88,7 @@ impl Ppu {
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
+                first_line_after_lcd_on: false,
             },
             oam: Oam::new(),
             pixel_pipeline: Some(FramePhase::VerticalBlank),
@@ -351,6 +352,7 @@ impl Ppu {
         if self.pixel_pipeline.is_none() {
             self.video.dot = 0;
             self.video.write_ly(0);
+            self.video.first_line_after_lcd_on = true;
             self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
 
