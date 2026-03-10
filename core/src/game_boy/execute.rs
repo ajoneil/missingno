@@ -549,6 +549,13 @@ impl GameBoy {
             new_screen = true;
         }
 
+        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
+        // g42 is clocked by CLK9 which has 4 rising edges per M-cycle (one per
+        // dot), so the latch captures IF & IE state at every dot, not just at
+        // M-cycle boundaries.
+        self.capture_interrupt_latch();
+        self.halt_wakeup_check();
+
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle, using falling edges of the
             // internal counter's bit 7 to drive the serial shift clock.
@@ -597,38 +604,6 @@ impl GameBoy {
             self.external.tick_decay();
 
             self.audio.mcycle(self.timers.internal_counter());
-
-            // Sequencer interrupt latch: captures IF & IE at each M-cycle
-            // boundary, modeling DFF g42 (clocked by CLK9). New captures
-            // are Fresh (not yet dispatchable); Ready values from a prior
-            // step keep their propagation state so the wakeup NOP's own
-            // boundary tick doesn't regress a Ready back to Fresh.
-            self.interrupt_latch = match self.cpu.interrupt_master_enable {
-                InterruptMasterEnable::Enabled => match self.interrupts.triggered() {
-                    Some(interrupt) => match self.interrupt_latch {
-                        InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
-                        _ => InterruptLatch::Fresh(interrupt),
-                    },
-                    None => InterruptLatch::Empty,
-                },
-                InterruptMasterEnable::Disabled => InterruptLatch::Empty,
-            };
-
-            // HALT wakeup: even with IME=Disabled, a pending interrupt
-            // wakes the CPU from HALT (without dispatching). Setting
-            // Running here causes the HaltedNop completion to capture
-            // its bus read as the prefetched opcode and return — the
-            // wakeup NOP IS the trailing fetch (1 M-cycle total, not 2).
-            // check_halt_bug() (which runs after the processor yields
-            // None) sees Running and no-ops, avoiding a spurious halt
-            // bug flag — the halt bug only fires at HALT entry, not
-            // during idle wakeup.
-            if self.cpu.halt_state == HaltState::Halted
-                && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
-                && self.interrupts.triggered().is_some()
-            {
-                self.cpu.halt_state = HaltState::Running;
-            }
         }
 
         new_screen
@@ -642,6 +617,43 @@ impl GameBoy {
         let s1 = self.tick_dot_falling(is_mcycle_boundary);
         let s2 = self.tick_dot_rising(is_mcycle_boundary);
         s1 || s2
+    }
+
+    /// Capture the interrupt latch, modeling g42's CLK9-edge sampling.
+    /// Called every dot (4x per M-cycle), matching hardware where g42
+    /// latches SeqControl_1 on every CLK9 rising edge. New captures are
+    /// Fresh (not yet dispatchable); Ready values from a prior step keep
+    /// their propagation state so the wakeup NOP's own tick doesn't
+    /// regress a Ready back to Fresh.
+    fn capture_interrupt_latch(&mut self) {
+        self.interrupt_latch = match self.cpu.interrupt_master_enable {
+            InterruptMasterEnable::Enabled => match self.interrupts.triggered() {
+                Some(interrupt) => match self.interrupt_latch {
+                    InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
+                    _ => InterruptLatch::Fresh(interrupt),
+                },
+                None => InterruptLatch::Empty,
+            },
+            InterruptMasterEnable::Disabled => InterruptLatch::Empty,
+        };
+    }
+
+    /// Check for HALT wakeup (IME=0 path). On hardware, the HALT latch
+    /// (g49) is reset combinationally from g42's output on the same CLK9
+    /// edge. Called every dot alongside capture_interrupt_latch().
+    ///
+    /// Even with IME=Disabled, a pending interrupt wakes the CPU from
+    /// HALT (without dispatching). Setting Running here causes the
+    /// HaltedNop completion to capture its bus read as the prefetched
+    /// opcode and return — the wakeup NOP IS the trailing fetch
+    /// (1 M-cycle total, not 2).
+    fn halt_wakeup_check(&mut self) {
+        if self.cpu.halt_state == HaltState::Halted
+            && self.cpu.interrupt_master_enable == InterruptMasterEnable::Disabled
+            && self.interrupts.triggered().is_some()
+        {
+            self.cpu.halt_state = HaltState::Running;
+        }
     }
 
     /// HALT bug: if HALT was just executed with IME=0 and an interrupt
