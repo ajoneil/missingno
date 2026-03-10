@@ -761,6 +761,13 @@ impl Rendering {
             SpriteState::Idle => !self.rydy && self.poky,
             _ => false,
         };
+
+        // POHU: combinational comparator, count == SCX & 7.
+        // On hardware, POHU is combinational and ROXO captures into PUXA
+        // on the falling edge. The count value is from the preceding rising
+        // (reg_old), matching hardware.
+        self.fine_scroll
+            .compare_falling(regs.background_viewport.x.output());
     }
 
     /// Rising edge Mode 3 pixel pipeline processing.
@@ -827,24 +834,19 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // Fine scroll match (PUXA/POVA).
-        //
-        // On hardware, PUXA (match capture DFF) and RYKU (fine counter)
-        // are both clocked by ROXO on the falling phase. DFF propagation
-        // delay means PUXA captures the comparator output computed from
-        // the pre-increment counter value. We model this by running the
-        // check BEFORE tick() within the same half-phase.
-        //
-        // POVA = AND2(PUXA, !NYZE) clears ROXY on the same edge. SACU
-        // responds combinationally: SACU = or2(SEGU, ROXY). Placing
-        // check_scroll_match before SACU lets ROXY clear before SACU
-        // is evaluated, matching hardware behavior.
-        //
-        // POVA fires for timing (Mode 3 length) but does NOT produce a
-        // visible LCD pixel. The lcd_data_latch is NOT updated here.
-        self.pova = if self.pygo {
-            self.fine_scroll
-                .check_scroll_match(regs.background_viewport.x.output())
+        // Forward-compute TYFA from cascade DFF state.
+        // PORY was just latched above. PYGO and POKY propagate on falling,
+        // but we can forward-compute their would-be values: if PORY is now
+        // true, PYGO would go true on the next falling, and POKY would follow.
+        let forward_pygo = self.pygo || self.pory;
+        let forward_poky = self.poky || forward_pygo;
+        let forward_tyfa =
+            !self.rydy && forward_poky && matches!(self.sprite_state, SpriteState::Idle);
+
+        // PUXA capture: ROXO fires when TYFA is active. Forward-compute
+        // TYFA so the capture sees the same-dot cascade result.
+        self.pova = if forward_tyfa {
+            self.fine_scroll.capture_rising()
         } else {
             false
         };
@@ -983,7 +985,7 @@ impl Rendering {
                     regs,
                 );
 
-                if !toba && tyfa {
+                if !toba && self.tyfa_bridge {
                     // Consume window_zero_pixel during pre-visible TYFA
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window

@@ -26,6 +26,9 @@ pub(super) struct FineScroll {
     /// phase. Used for POVA rising-edge detection: POVA = AND2(PUXA,
     /// !NYZE). Fires once per PUXA 0→1 transition.
     nyze: bool,
+    /// POHU comparator result, computed on falling (EVEN phase).
+    /// PUXA captures this on the next rising (ODD phase) when ROXO fires.
+    pohu: bool,
 }
 
 impl FineScroll {
@@ -34,6 +37,7 @@ impl FineScroll {
             count: 0,
             roxy: Roxy::Gating,
             nyze: false,
+            pohu: false,
         }
     }
 
@@ -55,15 +59,21 @@ impl FineScroll {
         self.count = 0;
     }
 
-    /// Check fine scroll match (PUXA) and compute POVA trigger.
+    /// Falling phase: compute POHU comparator result from current count.
+    /// On hardware, POHU is combinational (count == SCX & 7), and ROXO
+    /// captures it into PUXA on the falling edge. We store it for the
+    /// next rising phase's capture step.
+    pub(super) fn compare_falling(&mut self, scx: u8) {
+        self.pohu = self.count == (scx & 7);
+    }
+
+    /// Rising phase: capture PUXA from stored POHU, edge-detect POVA,
+    /// and clear ROXY if matched.
     ///
-    /// PUXA is the combinational match (count == SCX & 7). If ROXY is
-    /// still gating and PUXA fires, ROXY clears (one-shot per line).
-    /// Returns POVA = AND2(PUXA, !NYZE) — the rising-edge trigger that
-    /// fires once per PUXA 0→1 transition. POVA generates one extra
-    /// LCD clock pulse via SEMU = OR2(TOBA, POVA).
-    pub(super) fn check_scroll_match(&mut self, scx: u8) -> bool {
-        let puxa = self.count == (scx & 7);
+    /// Only call when forward_tyfa is true (ROXO fires).
+    /// Returns POVA = AND2(PUXA, !NYZE).
+    pub(super) fn capture_rising(&mut self) -> bool {
+        let puxa = self.pohu;
         let pova = puxa && !self.nyze;
         self.nyze = puxa;
 
@@ -79,5 +89,6 @@ impl FineScroll {
     pub(super) fn reset_for_window(&mut self) {
         self.count = 0;
         self.roxy = Roxy::Done;
+        self.pohu = false;
     }
 }
