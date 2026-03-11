@@ -720,7 +720,7 @@ impl Rendering {
         // and remain high for the rest of the scanline.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
-            && self.fetcher.step == FetcherStep::Idle
+            && self.lyry_prev
             && self.pygo
         {
             sf.phase = SpriteFetchPhase::FetchingData;
