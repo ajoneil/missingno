@@ -3,7 +3,6 @@ use screen::Screen;
 use sprites::{Sprite, SpriteId};
 
 use control::{Control, ControlFlags};
-use dff::LatchState;
 use memory::{Oam, OamAddress, Vram};
 use palette::Palettes;
 use pixel_pipeline::{FramePhase, Rendering};
@@ -62,9 +61,7 @@ impl Ppu {
         let control = Control::default();
         Self {
             registers: PipelineRegisters {
-                control_bg_en: DffLatch::new(
-                    control.bits() & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits(),
-                ),
+                control_latch: DffLatch::new(control.bits()),
                 control,
                 background_viewport: BackgroundViewportPosition {
                     x: DffLatch::new(0),
@@ -195,26 +192,11 @@ impl Ppu {
             }
             Register::Control => {
                 if is_drawing {
-                    // LCDC is DFF9: bits 1-7 latch atomically. Only BG_EN
-                    // (bit 0) has a transitional `old | new` phase.
-                    let old_bg_en = self.registers.control.bits()
-                        & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
-                    let new_bg_en = value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits();
-                    let transitional_bg_en = old_bg_en | new_bg_en;
-                    let immediate = (value & !ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits())
-                        | transitional_bg_en;
-                    self.write_register_immediate(&Register::Control, immediate);
-                    self.registers.control_bg_en.output = immediate;
-                    self.registers.control_bg_en.state = Some(LatchState::Transitional {
-                        final_value: value,
-                        fresh: true,
-                    });
+                    self.registers.control_latch.write_propagating(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value);
-                    self.registers
-                        .control_bg_en
-                        .write_immediate(value & ControlFlags::BACKGROUND_AND_WINDOW_ENABLE.bits());
+                    self.registers.control_latch.write_immediate(value);
                     false
                 }
             }

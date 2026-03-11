@@ -19,8 +19,8 @@ pub struct Window {
 /// is specific to this group.
 pub struct PipelineRegisters {
     pub(super) control: Control,
-    /// DFF8-style latch for LCDC bit 0 (BG_EN) only.
-    pub(super) control_bg_en: DffLatch,
+    /// DFF9-style latch for full LCDC byte.
+    pub(super) control_latch: DffLatch,
     pub(super) background_viewport: BackgroundViewportPosition,
     pub(super) window: Window,
     pub(super) palettes: Palettes,
@@ -36,8 +36,8 @@ impl PipelineRegisters {
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();
-        if self.control_bg_en.tick() {
-            self.control = Control::new(ControlFlags::from_bits_retain(self.control_bg_en.output));
+        if self.control_latch.tick() {
+            self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
     }
 
@@ -50,6 +50,6 @@ impl PipelineRegisters {
         self.background_viewport.x.clear();
         self.background_viewport.y.clear();
         self.window.x_plus_7.clear();
-        self.control_bg_en.clear();
+        self.control_latch.clear();
     }
 }
