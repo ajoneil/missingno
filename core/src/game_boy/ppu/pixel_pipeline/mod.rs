@@ -937,6 +937,12 @@ impl Rendering {
                 // (matching DFF22 behavior).
                 if seko_fire {
                     self.fetcher.load_into(&mut self.bg_shifter);
+                    // SEKO resets the fetcher counter (TEVO -> LOVY/LAXU/TYFO
+                    // reset), which drives LYRY low combinationally (phase < 10).
+                    // Clear lyry_prev so the next falling phase sees the reset
+                    // state — otherwise a sprite triggered at an X%8==0 boundary
+                    // would see stale lyry_prev=true and exit wait immediately.
+                    self.lyry_prev = false;
                 }
 
                 // Pixel counter increment (SACU clock). On hardware, SACU
