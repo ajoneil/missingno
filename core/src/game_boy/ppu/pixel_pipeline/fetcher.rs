@@ -17,8 +17,10 @@ pub enum FetcherStep {
 
 /// Which half of LEBO's 2-dot clock cycle the fetcher is in.
 /// The fetcher (and OAM scanner) are clocked at half the dot rate.
-/// T1 is the first dot — address computation from live register values.
-/// T2 is the second dot — VRAM read at the pre-computed address.
+/// T1 is the first dot — a timing delay (no work).
+/// T2 is the second dot — address computation + VRAM read (atomic).
+/// The address bus is combinational on hardware, so the address always
+/// reflects live register values at the moment of the VRAM read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FetcherTick {
     T1,
@@ -40,9 +42,8 @@ pub(super) struct TileFetcher {
     tile_data_high: u8,
     /// Whether we're fetching from the window tilemap.
     pub(super) fetching_window: bool,
-    /// VRAM address computed at T1, to be read at T2.
-    /// On hardware this is the combinational address on the VRAM bus
-    /// during phase_tfetch 0-1.
+    /// Last VRAM address used by the fetcher. Set at T2 when the address
+    /// is computed and VRAM is read. Retained for debugger visibility.
     vram_address: u16,
 }
 
@@ -136,7 +137,7 @@ impl TileFetcher {
         window_line_counter % 8
     }
 
-    /// Compute the VRAM offset for tile data (GetTileDataLow/High T1).
+    /// Compute the VRAM offset for tile data (GetTileDataLow/High T2).
     /// Reads LCDC (tile address mode), SCY from live registers.
     fn tile_data_address(
         &self,
@@ -158,15 +159,16 @@ impl TileFetcher {
     /// Advance the background tile fetcher by one dot.
     ///
     /// Each fetcher step spans 2 dots (T1 + T2):
-    /// - T1: compute VRAM address from live register values (SCX, SCY, LCDC).
-    /// - T2: read VRAM at the pre-computed address and latch the result.
+    /// - T1: timing delay (no work). Models the first half of LEBO's clock.
+    /// - T2: compute VRAM address from live registers and read VRAM.
     ///
-    /// GetTile always enters at T2 (after load_into/reset). Its address
-    /// bus is combinational, so T2 computes the address from current
-    /// register values and reads VRAM atomically. For GetTileDataLow and
-    /// GetTileDataHigh, T1 always precedes T2, so registers (LCDC tile
-    /// address mode, SCY) are sampled 1 dot before the VRAM read — matching
-    /// hardware's phase_tfetch 0-1 address computation.
+    /// The hardware VRAM address bus is combinational — it always reflects
+    /// current register values (SCX, SCY, LCDC). All three steps (GetTile,
+    /// GetTileDataLow, GetTileDataHigh) compute the address and read VRAM
+    /// atomically at T2. T1 exists solely to model the 2-dot step period.
+    ///
+    /// GetTile enters at T2 after load_into/reset (no preceding T1).
+    /// GetTileDataLow and GetTileDataHigh always have T1 before T2.
     pub(super) fn advance(
         &mut self,
         pixel_counter: u8,
@@ -200,11 +202,16 @@ impl TileFetcher {
             },
             FetcherStep::GetTileDataLow => match self.tick {
                 FetcherTick::T1 => {
-                    self.vram_address =
-                        self.tile_data_address(window_line_counter, regs, video, false);
+                    // Timing delay only. The address bus is combinational —
+                    // tile data address will be computed from live registers at T2.
                     self.tick = FetcherTick::T2;
                 }
                 FetcherTick::T2 => {
+                    // Compute tile data address from live registers and read VRAM
+                    // atomically. LCDC tile_address_mode and SCY are sampled here,
+                    // at the same dot as the VRAM read.
+                    self.vram_address =
+                        self.tile_data_address(window_line_counter, regs, video, false);
                     self.tile_data_low = vram.read_byte(self.vram_address);
                     self.tick = FetcherTick::T1;
                     self.step = FetcherStep::GetTileDataHigh;
@@ -212,11 +219,14 @@ impl TileFetcher {
             },
             FetcherStep::GetTileDataHigh => match self.tick {
                 FetcherTick::T1 => {
-                    self.vram_address =
-                        self.tile_data_address(window_line_counter, regs, video, true);
+                    // Timing delay only.
                     self.tick = FetcherTick::T2;
                 }
                 FetcherTick::T2 => {
+                    // Compute tile data address from live registers and read VRAM
+                    // atomically.
+                    self.vram_address =
+                        self.tile_data_address(window_line_counter, regs, video, true);
                     self.tile_data_high = vram.read_byte(self.vram_address);
                     self.tick = FetcherTick::T1;
                     self.step = FetcherStep::Idle;
