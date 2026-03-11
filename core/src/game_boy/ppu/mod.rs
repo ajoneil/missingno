@@ -394,7 +394,6 @@ impl Ppu {
                     Some(FramePhase::ActiveDisplay(rendering)) => {
                         if self.video.ly() == screen::NUM_SCANLINES {
                             result.screen = Some(rendering.screen.clone());
-                            result.request_vblank = true;
                             self.pixel_pipeline = Some(FramePhase::VerticalBlank);
                         } else {
                             rendering.reset_scanline(self.video.ly());
@@ -411,6 +410,15 @@ impl Ppu {
                     }
                     None => {}
                 }
+            }
+
+            // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
+            // not at the scanline boundary (dot 0).
+            if self.video.dot() == 4
+                && self.video.ly() == 144
+                && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
+            {
+                result.request_vblank = true;
             }
 
             // M-cycle-rate LYC comparison — AFTER advance_dot so the
