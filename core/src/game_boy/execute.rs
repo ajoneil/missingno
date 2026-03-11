@@ -630,6 +630,9 @@ impl GameBoy {
             InterruptMasterEnable::Enabled => match self.interrupts.triggered() {
                 Some(interrupt) => match self.interrupt_latch {
                     InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
+                    _ if self.cpu.halt_state == HaltState::Halted => {
+                        InterruptLatch::Ready(interrupt)
+                    }
                     _ => InterruptLatch::Fresh(interrupt),
                 },
                 None => InterruptLatch::Empty,
