@@ -205,8 +205,10 @@ impl Ppu {
                         | transitional_bg_en;
                     self.write_register_immediate(&Register::Control, immediate);
                     self.registers.control_bg_en.output = immediate;
-                    self.registers.control_bg_en.state =
-                        Some(LatchState::Transitional { final_value: value });
+                    self.registers.control_bg_en.state = Some(LatchState::Transitional {
+                        final_value: value,
+                        fresh: true,
+                    });
                     false
                 } else {
                     self.write_register_immediate(&register, value);

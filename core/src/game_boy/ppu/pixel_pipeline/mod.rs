@@ -851,7 +851,7 @@ impl Rendering {
                 &self.bg_shifter,
                 &self.obj_shifter,
                 &mut self.window_zero_pixel,
-                regs,
+                &self.pixel_snapshot,
             );
         }
 
@@ -1020,7 +1020,7 @@ impl Rendering {
                     &self.bg_shifter,
                     &self.obj_shifter,
                     &mut self.window_zero_pixel,
-                    regs,
+                    &self.pixel_snapshot,
                 );
 
                 if !toba && self.tyfa_bridge {

@@ -104,13 +104,13 @@ pub(super) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     window_zero_pixel: &mut bool,
-    regs: &PipelineRegisters,
+    snap: &PixelOutputSnapshot,
 ) -> PaletteIndex {
-    let bgp = regs.palettes.background.output();
-    let obp0 = regs.palettes.sprite0.output();
-    let obp1 = regs.palettes.sprite1.output();
-    let bg_window_enabled = regs.control.background_and_window_enabled();
-    let sprites_enabled = regs.control.sprites_enabled();
+    let bgp = snap.bgp;
+    let obp0 = snap.obp0;
+    let obp1 = snap.obp1;
+    let bg_window_enabled = snap.bg_window_enabled;
+    let sprites_enabled = snap.sprites_enabled;
 
     if *window_zero_pixel {
         *window_zero_pixel = false;

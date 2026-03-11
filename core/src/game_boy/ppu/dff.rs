@@ -8,8 +8,10 @@
 ///   may delay when the new value appears on the output pin.
 pub(super) enum LatchState {
     /// DFF8 transitional: output is `old | new` while the master latch
-    /// is transparent. The next tick resolves to the final value.
-    Transitional { final_value: u8 },
+    /// is transparent. A fresh transitional survives one tick (modeling
+    /// persistence through the write-phase clock edge); the next tick
+    /// resolves to the final value.
+    Transitional { final_value: u8, fresh: bool },
     /// DFF9 propagation: the old value persists on the output for one
     /// dot while the new value routes through internal wiring. Next
     /// tick applies the final value.
@@ -45,11 +47,20 @@ impl DffLatch {
     /// resolved (final value applied) on this tick.
     pub(super) fn tick(&mut self) -> bool {
         match self.state {
-            Some(LatchState::Transitional { final_value }) => {
-                // Next tick: slave captures, resolve to final value.
-                self.output = final_value;
-                self.state = None;
-                true
+            Some(LatchState::Transitional { final_value, fresh }) => {
+                if fresh {
+                    // First tick after write: mark as stale, keep old|new output.
+                    self.state = Some(LatchState::Transitional {
+                        final_value,
+                        fresh: false,
+                    });
+                    false
+                } else {
+                    // Second tick: slave captures, resolve to final value.
+                    self.output = final_value;
+                    self.state = None;
+                    true
+                }
             }
             Some(LatchState::Propagating { final_value }) => {
                 self.output = final_value;
@@ -66,6 +77,7 @@ impl DffLatch {
         self.output = self.output | new_value;
         self.state = Some(LatchState::Transitional {
             final_value: new_value,
+            fresh: true,
         });
     }
 
