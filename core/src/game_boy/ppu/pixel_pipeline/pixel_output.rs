@@ -25,6 +25,34 @@ use crate::game_boy::ppu::{
 
 use super::shifters::{BgShifter, ObjShifter};
 
+/// Snapshot of register values for pixel output, captured at the end
+/// of each rising phase. Models the TOBA qp_ext_old mechanism: the LCD
+/// data pins are driven by AND gates that read palette/LCDC outputs,
+/// but TOBA captures the PREVIOUS half-cycle's value. CPU writes that
+/// land between rising and falling edges are invisible to the current
+/// dot's pixel output.
+pub(super) struct PixelOutputSnapshot {
+    pub bgp: u8,
+    pub obp0: u8,
+    pub obp1: u8,
+    /// LCDC bit 0: gates BG color to zero.
+    pub bg_window_enabled: bool,
+    /// LCDC bit 1: gates sprite priority mixing and sprite trigger.
+    pub sprites_enabled: bool,
+}
+
+impl PixelOutputSnapshot {
+    pub fn capture(regs: &PipelineRegisters) -> Self {
+        Self {
+            bgp: regs.palettes.background.output(),
+            obp0: regs.palettes.sprite0.output(),
+            obp1: regs.palettes.sprite1.output(),
+            bg_window_enabled: regs.control.background_and_window_enabled(),
+            sprites_enabled: regs.control.sprites_enabled(),
+        }
+    }
+}
+
 /// Resolve BG and OBJ pixel values into a final palette index through
 /// priority logic and palette mapping.
 fn resolve_pixel(
@@ -34,30 +62,30 @@ fn resolve_pixel(
     spr_hi: u8,
     spr_pal: u8,
     spr_pri: u8,
-    regs: &PipelineRegisters,
+    snap: &PixelOutputSnapshot,
 ) -> PaletteIndex {
     // Form 2-bit BG color index (0 if BG/window disabled via LCDC.0)
-    let bg_color = if regs.control.background_and_window_enabled() {
+    let bg_color = if snap.bg_window_enabled {
         (bg_hi << 1) | bg_lo
     } else {
         0
     };
 
     // Sprite priority mixing
-    if regs.control.sprites_enabled() {
+    if snap.sprites_enabled {
         let spr_color = (spr_hi << 1) | spr_lo;
         if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
             let sprite_palette = if spr_pal == 0 {
-                PaletteMap(regs.palettes.sprite0.output())
+                PaletteMap(snap.obp0)
             } else {
-                PaletteMap(regs.palettes.sprite1.output())
+                PaletteMap(snap.obp1)
             };
             return sprite_palette.map(PaletteIndex(spr_color));
         }
     }
 
     // Background pixel
-    PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color))
+    PaletteMap(snap.bgp).map(PaletteIndex(bg_color))
 }
 
 /// Resolve the current pipe MSBs into a palette index for the LCD
@@ -72,31 +100,31 @@ pub(super) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     window_zero_pixel: &mut bool,
-    regs: &PipelineRegisters,
+    snap: &PixelOutputSnapshot,
 ) -> PaletteIndex {
     if *window_zero_pixel {
         *window_zero_pixel = false;
         let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
         let bg_color: u8 = 0;
 
-        if regs.control.sprites_enabled() {
+        if snap.sprites_enabled {
             let spr_color = (spr_hi << 1) | spr_lo;
             if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                 let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(regs.palettes.sprite0.output())
+                    PaletteMap(snap.obp0)
                 } else {
-                    PaletteMap(regs.palettes.sprite1.output())
+                    PaletteMap(snap.obp1)
                 };
                 return sprite_palette.map(PaletteIndex(spr_color));
             }
         }
 
-        return PaletteMap(regs.palettes.background.output()).map(PaletteIndex(bg_color));
+        return PaletteMap(snap.bgp).map(PaletteIndex(bg_color));
     }
 
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-    resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, regs)
+    resolve_pixel(bg_lo, bg_hi, spr_lo, spr_hi, spr_pal, spr_pri, snap)
 }
 
 /// Data-pin pixel overwrite (sprite merge).
@@ -112,7 +140,7 @@ pub(super) fn sprite_overwrite_data_latch(
     obj_shifter: &ObjShifter,
     lcd_data_latch: &mut PaletteIndex,
     window_zero_pixel: &mut bool,
-    regs: &PipelineRegisters,
+    snap: &PixelOutputSnapshot,
 ) {
-    *lcd_data_latch = resolve_current_pixel(bg_shifter, obj_shifter, window_zero_pixel, regs);
+    *lcd_data_latch = resolve_current_pixel(bg_shifter, obj_shifter, window_zero_pixel, snap);
 }
