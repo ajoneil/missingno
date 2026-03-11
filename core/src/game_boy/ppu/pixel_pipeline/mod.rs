@@ -58,8 +58,10 @@ const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
 /// This clocks the LY register and triggers line-end processing.
 pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
-/// RUTU dot for the shortened first line after LCD enable.
-pub(super) const FIRST_LINE_RUTU_DOT: u32 = FIRST_LINE_TOTAL_DOTS - 4;
+/// RUTU dot for the first line after LCD enable. Same as normal lines —
+/// RUTU fires at dot 452 regardless of line length. The post-RUTU period
+/// is 2 dots (vs normal 4) because FIRST_LINE_TOTAL_DOTS is 454.
+pub(super) const FIRST_LINE_RUTU_DOT: u32 = RUTU_LINE_END_DOT;
 /// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
 /// and WODU (hblank gate) hardware signals on page 21.
 ///
