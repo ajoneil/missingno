@@ -48,6 +48,25 @@ impl Vram {
     pub fn tile_map(&self, id: TileMapId) -> &TileMap {
         &self.tile_maps[id.0 as usize]
     }
+
+    /// Read a byte from VRAM by flat offset (0x0000–0x1FFF, corresponding
+    /// to the 0x8000–0x9FFF address range). Used by the fetcher's T2 phase
+    /// to read at the address computed during T1.
+    pub fn read_byte(&self, offset: u16) -> u8 {
+        let offset = offset as usize & 0x1FFF;
+        if offset < 0x1800 {
+            // Tile data: 3 blocks × 0x800 bytes each.
+            let block = offset / 0x800;
+            let within = offset % 0x800;
+            self.tiles[block].data[within]
+        } else {
+            // Tile maps: 2 maps × 0x400 bytes each.
+            let map_offset = offset - 0x1800;
+            let map = map_offset / 0x400;
+            let within = map_offset % 0x400;
+            self.tile_maps[map].data[within].0
+        }
+    }
 }
 
 /// OAM: sprite attribute memory. SoC-internal, not on either data bus.
