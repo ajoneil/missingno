@@ -278,7 +278,7 @@ impl Rendering {
             render_phase: RenderPhase::LineStart,
             sprites: SpriteStore::new(),
             scanner: OamScanner::new(),
-            scanning: true,
+            scanning: false,
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -551,10 +551,11 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // CATU_LINE_ENDp: at dot 1 for lines 1+, CATU fires (phase_lx=2,
-        // LINE_RSTn released), setting BESU (scan latch) and resetting
-        // the scan counter. Line 0 already has scanning=true from reset_scanline.
-        if video.dot() == 1 && video.ly() != 0 && !self.scanning {
+        // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
+        // released), setting BESU (scan latch) and resetting the scan
+        // counter. Suppressed on the LCD turn-on first line, where hardware
+        // skips OAM scan entirely and enters Mode 3 directly at dot 80.
+        if video.dot() == 1 && !self.lcd_turning_on && !self.scanning {
             self.render_phase = RenderPhase::OamScan;
             self.scanning = true;
             self.scanner.reset();
@@ -649,15 +650,10 @@ impl Rendering {
         }
         self.sprites = SpriteStore::new();
         self.scanner.reset();
-        if scanline == 0 {
-            // Line 0: BESU set at dot 0 (boot ROM / post-boot init
-            // sets the LCD on mid-line, so the full scan runs from dot 0).
-            self.scanning = true;
-        } else {
-            // Lines 1+: BESU deferred to dot 1 (CATU_LINE_ENDp fires
-            // at phase_lx=2, releasing LINE_RSTn and setting BESU).
-            self.scanning = false;
-        }
+        // BESU deferred to dot 1 on all scanlines (CATU_LINE_ENDp fires
+        // at phase_lx=2, releasing LINE_RSTn and setting BESU).
+        // LCD turn-on's first scanline is handled separately by new_lcd_on().
+        self.scanning = false;
         self.window_rendered = false;
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
