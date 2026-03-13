@@ -2,7 +2,7 @@
 
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
-use super::fetcher::{FetcherStep, FetcherTick, TileFetcher};
+use super::fetcher::{FetcherStep, TileFetcher};
 use super::fine_scroll::FineScroll;
 use super::shifters::BgShifter;
 
@@ -76,7 +76,6 @@ pub(super) fn check_window_trigger(
         if !rydy
             && bg_shifter.poky()
             && fetcher.step == FetcherStep::GetTile
-            && fetcher.tick == FetcherTick::T2
         {
             *window_zero_pixel = true;
         }

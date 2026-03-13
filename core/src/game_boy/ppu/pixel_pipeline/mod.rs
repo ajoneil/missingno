@@ -8,7 +8,7 @@ mod shifters;
 mod sprite_fetch;
 mod window;
 
-pub use fetcher::{FetcherStep, FetcherTick};
+pub use fetcher::FetcherStep;
 pub use frame_phase::FramePhase;
 pub use sprite_fetch::SpriteFetchPhase;
 
@@ -125,7 +125,6 @@ pub struct PipelineSnapshot {
     pub sprite_tile_data: Option<(u8, u8)>,
     pub lcd_x: u8,
     pub fetcher_step: FetcherStep,
-    pub fetcher_tick: FetcherTick,
     pub rydy: bool,
     pub wusa: bool,
     pub pova: bool,
@@ -419,7 +418,6 @@ impl Rendering {
             sprite_tile_data,
             lcd_x: self.lcd_shift_register.count(),
             fetcher_step: self.fetcher.step,
-            fetcher_tick: self.fetcher.tick,
             rydy: self.rydy,
             wusa: self.wusa,
             pova: self.pova,

@@ -5,22 +5,32 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 use super::super::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
+/// Background tile fetcher step. Each VRAM read takes 2 dots (wait + read),
+/// but GetTile enters directly at the read dot (LEBO head start), so a
+/// complete fetch cycle is 5 dots: GetTile(1) + DataLowWait(1) +
+/// DataLow(1) + DataHighWait(1) + DataHigh(1), then Idle until reload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FetcherStep {
+    /// Tilemap lookup — VRAM read (1 dot). Entry point after every reset.
+    /// LEBO head start skips the wait dot: NYXU resets the counter to 0,
+    /// then LEBO immediately clocks it to 1, so GetTile is always the
+    /// read half of the 2-dot cycle.
     GetTile,
+    /// Delay before tile data low read (1 dot).
+    GetTileDataLowWait,
+    /// Tile data low bitplane — VRAM read (1 dot).
     GetTileDataLow,
+    /// Delay before tile data high read (1 dot).
+    GetTileDataHighWait,
+    /// Tile data high bitplane — VRAM read (1 dot).
     GetTileDataHigh,
     /// The fetcher has completed all three VRAM reads and is frozen,
     /// waiting for the SEKO-triggered reload (fine_count == 7).
     Idle,
 }
 
-/// Which half of LEBO's 2-dot clock cycle the fetcher is in.
-/// The fetcher (and OAM scanner) are clocked at half the dot rate.
-/// T1 is the first dot — a timing delay (no work).
-/// T2 is the second dot — address computation + VRAM read (atomic).
-/// The address bus is combinational on hardware, so the address always
-/// reflects live register values at the moment of the VRAM read.
+/// Which half of a 2-dot clock cycle. Used by the sprite fetcher
+/// (which does NOT have the LEBO head start optimization).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FetcherTick {
     T1,
@@ -29,8 +39,6 @@ pub enum FetcherTick {
 
 pub(super) struct TileFetcher {
     pub(super) step: FetcherStep,
-    /// Which half of the 2-dot fetcher clock cycle we're in.
-    pub(super) tick: FetcherTick,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     pub(super) window_tile_x: u8,
@@ -65,7 +73,6 @@ impl TileFetcher {
     pub(super) fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
-            tick: FetcherTick::T2,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -158,20 +165,20 @@ impl TileFetcher {
 
     /// Advance the background tile fetcher by one dot.
     ///
-    /// Each fetcher step spans 2 dots (T1 + T2):
-    /// - T1: timing delay (no work). Models the first half of LEBO's clock.
-    /// - T2: compute VRAM address from live registers and read VRAM.
+    /// The fetch cycle is 5 dots total:
+    ///   GetTile (1 dot, VRAM read) → GetTileDataLowWait (1 dot) →
+    ///   GetTileDataLow (1 dot, VRAM read) → GetTileDataHighWait (1 dot) →
+    ///   GetTileDataHigh (1 dot, VRAM read) → Idle (waits for reload).
     ///
-    /// The hardware VRAM address bus is combinational — it always reflects
-    /// current register values (SCX, SCY, LCDC). All three steps (GetTile,
-    /// GetTileDataLow, GetTileDataHigh) compute the address and read VRAM
-    /// atomically at T2. T1 exists solely to model the 2-dot step period.
+    /// GetTile is always the entry point (via load_into/reset_for_window).
+    /// The LEBO head start means it enters directly at the read dot —
+    /// no preceding wait dot. GetTileDataLow and GetTileDataHigh each
+    /// have a wait dot before the read, modeling the full 2-dot period
+    /// of LEBO's clock.
     ///
-    /// GetTile enters at T2 after load_into/reset (LEBO head start).
-    /// NYXU resets the counter to 0, then LEBO immediately clocks it
-    /// to 1 on the next half-phase, skipping the T1 delay. This makes
-    /// the first step of each fetch cycle 1 dot (T2 only) while
-    /// GetTileDataLow and GetTileDataHigh take 2 dots (T1+T2).
+    /// The hardware VRAM address bus is combinational — addresses always
+    /// reflect current register values (SCX, SCY, LCDC) at the moment
+    /// of each VRAM read.
     pub(super) fn advance(
         &mut self,
         pixel_counter: u8,
@@ -181,55 +188,35 @@ impl TileFetcher {
         vram: &Vram,
     ) {
         match self.step {
-            FetcherStep::GetTile => match self.tick {
-                FetcherTick::T1 => {
-                    // Not normally reachable — GetTile enters at T2 due
-                    // to the LEBO head start. Present for completeness.
-                    self.tick = FetcherTick::T2;
-                }
-                FetcherTick::T2 => {
-                    // Compute tilemap address from live registers and read
-                    // VRAM atomically. This is the entry point after every
-                    // fetcher reset (LEBO head start skips T1).
-                    self.vram_address =
-                        self.tile_index_address(pixel_counter, window_line_counter, regs, video);
-                    self.tile_index = vram.read_byte(self.vram_address);
-                    self.tick = FetcherTick::T1;
-                    self.step = FetcherStep::GetTileDataLow;
-                }
-            },
-            FetcherStep::GetTileDataLow => match self.tick {
-                FetcherTick::T1 => {
-                    // Timing delay only. The address bus is combinational —
-                    // tile data address will be computed from live registers at T2.
-                    self.tick = FetcherTick::T2;
-                }
-                FetcherTick::T2 => {
-                    // Compute tile data address from live registers and read VRAM
-                    // atomically. LCDC tile_address_mode and SCY are sampled here,
-                    // at the same dot as the VRAM read.
-                    self.vram_address =
-                        self.tile_data_address(window_line_counter, regs, video, false);
-                    self.tile_data_low = vram.read_byte(self.vram_address);
-                    self.tick = FetcherTick::T1;
-                    self.step = FetcherStep::GetTileDataHigh;
-                }
-            },
-            FetcherStep::GetTileDataHigh => match self.tick {
-                FetcherTick::T1 => {
-                    // Timing delay only.
-                    self.tick = FetcherTick::T2;
-                }
-                FetcherTick::T2 => {
-                    // Compute tile data address from live registers and read VRAM
-                    // atomically.
-                    self.vram_address =
-                        self.tile_data_address(window_line_counter, regs, video, true);
-                    self.tile_data_high = vram.read_byte(self.vram_address);
-                    self.tick = FetcherTick::T1;
-                    self.step = FetcherStep::Idle;
-                }
-            },
+            FetcherStep::GetTile => {
+                // Compute tilemap address from live registers and read VRAM.
+                self.vram_address =
+                    self.tile_index_address(pixel_counter, window_line_counter, regs, video);
+                self.tile_index = vram.read_byte(self.vram_address);
+                self.step = FetcherStep::GetTileDataLowWait;
+            }
+            FetcherStep::GetTileDataLowWait => {
+                // Timing delay — first half of LEBO's 2-dot clock cycle.
+                self.step = FetcherStep::GetTileDataLow;
+            }
+            FetcherStep::GetTileDataLow => {
+                // Compute tile data address from live registers and read VRAM.
+                self.vram_address =
+                    self.tile_data_address(window_line_counter, regs, video, false);
+                self.tile_data_low = vram.read_byte(self.vram_address);
+                self.step = FetcherStep::GetTileDataHighWait;
+            }
+            FetcherStep::GetTileDataHighWait => {
+                // Timing delay.
+                self.step = FetcherStep::GetTileDataHigh;
+            }
+            FetcherStep::GetTileDataHigh => {
+                // Compute tile data address from live registers and read VRAM.
+                self.vram_address =
+                    self.tile_data_address(window_line_counter, regs, video, true);
+                self.tile_data_high = vram.read_byte(self.vram_address);
+                self.step = FetcherStep::Idle;
+            }
             FetcherStep::Idle => {
                 // The fetcher is frozen — it waits here until the
                 // SEKO-triggered reload (fine_count == 7) fires from
@@ -247,13 +234,11 @@ impl TileFetcher {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }
