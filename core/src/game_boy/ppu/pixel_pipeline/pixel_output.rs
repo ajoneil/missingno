@@ -25,34 +25,6 @@ use crate::game_boy::ppu::{
 
 use super::shifters::{BgShifter, ObjShifter};
 
-/// Snapshot of register values for pixel output, captured at the end
-/// of each rising phase. Models the TOBA qp_ext_old mechanism: the LCD
-/// data pins are driven by AND gates that read palette/LCDC outputs,
-/// but TOBA captures the PREVIOUS half-cycle's value. CPU writes that
-/// land between rising and falling edges are invisible to the current
-/// dot's pixel output.
-pub(super) struct PixelOutputSnapshot {
-    pub bgp: u8,
-    pub obp0: u8,
-    pub obp1: u8,
-    /// LCDC bit 0: gates BG color to zero.
-    pub bg_window_enabled: bool,
-    /// LCDC bit 1: gates sprite priority mixing and sprite trigger.
-    pub sprites_enabled: bool,
-}
-
-impl PixelOutputSnapshot {
-    pub fn capture(regs: &PipelineRegisters) -> Self {
-        Self {
-            bgp: regs.palettes.background.output(),
-            obp0: regs.palettes.sprite0.output(),
-            obp1: regs.palettes.sprite1.output(),
-            bg_window_enabled: regs.control.background_and_window_enabled(),
-            sprites_enabled: regs.control.sprites_enabled(),
-        }
-    }
-}
-
 /// Resolve BG and OBJ pixel values into a final palette index through
 /// priority logic and palette mapping.
 fn resolve_pixel(
@@ -93,9 +65,13 @@ fn resolve_pixel(
 }
 
 /// Resolve the current pipe MSBs into a palette index for the LCD
-/// data latch (REMY/RAVO). Does NOT shift the LCD register — the
-/// resolved pixel is stored in the lcd_data_latch and shifted in
-/// later when a TOBA edge fires (modeling the qp_ext_old lag).
+/// data latch (REMY/RAVO). Reads palette and LCDC values live from
+/// registers — on hardware, the palette lookup is combinational with
+/// no pipeline delay.
+///
+/// Does NOT shift the LCD register — the resolved pixel is stored in
+/// the lcd_data_latch and shifted in later when a TOBA edge fires
+/// (modeling the qp_ext_old lag on the final color output).
 ///
 /// Handles `window_zero_pixel`: when set, substitutes BG color 0
 /// without reading the BG shifter. The OBJ shifter is still read
@@ -104,13 +80,13 @@ pub(super) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     window_zero_pixel: &mut bool,
-    snap: &PixelOutputSnapshot,
+    regs: &PipelineRegisters,
 ) -> PaletteIndex {
-    let bgp = snap.bgp;
-    let obp0 = snap.obp0;
-    let obp1 = snap.obp1;
-    let bg_window_enabled = snap.bg_window_enabled;
-    let sprites_enabled = snap.sprites_enabled;
+    let bgp = regs.palettes.background.output();
+    let obp0 = regs.palettes.sprite0.output();
+    let obp1 = regs.palettes.sprite1.output();
+    let bg_window_enabled = regs.control.background_and_window_enabled();
+    let sprites_enabled = regs.control.sprites_enabled();
 
     if *window_zero_pixel {
         *window_zero_pixel = false;
@@ -162,28 +138,34 @@ pub(super) fn sprite_overwrite_data_latch(
     obj_shifter: &ObjShifter,
     lcd_data_latch: &mut PaletteIndex,
     window_zero_pixel: &mut bool,
-    snap: &PixelOutputSnapshot,
+    regs: &PipelineRegisters,
 ) {
+    let bgp = regs.palettes.background.output();
+    let obp0 = regs.palettes.sprite0.output();
+    let obp1 = regs.palettes.sprite1.output();
+    let bg_window_enabled = regs.control.background_and_window_enabled();
+    let sprites_enabled = regs.control.sprites_enabled();
+
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
 
     if *window_zero_pixel {
         *window_zero_pixel = false;
         let bg_color: u8 = 0;
 
-        if snap.sprites_enabled {
+        if sprites_enabled {
             let spr_color = (spr_hi << 1) | spr_lo;
             if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
                 let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(snap.obp0)
+                    PaletteMap(obp0)
                 } else {
-                    PaletteMap(snap.obp1)
+                    PaletteMap(obp1)
                 };
                 *lcd_data_latch = sprite_palette.map(PaletteIndex(spr_color));
                 return;
             }
         }
 
-        *lcd_data_latch = PaletteMap(snap.bgp).map(PaletteIndex(bg_color));
+        *lcd_data_latch = PaletteMap(bgp).map(PaletteIndex(bg_color));
         return;
     }
 
@@ -195,10 +177,10 @@ pub(super) fn sprite_overwrite_data_latch(
         spr_hi,
         spr_pal,
         spr_pri,
-        snap.bgp,
-        snap.obp0,
-        snap.obp1,
-        snap.bg_window_enabled,
-        snap.sprites_enabled,
+        bgp,
+        obp0,
+        obp1,
+        bg_window_enabled,
+        sprites_enabled,
     );
 }
