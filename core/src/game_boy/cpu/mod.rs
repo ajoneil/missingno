@@ -1,4 +1,5 @@
 use flags::{Flag, Flags};
+use mcycle::{BusDot, CpuPhase};
 use registers::{Register8, Register16};
 
 pub mod flags;
@@ -19,13 +20,13 @@ pub enum InterruptMasterEnable {
 /// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
 /// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
 /// resume until the next M-cycle — the wakeup NOP. The `InterruptLatch`
-/// enum's Fresh→Ready promotion at step() entry naturally models this
+/// enum's Fresh→Ready promotion at fetch entry naturally models this
 /// 1 M-cycle propagation delay.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
     Running,
-    /// HALT instruction decoded — the trailing fetch runs as a dummy
+    /// HALT instruction decoded — the next fetch runs as a dummy
     /// fetch (read [PC] without incrementing), then transitions to
     /// Halted. Models the hardware's 1 M-cycle transition from HALT
     /// execution to idle mode.
@@ -53,7 +54,44 @@ pub enum EiDelay {
     Fired,
 }
 
-#[derive(Clone)]
+/// Models the sequencer DFF (g42) pipeline for interrupt dispatch.
+///
+/// On hardware, an IF flag set during M-cycle N is captured in the
+/// sequencer DFF at N's boundary but doesn't reach the dispatch
+/// decision until M-cycle N+1. `promote()` advances Fresh→Ready.
+#[derive(Clone, Copy)]
+pub(super) enum InterruptLatch {
+    /// No interrupt pending in the sequencer pipeline.
+    Empty,
+    /// Interrupt captured during this step's M-cycle boundary ticks.
+    /// The DFF has latched the value but it hasn't propagated to the
+    /// dispatch output yet.
+    Fresh(super::interrupts::Interrupt),
+    /// Interrupt that has propagated through the DFF pipeline (carried
+    /// over from a previous step). Dispatch can consume it.
+    Ready(super::interrupts::Interrupt),
+}
+
+impl InterruptLatch {
+    /// Advance the DFF pipeline: Fresh becomes Ready.
+    pub(super) fn promote(&mut self) {
+        if let InterruptLatch::Fresh(interrupt) = *self {
+            *self = InterruptLatch::Ready(interrupt);
+        }
+    }
+
+    /// Take the interrupt if it has propagated (Ready). Returns None
+    /// and leaves the latch unchanged for Fresh and Empty.
+    pub(super) fn take_ready(&mut self) -> Option<super::interrupts::Interrupt> {
+        if let InterruptLatch::Ready(interrupt) = *self {
+            *self = InterruptLatch::Empty;
+            Some(interrupt)
+        } else {
+            None
+        }
+    }
+}
+
 pub struct Cpu {
     pub a: u8,
     pub b: u8,
@@ -79,6 +117,37 @@ pub struct Cpu {
     /// immediately but fails to increment PC on the next opcode fetch,
     /// causing that byte to be read twice.
     pub halt_bug: bool,
+
+    // ── Persistent state machine fields ──
+    /// Current execution phase of the CPU state machine.
+    pub(super) phase: CpuPhase,
+    /// The decoded instruction, preserved for debugger display.
+    pub(super) instruction: instructions::Instruction,
+    /// Dot position within the current M-cycle (0–3).
+    pub(super) dot: BusDot,
+    /// Whether we have a pending M-cycle.
+    pub(super) mcycle_active: bool,
+    /// The BusAction for the current M-cycle.
+    current_action: Option<mcycle::BusAction>,
+    /// Step counter for Fetch/Halted phases (tracks M-cycle sub-steps).
+    pub(super) exec_step: u8,
+    /// Scratch byte for multi-read phases (Pop, CondReturn).
+    pub(super) scratch: u8,
+    /// The dot position that produced the last DotAction (for the executor
+    /// to check timing signals like boga, bowa, mopa).
+    pub(super) last_dot: BusDot,
+    /// IE push bug flag.
+    pub(super) pending_vector_resolve: bool,
+    /// Interrupt latch (g42 DFF).
+    pub(super) interrupt_latch: InterruptLatch,
+    /// Set when the CPU transitions to the Fetch phase. The executor
+    /// reads this to detect instruction boundaries for EI delay and
+    /// step_instruction().
+    pub(super) boundary_flag: bool,
+    /// Whether an interrupt is currently pending (IF & IE != 0).
+    /// Updated every dot by `update_interrupt_state`. Used by the CPU
+    /// state machine for the HALT bug check.
+    pub(super) interrupt_pending: bool,
 }
 
 impl Cpu {
@@ -105,6 +174,19 @@ impl Cpu {
             ei_delay: None,
             halt_state: HaltState::Running,
             halt_bug: false,
+
+            phase: CpuPhase::Fetch,
+            instruction: instructions::Instruction::NoOperation,
+            dot: BusDot::ZERO,
+            mcycle_active: false,
+            current_action: None,
+            exec_step: 0,
+            scratch: 0,
+            last_dot: BusDot::ZERO,
+            pending_vector_resolve: false,
+            interrupt_latch: InterruptLatch::Empty,
+            boundary_flag: true, // Start at an instruction boundary
+            interrupt_pending: false,
         }
     }
 

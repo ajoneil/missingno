@@ -1,7 +1,6 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
-use cpu::mcycle::{BusDot, Processor};
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -20,78 +19,6 @@ pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
-
-/// Models the sequencer DFF (g42) pipeline for interrupt dispatch.
-///
-/// On hardware, an IF flag set during M-cycle N is captured in the
-/// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. `promote()` advances Fresh→Ready.
-/// For the Running path, promote runs after the leading fetch's
-/// ticking — the leading fetch M-cycle IS the DFF propagation
-/// delay. For the Halted path, dispatch is deferred so that a
-/// wakeup NOP runs first. When `take_ready()` succeeds, ISR
-/// dispatch begins immediately.
-#[derive(Clone, Copy)]
-enum InterruptLatch {
-    /// No interrupt pending in the sequencer pipeline.
-    Empty,
-    /// Interrupt captured during this step's M-cycle boundary ticks.
-    /// The DFF has latched the value but it hasn't propagated to the
-    /// dispatch output yet.
-    Fresh(interrupts::Interrupt),
-    /// Interrupt that has propagated through the DFF pipeline (carried
-    /// over from a previous step). Dispatch can consume it.
-    Ready(interrupts::Interrupt),
-}
-
-impl InterruptLatch {
-    /// Advance the DFF pipeline: Fresh becomes Ready.
-    fn promote(&mut self) {
-        if let InterruptLatch::Fresh(interrupt) = *self {
-            *self = InterruptLatch::Ready(interrupt);
-        }
-    }
-
-    /// Take the interrupt if it has propagated (Ready). Returns None
-    /// and leaves the latch unchanged for Fresh and Empty.
-    fn take_ready(&mut self) -> Option<interrupts::Interrupt> {
-        if let InterruptLatch::Ready(interrupt) = *self {
-            *self = InterruptLatch::Empty;
-            Some(interrupt)
-        } else {
-            None
-        }
-    }
-}
-
-/// Where the CPU is in its instruction execution lifecycle.
-/// Used by `step_dot()` to pause and resume between individual dots.
-enum ExecutionState {
-    /// Between instructions. The next `step_dot()` begins the
-    /// leading fetch (Running path) or builds a HaltedNop (Halted path).
-    Ready,
-    /// Leading fetch: ticking hardware for 4 dots then reading the
-    /// opcode at PC. After the read, the dispatch decision is made
-    /// and a Processor is built.
-    LeadingFetch {
-        dot: BusDot,
-        fetch_addr: u16,
-    },
-    /// Mid-instruction: the Processor is yielding dots.
-    Running {
-        processor: Processor,
-        read_value: u8,
-        dot: BusDot,
-        pending_oam_bug: Option<execute::OamBugKind>,
-        was_halted: bool,
-    },
-    /// HALT dummy fetch: ticking hardware for 4 dots then reading
-    /// at PC (result discarded), transitioning to Halted.
-    HaltDummyFetch {
-        dot: BusDot,
-        fetch_addr: u16,
-    },
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BusAccessKind {
@@ -124,8 +51,8 @@ pub struct GameBoy {
     sgb: Option<sgb::Sgb>,
     vram_bus: VramBus,
 
-    interrupt_latch: InterruptLatch,
-    execution: ExecutionState,
+    /// Last read value from the bus, persisted across dots for step_dot().
+    last_read_value: u8,
     bus_trace: Option<Vec<BusAccess>>,
 }
 
@@ -152,8 +79,7 @@ impl GameBoy {
             dma: Dma::new(),
             sgb,
             vram_bus: VramBus::new(),
-            interrupt_latch: InterruptLatch::Empty,
-            execution: ExecutionState::Ready,
+            last_read_value: 0,
             bus_trace: None,
         };
         gb.init_post_boot_vram();
@@ -181,8 +107,6 @@ impl GameBoy {
             None
         };
         self.init_post_boot_vram();
-        self.interrupt_latch = InterruptLatch::Empty;
-        self.execution = ExecutionState::Ready;
         self.bus_trace = None;
     }
 

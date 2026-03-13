@@ -1058,7 +1058,6 @@ impl Rendering {
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
         self.nuko_wx = regs.window.x_plus_7.output();
-
     }
 
     /// Check if a sprite should start fetching at the current pixel position.

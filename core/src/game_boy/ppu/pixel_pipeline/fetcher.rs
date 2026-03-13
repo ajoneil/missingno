@@ -201,8 +201,7 @@ impl TileFetcher {
             }
             FetcherStep::GetTileDataLow => {
                 // Compute tile data address from live registers and read VRAM.
-                self.vram_address =
-                    self.tile_data_address(window_line_counter, regs, video, false);
+                self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
                 self.tile_data_low = vram.read_byte(self.vram_address);
                 self.step = FetcherStep::GetTileDataHighWait;
             }
@@ -212,8 +211,7 @@ impl TileFetcher {
             }
             FetcherStep::GetTileDataHigh => {
                 // Compute tile data address from live registers and read VRAM.
-                self.vram_address =
-                    self.tile_data_address(window_line_counter, regs, video, true);
+                self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
                 self.tile_data_high = vram.read_byte(self.vram_address);
                 self.step = FetcherStep::Idle;
             }
