@@ -862,18 +862,13 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // Forward-compute TYFA from cascade DFF state.
-        // PORY was just latched above. PYGO and POKY propagate on falling,
-        // but we can forward-compute their would-be values: if PORY is now
-        // true, PYGO would go true on the next falling, and POKY would follow.
-        let forward_pygo = self.pygo || self.pory;
-        let forward_poky = self.poky || forward_pygo;
-        let forward_tyfa =
-            !self.rydy && forward_poky && matches!(self.sprite_state, SpriteState::Idle);
-
-        // PUXA capture: ROXO fires when TYFA is active. Forward-compute
-        // TYFA so the capture sees the same-dot cascade result.
-        self.pova = if forward_tyfa {
+        // PUXA capture: ROXO fires when TYFA is active. TYFA is
+        // combinational (AND3(SOCY, POKY, VYBO)), but POKY only updates
+        // on the falling edge — PORY just latched above, but PYGO won't
+        // capture PORY until the next falling phase. Use tyfa_bridge
+        // (computed at the end of the previous falling phase) which has
+        // the correct cascade-propagated POKY value.
+        self.pova = if self.tyfa_bridge {
             self.fine_scroll.capture_rising()
         } else {
             false

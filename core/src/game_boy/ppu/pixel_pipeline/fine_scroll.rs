@@ -70,7 +70,7 @@ impl FineScroll {
     /// Rising phase: capture PUXA from stored POHU, edge-detect POVA,
     /// and clear ROXY if matched.
     ///
-    /// Only call when forward_tyfa is true (ROXO fires).
+    /// Only call when TYFA is active (ROXO fires).
     /// Returns POVA = AND2(PUXA, !NYZE).
     pub(super) fn capture_rising(&mut self) -> bool {
         let puxa = self.pohu;
