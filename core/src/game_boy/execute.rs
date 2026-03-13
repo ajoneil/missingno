@@ -262,9 +262,16 @@ impl GameBoy {
                     }
                 }
 
-                // Falling phase (DELTA_EVEN): fetcher, DFF9, dot advance, interrupts, M-cycle subsystems.
+                // Falling phase (DELTA_EVEN): fetcher, DFF9, dot advance, M-cycle subsystems.
                 new_screen |= self.tick_dot_falling(is_mcycle_boundary);
             }
+
+            // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
+            // g42 is clocked at 4MHz (one edge per dot). Must run after BOTH phases
+            // have completed so it sees all interrupt sources (WODU from rising,
+            // mode transitions from falling) regardless of phase execution order.
+            self.capture_interrupt_latch();
+            self.halt_wakeup_check();
 
             // Bus actions after phase ticks. On hardware, CPU bus reads/writes
             // see post-AVAP, post-WODU state because all signals propagate
@@ -480,6 +487,11 @@ impl GameBoy {
                     new_screen |= self.tick_dot_falling(is_mcycle_boundary);
                 }
 
+                // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
+                // Must run after BOTH phases so it sees all interrupt sources.
+                self.capture_interrupt_latch();
+                self.halt_wakeup_check();
+
                 // Bus actions after phase ticks.
                 match dot_action {
                     DotAction::Idle => {}
@@ -589,13 +601,6 @@ impl GameBoy {
             new_screen = true;
         }
 
-        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
-        // g42 is clocked by CLK9 which has 4 rising edges per M-cycle (one per
-        // dot), so the latch captures IF & IE state at every dot, not just at
-        // M-cycle boundaries.
-        self.capture_interrupt_latch();
-        self.halt_wakeup_check();
-
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle, using falling edges of the
             // internal counter's bit 7 to drive the serial shift clock.
@@ -656,6 +661,8 @@ impl GameBoy {
     fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
         let s1 = self.tick_dot_rising(is_mcycle_boundary);
         let s2 = self.tick_dot_falling(is_mcycle_boundary);
+        self.capture_interrupt_latch();
+        self.halt_wakeup_check();
         s1 || s2
     }
 
