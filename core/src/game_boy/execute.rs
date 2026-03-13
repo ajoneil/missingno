@@ -526,14 +526,26 @@ impl GameBoy {
 
     /// Rising phase (DELTA_HA) of one dot: PPU half_rising (pixel output),
     /// M-cycle-rate subsystems (serial, DMA, audio).
+    ///
+    /// Combined method that runs both pipeline halves back-to-back.
+    /// Used by `tick_dot()` (trailing fetch) where no CPU bus actions
+    /// need to be interleaved between halves.
     fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
+        self.ppu.pipeline_rising(&self.vram_bus.vram);
+        self.ppu.pipeline_falling(&self.vram_bus.vram);
+        self.tick_dot_post_pipeline(is_mcycle_boundary)
+    }
+
+    /// Post-pipeline portion of the rising phase: DFF9 resolve, dot advance,
+    /// interrupt edge detection, and M-cycle subsystems. Called after both
+    /// `pipeline_rising()` and `pipeline_falling()` have run for this dot.
+    fn tick_dot_post_pipeline(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // PPU rising phase: pixel output, counter increment, interrupt
-        // edge detection (M-cycle boundaries only).
+        // DFF9 resolve, dot advance, interrupt edge detection.
         let video_result = self
             .ppu
-            .tcycle_rising(is_mcycle_boundary, &self.vram_bus.vram);
+            .tick_dot_post_pipeline(is_mcycle_boundary);
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }

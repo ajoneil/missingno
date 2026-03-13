@@ -343,14 +343,39 @@ impl Ppu {
         self.registers.tick_palette_latches();
     }
 
-    /// Rising edge phase (DELTA_ODD): pixel output, counter increment,
-    /// M-cycle-rate interrupt edge detection and LYC comparison.
+    /// First half of dot: pixel output, SACU, pipe shift (DELTA_ODD/rising).
     ///
-    /// Internally runs the pixel pipeline in hardware order: rising phase
-    /// first (pixel output, WODU), then falling phase (fetcher control,
-    /// VOGA/mode transitions). This matches the DMG's rising-before-falling
-    /// ordering within each dot.
-    pub fn tcycle_rising(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Exposed separately so the executor can interleave CPU bus actions
+    /// between the rising and falling pipeline halves within each dot.
+    pub fn pipeline_rising(&mut self, vram: &Vram) {
+        if !self.control().video_enabled() {
+            return;
+        }
+        if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+            pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
+        }
+    }
+
+    /// Second half of dot: fetcher advance, cascade DFFs, TYFA
+    /// (DELTA_EVEN/falling).
+    ///
+    /// Exposed separately so the executor can interleave CPU bus actions
+    /// between the rising and falling pipeline halves within each dot.
+    pub fn pipeline_falling(&mut self, vram: &Vram) {
+        if !self.control().video_enabled() {
+            return;
+        }
+        if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+            pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
+        }
+    }
+
+    /// Post-pipeline tick: DFF9 resolve, dot advance, scanline boundary,
+    /// VBlank/STAT interrupt edge detection, LCD-off handling.
+    ///
+    /// Must be called after both `pipeline_rising()` and `pipeline_falling()`
+    /// have run for this dot.
+    pub fn tick_dot_post_pipeline(&mut self, is_mcycle: bool) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -363,12 +388,6 @@ impl Ppu {
             // work. The pipeline is initialized on the next falling phase.
             if self.pixel_pipeline.is_none() {
                 return result;
-            }
-
-            if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-                // Hardware order: rising phase first, then falling phase.
-                pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
-                pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
             }
 
             // Advance DFF9 register latches after the pipeline so it reads
@@ -439,14 +458,6 @@ impl Ppu {
         result
     }
 
-    /// Advance PPU by one dot. Call once per T-cycle.
-    ///
-    /// STAT interrupt edge detection runs every dot. LYC comparison
-    /// only runs on M-cycle boundaries (when `is_mcycle` is true).
-    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
-        self.tcycle_falling(vram);
-        self.tcycle_rising(is_mcycle, vram)
-    }
 
     pub fn palettes(&self) -> &Palettes {
         &self.registers.palettes
