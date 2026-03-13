@@ -65,7 +65,7 @@ impl TileFetcher {
     pub(super) fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
-            tick: FetcherTick::T2,
+            tick: FetcherTick::T1,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -167,8 +167,8 @@ impl TileFetcher {
     /// GetTileDataLow, GetTileDataHigh) compute the address and read VRAM
     /// atomically at T2. T1 exists solely to model the 2-dot step period.
     ///
-    /// GetTile enters at T2 after load_into/reset (no preceding T1).
-    /// GetTileDataLow and GetTileDataHigh always have T1 before T2.
+    /// All three steps (GetTile, GetTileDataLow, GetTileDataHigh) go
+    /// through the full T1→T2 cycle after load_into/reset.
     pub(super) fn advance(
         &mut self,
         pixel_counter: u8,
@@ -180,19 +180,13 @@ impl TileFetcher {
         match self.step {
             FetcherStep::GetTile => match self.tick {
                 FetcherTick::T1 => {
-                    // GetTile always enters at T2 (after load_into/reset),
-                    // so T1 is only reachable if the entry point changes.
-                    // Compute the address here for completeness.
-                    self.vram_address =
-                        self.tile_index_address(pixel_counter, window_line_counter, regs, video);
+                    // Timing delay. Address bus is combinational — will
+                    // reflect live register values at T2.
                     self.tick = FetcherTick::T2;
                 }
                 FetcherTick::T2 => {
-                    // GetTile T2 computes the address atomically: the
-                    // hardware address bus is combinational from SCX/SCY/LCDC,
-                    // always reflecting current register values. Since no T1
-                    // precedes this (GetTile always enters at T2 after reload),
-                    // we compute the address here from live registers.
+                    // Compute tilemap address from live registers and read
+                    // VRAM atomically.
                     self.vram_address =
                         self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                     self.tile_index = vram.read_byte(self.vram_address);
@@ -249,13 +243,13 @@ impl TileFetcher {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
+        self.tick = FetcherTick::T1;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T2;
+        self.tick = FetcherTick::T1;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }
