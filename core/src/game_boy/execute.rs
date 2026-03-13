@@ -652,11 +652,11 @@ impl GameBoy {
             return;
         }
         if self.cpu.ei_delay == Some(EiDelay::Fired) {
-            // EI immediately before HALT: IME was promoted by EI's
-            // advance_ei_delay, but on real hardware HALT saw IME=0
-            // (the DFF pipeline hadn't propagated yet). The halt bug
-            // triggers — PC is not incremented. The interrupt will
-            // dispatch (IME is Enabled), but returns into HALT.
+            // EI immediately before HALT: on real hardware HALT saw
+            // IME=0 (the DFF pipeline hadn't propagated yet). The halt
+            // bug triggers — PC is not incremented. But EI's IME
+            // promotion still takes effect, so the interrupt dispatches.
+            self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
             self.cpu.program_counter -= 1;
             self.cpu.halt_state = HaltState::Running;
             self.cpu.ei_delay = None;
@@ -671,11 +671,11 @@ impl GameBoy {
     /// to the IME flip-flop.
     fn advance_ei_delay(&mut self) {
         self.cpu.ei_delay = match self.cpu.ei_delay {
-            Some(EiDelay::Pending) => {
+            Some(EiDelay::Pending) => Some(EiDelay::Fired),
+            Some(EiDelay::Fired) => {
                 self.cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
-                Some(EiDelay::Fired)
+                None
             }
-            Some(EiDelay::Fired) => None,
             None => None,
         };
     }

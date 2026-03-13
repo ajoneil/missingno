@@ -43,12 +43,13 @@ pub enum HaltState {
 /// boundaries.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum EiDelay {
-    /// EI was executed this instruction. IME will be promoted to
-    /// Enabled at this instruction's completion boundary.
+    /// EI was executed this instruction. Will advance to Fired at this
+    /// instruction's completion boundary. IME is not yet promoted.
     Pending,
 
-    /// IME was promoted by the previous instruction's EI delay.
-    /// `check_halt_bug` can see this to detect the EI→HALT edge case.
+    /// EI's delay has advanced one stage. IME will be promoted to
+    /// Enabled at this instruction's completion boundary (i.e., the
+    /// instruction after EI).
     Fired,
 }
 
