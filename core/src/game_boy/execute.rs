@@ -218,7 +218,7 @@ impl GameBoy {
                 }
             }
 
-            // BUDE: drive write data onto bus before PPU falling phase.
+            // BUDE: drive write data onto bus before PPU rising phase.
             // Hardware: BUDE_xxxxEFGH rises at D->E; PPU DFFs see data during E,F.
             if let DotAction::DriveBus { address, value } = &dot_action
                 && self.drive_ppu_bus(*address, *value)
@@ -226,9 +226,9 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Falling phase (DELTA_EF): timer tick, DFF latch advance, PPU half_falling.
+            // Rising phase (DELTA_ODD): timer, DFF8 palette latches, pixel output.
             let is_mcycle_boundary = dot.boga();
-            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
+            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
 
             // MOPA rising edge (dot 2): fire OAM bug corruption.
             if dot.mopa()
@@ -241,8 +241,8 @@ impl GameBoy {
                 }
             }
 
-            // Rising phase (DELTA_HA): PPU half_rising, M-cycle subsystems.
-            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
+            // Falling phase (DELTA_EVEN): fetcher, DFF9, dot advance, interrupts, M-cycle subsystems.
+            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
 
             // Bus actions after phase ticks. On hardware, CPU bus reads/writes
             // see post-AVAP, post-WODU state because all signals propagate
@@ -414,16 +414,16 @@ impl GameBoy {
                     }
                 }
 
-                // BUDE: drive write data onto bus before PPU falling phase.
+                // BUDE: drive write data onto bus before PPU rising phase.
                 if let DotAction::DriveBus { address, value } = &dot_action
                     && self.drive_ppu_bus(*address, *value)
                 {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
 
-                // Falling phase.
+                // Rising phase: timer, DFF8 palette latches, pixel output.
                 let is_mcycle_boundary = dot.boga();
-                let mut new_screen = self.tick_dot_falling(is_mcycle_boundary);
+                let mut new_screen = self.tick_dot_rising(is_mcycle_boundary);
 
                 // MOPA rising edge (dot 2): fire OAM bug.
                 if dot.mopa()
@@ -436,16 +436,15 @@ impl GameBoy {
                     }
                 }
 
-                // Rising phase.
-                new_screen |= self.tick_dot_rising(is_mcycle_boundary);
+                // Falling phase: fetcher, DFF9, dot advance, interrupts, M-cycle subsystems.
+                new_screen |= self.tick_dot_falling(is_mcycle_boundary);
 
-                // Bus actions after phase ticks. CPU reads/writes see
-                // post-tick_dot_rising state (post-AVAP, post-WODU).
+                // Bus actions after phase ticks.
                 match dot_action {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
                     DotAction::DriveBus { .. } => {
-                        // Already executed above before falling phase.
+                        // Already executed above before rising phase.
                     }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {
@@ -510,42 +509,30 @@ impl GameBoy {
         }
     }
 
-    /// Falling phase (DELTA_EF) of one dot: timer tick, DFF latch
-    /// advance, PPU half_falling.
-    fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
+    /// Rising phase (DELTA_ODD) of one dot: timer tick, DFF8 palette
+    /// latch advance, PPU pixel output pipeline.
+    fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
         // Timer ticks every T-cycle for DIV resolution
         if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
             self.interrupts.request(interrupt);
         }
 
-        // PPU falling phase: DFF latch advance, fetcher control, mode transitions.
-        self.ppu.tcycle_falling(&self.vram_bus.vram);
+        // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
+        self.ppu.tcycle_rising(&self.vram_bus.vram);
 
         false
     }
 
-    /// Rising phase (DELTA_HA) of one dot: PPU half_rising (pixel output),
-    /// M-cycle-rate subsystems (serial, DMA, audio).
-    ///
-    /// Combined method that runs both pipeline halves back-to-back.
-    /// Used by `tick_dot()` (trailing fetch) where no CPU bus actions
-    /// need to be interleaved between halves.
-    fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
-        self.ppu.pipeline_rising(&self.vram_bus.vram);
-        self.ppu.pipeline_falling(&self.vram_bus.vram);
-        self.tick_dot_post_pipeline(is_mcycle_boundary)
-    }
-
-    /// Post-pipeline portion of the rising phase: DFF9 resolve, dot advance,
-    /// interrupt edge detection, and M-cycle subsystems. Called after both
-    /// `pipeline_rising()` and `pipeline_falling()` have run for this dot.
-    fn tick_dot_post_pipeline(&mut self, is_mcycle_boundary: bool) -> bool {
+    /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
+    /// DFF9 resolve, dot advance, interrupt edge detection, and
+    /// M-cycle subsystems.
+    fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // DFF9 resolve, dot advance, interrupt edge detection.
+        // PPU falling phase: fetcher, DFF9, dot advance, interrupts.
         let video_result = self
             .ppu
-            .tick_dot_post_pipeline(is_mcycle_boundary);
+            .tcycle_falling(is_mcycle_boundary, &self.vram_bus.vram);
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -626,8 +613,8 @@ impl GameBoy {
     /// Convenience wrapper for callers that don't need to route bus
     /// actions between phases (e.g. the trailing fetch loop).
     fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
-        let s1 = self.tick_dot_falling(is_mcycle_boundary);
-        let s2 = self.tick_dot_rising(is_mcycle_boundary);
+        let s1 = self.tick_dot_rising(is_mcycle_boundary);
+        let s2 = self.tick_dot_falling(is_mcycle_boundary);
         s1 || s2
     }
 

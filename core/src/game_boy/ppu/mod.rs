@@ -321,13 +321,13 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Falling edge phase (DELTA_EVEN): LCD initialization and DFF8 palette
-    /// latch advance.
+    /// Rising edge (DELTA_ODD): DFF8 palette latch advance, LCD
+    /// initialization, pixel output pipeline (SACU, pipe shift).
     ///
-    /// DFF8 palette latches tick here (before the pipeline) so the pipeline
-    /// sees the transitional old|new value on the write dot. DFF9 register
-    /// latches tick after the pipeline in `tcycle_rising`.
-    pub fn tcycle_falling(&mut self, _vram: &Vram) {
+    /// DFF8 palette latches tick first so the pipeline sees the
+    /// transitional old|new value on the write dot, matching DFF8
+    /// master-slave transparency.
+    pub fn tcycle_rising(&mut self, vram: &Vram) {
         if !self.control().video_enabled() {
             return;
         }
@@ -341,41 +341,17 @@ impl Ppu {
 
         // Advance DFF8 palette latches before pixel output.
         self.registers.tick_palette_latches();
-    }
 
-    /// First half of dot: pixel output, SACU, pipe shift (DELTA_ODD/rising).
-    ///
-    /// Exposed separately so the executor can interleave CPU bus actions
-    /// between the rising and falling pipeline halves within each dot.
-    pub fn pipeline_rising(&mut self, vram: &Vram) {
-        if !self.control().video_enabled() {
-            return;
-        }
+        // Pixel output, SACU, pipe shift.
         if let Some(pipeline) = self.pixel_pipeline.as_mut() {
             pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
         }
     }
 
-    /// Second half of dot: fetcher advance, cascade DFFs, TYFA
-    /// (DELTA_EVEN/falling).
-    ///
-    /// Exposed separately so the executor can interleave CPU bus actions
-    /// between the rising and falling pipeline halves within each dot.
-    pub fn pipeline_falling(&mut self, vram: &Vram) {
-        if !self.control().video_enabled() {
-            return;
-        }
-        if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-            pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
-        }
-    }
-
-    /// Post-pipeline tick: DFF9 resolve, dot advance, scanline boundary,
-    /// VBlank/STAT interrupt edge detection, LCD-off handling.
-    ///
-    /// Must be called after both `pipeline_rising()` and `pipeline_falling()`
-    /// have run for this dot.
-    pub fn tick_dot_post_pipeline(&mut self, is_mcycle: bool) -> PpuTickResult {
+    /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade DFFs,
+    /// TYFA), DFF9 resolve, dot advance, scanline boundary, VBlank/STAT
+    /// interrupt edge detection, LCD-off handling.
+    pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -384,10 +360,15 @@ impl Ppu {
 
         if self.control().video_enabled() {
             // When video is enabled but the pipeline hasn't been created yet
-            // (LCDC was just written, falling phase hasn't run), skip all
-            // work. The pipeline is initialized on the next falling phase.
+            // (LCDC was just written, rising phase hasn't run), skip all
+            // work. The pipeline is initialized on the next rising phase.
             if self.pixel_pipeline.is_none() {
                 return result;
+            }
+
+            // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
+            if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+                pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
             }
 
             // Advance DFF9 register latches after the pipeline so it reads
