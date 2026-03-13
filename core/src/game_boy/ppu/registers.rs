@@ -27,12 +27,19 @@ pub struct PipelineRegisters {
 }
 
 impl PipelineRegisters {
-    /// Advance all DFF latches by one dot. On hardware, the master-slave
-    /// DFF cells resolve their pending values on the clock edge each dot.
-    pub(super) fn tick_latches(&mut self) {
+    /// Advance DFF8 palette latches by one dot. Runs before the pipeline
+    /// (in tcycle_falling) so the pipeline sees the transitional old|new
+    /// value on the write dot, matching DFF8 master-slave transparency.
+    pub(super) fn tick_palette_latches(&mut self) {
         self.palettes.background.tick();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
+    }
+
+    /// Advance DFF9 register latches by one dot. Runs after the pipeline
+    /// (in tcycle_rising) so the pipeline reads pre-tick values (reg_old),
+    /// matching hardware's combinational read-from-old behavior.
+    pub(super) fn tick_register_latches(&mut self) {
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();

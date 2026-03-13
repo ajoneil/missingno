@@ -12,11 +12,10 @@ pub(super) enum LatchState {
     /// persistence through the write-phase clock edge); the next tick
     /// resolves to the final value.
     Transitional { final_value: u8, fresh: bool },
-    /// DFF9 propagation: the old value persists on the output for two
-    /// dots while the new value routes through internal wiring. First
-    /// tick marks as stale; second tick applies the final value. This
-    /// matches hardware's G→H latch boundary at dot 3 falling.
-    Propagating { final_value: u8, fresh: bool },
+    /// DFF9 propagation: the old value persists on the output until the
+    /// next tick. The tick runs after the pipeline, so the pipeline reads
+    /// the pre-write value (reg_old) and the tick resolves afterward.
+    Propagating { final_value: u8 },
 }
 
 /// A DFF register cell that holds its output value and any pending latch.
@@ -63,18 +62,10 @@ impl DffLatch {
                     true
                 }
             }
-            Some(LatchState::Propagating { final_value, fresh }) => {
-                if fresh {
-                    self.state = Some(LatchState::Propagating {
-                        final_value,
-                        fresh: false,
-                    });
-                    false
-                } else {
-                    self.output = final_value;
-                    self.state = None;
-                    true
-                }
+            Some(LatchState::Propagating { final_value }) => {
+                self.output = final_value;
+                self.state = None;
+                true
             }
             None => false,
         }
@@ -91,11 +82,10 @@ impl DffLatch {
     }
 
     /// DFF9 write during Mode 3. The old value persists on the output
-    /// for two dots while the new value propagates through internal wiring.
+    /// until the next tick (which runs after the pipeline).
     pub(super) fn write_propagating(&mut self, new_value: u8) {
         self.state = Some(LatchState::Propagating {
             final_value: new_value,
-            fresh: true,
         });
     }
 

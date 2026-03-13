@@ -323,11 +323,12 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Falling edge phase (DELTA_EVEN): LCD initialization and DFF latch advance.
+    /// Falling edge phase (DELTA_EVEN): LCD initialization and DFF8 palette
+    /// latch advance.
     ///
-    /// The pixel pipeline's falling-phase processing (fetcher control, mode
-    /// transitions) is deferred to `tcycle_rising`, where it runs after the
-    /// rising phase. This matches hardware's rising-before-falling dot ordering.
+    /// DFF8 palette latches tick here (before the pipeline) so the pipeline
+    /// sees the transitional old|new value on the write dot. DFF9 register
+    /// latches tick after the pipeline in `tcycle_rising`.
     pub fn tcycle_falling(&mut self, _vram: &Vram) {
         if !self.control().video_enabled() {
             return;
@@ -340,8 +341,8 @@ impl Ppu {
             self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
 
-        // Advance DFF latches before pixel output.
-        self.registers.tick_latches();
+        // Advance DFF8 palette latches before pixel output.
+        self.registers.tick_palette_latches();
     }
 
     /// Rising edge phase (DELTA_ODD): pixel output, counter increment,
@@ -371,6 +372,10 @@ impl Ppu {
                 pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
                 pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
             }
+
+            // Advance DFF9 register latches after the pipeline so it reads
+            // pre-tick values (reg_old), matching hardware.
+            self.registers.tick_register_latches();
 
             if self.video.advance_dot() {
                 // Scanline boundary — dot counter wrapped to 0.
