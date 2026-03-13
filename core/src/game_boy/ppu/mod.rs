@@ -191,14 +191,12 @@ impl Ppu {
                 }
             }
             Register::Control => {
-                if is_drawing {
-                    self.registers.control_latch.write_propagating(value);
-                    false
-                } else {
-                    self.write_register_immediate(&register, value);
-                    self.registers.control_latch.write_immediate(value);
-                    false
-                }
+                // LCDC uses combinational reads on hardware — the fetcher's
+                // VRAM address logic reads reg_new.reg_lcdc with zero delay
+                // after the DFF9 latches. No propagation delay needed.
+                self.write_register_immediate(&register, value);
+                self.registers.control_latch.write_immediate(value);
+                false
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
