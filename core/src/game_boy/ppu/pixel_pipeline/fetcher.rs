@@ -65,7 +65,7 @@ impl TileFetcher {
     pub(super) fn new() -> Self {
         Self {
             step: FetcherStep::GetTile,
-            tick: FetcherTick::T1,
+            tick: FetcherTick::T2,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -167,8 +167,11 @@ impl TileFetcher {
     /// GetTileDataLow, GetTileDataHigh) compute the address and read VRAM
     /// atomically at T2. T1 exists solely to model the 2-dot step period.
     ///
-    /// All three steps (GetTile, GetTileDataLow, GetTileDataHigh) go
-    /// through the full T1→T2 cycle after load_into/reset.
+    /// GetTile enters at T2 after load_into/reset (LEBO head start).
+    /// NYXU resets the counter to 0, then LEBO immediately clocks it
+    /// to 1 on the next half-phase, skipping the T1 delay. This makes
+    /// the first step of each fetch cycle 1 dot (T2 only) while
+    /// GetTileDataLow and GetTileDataHigh take 2 dots (T1+T2).
     pub(super) fn advance(
         &mut self,
         pixel_counter: u8,
@@ -180,13 +183,14 @@ impl TileFetcher {
         match self.step {
             FetcherStep::GetTile => match self.tick {
                 FetcherTick::T1 => {
-                    // Timing delay. Address bus is combinational — will
-                    // reflect live register values at T2.
+                    // Not normally reachable — GetTile enters at T2 due
+                    // to the LEBO head start. Present for completeness.
                     self.tick = FetcherTick::T2;
                 }
                 FetcherTick::T2 => {
                     // Compute tilemap address from live registers and read
-                    // VRAM atomically.
+                    // VRAM atomically. This is the entry point after every
+                    // fetcher reset (LEBO head start skips T1).
                     self.vram_address =
                         self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                     self.tile_index = vram.read_byte(self.vram_address);
@@ -243,13 +247,13 @@ impl TileFetcher {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T1;
+        self.tick = FetcherTick::T2;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
         self.step = FetcherStep::GetTile;
-        self.tick = FetcherTick::T1;
+        self.tick = FetcherTick::T2;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }
