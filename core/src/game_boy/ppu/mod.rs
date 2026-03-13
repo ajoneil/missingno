@@ -70,11 +70,10 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: internal line 153, dot 400, VBlank.
+            // Post-boot PPU state: internal line 153, dot 396, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
-            // Gambatte uses 396, but test evidence shows 400 (4 dots later).
             video: VideoControl {
-                dot: 400,
+                dot: 396,
                 ly: 153,
                 lyc: 0,
                 ly_match_pending: true,

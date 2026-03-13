@@ -724,7 +724,6 @@ impl Processor {
                             value: *pc_lo,
                         })
                     }
-                    3 => Some(BusAction::Internal),
                     _ => None,
                 }
             }
