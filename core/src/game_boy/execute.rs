@@ -218,17 +218,18 @@ impl GameBoy {
                 }
             }
 
-            // BUDE: drive write data onto bus before PPU rising phase.
-            // Hardware: BUDE_xxxxEFGH rises at D->E; PPU DFFs see data during E,F.
+            // Rising phase (DELTA_ODD): timer, DFF8 palette latches, pixel output.
+            let is_mcycle_boundary = dot.boga();
+            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
+
+            // BUDE: drive write data onto bus between PPU half-phases.
+            // Rising half sees pre-write state; falling half sees post-write
+            // state for combinational registers (LCDC).
             if let DotAction::DriveBus { address, value } = &dot_action
                 && self.drive_ppu_bus(*address, *value)
             {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
-
-            // Rising phase (DELTA_ODD): timer, DFF8 palette latches, pixel output.
-            let is_mcycle_boundary = dot.boga();
-            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
 
             // MOPA rising edge (dot 2): fire OAM bug corruption.
             if dot.mopa()
@@ -254,7 +255,7 @@ impl GameBoy {
                     // Already handled above at BOWA.
                 }
                 DotAction::DriveBus { .. } => {
-                    // Already executed above before falling phase.
+                    // Already executed above between half-phases.
                 }
                 DotAction::Read { address } => {
                     // Detect OAM bug from CPU reads to the OAM region.
@@ -414,16 +415,16 @@ impl GameBoy {
                     }
                 }
 
-                // BUDE: drive write data onto bus before PPU rising phase.
+                // Rising phase: timer, DFF8 palette latches, pixel output.
+                let is_mcycle_boundary = dot.boga();
+                let mut new_screen = self.tick_dot_rising(is_mcycle_boundary);
+
+                // BUDE: drive write data onto bus between PPU half-phases.
                 if let DotAction::DriveBus { address, value } = &dot_action
                     && self.drive_ppu_bus(*address, *value)
                 {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
-
-                // Rising phase: timer, DFF8 palette latches, pixel output.
-                let is_mcycle_boundary = dot.boga();
-                let mut new_screen = self.tick_dot_rising(is_mcycle_boundary);
 
                 // MOPA rising edge (dot 2): fire OAM bug.
                 if dot.mopa()
@@ -444,7 +445,7 @@ impl GameBoy {
                     DotAction::Idle => {}
                     DotAction::InternalOamBug { .. } => {}
                     DotAction::DriveBus { .. } => {
-                        // Already executed above before rising phase.
+                        // Already executed above between half-phases.
                     }
                     DotAction::Read { address } => {
                         if (0xFE00..=0xFEFF).contains(&address) {
