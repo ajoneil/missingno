@@ -204,101 +204,11 @@ impl GameBoy {
                 }
             }
 
-            // BOWA (dot 0): record OAM bug from InternalOamBug actions
-            // and from IDU address on bus.
-            if dot.bowa()
-                && let DotAction::InternalOamBug { address } = &dot_action
-                && (0xFE00..=0xFEFF).contains(address)
-            {
-                match pending_oam_bug {
-                    Some(OamBugKind::Read) => {}
-                    _ => {
-                        pending_oam_bug = Some(OamBugKind::Write);
-                    }
-                }
-            }
-
-            let is_mcycle_boundary = dot.boga();
-            let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
-
-            if is_drivebus {
-                // DriveBus dot: hardware order is EVEN first, then ODD.
-                // 1. Falling phase (DELTA_EVEN): write pulse begins, DFF8 transparent.
-                new_screen |= self.tick_dot_falling(is_mcycle_boundary);
-
-                // 2. Drive write data onto bus.
-                if let DotAction::DriveBus { address, value } = &dot_action
-                    && self.drive_ppu_bus(*address, *value)
-                {
-                    self.interrupts.request(Interrupt::VideoStatus);
-                }
-
-                // MOPA rising edge (dot 2): fire OAM bug corruption.
-                if dot.mopa()
-                    && !dot.boga()
-                    && let Some(kind) = pending_oam_bug.take()
-                {
-                    match kind {
-                        OamBugKind::Read => self.ppu.oam_bug_read(),
-                        OamBugKind::Write => self.ppu.oam_bug_write(),
-                    }
-                }
-
-                // 3. Rising phase (DELTA_ODD): pixel output sees transitional old|new.
-                new_screen |= self.tick_dot_rising(is_mcycle_boundary);
-            } else {
-                // All other dots: normal order, ODD first then EVEN.
-                // Rising phase (DELTA_ODD): timer, DFF8 palette latches, pixel output.
-                new_screen |= self.tick_dot_rising(is_mcycle_boundary);
-
-                // MOPA rising edge (dot 2): fire OAM bug corruption.
-                if dot.mopa()
-                    && !dot.boga()
-                    && let Some(kind) = pending_oam_bug.take()
-                {
-                    match kind {
-                        OamBugKind::Read => self.ppu.oam_bug_read(),
-                        OamBugKind::Write => self.ppu.oam_bug_write(),
-                    }
-                }
-
-                // Falling phase (DELTA_EVEN): fetcher, DFF9, dot advance, M-cycle subsystems.
-                new_screen |= self.tick_dot_falling(is_mcycle_boundary);
-            }
-
-            // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
-            // g42 is clocked at 4MHz (one edge per dot). Must run after BOTH phases
-            // have completed so it sees all interrupt sources (WODU from rising,
-            // mode transitions from falling) regardless of phase execution order.
-            self.capture_interrupt_latch();
-            self.halt_wakeup_check();
-
-            // Bus actions after phase ticks. On hardware, CPU bus reads/writes
-            // see post-AVAP, post-WODU state because all signals propagate
-            // combinationally within the clock phase. Placing reads/writes
-            // after tick_dot_rising models this naturally.
-            match dot_action {
-                DotAction::Idle => {}
-                DotAction::InternalOamBug { .. } => {
-                    // Already handled above at BOWA.
-                }
-                DotAction::DriveBus { .. } => {
-                    // Already executed above between half-phases.
-                }
-                DotAction::Read { address } => {
-                    // Detect OAM bug from CPU reads to the OAM region.
-                    if (0xFE00..=0xFEFF).contains(&address) {
-                        pending_oam_bug = Some(OamBugKind::Read);
-                    }
-                    read_value = self.cpu_read(address);
-                }
-                DotAction::Write { address, value } => {
-                    // Detect OAM bug from CPU writes to the OAM region.
-                    if (0xFE00..=0xFEFF).contains(&address) {
-                        pending_oam_bug = Some(OamBugKind::Write);
-                    }
-                    self.write_byte(address, value);
-                }
+            let (new_screen_dot, new_read_value) =
+                self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
+            new_screen |= new_screen_dot;
+            if let Some(v) = new_read_value {
+                read_value = v;
             }
 
             // Advance dot counter, wrapping at M-cycle boundary.
@@ -430,87 +340,10 @@ impl GameBoy {
                     }
                 }
 
-                // BOWA (dot 0): record OAM bug.
-                if dot.bowa()
-                    && let DotAction::InternalOamBug { address } = &dot_action
-                    && (0xFE00..=0xFEFF).contains(address)
-                {
-                    match pending_oam_bug {
-                        Some(OamBugKind::Read) => {}
-                        _ => {
-                            pending_oam_bug = Some(OamBugKind::Write);
-                        }
-                    }
-                }
-
-                let is_mcycle_boundary = dot.boga();
-                let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
-                let mut new_screen;
-
-                if is_drivebus {
-                    // DriveBus dot: hardware order is EVEN first, then ODD.
-                    new_screen = self.tick_dot_falling(is_mcycle_boundary);
-
-                    if let DotAction::DriveBus { address, value } = &dot_action
-                        && self.drive_ppu_bus(*address, *value)
-                    {
-                        self.interrupts.request(Interrupt::VideoStatus);
-                    }
-
-                    // MOPA rising edge (dot 2): fire OAM bug.
-                    if dot.mopa()
-                        && !dot.boga()
-                        && let Some(kind) = pending_oam_bug.take()
-                    {
-                        match kind {
-                            OamBugKind::Read => self.ppu.oam_bug_read(),
-                            OamBugKind::Write => self.ppu.oam_bug_write(),
-                        }
-                    }
-
-                    new_screen |= self.tick_dot_rising(is_mcycle_boundary);
-                } else {
-                    // All other dots: normal order, ODD first then EVEN.
-                    new_screen = self.tick_dot_rising(is_mcycle_boundary);
-
-                    // MOPA rising edge (dot 2): fire OAM bug.
-                    if dot.mopa()
-                        && !dot.boga()
-                        && let Some(kind) = pending_oam_bug.take()
-                    {
-                        match kind {
-                            OamBugKind::Read => self.ppu.oam_bug_read(),
-                            OamBugKind::Write => self.ppu.oam_bug_write(),
-                        }
-                    }
-
-                    new_screen |= self.tick_dot_falling(is_mcycle_boundary);
-                }
-
-                // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
-                // Must run after BOTH phases so it sees all interrupt sources.
-                self.capture_interrupt_latch();
-                self.halt_wakeup_check();
-
-                // Bus actions after phase ticks.
-                match dot_action {
-                    DotAction::Idle => {}
-                    DotAction::InternalOamBug { .. } => {}
-                    DotAction::DriveBus { .. } => {
-                        // Already executed above between half-phases.
-                    }
-                    DotAction::Read { address } => {
-                        if (0xFE00..=0xFEFF).contains(&address) {
-                            pending_oam_bug = Some(OamBugKind::Read);
-                        }
-                        read_value = self.cpu_read(address);
-                    }
-                    DotAction::Write { address, value } => {
-                        if (0xFE00..=0xFEFF).contains(&address) {
-                            pending_oam_bug = Some(OamBugKind::Write);
-                        }
-                        self.write_byte(address, value);
-                    }
+                let (new_screen, new_read_value) =
+                    self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
+                if let Some(v) = new_read_value {
+                    read_value = v;
                 }
 
                 // Advance dot counter.
@@ -560,6 +393,101 @@ impl GameBoy {
                 new_screen
             }
         }
+    }
+
+    /// Execute one dot of hardware: OAM bug recording, phase ticks
+    /// (DriveBus-aware ordering), interrupt capture, and bus actions.
+    /// Returns `(new_screen, read_value)` where `read_value` is `Some`
+    /// only if the dot performed a bus Read.
+    fn execute_dot(
+        &mut self,
+        dot_action: &DotAction,
+        dot: BusDot,
+        pending_oam_bug: &mut Option<OamBugKind>,
+    ) -> (bool, Option<u8>) {
+        // BOWA (dot 0): record OAM bug from address in the upcoming action.
+        if dot.bowa()
+            && let DotAction::InternalOamBug { address } = dot_action
+            && (0xFE00..=0xFEFF).contains(address)
+        {
+            match pending_oam_bug {
+                Some(OamBugKind::Read) => {}
+                _ => {
+                    *pending_oam_bug = Some(OamBugKind::Write);
+                }
+            }
+        }
+
+        let is_mcycle_boundary = dot.boga();
+        let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
+        let mut new_screen;
+
+        if is_drivebus {
+            // DriveBus dot: hardware order is EVEN first, then ODD.
+            new_screen = self.tick_dot_falling(is_mcycle_boundary);
+
+            if let DotAction::DriveBus { address, value } = dot_action
+                && self.drive_ppu_bus(*address, *value)
+            {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
+
+            // MOPA rising edge (dot 2): fire OAM bug.
+            if dot.mopa()
+                && !dot.boga()
+                && let Some(kind) = pending_oam_bug.take()
+            {
+                match kind {
+                    OamBugKind::Read => self.ppu.oam_bug_read(),
+                    OamBugKind::Write => self.ppu.oam_bug_write(),
+                }
+            }
+
+            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
+        } else {
+            // All other dots: normal order, ODD first then EVEN.
+            new_screen = self.tick_dot_rising(is_mcycle_boundary);
+
+            // MOPA rising edge (dot 2): fire OAM bug.
+            if dot.mopa()
+                && !dot.boga()
+                && let Some(kind) = pending_oam_bug.take()
+            {
+                match kind {
+                    OamBugKind::Read => self.ppu.oam_bug_read(),
+                    OamBugKind::Write => self.ppu.oam_bug_write(),
+                }
+            }
+
+            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
+        }
+
+        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
+        // Must run after BOTH phases so it sees all interrupt sources.
+        self.capture_interrupt_latch();
+        self.halt_wakeup_check();
+
+        // Bus actions after phase ticks.
+        let read_value = match dot_action {
+            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => {
+                None
+            }
+            DotAction::Read { address } => {
+                if (0xFE00..=0xFEFF).contains(address) {
+                    *pending_oam_bug = Some(OamBugKind::Read);
+                }
+                Some(self.cpu_read(*address))
+            }
+            DotAction::Write { address, value } => {
+                if (0xFE00..=0xFEFF).contains(address) {
+                    *pending_oam_bug = Some(OamBugKind::Write);
+                }
+                self.write_byte(*address, *value);
+                None
+            }
+        };
+
+        (new_screen, read_value)
     }
 
     /// Rising phase (DELTA_ODD) of one dot: timer tick, DFF8 palette
