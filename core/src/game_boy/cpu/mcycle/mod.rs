@@ -101,7 +101,7 @@ impl BusDot {
     }
 
     /// Raw dot index (0-3). Escape hatch for the rare cases where
-    /// a named signal doesn't exist (e.g., TrailingFetch counter).
+    /// a named signal doesn't exist (e.g., fetch dot counter).
     /// Prefer named signals in all other contexts.
     pub fn index(self) -> u8 {
         self.0
@@ -257,7 +257,8 @@ enum Phase {
         action: PopAction,
     },
 
-    /// Interrupt dispatch: 5 M-cycles (no decode).
+    /// Interrupt dispatch: 4 post-fetch M-cycles (no decode).
+    /// The leading fetch (suppressed NOP) is handled by the executor.
     InterruptDispatch { sp: u16, pc_hi: u8, pc_lo: u8 },
 
     /// Halted NOP: 1 fetch Read (no decode happens when halted).
@@ -339,7 +340,7 @@ impl Processor {
     pub fn begin(cpu: &mut Cpu) -> Self {
         debug_assert!(
             matches!(cpu.halt_state, HaltState::Halted | HaltState::Halting),
-            "begin() called with CPU not halted — prefetched_opcode should be set"
+            "begin() called with CPU not halted"
         );
         Self::halted_nop(cpu.program_counter)
     }
@@ -701,12 +702,8 @@ impl Processor {
             Phase::InterruptDispatch { sp, pc_hi, pc_lo } => {
                 let sp = *sp;
                 match step {
-                    0 => {
-                        let pc = (*pc_hi as u16) << 8 | *pc_lo as u16;
-                        Some(BusAction::InternalOamBug { address: pc })
-                    }
-                    1 => Some(BusAction::InternalOamBug { address: sp }),
-                    2 => {
+                    0 => Some(BusAction::InternalOamBug { address: sp }),
+                    1 => {
                         let addr = sp.wrapping_sub(1);
                         cpu.stack_pointer = addr;
                         Some(BusAction::Write {
@@ -714,9 +711,9 @@ impl Processor {
                             value: *pc_hi,
                         })
                     }
-                    3 => {
+                    2 => {
                         // IE push bug: the vector must be resolved after
-                        // the high-byte push (step 2) but before this
+                        // the high-byte push (step 1) but before this
                         // low-byte push. The high-byte write may have
                         // landed on IE at 0xFFFF.
                         self.pending_vector_resolve = true;
@@ -727,6 +724,7 @@ impl Processor {
                             value: *pc_lo,
                         })
                     }
+                    3 => Some(BusAction::Internal),
                     _ => None,
                 }
             }

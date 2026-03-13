@@ -25,11 +25,12 @@ pub mod timers;
 ///
 /// On hardware, an IF flag set during M-cycle N is captured in the
 /// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. `promote()` at step entry advances
-/// Fresh→Ready. The DFF propagation delay is naturally provided by
-/// the trailing fetch (Running path) or HaltedNop (Halted path) —
-/// no separate propagation M-cycle is needed. When `take_ready()`
-/// succeeds, ISR dispatch begins immediately.
+/// decision until M-cycle N+1. `promote()` advances Fresh→Ready.
+/// For the Running path, promote runs after the leading fetch's
+/// ticking — the leading fetch M-cycle IS the DFF propagation
+/// delay. For the Halted path, dispatch is deferred so that a
+/// wakeup NOP runs first. When `take_ready()` succeeds, ISR
+/// dispatch begins immediately.
 #[derive(Clone, Copy)]
 enum InterruptLatch {
     /// No interrupt pending in the sequencer pipeline.
@@ -66,9 +67,16 @@ impl InterruptLatch {
 /// Where the CPU is in its instruction execution lifecycle.
 /// Used by `step_dot()` to pause and resume between individual dots.
 enum ExecutionState {
-    /// Between instructions. The next `step_dot()` promotes the
-    /// interrupt latch and builds a new Processor.
+    /// Between instructions. The next `step_dot()` begins the
+    /// leading fetch (Running path) or builds a HaltedNop (Halted path).
     Ready,
+    /// Leading fetch: ticking hardware for 4 dots then reading the
+    /// opcode at PC. After the read, the dispatch decision is made
+    /// and a Processor is built.
+    LeadingFetch {
+        dot: BusDot,
+        fetch_addr: u16,
+    },
     /// Mid-instruction: the Processor is yielding dots.
     Running {
         processor: Processor,
@@ -77,14 +85,11 @@ enum ExecutionState {
         pending_oam_bug: Option<execute::OamBugKind>,
         was_halted: bool,
     },
-    /// Instruction complete, ticking the trailing fetch (or HALT
-    /// dummy fetch). Hardware ticks for 4 dots, then a bus read.
-    TrailingFetch {
+    /// HALT dummy fetch: ticking hardware for 4 dots then reading
+    /// at PC (result discarded), transitioning to Halted.
+    HaltDummyFetch {
         dot: BusDot,
         fetch_addr: u16,
-        /// True for HALT dummy fetch: discard result, transition to
-        /// Halted. False for normal: store result as prefetched opcode.
-        halting: bool,
     },
 }
 
@@ -119,7 +124,6 @@ pub struct GameBoy {
     sgb: Option<sgb::Sgb>,
     vram_bus: VramBus,
 
-    prefetched_opcode: Option<u8>,
     interrupt_latch: InterruptLatch,
     execution: ExecutionState,
     bus_trace: Option<Vec<BusAccess>>,
@@ -148,14 +152,11 @@ impl GameBoy {
             dma: Dma::new(),
             sgb,
             vram_bus: VramBus::new(),
-            prefetched_opcode: None,
             interrupt_latch: InterruptLatch::Empty,
             execution: ExecutionState::Ready,
             bus_trace: None,
         };
         gb.init_post_boot_vram();
-        let pc = gb.cpu.program_counter;
-        gb.prefetched_opcode = Some(gb.cpu_read(pc));
         gb
     }
 
@@ -180,8 +181,6 @@ impl GameBoy {
             None
         };
         self.init_post_boot_vram();
-        let pc = self.cpu.program_counter;
-        self.prefetched_opcode = Some(self.cpu_read(pc));
         self.interrupt_latch = InterruptLatch::Empty;
         self.execution = ExecutionState::Ready;
         self.bus_trace = None;

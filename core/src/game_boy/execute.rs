@@ -42,181 +42,263 @@ impl GameBoy {
         (new_screen, trace)
     }
 
-    /// Run one complete instruction from start to finish (including
-    /// trailing fetch). This is the original `step()` logic, factored
-    /// out so `step()` can drain mid-instruction state first.
+    /// Run one complete instruction from start to finish.
+    ///
+    /// Running path: leading fetch (4 dots + opcode read) → dispatch
+    /// decision → Processor → advance EI delay → return.
+    ///
+    /// Halted/Halting paths: preserved from previous model with
+    /// minimal changes (no prefetched_opcode).
     fn step_instruction(&mut self) -> bool {
         let mut new_screen = false;
 
-        // Advance the sequencer DFF pipeline: a Fresh interrupt from
-        // the previous step's M-cycle boundary becomes Ready (dispatchable).
-        // For the Running path, the trailing fetch at the end of the
-        // previous step() already provided the DFF delay's worth of
-        // hardware ticking. For the Halted path, dispatch is deferred
-        // so that a wakeup NOP runs first — its M-cycle provides the
-        // hardware ticking that accompanies the Fresh→Ready propagation
-        // on real hardware.
-        self.interrupt_latch.promote();
-        let dispatch_interrupt = if self.cpu.halt_state == HaltState::Halted {
-            false // Defer — let the wakeup NOP run first
-        } else {
-            self.interrupt_latch.take_ready().is_some()
-        };
-
-        let mut processor = match self.cpu.halt_state {
+        match self.cpu.halt_state {
             HaltState::Running => {
-                if dispatch_interrupt {
+                // ── Leading fetch ──
+                // Run the opcode read M-cycle: 4 dots of hardware ticking
+                // followed by a bus read from PC. This IS the generic fetch
+                // on hardware — the first M-cycle of every instruction.
+                let fetch_addr = self.cpu.program_counter;
+                let mut fetch_dot = BusDot::ZERO;
+                for _ in 0u8..4 {
+                    let is_mcycle_boundary = fetch_dot.boga();
+                    new_screen |= self.tick_dot(is_mcycle_boundary);
+                    fetch_dot = if fetch_dot.boga() {
+                        BusDot::ZERO
+                    } else {
+                        fetch_dot.advance()
+                    };
+                }
+                let opcode = self.cpu_read(fetch_addr);
+
+                // ── Dispatch decision ──
+                // After the leading fetch's ticking, check for interrupt
+                // dispatch. This matches hardware's A→B boundary decision.
+                self.interrupt_latch.promote();
+                let dispatch = self.interrupt_latch.take_ready().is_some();
+
+                let mut processor = if dispatch {
+                    // Leading fetch M-cycle = ISR M0 (suppressed fetch).
+                    // Processor starts at ISR M1 (4 post-fetch M-cycles).
                     Processor::interrupt(&mut self.cpu)
-                } else if let Some(opcode) = self.prefetched_opcode.take() {
-                    Processor::fetch_with_opcode(&mut self.cpu, opcode)
                 } else {
-                    unreachable!("Running CPU must have a prefetched opcode")
+                    Processor::fetch_with_opcode(&mut self.cpu, opcode)
+                };
+
+                // ── Run Processor dots ──
+                let mut read_value: u8 = 0;
+                let mut pending_oam_bug: Option<OamBugKind> = None;
+                let mut dot = BusDot::ZERO;
+
+                const DOT_BUDGET: u32 = 52;
+                let mut dots_remaining = DOT_BUDGET;
+
+                loop {
+                    assert!(
+                        dots_remaining > 0,
+                        "step() exceeded {DOT_BUDGET} dot budget — possible infinite loop in Processor"
+                    );
+                    dots_remaining -= 1;
+                    let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
+                        Some(action) => action,
+                        None => {
+                            self.check_halt_bug();
+
+                            if self.cpu.halt_state == HaltState::Halting {
+                                // HALT's dummy fetch: read [PC] without incrementing.
+                                // Run 4 dots of hardware ticking, then transition
+                                // to Halted.
+                                let halt_addr = self.cpu.program_counter;
+                                let mut halt_dot = BusDot::ZERO;
+                                for _ in 0u8..4 {
+                                    let is_mcycle_boundary = halt_dot.boga();
+                                    new_screen |= self.tick_dot(is_mcycle_boundary);
+                                    halt_dot = if halt_dot.boga() {
+                                        BusDot::ZERO
+                                    } else {
+                                        halt_dot.advance()
+                                    };
+                                }
+                                let _ = self.cpu_read(halt_addr);
+                                self.cpu.halt_state = HaltState::Halted;
+                            }
+
+                            self.advance_ei_delay();
+                            return new_screen;
+                        }
+                    };
+
+                    // IE push bug.
+                    if processor.take_pending_vector_resolve() {
+                        if let Some(interrupt) = self.interrupts.triggered() {
+                            self.interrupts.clear(interrupt);
+                            self.cpu.program_counter = interrupt.vector();
+                        } else {
+                            self.cpu.program_counter = 0x0000;
+                        }
+                    }
+
+                    let (new_screen_dot, new_read_value) =
+                        self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
+                    new_screen |= new_screen_dot;
+                    if let Some(v) = new_read_value {
+                        read_value = v;
+                    }
+
+                    dot = if dot.boga() {
+                        BusDot::ZERO
+                    } else {
+                        dot.advance()
+                    };
                 }
             }
+
             HaltState::Halted => {
-                if dispatch_interrupt {
+                // Halted path: preserved from previous model.
+                // promote() at top, deferred dispatch, HaltedNop, etc.
+                self.interrupt_latch.promote();
+                let dispatch_interrupt = self.interrupt_latch.take_ready().is_some();
+
+                let mut processor = if dispatch_interrupt {
                     Processor::interrupt(&mut self.cpu)
                 } else {
                     Processor::begin(&mut self.cpu)
-                }
-            }
-            HaltState::Halting => Processor::begin(&mut self.cpu),
-        };
+                };
 
-        let mut was_halted = self.cpu.halt_state == HaltState::Halted;
+                let mut was_halted = true;
 
-        // Run dots. Each M-cycle is 4 dots; the processor yields one
-        // DotAction per dot with bus operations at dot 3 (end of M-cycle).
-        let mut read_value: u8 = 0;
-        let mut pending_oam_bug: Option<OamBugKind> = None;
-        let mut dot = BusDot::ZERO;
+                let mut read_value: u8 = 0;
+                let mut pending_oam_bug: Option<OamBugKind> = None;
+                let mut dot = BusDot::ZERO;
 
-        // Safety budget: longest instruction is 6 M-cycles = 24 dots
-        // (3 fetch + 3 execute). Interrupt dispatch is 20 dots (5 ISR
-        // M-cycles). Budget of 52 gives margin.
-        const DOT_BUDGET: u32 = 52;
-        let mut dots_remaining = DOT_BUDGET;
+                const DOT_BUDGET: u32 = 52;
+                let mut dots_remaining = DOT_BUDGET;
 
-        loop {
-            assert!(
-                dots_remaining > 0,
-                "step() exceeded {DOT_BUDGET} dot budget — possible infinite loop in Processor"
-            );
-            dots_remaining -= 1;
-            let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
-                Some(action) => action,
-                None => {
-                    self.check_halt_bug();
+                loop {
+                    assert!(
+                        dots_remaining > 0,
+                        "step() exceeded {DOT_BUDGET} dot budget — possible infinite loop in Processor"
+                    );
+                    dots_remaining -= 1;
+                    let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
+                        Some(action) => action,
+                        None => {
+                            if self.cpu.halt_state == HaltState::Halted {
+                                if self.interrupt_latch.take_ready().is_some() {
+                                    // Interrupt was Ready — the HaltedNop's
+                                    // M-cycle served as the wakeup NOP. ISR
+                                    // dispatch begins immediately.
+                                    was_halted = false;
+                                    processor = Processor::interrupt(&mut self.cpu);
+                                    continue;
+                                }
+                                // Fresh capture or still idle — stay halted.
+                                self.advance_ei_delay();
+                                return new_screen;
+                            }
 
-                    if self.cpu.halt_state == HaltState::Halting {
-                        // HALT's dummy fetch: read [PC] without incrementing.
-                        // Run 4 dots of hardware ticking (same as any trailing
-                        // fetch), then transition to Halted.
-                        let fetch_addr = self.cpu.program_counter;
-                        let mut halt_dot = BusDot::ZERO;
-                        for _ in 0u8..4 {
-                            let is_mcycle_boundary = halt_dot.boga();
-                            new_screen |= self.tick_dot(is_mcycle_boundary);
-                            halt_dot = if halt_dot.boga() {
-                                BusDot::ZERO
-                            } else {
-                                halt_dot.advance()
-                            };
+                            // IME=0 HALT wakeup: the HaltedNop's M-cycle
+                            // already served as the leading fetch — it read
+                            // the opcode at [PC]. Build a new Processor with
+                            // that opcode and run it inline.
+                            if was_halted && self.cpu.halt_state == HaltState::Running {
+                                was_halted = false;
+                                processor =
+                                    Processor::fetch_with_opcode(&mut self.cpu, read_value);
+                                continue;
+                            }
+
+                            // ISR or post-wakeup instruction complete.
+                            self.check_halt_bug();
+
+                            if self.cpu.halt_state == HaltState::Halting {
+                                let halt_addr = self.cpu.program_counter;
+                                let mut halt_dot = BusDot::ZERO;
+                                for _ in 0u8..4 {
+                                    let is_mcycle_boundary = halt_dot.boga();
+                                    new_screen |= self.tick_dot(is_mcycle_boundary);
+                                    halt_dot = if halt_dot.boga() {
+                                        BusDot::ZERO
+                                    } else {
+                                        halt_dot.advance()
+                                    };
+                                }
+                                let _ = self.cpu_read(halt_addr);
+                                self.cpu.halt_state = HaltState::Halted;
+                            }
+
+                            self.advance_ei_delay();
+                            return new_screen;
                         }
-                        // Dummy fetch: read the bus but discard the result.
-                        // PC is not incremented — the byte is thrown away.
-                        let _ = self.cpu_read(fetch_addr);
-                        self.cpu.halt_state = HaltState::Halted;
-                        self.prefetched_opcode = None;
-                        self.advance_ei_delay();
-                        return new_screen;
-                    }
+                    };
 
-                    if self.cpu.halt_state == HaltState::Halted {
-                        if self.interrupt_latch.take_ready().is_some() {
-                            // Interrupt was already Ready when this step began but
-                            // the CPU was halted — the HaltedNop's M-cycle served
-                            // as the wakeup NOP. ISR dispatch begins immediately.
-                            // Clear was_halted so the ISR completion takes the
-                            // normal trailing fetch path (not the IME=0 shortcut).
-                            was_halted = false;
-                            processor = Processor::interrupt(&mut self.cpu);
-                            continue;
-                        }
-                        // Fresh capture or still idle — stay halted. Fresh
-                        // will promote to Ready at next step() entry via
-                        // promote(), modeling the DFF cascade's 1 M-cycle
-                        // propagation delay (CLK_ENA→PHI resumption).
-                        self.prefetched_opcode = None;
-                        self.advance_ei_delay();
-                        return new_screen;
-                    }
-
-                    // IME=0 HALT wakeup: the HaltedNop's M-cycle already served
-                    // as the trailing fetch — it read the opcode at [PC]. On
-                    // hardware, the wakeup NOP IS the generic fetch. Capturing
-                    // read_value as the prefetched opcode and returning avoids
-                    // an extra M-cycle of hardware ticking.
-                    if was_halted && self.cpu.halt_state == HaltState::Running {
-                        self.prefetched_opcode = Some(read_value);
-                        self.advance_ei_delay();
-                        return new_screen;
-                    }
-
-                    // Run trailing fetch M-cycle: 4 dots of hardware ticks
-                    // followed by an opcode bus read from PC.
-                    //
-                    // tick_dot() updates interrupt_latch at the M-cycle
-                    // boundary, modeling the sequencer DFF pipeline.
-                    let fetch_addr = self.cpu.program_counter;
-                    let mut fetch_dot = BusDot::ZERO;
-                    for _ in 0u8..4 {
-                        let is_mcycle_boundary = fetch_dot.boga();
-                        new_screen |= self.tick_dot(is_mcycle_boundary);
-                        fetch_dot = if fetch_dot.boga() {
-                            BusDot::ZERO
+                    // IE push bug.
+                    if processor.take_pending_vector_resolve() {
+                        if let Some(interrupt) = self.interrupts.triggered() {
+                            self.interrupts.clear(interrupt);
+                            self.cpu.program_counter = interrupt.vector();
                         } else {
-                            fetch_dot.advance()
-                        };
+                            self.cpu.program_counter = 0x0000;
+                        }
                     }
-                    self.prefetched_opcode = Some(self.cpu_read(fetch_addr));
 
-                    // Advance the EI delay pipeline after the trailing fetch.
-                    // IME promotion takes effect at instruction completion but
-                    // the sequencer latch (updated during ticks above) doesn't
-                    // see it until the NEXT trailing fetch's M-cycle boundary.
-                    self.advance_ei_delay();
+                    let (new_screen_dot, new_read_value) =
+                        self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
+                    new_screen |= new_screen_dot;
+                    if let Some(v) = new_read_value {
+                        read_value = v;
+                    }
 
-                    return new_screen;
-                }
-            };
-
-            // IE push bug: the interrupt controller samples IF & IE
-            // between the high-byte and low-byte push writes of interrupt
-            // dispatch. The high-byte push may have landed on 0xFFFF (IE),
-            // altering which interrupt (if any) is still triggered.
-            if processor.take_pending_vector_resolve() {
-                if let Some(interrupt) = self.interrupts.triggered() {
-                    self.interrupts.clear(interrupt);
-                    self.cpu.program_counter = interrupt.vector();
-                } else {
-                    self.cpu.program_counter = 0x0000;
+                    dot = if dot.boga() {
+                        BusDot::ZERO
+                    } else {
+                        dot.advance()
+                    };
                 }
             }
 
-            let (new_screen_dot, new_read_value) =
-                self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
-            new_screen |= new_screen_dot;
-            if let Some(v) = new_read_value {
-                read_value = v;
-            }
+            HaltState::Halting => {
+                // HALT entry: the HALT instruction was decoded in the
+                // previous step. Run the HaltedNop (which does the
+                // dummy fetch), then transition to Halted.
+                let mut processor = Processor::begin(&mut self.cpu);
 
-            // Advance dot counter, wrapping at M-cycle boundary.
-            dot = if dot.boga() {
-                BusDot::ZERO
-            } else {
-                dot.advance()
-            };
+                let mut read_value: u8 = 0;
+                let mut pending_oam_bug: Option<OamBugKind> = None;
+                let mut dot = BusDot::ZERO;
+
+                const DOT_BUDGET: u32 = 52;
+                let mut dots_remaining = DOT_BUDGET;
+
+                loop {
+                    assert!(
+                        dots_remaining > 0,
+                        "step() exceeded {DOT_BUDGET} dot budget — possible infinite loop in Processor"
+                    );
+                    dots_remaining -= 1;
+                    let dot_action = match processor.next_dot(read_value, &mut self.cpu) {
+                        Some(action) => action,
+                        None => {
+                            self.cpu.halt_state = HaltState::Halted;
+                            self.advance_ei_delay();
+                            return new_screen;
+                        }
+                    };
+
+                    let (new_screen_dot, new_read_value) =
+                        self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
+                    new_screen |= new_screen_dot;
+                    if let Some(v) = new_read_value {
+                        read_value = v;
+                    }
+
+                    dot = if dot.boga() {
+                        BusDot::ZERO
+                    } else {
+                        dot.advance()
+                    };
+                }
+            }
         }
     }
 
@@ -226,46 +308,85 @@ impl GameBoy {
     pub fn step_dot(&mut self) -> bool {
         match std::mem::replace(&mut self.execution, ExecutionState::Ready) {
             ExecutionState::Ready => {
-                // Start a new instruction.
-                self.interrupt_latch.promote();
-                let dispatch_interrupt = if self.cpu.halt_state == HaltState::Halted {
-                    false // Defer — let the wakeup NOP run first
-                } else {
-                    self.interrupt_latch.take_ready().is_some()
-                };
-
-                let processor = match self.cpu.halt_state {
+                match self.cpu.halt_state {
                     HaltState::Running => {
-                        if dispatch_interrupt {
-                            Processor::interrupt(&mut self.cpu)
-                        } else if let Some(opcode) = self.prefetched_opcode.take() {
-                            Processor::fetch_with_opcode(&mut self.cpu, opcode)
-                        } else {
-                            unreachable!("Running CPU must have a prefetched opcode")
-                        }
+                        // Start the leading fetch.
+                        self.execution = ExecutionState::LeadingFetch {
+                            dot: BusDot::ZERO,
+                            fetch_addr: self.cpu.program_counter,
+                        };
+                        self.step_dot()
                     }
                     HaltState::Halted => {
-                        if dispatch_interrupt {
+                        // Halted path: promote, then dispatch or HaltedNop.
+                        self.interrupt_latch.promote();
+                        let dispatch = self.interrupt_latch.take_ready().is_some();
+
+                        let processor = if dispatch {
                             Processor::interrupt(&mut self.cpu)
                         } else {
                             Processor::begin(&mut self.cpu)
-                        }
+                        };
+
+                        let was_halted = true;
+
+                        self.execution = ExecutionState::Running {
+                            processor,
+                            read_value: 0,
+                            dot: BusDot::ZERO,
+                            pending_oam_bug: None,
+                            was_halted,
+                        };
+                        self.step_dot()
                     }
-                    HaltState::Halting => Processor::begin(&mut self.cpu),
-                };
+                    HaltState::Halting => {
+                        // HALT entry: run HaltedNop then transition.
+                        let processor = Processor::begin(&mut self.cpu);
 
-                let was_halted = self.cpu.halt_state == HaltState::Halted;
+                        self.execution = ExecutionState::Running {
+                            processor,
+                            read_value: 0,
+                            dot: BusDot::ZERO,
+                            pending_oam_bug: None,
+                            was_halted: false,
+                        };
+                        self.step_dot()
+                    }
+                }
+            }
+            ExecutionState::LeadingFetch { dot, fetch_addr } => {
+                let is_mcycle_boundary = dot.boga();
+                let new_screen = self.tick_dot(is_mcycle_boundary);
 
-                self.execution = ExecutionState::Running {
-                    processor,
-                    read_value: 0,
-                    dot: BusDot::ZERO,
-                    pending_oam_bug: None,
-                    was_halted,
-                };
+                if is_mcycle_boundary {
+                    // Final dot of the leading fetch M-cycle.
+                    let opcode = self.cpu_read(fetch_addr);
 
-                // Run the first dot of this new instruction.
-                self.step_dot()
+                    // Dispatch decision after the leading fetch's ticking.
+                    self.interrupt_latch.promote();
+                    let dispatch = self.interrupt_latch.take_ready().is_some();
+
+                    let processor = if dispatch {
+                        Processor::interrupt(&mut self.cpu)
+                    } else {
+                        Processor::fetch_with_opcode(&mut self.cpu, opcode)
+                    };
+
+                    self.execution = ExecutionState::Running {
+                        processor,
+                        read_value: 0,
+                        dot: BusDot::ZERO,
+                        pending_oam_bug: None,
+                        was_halted: false,
+                    };
+                } else {
+                    self.execution = ExecutionState::LeadingFetch {
+                        dot: dot.advance(),
+                        fetch_addr,
+                    };
+                }
+
+                new_screen
             }
             ExecutionState::Running {
                 mut processor,
@@ -282,19 +403,16 @@ impl GameBoy {
                         self.check_halt_bug();
 
                         if self.cpu.halt_state == HaltState::Halting {
-                            self.execution = ExecutionState::TrailingFetch {
+                            self.execution = ExecutionState::HaltDummyFetch {
                                 dot: BusDot::ZERO,
                                 fetch_addr: self.cpu.program_counter,
-                                halting: true,
                             };
                             return self.step_dot();
                         }
 
                         if self.cpu.halt_state == HaltState::Halted {
                             if self.interrupt_latch.take_ready().is_some() {
-                                // Restart with interrupt dispatch. Clear
-                                // was_halted so ISR completion takes the normal
-                                // trailing fetch path (not the IME=0 shortcut).
+                                // Restart with interrupt dispatch.
                                 self.execution = ExecutionState::Running {
                                     processor: Processor::interrupt(&mut self.cpu),
                                     read_value: 0,
@@ -304,29 +422,33 @@ impl GameBoy {
                                 };
                                 return self.step_dot();
                             }
-                            // Stay halted, no trailing fetch needed.
-                            self.prefetched_opcode = None;
+                            // Stay halted.
                             self.advance_ei_delay();
                             self.execution = ExecutionState::Ready;
                             return false;
                         }
 
-                        // IME=0 HALT wakeup: wakeup NOP IS the trailing
-                        // fetch. read_value is the prefetched opcode.
+                        // IME=0 HALT wakeup: the HaltedNop's M-cycle
+                        // already read the opcode at [PC]. Build a
+                        // Processor with that opcode and continue inline.
                         if was_halted && self.cpu.halt_state == HaltState::Running {
-                            self.prefetched_opcode = Some(read_value);
-                            self.advance_ei_delay();
-                            self.execution = ExecutionState::Ready;
-                            return false;
+                            self.execution = ExecutionState::Running {
+                                processor: Processor::fetch_with_opcode(
+                                    &mut self.cpu,
+                                    read_value,
+                                ),
+                                read_value: 0,
+                                dot: BusDot::ZERO,
+                                pending_oam_bug: None,
+                                was_halted: false,
+                            };
+                            return self.step_dot();
                         }
 
-                        // Normal: enter trailing fetch.
-                        self.execution = ExecutionState::TrailingFetch {
-                            dot: BusDot::ZERO,
-                            fetch_addr: self.cpu.program_counter,
-                            halting: false,
-                        };
-                        return self.step_dot();
+                        // Normal instruction complete.
+                        self.advance_ei_delay();
+                        self.execution = ExecutionState::Ready;
+                        return false;
                     }
                 };
 
@@ -363,30 +485,20 @@ impl GameBoy {
 
                 new_screen
             }
-            ExecutionState::TrailingFetch {
-                dot,
-                fetch_addr,
-                halting,
-            } => {
+            ExecutionState::HaltDummyFetch { dot, fetch_addr } => {
                 let is_mcycle_boundary = dot.boga();
                 let new_screen = self.tick_dot(is_mcycle_boundary);
 
                 if is_mcycle_boundary {
-                    // Final dot of the trailing fetch M-cycle.
-                    let bus_value = self.cpu_read(fetch_addr);
-                    if halting {
-                        self.cpu.halt_state = HaltState::Halted;
-                        self.prefetched_opcode = None;
-                    } else {
-                        self.prefetched_opcode = Some(bus_value);
-                    }
+                    // Final dot of the HALT dummy fetch.
+                    let _ = self.cpu_read(fetch_addr);
+                    self.cpu.halt_state = HaltState::Halted;
                     self.advance_ei_delay();
                     self.execution = ExecutionState::Ready;
                 } else {
-                    self.execution = ExecutionState::TrailingFetch {
+                    self.execution = ExecutionState::HaltDummyFetch {
                         dot: dot.advance(),
                         fetch_addr,
-                        halting,
                     };
                 }
 
@@ -593,7 +705,7 @@ impl GameBoy {
     /// Tick hardware for one dot (both phases).
     ///
     /// Convenience wrapper for callers that don't need to route bus
-    /// actions between phases (e.g. the trailing fetch loop).
+    /// actions between phases (e.g. the leading fetch loop).
     fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
         let s1 = self.tick_dot_rising(is_mcycle_boundary);
         let s2 = self.tick_dot_falling(is_mcycle_boundary);
@@ -630,8 +742,8 @@ impl GameBoy {
     ///
     /// Even with IME=Disabled, a pending interrupt wakes the CPU from
     /// HALT (without dispatching). Setting Running here causes the
-    /// HaltedNop completion to capture its bus read as the prefetched
-    /// opcode and return — the wakeup NOP IS the trailing fetch
+    /// HaltedNop completion to use its bus read value as the opcode
+    /// for the next instruction — the wakeup NOP IS the leading fetch
     /// (1 M-cycle total, not 2).
     fn halt_wakeup_check(&mut self) {
         if self.cpu.halt_state == HaltState::Halted
