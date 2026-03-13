@@ -9,16 +9,13 @@ use pixel_pipeline::{FramePhase, Rendering};
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
-pub use pixel_pipeline::{
-    FetcherStep, PipelineSnapshot, RenderPhase, SpriteFetchPhase,
-};
+pub use pixel_pipeline::{FetcherStep, PipelineSnapshot, RenderPhase, SpriteFetchPhase};
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
 pub struct PpuTickResult {
     pub screen: Option<Screen>,
     pub request_vblank: bool,
-    pub request_stat: bool,
 }
 
 pub mod control;
@@ -355,7 +352,6 @@ impl Ppu {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
-            request_stat: false,
         };
 
         if self.control().video_enabled() {
@@ -415,13 +411,9 @@ impl Ppu {
                 self.video.latch_ly_comparison();
             }
 
-            // Detect rising edge of STAT interrupt line (runs every dot,
-            // matching hardware's SUKO-clocked DFF which has phase granularity)
-            let stat_line_high = self.stat_line_active();
-            if stat_line_high && !self.video.stat_line_was_high {
-                result.request_stat = true;
-            }
-            self.video.stat_line_was_high = stat_line_high;
+            // STAT edge detection moved to check_stat_edge() — called
+            // after each phase by the executor, matching hardware's
+            // combinational SUKO which fires on any phase.
         } else {
             if !is_mcycle {
                 return result;
@@ -439,6 +431,26 @@ impl Ppu {
         result
     }
 
+    /// Detect a rising edge on the STAT interrupt line (SUKO).
+    /// On hardware, SUKO is purely combinational — it can fire on
+    /// any phase where an enabled condition transitions from inactive
+    /// to active. The caller invokes this after each phase tick so
+    /// that edges from the rising phase (e.g. WODU/Mode 0) are not
+    /// deferred to the next falling phase.
+    ///
+    /// Only evaluates when the LCD is enabled. When LCD is off, SUKO's
+    /// inputs (TARU, TAPA, PARU, ROPO) retain their static values and
+    /// the latch state freezes — matching hardware where the DFF outputs
+    /// persist without a clock.
+    pub fn check_stat_edge(&mut self) -> bool {
+        if !self.control().video_enabled() {
+            return false;
+        }
+        let stat_line_high = self.stat_line_active();
+        let edge = stat_line_high && !self.video.stat_line_was_high;
+        self.video.stat_line_was_high = stat_line_high;
+        edge
+    }
 
     pub fn palettes(&self) -> &Palettes {
         &self.registers.palettes

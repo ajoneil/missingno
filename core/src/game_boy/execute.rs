@@ -469,9 +469,7 @@ impl GameBoy {
 
         // Bus actions after phase ticks.
         let read_value = match dot_action {
-            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => {
-                None
-            }
+            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => None,
             DotAction::Read { address } => {
                 if (0xFE00..=0xFEFF).contains(address) {
                     *pending_oam_bug = Some(OamBugKind::Read);
@@ -501,6 +499,13 @@ impl GameBoy {
         // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
         self.ppu.tcycle_rising(&self.vram_bus.vram);
 
+        // SUKO is combinational — check for STAT edge after every phase.
+        // Mode 0 (WODU/TARU) fires on the rising phase, so this catches
+        // it immediately rather than deferring to the next falling phase.
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
         false
     }
 
@@ -517,7 +522,10 @@ impl GameBoy {
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
-        if video_result.request_stat {
+
+        // SUKO is combinational — check for STAT edge after every phase.
+        // Falling phase changes mode transitions, LYC comparison, etc.
+        if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
