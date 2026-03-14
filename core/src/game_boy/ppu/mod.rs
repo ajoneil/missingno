@@ -347,11 +347,12 @@ impl Ppu {
     }
 
     /// Rising edge (DELTA_ODD): LCD initialization, pixel output
-    /// pipeline (SACU, pipe shift).
+    /// pipeline (SACU, pipe shift), and DFF8 palette capture.
     ///
-    /// DFF8 palette latches are ticked on the falling phase (TEPO
-    /// rising, phase H), so the pipeline here still sees the old
-    /// palette value on the capture dot — matching hardware.
+    /// DFF8 palette latches are ticked AFTER the pipeline runs, so
+    /// the pipeline reads the pre-capture value on the resolve dot.
+    /// The capture resolves here (not in falling) to avoid the
+    /// DriveBus timing gap where falling runs before bus writes.
     pub fn tcycle_rising(&mut self, vram: &Vram) {
         if !self.control().video_enabled() {
             return;
@@ -381,6 +382,11 @@ impl Ppu {
                 rendering.rise(&self.registers, &self.video, &self.oam, vram);
             }
         }
+
+        // DFF8 palette capture (TEPO rising, phase H). Placed after
+        // rendering.rise() so the pipeline reads the pre-capture value
+        // on the resolve dot, matching hardware phase ordering (G before H).
+        self.registers.tick_palette_latches();
     }
 
     /// Master clock tick (XOTA rising edge). Runs the WUVU/VENA divider
@@ -444,9 +450,8 @@ impl Ppu {
         result
     }
 
-    /// Falling edge (DELTA_EVEN): DFF8 palette capture (TEPO rising,
-    /// phase H), fetcher pipeline (advance, cascade DFFs, TYFA), DFF9
-    /// resolve, LCD-off handling.
+    /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade
+    /// DFFs, TYFA), DFF9 resolve, LCD-off handling.
     pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
@@ -460,9 +465,6 @@ impl Ppu {
             if self.pixel_pipeline.is_none() {
                 return result;
             }
-
-            // DFF8 palette capture (TEPO rising, phase H).
-            self.registers.tick_palette_latches();
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
