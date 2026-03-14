@@ -1,3 +1,4 @@
+mod fetch_cascade;
 mod fetcher;
 mod fine_scroll;
 mod frame_phase;
@@ -6,6 +7,7 @@ mod oam_scan;
 mod pixel_output;
 mod shifters;
 mod sprite_fetch;
+mod sprite_scanner;
 mod window;
 
 pub use fetcher::FetcherStep;
@@ -21,138 +23,13 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
+use fetch_cascade::FetchCascade;
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
 use lcd_shift_register::LcdShiftRegister;
-use oam_scan::{ScanCounter, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
-
-/// Sprite scanner — owns all OAM scan (Mode 2) state.
-///
-/// Encapsulates the scan counter, scanning latch (BESU), BYBA/DOBA
-/// scan-done pipeline, and the sprite store that bridges Mode 2 and
-/// Mode 3. Communicates with the rest of the pipeline through explicit
-/// signals: AVAP (scan complete) triggers the Mode 2→3 transition,
-/// and the populated `SpriteStore` is consumed by the X matchers.
-pub(super) struct SpriteScanner {
-    /// 6-bit scan counter + Y comparator (YFEL-FONY).
-    counter: ScanCounter,
-    /// BESU scanning latch. Set when OAM scan starts, cleared by AVAP.
-    scanning: bool,
-    /// BYBA_SCAN_DONEp_odd: captures FETO (scan_done) on XUPY rising edges.
-    byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
-    doba: bool,
-    /// Ten-entry sprite register file (page 30). Populated during Mode 2,
-    /// consumed by X matchers during Mode 3.
-    sprites: SpriteStore,
-}
-
-/// Signals produced by `SpriteScanner::tick_falling()` for the rest of the pipeline.
-pub(super) struct ScanSignals {
-    /// CATU fired this dot — scan just started (Mode 2 entry).
-    pub(super) scan_started: bool,
-    /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
-    pub(super) avap: bool,
-}
-
-impl SpriteScanner {
-    pub(super) fn new() -> Self {
-        Self {
-            counter: ScanCounter::new(),
-            scanning: false,
-            byba: false,
-            doba: false,
-            sprites: SpriteStore::new(),
-        }
-    }
-
-    /// Whether the scanner is currently active (BESU/ACYL).
-    pub(super) fn scanning(&self) -> bool {
-        self.scanning
-    }
-
-    /// BYBA state, for debug snapshot.
-    pub(super) fn byba(&self) -> bool {
-        self.byba
-    }
-
-    /// DOBA state, for debug snapshot.
-    pub(super) fn doba(&self) -> bool {
-        self.doba
-    }
-
-    /// The OAM address the scanner is currently driving, if scanning.
-    pub(super) fn oam_address(&self) -> Option<u8> {
-        if self.scanning {
-            Some(self.counter.oam_address())
-        } else {
-            None
-        }
-    }
-
-    /// Rising edge: DOBA captures BYBA.
-    pub(super) fn rise(&mut self) {
-        self.doba = self.byba;
-    }
-
-    /// Falling edge: scanner tick, CATU scan-start, BYBA capture, AVAP check.
-    ///
-    /// Takes explicit inputs from the video control and pipeline state.
-    /// Returns `ScanSignals` indicating whether AVAP fired.
-    pub(super) fn fall(
-        &mut self,
-        xupy_rising: bool,
-        lx: u8,
-        wuvu: bool,
-        ly: u8,
-        lcd_turning_on: bool,
-        regs: &PipelineRegisters,
-        oam: &Oam,
-    ) -> ScanSignals {
-        // Capture FETO *before* the scanner tick — models DFF pre-edge capture.
-        let feto_old = self.counter.scan_done();
-
-        if self.scanning && xupy_rising {
-            self.counter.tick(ly, &mut self.sprites, regs, oam);
-        }
-
-        // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
-        // the scan counter. Suppressed on LCD turn-on first line.
-        let scan_started = lx == 0 && wuvu && !lcd_turning_on && !self.scanning;
-        if scan_started {
-            self.scanning = true;
-            self.counter.reset();
-        }
-
-        // BYBA_SCAN_DONEp_odd: capture pre-tick FETO on XUPY rising edge.
-        if xupy_rising {
-            self.byba = feto_old;
-        }
-
-        // AVAP: combinational scan-done trigger.
-        let avap = self.byba && !self.doba;
-
-        if avap && self.scanning && !lcd_turning_on {
-            self.scanning = false;
-        }
-
-        ScanSignals { scan_started, avap }
-    }
-
-    /// Reset at scanline boundary.
-    pub(super) fn reset(&mut self) {
-        self.counter.reset();
-        self.scanning = false;
-        self.sprites = SpriteStore::new();
-        // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
-        // they naturally clear because FETO is false after counter reset.
-        // But we reset them for cleanliness.
-        self.byba = false;
-        self.doba = false;
-    }
-}
+use sprite_scanner::SpriteScanner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -265,27 +142,9 @@ pub struct Rendering {
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
-    /// LYRY previous-phase latch. Models `reg_old.LYRY` (= `reg_old.phase_tfetch >= 10`)
-    /// for the NYKA DFF17 input. On hardware, NYKA reads the previous falling
-    /// phase's LYRY value, not the current one. This 1-phase delay adds 1 dot
-    /// to pipeline priming, matching the hardware cascade timing.
-    lyry_prev: bool,
-    /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
-    /// Goes high when the first BG tile fetch completes (LYRY fires).
-    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
-    nyka: bool,
-    /// PORY_FETCH_DONEp_odd: DFF17, latches on MYVO (rising edge).
-    /// Captures NYKA one half-phase after NYKA goes high.
-    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
-    pory: bool,
-    /// PYGO_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
-    /// Captures PORY one half-phase after PORY goes high.
-    /// Reset at scanline boundaries (XYMU_RENDERINGn).
-    pygo: bool,
-    /// POKY NOR latch — captures PYGO on falling edge. TYFA reads this
-    /// instead of PYGO directly, adding 1 dot of cascade delay to the
-    /// pixel clock enable. Reset at scanline boundaries.
-    poky: bool,
+    /// Fetch-done cascade: LYRY → NYKA → PORY → PYGO → POKY DFF chain.
+    /// Propagates fetcher-idle through pipeline delay stages.
+    cascade: FetchCascade,
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
@@ -370,11 +229,7 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            lyry_prev: false,
-            nyka: false,
-            pory: false,
-            pygo: false,
-            poky: false,
+            cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             rydy: false,
 
@@ -404,11 +259,7 @@ impl Rendering {
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            lyry_prev: false,
-            nyka: false,
-            pory: false,
-            pygo: false,
-            poky: false,
+            cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             rydy: false,
 
@@ -499,8 +350,8 @@ impl Rendering {
             rydy: self.rydy,
             wusa: self.wusa,
             pova: self.pova,
-            pygo: self.pygo,
-            poky: self.poky,
+            pygo: self.cascade.pygo(),
+            poky: self.cascade.poky(),
             wx_triggered: self.wx_triggered,
             wuvu: video.xupy(),
             byba: self.scan.byba(),
@@ -671,11 +522,7 @@ impl Rendering {
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
-        self.lyry_prev = false;
-        self.nyka = false;
-        self.pory = false;
-        self.pygo = false;
-        self.poky = false;
+        self.cascade.reset();
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
 
@@ -750,8 +597,8 @@ impl Rendering {
         // and remain high for the rest of the scanline.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
-            && self.lyry_prev
-            && self.pygo
+            && self.cascade.lyry_prev()
+            && self.cascade.pygo()
         {
             sf.phase = SpriteFetchPhase::FetchingData;
             // The first sprite fetch step fires immediately on the
@@ -761,34 +608,7 @@ impl Rendering {
             sf.advance(regs, oam, vram);
         }
 
-        // --- Cascade DFF propagation (falling edge: NYKA) ---
-        //
-        // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
-        // NYKA is a DFF17 clocked on ALET (falling edge of master clock).
-        // DFF17 reads state_old -- the PREVIOUS falling phase's LYRY value.
-
-        // NYKA captures lyry_prev (the previous phase's LYRY), not the
-        // current lyry. This models the DFF17 state_old read.
-        if self.lyry_prev && !self.nyka {
-            self.nyka = true;
-        }
-
-        // Update lyry_prev for next falling phase.
-        self.lyry_prev = lyry;
-
-        // PYGO captures PORY on falling edge (ALET clock). On hardware,
-        // PYGO is DFF17 clocked by ALET_xBxDxFxH. PORY was latched
-        // on the preceding rising (MYVO clock), so PYGO reads state_old.PORY.
-        if self.pory && !self.pygo {
-            self.pygo = true;
-        }
-
-        // POKY NOR latch fires on falling, reading the just-updated PYGO.
-        // Zero propagation delay from PYGO to POKY within this falling
-        // phase, matching hardware NOR latch behavior.
-        if self.pygo && !self.poky {
-            self.poky = true;
-        }
+        self.cascade.fall(lyry);
 
         // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
         // SOCY = NOT(RYDY): self.rydy was set in the preceding rising by
@@ -797,7 +617,7 @@ impl Rendering {
         // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
         // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
         self.tyfa_bridge = match self.sprite_state {
-            SpriteState::Idle => !self.rydy && self.poky,
+            SpriteState::Idle => !self.rydy && self.cascade.poky(),
             _ => false,
         };
 
@@ -826,12 +646,7 @@ impl Rendering {
             pixel_counter: self.pixel_counter,
         };
 
-        // PORY captures old NYKA (rising edge, MYVO clock).
-        // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
-        let old_nyka = self.nyka;
-        if old_nyka && !self.pory {
-            self.pory = true;
-        }
+        self.cascade.rise();
 
         // PORY clears RYDY: on hardware, PORY is a reset input to the
         // RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
@@ -843,7 +658,7 @@ impl Rendering {
         // the pre-clear RYDY value (captured on falling). SUZU fires for
         // exactly one half-cycle when RYDY transitions 1→0, triggering
         // TEVO (pipe load + fine counter reset).
-        if self.pory && self.rydy {
+        if self.cascade.pory() && self.rydy {
             self.rydy = false;
 
             // SUZU → TEVO → NYXU: load window tile data into pipe.
@@ -869,7 +684,7 @@ impl Rendering {
         // !self.pygo is still true at TAVE time. Once PYGO fires,
         // !self.pygo permanently disables TAVE, matching hardware where
         // POKY disables SUVU/TAVE.
-        if self.nyka && self.pory && !self.pygo {
+        if self.cascade.nyka() && self.cascade.pory() && !self.cascade.pygo() {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
@@ -967,7 +782,7 @@ impl Rendering {
                     // Clear lyry_prev so the next falling phase sees the reset
                     // state — otherwise a sprite triggered at an X%8==0 boundary
                     // would see stale lyry_prev=true and exit wait immediately.
-                    self.lyry_prev = false;
+                    self.cascade.clear_lyry();
                 }
 
                 // Pixel counter increment (SACU clock). On hardware, SACU
@@ -1065,13 +880,12 @@ impl Rendering {
         // — it fires regardless of sprite fetch state. During sprite
         // fetch, pixel_counter is frozen, so the match just re-checks
         // the same value each dot.
+        let pygo = self.cascade.pygo();
         window::check_window_trigger(
             inputs.rydy,
             &mut self.rydy,
             &mut self.fetcher,
-            &mut self.nyka,
-            &mut self.pory,
-            &mut self.lyry_prev,
+            &mut self.cascade,
             &mut self.bg_shifter,
             &mut self.fine_scroll,
             &mut self.window_zero_pixel,
@@ -1080,7 +894,7 @@ impl Rendering {
             inputs.pixel_counter,
             &mut self.last_wx_value,
             self.nuko_wx,
-            self.pygo,
+            pygo,
             regs,
             video,
         );
@@ -1103,12 +917,13 @@ impl Rendering {
 
         let match_x = self.pixel_counter;
 
-        for i in 0..self.scan.sprites.count as usize {
-            if self.scan.sprites.fetched & (1 << i) != 0 {
+        let sprites = self.scan.sprites_mut();
+        for i in 0..sprites.count as usize {
+            if sprites.fetched & (1 << i) != 0 {
                 continue; // Already fetched — reset flag is set
             }
 
-            let entry = &self.scan.sprites.entries[i];
+            let entry = &sprites.entries[i];
 
             if entry.x != match_x {
                 continue; // X doesn't match current pixel counter
@@ -1116,12 +931,12 @@ impl Rendering {
 
             if entry.x >= 168 {
                 // Off-screen right — mark as fetched so we don't check again
-                self.scan.sprites.fetched |= 1 << i;
+                sprites.fetched |= 1 << i;
                 continue;
             }
 
             // Match found — trigger sprite fetch, mark slot as fetched
-            self.scan.sprites.fetched |= 1 << i;
+            sprites.fetched |= 1 << i;
             self.sprite_state = SpriteState::Fetching(SpriteFetch::new(*entry));
             break; // Only one sprite fetch at a time
         }

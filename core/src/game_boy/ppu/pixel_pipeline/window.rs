@@ -2,6 +2,7 @@
 
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
+use super::fetch_cascade::FetchCascade;
 use super::fetcher::{FetcherStep, TileFetcher};
 use super::fine_scroll::FineScroll;
 use super::shifters::BgShifter;
@@ -25,9 +26,7 @@ pub(super) fn check_window_trigger(
     rydy: bool,
     rydy_live: &mut bool,
     fetcher: &mut TileFetcher,
-    nyka: &mut bool,
-    pory: &mut bool,
-    lyry_prev: &mut bool,
+    cascade: &mut FetchCascade,
     bg_shifter: &mut BgShifter,
     fine_scroll: &mut FineScroll,
     window_zero_pixel: &mut bool,
@@ -99,8 +98,6 @@ pub(super) fn check_window_trigger(
     // the window tile fetch completes before the pixel clock can resume.
     // lyry_prev must also be cleared so the window refetch does not inherit
     // stale LYRY state from the previous fetch.
-    *nyka = false;
-    *pory = false;
-    *lyry_prev = false;
+    cascade.reset_window();
     *window_rendered = true;
 }
