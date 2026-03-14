@@ -419,25 +419,7 @@ impl GameBoy {
 
         let is_mcycle_boundary = dot.boga();
         let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
-
-        // Master clock (XOTA): tick the WUVU/VENA divider chain, LX
-        // counter, scanline boundary, VBlank IF, and LYC comparison.
-        // Runs once per dot, independent of the rising/falling split.
-        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
         let mut new_screen = false;
-        if xota_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        if let Some(screen) = xota_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
-            }
-            self.screen = screen;
-            new_screen = true;
-        }
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
 
         if is_drivebus {
             // DriveBus dot: hardware order is EVEN first, then ODD.
@@ -526,10 +508,30 @@ impl GameBoy {
         false
     }
 
-    /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
-    /// DFF9 resolve, LCD-off handling, and M-cycle subsystems.
+    /// Falling phase (DELTA_EVEN / XOTA rising edge) of one dot:
+    /// master clock divider chain (WUVU/VENA/TALU/LX), PPU fetcher
+    /// pipeline, DFF9 resolve, LCD-off handling, and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
+
+        // XOTA rising edge: tick WUVU/VENA divider chain, LX counter,
+        // scanline boundary, VBlank IF, LYC comparison. This IS the
+        // falling half-phase — XOTA_AxCxExGx rising edge coincides
+        // with DELTA_EVEN.
+        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
+        if xota_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if let Some(screen) = xota_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            new_screen = true;
+        }
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
 
         // PPU falling phase: fetcher, DFF9, LCD-off.
         let video_result = self
