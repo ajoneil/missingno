@@ -25,8 +25,6 @@ pub(super) struct SpriteScanner {
 
 /// Signals produced by `SpriteScanner::fall()` for the rest of the pipeline.
 pub(super) struct ScanSignals {
-    /// CATU fired this dot — scan just started (Mode 2 entry).
-    pub(super) scan_started: bool,
     /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
     pub(super) avap: bool,
 }
@@ -117,7 +115,7 @@ impl SpriteScanner {
             self.scanning = false;
         }
 
-        ScanSignals { scan_started, avap }
+        ScanSignals { avap }
     }
 
     /// Reset at scanline boundary.

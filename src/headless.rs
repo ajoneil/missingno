@@ -494,12 +494,7 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
     match ppu.pipeline_state() {
         Some(snap) => serde_json::json!({
             "pixel_counter": snap.pixel_counter,
-            "render_phase": match snap.render_phase {
-                ppu::RenderPhase::OamScan => "oam_scan",
-                ppu::RenderPhase::Drawing => "drawing",
-                ppu::RenderPhase::DrawingComplete => "drawing_complete",
-                ppu::RenderPhase::HorizontalBlank => "hblank",
-            },
+            "xymu": snap.xymu,
             "bg_shifter": {
                 "low": snap.bg_low,
                 "high": snap.bg_high,

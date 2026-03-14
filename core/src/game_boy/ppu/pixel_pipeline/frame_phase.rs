@@ -5,7 +5,7 @@ use crate::game_boy::ppu::{
     memory::{Oam, Vram},
 };
 
-use super::{Mode, PipelineSnapshot, RenderPhase, Rendering};
+use super::{Mode, PipelineSnapshot, Rendering};
 
 pub enum FramePhase {
     ActiveDisplay(Rendering),
@@ -100,12 +100,7 @@ impl FramePhase {
 
     pub fn is_rendering(&self) -> bool {
         match self {
-            FramePhase::ActiveDisplay(rendering) => {
-                matches!(
-                    rendering.render_phase,
-                    RenderPhase::Drawing | RenderPhase::DrawingComplete
-                )
-            }
+            FramePhase::ActiveDisplay(rendering) => rendering.xymu,
             FramePhase::VerticalBlank => false,
         }
     }

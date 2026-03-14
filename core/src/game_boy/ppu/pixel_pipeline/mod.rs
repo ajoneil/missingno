@@ -51,33 +51,6 @@ impl fmt::Display for Mode {
     }
 }
 
-/// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
-/// and WODU (hblank gate) hardware signals on page 21.
-///
-/// On hardware, WODU fires combinationally when the pixel counter reaches
-/// 167, then VOGA latches WODU on the next falling phase to clear XYMU.
-/// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
-/// sees HBlank one phase before XYMU clears.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RenderPhase {
-    /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
-    /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
-    /// for lines 1+ (in half_falling), cleared by AVAP when the scan
-    /// completes.
-    OamScan,
-    /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
-    /// period from AVAP (scan done) through WODU (PX≥167). During
-    /// startup, the NYKA/PORY/PYGO cascade DFFs propagate while the
-    /// pixel clock waits for POKY (bg_shifter.loaded) to latch.
-    Drawing,
-    /// WODU fired (XUGU decode + !FEPO): STAT sees mode=0 via TARU,
-    /// pixel clock stops, VRAM/OAM unlocked. VOGA captures on next
-    /// falling phase, clearing XYMU and WUSA via WEGO. Lasts 1 dot.
-    DrawingComplete,
-    /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
-    /// Hardware: XYMU clear, WODU set.
-    HorizontalBlank,
-}
 
 /// Within-phase snapshot of signals that are both read and written during
 /// `mode3_rising`. On hardware, combinational logic within a phase reads DFF
@@ -96,7 +69,8 @@ struct RisingPhaseInputs {
 
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
-    pub render_phase: RenderPhase,
+    /// XYMU rendering latch (page 21). True = Mode 3 rendering active.
+    pub xymu: bool,
     pub bg_low: u8,
     pub bg_high: u8,
     pub bg_loaded: bool,
@@ -125,9 +99,11 @@ pub struct Rendering {
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     pub(super) lcd_turning_on: bool,
-    /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
-    /// (hblank gate). See `RenderPhase` for hardware signal mapping.
-    pub(super) render_phase: RenderPhase,
+    /// XYMU rendering latch (page 21). SET by AVAP (scan done, Mode 2→3).
+    /// CLEAR by WEGO = OR2(VID_RST, VOGA). When set, the fetcher and pixel
+    /// pipeline are active (Mode 3). WODU is computed combinationally from
+    /// XUGU and !FEPO while XYMU is set.
+    pub(super) xymu: bool,
     /// Sprite scanner — scan counter, scanning latch, BYBA/DOBA pipeline,
     /// and the sprite store that bridges Mode 2 and Mode 3.
     scan: SpriteScanner,
@@ -199,7 +175,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
-            render_phase: RenderPhase::HorizontalBlank,
+            xymu: false,
             scan: SpriteScanner::new(),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
@@ -224,7 +200,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: true,
-            render_phase: RenderPhase::HorizontalBlank,
+            xymu: false,
             scan: SpriteScanner::new(),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
@@ -244,25 +220,35 @@ impl Rendering {
         }
     }
 
+    /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
+    /// On hardware, WODU is not a latch — it's valid whenever its
+    /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
+    fn wodu(&self) -> bool {
+        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
+        self.xymu && self.lcd.xugu() && !fepo
+    }
+
     fn mode(&self, _video: &VideoControl) -> Mode {
-        match self.render_phase {
-            RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::OamScan => Mode::OamScan,
-            _ => Mode::HorizontalBlank,
+        if self.scan.scanning() {
+            Mode::OamScan
+        } else if self.xymu && !self.wodu() {
+            Mode::Drawing
+        } else {
+            Mode::HorizontalBlank
         }
     }
 
     /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
-    ///
-    /// No look-aheads needed: CPU bus reads/writes execute after
-    /// both phases, so AVAP (rising) and VOGA (falling) have already
-    /// fired and updated render_phase before stat_mode() is called.
+    /// TARU (mode 0 condition) reads WODU combinationally — STAT sees
+    /// mode 0 on the same phase that WODU fires, before VOGA captures.
     fn stat_mode(&self, _video: &VideoControl) -> Mode {
-        match self.render_phase {
-            RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::OamScan => Mode::OamScan,
-            _ => Mode::HorizontalBlank,
+        if self.scan.scanning() {
+            Mode::OamScan
+        } else if self.xymu && !self.wodu() {
+            Mode::Drawing
+        } else {
+            Mode::HorizontalBlank
         }
     }
 
@@ -301,7 +287,7 @@ impl Rendering {
         };
         PipelineSnapshot {
             pixel_counter: self.lcd.pixel_counter(),
-            render_phase: self.render_phase,
+            xymu: self.xymu,
             bg_low,
             bg_high,
             bg_loaded,
@@ -327,35 +313,22 @@ impl Rendering {
 
     fn oam_locked(&self) -> bool {
         // Hardware: OAM blocked by ACYL (scanning) or XYMU (rendering).
-        matches!(
-            self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        self.scan.scanning() || self.xymu
     }
 
     fn vram_locked(&self) -> bool {
-        // Hardware: VRAM blocked by XYMU_RENDERINGp. XYMU stays set through
-        // DrawingComplete (WODU dot); VOGA clears it on the next falling phase.
-        matches!(
-            self.render_phase,
-            RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        // Hardware: VRAM blocked by XYMU_RENDERINGp.
+        self.xymu
     }
 
     fn oam_write_locked(&self) -> bool {
         // Hardware: OAM writes blocked by ACYL (scanning) or XYMU (rendering).
-        matches!(
-            self.render_phase,
-            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        self.scan.scanning() || self.xymu
     }
 
     fn vram_write_locked(&self) -> bool {
         // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
-        matches!(
-            self.render_phase,
-            RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        self.xymu
     }
 
     /// Falling edge half-cycle: setup phase (runs after rising edge).
@@ -391,17 +364,14 @@ impl Rendering {
         );
 
         // React to scan signals.
-        if scan.scan_started {
-            self.render_phase = RenderPhase::OamScan;
-        }
         if scan.avap && !self.lcd_turning_on {
-            // AVAP fires: Mode 2 → Mode 3 transition.
-            self.render_phase = RenderPhase::Drawing;
+            // AVAP fires: Mode 2 → Mode 3 transition. Set XYMU.
+            self.xymu = true;
             self.lcd_turning_on = false;
             self.nuko_wx = regs.window.x_plus_7.output();
         } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
-            // LCD turn-on: Mode 0 → Mode 3 transition.
-            self.render_phase = RenderPhase::Drawing;
+            // LCD turn-on: Mode 0 → Mode 3 transition. Set XYMU.
+            self.xymu = true;
             self.lcd_turning_on = false;
             self.nuko_wx = regs.window.x_plus_7.output();
         }
@@ -411,24 +381,24 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU from
-        // this dot's preceding rising phase. DrawingComplete means WODU
-        // fired this dot.
-        if self.render_phase == RenderPhase::DrawingComplete {
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU
+        // combinationally. XYMU is still set at this point (VOGA
+        // hasn't cleared it yet), so wodu() is valid to sample.
+        let wodu = self.wodu();
+        if wodu {
             self.voga = true;
         }
 
         // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
-        let last_pixel = self.render_phase == RenderPhase::DrawingComplete;
-        self.lcd.fall(self.voga, last_pixel, &mut self.screen);
+        self.lcd.fall(self.voga, wodu, &mut self.screen);
         if self.voga {
-            self.render_phase = RenderPhase::HorizontalBlank;
+            self.xymu = false;
         }
 
         // Mode 3 falling-phase processing
-        if self.render_phase == RenderPhase::Drawing {
+        if self.xymu {
             self.mode3_falling(regs, video, oam, vram);
         }
     }
@@ -448,31 +418,16 @@ impl Rendering {
         self.scan.rise();
 
         // Mode 3 (drawing) — pixel output phase.
-        // Runs when in Drawing phase and not during a mode transition dot.
-        if self.render_phase == RenderPhase::Drawing {
+        // Runs when XYMU is set (rendering active).
+        if self.xymu {
             self.mode3_rising(regs, video, oam, vram);
-        }
-
-        // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
-        // decodes PX=167 (bits 0+1+2+5+7 all set). WODU = AND2(!FEPO, !XUGU).
-        // WODU fires combinationally when the pixel counter has all five
-        // XUGU bits set and no sprite match (FEPO) is active.
-        //
-        // TARU (STAT mode 0 interrupt) uses WODU directly on the same
-        // phase — DrawingComplete models this. VOGA latches WODU on the
-        // next falling phase, clearing XYMU (handled in half_falling).
-        let xugu = self.lcd.xugu();
-        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
-        let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
-        if wodu {
-            self.render_phase = RenderPhase::DrawingComplete;
         }
     }
 
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.render_phase = RenderPhase::HorizontalBlank;
+        self.xymu = false;
         if self.window_rendered {
             self.window_line_counter += 1;
         }

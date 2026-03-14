@@ -93,7 +93,7 @@ impl LcdControl {
     }
 
     /// Falling edge: WEGO = OR2(VID_RST, VOGA). When VOGA is set,
-    /// clears WUSA. On the DrawingComplete dot (last_pixel), also
+    /// clears WUSA. On the WODU dot (last_pixel), also
     /// shifts in the final pixel and latches the shift register to
     /// the screen.
     pub(super) fn fall(&mut self, voga: bool, last_pixel: bool, screen: &mut Screen) {
