@@ -116,7 +116,8 @@ impl GameBoy {
                         let mut halt_dot = BusDot::ZERO;
                         let mut no_oam_bug = None;
                         for _ in 0u8..4 {
-                            let (s, _) = self.execute_dot(&DotAction::Idle, halt_dot, &mut no_oam_bug);
+                            let (s, _) =
+                                self.execute_dot(&DotAction::Idle, halt_dot, &mut no_oam_bug);
                             new_screen |= s;
                             halt_dot = if halt_dot.boga() {
                                 BusDot::ZERO

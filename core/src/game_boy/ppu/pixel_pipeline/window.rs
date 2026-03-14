@@ -73,10 +73,7 @@ pub(super) fn check_window_trigger(
     // Reactivation requires the initial window fetch to have completed
     // (RYDY=0), modeling hardware's !window_is_being_fetched.
     if fetcher.fetching_window {
-        if !rydy
-            && bg_shifter.poky()
-            && fetcher.step == FetcherStep::GetTile
-        {
+        if !rydy && bg_shifter.poky() && fetcher.step == FetcherStep::GetTile {
             *window_zero_pixel = true;
         }
         return;

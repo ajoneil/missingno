@@ -24,9 +24,135 @@ use crate::game_boy::ppu::{
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
 use lcd_shift_register::LcdShiftRegister;
-use oam_scan::{OamScanner, SpriteStore};
+use oam_scan::{ScanCounter, SpriteStore};
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
+
+/// Sprite scanner — owns all OAM scan (Mode 2) state.
+///
+/// Encapsulates the scan counter, scanning latch (BESU), BYBA/DOBA
+/// scan-done pipeline, and the sprite store that bridges Mode 2 and
+/// Mode 3. Communicates with the rest of the pipeline through explicit
+/// signals: AVAP (scan complete) triggers the Mode 2→3 transition,
+/// and the populated `SpriteStore` is consumed by the X matchers.
+pub(super) struct SpriteScanner {
+    /// 6-bit scan counter + Y comparator (YFEL-FONY).
+    counter: ScanCounter,
+    /// BESU scanning latch. Set when OAM scan starts, cleared by AVAP.
+    scanning: bool,
+    /// BYBA_SCAN_DONEp_odd: captures FETO (scan_done) on XUPY rising edges.
+    byba: bool,
+    /// DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
+    doba: bool,
+    /// Ten-entry sprite register file (page 30). Populated during Mode 2,
+    /// consumed by X matchers during Mode 3.
+    sprites: SpriteStore,
+}
+
+/// Signals produced by `SpriteScanner::tick_falling()` for the rest of the pipeline.
+pub(super) struct ScanSignals {
+    /// CATU fired this dot — scan just started (Mode 2 entry).
+    pub(super) scan_started: bool,
+    /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
+    pub(super) avap: bool,
+}
+
+impl SpriteScanner {
+    pub(super) fn new() -> Self {
+        Self {
+            counter: ScanCounter::new(),
+            scanning: false,
+            byba: false,
+            doba: false,
+            sprites: SpriteStore::new(),
+        }
+    }
+
+    /// Whether the scanner is currently active (BESU/ACYL).
+    pub(super) fn scanning(&self) -> bool {
+        self.scanning
+    }
+
+    /// BYBA state, for debug snapshot.
+    pub(super) fn byba(&self) -> bool {
+        self.byba
+    }
+
+    /// DOBA state, for debug snapshot.
+    pub(super) fn doba(&self) -> bool {
+        self.doba
+    }
+
+    /// The OAM address the scanner is currently driving, if scanning.
+    pub(super) fn oam_address(&self) -> Option<u8> {
+        if self.scanning {
+            Some(self.counter.oam_address())
+        } else {
+            None
+        }
+    }
+
+    /// Rising edge: DOBA captures BYBA.
+    pub(super) fn rise(&mut self) {
+        self.doba = self.byba;
+    }
+
+    /// Falling edge: scanner tick, CATU scan-start, BYBA capture, AVAP check.
+    ///
+    /// Takes explicit inputs from the video control and pipeline state.
+    /// Returns `ScanSignals` indicating whether AVAP fired.
+    pub(super) fn fall(
+        &mut self,
+        xupy_rising: bool,
+        lx: u8,
+        wuvu: bool,
+        ly: u8,
+        lcd_turning_on: bool,
+        regs: &PipelineRegisters,
+        oam: &Oam,
+    ) -> ScanSignals {
+        // Capture FETO *before* the scanner tick — models DFF pre-edge capture.
+        let feto_old = self.counter.scan_done();
+
+        if self.scanning && xupy_rising {
+            self.counter.tick(ly, &mut self.sprites, regs, oam);
+        }
+
+        // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
+        // the scan counter. Suppressed on LCD turn-on first line.
+        let scan_started = lx == 0 && wuvu && !lcd_turning_on && !self.scanning;
+        if scan_started {
+            self.scanning = true;
+            self.counter.reset();
+        }
+
+        // BYBA_SCAN_DONEp_odd: capture pre-tick FETO on XUPY rising edge.
+        if xupy_rising {
+            self.byba = feto_old;
+        }
+
+        // AVAP: combinational scan-done trigger.
+        let avap = self.byba && !self.doba;
+
+        if avap && self.scanning && !lcd_turning_on {
+            self.scanning = false;
+        }
+
+        ScanSignals { scan_started, avap }
+    }
+
+    /// Reset at scanline boundary.
+    pub(super) fn reset(&mut self) {
+        self.counter.reset();
+        self.scanning = false;
+        self.sprites = SpriteStore::new();
+        // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
+        // they naturally clear because FETO is false after counter reset.
+        // But we reset them for cleanliness.
+        self.byba = false;
+        self.doba = false;
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -128,15 +254,9 @@ pub struct Rendering {
     /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
     /// (hblank gate). See `RenderPhase` for hardware signal mapping.
     pub(super) render_phase: RenderPhase,
-    /// Sprites on this line, stored as hardware register file entries.
-    sprites: SpriteStore,
-    /// OAM scanner (YFEL-FONY counter). Always present — on hardware
-    /// the counter is never destroyed, just reset at line boundaries.
-    scanner: OamScanner,
-    /// BESU scanning latch. Set when OAM scan starts (dot 1 for lines 1+,
-    /// dot 0 for line 0), cleared by AVAP when scan completes. Gates
-    /// ACYL_SCANNINGp which drives STAT mode bits and OAM bus ownership.
-    scanning: bool,
+    /// Sprite scanner — scan counter, scanning latch, BYBA/DOBA pipeline,
+    /// and the sprite store that bridges Mode 2 and Mode 3.
+    scan: SpriteScanner,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
     /// Background pixel shift register (page 32).
@@ -236,10 +356,6 @@ pub struct Rendering {
     /// live DFF output. check_window_trigger reads this instead of the
     /// live register, providing a 1-dot lag on mid-scanline WX writes.
     nuko_wx: u8,
-    /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
-    byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA on every falling edge.
-    doba: bool,
 }
 
 impl Rendering {
@@ -249,9 +365,7 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: false,
             render_phase: RenderPhase::HorizontalBlank,
-            sprites: SpriteStore::new(),
-            scanner: OamScanner::new(),
-            scanning: false,
+            scan: SpriteScanner::new(),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -276,8 +390,6 @@ impl Rendering {
             wx_triggered: false,
             last_wx_value: 0xFF,
             nuko_wx: 0xFF,
-            byba: false,
-            doba: false,
         }
     }
 
@@ -287,9 +399,7 @@ impl Rendering {
             window_line_counter: 0,
             lcd_turning_on: true,
             render_phase: RenderPhase::HorizontalBlank,
-            sprites: SpriteStore::new(),
-            scanner: OamScanner::new(),
-            scanning: false,
+            scan: SpriteScanner::new(),
             window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -314,8 +424,6 @@ impl Rendering {
             wx_triggered: false,
             last_wx_value: 0xFF,
             nuko_wx: 0xFF,
-            byba: false,
-            doba: false,
         }
     }
 
@@ -364,11 +472,7 @@ impl Rendering {
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
-        if self.scanning {
-            Some(self.scanner.oam_address())
-        } else {
-            None
-        }
+        self.scan.oam_address()
     }
 
     pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
@@ -399,8 +503,8 @@ impl Rendering {
             poky: self.poky,
             wx_triggered: self.wx_triggered,
             wuvu: video.xupy(),
-            byba: self.byba,
-            doba: self.doba,
+            byba: self.scan.byba(),
+            doba: self.scan.doba(),
         }
     }
 
@@ -458,54 +562,25 @@ impl Rendering {
         // before this function, xupy()==true means WUVU just went low→high.
         let xupy_rising = video.xupy();
 
-        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
-        // XUPY). Gated on XUPY rising (2-dot period). FETO only freezes
-        // the counter, not the comparison — entry 39 is still compared.
-        // Runs BEFORE the CATU/BESU scan-start below: on hardware, the
-        // scan counter tick (GAVA) and CATU use the same XUPY edge, but
-        // ATEJ resets the counter at the same moment CATU fires. Ticking
-        // first with the pre-reset counter is a no-op (counter is stale
-        // from previous line), then CATU resets it.
-        // Capture FETO *before* the scanner tick. On hardware, BYBA's DFF
-        // reads FETO_old (the value from the previous phase). Since we
-        // evaluate in one pass, reading scan_done() before tick() models
-        // the DFF's pre-edge capture behavior.
-        let feto_old = self.scanner.scan_done();
+        // Sprite scanner falling edge: counter tick, scan-start, BYBA, AVAP.
+        let scan = self.scan.fall(
+            xupy_rising,
+            video.lx,
+            video.wuvu,
+            video.ly(),
+            self.lcd_turning_on,
+            regs,
+            oam,
+        );
 
-        if self.scanning && xupy_rising {
-            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
-        }
-
-        // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
-        // released), setting BESU (scan latch) and resetting the scan
-        // counter. CATU is clocked by XUPY (= WUVU.qp), not VENA.
-        // Suppressed on the LCD turn-on first line, where hardware
-        // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.lx == 0 && video.wuvu && !self.lcd_turning_on && !self.scanning {
+        // React to scan signals.
+        if scan.scan_started {
             self.render_phase = RenderPhase::OamScan;
-            self.scanning = true;
-            self.scanner.reset();
         }
-
-        // BYBA_SCAN_DONEp_odd: capture pre-tick FETO on XUPY rising edge.
-        if xupy_rising {
-            self.byba = feto_old;
-        }
-
-        // AVAP: combinational scan-done trigger.
-        // Fires for one half-phase when BYBA has captured but DOBA has not.
-        let avap = self.byba && !self.doba;
-
-        if avap && self.scanning && !self.lcd_turning_on {
+        if scan.avap && !self.lcd_turning_on {
             // AVAP fires: Mode 2 → Mode 3 transition.
-            // Clears BESU (scan flag), sets XYMU (rendering latch),
-            // resets the BG fetcher (NYXU). The fetcher begins
-            // advancing on this same dot's mode3_falling below.
-            self.scanning = false;
             self.render_phase = RenderPhase::Drawing;
             self.lcd_turning_on = false;
-            // Seed NUKO's WX cache from the live DFF8 output at Mode 3
-            // entry.
             self.nuko_wx = regs.window.x_plus_7.output();
         } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
             // LCD turn-on: Mode 0 → Mode 3 transition.
@@ -514,7 +589,7 @@ impl Rendering {
             self.nuko_wx = regs.window.x_plus_7.output();
         }
 
-        if self.scanning {
+        if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return;
         }
@@ -559,11 +634,8 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
-        // Moved from half_falling to maintain the half-phase separation
-        // between BYBA (falling) and DOBA (rising) that produces the
-        // single-half-phase AVAP pulse.
-        self.doba = self.byba;
+        // Sprite scanner rising edge: DOBA captures BYBA.
+        self.scan.rise();
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when in Drawing phase and not during a mode transition dot.
@@ -594,12 +666,7 @@ impl Rendering {
         if self.window_rendered {
             self.window_line_counter += 1;
         }
-        self.sprites = SpriteStore::new();
-        self.scanner.reset();
-        // BESU deferred to dot 1 on all scanlines (CATU_LINE_ENDp fires
-        // at phase_lx=2, releasing LINE_RSTn and setting BESU).
-        // LCD turn-on's first scanline is handled separately by new_lcd_on().
-        self.scanning = false;
+        self.scan.reset();
         self.window_rendered = false;
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
@@ -623,10 +690,8 @@ impl Rendering {
         self.wx_triggered = false;
         self.last_wx_value = 0xFF;
         self.nuko_wx = 0xFF;
-        // BYBA and DOBA are cleared by LINE_RST at the scanline boundary.
+        // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
-        self.byba = false;
-        self.doba = false;
     }
 
     /// Falling edge Mode 3 processing.
@@ -1038,12 +1103,12 @@ impl Rendering {
 
         let match_x = self.pixel_counter;
 
-        for i in 0..self.sprites.count as usize {
-            if self.sprites.fetched & (1 << i) != 0 {
+        for i in 0..self.scan.sprites.count as usize {
+            if self.scan.sprites.fetched & (1 << i) != 0 {
                 continue; // Already fetched — reset flag is set
             }
 
-            let entry = &self.sprites.entries[i];
+            let entry = &self.scan.sprites.entries[i];
 
             if entry.x != match_x {
                 continue; // X doesn't match current pixel counter
@@ -1051,12 +1116,12 @@ impl Rendering {
 
             if entry.x >= 168 {
                 // Off-screen right — mark as fetched so we don't check again
-                self.sprites.fetched |= 1 << i;
+                self.scan.sprites.fetched |= 1 << i;
                 continue;
             }
 
             // Match found — trigger sprite fetch, mark slot as fetched
-            self.sprites.fetched |= 1 << i;
+            self.scan.sprites.fetched |= 1 << i;
             self.sprite_state = SpriteState::Fetching(SpriteFetch::new(*entry));
             break; // Only one sprite fetch at a time
         }

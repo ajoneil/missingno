@@ -52,7 +52,7 @@ impl SpriteStore {
 
 // --- OAM scanner ---
 
-/// Hardware OAM scanner (YFEL-FONY scan counter + comparison logic).
+/// OAM scan counter (YFEL-FONY) with Y comparison logic.
 /// Processes one OAM entry every 2 dots during Mode 2, reading Y and X
 /// from OAM, comparing Y against LY, and writing matches into the
 /// sprite store.
@@ -67,7 +67,7 @@ impl SpriteStore {
 /// At the dot level, each XUPY tick compares the current entry and
 /// then increments the counter. The caller gates ticks on XUPY
 /// rising and !scan_done() (modeling GAVA freeze).
-pub(super) struct OamScanner {
+pub(super) struct ScanCounter {
     /// 6-bit scan counter (YFEL-FONY). Drives OAM address and indexes
     /// the current entry for comparison. Range 0-39, frozen at 39
     /// once FETO fires.
@@ -78,7 +78,7 @@ pub(super) struct OamScanner {
     frozen: bool,
 }
 
-impl OamScanner {
+impl ScanCounter {
     pub(super) fn new() -> Self {
         Self {
             entry: 0,
