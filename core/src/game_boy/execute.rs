@@ -420,11 +420,29 @@ impl GameBoy {
 
         let is_mcycle_boundary = dot.boga();
         let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
-        let mut new_screen;
+
+        // Master clock (XOTA): tick the WUVU/VENA divider chain, LX
+        // counter, scanline boundary, VBlank IF, and LYC comparison.
+        // Runs once per dot, independent of the rising/falling split.
+        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
+        let mut new_screen = false;
+        if xota_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if let Some(screen) = xota_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            new_screen = true;
+        }
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
 
         if is_drivebus {
             // DriveBus dot: hardware order is EVEN first, then ODD.
-            new_screen = self.tick_dot_falling(is_mcycle_boundary);
+            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
 
             if let DotAction::DriveBus { address, value } = dot_action
                 && self.drive_ppu_bus(*address, *value)
@@ -446,7 +464,7 @@ impl GameBoy {
             new_screen |= self.tick_dot_rising(is_mcycle_boundary);
         } else {
             // All other dots: normal order, ODD first then EVEN.
-            new_screen = self.tick_dot_rising(is_mcycle_boundary);
+            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
 
             // MOPA rising edge (dot 2): fire OAM bug.
             if dot.mopa()
@@ -510,25 +528,21 @@ impl GameBoy {
     }
 
     /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
-    /// DFF9 resolve, dot advance, interrupt edge detection, and
-    /// M-cycle subsystems.
+    /// DFF9 resolve, LCD-off handling, and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // PPU falling phase: fetcher, DFF9, dot advance, interrupts.
+        // PPU falling phase: fetcher, DFF9, LCD-off.
         let video_result = self
             .ppu
             .tcycle_falling(is_mcycle_boundary, &self.vram_bus.vram);
-        if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
 
         // SUKO is combinational — check for STAT edge after every phase.
-        // Falling phase changes mode transitions, LYC comparison, etc.
         if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
+        // LCD-off produces a blank screen.
         if let Some(screen) = video_result.screen {
             if let Some(sgb) = &mut self.sgb {
                 sgb.update_screen(&screen);
@@ -595,11 +609,29 @@ impl GameBoy {
     /// Convenience wrapper for callers that don't need to route bus
     /// actions between phases (e.g. the trailing fetch loop).
     fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
-        let s1 = self.tick_dot_rising(is_mcycle_boundary);
-        let s2 = self.tick_dot_falling(is_mcycle_boundary);
+        let mut new_screen = false;
+
+        // Master clock tick first — independent of half-phases.
+        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
+        if xota_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if let Some(screen) = xota_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            new_screen = true;
+        }
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        new_screen |= self.tick_dot_rising(is_mcycle_boundary);
+        new_screen |= self.tick_dot_falling(is_mcycle_boundary);
         self.capture_interrupt_latch();
         self.halt_wakeup_check();
-        s1 || s2
+        new_screen
     }
 
     /// Capture the interrupt latch, modeling g42's CLK9-edge sampling.

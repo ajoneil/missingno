@@ -103,10 +103,11 @@ impl VideoControl {
         self.ly_match_pending = self.ly == self.lyc;
     }
 
-    /// Advance the scanline by one dot = one XOTA rising edge.
-    /// Toggles WUVU, cascades to VENA, cascades to LX on TALU rising.
-    /// Returns true at scanline boundary (LX wraps 113→0).
-    pub fn advance_dot(&mut self) -> bool {
+    /// One XOTA rising edge: toggles WUVU, cascades to VENA, cascades
+    /// to LX on TALU rising. Returns true at scanline boundary (LX
+    /// wraps 113→0). Called once per dot by the executor, independent
+    /// of the rising/falling half-phase split.
+    pub fn tick_xota(&mut self) -> bool {
         let wuvu_was = self.wuvu;
 
         // WUVU DFF17: clocked by XOTA (every dot), self-toggles.

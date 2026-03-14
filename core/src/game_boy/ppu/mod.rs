@@ -357,9 +357,70 @@ impl Ppu {
         }
     }
 
+    /// Master clock tick (XOTA rising edge). Runs the WUVU/VENA divider
+    /// chain, LX counter, scanline boundary logic, VBlank IF, and LYC
+    /// comparison. Called once per dot by the executor, independent of
+    /// the rising/falling half-phase split — on hardware, the master
+    /// clock is not part of either half-phase.
+    pub fn tick_xota(&mut self, is_mcycle: bool) -> PpuTickResult {
+        let mut result = PpuTickResult {
+            screen: None,
+            request_vblank: false,
+        };
+
+        if !self.control().video_enabled() {
+            // WUVU/VENA are held in async reset by VID_RST while LCD
+            // is disabled. Nothing to tick.
+            return result;
+        }
+
+        if self.pixel_pipeline.is_none() {
+            return result;
+        }
+
+        if self.video.tick_xota() {
+            // Scanline boundary — LX wrapped to 0.
+            match self.pixel_pipeline.as_mut() {
+                Some(FramePhase::ActiveDisplay(rendering)) => {
+                    if self.video.ly() == screen::NUM_SCANLINES {
+                        result.screen = Some(rendering.screen.clone());
+                        self.pixel_pipeline = Some(FramePhase::VerticalBlank);
+                    } else {
+                        rendering.reset_scanline(self.video.ly());
+                    }
+                }
+                Some(FramePhase::VerticalBlank) => {
+                    if self.video.ly == 0 {
+                        self.pixel_pipeline = Some(FramePhase::ActiveDisplay(Rendering::new()));
+                    }
+                }
+                None => {}
+            }
+        }
+
+        // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
+        // not at the scanline boundary (dot 0).
+        if self.video.lx == 1
+            && self.video.talu()
+            && !self.video.wuvu
+            && self.video.ly() == 144
+            && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
+        {
+            result.request_vblank = true;
+        }
+
+        // M-cycle-rate LYC comparison — AFTER tick_xota so the
+        // comparison sees post-increment LY, BEFORE STAT edge detection
+        // so interrupts see the freshly promoted ly_eq_lyc.
+        if is_mcycle {
+            self.video.latch_ly_comparison();
+        }
+
+        result
+    }
+
     /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade DFFs,
-    /// TYFA), DFF9 resolve, dot advance, scanline boundary, VBlank/STAT
-    /// interrupt edge detection, LCD-off handling.
+    /// TYFA), DFF9 resolve, LCD-off handling.
     pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
@@ -382,48 +443,6 @@ impl Ppu {
             // Advance DFF9 register latches after the pipeline so it reads
             // pre-tick values (reg_old), matching hardware.
             self.registers.tick_register_latches();
-
-            if self.video.advance_dot() {
-                // Scanline boundary — dot counter wrapped to 0.
-                match self.pixel_pipeline.as_mut() {
-                    Some(FramePhase::ActiveDisplay(rendering)) => {
-                        if self.video.ly() == screen::NUM_SCANLINES {
-                            result.screen = Some(rendering.screen.clone());
-                            self.pixel_pipeline = Some(FramePhase::VerticalBlank);
-                        } else {
-                            rendering.reset_scanline(self.video.ly());
-                        }
-                    }
-                    Some(FramePhase::VerticalBlank) => {
-                        // Use the internal counter, not ly(), because ly()
-                        // returns 0 on line 153 (MYTA early reset). The
-                        // VBlank→ActiveDisplay transition must wait for the
-                        // real ly counter to wrap 153→0 at RUTU.
-                        if self.video.ly == 0 {
-                            self.pixel_pipeline = Some(FramePhase::ActiveDisplay(Rendering::new()));
-                        }
-                    }
-                    None => {}
-                }
-            }
-
-            // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
-            // not at the scanline boundary (dot 0).
-            if self.video.lx == 1
-                && self.video.talu()
-                && !self.video.wuvu
-                && self.video.ly() == 144
-                && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
-            {
-                result.request_vblank = true;
-            }
-
-            // M-cycle-rate LYC comparison — AFTER advance_dot so the
-            // comparison sees post-increment LY, BEFORE STAT edge detection
-            // so interrupts see the freshly promoted ly_eq_lyc.
-            if is_mcycle {
-                self.video.latch_ly_comparison();
-            }
 
             // STAT edge detection moved to check_stat_edge() — called
             // after each phase by the executor, matching hardware's
