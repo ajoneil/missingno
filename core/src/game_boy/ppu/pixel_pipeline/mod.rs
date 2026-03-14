@@ -2,6 +2,7 @@ mod fetch_cascade;
 mod fetcher;
 mod fine_scroll;
 mod frame_phase;
+mod lcd_control;
 mod lcd_shift_register;
 mod oam_scan;
 mod pixel_output;
@@ -19,14 +20,13 @@ use core::fmt;
 use crate::game_boy::ppu::{
     PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
-    palette::PaletteIndex,
     screen::Screen,
 };
 
 use fetch_cascade::FetchCascade;
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
-use lcd_shift_register::LcdShiftRegister;
+use lcd_control::LcdControl;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
 use sprite_scanner::SpriteScanner;
@@ -51,9 +51,6 @@ impl fmt::Display for Mode {
     }
 }
 
-/// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
-/// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
-const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
 /// and WODU (hblank gate) hardware signals on page 21.
 ///
@@ -158,40 +155,19 @@ pub struct Rendering {
     /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The snapshot on
     /// the NEXT dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
     rydy: bool,
-    /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
-    /// the pixel clock starts after startup. Drives WODU (hblank gate)
-    /// at PX=167. Not reset on window trigger — PX is a monotonic
-    /// per-line counter.
-    pixel_counter: u8,
-    /// WUSA NOR latch — LCD clock gate (page 24). SET by XAJO
-    /// (AND2 of pixel counter bits 0 and 3, first at PX=9). CLEAR
-    /// by WEGO (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
-    wusa: bool,
     /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
     /// falling phases (ALET). Captures WODU from the previous rising phase.
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
-    /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
-    /// match signal. Computed on rising phases as AND2(PUXA, !NYZE).
-    /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
-    /// providing the 160th LCD clock edge before WUSA opens.
-    pova: bool,
     /// TYFA result computed in falling phase, consumed by rising phase. TYFA
     /// is combinational in hardware (falling phase), but downstream SACU is
     /// combinational in the rising phase. This bridge carries the
     /// falling-phase TYFA result to rising-phase SACU.
     tyfa_bridge: bool,
-    /// LCD shift register — 159-stage pixel buffer between the pixel
-    /// mux and the Screen. Replaces direct framebuffer writes.
-    lcd_shift_register: LcdShiftRegister,
-    /// LCD data pin latch (REMY/RAVO qp_ext_old model). On hardware,
-    /// the LCD data pins are combinational from the pipe MSBs, but the
-    /// LCD captures `qp_ext_old()` — the previous half-cycle's value.
-    /// This buffer holds the resolved pixel from the previous SACU edge.
-    /// TOBA shifts this buffered value into the LCD shift register,
-    /// giving a 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
-    lcd_data_latch: PaletteIndex,
+    /// LCD Control block (die page 24): pixel X counter, LCD clock
+    /// gating (WUSA), POVA trigger, LCD shift register, data latch.
+    lcd: LcdControl,
     /// Pixel output register snapshot — captured at the end of mode3_rising.
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
@@ -232,14 +208,9 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             rydy: false,
-
-            pixel_counter: 0,
-            wusa: false,
             voga: false,
-            pova: false,
             tyfa_bridge: false,
-            lcd_shift_register: LcdShiftRegister::new(),
-            lcd_data_latch: PaletteIndex(0),
+            lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -262,14 +233,9 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             rydy: false,
-
-            pixel_counter: 0,
-            wusa: false,
             voga: false,
-            pova: false,
             tyfa_bridge: false,
-            lcd_shift_register: LcdShiftRegister::new(),
-            lcd_data_latch: PaletteIndex(0),
+            lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -334,7 +300,7 @@ impl Rendering {
             SpriteState::Idle => (None, None),
         };
         PipelineSnapshot {
-            pixel_counter: self.pixel_counter,
+            pixel_counter: self.lcd.pixel_counter(),
             render_phase: self.render_phase,
             bg_low,
             bg_high,
@@ -345,11 +311,11 @@ impl Rendering {
             obj_priority,
             sprite_fetch_phase,
             sprite_tile_data,
-            lcd_x: self.lcd_shift_register.count(),
+            lcd_x: self.lcd.lcd_x(),
             fetcher_step: self.fetcher.step,
             rydy: self.rydy,
-            wusa: self.wusa,
-            pova: self.pova,
+            wusa: self.lcd.wusa(),
+            pova: self.lcd.pova(),
             pygo: self.cascade.pygo(),
             poky: self.cascade.poky(),
             wx_triggered: self.wx_triggered,
@@ -456,15 +422,8 @@ impl Rendering {
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
         if self.voga {
-            self.wusa = false;
-            if self.render_phase == RenderPhase::DrawingComplete {
-                // LCD NOR latch provides the 160th pixel: the data pins'
-                // current value at latch time. This is the lcd_data_latch
-                // (last resolved pixel from the final SACU edge, PX=167).
-                self.lcd_shift_register.shift_in(self.lcd_data_latch);
-                // LCD_LATCH (PIN_55): transfer shift register to column drivers.
-                self.lcd_shift_register.latch_to_screen(&mut self.screen);
-            }
+            let last_pixel = self.render_phase == RenderPhase::DrawingComplete;
+            self.lcd.clear_wusa(last_pixel, &mut self.screen);
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
@@ -502,7 +461,7 @@ impl Rendering {
         // TARU (STAT mode 0 interrupt) uses WODU directly on the same
         // phase — DrawingComplete models this. VOGA latches WODU on the
         // next falling phase, clearing XYMU (handled in half_falling).
-        let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
+        let xugu = self.lcd.xugu();
         let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
         let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
         if wodu {
@@ -526,12 +485,9 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.rydy = false;
 
-        self.pixel_counter = 0;
-        self.wusa = false;
         self.voga = false;
-        self.pova = false;
         self.tyfa_bridge = false;
-        self.lcd_shift_register.reset(scanline);
+        self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -565,7 +521,7 @@ impl Rendering {
         // only by sprite data fetch. LEBO = NAND2(ALET, MOCE).
         if !sprite_data_fetch {
             self.fetcher.advance(
-                self.pixel_counter,
+                self.lcd.pixel_counter(),
                 self.window_line_counter,
                 regs,
                 video,
@@ -643,7 +599,7 @@ impl Rendering {
         // `inputs`; all mutations go to `self`.
         let inputs = RisingPhaseInputs {
             rydy: self.rydy,
-            pixel_counter: self.pixel_counter,
+            pixel_counter: self.lcd.pixel_counter(),
         };
 
         self.cascade.rise();
@@ -669,12 +625,12 @@ impl Rendering {
 
             // REMY/RAVO combinational update: data pins reflect the
             // newly loaded window tile data immediately.
-            self.lcd_data_latch = pixel_output::resolve_current_pixel(
+            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
                 &mut self.window_zero_pixel,
                 regs,
-            );
+            ));
         }
 
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
@@ -694,11 +650,11 @@ impl Rendering {
         // capture PORY until the next falling phase. Use tyfa_bridge
         // (computed at the end of the previous falling phase) which has
         // the correct cascade-propagated POKY value.
-        self.pova = if self.tyfa_bridge {
+        self.lcd.set_pova(if self.tyfa_bridge {
             self.fine_scroll.capture_rising()
         } else {
             false
-        };
+        });
 
         match self.sprite_state {
             SpriteState::Fetching(ref mut sf) => {
@@ -726,7 +682,7 @@ impl Rendering {
                         pixel_output::sprite_overwrite_data_latch(
                             &self.bg_shifter,
                             &self.obj_shifter,
-                            &mut self.lcd_data_latch,
+                            self.lcd.data_latch_mut(),
                             &mut self.window_zero_pixel,
                             regs,
                         );
@@ -790,16 +746,12 @@ impl Rendering {
                 // counter's Q output updates first; pixel output reads the
                 // post-increment value. Placed before pixel output to model this.
                 if sacu {
-                    self.pixel_counter += 1;
+                    self.lcd.increment();
                 }
 
                 // XAJO: AND2(PX bit 0, PX bit 3). Sets the WUSA NOR latch,
                 // opening the LCD clock gate. First fires at PX=9 (0b1001).
-                // Subsequent fires (PX=11, 13, 15, 25...) are no-ops since
-                // WUSA is already set (NOR latch semantics).
-                if !self.wusa && (self.pixel_counter & 0b1001 == 0b1001) {
-                    self.wusa = true;
-                }
+                self.lcd.check_xajo();
 
                 // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
                 // On hardware, TOBA clocks the 159-stage LCD shift register,
@@ -808,7 +760,7 @@ impl Rendering {
                 // RYDY suppresses TOBA indirectly via TYFA→SEGU→SACU:
                 // RYDY→SOCY→TYFA=0→SACU stuck. No explicit RYDY gate
                 // exists on TOBA in hardware.
-                let toba = self.wusa && sacu;
+                let toba = self.lcd.toba(sacu);
 
                 // LCD data pin lag model (REMY/RAVO qp_ext_old).
                 //
@@ -823,7 +775,7 @@ impl Rendering {
                 // 159 TOBA edges output pixels for PX=8–166. The 160th pixel
                 // (PX=167) is captured by the NOR latch at end-of-line.
                 if toba {
-                    self.lcd_shift_register.shift_in(self.lcd_data_latch);
+                    self.lcd.shift_in();
                 }
 
                 // Update the LCD data latch with the current pipe state.
@@ -833,12 +785,12 @@ impl Rendering {
                 // window tile data loads (SEKO/TEVO), and the data pins
                 // reflect this immediately. The first post-stall TOBA
                 // captures window data via qp_ext_old.
-                self.lcd_data_latch = pixel_output::resolve_current_pixel(
+                self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                     &self.bg_shifter,
                     &self.obj_shifter,
                     &mut self.window_zero_pixel,
                     regs,
-                );
+                ));
 
                 if !toba && self.tyfa_bridge {
                     // Consume window_zero_pixel during pre-visible TYFA
@@ -915,7 +867,7 @@ impl Rendering {
             return;
         }
 
-        let match_x = self.pixel_counter;
+        let match_x = self.lcd.pixel_counter();
 
         let sprites = self.scan.sprites_mut();
         for i in 0..sprites.count as usize {
