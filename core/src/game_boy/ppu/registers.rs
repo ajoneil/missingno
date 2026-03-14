@@ -27,9 +27,9 @@ pub struct PipelineRegisters {
 }
 
 impl PipelineRegisters {
-    /// Advance DFF8 palette latches by one dot. Runs before the pipeline
-    /// (in tcycle_falling) so the pipeline sees the transitional old|new
-    /// value on the write dot, matching DFF8 master-slave transparency.
+    /// Advance DFF8 palette latches by one dot. The old value persists
+    /// through the write dot; the new value appears atomically on the
+    /// capture tick (one dot after write).
     pub(super) fn tick_palette_latches(&mut self) {
         self.palettes.background.tick();
         self.palettes.sprite0.tick();

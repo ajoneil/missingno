@@ -325,8 +325,7 @@ impl Ppu {
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 =
-            in_vblank && self.video.ly() == 144 && self.video.lx == 0;
+        let vblank_line_144 = in_vblank && self.video.ly() == 144 && self.video.lx == 0;
 
         (self
             .video
@@ -347,12 +346,12 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Rising edge (DELTA_ODD): DFF8 palette latch advance, LCD
-    /// initialization, pixel output pipeline (SACU, pipe shift).
+    /// Rising edge (DELTA_ODD): LCD initialization, pixel output
+    /// pipeline (SACU, pipe shift).
     ///
-    /// DFF8 palette latches tick first so the pipeline sees the
-    /// transitional old|new value on the write dot, matching DFF8
-    /// master-slave transparency.
+    /// DFF8 palette latches are ticked on the falling phase (TEPO
+    /// rising, phase H), so the pipeline here still sees the old
+    /// palette value on the capture dot — matching hardware.
     pub fn tcycle_rising(&mut self, vram: &Vram) {
         if !self.control().video_enabled() {
             return;
@@ -375,9 +374,6 @@ impl Ppu {
             self.video.write_ly(0);
             self.pixel_pipeline = Some(Rendering::new_lcd_on());
         }
-
-        // Advance DFF8 palette latches before pixel output.
-        self.registers.tick_palette_latches();
 
         // Pixel output, SACU, pipe shift — only during active display.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -448,8 +444,9 @@ impl Ppu {
         result
     }
 
-    /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade DFFs,
-    /// TYFA), DFF9 resolve, LCD-off handling.
+    /// Falling edge (DELTA_EVEN): DFF8 palette capture (TEPO rising,
+    /// phase H), fetcher pipeline (advance, cascade DFFs, TYFA), DFF9
+    /// resolve, LCD-off handling.
     pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
@@ -463,6 +460,9 @@ impl Ppu {
             if self.pixel_pipeline.is_none() {
                 return result;
             }
+
+            // DFF8 palette capture (TEPO rising, phase H).
+            self.registers.tick_palette_latches();
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.

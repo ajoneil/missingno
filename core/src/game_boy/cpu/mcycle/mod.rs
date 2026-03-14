@@ -130,10 +130,9 @@ pub enum DotAction {
     /// at this dot (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
     /// The CPU write pulse is active — the data bus is being driven with
-    /// the write value at dot 2 (BUDE rising, phase E). PPU register
-    /// DFF8 cells enter their master-slave transitional state; the
-    /// slave captures on the next tick. The bus write completes at dot 3
-    /// via `Write`.
+    /// the write value at dot 2 (BUDE rising, phase E). DFF8 cells
+    /// begin their pending capture; the old output persists until the
+    /// capture tick. The bus write completes at dot 3 via `Write`.
     DriveBus { address: u16, value: u8 },
     /// Internal cycle where the IDU places an address on the bus.
     /// May trigger OAM bug if address is in 0xFE00-0xFEFF.
