@@ -114,9 +114,10 @@ impl GameBoy {
                         // fetch), then transition to Halted.
                         let fetch_addr = self.cpu.program_counter;
                         let mut halt_dot = BusDot::ZERO;
+                        let mut no_oam_bug = None;
                         for _ in 0u8..4 {
-                            let is_mcycle_boundary = halt_dot.boga();
-                            new_screen |= self.tick_dot(is_mcycle_boundary);
+                            let (s, _) = self.execute_dot(&DotAction::Idle, halt_dot, &mut no_oam_bug);
+                            new_screen |= s;
                             halt_dot = if halt_dot.boga() {
                                 BusDot::ZERO
                             } else {
@@ -165,14 +166,12 @@ impl GameBoy {
 
                     // Run trailing fetch M-cycle: 4 dots of hardware ticks
                     // followed by an opcode bus read from PC.
-                    //
-                    // tick_dot() updates interrupt_latch at the M-cycle
-                    // boundary, modeling the sequencer DFF pipeline.
                     let fetch_addr = self.cpu.program_counter;
                     let mut fetch_dot = BusDot::ZERO;
+                    let mut no_oam_bug = None;
                     for _ in 0u8..4 {
-                        let is_mcycle_boundary = fetch_dot.boga();
-                        new_screen |= self.tick_dot(is_mcycle_boundary);
+                        let (s, _) = self.execute_dot(&DotAction::Idle, fetch_dot, &mut no_oam_bug);
+                        new_screen |= s;
                         fetch_dot = if fetch_dot.boga() {
                             BusDot::ZERO
                         } else {
@@ -368,10 +367,10 @@ impl GameBoy {
                 fetch_addr,
                 halting,
             } => {
-                let is_mcycle_boundary = dot.boga();
-                let new_screen = self.tick_dot(is_mcycle_boundary);
+                let mut no_oam_bug = None;
+                let (new_screen, _) = self.execute_dot(&DotAction::Idle, dot, &mut no_oam_bug);
 
-                if is_mcycle_boundary {
+                if dot.boga() {
                     // Final dot of the trailing fetch M-cycle.
                     let bus_value = self.cpu_read(fetch_addr);
                     if halting {
@@ -601,36 +600,6 @@ impl GameBoy {
             self.audio.mcycle(self.timers.internal_counter());
         }
 
-        new_screen
-    }
-
-    /// Tick hardware for one dot (both phases).
-    ///
-    /// Convenience wrapper for callers that don't need to route bus
-    /// actions between phases (e.g. the trailing fetch loop).
-    fn tick_dot(&mut self, is_mcycle_boundary: bool) -> bool {
-        let mut new_screen = false;
-
-        // Master clock tick first — independent of half-phases.
-        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
-        if xota_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        if let Some(screen) = xota_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
-            }
-            self.screen = screen;
-            new_screen = true;
-        }
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        new_screen |= self.tick_dot_rising(is_mcycle_boundary);
-        new_screen |= self.tick_dot_falling(is_mcycle_boundary);
-        self.capture_interrupt_latch();
-        self.halt_wakeup_check();
         new_screen
     }
 
