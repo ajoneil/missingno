@@ -122,18 +122,18 @@ impl VideoControl {
             if !talu_was && self.vena {
                 self.lx += 1;
 
-                // SANU fires at LX=113, clocking RUTU (line-end).
-                // RUTU clocks the LY ripple counter.
-                if self.lx == 113 {
+                // SANU detects LX=113 combinationally (no action here;
+                // RUTU latches on the NEXT TALU edge).
+
+                // RUTU fires when LX reaches 114: resets LX to 0 (via MUDE)
+                // and clocks the LY ripple counter. Both are driven by the
+                // same RUTU DFF output.
+                if self.lx >= 114 {
                     if self.ly >= 153 {
                         self.ly = 0;
                     } else {
                         self.ly += 1;
                     }
-                }
-
-                // Line end: LX reaches 114, wrap to 0.
-                if self.lx >= 114 {
                     self.lx = 0;
                     return true;
                 }
