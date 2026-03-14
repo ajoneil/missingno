@@ -73,8 +73,10 @@ impl Ppu {
             // Post-boot PPU state: internal line 153, dot 400, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             // Gambatte uses 396, but test evidence shows 400 (4 dots later).
+            // dot 400 = lx 100, phase 0.
             video: VideoControl {
-                dot: 400,
+                lx: 100,
+                phase: 0,
                 ly: 153,
                 lyc: 0,
                 ly_match_pending: true,
@@ -82,7 +84,6 @@ impl Ppu {
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
-                first_line_after_lcd_on: false,
             },
             oam: Oam::new(),
             pixel_pipeline: Some(FramePhase::VerticalBlank),
@@ -295,7 +296,7 @@ impl Ppu {
         // at line 144 when VBlank starts.
         let vblank_line_144 = matches!(ppu, FramePhase::VerticalBlank)
             && self.video.ly() == 144
-            && self.video.dot() < 4;
+            && self.video.lx == 0;
 
         // Mode 0 interrupt fires on the actual mode transition, not the
         // early stat_mode prediction (which is only for STAT register reads).
@@ -330,9 +331,18 @@ impl Ppu {
         }
 
         if self.pixel_pipeline.is_none() {
-            self.video.dot = 0;
+            // WUVU/VENA come out of async reset at qp=0. The CPU write to LCDC
+            // takes effect at DELTA_GH. The combination of divider phase offset
+            // (4 dots) and write timing within the M-cycle (4 dots) produces an
+            // 8-dot shortening of the first scanline (448 dots instead of 456).
+            //
+            // Model: start LX at 2 with phase 0. This skips 8 dots (2 LX values
+            // x 4 dots/LX), so LX=113 is reached after 444 dots from LX=2's
+            // perspective, giving 444 + 8 skipped = ~448 total dots for the first
+            // scanline as seen by the CPU.
+            self.video.lx = 2;
+            self.video.phase = 0;
             self.video.write_ly(0);
-            self.video.first_line_after_lcd_on = true;
             self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
 
@@ -397,7 +407,8 @@ impl Ppu {
 
             // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
             // not at the scanline boundary (dot 0).
-            if self.video.dot() == 4
+            if self.video.lx == 1
+                && self.video.phase == 0
                 && self.video.ly() == 144
                 && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
             {

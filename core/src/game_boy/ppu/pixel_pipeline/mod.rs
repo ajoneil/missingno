@@ -48,20 +48,9 @@ impl fmt::Display for Mode {
     }
 }
 
-pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
-/// Total dots for line 0 after LCD enable. The hardware's WUVU/VENA phase
-/// offset on initial enable shortens the first scanline by 2 dots.
-pub(super) const FIRST_LINE_TOTAL_DOTS: u32 = 454;
 /// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
 /// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
 const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
-/// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
-/// This clocks the LY register and triggers line-end processing.
-pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
-/// RUTU dot for the first line after LCD enable. Same as normal lines —
-/// RUTU fires at dot 452 regardless of line length. The post-RUTU period
-/// is 2 dots (vs normal 4) because FIRST_LINE_TOTAL_DOTS is 454.
-pub(super) const FIRST_LINE_RUTU_DOT: u32 = RUTU_LINE_END_DOT;
 /// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
 /// and WODU (hblank gate) hardware signals on page 21.
 ///
@@ -345,7 +334,7 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.dot() >= 1 => Mode::OamScan,
+            RenderPhase::LineStart if self.scanning && video.dot() >= 1 => Mode::OamScan, // sub-M-cycle check, keep dot()
             _ => Mode::HorizontalBlank,
         }
     }
@@ -361,7 +350,7 @@ impl Rendering {
             RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.dot() >= 4 => Mode::OamScan,
+            RenderPhase::LineStart if self.scanning && video.lx >= 1 => Mode::OamScan,
             RenderPhase::LineStart => Mode::HorizontalBlank,
         }
     }
@@ -377,15 +366,14 @@ impl Rendering {
     /// interrupt on line 0 fires at dot 4 through a separate path.
     fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         let ly = video.ly();
-        let dot = video.dot();
 
         if ly == 0 {
-            // Line 0: no TAPA pulse. Mode 2 interrupt at dot 4 when
-            // OamScan mode activates (LineStart -> scanning && dot >= 4).
-            dot == 4
+            // Line 0: no TAPA pulse. Mode 2 interrupt fires at LX=1
+            // phase 0 (dot 4), when OamScan mode activates.
+            video.lx == 1 && video.phase == 0
         } else {
-            // Lines 1-143: TAPA pulse for dots 0-3.
-            dot <= 3
+            // Lines 1-143: TAPA pulse during LX=0 (dots 0-3).
+            video.lx == 0
         }
     }
 
@@ -533,7 +521,7 @@ impl Rendering {
         // released), setting BESU (scan latch) and resetting the scan
         // counter. Suppressed on the LCD turn-on first line, where hardware
         // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.dot() == 1 && !self.lcd_turning_on && !self.scanning {
+        if video.lx == 0 && video.phase == 1 && !self.lcd_turning_on && !self.scanning {
             self.render_phase = RenderPhase::OamScan;
             self.scanning = true;
             self.scanner.reset();
@@ -585,7 +573,7 @@ impl Rendering {
             // next and sees render_phase == Drawing, so mode3_falling
             // advances the fetcher naturally on the AVAP dot. No
             // explicit pre-advance needed.
-        } else if self.lcd_turning_on && video.dot() == 80 {
+        } else if self.lcd_turning_on && video.lx == 20 && video.phase == 0 {
             // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
             // directly to Mode 3, skipping the OAM scan. Mode 3 starts at
             // approximately dot 80, the same as normal scanlines. The video
@@ -1058,7 +1046,6 @@ impl Rendering {
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
         self.nuko_wx = regs.window.x_plus_7.output();
-
     }
 
     /// Check if a sprite should start fetching at the current pixel position.

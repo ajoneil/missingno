@@ -1,7 +1,5 @@
 use bitflags::bitflags;
 
-use super::pixel_pipeline;
-
 bitflags! {
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
@@ -18,16 +16,21 @@ bitflags! {
 /// interrupt logic reads the latched comparison result. These signals
 /// sit together on the die's video control section.
 pub struct VideoControl {
-    /// Scanline dot counter (XODO-XYNY flip-flop chain, page 21).
-    /// Counts 0–455 every scanline, in both active display and VBlank.
-    /// Drives RUTU (line-end event that clocks LY) at dot 452.
-    pub(super) dot: u32,
+    /// LX counter (SAXO-TYRY ripple counter, page 21).
+    /// Counts 0-113 per scanline. Clocked by TALU (every 4 dots).
+    /// SANU fires at LX=113, clocking RUTU (line-end).
+    pub(super) lx: u8,
+
+    /// Sub-LX phase counter modeling WUVU/VENA divider state.
+    /// Counts 0-3 within each LX value (one increment per dot).
+    /// Phase 0 = TALU rising edge (LX increment point).
+    pub(super) phase: u8,
 
     /// LY counter (MUWY-LAFO ripple counter, page 21). Clocked by RUTU
-    /// at dot 452, counting 0–153 and wrapping. On line 153, MYTA
+    /// at LX=113, counting 0–153 and wrapping. On line 153, MYTA
     /// (frame-end DFF, clocked by NYPE one half-cycle after RUTU) drives
     /// LAMA low, resetting all LY bits to 0. The CPU sees LY=153 only
-    /// during the first M-cycle (dots 0–3); from dot 4 onward, `ly()`
+    /// during the first M-cycle (LX=0); from LX=1 onward, `ly()`
     /// returns 0.
     pub(super) ly: u8,
 
@@ -48,26 +51,23 @@ pub struct VideoControl {
 
     /// Previous STAT line state for rising-edge detection.
     pub(super) stat_line_was_high: bool,
-
-    /// True during the first scanline after LCD enable (LCDC bit 7 set).
-    /// Line 0 after LCD-on runs 454 dots instead of 456, matching the
-    /// hardware's WUVU/VENA phase offset on initial enable.
-    pub(super) first_line_after_lcd_on: bool,
 }
 
 impl VideoControl {
+    /// Scanline dot position, computed from LX and phase.
+    /// Returns 0-455 on normal lines, 0-447 on the first line after LCD-on
+    /// (which starts at LX=2).
     pub fn dot(&self) -> u32 {
-        self.dot
+        self.lx as u32 * 4 + self.phase as u32
     }
 
     /// CPU-visible LY value. On line 153, MYTA (frame-end DFF clocked
     /// by NYPE) drives LAMA low, resetting all LY bits to 0 after
-    /// dot 4. The CPU sees LY=153 only during the first M-cycle
-    /// (dots 0–3); from dot 4 onward, `ly()` returns 0. The internal
-    /// counter remains at 153 until RUTU at dot 452 naturally wraps
-    /// it 153→0.
+    /// the first M-cycle. The CPU sees LY=153 only during LX=0;
+    /// from LX=1 onward, `ly()` returns 0. The internal counter
+    /// remains at 153 until RUTU at LX=113 naturally wraps it 153→0.
     pub fn ly(&self) -> u8 {
-        if self.ly == 153 && self.dot >= 4 && self.dot < pixel_pipeline::RUTU_LINE_END_DOT {
+        if self.ly == 153 && self.lx >= 1 && self.lx < 113 {
             0
         } else {
             self.ly
@@ -90,26 +90,22 @@ impl VideoControl {
         self.ly_match_pending = self.ly == self.lyc;
     }
 
-    /// Advance the scanline dot counter by one. At RUTU_LINE_END_DOT (452),
-    /// fires the RUTU event: the LY ripple counter increments, wrapping
-    /// naturally from 153→0. At SCANLINE_TOTAL_DOTS (456), resets dot to
-    /// 0 and returns true.
+    /// Advance the scanline by one dot. Returns true at scanline boundary
+    /// (LX wraps 113->0 at the end of the final phase).
     pub fn advance_dot(&mut self) -> bool {
-        self.dot += 1;
+        self.phase += 1;
 
-        let rutu_dot = if self.first_line_after_lcd_on {
-            pixel_pipeline::FIRST_LINE_RUTU_DOT
-        } else {
-            pixel_pipeline::RUTU_LINE_END_DOT
-        };
-        let total_dots = if self.first_line_after_lcd_on {
-            pixel_pipeline::FIRST_LINE_TOTAL_DOTS
-        } else {
-            pixel_pipeline::SCANLINE_TOTAL_DOTS
-        };
+        if self.phase < 4 {
+            return false;
+        }
 
-        if self.dot == rutu_dot {
-            // RUTU line-end event: clock the LY ripple counter.
+        // Phase wrapped 3->0: TALU rising edge, increment LX.
+        self.phase = 0;
+        self.lx += 1;
+
+        // RUTU fires when LX reaches 113 (SANU comparator).
+        // Clock the LY ripple counter.
+        if self.lx == 113 {
             if self.ly >= 153 {
                 self.ly = 0;
             } else {
@@ -117,9 +113,9 @@ impl VideoControl {
             }
         }
 
-        if self.dot == total_dots {
-            self.dot = 0;
-            self.first_line_after_lcd_on = false;
+        // Line end: LX reaches 114, wrap to 0.
+        if self.lx >= 114 {
+            self.lx = 0;
             return true;
         }
 
