@@ -496,6 +496,6 @@ impl Ppu {
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         self.pixel_pipeline
             .as_ref()
-            .and_then(|p| p.pipeline_state())
+            .and_then(|p| p.pipeline_state(&self.video))
     }
 }

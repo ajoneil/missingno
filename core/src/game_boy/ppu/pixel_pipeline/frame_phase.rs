@@ -117,9 +117,9 @@ impl FramePhase {
         }
     }
 
-    pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
+    pub fn pipeline_state(&self, video: &VideoControl) -> Option<PipelineSnapshot> {
         match self {
-            FramePhase::ActiveDisplay(rendering) => Some(rendering.pipeline_state()),
+            FramePhase::ActiveDisplay(rendering) => Some(rendering.pipeline_state(video)),
             FramePhase::VerticalBlank => None,
         }
     }

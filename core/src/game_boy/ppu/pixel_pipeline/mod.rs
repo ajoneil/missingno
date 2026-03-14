@@ -242,9 +242,6 @@ pub struct Rendering {
     /// live DFF output. check_window_trigger reads this instead of the
     /// live register, providing a 1-dot lag on mid-scanline WX writes.
     nuko_wx: u8,
-    /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every rising edge.
-    /// Reset to false on LCD-on only; free-runs across scanlines.
-    wuvu: bool,
     /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
     byba: bool,
     /// DOBA_SCAN_DONEp_evn: captures BYBA on every falling edge.
@@ -285,7 +282,6 @@ impl Rendering {
             wx_triggered: false,
             last_wx_value: 0xFF,
             nuko_wx: 0xFF,
-            wuvu: false,
             byba: false,
             doba: false,
         }
@@ -324,7 +320,6 @@ impl Rendering {
             wx_triggered: false,
             last_wx_value: 0xFF,
             nuko_wx: 0xFF,
-            wuvu: false,
             byba: false,
             doba: false,
         }
@@ -334,7 +329,9 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && (video.lx > 0 || video.wuvu) => Mode::OamScan,
+            RenderPhase::LineStart if self.scanning && (video.lx > 0 || video.wuvu) => {
+                Mode::OamScan
+            }
             _ => Mode::HorizontalBlank,
         }
     }
@@ -385,7 +382,7 @@ impl Rendering {
         }
     }
 
-    pub fn pipeline_state(&self) -> PipelineSnapshot {
+    pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
         let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
@@ -412,7 +409,7 @@ impl Rendering {
             pygo: self.pygo,
             poky: self.poky,
             wx_triggered: self.wx_triggered,
-            wuvu: self.wuvu,
+            wuvu: video.xupy(),
             byba: self.byba,
             doba: self.doba,
         }
@@ -457,9 +454,14 @@ impl Rendering {
 
     /// Falling edge half-cycle: setup phase (runs after rising edge).
     ///
-    /// On hardware, the falling edge handles fetcher control signals (NYKA,
-    /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
-    /// match (PUXA), and window WX match (PYCO).
+    /// On hardware, the falling edge handles XUPY-derived logic (BYBA,
+    /// CATU, scan-counter, AVAP mode transitions), fetcher control signals
+    /// (NYKA, POKY), mode transitions (VOGA/WEGO clearing XYMU), fine
+    /// scroll match (PUXA), and window WX match (PYCO).
+    ///
+    /// XUPY derives from WUVU, which is clocked by XOTA rising (= our
+    /// falling phase). tick_xota() runs before tcycle_falling() in the
+    /// executor, so video.xupy() reflects the post-toggle state here.
     pub(super) fn half_falling(
         &mut self,
         regs: &PipelineRegisters,
@@ -467,13 +469,59 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // DOBA_SCAN_DONEp_evn: captures BYBA_old on every falling edge (ALET clock).
-        self.doba = self.byba;
+        // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
+        // released), setting BESU (scan latch) and resetting the scan
+        // counter. Suppressed on the LCD turn-on first line, where hardware
+        // skips OAM scan entirely and enters Mode 3 directly at dot 80.
+        if video.lx == 0 && video.wuvu && video.vena && !self.lcd_turning_on && !self.scanning {
+            self.render_phase = RenderPhase::OamScan;
+            self.scanning = true;
+            self.scanner.reset();
+        }
+
+        // XUPY rising edge detection: since tick_xota() toggled WUVU
+        // before this function, xupy()==true means WUVU just went low→high.
+        let xupy_rising = video.xupy();
+
+        // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
+        let feto = self.scanner.scan_done();
+
+        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
+        if xupy_rising {
+            self.byba = feto;
+        }
+
+        // AVAP: combinational scan-done trigger.
+        // Fires for one half-phase when BYBA has captured but DOBA has not.
+        let avap = self.byba && !self.doba;
+
+        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
+        // XUPY). Gated on XUPY rising (2-dot period). FETO only freezes
+        // the counter, not the comparison — entry 39 is still compared.
+        if self.scanning && xupy_rising {
+            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
+        }
+
+        if avap && self.scanning && !self.lcd_turning_on {
+            // AVAP fires: Mode 2 → Mode 3 transition.
+            // Clears BESU (scan flag), sets XYMU (rendering latch),
+            // resets the BG fetcher (NYXU). The fetcher begins
+            // advancing on this same dot's mode3_falling below.
+            self.scanning = false;
+            self.render_phase = RenderPhase::Drawing;
+            self.lcd_turning_on = false;
+            // Seed NUKO's WX cache from the live DFF8 output at Mode 3
+            // entry.
+            self.nuko_wx = regs.window.x_plus_7.output();
+        } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
+            // LCD turn-on: Mode 0 → Mode 3 transition.
+            self.render_phase = RenderPhase::Drawing;
+            self.lcd_turning_on = false;
+            self.nuko_wx = regs.window.x_plus_7.output();
+        }
 
         if self.scanning {
-            // Mode 2: OAM scan uses M-cycle sub-phases, not simple
-            // falling/rising. Full scan processing deferred to half_rising
-            // for step 1 behavior preservation.
+            // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return;
         }
 
@@ -508,8 +556,8 @@ impl Rendering {
 
     /// Rising edge half-cycle: output phase.
     ///
-    /// On hardware, the rising edge handles pixel counter increment,
-    /// fine counter increment, pipe shift, and sprite X matching.
+    /// On hardware, the rising edge handles DOBA capture, pixel counter
+    /// increment, fine counter increment, pipe shift, and sprite X matching.
     pub(super) fn half_rising(
         &mut self,
         regs: &PipelineRegisters,
@@ -517,73 +565,11 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
-        // released), setting BESU (scan latch) and resetting the scan
-        // counter. Suppressed on the LCD turn-on first line, where hardware
-        // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.lx == 0 && video.wuvu && video.vena && !self.lcd_turning_on && !self.scanning {
-            self.render_phase = RenderPhase::OamScan;
-            self.scanning = true;
-            self.scanner.reset();
-        }
-
-        // WUVU_ABxxEFxx: toggle DFF, unconditional on every rising edge.
-        self.wuvu = !self.wuvu;
-        let xupy_rising = self.wuvu;
-
-        // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
-        // Fires when counter reaches 39 (0b100111), before entry 39's
-        // comparison completes. On hardware this is a wire, not a latch.
-        let feto = self.scanner.scan_done();
-
-        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
-        if xupy_rising {
-            self.byba = feto;
-        }
-
-        // AVAP: combinational scan-done trigger.
-        // Fires for one half-phase when BYBA has captured but DOBA has not.
-        let avap = self.byba && !self.doba;
-
-        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
-        // XUPY). At dot granularity, one tick compares the current
-        // entry and increments the counter. Gated on XUPY rising
-        // (2-dot period). FETO only freezes the counter, not the
-        // comparison — entry 39 is still compared.
-        if self.scanning && xupy_rising {
-            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
-        }
-
-        if avap && self.scanning && !self.lcd_turning_on {
-            // AVAP fires: Mode 2 → Mode 3 transition.
-            // Clears BESU (scan flag), sets XYMU (rendering latch),
-            // resets the BG fetcher (NYXU). The fetcher begins
-            // advancing on the same dot's falling phase (mode3_falling).
-            self.scanning = false;
-            self.render_phase = RenderPhase::Drawing;
-            self.lcd_turning_on = false;
-            // Seed NUKO's WX cache from the live DFF8 output at Mode 3
-            // entry. The DFF8 slave has been stable since before Mode 3,
-            // so the live output is the correct initial value. Without
-            // this, the first dot of Mode 3 would compare against 0xFF
-            // (from reset), causing a 1-dot-late trigger for WX values
-            // that should match on the first dot.
-            self.nuko_wx = regs.window.x_plus_7.output();
-            // With rising-before-falling ordering, this dot's half_falling runs
-            // next and sees render_phase == Drawing, so mode3_falling
-            // advances the fetcher naturally on the AVAP dot. No
-            // explicit pre-advance needed.
-        } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
-            // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
-            // directly to Mode 3, skipping the OAM scan. Mode 3 starts at
-            // approximately dot 80, the same as normal scanlines. The video
-            // clock divider (WUVU/VENA) comes out of LCD-enable reset at a
-            // misaligned phase, adding ~8 dots of delay beyond the naive
-            // 18 NOP × 4 = 72 calculation from Mooneye lcdon_timing-GS.
-            self.render_phase = RenderPhase::Drawing;
-            self.lcd_turning_on = false;
-            self.nuko_wx = regs.window.x_plus_7.output();
-        }
+        // DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
+        // Moved from half_falling to maintain the half-phase separation
+        // between BYBA (falling) and DOBA (rising) that produces the
+        // single-half-phase AVAP pulse.
+        self.doba = self.byba;
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when in Drawing phase and not during a mode transition dot.
@@ -643,8 +629,8 @@ impl Rendering {
         self.wx_triggered = false;
         self.last_wx_value = 0xFF;
         self.nuko_wx = 0xFF;
-        // WUVU free-runs across scanlines (no reset). BYBA and DOBA are
-        // cleared by LINE_RST at the scanline boundary.
+        // BYBA and DOBA are cleared by LINE_RST at the scanline boundary.
+        // WUVU free-runs (no reset) — lives on VideoControl.
         self.byba = false;
         self.doba = false;
     }
