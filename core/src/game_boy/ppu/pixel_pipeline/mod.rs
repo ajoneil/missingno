@@ -454,6 +454,22 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // XUPY rising edge detection: since tick_xota() toggled WUVU
+        // before this function, xupy()==true means WUVU just went low→high.
+        let xupy_rising = video.xupy();
+
+        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
+        // XUPY). Gated on XUPY rising (2-dot period). FETO only freezes
+        // the counter, not the comparison — entry 39 is still compared.
+        // Runs BEFORE the CATU/BESU scan-start below: on hardware, the
+        // scan counter tick (GAVA) and CATU use the same XUPY edge, but
+        // ATEJ resets the counter at the same moment CATU fires. Ticking
+        // first with the pre-reset counter is a no-op (counter is stale
+        // from previous line), then CATU resets it.
+        if self.scanning && xupy_rising {
+            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
+        }
+
         // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
         // released), setting BESU (scan latch) and resetting the scan
         // counter. CATU is clocked by XUPY (= WUVU.qp), not VENA.
@@ -464,10 +480,6 @@ impl Rendering {
             self.scanning = true;
             self.scanner.reset();
         }
-
-        // XUPY rising edge detection: since tick_xota() toggled WUVU
-        // before this function, xupy()==true means WUVU just went low→high.
-        let xupy_rising = video.xupy();
 
         // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
         let feto = self.scanner.scan_done();
@@ -480,13 +492,6 @@ impl Rendering {
         // AVAP: combinational scan-done trigger.
         // Fires for one half-phase when BYBA has captured but DOBA has not.
         let avap = self.byba && !self.doba;
-
-        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
-        // XUPY). Gated on XUPY rising (2-dot period). FETO only freezes
-        // the counter, not the comparison — entry 39 is still compared.
-        if self.scanning && xupy_rising {
-            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
-        }
 
         if avap && self.scanning && !self.lcd_turning_on {
             // AVAP fires: Mode 2 → Mode 3 transition.
