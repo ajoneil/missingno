@@ -160,13 +160,6 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // DriveBus: drive the bus BEFORE PPU falling work.
-        if let DotAction::DriveBus { address, value } = &self.current_dot_action
-            && self.drive_ppu_bus(*address, *value)
-        {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
         let new_screen = self.tick_dot_falling(is_mcycle_boundary);
 
         // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
@@ -184,10 +177,18 @@ impl GameBoy {
                 self.last_read_value = self.cpu_read(*address);
             }
             DotAction::Write { address, value } => {
-                if (0xFE00..=0xFEFF).contains(address) {
+                let address = *address;
+                let value = *value;
+                if (0xFE00..=0xFEFF).contains(&address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
-                self.write_byte(*address, *value);
+                // PPU register writes (DFF8/DFF9) latch at AFAS falling
+                // (G→H boundary, end of dot 3). drive_ppu_bus handles
+                // the PPU write; write_byte handles everything else.
+                if self.drive_ppu_bus(address, value) {
+                    self.interrupts.request(Interrupt::VideoStatus);
+                }
+                self.write_byte(address, value);
             }
         }
 
