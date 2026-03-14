@@ -58,6 +58,10 @@ impl Cpu {
             }
             InterruptInstruction::Disable => {
                 cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                // On real hardware, DI's combinational gate (g91) clears the
+                // EI pipeline latch (g92). Without this, an EI;DI sequence
+                // would let EI's delay survive and re-enable IME.
+                cpu.ei_delay = None;
             }
             InterruptInstruction::Await => {
                 cpu.halt_state = HaltState::Halted;
