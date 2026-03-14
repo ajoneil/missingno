@@ -421,9 +421,9 @@ impl Rendering {
         // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
+        let last_pixel = self.render_phase == RenderPhase::DrawingComplete;
+        self.lcd.fall(self.voga, last_pixel, &mut self.screen);
         if self.voga {
-            let last_pixel = self.render_phase == RenderPhase::DrawingComplete;
-            self.lcd.clear_wusa(last_pixel, &mut self.screen);
             self.render_phase = RenderPhase::HorizontalBlank;
         }
 
@@ -650,11 +650,11 @@ impl Rendering {
         // capture PORY until the next falling phase. Use tyfa_bridge
         // (computed at the end of the previous falling phase) which has
         // the correct cascade-propagated POKY value.
-        self.lcd.set_pova(if self.tyfa_bridge {
+        let pova = if self.tyfa_bridge {
             self.fine_scroll.capture_rising()
         } else {
             false
-        });
+        };
 
         match self.sprite_state {
             SpriteState::Fetching(ref mut sf) => {
@@ -741,56 +741,16 @@ impl Rendering {
                     self.cascade.clear_lyry();
                 }
 
-                // Pixel counter increment (SACU clock). On hardware, SACU
-                // clocks the counter and pixel output on the same edge. The
-                // counter's Q output updates first; pixel output reads the
-                // post-increment value. Placed before pixel output to model this.
-                if sacu {
-                    self.lcd.increment();
-                }
-
-                // XAJO: AND2(PX bit 0, PX bit 3). Sets the WUSA NOR latch,
-                // opening the LCD clock gate. First fires at PX=9 (0b1001).
-                self.lcd.check_xajo();
-
-                // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
-                // On hardware, TOBA clocks the 159-stage LCD shift register,
-                // firing from PX=9 through PX=167 (159 clock edges).
-                //
-                // RYDY suppresses TOBA indirectly via TYFA→SEGU→SACU:
-                // RYDY→SOCY→TYFA=0→SACU stuck. No explicit RYDY gate
-                // exists on TOBA in hardware.
-                let toba = self.lcd.toba(sacu);
-
-                // LCD data pin lag model (REMY/RAVO qp_ext_old).
-                //
-                // On hardware, the LCD data pins (REMY/RAVO) are combinational
-                // from the pipe MSBs, but the LCD captures qp_ext_old — the
-                // previous half-cycle's pin state. TOBA shifts the BUFFERED
-                // pixel (from the previous SACU edge) into the LCD register,
-                // then the latch updates to the current pipe state.
-                //
-                // This gives a 1-dot offset: TOBA at PX=9 outputs PX=8's
-                // pixel, TOBA at PX=10 outputs PX=9's pixel, etc. Total:
-                // 159 TOBA edges output pixels for PX=8–166. The 160th pixel
-                // (PX=167) is captured by the NOR latch at end-of-line.
-                if toba {
-                    self.lcd.shift_in();
-                }
-
-                // Update the LCD data latch with the current pipe state.
-                // On hardware, REMY/RAVO are combinational from pipe MSBs
-                // — they update every phase, not just on TYFA or SACU
-                // edges. During the RYDY stall, pipe content changes when
-                // window tile data loads (SEKO/TEVO), and the data pins
-                // reflect this immediately. The first post-stall TOBA
-                // captures window data via qp_ext_old.
-                self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
+                // LCD Control (page 24): pixel counter, XAJO, TOBA, shift
+                // register, data latch — all internal to the block. We
+                // provide SACU, the resolved pixel, and POVA.
+                let pixel = pixel_output::resolve_current_pixel(
                     &self.bg_shifter,
                     &self.obj_shifter,
                     &mut self.window_zero_pixel,
                     regs,
-                ));
+                );
+                let toba = self.lcd.rise(sacu, pixel, pova);
 
                 if !toba && self.tyfa_bridge {
                     // Consume window_zero_pixel during pre-visible TYFA
