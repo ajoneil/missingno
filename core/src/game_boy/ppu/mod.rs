@@ -189,7 +189,7 @@ impl Ppu {
                         Register::Sprite1Palette => &mut self.registers.palettes.sprite1,
                         _ => unreachable!(),
                     };
-                    latch.write_dff8(value);
+                    latch.write(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -208,7 +208,7 @@ impl Ppu {
                     self.registers
                         .background_viewport
                         .y
-                        .write_propagating(value);
+                        .write(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -219,7 +219,7 @@ impl Ppu {
                     self.registers
                         .background_viewport
                         .x
-                        .write_propagating(value);
+                        .write(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -227,7 +227,7 @@ impl Ppu {
             }
             Register::WindowX => {
                 if is_drawing {
-                    self.registers.window.x_plus_7.write_propagating(value);
+                    self.registers.window.x_plus_7.write(value);
                     false
                 } else {
                     self.write_register_immediate(&register, value)
@@ -383,10 +383,8 @@ impl Ppu {
             }
         }
 
-        // DFF8 palette capture (TEPO rising, phase H). Placed after
-        // rendering.rise() so the pipeline reads the pre-capture value
-        // on the resolve dot, matching hardware phase ordering (G before H).
-        self.registers.tick_palette_latches();
+        // DFF8 palette capture happens on the falling phase (phase H),
+        // not here. See tcycle_falling().
     }
 
     /// Master clock tick (XOTA rising edge). Runs the WUVU/VENA divider
@@ -473,6 +471,11 @@ impl Ppu {
                     rendering.fall(&self.registers, &self.video, &self.oam, vram);
                 }
             }
+
+            // DFF8 palette capture (TEPO rising, phase H). On hardware,
+            // palette capture happens on the falling phase — after pixel
+            // output (rising) has already read the old palette value.
+            self.registers.tick_palette_latches();
 
             // Advance DFF9 register latches after the pipeline so it reads
             // pre-tick values (reg_old), matching hardware.
