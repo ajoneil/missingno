@@ -343,10 +343,8 @@ impl Ppu {
     /// Rising edge (DELTA_ODD): LCD initialization, pixel output
     /// pipeline (SACU, pipe shift), and DFF8 palette capture.
     ///
-    /// DFF8 palette latches are ticked AFTER the pipeline runs, so
+    /// DFF8 palette latches are ticked in the falling phase, so
     /// the pipeline reads the pre-capture value on the resolve dot.
-    /// The capture resolves here (not in falling) to avoid the
-    /// DriveBus timing gap where falling runs before bus writes.
     pub fn tcycle_rising(&mut self, vram: &Vram) {
         if !self.control().video_enabled() {
             return;

@@ -169,7 +169,7 @@ impl GameBoy {
 
         // Bus actions after phase ticks.
         match &self.current_dot_action {
-            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => {}
+            DotAction::Idle | DotAction::InternalOamBug { .. } => {}
             DotAction::Read { address } => {
                 if (0xFE00..=0xFEFF).contains(address) {
                     *pending_oam_bug = Some(OamBugKind::Read);

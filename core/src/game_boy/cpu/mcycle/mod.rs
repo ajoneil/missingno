@@ -67,12 +67,6 @@ impl BusDot {
     /// BUDE_xxxxEFGH: Write data window. The CPU drives write data
     /// onto the bus during phases E-H (dots 2-3).
     ///
-    /// Used for: DriveBus timing -- PPU register DFFs see the write
-    /// data during this window.
-    pub fn bude(self) -> bool {
-        self.0 >= 2
-    }
-
     /// MOPA_xxxxEFGH: Second half of the M-cycle. Rising edge at
     /// D->E (start of dot 2).
     ///
@@ -116,7 +110,7 @@ impl BusDot {
 /// Each M-cycle expands into 4 dots with bus operations placed at
 /// the hardware-correct position:
 /// - **Read**:     `[Idle, Idle, Idle, Read]`
-/// - **Write**:    `[Idle, Idle, DriveBus, Write]`
+/// - **Write**:    `[Idle, Idle, Idle, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Clone, Copy, Debug)]
@@ -129,11 +123,6 @@ pub enum DotAction {
     /// CPU is writing this value to this address. The write latches
     /// at this dot (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
-    /// The CPU write pulse is active — the data bus is being driven with
-    /// the write value at dot 2 (BUDE rising, phase E). DFF8 cells
-    /// begin their pending capture; the old output persists until the
-    /// capture tick. The bus write completes at dot 3 via `Write`.
-    DriveBus { address: u16, value: u8 },
     /// Internal cycle where the IDU places an address on the bus.
     /// May trigger OAM bug if address is in 0xFE00-0xFEFF.
     InternalOamBug { address: u16 },
@@ -361,12 +350,7 @@ impl Cpu {
                 }
             }
             Some(BusAction::Write { address, value }) => {
-                if dot.bude() && !dot.afas_falling() {
-                    DotAction::DriveBus {
-                        address: *address,
-                        value: *value,
-                    }
-                } else if dot.afas_falling() {
+                if dot.afas_falling() {
                     DotAction::Write {
                         address: *address,
                         value: *value,
