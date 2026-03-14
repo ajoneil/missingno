@@ -477,7 +477,7 @@ fn ppu_state(gb: &GameBoy) -> PpuState {
             mode_number: mode as u8,
         },
         ly: ppu.read_register(ppu::Register::CurrentScanline),
-        dot: ppu.dot(),
+        lx: ppu.lx(),
         lyc: ppu.read_register(ppu::Register::InterruptOnScanline),
         scy: ppu.read_register(ppu::Register::BackgroundViewportY),
         scx: ppu.read_register(ppu::Register::BackgroundViewportX),
@@ -494,13 +494,7 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
     match ppu.pipeline_state() {
         Some(snap) => serde_json::json!({
             "pixel_counter": snap.pixel_counter,
-            "render_phase": match snap.render_phase {
-                ppu::RenderPhase::LineStart => "line_start",
-                ppu::RenderPhase::OamScan => "oam_scan",
-                ppu::RenderPhase::Drawing => "drawing",
-                ppu::RenderPhase::DrawingComplete => "drawing_complete",
-                ppu::RenderPhase::HorizontalBlank => "hblank",
-            },
+            "xymu": snap.xymu,
             "bg_shifter": {
                 "low": snap.bg_low,
                 "high": snap.bg_high,
@@ -853,7 +847,7 @@ struct PpuState {
     lcdc: LcdcState,
     stat: StatState,
     ly: u8,
-    dot: u32,
+    lx: u8,
     lyc: u8,
     scy: u8,
     scx: u8,

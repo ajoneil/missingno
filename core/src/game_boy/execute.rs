@@ -231,6 +231,8 @@ impl GameBoy {
         self.ppu.tcycle_rising(&self.vram_bus.vram);
 
         // SUKO is combinational — check for STAT edge after every phase.
+        // Mode 0 (WODU/TARU) fires on the rising phase, so this catches
+        // it immediately rather than deferring to the next falling phase.
         if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
@@ -238,25 +240,42 @@ impl GameBoy {
         false
     }
 
-    /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
-    /// DFF9 resolve, dot advance, interrupt edge detection, and
-    /// M-cycle subsystems.
+    /// Falling phase (DELTA_EVEN / XOTA rising edge) of one dot:
+    /// master clock divider chain (WUVU/VENA/TALU/LX), PPU fetcher
+    /// pipeline, DFF9 resolve, LCD-off handling, and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // PPU falling phase: fetcher, DFF9, dot advance, interrupts.
+        // XOTA rising edge: tick WUVU/VENA divider chain, LX counter,
+        // scanline boundary, VBlank IF, LYC comparison. This IS the
+        // falling half-phase — XOTA_AxCxExGx rising edge coincides
+        // with DELTA_EVEN.
+        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
+        if xota_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if let Some(screen) = xota_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            new_screen = true;
+        }
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        // PPU falling phase: fetcher, DFF9, LCD-off.
         let video_result = self
             .ppu
             .tcycle_falling(is_mcycle_boundary, &self.vram_bus.vram);
-        if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
 
         // SUKO is combinational — check for STAT edge after every phase.
         if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
+        // LCD-off produces a blank screen.
         if let Some(screen) = video_result.screen {
             if let Some(sgb) = &mut self.sgb {
                 sgb.update_screen(&screen);

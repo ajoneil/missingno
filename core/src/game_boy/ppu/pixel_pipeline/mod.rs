@@ -1,15 +1,16 @@
+mod fetch_cascade;
 mod fetcher;
 mod fine_scroll;
-mod frame_phase;
+mod lcd_control;
 mod lcd_shift_register;
 mod oam_scan;
 mod pixel_output;
 mod shifters;
 mod sprite_fetch;
-mod window;
+mod sprite_scanner;
+mod window_control;
 
 pub use fetcher::FetcherStep;
-pub use frame_phase::FramePhase;
 pub use sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
@@ -17,16 +18,17 @@ use core::fmt;
 use crate::game_boy::ppu::{
     PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
-    palette::PaletteIndex,
     screen::Screen,
 };
 
+use fetch_cascade::FetchCascade;
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
-use lcd_shift_register::LcdShiftRegister;
-use oam_scan::{OamScanner, SpriteStore};
+use lcd_control::LcdControl;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
+use sprite_scanner::SpriteScanner;
+use window_control::WindowControl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -48,53 +50,6 @@ impl fmt::Display for Mode {
     }
 }
 
-pub(super) const SCANLINE_TOTAL_DOTS: u32 = 456;
-/// Total dots for line 0 after LCD enable. The hardware's WUVU/VENA phase
-/// offset on initial enable shortens the first scanline by 2 dots.
-pub(super) const FIRST_LINE_TOTAL_DOTS: u32 = 454;
-/// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
-/// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
-const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
-/// Dot at which the RUTU line-end signal fires (LX=113 × 4 dots/M-cycle = 452).
-/// This clocks the LY register and triggers line-end processing.
-pub(super) const RUTU_LINE_END_DOT: u32 = SCANLINE_TOTAL_DOTS - 4;
-/// RUTU dot for the first line after LCD enable. Same as normal lines —
-/// RUTU fires at dot 452 regardless of line length. The post-RUTU period
-/// is 2 dots (vs normal 4) because FIRST_LINE_TOTAL_DOTS is 454.
-pub(super) const FIRST_LINE_RUTU_DOT: u32 = RUTU_LINE_END_DOT;
-/// Pixel pipeline rendering phase, modeling the XYMU (rendering latch)
-/// and WODU (hblank gate) hardware signals on page 21.
-///
-/// On hardware, WODU fires combinationally when the pixel counter reaches
-/// 167, then VOGA latches WODU on the next falling phase to clear XYMU.
-/// The STAT mode 0 interrupt condition (TARU) uses WODU directly, so it
-/// sees HBlank one phase before XYMU clears.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RenderPhase {
-    /// Not drawing — before Mode 3 starts or after line-end reset.
-    /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
-    /// is never set on line 0). STAT reads mode 0 for dots 0-3, then
-    /// mode 2 from dot 4 onward (matching TCAGBD section 8.11.1).
-    LineStart,
-    /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
-    /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
-    /// for lines 1+ (in half_falling), cleared by AVAP when the scan
-    /// completes. Line 0 skips this phase (BESU never set on first
-    /// line; scanner runs under LineStart instead).
-    OamScan,
-    /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
-    /// period from AVAP (scan done) through WODU (PX≥167). During
-    /// startup, the NYKA/PORY/PYGO cascade DFFs propagate while the
-    /// pixel clock waits for POKY (bg_shifter.loaded) to latch.
-    Drawing,
-    /// WODU fired (XUGU decode + !FEPO): STAT sees mode=0 via TARU,
-    /// pixel clock stops, VRAM/OAM unlocked. VOGA captures on next
-    /// falling phase, clearing XYMU and WUSA via WEGO. Lasts 1 dot.
-    DrawingComplete,
-    /// Mode 0 (HBlank): XYMU cleared via VOGA latch. Rendering fully stopped.
-    /// Hardware: XYMU clear, WODU set.
-    HorizontalBlank,
-}
 
 /// Within-phase snapshot of signals that are both read and written during
 /// `mode3_rising`. On hardware, combinational logic within a phase reads DFF
@@ -113,7 +68,8 @@ struct RisingPhaseInputs {
 
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
-    pub render_phase: RenderPhase,
+    /// XYMU rendering latch (page 21). True = Mode 3 rendering active.
+    pub xymu: bool,
     pub bg_low: u8,
     pub bg_high: u8,
     pub bg_loaded: bool,
@@ -138,231 +94,117 @@ pub struct PipelineSnapshot {
 
 pub struct Rendering {
     pub(super) screen: Screen,
-    window_line_counter: u8,
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     pub(super) lcd_turning_on: bool,
-    /// Pixel pipeline phase — models XYMU (rendering latch) and WODU
-    /// (hblank gate). See `RenderPhase` for hardware signal mapping.
-    pub(super) render_phase: RenderPhase,
-    /// Sprites on this line, stored as hardware register file entries.
-    sprites: SpriteStore,
-    /// OAM scanner (YFEL-FONY counter). Always present — on hardware
-    /// the counter is never destroyed, just reset at line boundaries.
-    scanner: OamScanner,
-    /// BESU scanning latch. Set when OAM scan starts (dot 1 for lines 1+,
-    /// dot 0 for line 0), cleared by AVAP when scan completes. Gates
-    /// ACYL_SCANNINGp which drives STAT mode bits and OAM bus ownership.
-    scanning: bool,
-    /// Whether the window has been rendered on this line.
-    window_rendered: bool,
+    /// XYMU rendering latch (page 21). SET by AVAP (scan done, Mode 2→3).
+    /// CLEAR by WEGO = OR2(VID_RST, VOGA). When set, the fetcher and pixel
+    /// pipeline are active (Mode 3). WODU is computed combinationally from
+    /// XUGU and !FEPO while XYMU is set.
+    pub(super) xymu: bool,
+    /// Sprite scanner — scan counter, scanning latch, BYBA/DOBA pipeline,
+    /// and the sprite store that bridges Mode 2 and Mode 3.
+    scan: SpriteScanner,
     /// Background pixel shift register (page 32).
     bg_shifter: BgShifter,
     /// Sprite pixel shift register (pages 33-34).
     obj_shifter: ObjShifter,
     /// Background/window tile fetcher.
     fetcher: TileFetcher,
-    /// LYRY previous-phase latch. Models `reg_old.LYRY` (= `reg_old.phase_tfetch >= 10`)
-    /// for the NYKA DFF17 input. On hardware, NYKA reads the previous falling
-    /// phase's LYRY value, not the current one. This 1-phase delay adds 1 dot
-    /// to pipeline priming, matching the hardware cascade timing.
-    lyry_prev: bool,
-    /// NYKA_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
-    /// Goes high when the first BG tile fetch completes (LYRY fires).
-    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
-    nyka: bool,
-    /// PORY_FETCH_DONEp_odd: DFF17, latches on MYVO (rising edge).
-    /// Captures NYKA one half-phase after NYKA goes high.
-    /// Reset by NAFY (window mode trigger) and at scanline boundaries.
-    pory: bool,
-    /// PYGO_FETCH_DONEp_evn: DFF17, latches on ALET (falling edge).
-    /// Captures PORY one half-phase after PORY goes high.
-    /// Reset at scanline boundaries (XYMU_RENDERINGn).
-    pygo: bool,
-    /// POKY NOR latch — captures PYGO on falling edge. TYFA reads this
-    /// instead of PYGO directly, adding 1 dot of cascade delay to the
-    /// pixel clock enable. Reset at scanline boundaries.
-    poky: bool,
+    /// Fetch-done cascade: LYRY → NYKA → PORY → PYGO → POKY DFF chain.
+    /// Propagates fetcher-idle through pipeline delay stages.
+    cascade: FetchCascade,
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
-    /// RYDY NOR latch — window hit signal. When high, gates TYFA
-    /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
-    /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. SET directly by check_window_trigger,
-    /// CLEAR by PORY (NYKA/PORY cascade after fetcher completes).
-    ///
-    /// 1-dot delay: check_window_trigger sets self.rydy at the end of
-    /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The snapshot on
-    /// the NEXT dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
-    rydy: bool,
-    /// Hardware pixel counter (XEHO-SYBE, page 21). Counts from 0 when
-    /// the pixel clock starts after startup. Drives WODU (hblank gate)
-    /// at PX=167. Not reset on window trigger — PX is a monotonic
-    /// per-line counter.
-    pixel_counter: u8,
-    /// WUSA NOR latch — LCD clock gate (page 24). SET by XAJO
-    /// (AND2 of pixel counter bits 0 and 3, first at PX=9). CLEAR
-    /// by WEGO (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
-    wusa: bool,
+    /// Window control block (die page 27): RYDY latch, WX comparator,
+    /// window line counter, window zero pixel.
+    window: WindowControl,
     /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
     /// falling phases (ALET). Captures WODU from the previous rising phase.
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
-    /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
-    /// match signal. Computed on rising phases as AND2(PUXA, !NYZE).
-    /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
-    /// providing the 160th LCD clock edge before WUSA opens.
-    pova: bool,
     /// TYFA result computed in falling phase, consumed by rising phase. TYFA
     /// is combinational in hardware (falling phase), but downstream SACU is
     /// combinational in the rising phase. This bridge carries the
     /// falling-phase TYFA result to rising-phase SACU.
     tyfa_bridge: bool,
-    /// LCD shift register — 159-stage pixel buffer between the pixel
-    /// mux and the Screen. Replaces direct framebuffer writes.
-    lcd_shift_register: LcdShiftRegister,
-    /// LCD data pin latch (REMY/RAVO qp_ext_old model). On hardware,
-    /// the LCD data pins are combinational from the pipe MSBs, but the
-    /// LCD captures `qp_ext_old()` — the previous half-cycle's value.
-    /// This buffer holds the resolved pixel from the previous SACU edge.
-    /// TOBA shifts this buffered value into the LCD shift register,
-    /// giving a 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
-    lcd_data_latch: PaletteIndex,
-    /// Pixel output register snapshot — captured at the end of mode3_rising.
+    /// LCD Control block (die page 24): pixel X counter, LCD clock
+    /// gating (WUSA), POVA trigger, LCD shift register, data latch.
+    lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
-    /// Window reactivation zero pixel (DMG only). Set when WX re-matches
-    /// while the window is active with specific fetcher/FIFO conditions.
-    /// Causes the next pixel output to use bg_color=0 without popping
-    /// the BG shifter. The OBJ shifter is popped normally.
-    window_zero_pixel: bool,
-    /// WX comparator suppression latch. Models the hardware behavior where
-    /// the RYDY latch prevents the WX comparator (PYCO) from re-firing
-    /// after the window has already triggered on this scanline. Cleared
-    /// when WX is written mid-scanline, allowing reactivation with a new
-    /// WX value.
-    wx_triggered: bool,
-    /// Last observed WX output value, used to detect mid-scanline WX changes
-    /// that should clear the wx_triggered latch.
-    last_wx_value: u8,
-    /// Cached WX value for the NUKO comparator. On hardware, NUKO reads
-    /// the DFF8 slave output, which lags the master by one clock edge.
-    /// Updated unconditionally at the end of every mode3_rising from the
-    /// live DFF output. check_window_trigger reads this instead of the
-    /// live register, providing a 1-dot lag on mid-scanline WX writes.
-    nuko_wx: u8,
-    /// WUVU_ABxxEFxx: 2-dot toggle DFF, clocked every rising edge.
-    /// Reset to false on LCD-on only; free-runs across scanlines.
-    wuvu: bool,
-    /// BYBA_SCAN_DONEp_odd: captures scanner-done on XUPY rising edges.
-    byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA on every falling edge.
-    doba: bool,
 }
 
 impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
             screen: Screen::new(),
-            window_line_counter: 0,
             lcd_turning_on: false,
-            render_phase: RenderPhase::LineStart,
-            sprites: SpriteStore::new(),
-            scanner: OamScanner::new(),
-            scanning: false,
-            window_rendered: false,
+            xymu: false,
+            scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            lyry_prev: false,
-            nyka: false,
-            pory: false,
-            pygo: false,
-            poky: false,
+            cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
-            rydy: false,
-
-            pixel_counter: 0,
-            wusa: false,
+            window: WindowControl::new(),
             voga: false,
-            pova: false,
             tyfa_bridge: false,
-            lcd_shift_register: LcdShiftRegister::new(),
-            lcd_data_latch: PaletteIndex(0),
+            lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            window_zero_pixel: false,
-            wx_triggered: false,
-            last_wx_value: 0xFF,
-            nuko_wx: 0xFF,
-            wuvu: false,
-            byba: false,
-            doba: false,
         }
     }
 
-    fn new_lcd_on() -> Self {
+    pub(super) fn new_lcd_on() -> Self {
         Rendering {
             screen: Screen::new(),
-            window_line_counter: 0,
             lcd_turning_on: true,
-            render_phase: RenderPhase::LineStart,
-            sprites: SpriteStore::new(),
-            scanner: OamScanner::new(),
-            scanning: false,
-            window_rendered: false,
+            xymu: false,
+            scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
-            lyry_prev: false,
-            nyka: false,
-            pory: false,
-            pygo: false,
-            poky: false,
+            cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
-            rydy: false,
-
-            pixel_counter: 0,
-            wusa: false,
+            window: WindowControl::new(),
             voga: false,
-            pova: false,
             tyfa_bridge: false,
-            lcd_shift_register: LcdShiftRegister::new(),
-            lcd_data_latch: PaletteIndex(0),
+            lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            window_zero_pixel: false,
-            wx_triggered: false,
-            last_wx_value: 0xFF,
-            nuko_wx: 0xFF,
-            wuvu: false,
-            byba: false,
-            doba: false,
         }
     }
 
-    fn mode(&self, video: &VideoControl) -> Mode {
-        match self.render_phase {
-            RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.dot() >= 1 => Mode::OamScan,
-            _ => Mode::HorizontalBlank,
+    /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
+    /// On hardware, WODU is not a latch — it's valid whenever its
+    /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
+    fn wodu(&self) -> bool {
+        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
+        self.xymu && self.lcd.xugu() && !fepo
+    }
+
+    pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
+        if self.scan.scanning() {
+            Mode::OamScan
+        } else if self.xymu && !self.wodu() {
+            Mode::Drawing
+        } else {
+            Mode::HorizontalBlank
         }
     }
 
     /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
-    ///
-    /// No look-aheads needed: CPU bus reads/writes execute after
-    /// both phases, so AVAP (rising) and VOGA (falling) have already
-    /// fired and updated render_phase before stat_mode() is called.
-    fn stat_mode(&self, video: &VideoControl) -> Mode {
-        match self.render_phase {
-            RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
-            RenderPhase::Drawing => Mode::Drawing,
-            RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.dot() >= 4 => Mode::OamScan,
-            RenderPhase::LineStart => Mode::HorizontalBlank,
+    /// TARU (mode 0 condition) reads WODU combinationally — STAT sees
+    /// mode 0 on the same phase that WODU fires, before VOGA captures.
+    pub(super) fn stat_mode(&self, _video: &VideoControl) -> Mode {
+        if self.scan.scanning() {
+            Mode::OamScan
+        } else if self.xymu && !self.wodu() {
+            Mode::Drawing
+        } else {
+            Mode::HorizontalBlank
         }
     }
 
@@ -375,29 +217,24 @@ impl Rendering {
     ///
     /// Line 0 has no RUTU pulse (suppressed by first_line). The mode 2
     /// interrupt on line 0 fires at dot 4 through a separate path.
-    fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
+    pub(super) fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         let ly = video.ly();
-        let dot = video.dot();
 
         if ly == 0 {
-            // Line 0: no TAPA pulse. Mode 2 interrupt at dot 4 when
-            // OamScan mode activates (LineStart -> scanning && dot >= 4).
-            dot == 4
+            // Line 0: no TAPA pulse. Mode 2 interrupt fires at LX=1
+            // phase 0 (dot 4), when OamScan mode activates.
+            video.lx == 1 && video.talu() && !video.wuvu
         } else {
-            // Lines 1-143: TAPA pulse for dots 0-3.
-            dot <= 3
+            // Lines 1-143: TAPA pulse during LX=0 (dots 0-3).
+            video.lx == 0
         }
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
-        if self.scanning {
-            Some(self.scanner.oam_address())
-        } else {
-            None
-        }
+        self.scan.oam_address()
     }
 
-    pub fn pipeline_state(&self) -> PipelineSnapshot {
+    pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
         let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
@@ -405,8 +242,8 @@ impl Rendering {
             SpriteState::Idle => (None, None),
         };
         PipelineSnapshot {
-            pixel_counter: self.pixel_counter,
-            render_phase: self.render_phase,
+            pixel_counter: self.lcd.pixel_counter(),
+            xymu: self.xymu,
             bg_low,
             bg_high,
             bg_loaded,
@@ -416,249 +253,162 @@ impl Rendering {
             obj_priority,
             sprite_fetch_phase,
             sprite_tile_data,
-            lcd_x: self.lcd_shift_register.count(),
+            lcd_x: self.lcd.lcd_x(),
             fetcher_step: self.fetcher.step,
-            rydy: self.rydy,
-            wusa: self.wusa,
-            pova: self.pova,
-            pygo: self.pygo,
-            poky: self.poky,
-            wx_triggered: self.wx_triggered,
-            wuvu: self.wuvu,
-            byba: self.byba,
-            doba: self.doba,
+            rydy: self.window.rydy(),
+            wusa: self.lcd.wusa(),
+            pova: self.lcd.pova(),
+            pygo: self.cascade.pygo(),
+            poky: self.cascade.poky(),
+            wx_triggered: self.window.wx_triggered(),
+            wuvu: video.xupy(),
+            byba: self.scan.byba(),
+            doba: self.scan.doba(),
         }
     }
 
-    fn oam_locked(&self) -> bool {
-        matches!(
-            self.render_phase,
-            RenderPhase::LineStart
-                | RenderPhase::OamScan
-                | RenderPhase::Drawing
-                | RenderPhase::DrawingComplete
-        )
+    pub(super) fn oam_locked(&self) -> bool {
+        // Hardware: OAM blocked by ACYL (scanning) or XYMU (rendering).
+        self.scan.scanning() || self.xymu
     }
 
-    fn vram_locked(&self) -> bool {
-        // Hardware: VRAM blocked by XYMU_RENDERINGp. XYMU stays set through
-        // DrawingComplete (WODU dot); VOGA clears it on the next falling phase.
-        matches!(
-            self.render_phase,
-            RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+    pub(super) fn vram_locked(&self) -> bool {
+        // Hardware: VRAM blocked by XYMU_RENDERINGp.
+        self.xymu
     }
 
-    fn oam_write_locked(&self) -> bool {
-        matches!(
-            self.render_phase,
-            RenderPhase::LineStart
-                | RenderPhase::OamScan
-                | RenderPhase::Drawing
-                | RenderPhase::DrawingComplete
-        )
+    pub(super) fn oam_write_locked(&self) -> bool {
+        // Hardware: OAM writes blocked by ACYL (scanning) or XYMU (rendering).
+        self.scan.scanning() || self.xymu
     }
 
-    fn vram_write_locked(&self) -> bool {
+    pub(super) fn vram_write_locked(&self) -> bool {
         // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
-        matches!(
-            self.render_phase,
-            RenderPhase::Drawing | RenderPhase::DrawingComplete
-        )
+        self.xymu
     }
 
-    /// Falling edge half-cycle: setup phase (runs after rising edge).
+    /// Falling edge (DELTA_EVEN): setup phase.
     ///
-    /// On hardware, the falling edge handles fetcher control signals (NYKA,
-    /// POKY), mode transitions (VOGA/WEGO clearing XYMU), fine scroll
-    /// match (PUXA), and window WX match (PYCO).
-    pub(super) fn half_falling(
+    /// On hardware, the falling edge handles XUPY-derived logic (BYBA,
+    /// CATU, scan-counter, AVAP mode transitions), fetcher control signals
+    /// (NYKA, POKY), mode transitions (VOGA/WEGO clearing XYMU), fine
+    /// scroll match (PUXA), and window WX match (PYCO).
+    ///
+    /// XUPY derives from WUVU, which is clocked by XOTA rising (= our
+    /// falling phase). tick_xota() runs before tcycle_falling() in the
+    /// executor, so video.xupy() reflects the post-toggle state here.
+    pub(super) fn fall(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
     ) {
-        // DOBA_SCAN_DONEp_evn: captures BYBA_old on every falling edge (ALET clock).
-        self.doba = self.byba;
+        // XUPY rising edge detection: since tick_xota() toggled WUVU
+        // before this function, xupy()==true means WUVU just went low→high.
+        let xupy_rising = video.xupy();
 
-        if self.scanning {
-            // Mode 2: OAM scan uses M-cycle sub-phases, not simple
-            // falling/rising. Full scan processing deferred to half_rising
-            // for step 1 behavior preservation.
+        // Sprite scanner falling edge: counter tick, scan-start, BYBA, AVAP.
+        let scan = self.scan.fall(
+            xupy_rising,
+            video.lx,
+            video.wuvu,
+            video.ly(),
+            self.lcd_turning_on,
+            regs,
+            oam,
+        );
+
+        // React to scan signals.
+        if scan.avap && !self.lcd_turning_on {
+            // AVAP fires: Mode 2 → Mode 3 transition. Set XYMU.
+            self.xymu = true;
+            self.lcd_turning_on = false;
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+        } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
+            // LCD turn-on: Mode 0 → Mode 3 transition. Set XYMU.
+            self.xymu = true;
+            self.lcd_turning_on = false;
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+        }
+
+        if self.scan.scanning() {
+            // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU from
-        // this dot's preceding rising phase. DrawingComplete means WODU
-        // fired this dot.
-        if self.render_phase == RenderPhase::DrawingComplete {
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU
+        // combinationally. XYMU is still set at this point (VOGA
+        // hasn't cleared it yet), so wodu() is valid to sample.
+        let wodu = self.wodu();
+        if wodu {
             self.voga = true;
         }
 
         // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
+        self.lcd.fall(self.voga, wodu, &mut self.screen);
         if self.voga {
-            self.wusa = false;
-            if self.render_phase == RenderPhase::DrawingComplete {
-                // LCD NOR latch provides the 160th pixel: the data pins'
-                // current value at latch time. This is the lcd_data_latch
-                // (last resolved pixel from the final SACU edge, PX=167).
-                self.lcd_shift_register.shift_in(self.lcd_data_latch);
-                // LCD_LATCH (PIN_55): transfer shift register to column drivers.
-                self.lcd_shift_register.latch_to_screen(&mut self.screen);
-            }
-            self.render_phase = RenderPhase::HorizontalBlank;
+            self.xymu = false;
         }
 
         // Mode 3 falling-phase processing
-        if self.render_phase == RenderPhase::Drawing {
+        if self.xymu {
             self.mode3_falling(regs, video, oam, vram);
         }
     }
 
-    /// Rising edge half-cycle: output phase.
+    /// Rising edge (DELTA_ODD): output phase.
     ///
-    /// On hardware, the rising edge handles pixel counter increment,
-    /// fine counter increment, pipe shift, and sprite X matching.
-    pub(super) fn half_rising(
+    /// On hardware, the rising edge handles DOBA capture, pixel counter
+    /// increment, fine counter increment, pipe shift, and sprite X matching.
+    pub(super) fn rise(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
     ) {
-        // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
-        // released), setting BESU (scan latch) and resetting the scan
-        // counter. Suppressed on the LCD turn-on first line, where hardware
-        // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.dot() == 1 && !self.lcd_turning_on && !self.scanning {
-            self.render_phase = RenderPhase::OamScan;
-            self.scanning = true;
-            self.scanner.reset();
-        }
-
-        // WUVU_ABxxEFxx: toggle DFF, unconditional on every rising edge.
-        self.wuvu = !self.wuvu;
-        let xupy_rising = self.wuvu;
-
-        // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
-        // Fires when counter reaches 39 (0b100111), before entry 39's
-        // comparison completes. On hardware this is a wire, not a latch.
-        let feto = self.scanner.scan_done();
-
-        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
-        if xupy_rising {
-            self.byba = feto;
-        }
-
-        // AVAP: combinational scan-done trigger.
-        // Fires for one half-phase when BYBA has captured but DOBA has not.
-        let avap = self.byba && !self.doba;
-
-        // OAM scan: GAVA and COTA fire on the same sub-phase (A/E of
-        // XUPY). At dot granularity, one tick compares the current
-        // entry and increments the counter. Gated on XUPY rising
-        // (2-dot period). FETO only freezes the counter, not the
-        // comparison — entry 39 is still compared.
-        if self.scanning && xupy_rising {
-            self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
-        }
-
-        if avap && self.scanning && !self.lcd_turning_on {
-            // AVAP fires: Mode 2 → Mode 3 transition.
-            // Clears BESU (scan flag), sets XYMU (rendering latch),
-            // resets the BG fetcher (NYXU). The fetcher begins
-            // advancing on the same dot's falling phase (mode3_falling).
-            self.scanning = false;
-            self.render_phase = RenderPhase::Drawing;
-            self.lcd_turning_on = false;
-            // Seed NUKO's WX cache from the live DFF8 output at Mode 3
-            // entry. The DFF8 slave has been stable since before Mode 3,
-            // so the live output is the correct initial value. Without
-            // this, the first dot of Mode 3 would compare against 0xFF
-            // (from reset), causing a 1-dot-late trigger for WX values
-            // that should match on the first dot.
-            self.nuko_wx = regs.window.x_plus_7.output();
-            // With rising-before-falling ordering, this dot's half_falling runs
-            // next and sees render_phase == Drawing, so mode3_falling
-            // advances the fetcher naturally on the AVAP dot. No
-            // explicit pre-advance needed.
-        } else if self.lcd_turning_on && video.dot() == 80 {
-            // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
-            // directly to Mode 3, skipping the OAM scan. Mode 3 starts at
-            // approximately dot 80, the same as normal scanlines. The video
-            // clock divider (WUVU/VENA) comes out of LCD-enable reset at a
-            // misaligned phase, adding ~8 dots of delay beyond the naive
-            // 18 NOP × 4 = 72 calculation from Mooneye lcdon_timing-GS.
-            self.render_phase = RenderPhase::Drawing;
-            self.lcd_turning_on = false;
-            self.nuko_wx = regs.window.x_plus_7.output();
-        }
+        // Sprite scanner rising edge: DOBA captures BYBA.
+        self.scan.rise();
 
         // Mode 3 (drawing) — pixel output phase.
-        // Runs when in Drawing phase and not during a mode transition dot.
-        if self.render_phase == RenderPhase::Drawing {
+        // Runs when XYMU is set (rendering active).
+        if self.xymu {
             self.mode3_rising(regs, video, oam, vram);
-        }
-
-        // WODU hblank gate (DELTA_ODD). XUGU = NAND5(PX0,PX1,PX2,PX5,PX7)
-        // decodes PX=167 (bits 0+1+2+5+7 all set). WODU = AND2(!FEPO, !XUGU).
-        // WODU fires combinationally when the pixel counter has all five
-        // XUGU bits set and no sprite match (FEPO) is active.
-        //
-        // TARU (STAT mode 0 interrupt) uses WODU directly on the same
-        // phase — DrawingComplete models this. VOGA latches WODU on the
-        // next falling phase, clearing XYMU (handled in half_falling).
-        let xugu = self.pixel_counter & XUGU_MASK == XUGU_MASK;
-        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
-        let wodu = self.render_phase == RenderPhase::Drawing && xugu && !fepo;
-        if wodu {
-            self.render_phase = RenderPhase::DrawingComplete;
         }
     }
 
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.render_phase = RenderPhase::LineStart;
-        if self.window_rendered {
-            self.window_line_counter += 1;
-        }
-        self.sprites = SpriteStore::new();
-        self.scanner.reset();
-        // BESU deferred to dot 1 on all scanlines (CATU_LINE_ENDp fires
-        // at phase_lx=2, releasing LINE_RSTn and setting BESU).
-        // LCD turn-on's first scanline is handled separately by new_lcd_on().
-        self.scanning = false;
-        self.window_rendered = false;
+        self.xymu = false;
+        self.scan.reset();
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
-        self.lyry_prev = false;
-        self.nyka = false;
-        self.pory = false;
-        self.pygo = false;
-        self.poky = false;
+        self.cascade.reset();
         self.fine_scroll = FineScroll::new();
-        self.rydy = false;
+        self.window.reset_scanline();
 
-        self.pixel_counter = 0;
-        self.wusa = false;
         self.voga = false;
-        self.pova = false;
         self.tyfa_bridge = false;
-        self.lcd_shift_register.reset(scanline);
+        self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
-        self.window_zero_pixel = false;
-        self.wx_triggered = false;
-        self.last_wx_value = 0xFF;
-        self.nuko_wx = 0xFF;
-        // WUVU free-runs across scanlines (no reset). BYBA and DOBA are
-        // cleared by LINE_RST at the scanline boundary.
-        self.byba = false;
-        self.doba = false;
+        // BYBA, DOBA, and WUVU are handled by scan.reset() above.
+        // WUVU free-runs (no reset) — lives on VideoControl.
+    }
+
+    /// Reset for a new frame (VBlank → Active Display transition at LY=0).
+    /// Resets the screen buffer and window line counter, then performs the
+    /// standard per-scanline reset for line 0. On hardware, the circuits
+    /// persist through VBlank — this models the frame-boundary resets that
+    /// individual blocks perform, not struct destruction/recreation.
+    pub(super) fn reset_frame(&mut self) {
+        self.screen = Screen::new();
+        self.window.reset_frame();
+        self.reset_scanline(0);
     }
 
     /// Falling edge Mode 3 processing.
@@ -685,8 +435,8 @@ impl Rendering {
         // only by sprite data fetch. LEBO = NAND2(ALET, MOCE).
         if !sprite_data_fetch {
             self.fetcher.advance(
-                self.pixel_counter,
-                self.window_line_counter,
+                self.lcd.pixel_counter(),
+                self.window.window_line_counter(),
                 regs,
                 video,
                 vram,
@@ -717,8 +467,8 @@ impl Rendering {
         // and remain high for the rest of the scanline.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
-            && self.lyry_prev
-            && self.pygo
+            && self.cascade.lyry_prev()
+            && self.cascade.pygo()
         {
             sf.phase = SpriteFetchPhase::FetchingData;
             // The first sprite fetch step fires immediately on the
@@ -728,34 +478,7 @@ impl Rendering {
             sf.advance(regs, oam, vram);
         }
 
-        // --- Cascade DFF propagation (falling edge: NYKA) ---
-        //
-        // Hardware chain: LYRY -> NYKA -> PORY -> PYGO -> POKY
-        // NYKA is a DFF17 clocked on ALET (falling edge of master clock).
-        // DFF17 reads state_old -- the PREVIOUS falling phase's LYRY value.
-
-        // NYKA captures lyry_prev (the previous phase's LYRY), not the
-        // current lyry. This models the DFF17 state_old read.
-        if self.lyry_prev && !self.nyka {
-            self.nyka = true;
-        }
-
-        // Update lyry_prev for next falling phase.
-        self.lyry_prev = lyry;
-
-        // PYGO captures PORY on falling edge (ALET clock). On hardware,
-        // PYGO is DFF17 clocked by ALET_xBxDxFxH. PORY was latched
-        // on the preceding rising (MYVO clock), so PYGO reads state_old.PORY.
-        if self.pory && !self.pygo {
-            self.pygo = true;
-        }
-
-        // POKY NOR latch fires on falling, reading the just-updated PYGO.
-        // Zero propagation delay from PYGO to POKY within this falling
-        // phase, matching hardware NOR latch behavior.
-        if self.pygo && !self.poky {
-            self.poky = true;
-        }
+        self.cascade.fall(lyry);
 
         // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
         // SOCY = NOT(RYDY): self.rydy was set in the preceding rising by
@@ -764,7 +487,7 @@ impl Rendering {
         // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
         // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
         self.tyfa_bridge = match self.sprite_state {
-            SpriteState::Idle => !self.rydy && self.poky,
+            SpriteState::Idle => !self.window.rydy() && self.cascade.poky(),
             _ => false,
         };
 
@@ -789,16 +512,11 @@ impl Rendering {
         // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
         // `inputs`; all mutations go to `self`.
         let inputs = RisingPhaseInputs {
-            rydy: self.rydy,
-            pixel_counter: self.pixel_counter,
+            rydy: self.window.rydy(),
+            pixel_counter: self.lcd.pixel_counter(),
         };
 
-        // PORY captures old NYKA (rising edge, MYVO clock).
-        // Part of the NYKA -> PORY -> PYGO -> POKY startup cascade.
-        let old_nyka = self.nyka;
-        if old_nyka && !self.pory {
-            self.pory = true;
-        }
+        self.cascade.rise();
 
         // PORY clears RYDY: on hardware, PORY is a reset input to the
         // RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
@@ -810,9 +528,7 @@ impl Rendering {
         // the pre-clear RYDY value (captured on falling). SUZU fires for
         // exactly one half-cycle when RYDY transitions 1→0, triggering
         // TEVO (pipe load + fine counter reset).
-        if self.pory && self.rydy {
-            self.rydy = false;
-
+        if self.window.clear_rydy_on_pory(self.cascade.pory()) {
             // SUZU → TEVO → NYXU: load window tile data into pipe.
             self.fetcher.load_into(&mut self.bg_shifter);
 
@@ -821,12 +537,12 @@ impl Rendering {
 
             // REMY/RAVO combinational update: data pins reflect the
             // newly loaded window tile data immediately.
-            self.lcd_data_latch = pixel_output::resolve_current_pixel(
+            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
-                &mut self.window_zero_pixel,
+                self.window.window_zero_pixel_mut(),
                 regs,
-            );
+            ));
         }
 
         // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
@@ -836,7 +552,7 @@ impl Rendering {
         // !self.pygo is still true at TAVE time. Once PYGO fires,
         // !self.pygo permanently disables TAVE, matching hardware where
         // POKY disables SUVU/TAVE.
-        if self.nyka && self.pory && !self.pygo {
+        if self.cascade.nyka() && self.cascade.pory() && !self.cascade.pygo() {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
@@ -846,7 +562,7 @@ impl Rendering {
         // capture PORY until the next falling phase. Use tyfa_bridge
         // (computed at the end of the previous falling phase) which has
         // the correct cascade-propagated POKY value.
-        self.pova = if self.tyfa_bridge {
+        let pova = if self.tyfa_bridge {
             self.fine_scroll.capture_rising()
         } else {
             false
@@ -878,8 +594,8 @@ impl Rendering {
                         pixel_output::sprite_overwrite_data_latch(
                             &self.bg_shifter,
                             &self.obj_shifter,
-                            &mut self.lcd_data_latch,
-                            &mut self.window_zero_pixel,
+                            self.lcd.data_latch_mut(),
+                            self.window.window_zero_pixel_mut(),
                             regs,
                         );
                         self.sprite_state = SpriteState::Idle;
@@ -934,70 +650,26 @@ impl Rendering {
                     // Clear lyry_prev so the next falling phase sees the reset
                     // state — otherwise a sprite triggered at an X%8==0 boundary
                     // would see stale lyry_prev=true and exit wait immediately.
-                    self.lyry_prev = false;
+                    self.cascade.clear_lyry();
                 }
 
-                // Pixel counter increment (SACU clock). On hardware, SACU
-                // clocks the counter and pixel output on the same edge. The
-                // counter's Q output updates first; pixel output reads the
-                // post-increment value. Placed before pixel output to model this.
-                if sacu {
-                    self.pixel_counter += 1;
-                }
-
-                // XAJO: AND2(PX bit 0, PX bit 3). Sets the WUSA NOR latch,
-                // opening the LCD clock gate. First fires at PX=9 (0b1001).
-                // Subsequent fires (PX=11, 13, 15, 25...) are no-ops since
-                // WUSA is already set (NOR latch semantics).
-                if !self.wusa && (self.pixel_counter & 0b1001 == 0b1001) {
-                    self.wusa = true;
-                }
-
-                // TOBA = AND2(WUSA, SACU_CLKPIPE) — the gated LCD clock.
-                // On hardware, TOBA clocks the 159-stage LCD shift register,
-                // firing from PX=9 through PX=167 (159 clock edges).
-                //
-                // RYDY suppresses TOBA indirectly via TYFA→SEGU→SACU:
-                // RYDY→SOCY→TYFA=0→SACU stuck. No explicit RYDY gate
-                // exists on TOBA in hardware.
-                let toba = self.wusa && sacu;
-
-                // LCD data pin lag model (REMY/RAVO qp_ext_old).
-                //
-                // On hardware, the LCD data pins (REMY/RAVO) are combinational
-                // from the pipe MSBs, but the LCD captures qp_ext_old — the
-                // previous half-cycle's pin state. TOBA shifts the BUFFERED
-                // pixel (from the previous SACU edge) into the LCD register,
-                // then the latch updates to the current pipe state.
-                //
-                // This gives a 1-dot offset: TOBA at PX=9 outputs PX=8's
-                // pixel, TOBA at PX=10 outputs PX=9's pixel, etc. Total:
-                // 159 TOBA edges output pixels for PX=8–166. The 160th pixel
-                // (PX=167) is captured by the NOR latch at end-of-line.
-                if toba {
-                    self.lcd_shift_register.shift_in(self.lcd_data_latch);
-                }
-
-                // Update the LCD data latch with the current pipe state.
-                // On hardware, REMY/RAVO are combinational from pipe MSBs
-                // — they update every phase, not just on TYFA or SACU
-                // edges. During the RYDY stall, pipe content changes when
-                // window tile data loads (SEKO/TEVO), and the data pins
-                // reflect this immediately. The first post-stall TOBA
-                // captures window data via qp_ext_old.
-                self.lcd_data_latch = pixel_output::resolve_current_pixel(
+                // LCD Control (page 24): pixel counter, XAJO, TOBA, shift
+                // register, data latch — all internal to the block. We
+                // provide SACU, the resolved pixel, and POVA.
+                let pixel = pixel_output::resolve_current_pixel(
                     &self.bg_shifter,
                     &self.obj_shifter,
-                    &mut self.window_zero_pixel,
+                    self.window.window_zero_pixel_mut(),
                     regs,
                 );
+                let toba = self.lcd.rise(sacu, pixel, pova);
 
                 if !toba && self.tyfa_bridge {
                     // Consume window_zero_pixel during pre-visible TYFA
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window
                     // zero pixel is consumed even when SACU/TOBA don't fire.
-                    self.window_zero_pixel = false;
+                    self.window.consume_window_zero_pixel();
                 }
 
                 // Sprite trigger check.
@@ -1032,22 +704,15 @@ impl Rendering {
         // — it fires regardless of sprite fetch state. During sprite
         // fetch, pixel_counter is frozen, so the match just re-checks
         // the same value each dot.
-        window::check_window_trigger(
+        let pygo = self.cascade.pygo();
+        self.window.check_trigger(
             inputs.rydy,
-            &mut self.rydy,
             &mut self.fetcher,
-            &mut self.nyka,
-            &mut self.pory,
-            &mut self.lyry_prev,
-            &mut self.bg_shifter,
+            &mut self.cascade,
+            &self.bg_shifter,
             &mut self.fine_scroll,
-            &mut self.window_zero_pixel,
-            &mut self.wx_triggered,
-            &mut self.window_rendered,
             inputs.pixel_counter,
-            &mut self.last_wx_value,
-            self.nuko_wx,
-            self.pygo,
+            pygo,
             regs,
             video,
         );
@@ -1057,7 +722,7 @@ impl Rendering {
         // the DFF output even during sprite fetch. On hardware, the
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
-        self.nuko_wx = regs.window.x_plus_7.output();
+        self.window.update_nuko_wx(regs.window.x_plus_7.output());
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
@@ -1068,14 +733,15 @@ impl Rendering {
             return;
         }
 
-        let match_x = self.pixel_counter;
+        let match_x = self.lcd.pixel_counter();
 
-        for i in 0..self.sprites.count as usize {
-            if self.sprites.fetched & (1 << i) != 0 {
+        let sprites = self.scan.sprites_mut();
+        for i in 0..sprites.count as usize {
+            if sprites.fetched & (1 << i) != 0 {
                 continue; // Already fetched — reset flag is set
             }
 
-            let entry = &self.sprites.entries[i];
+            let entry = &sprites.entries[i];
 
             if entry.x != match_x {
                 continue; // X doesn't match current pixel counter
@@ -1083,12 +749,12 @@ impl Rendering {
 
             if entry.x >= 168 {
                 // Off-screen right — mark as fetched so we don't check again
-                self.sprites.fetched |= 1 << i;
+                sprites.fetched |= 1 << i;
                 continue;
             }
 
             // Match found — trigger sprite fetch, mark slot as fetched
-            self.sprites.fetched |= 1 << i;
+            sprites.fetched |= 1 << i;
             self.sprite_state = SpriteState::Fetching(SpriteFetch::new(*entry));
             break; // Only one sprite fetch at a time
         }
