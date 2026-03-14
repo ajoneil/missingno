@@ -72,11 +72,11 @@ impl Ppu {
             },
             // Post-boot PPU state: internal line 153, LX=100, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
-            // WUVU/VENA at TALU-rising state (LX just incremented).
+            // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
                 lx: 100,
                 wuvu: false,
-                vena: true,
+                vena: false,
                 ly: 153,
                 lyc: 0,
                 ly_match_pending: true,
