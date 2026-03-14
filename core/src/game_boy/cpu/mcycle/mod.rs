@@ -119,7 +119,7 @@ impl BusDot {
 /// - **Write**:    `[Idle, Idle, DriveBus, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum DotAction {
     /// No bus transfer this dot.
     Idle,

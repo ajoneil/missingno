@@ -1,9 +1,6 @@
 use super::{
-    BusAccess, BusAccessKind, GameBoy,
-    cpu::mcycle::{BusDot, DotAction},
-    interrupts::Interrupt,
-    memory::Bus,
-    ppu,
+    BusAccess, BusAccessKind, ClockPhase, GameBoy, cpu::mcycle::DotAction, interrupts::Interrupt,
+    memory::Bus, ppu,
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -40,54 +37,34 @@ impl GameBoy {
 
     /// Run one complete instruction from start to finish.
     ///
-    /// Runs dots until the CPU returns to the Fetch phase at a fresh
+    /// Runs phases until the CPU returns to the Fetch phase at a fresh
     /// M-cycle boundary (instruction boundary). At that point, EI delay
     /// is advanced and control returns to the caller.
     fn step_instruction(&mut self) -> bool {
         let mut new_screen = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
-        let mut read_value: u8 = 0;
+        self.last_read_value = 0;
 
         // Consume the current instruction boundary (we're starting
         // from a boundary — we want to run until the NEXT one).
         self.cpu.take_instruction_boundary();
 
-        const DOT_BUDGET: u32 = 200;
-        let mut dots_remaining = DOT_BUDGET;
+        const PHASE_BUDGET: u32 = 400;
+        let mut phases_remaining = PHASE_BUDGET;
 
         loop {
             assert!(
-                dots_remaining > 0,
-                "step() exceeded {DOT_BUDGET} dot budget — possible infinite loop in CPU"
+                phases_remaining > 0,
+                "step() exceeded {PHASE_BUDGET} phase budget — possible infinite loop in CPU"
             );
-            dots_remaining -= 1;
+            phases_remaining -= 1;
 
-            let dot_action = self.cpu.next_dot(read_value);
+            let ns = self.execute_phase(&mut pending_oam_bug);
+            new_screen |= ns;
 
-            // IE push bug: check after each M-cycle transition.
-            if self.cpu.take_pending_vector_resolve() {
-                if let Some(interrupt) = self.interrupts.triggered() {
-                    self.interrupts.clear(interrupt);
-                    self.cpu.program_counter = interrupt.vector();
-                } else {
-                    self.cpu.program_counter = 0x0000;
-                }
-            }
-
-            let (new_screen_dot, new_read_value) = self.execute_dot(
-                &dot_action,
-                self.cpu.dot_for_execute(),
-                &mut pending_oam_bug,
-            );
-            new_screen |= new_screen_dot;
-            if let Some(v) = new_read_value {
-                read_value = v;
-            }
-
-            // Check for the next instruction boundary.
-            // HALT bug check and EI delay advance are handled internally
-            // by the CPU state machine at the exact transition point.
-            if self.cpu.at_instruction_boundary() {
+            // Check for instruction boundary after completing a dot
+            // (clock_phase is now Rising = just finished Falling = dot complete)
+            if self.clock_phase == ClockPhase::Rising && self.cpu.at_instruction_boundary() {
                 break;
             }
         }
@@ -97,25 +74,16 @@ impl GameBoy {
     /// Advance exactly one dot (T-cycle). Returns true if a new
     /// frame was produced.
     pub fn step_dot(&mut self) -> bool {
+        let mut new_screen = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
-        let read_value = self.last_read_value;
 
-        let dot_action = self.cpu.next_dot(read_value);
-
-        // IE push bug
-        if self.cpu.take_pending_vector_resolve() {
-            if let Some(interrupt) = self.interrupts.triggered() {
-                self.interrupts.clear(interrupt);
-                self.cpu.program_counter = interrupt.vector();
-            } else {
-                self.cpu.program_counter = 0x0000;
+        // Run phases until we complete a dot (return to Rising)
+        loop {
+            let ns = self.execute_phase(&mut pending_oam_bug);
+            new_screen |= ns;
+            if self.clock_phase == ClockPhase::Rising {
+                break;
             }
-        }
-
-        let dot = self.cpu.dot_for_execute();
-        let (new_screen, new_read_value) = self.execute_dot(&dot_action, dot, &mut pending_oam_bug);
-        if let Some(v) = new_read_value {
-            self.last_read_value = v;
         }
 
         // Consume instruction boundary flag (used by step_traced to detect
@@ -126,19 +94,38 @@ impl GameBoy {
         new_screen
     }
 
-    /// Execute one dot of hardware: OAM bug recording, phase ticks
-    /// (DriveBus-aware ordering), interrupt capture, and bus actions.
-    /// Returns `(new_screen, read_value)` where `read_value` is `Some`
-    /// only if the dot performed a bus Read.
-    fn execute_dot(
-        &mut self,
-        dot_action: &DotAction,
-        dot: BusDot,
-        pending_oam_bug: &mut Option<OamBugKind>,
-    ) -> (bool, Option<u8>) {
+    /// Execute one phase (half-dot) of hardware. The master clock
+    /// alternates Rising → Falling uniformly. Rising starts a new dot;
+    /// Falling completes it.
+    fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+        match self.clock_phase {
+            ClockPhase::Rising => self.execute_rising_phase(pending_oam_bug),
+            ClockPhase::Falling => self.execute_falling_phase(pending_oam_bug),
+        }
+    }
+
+    /// Rising phase (first half of dot): advance CPU state machine,
+    /// IE push bug, OAM bug recording, PPU rising tick, OAM bug fire.
+    fn execute_rising_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+        let dot_action = self.cpu.next_dot(self.last_read_value);
+        self.current_dot_action = dot_action;
+
+        // IE push bug: check after each M-cycle transition.
+        if self.cpu.take_pending_vector_resolve() {
+            if let Some(interrupt) = self.interrupts.triggered() {
+                self.interrupts.clear(interrupt);
+                self.cpu.program_counter = interrupt.vector();
+            } else {
+                self.cpu.program_counter = 0x0000;
+            }
+        }
+
+        let dot = self.cpu.dot_for_execute();
+        self.current_dot = dot;
+
         // BOWA (dot 0): record OAM bug from address in the upcoming action.
         if dot.bowa()
-            && let DotAction::InternalOamBug { address } = dot_action
+            && let DotAction::InternalOamBug { address } = &self.current_dot_action
             && (0xFE00..=0xFEFF).contains(address)
         {
             match pending_oam_bug {
@@ -150,48 +137,37 @@ impl GameBoy {
         }
 
         let is_mcycle_boundary = dot.boga();
-        let is_drivebus = matches!(dot_action, DotAction::DriveBus { .. });
-        let mut new_screen;
+        self.tick_dot_rising(is_mcycle_boundary);
 
-        if is_drivebus {
-            // DriveBus dot: hardware order is EVEN first, then ODD.
-            new_screen = self.tick_dot_falling(is_mcycle_boundary);
-
-            if let DotAction::DriveBus { address, value } = dot_action
-                && self.drive_ppu_bus(*address, *value)
-            {
-                self.interrupts.request(Interrupt::VideoStatus);
+        // MOPA rising edge (dot 2): fire OAM bug.
+        if dot.mopa()
+            && !dot.boga()
+            && let Some(kind) = pending_oam_bug.take()
+        {
+            match kind {
+                OamBugKind::Read => self.ppu.oam_bug_read(),
+                OamBugKind::Write => self.ppu.oam_bug_write(),
             }
-
-            // MOPA rising edge (dot 2): fire OAM bug.
-            if dot.mopa()
-                && !dot.boga()
-                && let Some(kind) = pending_oam_bug.take()
-            {
-                match kind {
-                    OamBugKind::Read => self.ppu.oam_bug_read(),
-                    OamBugKind::Write => self.ppu.oam_bug_write(),
-                }
-            }
-
-            new_screen |= self.tick_dot_rising(is_mcycle_boundary);
-        } else {
-            // All other dots: normal order, ODD first then EVEN.
-            new_screen = self.tick_dot_rising(is_mcycle_boundary);
-
-            // MOPA rising edge (dot 2): fire OAM bug.
-            if dot.mopa()
-                && !dot.boga()
-                && let Some(kind) = pending_oam_bug.take()
-            {
-                match kind {
-                    OamBugKind::Read => self.ppu.oam_bug_read(),
-                    OamBugKind::Write => self.ppu.oam_bug_write(),
-                }
-            }
-
-            new_screen |= self.tick_dot_falling(is_mcycle_boundary);
         }
+
+        self.clock_phase = ClockPhase::Falling;
+        false
+    }
+
+    /// Falling phase (second half of dot): DriveBus, PPU falling tick,
+    /// interrupt latch capture, bus actions.
+    fn execute_falling_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+        let dot = self.current_dot;
+        let is_mcycle_boundary = dot.boga();
+
+        // DriveBus: drive the bus BEFORE PPU falling work.
+        if let DotAction::DriveBus { address, value } = &self.current_dot_action
+            && self.drive_ppu_bus(*address, *value)
+        {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        let new_screen = self.tick_dot_falling(is_mcycle_boundary);
 
         // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
         // Must run after BOTH phases so it sees all interrupt sources.
@@ -199,24 +175,24 @@ impl GameBoy {
         self.cpu.update_interrupt_state(triggered);
 
         // Bus actions after phase ticks.
-        let read_value = match dot_action {
-            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => None,
+        match &self.current_dot_action {
+            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::DriveBus { .. } => {}
             DotAction::Read { address } => {
                 if (0xFE00..=0xFEFF).contains(address) {
                     *pending_oam_bug = Some(OamBugKind::Read);
                 }
-                Some(self.cpu_read(*address))
+                self.last_read_value = self.cpu_read(*address);
             }
             DotAction::Write { address, value } => {
                 if (0xFE00..=0xFEFF).contains(address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
                 self.write_byte(*address, *value);
-                None
             }
-        };
+        }
 
-        (new_screen, read_value)
+        self.clock_phase = ClockPhase::Rising;
+        new_screen
     }
 
     /// Rising phase (DELTA_ODD) of one dot: timer tick, DFF8 palette

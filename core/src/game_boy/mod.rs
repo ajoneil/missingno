@@ -1,6 +1,7 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
+use cpu::mcycle::{BusDot, DotAction};
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -19,6 +20,21 @@ pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockPhase {
+    Rising,
+    Falling,
+}
+
+impl ClockPhase {
+    pub fn next(self) -> ClockPhase {
+        match self {
+            ClockPhase::Rising => ClockPhase::Falling,
+            ClockPhase::Falling => ClockPhase::Rising,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BusAccessKind {
@@ -54,6 +70,13 @@ pub struct GameBoy {
     /// Last read value from the bus, persisted across dots for step_dot().
     last_read_value: u8,
     bus_trace: Option<Vec<BusAccess>>,
+
+    /// Master clock phase — alternates Rising/Falling uniformly.
+    clock_phase: ClockPhase,
+    /// Action for the current dot, set on Rising and consumed during Falling.
+    current_dot_action: DotAction,
+    /// Dot position for the current dot, set on Rising and consumed during Falling.
+    current_dot: BusDot,
 }
 
 impl GameBoy {
@@ -81,6 +104,9 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             last_read_value: 0,
             bus_trace: None,
+            clock_phase: ClockPhase::Rising,
+            current_dot_action: DotAction::Idle,
+            current_dot: BusDot::ZERO,
         };
         gb.init_post_boot_vram();
         gb
@@ -108,6 +134,9 @@ impl GameBoy {
         };
         self.init_post_boot_vram();
         self.bus_trace = None;
+        self.clock_phase = ClockPhase::Rising;
+        self.current_dot_action = DotAction::Idle;
+        self.current_dot = BusDot::ZERO;
     }
 
     pub fn cartridge(&self) -> &Cartridge {
