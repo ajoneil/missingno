@@ -471,9 +471,10 @@ impl Rendering {
     ) {
         // CATU_LINE_ENDp: at dot 1, CATU fires (phase_lx=2, LINE_RSTn
         // released), setting BESU (scan latch) and resetting the scan
-        // counter. Suppressed on the LCD turn-on first line, where hardware
+        // counter. CATU is clocked by XUPY (= WUVU.qp), not VENA.
+        // Suppressed on the LCD turn-on first line, where hardware
         // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.lx == 0 && video.wuvu && video.vena && !self.lcd_turning_on && !self.scanning {
+        if video.lx == 0 && video.wuvu && !self.lcd_turning_on && !self.scanning {
             self.render_phase = RenderPhase::OamScan;
             self.scanning = true;
             self.scanner.reset();
