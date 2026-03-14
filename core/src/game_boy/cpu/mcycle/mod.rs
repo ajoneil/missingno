@@ -500,6 +500,13 @@ impl Cpu {
                 return self.mcycle_fetch(0);
             }
 
+            // Promote at the start of each halted NOP, matching the Running
+            // path where promote runs at mcycle_fetch step 1 (after the
+            // detecting fetch's 4 dots). Fresh from the previous iteration's
+            // dots becomes Ready here; Fresh set during THIS iteration's dots
+            // won't be promoted until the next iteration's step 0.
+            self.interrupt_latch.promote();
+
             // Emit the halted read (wakeup NOP).
             Some(BusAction::Read {
                 address: self.program_counter,
@@ -509,9 +516,9 @@ impl Cpu {
             self.exec_step = 0;
             self.boundary_flag = true;
 
-            // Promote Fresh→Ready, matching the Running path's
-            // mcycle_fetch step 1 which also promotes before checking.
-            self.interrupt_latch.promote();
+            // No promote here — promotion happens at step 0 of the next
+            // halted NOP, ensuring a full M-cycle of ticking between
+            // the interrupt-setting event and dispatch.
 
             if self.interrupt_latch.take_ready().is_some() {
                 // IME=1 wakeup: the halted read's M-cycle served as
