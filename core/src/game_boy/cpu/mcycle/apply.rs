@@ -52,7 +52,12 @@ impl Cpu {
     pub(super) fn apply_interrupt_instruction(cpu: &mut Cpu, instr: &InterruptInstruction) {
         match instr {
             InterruptInstruction::Enable => {
-                if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled {
+                // On hardware, EI sets an RS latch — re-setting an already-set
+                // latch is a no-op. Guard against overwriting Fired with Pending,
+                // which would delay IME enablement by an extra instruction.
+                if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled
+                    && cpu.ei_delay.is_none()
+                {
                     cpu.ei_delay = Some(EiDelay::Pending);
                 }
             }
