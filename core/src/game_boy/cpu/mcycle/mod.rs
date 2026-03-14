@@ -492,36 +492,6 @@ impl Cpu {
         self.exec_step += 1;
 
         if step == 0 {
-            // Before emitting the halted NOP read, check if an interrupt
-            // is already Ready. In the old code, promote + take_ready
-            // happened at the top of step_instruction before any halted
-            // NOP dots. This avoids running 4 extra dots when an interrupt
-            // is already pending at the boundary.
-            self.interrupt_latch.promote();
-
-            if self.interrupt_latch.take_ready().is_some() {
-                // IME=1 wakeup without halted NOP. The interrupt was
-                // already Ready at entry — dispatch ISR immediately.
-                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
-                self.ei_delay = None;
-                self.halt_state = HaltState::Running;
-
-                let pc = self.program_counter;
-                let pc_hi = (pc >> 8) as u8;
-                let pc_lo = (pc & 0xff) as u8;
-                let sp = self.stack_pointer;
-
-                self.phase = CpuPhase::InterruptDispatch {
-                    sp,
-                    pc_hi,
-                    pc_lo,
-                    step: 0,
-                };
-                self.exec_step = 0;
-                self.pending_vector_resolve = false;
-                return self.mcycle_isr(0);
-            }
-
             if self.halt_state == HaltState::Running {
                 // IME=0 wakeup detected before halted NOP started.
                 // Transition to Fetch to process the first instruction.
@@ -530,7 +500,7 @@ impl Cpu {
                 return self.mcycle_fetch(0);
             }
 
-            // No interrupt pending — emit the halted read.
+            // Emit the halted read (wakeup NOP).
             Some(BusAction::Read {
                 address: self.program_counter,
             })
@@ -538,6 +508,10 @@ impl Cpu {
             // Halted read complete — check for wakeup.
             self.exec_step = 0;
             self.boundary_flag = true;
+
+            // Promote Fresh→Ready, matching the Running path's
+            // mcycle_fetch step 1 which also promotes before checking.
+            self.interrupt_latch.promote();
 
             if self.interrupt_latch.take_ready().is_some() {
                 // IME=1 wakeup: the halted read's M-cycle served as
@@ -890,8 +864,13 @@ impl Cpu {
         *step += 1;
 
         match current_step {
-            0 => Some(BusAction::InternalOamBug { address: sp }),
-            1 => {
+            // M0: IDU PC- — undo the detecting fetch's PC increment.
+            // On real hardware this is a full internal M-cycle even though the
+            // emulator avoids incrementing PC during detection. The cycle must
+            // still be burned for correct timing.
+            0 => Some(BusAction::Internal),
+            1 => Some(BusAction::InternalOamBug { address: sp }),
+            2 => {
                 let addr = sp.wrapping_sub(1);
                 self.stack_pointer = addr;
                 Some(BusAction::Write {
@@ -899,9 +878,9 @@ impl Cpu {
                     value: pc_hi,
                 })
             }
-            2 => {
+            3 => {
                 // IE push bug: the vector must be resolved after the
-                // high-byte push (step 1) but before this low-byte push.
+                // high-byte push (step 2) but before this low-byte push.
                 self.pending_vector_resolve = true;
                 let addr = sp.wrapping_sub(2);
                 self.stack_pointer = addr;
@@ -910,7 +889,7 @@ impl Cpu {
                     value: pc_lo,
                 })
             }
-            3 => {
+            4 => {
                 // ISR complete — transition to Fetch at the vector address.
                 Some(self.enter_fetch())
             }
@@ -1064,7 +1043,6 @@ impl Cpu {
             InterruptMasterEnable::Enabled => match triggered {
                 Some(interrupt) => match self.interrupt_latch {
                     InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
-                    _ if self.halt_state == HaltState::Halted => InterruptLatch::Ready(interrupt),
                     _ => InterruptLatch::Fresh(interrupt),
                 },
                 None => InterruptLatch::Empty,
