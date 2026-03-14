@@ -382,7 +382,7 @@ impl Ppu {
         // Pixel output, SACU, pipe shift — only during active display.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             if !self.video.in_vblank() {
-                rendering.half_rising(&self.registers, &self.video, &self.oam, vram);
+                rendering.rise(&self.registers, &self.video, &self.oam, vram);
             }
         }
     }
@@ -468,7 +468,7 @@ impl Ppu {
             // Only during active display — pipeline is idle in VBlank.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 if !self.video.in_vblank() {
-                    rendering.half_falling(&self.registers, &self.video, &self.oam, vram);
+                    rendering.fall(&self.registers, &self.video, &self.oam, vram);
                 }
             }
 

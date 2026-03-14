@@ -287,7 +287,7 @@ impl Rendering {
         self.xymu
     }
 
-    /// Falling edge half-cycle: setup phase (runs after rising edge).
+    /// Falling edge (DELTA_EVEN): setup phase.
     ///
     /// On hardware, the falling edge handles XUPY-derived logic (BYBA,
     /// CATU, scan-counter, AVAP mode transitions), fetcher control signals
@@ -297,7 +297,7 @@ impl Rendering {
     /// XUPY derives from WUVU, which is clocked by XOTA rising (= our
     /// falling phase). tick_xota() runs before tcycle_falling() in the
     /// executor, so video.xupy() reflects the post-toggle state here.
-    pub(super) fn half_falling(
+    pub(super) fn fall(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -359,11 +359,11 @@ impl Rendering {
         }
     }
 
-    /// Rising edge half-cycle: output phase.
+    /// Rising edge (DELTA_ODD): output phase.
     ///
     /// On hardware, the rising edge handles DOBA capture, pixel counter
     /// increment, fine counter increment, pipe shift, and sprite X matching.
-    pub(super) fn half_rising(
+    pub(super) fn rise(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
