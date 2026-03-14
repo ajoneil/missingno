@@ -60,16 +60,10 @@ const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// sees HBlank one phase before XYMU clears.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderPhase {
-    /// Not drawing — before Mode 3 starts or after line-end reset.
-    /// On line 0, the OAM scan runs with `LineStart` render phase (BESU
-    /// is never set on line 0). STAT reads mode 0 for dots 0-3, then
-    /// mode 2 from dot 4 onward (matching TCAGBD section 8.11.1).
-    LineStart,
     /// Mode 2: BESU set, OAM scanner active. ACYL_SCANNINGp drives
     /// STAT register mode bit 1. Set by CATU_LINE_ENDp at dot 1
     /// for lines 1+ (in half_falling), cleared by AVAP when the scan
-    /// completes. Line 0 skips this phase (BESU never set on first
-    /// line; scanner runs under LineStart instead).
+    /// completes.
     OamScan,
     /// Mode 3: XYMU set, fetcher running. Covers the entire rendering
     /// period from AVAP (scan done) through WODU (PX≥167). During
@@ -254,7 +248,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: false,
-            render_phase: RenderPhase::LineStart,
+            render_phase: RenderPhase::HorizontalBlank,
             sprites: SpriteStore::new(),
             scanner: OamScanner::new(),
             scanning: false,
@@ -292,7 +286,7 @@ impl Rendering {
             screen: Screen::new(),
             window_line_counter: 0,
             lcd_turning_on: true,
-            render_phase: RenderPhase::LineStart,
+            render_phase: RenderPhase::HorizontalBlank,
             sprites: SpriteStore::new(),
             scanner: OamScanner::new(),
             scanning: false,
@@ -325,13 +319,10 @@ impl Rendering {
         }
     }
 
-    fn mode(&self, video: &VideoControl) -> Mode {
+    fn mode(&self, _video: &VideoControl) -> Mode {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && (video.lx > 0 || video.wuvu) => {
-                Mode::OamScan
-            }
             _ => Mode::HorizontalBlank,
         }
     }
@@ -342,13 +333,11 @@ impl Rendering {
     /// No look-aheads needed: CPU bus reads/writes execute after
     /// both phases, so AVAP (rising) and VOGA (falling) have already
     /// fired and updated render_phase before stat_mode() is called.
-    fn stat_mode(&self, video: &VideoControl) -> Mode {
+    fn stat_mode(&self, _video: &VideoControl) -> Mode {
         match self.render_phase {
-            RenderPhase::DrawingComplete | RenderPhase::HorizontalBlank => Mode::HorizontalBlank,
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.lx >= 1 => Mode::OamScan,
-            RenderPhase::LineStart => Mode::HorizontalBlank,
+            _ => Mode::HorizontalBlank,
         }
     }
 
@@ -416,12 +405,10 @@ impl Rendering {
     }
 
     fn oam_locked(&self) -> bool {
+        // Hardware: OAM blocked by ACYL (scanning) or XYMU (rendering).
         matches!(
             self.render_phase,
-            RenderPhase::LineStart
-                | RenderPhase::OamScan
-                | RenderPhase::Drawing
-                | RenderPhase::DrawingComplete
+            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
         )
     }
 
@@ -435,12 +422,10 @@ impl Rendering {
     }
 
     fn oam_write_locked(&self) -> bool {
+        // Hardware: OAM writes blocked by ACYL (scanning) or XYMU (rendering).
         matches!(
             self.render_phase,
-            RenderPhase::LineStart
-                | RenderPhase::OamScan
-                | RenderPhase::Drawing
-                | RenderPhase::DrawingComplete
+            RenderPhase::OamScan | RenderPhase::Drawing | RenderPhase::DrawingComplete
         )
     }
 
@@ -597,7 +582,7 @@ impl Rendering {
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.render_phase = RenderPhase::LineStart;
+        self.render_phase = RenderPhase::HorizontalBlank;
         if self.window_rendered {
             self.window_line_counter += 1;
         }

@@ -495,7 +495,6 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
         Some(snap) => serde_json::json!({
             "pixel_counter": snap.pixel_counter,
             "render_phase": match snap.render_phase {
-                ppu::RenderPhase::LineStart => "line_start",
                 ppu::RenderPhase::OamScan => "oam_scan",
                 ppu::RenderPhase::Drawing => "drawing",
                 ppu::RenderPhase::DrawingComplete => "drawing_complete",
