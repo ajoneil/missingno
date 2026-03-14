@@ -1,5 +1,5 @@
 use super::{
-    Cpu, HaltState, InterruptMasterEnable,
+    Cpu, EiDelay, HaltState, InterruptLatch, InterruptMasterEnable,
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
     instructions::bit_shift::{Carry, Direction},
@@ -13,7 +13,7 @@ mod build;
 
 /// What happens on the memory bus during one M-cycle.
 #[derive(Debug)]
-pub enum BusAction {
+pub(super) enum BusAction {
     /// Read a byte at the given address.
     Read { address: u16 },
     /// Write a byte to the given address.
@@ -101,7 +101,7 @@ impl BusDot {
     }
 
     /// Raw dot index (0-3). Escape hatch for the rare cases where
-    /// a named signal doesn't exist (e.g., TrailingFetch counter).
+    /// a named signal doesn't exist (e.g., fetch dot counter).
     /// Prefer named signals in all other contexts.
     pub fn index(self) -> u8 {
         self.0
@@ -194,20 +194,18 @@ enum RmwOp {
 
 // ── Phase enum ──────────────────────────────────────────────────────────
 
-/// The behavior of the current instruction, expressed as a sequence of
-/// M-cycles. The `Processor` walks through the phase yielding one
-/// `BusAction` per M-cycle via `next_mcycle()`.
+/// The behavior of the current instruction's post-decode M-cycles,
+/// expressed as a sequence of bus actions. The CPU walks through the
+/// phase yielding one `BusAction` per M-cycle via `next_mcycle()`.
 #[derive(Debug)]
-enum Phase {
-    /// Fetch opcode and operand bytes, decode, then transition to the
-    /// instruction's execution phase. Each byte is one Read M-cycle.
-    Fetch {
+#[allow(private_interfaces)]
+pub(in crate::game_boy) enum Phase {
+    /// Read operand bytes, then decode and transition to the execution
+    /// phase. The opcode has already been read in the Fetch CpuPhase.
+    Operands {
         pc: u16,
-        /// Bytes read so far (opcode + operands). Index 0 = opcode.
         bytes: [u8; 3],
-        /// How many bytes have been read.
         bytes_read: u8,
-        /// Total bytes needed (0 = unknown until opcode is read).
         bytes_needed: u8,
     },
 
@@ -257,12 +255,6 @@ enum Phase {
         action: PopAction,
     },
 
-    /// Interrupt dispatch: 5 M-cycles (no decode).
-    InterruptDispatch { sp: u16, pc_hi: u8, pc_lo: u8 },
-
-    /// Halted NOP: 1 fetch Read (no decode happens when halted).
-    HaltedNop { fetch_pc: u16 },
-
     /// No post-fetch M-cycles (NOP, LD r,r, ALU A,r, HALT, STOP, etc.).
     Empty,
 }
@@ -301,474 +293,60 @@ fn operand_count(opcode: u8) -> u8 {
     }
 }
 
-// ── Processor ──────────────────────────────────────────────────
+// ── CpuPhase ────────────────────────────────────────────────────────────
 
-/// State machine that yields one `DotAction` per dot (T-cycle).
-///
-/// Each instruction is a sequence of M-cycles, each expanded into 4 dots.
-/// The processor covers the entire instruction lifecycle: fetch (reading
-/// opcode + operands), decode, and execution (post-fetch M-cycles).
-pub struct Processor {
-    /// The decoded instruction, preserved for debugger display.
-    #[allow(dead_code)]
-    pub instruction: Instruction,
-    step: u8,
-    phase: Phase,
-    /// Scratch byte for multi-read phases (Pop, CondReturn) to store
-    /// the first read value until the second read completes.
-    scratch: u8,
-    /// Dot position within the current M-cycle (0–3).
-    dot: BusDot,
-    /// The BusAction for the current M-cycle, fetched at dot 0.
-    /// `None` means the instruction is complete.
-    current_action: Option<BusAction>,
-    /// Whether we have started dot iteration (have a pending M-cycle).
-    mcycle_active: bool,
-    /// IE push bug: set between the high-byte and low-byte push of
-    /// interrupt dispatch. The high-byte push may have written to the
-    /// IE register at 0xFFFF, so the caller must sample IF & IE at
-    /// this point to determine the jump vector — before the low-byte
-    /// push, which must not affect the vector.
-    pending_vector_resolve: bool,
+/// The CPU's top-level execution phase. The CPU is a persistent state
+/// machine that continuously cycles through these phases, yielding one
+/// `DotAction` per dot.
+#[derive(Debug)]
+pub(in crate::game_boy) enum CpuPhase {
+    /// Generic fetch: reading opcode at [PC]. First M-cycle of every
+    /// instruction, and the last M-cycle of the previous instruction
+    /// (fetch/execute overlap on hardware).
+    Fetch,
+
+    /// Halted: spinning in fetch-like reads at [PC] without incrementing.
+    /// Exits to Execute (IME=0 wakeup) or InterruptDispatch (IME=1 wakeup).
+    Halted,
+
+    /// Fetching operand bytes and/or executing post-decode M-cycles.
+    Execute { phase: Phase, step: u8 },
+
+    /// ISR dispatch: 3 post-fetch M-cycles (M1-M3 from research doc).
+    /// M0 (the detecting fetch) already happened in Fetch phase.
+    InterruptDispatch {
+        sp: u16,
+        pc_hi: u8,
+        pc_lo: u8,
+        step: u8,
+    },
 }
 
-impl Processor {
-    /// Create a processor for a halted CPU. The CPU is idling — it
-    /// drives PC onto the address bus (one Read M-cycle) but discards
-    /// the result. Hardware ticks during this M-cycle may wake the CPU.
-    pub fn begin(cpu: &mut Cpu) -> Self {
-        debug_assert!(
-            matches!(cpu.halt_state, HaltState::Halted | HaltState::Halting),
-            "begin() called with CPU not halted — prefetched_opcode should be set"
-        );
-        Self::halted_nop(cpu.program_counter)
-    }
+// ── CPU state machine methods ───────────────────────────────────────────
 
-    /// Create a processor for a halted NOP (CPU is halted, ticks once).
-    fn halted_nop(pc: u16) -> Self {
-        Self {
-            instruction: Instruction::NoOperation,
-            step: 0,
-            phase: Phase::HaltedNop { fetch_pc: pc },
-            scratch: 0,
-            dot: BusDot::ZERO,
-            current_action: None,
-            mcycle_active: false,
-            pending_vector_resolve: false,
-        }
-    }
-
-    /// Create a processor that skips the opcode read M-cycle.
-    /// The opcode has already been fetched; the Processor starts at the
-    /// point where it would consume `read_value` as the opcode byte.
-    pub fn fetch_with_opcode(cpu: &mut Cpu, opcode: u8) -> Self {
-        let mut proc = Self {
-            instruction: Instruction::NoOperation,
-            step: 1,
-            phase: Phase::Fetch {
-                pc: cpu.program_counter,
-                bytes: [0; 3],
-                bytes_read: 0,
-                bytes_needed: 0,
-            },
-            scratch: 0,
-            dot: BusDot::ZERO,
-            current_action: None,
-            mcycle_active: false,
-            pending_vector_resolve: false,
-        };
-        proc.current_action = proc.next_mcycle(opcode, cpu);
-        if proc.current_action.is_some() {
-            proc.mcycle_active = true;
-        }
-        proc
-    }
-
-    /// Create a processor for hardware interrupt dispatch.
+impl Cpu {
+    /// Advance one dot (T-cycle). Returns a `DotAction` that the executor
+    /// must handle (tick hardware, perform bus operations).
     ///
-    /// The jump vector is not resolved here — it is deferred until after
-    /// the high-byte push via `take_pending_vector_resolve()`, because
-    /// the push may land on the IE register at 0xFFFF and alter which
-    /// interrupt is triggered (IE push bug).
-    pub fn interrupt(cpu: &mut Cpu) -> Self {
-        cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
-        cpu.ei_delay = None;
-        cpu.halt_state = HaltState::Running;
-
-        let pc = cpu.program_counter;
-        let pc_hi = (pc >> 8) as u8;
-        let pc_lo = (pc & 0xff) as u8;
-        let sp = cpu.stack_pointer;
-
-        Self {
-            instruction: Instruction::NoOperation,
-            step: 0,
-            phase: Phase::InterruptDispatch { sp, pc_hi, pc_lo },
-            scratch: 0,
-            dot: BusDot::ZERO,
-            current_action: None,
-            mcycle_active: false,
-            pending_vector_resolve: false,
-        }
-    }
-
-    /// Transition from fetch to execution phase after all bytes are read.
-    fn decode_and_transition(&mut self, cpu: &mut Cpu, bytes: [u8; 3], bytes_read: u8) {
-        let mut iter = bytes[..bytes_read as usize].iter().copied();
-        let instruction = Instruction::decode(&mut iter).unwrap();
-
-        let phase = match &instruction {
-            Instruction::Interrupt(InterruptInstruction::Await) => {
-                cpu.halt_state = HaltState::Halting;
-                Phase::Empty
-            }
-            Instruction::Stop => {
-                cpu.halt_state = HaltState::Halting;
-                Phase::Empty
-            }
-            Instruction::Invalid(op) => panic!("Invalid instruction {:02x}", op),
-
-            Instruction::NoOperation => Phase::Empty,
-            Instruction::DecimalAdjustAccumulator => {
-                Self::apply_daa(cpu);
-                Phase::Empty
-            }
-            Instruction::CarryFlag(cf) => {
-                Self::apply_carry_flag(cpu, cf);
-                Phase::Empty
-            }
-            Instruction::Interrupt(instr) => {
-                Self::apply_interrupt_instruction(cpu, instr);
-                Phase::Empty
-            }
-
-            Instruction::Load(load) => Self::build_load(cpu, load),
-            Instruction::Arithmetic(arith) => Self::build_arithmetic(cpu, arith),
-            Instruction::Bitwise(bw) => Self::build_bitwise(cpu, bw),
-            Instruction::BitShift(bs) => Self::build_bit_shift(cpu, bs),
-            Instruction::BitFlag(bf) => Self::build_bit_flag(cpu, bf),
-            Instruction::Jump(j) => Self::build_jump(cpu, j),
-            Instruction::Stack(s) => Self::build_stack(cpu, s),
-        };
-
-        self.instruction = instruction;
-        self.phase = phase;
-        self.step = 0;
-    }
-
-    /// Advance one M-cycle. Returns `None` when instruction is complete.
-    /// `read_value` is the byte read during the previous cycle's `BusAction::Read`.
-    fn next_mcycle(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<BusAction> {
-        let step = self.step;
-        self.step += 1;
-
-        match &mut self.phase {
-            Phase::Fetch {
-                pc,
-                bytes,
-                bytes_read,
-                bytes_needed,
-            } => {
-                if step == 0 {
-                    // First M-cycle: read opcode
-                    Some(BusAction::Read { address: *pc })
-                } else if *bytes_read == 0 {
-                    // Opcode just read — store it and determine operand count
-                    bytes[0] = read_value;
-                    *bytes_read = 1;
-                    if cpu.halt_bug {
-                        cpu.halt_bug = false;
-                    } else {
-                        *pc += 1;
-                    }
-                    cpu.program_counter = *pc;
-                    *bytes_needed = 1 + operand_count(bytes[0]);
-                    if *bytes_read >= *bytes_needed {
-                        // No operands — decode and transition
-                        let b = *bytes;
-                        let n = *bytes_read;
-                        self.decode_and_transition(cpu, b, n);
-                        // Check HALT bug after decode
-                        self.check_halt_bug_after_decode(cpu);
-                        // Return first M-cycle of execution phase (or None if Empty)
-                        self.step = 0;
-                        self.next_mcycle(0, cpu)
-                    } else {
-                        // Read next operand byte
-                        Some(BusAction::Read { address: *pc })
-                    }
-                } else {
-                    // Operand byte just read
-                    bytes[*bytes_read as usize] = read_value;
-                    *bytes_read += 1;
-                    *pc += 1;
-                    cpu.program_counter = *pc;
-                    if *bytes_read >= *bytes_needed {
-                        // All bytes read — decode and transition
-                        let b = *bytes;
-                        let n = *bytes_read;
-                        self.decode_and_transition(cpu, b, n);
-                        self.check_halt_bug_after_decode(cpu);
-                        self.step = 0;
-                        self.next_mcycle(0, cpu)
-                    } else {
-                        // Read next operand byte
-                        Some(BusAction::Read { address: *pc })
-                    }
-                }
-            }
-
-            Phase::Empty => None,
-
-            Phase::HaltedNop { fetch_pc } => match step {
-                0 => Some(BusAction::Read { address: *fetch_pc }),
-                _ => None,
-            },
-
-            Phase::ReadOp { address, action } => match step {
-                0 => Some(BusAction::Read { address: *address }),
-                1 => {
-                    Self::apply_read_action(cpu, action, read_value);
-                    None
-                }
-                _ => None,
-            },
-
-            Phase::ReadModifyWrite { address, op } => {
-                let address = *address;
-                match step {
-                    0 => Some(BusAction::Read { address }),
-                    1 => {
-                        let result = Self::apply_rmw(cpu, op, read_value);
-                        Some(BusAction::Write {
-                            address,
-                            value: result,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-
-            Phase::WriteOp {
-                address,
-                value,
-                hl_post,
-            } => match step {
-                0 => {
-                    if *hl_post != 0 {
-                        let hl = cpu.get_register16(Register16::Hl);
-                        cpu.set_register16(Register16::Hl, hl.wrapping_add(*hl_post as u16));
-                    }
-                    Some(BusAction::Write {
-                        address: *address,
-                        value: *value,
-                    })
-                }
-                _ => None,
-            },
-
-            Phase::Write16 { address, lo, hi } => {
-                let address = *address;
-                match step {
-                    0 => Some(BusAction::Write {
-                        address,
-                        value: *lo,
-                    }),
-                    1 => Some(BusAction::Write {
-                        address: address.wrapping_add(1),
-                        value: *hi,
-                    }),
-                    _ => None,
-                }
-            }
-
-            Phase::InternalOp { count } => {
-                if step < *count {
-                    Some(BusAction::Internal)
-                } else {
-                    None
-                }
-            }
-
-            Phase::InternalOamBug { address } => match step {
-                0 => Some(BusAction::InternalOamBug { address: *address }),
-                _ => None,
-            },
-
-            Phase::Pop { sp, action } => {
-                let sp = *sp;
-                match step {
-                    0 => Some(BusAction::Read { address: sp }),
-                    1 => {
-                        self.scratch = read_value;
-                        Some(BusAction::Read {
-                            address: sp.wrapping_add(1),
-                        })
-                    }
-                    2 => {
-                        Self::apply_pop(cpu, action, self.scratch, read_value, sp);
-                        let has_trailing =
-                            matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
-                        if has_trailing {
-                            Some(BusAction::Internal)
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            }
-
-            Phase::Push { sp, hi, lo } => {
-                let sp = *sp;
-                match step {
-                    0 => Some(BusAction::InternalOamBug { address: sp }),
-                    1 => {
-                        // First decrement: SP-1, write high byte
-                        let addr = sp.wrapping_sub(1);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *hi,
-                        })
-                    }
-                    2 => {
-                        // Second decrement: SP-2, write low byte
-                        let addr = sp.wrapping_sub(2);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *lo,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-
-            Phase::CondJump { taken } => match step {
-                0 if *taken => Some(BusAction::Internal),
-                _ => None,
-            },
-
-            Phase::CondCall { taken, sp, hi, lo } => {
-                if !*taken {
-                    return None;
-                }
-                let sp = *sp;
-                match step {
-                    0 => Some(BusAction::InternalOamBug { address: sp }),
-                    1 => {
-                        let addr = sp.wrapping_sub(1);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *hi,
-                        })
-                    }
-                    2 => {
-                        let addr = sp.wrapping_sub(2);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *lo,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-
-            Phase::CondReturn { taken, sp, action } => {
-                let sp = *sp;
-                let taken = *taken;
-                match step {
-                    0 => Some(BusAction::Internal),
-                    1 if !taken => None,
-                    1 => Some(BusAction::Read { address: sp }),
-                    2 => {
-                        self.scratch = read_value;
-                        Some(BusAction::Read {
-                            address: sp.wrapping_add(1),
-                        })
-                    }
-                    3 => {
-                        Self::apply_pop(cpu, action, self.scratch, read_value, sp);
-                        Some(BusAction::Internal)
-                    }
-                    _ => None,
-                }
-            }
-
-            Phase::InterruptDispatch { sp, pc_hi, pc_lo } => {
-                let sp = *sp;
-                match step {
-                    0 => {
-                        let pc = (*pc_hi as u16) << 8 | *pc_lo as u16;
-                        Some(BusAction::InternalOamBug { address: pc })
-                    }
-                    1 => Some(BusAction::InternalOamBug { address: sp }),
-                    2 => {
-                        let addr = sp.wrapping_sub(1);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *pc_hi,
-                        })
-                    }
-                    3 => {
-                        // IE push bug: the vector must be resolved after
-                        // the high-byte push (step 2) but before this
-                        // low-byte push. The high-byte write may have
-                        // landed on IE at 0xFFFF.
-                        self.pending_vector_resolve = true;
-                        let addr = sp.wrapping_sub(2);
-                        cpu.stack_pointer = addr;
-                        Some(BusAction::Write {
-                            address: addr,
-                            value: *pc_lo,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-        }
-    }
-
-    /// HALT bug: if HALT was just executed with IME=0 and an interrupt
-    /// is already pending, the CPU doesn't truly halt. It resumes
-    /// immediately but fails to increment PC on the next opcode fetch.
-    ///
-    /// Called after decode when the instruction set `cpu.halted = true`.
-    fn check_halt_bug_after_decode(&self, _cpu: &mut Cpu) {
-        // This is checked by the execute loop which has access to the
-        // interrupt registers. The Processor just sets halted; the
-        // execute loop detects halted + pending interrupt and sets
-        // halt_bug or rewinds PC as appropriate.
-    }
-
-    /// Advance one dot (T-cycle). Returns `None` when the instruction
-    /// is complete.
-    ///
-    /// Each M-cycle is expanded into 4 dots with bus operations at the
-    /// hardware-correct position:
-    /// - **Read**:     `[Idle, Idle, Idle, Read]`
-    /// - **Write**:    `[Idle, Idle, DriveBus, Write]`
-    /// - **Internal**: `[Idle, Idle, Idle, Idle]`
-    /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
-    ///
-    /// `read_value` is consumed at the start of a new M-cycle (dot 0)
-    /// when the previous M-cycle was a Read.
-    pub fn next_dot(&mut self, read_value: u8, cpu: &mut Cpu) -> Option<DotAction> {
-        // At the start of a new M-cycle, fetch the next BusAction
+    /// The CPU is a continuous state machine — this method always returns
+    /// a `DotAction`. When an instruction completes, the boundary flag is
+    /// set and the first dot of the next instruction is deferred to the
+    /// next call.
+    pub fn next_dot(&mut self, read_value: u8) -> DotAction {
+        // At the start of a new M-cycle, fetch the next BusAction.
+        // The CPU always chains into the next M-cycle (enter_fetch chains
+        // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
-            self.current_action = self.next_mcycle(read_value, cpu);
-            if self.current_action.is_none() {
-                return None;
-            }
+            let action = self
+                .next_mcycle(read_value)
+                .expect("next_mcycle must always return Some (CPU chains at boundaries)");
+            self.current_action = Some(action);
             self.dot = BusDot::ZERO;
             self.mcycle_active = true;
         }
 
         let dot = self.dot;
+        self.last_dot = dot;
         self.dot = if dot.boga() {
             BusDot::ZERO
         } else {
@@ -776,7 +354,6 @@ impl Processor {
         };
 
         let result = match &self.current_action {
-            // Read: data capture at BOGA (M-cycle boundary, dot 3)
             Some(BusAction::Read { address }) => {
                 if dot.boga() {
                     DotAction::Read { address: *address }
@@ -784,19 +361,13 @@ impl Processor {
                     DotAction::Idle
                 }
             }
-            // Write: drive data at BUDE (dot 2), latch at AFAS falling (dot 3)
             Some(BusAction::Write { address, value }) => {
                 if dot.bude() && !dot.afas_falling() {
-                    // Dot 2: BUDE rises (phase E), write data appears on bus.
-                    // PPU register DFF8 cells enter their transitional
-                    // `old | new` state; the master-slave delay resolves
-                    // on the next tick_latches call (dot 3).
                     DotAction::DriveBus {
                         address: *address,
                         value: *value,
                     }
                 } else if dot.afas_falling() {
-                    // Dot 3: AFAS falls at G->H, register DFFs latch
                     DotAction::Write {
                         address: *address,
                         value: *value,
@@ -805,7 +376,6 @@ impl Processor {
                     DotAction::Idle
                 }
             }
-            // OAM bug: IDU address on bus at BOWA
             Some(BusAction::InternalOamBug { address }) => {
                 if dot.bowa() {
                     DotAction::InternalOamBug { address: *address }
@@ -821,26 +391,675 @@ impl Processor {
             self.mcycle_active = false;
         }
 
-        Some(result)
+        result
     }
 
-    /// If the current M-cycle has an IDU address on the bus (from an
-    /// `InternalOamBug` action), returns that address for OAM bug write
-    /// corruption.
-    pub fn oam_bug_address(&self) -> Option<u16> {
-        match &self.current_action {
-            Some(BusAction::InternalOamBug { address }) => Some(*address),
-            _ => None,
+    /// Get the next M-cycle's bus action. Returns `None` at an
+    /// instruction boundary (the CPU has entered Fetch but the fetch
+    /// M-cycle should be deferred to the next `next_dot` call).
+    fn next_mcycle(&mut self, read_value: u8) -> Option<BusAction> {
+        match self.phase_tag() {
+            PhaseTag::Fetch => self.mcycle_fetch(read_value),
+            PhaseTag::Halted => self.mcycle_halted(read_value),
+            PhaseTag::Execute => self.mcycle_execute(read_value),
+            PhaseTag::InterruptDispatch => self.mcycle_isr(read_value),
         }
     }
 
-    /// IE push bug: consume the pending vector resolution request.
+    fn phase_tag(&self) -> PhaseTag {
+        match &self.phase {
+            CpuPhase::Fetch => PhaseTag::Fetch,
+            CpuPhase::Halted => PhaseTag::Halted,
+            CpuPhase::Execute { .. } => PhaseTag::Execute,
+            CpuPhase::InterruptDispatch { .. } => PhaseTag::InterruptDispatch,
+        }
+    }
+
+    /// Fetch phase: single M-cycle reading opcode at [PC].
+    /// Returns `None` when the fetched instruction has no post-decode
+    /// M-cycles (e.g., NOP) — the instruction completes immediately.
+    fn mcycle_fetch(&mut self, read_value: u8) -> Option<BusAction> {
+        let step = self.exec_step;
+        self.exec_step += 1;
+
+        if step == 0 {
+            // Emit the fetch read
+            Some(BusAction::Read {
+                address: self.program_counter,
+            })
+        } else {
+            // Opcode received — check for HALT entry first
+            if self.halt_state == HaltState::Halting {
+                // HALT was decoded in the previous instruction. The
+                // fetch we just completed was the dummy fetch (read [PC]
+                // without incrementing). Transition to Halted.
+                self.halt_state = HaltState::Halted;
+                self.phase = CpuPhase::Halted;
+                self.exec_step = 0;
+                // Promote interrupt latch at Halted entry
+                self.interrupt_latch.promote();
+                // Signal boundary and chain into the first halted NOP.
+                self.boundary_flag = true;
+                return self.mcycle_halted(0);
+            }
+
+            // Promote interrupt latch: Fresh -> Ready
+            self.interrupt_latch.promote();
+
+            // Check for interrupt dispatch
+            if self.interrupt_latch.take_ready().is_some() {
+                // Interrupt detected — enter ISR dispatch.
+                // PC stays at pre-fetch value (not incremented).
+                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                self.ei_delay = None;
+
+                let pc = self.program_counter;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.pending_vector_resolve = false;
+                return self.mcycle_isr(0);
+            }
+
+            // Normal opcode consumption — increment PC (with halt_bug check)
+            let opcode = read_value;
+            if self.halt_bug {
+                self.halt_bug = false;
+            } else {
+                self.program_counter = self.program_counter.wrapping_add(1);
+            }
+
+            let needed = operand_count(opcode);
+            if needed == 0 {
+                // No operands — decode immediately
+                let bytes = [opcode, 0, 0];
+                self.decode_and_transition(bytes, 1);
+                self.exec_step = 0;
+                self.mcycle_execute(0)
+            } else {
+                // Need operand bytes — enter Execute with Operands phase
+                self.phase = CpuPhase::Execute {
+                    phase: Phase::Operands {
+                        pc: self.program_counter,
+                        bytes: [opcode, 0, 0],
+                        bytes_read: 1,
+                        bytes_needed: 1 + needed,
+                    },
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.mcycle_execute(0)
+            }
+        }
+    }
+
+    /// Halted phase: emit Read at [PC] without incrementing.
+    /// Returns `None` at instruction boundaries (still-halted or wakeup
+    /// completion) to defer the next M-cycle to the next `next_dot` call.
+    fn mcycle_halted(&mut self, read_value: u8) -> Option<BusAction> {
+        let step = self.exec_step;
+        self.exec_step += 1;
+
+        if step == 0 {
+            // Before emitting the halted NOP read, check if an interrupt
+            // is already Ready. In the old code, promote + take_ready
+            // happened at the top of step_instruction before any halted
+            // NOP dots. This avoids running 4 extra dots when an interrupt
+            // is already pending at the boundary.
+            self.interrupt_latch.promote();
+
+            if self.interrupt_latch.take_ready().is_some() {
+                // IME=1 wakeup without halted NOP. The interrupt was
+                // already Ready at entry — dispatch ISR immediately.
+                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                self.ei_delay = None;
+                self.halt_state = HaltState::Running;
+
+                let pc = self.program_counter;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.pending_vector_resolve = false;
+                return self.mcycle_isr(0);
+            }
+
+            if self.halt_state == HaltState::Running {
+                // IME=0 wakeup detected before halted NOP started.
+                // Transition to Fetch to process the first instruction.
+                self.phase = CpuPhase::Fetch;
+                self.exec_step = 0;
+                return self.mcycle_fetch(0);
+            }
+
+            // No interrupt pending — emit the halted read.
+            Some(BusAction::Read {
+                address: self.program_counter,
+            })
+        } else {
+            // Halted read complete — check for wakeup.
+            self.exec_step = 0;
+            self.boundary_flag = true;
+
+            if self.interrupt_latch.take_ready().is_some() {
+                // IME=1 wakeup: the halted read's M-cycle served as
+                // the wakeup NOP. Transition to InterruptDispatch.
+                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                self.ei_delay = None;
+                self.halt_state = HaltState::Running;
+
+                let pc = self.program_counter;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.pending_vector_resolve = false;
+                return self.mcycle_isr(0);
+            }
+
+            if self.halt_state == HaltState::Running {
+                // IME=0 wakeup: halt_wakeup_check already set Running.
+                // The halted read's value IS the opcode. Transition to
+                // Execute, treating it as a fetch.
+                let opcode = read_value;
+                if self.halt_bug {
+                    self.halt_bug = false;
+                } else {
+                    self.program_counter = self.program_counter.wrapping_add(1);
+                }
+
+                let needed = operand_count(opcode);
+                if needed == 0 {
+                    let bytes = [opcode, 0, 0];
+                    self.decode_and_transition(bytes, 1);
+                    return self.mcycle_execute(0);
+                } else {
+                    self.phase = CpuPhase::Execute {
+                        phase: Phase::Operands {
+                            pc: self.program_counter,
+                            bytes: [opcode, 0, 0],
+                            bytes_read: 1,
+                            bytes_needed: 1 + needed,
+                        },
+                        step: 0,
+                    };
+                    return self.mcycle_execute(0);
+                }
+            }
+
+            // Still halted — advance EI delay, start next halted NOP
+            self.advance_ei_delay();
+            Some(BusAction::Read {
+                address: self.program_counter,
+            })
+        }
+    }
+
+    /// Execute phase: operand reading and post-decode M-cycles.
     ///
-    /// During interrupt dispatch, the high-byte push (to `[SP-1]`) may
-    /// land on the IE register at 0xFFFF. The hardware samples IF & IE
-    /// after this write but before the low-byte push to determine the
-    /// jump vector. Returns `true` exactly once, at the M-cycle
-    /// boundary between the two push writes.
+    /// Returns `None` when the instruction is complete (the CPU has
+    /// transitioned to Fetch). Returns `Some(action)` for in-progress
+    /// M-cycles.
+    ///
+    /// Uses `std::mem::replace` to take the phase out, avoiding
+    /// simultaneous borrows of `self.phase` and `&mut self`.
+    fn mcycle_execute(&mut self, read_value: u8) -> Option<BusAction> {
+        // Take the phase out to avoid borrow conflicts.
+        let taken = std::mem::replace(&mut self.phase, CpuPhase::Fetch);
+        let (mut phase, mut step) = match taken {
+            CpuPhase::Execute { phase, step } => (phase, step),
+            _ => unreachable!("mcycle_execute called outside Execute phase"),
+        };
+
+        let current_step = step;
+        step += 1;
+
+        let (action, put_back) = self.execute_phase_step(&mut phase, current_step, read_value);
+
+        if put_back {
+            self.phase = CpuPhase::Execute { phase, step };
+        }
+
+        action
+    }
+
+    /// Process one M-cycle step of the Execute phase. Returns `(action, put_back)`:
+    /// - `Some(action)` for an in-progress M-cycle, `None` for instruction completion.
+    /// - `put_back = true` means the phase should be stored back in self.phase.
+    fn execute_phase_step(
+        &mut self,
+        phase: &mut Phase,
+        current_step: u8,
+        read_value: u8,
+    ) -> (Option<BusAction>, bool) {
+        match phase {
+            Phase::Operands {
+                pc,
+                bytes,
+                bytes_read,
+                bytes_needed,
+            } => {
+                if current_step == 0 && *bytes_read < *bytes_needed {
+                    return (Some(BusAction::Read { address: *pc }), true);
+                }
+
+                // Operand byte just read
+                bytes[*bytes_read as usize] = read_value;
+                *bytes_read += 1;
+                *pc = pc.wrapping_add(1);
+                self.program_counter = *pc;
+
+                if *bytes_read >= *bytes_needed {
+                    let b = *bytes;
+                    let n = *bytes_read;
+                    self.decode_and_transition(b, n);
+                    if let CpuPhase::Execute { step, .. } = &mut self.phase {
+                        *step = 0;
+                    }
+                    let action = self.mcycle_execute(0);
+                    return (action, false);
+                }
+
+                (Some(BusAction::Read { address: *pc }), true)
+            }
+
+            Phase::Empty => (Some(self.enter_fetch()), false),
+
+            Phase::ReadOp { address, action } => match current_step {
+                0 => (Some(BusAction::Read { address: *address }), true),
+                _ => {
+                    Self::apply_read_action(self, action, read_value);
+                    (Some(self.enter_fetch()), false)
+                }
+            },
+
+            Phase::ReadModifyWrite { address, op } => {
+                let address = *address;
+                match current_step {
+                    0 => (Some(BusAction::Read { address }), true),
+                    1 => {
+                        let result = Self::apply_rmw(self, op, read_value);
+                        (
+                            Some(BusAction::Write {
+                                address,
+                                value: result,
+                            }),
+                            true,
+                        )
+                    }
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+
+            Phase::WriteOp {
+                address,
+                value,
+                hl_post,
+            } => match current_step {
+                0 => {
+                    if *hl_post != 0 {
+                        let hl = self.get_register16(Register16::Hl);
+                        self.set_register16(Register16::Hl, hl.wrapping_add(*hl_post as u16));
+                    }
+                    (
+                        Some(BusAction::Write {
+                            address: *address,
+                            value: *value,
+                        }),
+                        true,
+                    )
+                }
+                _ => (Some(self.enter_fetch()), false),
+            },
+
+            Phase::Write16 { address, lo, hi } => {
+                let address = *address;
+                match current_step {
+                    0 => (
+                        Some(BusAction::Write {
+                            address,
+                            value: *lo,
+                        }),
+                        true,
+                    ),
+                    1 => (
+                        Some(BusAction::Write {
+                            address: address.wrapping_add(1),
+                            value: *hi,
+                        }),
+                        true,
+                    ),
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+
+            Phase::InternalOp { count } => {
+                if current_step < *count {
+                    (Some(BusAction::Internal), true)
+                } else {
+                    (Some(self.enter_fetch()), false)
+                }
+            }
+
+            Phase::InternalOamBug { address } => match current_step {
+                0 => (Some(BusAction::InternalOamBug { address: *address }), true),
+                _ => (Some(self.enter_fetch()), false),
+            },
+
+            Phase::Pop { sp, action } => {
+                let sp = *sp;
+                match current_step {
+                    0 => (Some(BusAction::Read { address: sp }), true),
+                    1 => {
+                        self.scratch = read_value;
+                        (
+                            Some(BusAction::Read {
+                                address: sp.wrapping_add(1),
+                            }),
+                            true,
+                        )
+                    }
+                    2 => {
+                        Self::apply_pop(self, action, self.scratch, read_value, sp);
+                        let has_trailing =
+                            matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
+                        if has_trailing {
+                            (Some(BusAction::Internal), true)
+                        } else {
+                            (Some(self.enter_fetch()), false)
+                        }
+                    }
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+
+            Phase::Push { sp, hi, lo } => {
+                let sp = *sp;
+                match current_step {
+                    0 => (Some(BusAction::InternalOamBug { address: sp }), true),
+                    1 => {
+                        let addr = sp.wrapping_sub(1);
+                        self.stack_pointer = addr;
+                        (
+                            Some(BusAction::Write {
+                                address: addr,
+                                value: *hi,
+                            }),
+                            true,
+                        )
+                    }
+                    2 => {
+                        let addr = sp.wrapping_sub(2);
+                        self.stack_pointer = addr;
+                        (
+                            Some(BusAction::Write {
+                                address: addr,
+                                value: *lo,
+                            }),
+                            true,
+                        )
+                    }
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+
+            Phase::CondJump { taken } => {
+                if current_step == 0 && *taken {
+                    (Some(BusAction::Internal), true)
+                } else {
+                    (Some(self.enter_fetch()), false)
+                }
+            }
+
+            Phase::CondCall { taken, sp, hi, lo } => {
+                if !*taken {
+                    return (Some(self.enter_fetch()), false);
+                }
+                let sp = *sp;
+                match current_step {
+                    0 => (Some(BusAction::InternalOamBug { address: sp }), true),
+                    1 => {
+                        let addr = sp.wrapping_sub(1);
+                        self.stack_pointer = addr;
+                        (
+                            Some(BusAction::Write {
+                                address: addr,
+                                value: *hi,
+                            }),
+                            true,
+                        )
+                    }
+                    2 => {
+                        let addr = sp.wrapping_sub(2);
+                        self.stack_pointer = addr;
+                        (
+                            Some(BusAction::Write {
+                                address: addr,
+                                value: *lo,
+                            }),
+                            true,
+                        )
+                    }
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+
+            Phase::CondReturn { taken, sp, action } => {
+                let sp = *sp;
+                let taken = *taken;
+                match current_step {
+                    0 => (Some(BusAction::Internal), true),
+                    1 if !taken => (Some(self.enter_fetch()), false),
+                    1 => (Some(BusAction::Read { address: sp }), true),
+                    2 => {
+                        self.scratch = read_value;
+                        (
+                            Some(BusAction::Read {
+                                address: sp.wrapping_add(1),
+                            }),
+                            true,
+                        )
+                    }
+                    3 => {
+                        Self::apply_pop(self, action, self.scratch, read_value, sp);
+                        (Some(BusAction::Internal), true)
+                    }
+                    _ => (Some(self.enter_fetch()), false),
+                }
+            }
+        }
+    }
+
+    /// ISR dispatch: 3 post-fetch M-cycles.
+    fn mcycle_isr(&mut self, _read_value: u8) -> Option<BusAction> {
+        let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
+            CpuPhase::InterruptDispatch {
+                sp,
+                pc_hi,
+                pc_lo,
+                step,
+            } => (*sp, *pc_hi, *pc_lo, step),
+            _ => unreachable!("mcycle_isr called outside InterruptDispatch phase"),
+        };
+
+        let current_step = *step;
+        *step += 1;
+
+        match current_step {
+            0 => Some(BusAction::InternalOamBug { address: sp }),
+            1 => {
+                let addr = sp.wrapping_sub(1);
+                self.stack_pointer = addr;
+                Some(BusAction::Write {
+                    address: addr,
+                    value: pc_hi,
+                })
+            }
+            2 => {
+                // IE push bug: the vector must be resolved after the
+                // high-byte push (step 1) but before this low-byte push.
+                self.pending_vector_resolve = true;
+                let addr = sp.wrapping_sub(2);
+                self.stack_pointer = addr;
+                Some(BusAction::Write {
+                    address: addr,
+                    value: pc_lo,
+                })
+            }
+            3 => {
+                // ISR complete — transition to Fetch at the vector address.
+                Some(self.enter_fetch())
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Transition from fetch to execution phase after all bytes are read.
+    fn decode_and_transition(&mut self, bytes: [u8; 3], bytes_read: u8) {
+        let mut iter = bytes[..bytes_read as usize].iter().copied();
+        let instruction = Instruction::decode(&mut iter).unwrap();
+
+        let phase = match &instruction {
+            Instruction::Interrupt(InterruptInstruction::Await) => {
+                self.halt_state = HaltState::Halting;
+                Phase::Empty
+            }
+            Instruction::Stop => {
+                self.halt_state = HaltState::Halting;
+                Phase::Empty
+            }
+            Instruction::Invalid(op) => panic!("Invalid instruction {:02x}", op),
+
+            Instruction::NoOperation => Phase::Empty,
+            Instruction::DecimalAdjustAccumulator => {
+                Self::apply_daa(self);
+                Phase::Empty
+            }
+            Instruction::CarryFlag(cf) => {
+                Self::apply_carry_flag(self, cf);
+                Phase::Empty
+            }
+            Instruction::Interrupt(instr) => {
+                Self::apply_interrupt_instruction(self, instr);
+                Phase::Empty
+            }
+
+            Instruction::Load(load) => Self::build_load(self, load),
+            Instruction::Arithmetic(arith) => Self::build_arithmetic(self, arith),
+            Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
+            Instruction::BitShift(bs) => Self::build_bit_shift(self, bs),
+            Instruction::BitFlag(bf) => Self::build_bit_flag(self, bf),
+            Instruction::Jump(j) => Self::build_jump(self, j),
+            Instruction::Stack(s) => Self::build_stack(self, s),
+        };
+
+        self.instruction = instruction;
+        self.phase = CpuPhase::Execute { phase, step: 0 };
+    }
+
+    /// Transition to the Fetch phase, run instruction-boundary side
+    /// effects (HALT bug check, EI delay advance), signal the boundary,
+    /// and chain into the first fetch M-cycle.
+    fn enter_fetch(&mut self) -> BusAction {
+        self.phase = CpuPhase::Fetch;
+        self.exec_step = 0;
+
+        // Run HALT bug check and EI delay advance at the instruction
+        // boundary, INSIDE the CPU, so the timing is exact regardless
+        // of when the executor detects the boundary.
+        self.check_halt_bug();
+        self.advance_ei_delay();
+
+        self.boundary_flag = true;
+
+        // Chain into the first fetch M-cycle. If check_halt_bug
+        // transitioned to Halting/Halted, mcycle_fetch will handle it.
+        self.mcycle_fetch(0).expect("fetch step 0 must return Some")
+    }
+
+    /// HALT bug: if HALT was just executed with IME=0 and an interrupt
+    /// is already pending, the CPU doesn't truly halt. It resumes
+    /// immediately but fails to increment PC on the next opcode fetch.
+    fn check_halt_bug(&mut self) {
+        if !matches!(self.halt_state, HaltState::Halted | HaltState::Halting)
+            || !self.interrupt_pending
+        {
+            return;
+        }
+        if self.ei_delay == Some(EiDelay::Fired) {
+            // EI immediately before HALT: on real hardware HALT saw
+            // IME=0 (the DFF pipeline hadn't propagated yet). The halt
+            // bug triggers — PC is not incremented. But EI's IME
+            // promotion still takes effect, so the interrupt dispatches.
+            self.interrupt_master_enable = InterruptMasterEnable::Enabled;
+            self.program_counter = self.program_counter.wrapping_sub(1);
+            self.halt_state = HaltState::Running;
+            self.ei_delay = None;
+        } else if self.interrupt_master_enable == InterruptMasterEnable::Disabled {
+            self.halt_state = HaltState::Running;
+            self.halt_bug = true;
+        }
+    }
+
+    /// Advance the EI delay pipeline one stage per instruction
+    /// completion, modeling the DFF cascade from EI's decode signal
+    /// to the IME flip-flop.
+    fn advance_ei_delay(&mut self) {
+        self.ei_delay = match self.ei_delay {
+            Some(EiDelay::Pending) => Some(EiDelay::Fired),
+            Some(EiDelay::Fired) => {
+                self.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                None
+            }
+            None => None,
+        };
+    }
+
+    /// The dot position that produced the last `DotAction`. The executor
+    /// needs this to check timing signals (boga, bowa, mopa) for hardware
+    /// tick ordering and OAM bug timing.
+    pub fn dot_for_execute(&self) -> BusDot {
+        self.last_dot
+    }
+
+    /// Check and consume the instruction boundary flag. Returns true
+    /// if the CPU transitioned to the Fetch phase since the last check.
+    pub fn take_instruction_boundary(&mut self) -> bool {
+        if self.boundary_flag {
+            self.boundary_flag = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if the CPU is at an instruction boundary without consuming it.
+    pub fn at_instruction_boundary(&self) -> bool {
+        self.boundary_flag
+    }
+
+    /// IE push bug: consume the pending vector resolution request.
     pub fn take_pending_vector_resolve(&mut self) -> bool {
         if self.pending_vector_resolve {
             self.pending_vector_resolve = false;
@@ -849,4 +1068,41 @@ impl Processor {
             false
         }
     }
+
+    /// Update the interrupt latch based on externally-provided trigger state.
+    /// Called every dot by the executor after both phases have ticked.
+    pub fn update_interrupt_state(
+        &mut self,
+        triggered: Option<super::super::interrupts::Interrupt>,
+    ) {
+        self.interrupt_pending = triggered.is_some();
+
+        self.interrupt_latch = match self.interrupt_master_enable {
+            InterruptMasterEnable::Enabled => match triggered {
+                Some(interrupt) => match self.interrupt_latch {
+                    InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
+                    _ if self.halt_state == HaltState::Halted => InterruptLatch::Ready(interrupt),
+                    _ => InterruptLatch::Fresh(interrupt),
+                },
+                None => InterruptLatch::Empty,
+            },
+            InterruptMasterEnable::Disabled => InterruptLatch::Empty,
+        };
+
+        // IME=0 halt wakeup
+        if self.halt_state == HaltState::Halted
+            && self.interrupt_master_enable == InterruptMasterEnable::Disabled
+            && triggered.is_some()
+        {
+            self.halt_state = HaltState::Running;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PhaseTag {
+    Fetch,
+    Halted,
+    Execute,
+    InterruptDispatch,
 }

@@ -9,16 +9,13 @@ use pixel_pipeline::{FramePhase, Rendering};
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
-pub use pixel_pipeline::{
-    FetcherStep, FetcherTick, PipelineSnapshot, RenderPhase, SpriteFetchPhase,
-};
+pub use pixel_pipeline::{FetcherStep, PipelineSnapshot, RenderPhase, SpriteFetchPhase};
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
 pub struct PpuTickResult {
     pub screen: Option<Screen>,
     pub request_vblank: bool,
-    pub request_stat: bool,
 }
 
 pub mod control;
@@ -73,11 +70,10 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: internal line 153, dot 400, VBlank.
+            // Post-boot PPU state: internal line 153, dot 396, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
-            // Gambatte uses 396, but test evidence shows 400 (4 dots later).
             video: VideoControl {
-                dot: 400,
+                dot: 396,
                 ly: 153,
                 lyc: 0,
                 ly_match_pending: true,
@@ -191,14 +187,12 @@ impl Ppu {
                 }
             }
             Register::Control => {
-                if is_drawing {
-                    self.registers.control_latch.write_propagating(value);
-                    false
-                } else {
-                    self.write_register_immediate(&register, value);
-                    self.registers.control_latch.write_immediate(value);
-                    false
-                }
+                // LCDC uses combinational reads on hardware — the fetcher's
+                // VRAM address logic reads reg_new.reg_lcdc with zero delay
+                // after the DFF9 latches. No propagation delay needed.
+                self.write_register_immediate(&register, value);
+                self.registers.control_latch.write_immediate(value);
+                false
             }
             Register::BackgroundViewportY => {
                 if is_drawing {
@@ -323,13 +317,13 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Falling edge phase (DELTA_EVEN): LCD initialization and DFF8 palette
-    /// latch advance.
+    /// Rising edge (DELTA_ODD): DFF8 palette latch advance, LCD
+    /// initialization, pixel output pipeline (SACU, pipe shift).
     ///
-    /// DFF8 palette latches tick here (before the pipeline) so the pipeline
-    /// sees the transitional old|new value on the write dot. DFF9 register
-    /// latches tick after the pipeline in `tcycle_rising`.
-    pub fn tcycle_falling(&mut self, _vram: &Vram) {
+    /// DFF8 palette latches tick first so the pipeline sees the
+    /// transitional old|new value on the write dot, matching DFF8
+    /// master-slave transparency.
+    pub fn tcycle_rising(&mut self, vram: &Vram) {
         if !self.control().video_enabled() {
             return;
         }
@@ -343,33 +337,32 @@ impl Ppu {
 
         // Advance DFF8 palette latches before pixel output.
         self.registers.tick_palette_latches();
+
+        // Pixel output, SACU, pipe shift.
+        if let Some(pipeline) = self.pixel_pipeline.as_mut() {
+            pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
+        }
     }
 
-    /// Rising edge phase (DELTA_ODD): pixel output, counter increment,
-    /// M-cycle-rate interrupt edge detection and LYC comparison.
-    ///
-    /// Internally runs the pixel pipeline in hardware order: rising phase
-    /// first (pixel output, WODU), then falling phase (fetcher control,
-    /// VOGA/mode transitions). This matches the DMG's rising-before-falling
-    /// ordering within each dot.
-    pub fn tcycle_rising(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade DFFs,
+    /// TYFA), DFF9 resolve, dot advance, scanline boundary, VBlank/STAT
+    /// interrupt edge detection, LCD-off handling.
+    pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
-            request_stat: false,
         };
 
         if self.control().video_enabled() {
             // When video is enabled but the pipeline hasn't been created yet
-            // (LCDC was just written, falling phase hasn't run), skip all
-            // work. The pipeline is initialized on the next falling phase.
+            // (LCDC was just written, rising phase hasn't run), skip all
+            // work. The pipeline is initialized on the next rising phase.
             if self.pixel_pipeline.is_none() {
                 return result;
             }
 
+            // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-                // Hardware order: rising phase first, then falling phase.
-                pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
                 pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
             }
 
@@ -417,13 +410,9 @@ impl Ppu {
                 self.video.latch_ly_comparison();
             }
 
-            // Detect rising edge of STAT interrupt line (runs every dot,
-            // matching hardware's SUKO-clocked DFF which has phase granularity)
-            let stat_line_high = self.stat_line_active();
-            if stat_line_high && !self.video.stat_line_was_high {
-                result.request_stat = true;
-            }
-            self.video.stat_line_was_high = stat_line_high;
+            // STAT edge detection moved to check_stat_edge() — called
+            // after each phase by the executor, matching hardware's
+            // combinational SUKO which fires on any phase.
         } else {
             if !is_mcycle {
                 return result;
@@ -441,13 +430,25 @@ impl Ppu {
         result
     }
 
-    /// Advance PPU by one dot. Call once per T-cycle.
+    /// Detect a rising edge on the STAT interrupt line (SUKO).
+    /// On hardware, SUKO is purely combinational — it can fire on
+    /// any phase where an enabled condition transitions from inactive
+    /// to active. The caller invokes this after each phase tick so
+    /// that edges from the rising phase (e.g. WODU/Mode 0) are not
+    /// deferred to the next falling phase.
     ///
-    /// STAT interrupt edge detection runs every dot. LYC comparison
-    /// only runs on M-cycle boundaries (when `is_mcycle` is true).
-    pub fn tcycle(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
-        self.tcycle_falling(vram);
-        self.tcycle_rising(is_mcycle, vram)
+    /// Only evaluates when the LCD is enabled. When LCD is off, SUKO's
+    /// inputs (TARU, TAPA, PARU, ROPO) retain their static values and
+    /// the latch state freezes — matching hardware where the DFF outputs
+    /// persist without a clock.
+    pub fn check_stat_edge(&mut self) -> bool {
+        if !self.control().video_enabled() {
+            return false;
+        }
+        let stat_line_high = self.stat_line_active();
+        let edge = stat_line_high && !self.video.stat_line_was_high;
+        self.video.stat_line_was_high = stat_line_high;
+        edge
     }
 
     pub fn palettes(&self) -> &Palettes {

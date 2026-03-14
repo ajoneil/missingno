@@ -7,9 +7,9 @@ use super::super::{
     },
     registers::Register16,
 };
-use super::{AluOp, Phase, PopAction, Processor, ReadAction, RmwOp};
+use super::{AluOp, Phase, PopAction, ReadAction, RmwOp};
 
-impl Processor {
+impl Cpu {
     fn resolve_address(cpu: &Cpu, address: &Address) -> u16 {
         match address {
             Address::Fixed(addr) => *addr,
@@ -418,8 +418,6 @@ impl Processor {
                 if matches!(location, jump::Location::RegisterHl) {
                     Phase::Empty
                 } else if is_relative && taken {
-                    // JR puts PC on the bus during the internal cycle,
-                    // potentially triggering the OAM corruption bug.
                     Phase::InternalOamBug { address: pc_before }
                 } else {
                     Phase::CondJump { taken }

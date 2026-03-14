@@ -1,7 +1,6 @@
 use audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
-use cpu::mcycle::{BusDot, Processor};
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -20,73 +19,6 @@ pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
-
-/// Models the sequencer DFF (g42) pipeline for interrupt dispatch.
-///
-/// On hardware, an IF flag set during M-cycle N is captured in the
-/// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. `promote()` at step entry advances
-/// Fresh→Ready. The DFF propagation delay is naturally provided by
-/// the trailing fetch (Running path) or HaltedNop (Halted path) —
-/// no separate propagation M-cycle is needed. When `take_ready()`
-/// succeeds, ISR dispatch begins immediately.
-#[derive(Clone, Copy)]
-enum InterruptLatch {
-    /// No interrupt pending in the sequencer pipeline.
-    Empty,
-    /// Interrupt captured during this step's M-cycle boundary ticks.
-    /// The DFF has latched the value but it hasn't propagated to the
-    /// dispatch output yet.
-    Fresh(interrupts::Interrupt),
-    /// Interrupt that has propagated through the DFF pipeline (carried
-    /// over from a previous step). Dispatch can consume it.
-    Ready(interrupts::Interrupt),
-}
-
-impl InterruptLatch {
-    /// Advance the DFF pipeline: Fresh becomes Ready.
-    fn promote(&mut self) {
-        if let InterruptLatch::Fresh(interrupt) = *self {
-            *self = InterruptLatch::Ready(interrupt);
-        }
-    }
-
-    /// Take the interrupt if it has propagated (Ready). Returns None
-    /// and leaves the latch unchanged for Fresh and Empty.
-    fn take_ready(&mut self) -> Option<interrupts::Interrupt> {
-        if let InterruptLatch::Ready(interrupt) = *self {
-            *self = InterruptLatch::Empty;
-            Some(interrupt)
-        } else {
-            None
-        }
-    }
-}
-
-/// Where the CPU is in its instruction execution lifecycle.
-/// Used by `step_dot()` to pause and resume between individual dots.
-enum ExecutionState {
-    /// Between instructions. The next `step_dot()` promotes the
-    /// interrupt latch and builds a new Processor.
-    Ready,
-    /// Mid-instruction: the Processor is yielding dots.
-    Running {
-        processor: Processor,
-        read_value: u8,
-        dot: BusDot,
-        pending_oam_bug: Option<execute::OamBugKind>,
-        was_halted: bool,
-    },
-    /// Instruction complete, ticking the trailing fetch (or HALT
-    /// dummy fetch). Hardware ticks for 4 dots, then a bus read.
-    TrailingFetch {
-        dot: BusDot,
-        fetch_addr: u16,
-        /// True for HALT dummy fetch: discard result, transition to
-        /// Halted. False for normal: store result as prefetched opcode.
-        halting: bool,
-    },
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BusAccessKind {
@@ -119,9 +51,8 @@ pub struct GameBoy {
     sgb: Option<sgb::Sgb>,
     vram_bus: VramBus,
 
-    prefetched_opcode: Option<u8>,
-    interrupt_latch: InterruptLatch,
-    execution: ExecutionState,
+    /// Last read value from the bus, persisted across dots for step_dot().
+    last_read_value: u8,
     bus_trace: Option<Vec<BusAccess>>,
 }
 
@@ -148,14 +79,10 @@ impl GameBoy {
             dma: Dma::new(),
             sgb,
             vram_bus: VramBus::new(),
-            prefetched_opcode: None,
-            interrupt_latch: InterruptLatch::Empty,
-            execution: ExecutionState::Ready,
+            last_read_value: 0,
             bus_trace: None,
         };
         gb.init_post_boot_vram();
-        let pc = gb.cpu.program_counter;
-        gb.prefetched_opcode = Some(gb.cpu_read(pc));
         gb
     }
 
@@ -180,10 +107,6 @@ impl GameBoy {
             None
         };
         self.init_post_boot_vram();
-        let pc = self.cpu.program_counter;
-        self.prefetched_opcode = Some(self.cpu_read(pc));
-        self.interrupt_latch = InterruptLatch::Empty;
-        self.execution = ExecutionState::Ready;
         self.bus_trace = None;
     }
 

@@ -8,7 +8,7 @@ mod shifters;
 mod sprite_fetch;
 mod window;
 
-pub use fetcher::{FetcherStep, FetcherTick};
+pub use fetcher::FetcherStep;
 pub use frame_phase::FramePhase;
 pub use sprite_fetch::SpriteFetchPhase;
 
@@ -25,7 +25,6 @@ use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
 use lcd_shift_register::LcdShiftRegister;
 use oam_scan::{OamScanner, SpriteStore};
-use pixel_output::PixelOutputSnapshot;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
 
@@ -126,7 +125,6 @@ pub struct PipelineSnapshot {
     pub sprite_tile_data: Option<(u8, u8)>,
     pub lcd_x: u8,
     pub fetcher_step: FetcherStep,
-    pub fetcher_tick: FetcherTick,
     pub rydy: bool,
     pub wusa: bool,
     pub pova: bool,
@@ -233,11 +231,6 @@ pub struct Rendering {
     /// giving a 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
     lcd_data_latch: PaletteIndex,
     /// Pixel output register snapshot — captured at the end of mode3_rising.
-    /// Models the TOBA qp_ext_old mechanism: pixel output on dot N+1 uses
-    /// palette/LCDC values snapshotted at the end of dot N's rising phase,
-    /// making CPU writes between rising and falling invisible to the current
-    /// dot's pixel output.
-    pixel_snapshot: PixelOutputSnapshot,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
     /// Window reactivation zero pixel (DMG only). Set when WX re-matches
@@ -298,13 +291,6 @@ impl Rendering {
             tyfa_bridge: false,
             lcd_shift_register: LcdShiftRegister::new(),
             lcd_data_latch: PaletteIndex(0),
-            pixel_snapshot: PixelOutputSnapshot {
-                bgp: 0xFC,
-                obp0: 0xFF,
-                obp1: 0xFF,
-                bg_window_enabled: true,
-                sprites_enabled: false,
-            },
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -344,13 +330,6 @@ impl Rendering {
             tyfa_bridge: false,
             lcd_shift_register: LcdShiftRegister::new(),
             lcd_data_latch: PaletteIndex(0),
-            pixel_snapshot: PixelOutputSnapshot {
-                bgp: 0xFC,
-                obp0: 0xFF,
-                obp1: 0xFF,
-                bg_window_enabled: true,
-                sprites_enabled: false,
-            },
             sprite_state: SpriteState::Idle,
             window_zero_pixel: false,
             wx_triggered: false,
@@ -439,7 +418,6 @@ impl Rendering {
             sprite_tile_data,
             lcd_x: self.lcd_shift_register.count(),
             fetcher_step: self.fetcher.step,
-            fetcher_tick: self.fetcher.tick,
             rydy: self.rydy,
             wusa: self.wusa,
             pova: self.pova,
@@ -847,7 +825,7 @@ impl Rendering {
                 &self.bg_shifter,
                 &self.obj_shifter,
                 &mut self.window_zero_pixel,
-                &self.pixel_snapshot,
+                regs,
             );
         }
 
@@ -862,18 +840,13 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // Forward-compute TYFA from cascade DFF state.
-        // PORY was just latched above. PYGO and POKY propagate on falling,
-        // but we can forward-compute their would-be values: if PORY is now
-        // true, PYGO would go true on the next falling, and POKY would follow.
-        let forward_pygo = self.pygo || self.pory;
-        let forward_poky = self.poky || forward_pygo;
-        let forward_tyfa =
-            !self.rydy && forward_poky && matches!(self.sprite_state, SpriteState::Idle);
-
-        // PUXA capture: ROXO fires when TYFA is active. Forward-compute
-        // TYFA so the capture sees the same-dot cascade result.
-        self.pova = if forward_tyfa {
+        // PUXA capture: ROXO fires when TYFA is active. TYFA is
+        // combinational (AND3(SOCY, POKY, VYBO)), but POKY only updates
+        // on the falling edge — PORY just latched above, but PYGO won't
+        // capture PORY until the next falling phase. Use tyfa_bridge
+        // (computed at the end of the previous falling phase) which has
+        // the correct cascade-propagated POKY value.
+        self.pova = if self.tyfa_bridge {
             self.fine_scroll.capture_rising()
         } else {
             false
@@ -907,7 +880,7 @@ impl Rendering {
                             &self.obj_shifter,
                             &mut self.lcd_data_latch,
                             &mut self.window_zero_pixel,
-                            &self.pixel_snapshot,
+                            regs,
                         );
                         self.sprite_state = SpriteState::Idle;
 
@@ -919,7 +892,7 @@ impl Rendering {
                         // another sprite matches, a new fetch begins without any
                         // pixel counter advancement. This chains all same-X
                         // sprite fetches back-to-back.
-                        self.check_sprite_trigger();
+                        self.check_sprite_trigger(regs);
                     }
                 }
             }
@@ -1016,7 +989,7 @@ impl Rendering {
                     &self.bg_shifter,
                     &self.obj_shifter,
                     &mut self.window_zero_pixel,
-                    &self.pixel_snapshot,
+                    regs,
                 );
 
                 if !toba && self.tyfa_bridge {
@@ -1028,7 +1001,7 @@ impl Rendering {
                 }
 
                 // Sprite trigger check.
-                self.check_sprite_trigger();
+                self.check_sprite_trigger(regs);
 
                 // BG fetcher advances on falling (mode3_falling).
                 // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
@@ -1085,20 +1058,13 @@ impl Rendering {
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
         self.nuko_wx = regs.window.x_plus_7.output();
-
-        // Capture pixel output snapshot for the NEXT dot's mode3_rising.
-        // Models TOBA qp_ext_old: pixel output reads the previous rising
-        // phase's register values, not the current ones. DriveBus writes
-        // that land after this capture (between rising and falling) will
-        // only be visible two dots later.
-        self.pixel_snapshot = PixelOutputSnapshot::capture(regs);
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
     /// Scans all store slots in parallel, matching the hardware's 10
     /// independent X comparators. The lowest-indexed matching slot wins.
-    fn check_sprite_trigger(&mut self) {
-        if !self.pixel_snapshot.sprites_enabled {
+    fn check_sprite_trigger(&mut self, regs: &PipelineRegisters) {
+        if !regs.control.sprites_enabled() {
             return;
         }
 
