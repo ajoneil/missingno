@@ -154,7 +154,7 @@ impl GameBoy {
         false
     }
 
-    /// Falling phase (second half of dot): DriveBus, PPU falling tick,
+    /// Falling phase (second half of dot): PPU falling tick,
     /// interrupt latch capture, bus actions.
     fn execute_falling_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let dot = self.current_dot;

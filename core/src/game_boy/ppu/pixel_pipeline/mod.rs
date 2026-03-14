@@ -50,7 +50,6 @@ impl fmt::Display for Mode {
     }
 }
 
-
 /// Within-phase snapshot of signals that are both read and written during
 /// `mode3_rising`. On hardware, combinational logic within a phase reads DFF
 /// outputs from before the clock edge (rising edge). This struct captures
