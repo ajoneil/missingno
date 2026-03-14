@@ -334,7 +334,7 @@ impl Rendering {
         match self.render_phase {
             RenderPhase::Drawing => Mode::Drawing,
             RenderPhase::OamScan => Mode::OamScan,
-            RenderPhase::LineStart if self.scanning && video.dot() >= 1 => Mode::OamScan, // sub-M-cycle check, keep dot()
+            RenderPhase::LineStart if self.scanning && (video.lx > 0 || video.wuvu) => Mode::OamScan,
             _ => Mode::HorizontalBlank,
         }
     }
@@ -370,7 +370,7 @@ impl Rendering {
         if ly == 0 {
             // Line 0: no TAPA pulse. Mode 2 interrupt fires at LX=1
             // phase 0 (dot 4), when OamScan mode activates.
-            video.lx == 1 && video.phase == 0
+            video.lx == 1 && video.talu() && !video.wuvu
         } else {
             // Lines 1-143: TAPA pulse during LX=0 (dots 0-3).
             video.lx == 0
@@ -521,7 +521,7 @@ impl Rendering {
         // released), setting BESU (scan latch) and resetting the scan
         // counter. Suppressed on the LCD turn-on first line, where hardware
         // skips OAM scan entirely and enters Mode 3 directly at dot 80.
-        if video.lx == 0 && video.phase == 1 && !self.lcd_turning_on && !self.scanning {
+        if video.lx == 0 && video.wuvu && video.vena && !self.lcd_turning_on && !self.scanning {
             self.render_phase = RenderPhase::OamScan;
             self.scanning = true;
             self.scanner.reset();
@@ -573,7 +573,7 @@ impl Rendering {
             // next and sees render_phase == Drawing, so mode3_falling
             // advances the fetcher naturally on the AVAP dot. No
             // explicit pre-advance needed.
-        } else if self.lcd_turning_on && video.lx == 20 && video.phase == 0 {
+        } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
             // LCD turn-on: Mode 0 → Mode 3 transition. Hardware transitions
             // directly to Mode 3, skipping the OAM scan. Mode 3 starts at
             // approximately dot 80, the same as normal scanlines. The video

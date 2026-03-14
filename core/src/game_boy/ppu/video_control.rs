@@ -21,10 +21,18 @@ pub struct VideoControl {
     /// SANU fires at LX=113, clocking RUTU (line-end).
     pub(super) lx: u8,
 
-    /// Sub-LX phase counter modeling WUVU/VENA divider state.
-    /// Counts 0-3 within each LX value (one increment per dot).
-    /// Phase 0 = TALU rising edge (LX increment point).
-    pub(super) phase: u8,
+    /// WUVU divide-by-2 toggle DFF (GateBoyClocks.cpp).
+    /// Clocked by XOTA (master clock rising edge, once per dot).
+    /// Self-toggles: data = WUVU.qn_old. Period = 2 dots.
+    /// High during phases A,B,E,F (`WUVU_ABxxEFxx`).
+    pub(super) wuvu: bool,
+
+    /// VENA divide-by-2 toggle DFF (GateBoyClocks.cpp).
+    /// Clocked by WUVU.qn rising edge (= WUVU falling edge).
+    /// Self-toggles: data = VENA.qn_old. Period = 4 dots = 1 M-cycle.
+    /// High during phases C,D,E,F (`VENA_xxCDEFxx`).
+    /// TALU = VENA.qp (buffered). TALU rising edge clocks LX.
+    pub(super) vena: bool,
 
     /// LY counter (MUWY-LAFO ripple counter, page 21). Clocked by RUTU
     /// at LX=113, counting 0–153 and wrapping. On line 153, MYTA
@@ -54,11 +62,16 @@ pub struct VideoControl {
 }
 
 impl VideoControl {
-    /// Scanline dot position, computed from LX and phase.
-    /// Returns 0-455 on normal lines, 0-447 on the first line after LCD-on
-    /// (which starts at LX=2).
-    pub fn dot(&self) -> u32 {
-        self.lx as u32 * 4 + self.phase as u32
+    /// TALU signal: buffered VENA.qp. High during phases C,D,E,F.
+    /// TALU rising edge clocks LX, ROPO, and NYPE.
+    pub fn talu(&self) -> bool {
+        self.vena
+    }
+
+    /// XUPY signal: buffered WUVU.qp. High during phases A,B,E,F.
+    /// Clocks OAM scan counter (via GAVA), BYBA/CATU pipeline DFFs.
+    pub fn xupy(&self) -> bool {
+        self.wuvu
     }
 
     /// CPU-visible LY value. On line 153, MYTA (frame-end DFF clocked
@@ -90,33 +103,40 @@ impl VideoControl {
         self.ly_match_pending = self.ly == self.lyc;
     }
 
-    /// Advance the scanline by one dot. Returns true at scanline boundary
-    /// (LX wraps 113->0 at the end of the final phase).
+    /// Advance the scanline by one dot = one XOTA rising edge.
+    /// Toggles WUVU, cascades to VENA, cascades to LX on TALU rising.
+    /// Returns true at scanline boundary (LX wraps 113→0).
     pub fn advance_dot(&mut self) -> bool {
-        self.phase += 1;
+        let wuvu_was = self.wuvu;
 
-        if self.phase < 4 {
-            return false;
-        }
+        // WUVU DFF17: clocked by XOTA (every dot), self-toggles.
+        self.wuvu = !self.wuvu;
 
-        // Phase wrapped 3->0: TALU rising edge, increment LX.
-        self.phase = 0;
-        self.lx += 1;
+        // VENA DFF17: clocked by WUVU.qn rising = WUVU.qp falling.
+        if wuvu_was && !self.wuvu {
+            let talu_was = self.vena;
+            self.vena = !self.vena;
 
-        // RUTU fires when LX reaches 113 (SANU comparator).
-        // Clock the LY ripple counter.
-        if self.lx == 113 {
-            if self.ly >= 153 {
-                self.ly = 0;
-            } else {
-                self.ly += 1;
+            // TALU = VENA.qp. LX clocked on TALU rising edge.
+            if !talu_was && self.vena {
+                self.lx += 1;
+
+                // SANU fires at LX=113, clocking RUTU (line-end).
+                // RUTU clocks the LY ripple counter.
+                if self.lx == 113 {
+                    if self.ly >= 153 {
+                        self.ly = 0;
+                    } else {
+                        self.ly += 1;
+                    }
+                }
+
+                // Line end: LX reaches 114, wrap to 0.
+                if self.lx >= 114 {
+                    self.lx = 0;
+                    return true;
+                }
             }
-        }
-
-        // Line end: LX reaches 114, wrap to 0.
-        if self.lx >= 114 {
-            self.lx = 0;
-            return true;
         }
 
         false

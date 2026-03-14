@@ -70,13 +70,13 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: internal line 153, dot 400, VBlank.
+            // Post-boot PPU state: internal line 153, LX=100, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
-            // Gambatte uses 396, but test evidence shows 400 (4 dots later).
-            // dot 400 = lx 100, phase 0.
+            // WUVU/VENA at TALU-rising state (LX just incremented).
             video: VideoControl {
                 lx: 100,
-                phase: 0,
+                wuvu: false,
+                vena: true,
                 ly: 153,
                 lyc: 0,
                 ly_match_pending: true,
@@ -90,8 +90,8 @@ impl Ppu {
         }
     }
 
-    pub fn dot(&self) -> u32 {
-        self.video.dot()
+    pub fn lx(&self) -> u8 {
+        self.video.lx
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
@@ -341,7 +341,9 @@ impl Ppu {
             // perspective, giving 444 + 8 skipped = ~448 total dots for the first
             // scanline as seen by the CPU.
             self.video.lx = 2;
-            self.video.phase = 0;
+            // WUVU/VENA start at qp=false after VID_RST deasserts.
+            self.video.wuvu = false;
+            self.video.vena = false;
             self.video.write_ly(0);
             self.pixel_pipeline = Some(FramePhase::new_lcd_on());
         }
@@ -408,7 +410,8 @@ impl Ppu {
             // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
             // not at the scanline boundary (dot 0).
             if self.video.lx == 1
-                && self.video.phase == 0
+                && self.video.talu()
+                && !self.video.wuvu
                 && self.video.ly() == 144
                 && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
             {
