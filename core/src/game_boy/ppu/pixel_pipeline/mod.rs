@@ -9,7 +9,7 @@ mod pixel_output;
 mod shifters;
 mod sprite_fetch;
 mod sprite_scanner;
-mod window;
+mod window_control;
 
 pub use fetcher::FetcherStep;
 pub use frame_phase::FramePhase;
@@ -30,6 +30,7 @@ use lcd_control::LcdControl;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
 use sprite_scanner::SpriteScanner;
+use window_control::WindowControl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -95,7 +96,6 @@ pub struct PipelineSnapshot {
 
 pub struct Rendering {
     pub(super) screen: Screen,
-    window_line_counter: u8,
     /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
     /// The STAT mode bits read as 0 until Mode 2 actually starts.
     pub(super) lcd_turning_on: bool,
@@ -107,8 +107,6 @@ pub struct Rendering {
     /// Sprite scanner — scan counter, scanning latch, BYBA/DOBA pipeline,
     /// and the sprite store that bridges Mode 2 and Mode 3.
     scan: SpriteScanner,
-    /// Whether the window has been rendered on this line.
-    window_rendered: bool,
     /// Background pixel shift register (page 32).
     bg_shifter: BgShifter,
     /// Sprite pixel shift register (pages 33-34).
@@ -121,16 +119,9 @@ pub struct Rendering {
     /// Fine scroll counter and pixel clock gate (ROXY). Gates the pixel
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
-    /// RYDY NOR latch — window hit signal. When high, gates TYFA
-    /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
-    /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. SET directly by check_window_trigger,
-    /// CLEAR by PORY (NYKA/PORY cascade after fetcher completes).
-    ///
-    /// 1-dot delay: check_window_trigger sets self.rydy at the end of
-    /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The snapshot on
-    /// the NEXT dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
-    rydy: bool,
+    /// Window control block (die page 27): RYDY latch, WX comparator,
+    /// window line counter, window zero pixel.
+    window: WindowControl,
     /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
     /// falling phases (ALET). Captures WODU from the previous rising phase.
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
@@ -144,79 +135,46 @@ pub struct Rendering {
     /// LCD Control block (die page 24): pixel X counter, LCD clock
     /// gating (WUSA), POVA trigger, LCD shift register, data latch.
     lcd: LcdControl,
-    /// Pixel output register snapshot — captured at the end of mode3_rising.
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
-    /// Window reactivation zero pixel (DMG only). Set when WX re-matches
-    /// while the window is active with specific fetcher/FIFO conditions.
-    /// Causes the next pixel output to use bg_color=0 without popping
-    /// the BG shifter. The OBJ shifter is popped normally.
-    window_zero_pixel: bool,
-    /// WX comparator suppression latch. Models the hardware behavior where
-    /// the RYDY latch prevents the WX comparator (PYCO) from re-firing
-    /// after the window has already triggered on this scanline. Cleared
-    /// when WX is written mid-scanline, allowing reactivation with a new
-    /// WX value.
-    wx_triggered: bool,
-    /// Last observed WX output value, used to detect mid-scanline WX changes
-    /// that should clear the wx_triggered latch.
-    last_wx_value: u8,
-    /// Cached WX value for the NUKO comparator. On hardware, NUKO reads
-    /// the DFF8 slave output, which lags the master by one clock edge.
-    /// Updated unconditionally at the end of every mode3_rising from the
-    /// live DFF output. check_window_trigger reads this instead of the
-    /// live register, providing a 1-dot lag on mid-scanline WX writes.
-    nuko_wx: u8,
 }
 
 impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
             screen: Screen::new(),
-            window_line_counter: 0,
             lcd_turning_on: false,
             xymu: false,
             scan: SpriteScanner::new(),
-            window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
-            rydy: false,
+            window: WindowControl::new(),
             voga: false,
             tyfa_bridge: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            window_zero_pixel: false,
-            wx_triggered: false,
-            last_wx_value: 0xFF,
-            nuko_wx: 0xFF,
         }
     }
 
     fn new_lcd_on() -> Self {
         Rendering {
             screen: Screen::new(),
-            window_line_counter: 0,
             lcd_turning_on: true,
             xymu: false,
             scan: SpriteScanner::new(),
-            window_rendered: false,
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
             fetcher: TileFetcher::new(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
-            rydy: false,
+            window: WindowControl::new(),
             voga: false,
             tyfa_bridge: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            window_zero_pixel: false,
-            wx_triggered: false,
-            last_wx_value: 0xFF,
-            nuko_wx: 0xFF,
         }
     }
 
@@ -299,12 +257,12 @@ impl Rendering {
             sprite_tile_data,
             lcd_x: self.lcd.lcd_x(),
             fetcher_step: self.fetcher.step,
-            rydy: self.rydy,
+            rydy: self.window.rydy(),
             wusa: self.lcd.wusa(),
             pova: self.lcd.pova(),
             pygo: self.cascade.pygo(),
             poky: self.cascade.poky(),
-            wx_triggered: self.wx_triggered,
+            wx_triggered: self.window.wx_triggered(),
             wuvu: video.xupy(),
             byba: self.scan.byba(),
             doba: self.scan.doba(),
@@ -368,12 +326,12 @@ impl Rendering {
             // AVAP fires: Mode 2 → Mode 3 transition. Set XYMU.
             self.xymu = true;
             self.lcd_turning_on = false;
-            self.nuko_wx = regs.window.x_plus_7.output();
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
         } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
             // LCD turn-on: Mode 0 → Mode 3 transition. Set XYMU.
             self.xymu = true;
             self.lcd_turning_on = false;
-            self.nuko_wx = regs.window.x_plus_7.output();
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
         }
 
         if self.scan.scanning() {
@@ -428,26 +386,18 @@ impl Rendering {
     /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.xymu = false;
-        if self.window_rendered {
-            self.window_line_counter += 1;
-        }
         self.scan.reset();
-        self.window_rendered = false;
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
         self.cascade.reset();
         self.fine_scroll = FineScroll::new();
-        self.rydy = false;
+        self.window.reset_scanline();
 
         self.voga = false;
         self.tyfa_bridge = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
-        self.window_zero_pixel = false;
-        self.wx_triggered = false;
-        self.last_wx_value = 0xFF;
-        self.nuko_wx = 0xFF;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -477,7 +427,7 @@ impl Rendering {
         if !sprite_data_fetch {
             self.fetcher.advance(
                 self.lcd.pixel_counter(),
-                self.window_line_counter,
+                self.window.window_line_counter(),
                 regs,
                 video,
                 vram,
@@ -528,7 +478,7 @@ impl Rendering {
         // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
         // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
         self.tyfa_bridge = match self.sprite_state {
-            SpriteState::Idle => !self.rydy && self.cascade.poky(),
+            SpriteState::Idle => !self.window.rydy() && self.cascade.poky(),
             _ => false,
         };
 
@@ -553,7 +503,7 @@ impl Rendering {
         // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
         // `inputs`; all mutations go to `self`.
         let inputs = RisingPhaseInputs {
-            rydy: self.rydy,
+            rydy: self.window.rydy(),
             pixel_counter: self.lcd.pixel_counter(),
         };
 
@@ -569,9 +519,7 @@ impl Rendering {
         // the pre-clear RYDY value (captured on falling). SUZU fires for
         // exactly one half-cycle when RYDY transitions 1→0, triggering
         // TEVO (pipe load + fine counter reset).
-        if self.cascade.pory() && self.rydy {
-            self.rydy = false;
-
+        if self.window.clear_rydy_on_pory(self.cascade.pory()) {
             // SUZU → TEVO → NYXU: load window tile data into pipe.
             self.fetcher.load_into(&mut self.bg_shifter);
 
@@ -583,7 +531,7 @@ impl Rendering {
             self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
-                &mut self.window_zero_pixel,
+                self.window.window_zero_pixel_mut(),
                 regs,
             ));
         }
@@ -638,7 +586,7 @@ impl Rendering {
                             &self.bg_shifter,
                             &self.obj_shifter,
                             self.lcd.data_latch_mut(),
-                            &mut self.window_zero_pixel,
+                            self.window.window_zero_pixel_mut(),
                             regs,
                         );
                         self.sprite_state = SpriteState::Idle;
@@ -702,7 +650,7 @@ impl Rendering {
                 let pixel = pixel_output::resolve_current_pixel(
                     &self.bg_shifter,
                     &self.obj_shifter,
-                    &mut self.window_zero_pixel,
+                    self.window.window_zero_pixel_mut(),
                     regs,
                 );
                 let toba = self.lcd.rise(sacu, pixel, pova);
@@ -712,7 +660,7 @@ impl Rendering {
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window
                     // zero pixel is consumed even when SACU/TOBA don't fire.
-                    self.window_zero_pixel = false;
+                    self.window.consume_window_zero_pixel();
                 }
 
                 // Sprite trigger check.
@@ -748,19 +696,13 @@ impl Rendering {
         // fetch, pixel_counter is frozen, so the match just re-checks
         // the same value each dot.
         let pygo = self.cascade.pygo();
-        window::check_window_trigger(
+        self.window.check_trigger(
             inputs.rydy,
-            &mut self.rydy,
             &mut self.fetcher,
             &mut self.cascade,
-            &mut self.bg_shifter,
+            &self.bg_shifter,
             &mut self.fine_scroll,
-            &mut self.window_zero_pixel,
-            &mut self.wx_triggered,
-            &mut self.window_rendered,
             inputs.pixel_counter,
-            &mut self.last_wx_value,
-            self.nuko_wx,
             pygo,
             regs,
             video,
@@ -771,7 +713,7 @@ impl Rendering {
         // the DFF output even during sprite fetch. On hardware, the
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
-        self.nuko_wx = regs.window.x_plus_7.output();
+        self.window.update_nuko_wx(regs.window.x_plus_7.output());
     }
 
     /// Check if a sprite should start fetching at the current pixel position.
