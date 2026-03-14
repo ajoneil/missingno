@@ -72,17 +72,25 @@ pub(super) struct OamScanner {
     /// the current entry for comparison. Range 0-39, frozen at 39
     /// once FETO fires.
     entry: u8,
+    /// Models GAVA held high by FETO (OR gate output latched). Once
+    /// FETO fires (counter == 39), GAVA stays permanently high — no
+    /// more rising edges reach the counter, freezing it.
+    frozen: bool,
 }
 
 impl OamScanner {
     pub(super) fn new() -> Self {
-        Self { entry: 0 }
+        Self {
+            entry: 0,
+            frozen: false,
+        }
     }
 
     /// Reset the scan counter to 0 (ANOM_LINE_RST). Called at scanline
     /// boundaries — the counter is never destroyed, just reset.
     pub(super) fn reset(&mut self) {
         self.entry = 0;
+        self.frozen = false;
     }
 
     /// Process one scan tick. On hardware, GAVA clocks the counter
@@ -123,10 +131,17 @@ impl OamScanner {
             }
         }
 
-        // Counter increment (GAVA), gated by FETO. When the counter
-        // reaches 39, FETO holds GAVA high — no more rising edges,
-        // counter frozen. The comparison above still ran for entry 39.
-        if !self.scan_done() {
+        // GAVA freeze: once FETO fires, latch frozen=true so the
+        // counter never increments again this scanline. On hardware,
+        // FETO feeds back into GAVA's OR gate, holding the clock high.
+        if self.scan_done() {
+            self.frozen = true;
+        }
+
+        // Counter increment (GAVA), gated by frozen. Once FETO has
+        // fired and set frozen=true, no more rising edges reach the
+        // counter — it stays at 39 for the rest of the scanline.
+        if !self.frozen {
             self.entry += 1;
         }
     }

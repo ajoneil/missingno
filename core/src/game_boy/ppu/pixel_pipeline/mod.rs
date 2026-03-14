@@ -466,6 +466,12 @@ impl Rendering {
         // ATEJ resets the counter at the same moment CATU fires. Ticking
         // first with the pre-reset counter is a no-op (counter is stale
         // from previous line), then CATU resets it.
+        // Capture FETO *before* the scanner tick. On hardware, BYBA's DFF
+        // reads FETO_old (the value from the previous phase). Since we
+        // evaluate in one pass, reading scan_done() before tick() models
+        // the DFF's pre-edge capture behavior.
+        let feto_old = self.scanner.scan_done();
+
         if self.scanning && xupy_rising {
             self.scanner.tick(video.ly(), &mut self.sprites, regs, oam);
         }
@@ -481,12 +487,9 @@ impl Rendering {
             self.scanner.reset();
         }
 
-        // FETO_SCAN_DONE: combinational AND4 of scan counter bits 0,1,2,5.
-        let feto = self.scanner.scan_done();
-
-        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
+        // BYBA_SCAN_DONEp_odd: capture pre-tick FETO on XUPY rising edge.
         if xupy_rising {
-            self.byba = feto;
+            self.byba = feto_old;
         }
 
         // AVAP: combinational scan-done trigger.
