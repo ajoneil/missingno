@@ -103,6 +103,13 @@ impl VideoControl {
         self.ly_match_pending = self.ly == self.lyc;
     }
 
+    /// Whether the PPU is in VBlank (lines 144-153). Derived from the
+    /// internal line counter, not the CPU-visible LY (which reads 0 on
+    /// line 153 due to MYTA early reset).
+    pub fn in_vblank(&self) -> bool {
+        self.ly >= 144
+    }
+
     /// One XOTA rising edge: toggles WUVU, cascades to VENA, cascades
     /// to LX on TALU rising. Returns true at scanline boundary (LX
     /// wraps 113→0). Called once per dot by the executor, independent

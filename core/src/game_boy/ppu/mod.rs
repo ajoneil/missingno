@@ -5,7 +5,7 @@ use sprites::{Sprite, SpriteId};
 use control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
 use palette::Palettes;
-use pixel_pipeline::{FramePhase, Rendering};
+use pixel_pipeline::Rendering;
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
@@ -47,7 +47,12 @@ pub enum Register {
 }
 
 pub struct Ppu {
-    pixel_pipeline: Option<FramePhase>,
+    /// Pixel pipeline state. None = LCD off (VID_RST asserted, circuits
+    /// held in reset). Some = LCD on — the pipeline persists through both
+    /// active display and VBlank, matching hardware where these circuits
+    /// are always present. VBlank vs active display is derived from
+    /// `video.in_vblank()`.
+    pixel_pipeline: Option<Rendering>,
     registers: PipelineRegisters,
     video: VideoControl,
     pub(super) oam: Oam,
@@ -86,7 +91,9 @@ impl Ppu {
                 stat_line_was_high: false,
             },
             oam: Oam::new(),
-            pixel_pipeline: Some(FramePhase::VerticalBlank),
+            // Pipeline persists through VBlank — video.ly=153 means
+            // in_vblank() is true, so pipeline ticking is gated off.
+            pixel_pipeline: Some(Rendering::new()),
         }
     }
 
@@ -98,10 +105,13 @@ impl Ppu {
         match register {
             Register::Control => self.registers.control.bits(),
             Register::Status => {
-                let mode = if let Some(ppu) = &self.pixel_pipeline {
-                    ppu.stat_mode(&self.video) as u8
-                } else {
-                    0
+                let mode = match &self.pixel_pipeline {
+                    Some(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank as u8,
+                    Some(rendering) if !self.video.in_vblank() => {
+                        rendering.stat_mode(&self.video) as u8
+                    }
+                    Some(_) => Mode::VerticalBlank as u8,
+                    None => 0,
                 };
                 let line_compare = if self.video.ly_eq_lyc() {
                     0b00000100
@@ -168,10 +178,7 @@ impl Ppu {
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
-        let is_drawing = self
-            .pixel_pipeline
-            .as_ref()
-            .map_or(false, |p| p.is_rendering());
+        let is_drawing = self.is_rendering();
 
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
@@ -243,35 +250,39 @@ impl Ppu {
     }
 
     pub fn mode(&self) -> pixel_pipeline::Mode {
-        if let Some(ppu) = &self.pixel_pipeline {
-            ppu.mode(&self.video)
-        } else {
-            pixel_pipeline::Mode::VerticalBlank
+        match &self.pixel_pipeline {
+            Some(rendering) if !self.video.in_vblank() => rendering.mode(&self.video),
+            Some(_) => Mode::VerticalBlank,
+            None => Mode::VerticalBlank,
         }
     }
 
     pub fn oam_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map_or(false, |ppu| ppu.oam_locked())
+        match &self.pixel_pipeline {
+            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.oam_locked(),
+            _ => false,
+        }
     }
 
     pub fn vram_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map_or(false, |ppu| ppu.vram_locked())
+        match &self.pixel_pipeline {
+            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.vram_locked(),
+            _ => false,
+        }
     }
 
     pub fn oam_write_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map_or(false, |ppu| ppu.oam_write_locked())
+        match &self.pixel_pipeline {
+            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.oam_write_locked(),
+            _ => false,
+        }
     }
 
     pub fn vram_write_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map_or(false, |ppu| ppu.vram_write_locked())
+        match &self.pixel_pipeline {
+            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.vram_write_locked(),
+            _ => false,
+        }
     }
 
     pub fn control(&self) -> Control {
@@ -279,27 +290,44 @@ impl Ppu {
     }
 
     pub fn is_rendering(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map_or(false, |p| p.is_rendering())
+        match &self.pixel_pipeline {
+            Some(r) if !self.video.in_vblank() => r.xymu,
+            _ => false,
+        }
     }
 
     fn stat_line_active(&self) -> bool {
-        let ppu = match &self.pixel_pipeline {
-            Some(ppu) => ppu,
+        let rendering = match &self.pixel_pipeline {
+            Some(r) => r,
             None => return false,
         };
 
-        let mode = ppu.interrupt_mode(&self.video);
+        let in_vblank = self.video.in_vblank();
+
+        // Interrupt mode: during LCD startup, suppress all STAT conditions
+        // by reporting Drawing (no STAT enable bit for Drawing).
+        // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
+        let mode = if rendering.lcd_turning_on {
+            Mode::Drawing
+        } else if in_vblank && self.video.ly() == 144 && self.video.lx == 0 {
+            Mode::HorizontalBlank
+        } else {
+            self.mode()
+        };
+
+        // Mode 2 interrupt active: during LCD startup or VBlank, never.
+        // Otherwise delegate to the rendering pipeline's TAPA signal.
+        let mode2_active = if rendering.lcd_turning_on || in_vblank {
+            false
+        } else {
+            rendering.mode2_interrupt_active(&self.video)
+        };
 
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts.
-        let vblank_line_144 = matches!(ppu, FramePhase::VerticalBlank)
-            && self.video.ly() == 144
-            && self.video.lx == 0;
+        let vblank_line_144 =
+            in_vblank && self.video.ly() == 144 && self.video.lx == 0;
 
-        // Mode 0 interrupt fires on the actual mode transition, not the
-        // early stat_mode prediction (which is only for STAT register reads).
         (self
             .video
             .stat_flags
@@ -311,7 +339,7 @@ impl Ppu {
                 .contains(InterruptFlags::VERTICAL_BLANK)
                 && mode == Mode::VerticalBlank)
             || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
-                && (ppu.mode2_interrupt_active(&self.video) || vblank_line_144))
+                && (mode2_active || vblank_line_144))
             || (self
                 .video
                 .stat_flags
@@ -345,15 +373,17 @@ impl Ppu {
             self.video.wuvu = false;
             self.video.vena = false;
             self.video.write_ly(0);
-            self.pixel_pipeline = Some(FramePhase::new_lcd_on());
+            self.pixel_pipeline = Some(Rendering::new_lcd_on());
         }
 
         // Advance DFF8 palette latches before pixel output.
         self.registers.tick_palette_latches();
 
-        // Pixel output, SACU, pipe shift.
-        if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-            pipeline.tcycle_rising(&self.registers, &self.video, &self.oam, vram);
+        // Pixel output, SACU, pipe shift — only during active display.
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            if !self.video.in_vblank() {
+                rendering.half_rising(&self.registers, &self.video, &self.oam, vram);
+            }
         }
     }
 
@@ -380,21 +410,19 @@ impl Ppu {
 
         if self.video.tick_xota() {
             // Scanline boundary — LX wrapped to 0.
-            match self.pixel_pipeline.as_mut() {
-                Some(FramePhase::ActiveDisplay(rendering)) => {
-                    if self.video.ly() == screen::NUM_SCANLINES {
-                        result.screen = Some(rendering.screen.clone());
-                        self.pixel_pipeline = Some(FramePhase::VerticalBlank);
-                    } else {
-                        rendering.reset_scanline(self.video.ly());
-                    }
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                let ly = self.video.ly();
+                if ly == screen::NUM_SCANLINES {
+                    // Line 144: extract completed frame, enter VBlank.
+                    // Pipeline persists — circuits are idle, not destroyed.
+                    result.screen = Some(rendering.screen.clone());
+                } else if self.video.ly == 0 {
+                    // Line 0: VBlank → Active Display. Reset for new frame.
+                    rendering.reset_frame();
+                } else if !self.video.in_vblank() {
+                    // Lines 1-143: per-scanline reset.
+                    rendering.reset_scanline(ly);
                 }
-                Some(FramePhase::VerticalBlank) => {
-                    if self.video.ly == 0 {
-                        self.pixel_pipeline = Some(FramePhase::ActiveDisplay(Rendering::new()));
-                    }
-                }
-                None => {}
             }
         }
 
@@ -404,7 +432,8 @@ impl Ppu {
             && self.video.talu()
             && !self.video.wuvu
             && self.video.ly() == 144
-            && matches!(self.pixel_pipeline, Some(FramePhase::VerticalBlank))
+            && self.video.in_vblank()
+            && self.pixel_pipeline.is_some()
         {
             result.request_vblank = true;
         }
@@ -436,8 +465,11 @@ impl Ppu {
             }
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
-            if let Some(pipeline) = self.pixel_pipeline.as_mut() {
-                pipeline.tcycle_falling(&self.registers, &self.video, &self.oam, vram);
+            // Only during active display — pipeline is idle in VBlank.
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                if !self.video.in_vblank() {
+                    rendering.half_falling(&self.registers, &self.video, &self.oam, vram);
+                }
             }
 
             // Advance DFF9 register latches after the pipeline so it reads
@@ -494,8 +526,11 @@ impl Ppu {
     }
 
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
-        self.pixel_pipeline
-            .as_ref()
-            .and_then(|p| p.pipeline_state(&self.video))
+        match &self.pixel_pipeline {
+            Some(rendering) if !self.video.in_vblank() => {
+                Some(rendering.pipeline_state(&self.video))
+            }
+            _ => None,
+        }
     }
 }

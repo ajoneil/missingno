@@ -1,7 +1,6 @@
 mod fetch_cascade;
 mod fetcher;
 mod fine_scroll;
-mod frame_phase;
 mod lcd_control;
 mod lcd_shift_register;
 mod oam_scan;
@@ -12,7 +11,6 @@ mod sprite_scanner;
 mod window_control;
 
 pub use fetcher::FetcherStep;
-pub use frame_phase::FramePhase;
 pub use sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
@@ -159,7 +157,7 @@ impl Rendering {
         }
     }
 
-    fn new_lcd_on() -> Self {
+    pub(super) fn new_lcd_on() -> Self {
         Rendering {
             screen: Screen::new(),
             lcd_turning_on: true,
@@ -186,7 +184,7 @@ impl Rendering {
         self.xymu && self.lcd.xugu() && !fepo
     }
 
-    fn mode(&self, _video: &VideoControl) -> Mode {
+    pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
         if self.scan.scanning() {
             Mode::OamScan
         } else if self.xymu && !self.wodu() {
@@ -200,7 +198,7 @@ impl Rendering {
     /// Scanning maps to mode 2 via the BESU/ACYL signal path.
     /// TARU (mode 0 condition) reads WODU combinationally — STAT sees
     /// mode 0 on the same phase that WODU fires, before VOGA captures.
-    fn stat_mode(&self, _video: &VideoControl) -> Mode {
+    pub(super) fn stat_mode(&self, _video: &VideoControl) -> Mode {
         if self.scan.scanning() {
             Mode::OamScan
         } else if self.xymu && !self.wodu() {
@@ -219,7 +217,7 @@ impl Rendering {
     ///
     /// Line 0 has no RUTU pulse (suppressed by first_line). The mode 2
     /// interrupt on line 0 fires at dot 4 through a separate path.
-    fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
+    pub(super) fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
         let ly = video.ly();
 
         if ly == 0 {
@@ -269,22 +267,22 @@ impl Rendering {
         }
     }
 
-    fn oam_locked(&self) -> bool {
+    pub(super) fn oam_locked(&self) -> bool {
         // Hardware: OAM blocked by ACYL (scanning) or XYMU (rendering).
         self.scan.scanning() || self.xymu
     }
 
-    fn vram_locked(&self) -> bool {
+    pub(super) fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp.
         self.xymu
     }
 
-    fn oam_write_locked(&self) -> bool {
+    pub(super) fn oam_write_locked(&self) -> bool {
         // Hardware: OAM writes blocked by ACYL (scanning) or XYMU (rendering).
         self.scan.scanning() || self.xymu
     }
 
-    fn vram_write_locked(&self) -> bool {
+    pub(super) fn vram_write_locked(&self) -> bool {
         // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
         self.xymu
     }
@@ -400,6 +398,17 @@ impl Rendering {
         self.sprite_state = SpriteState::Idle;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
+    }
+
+    /// Reset for a new frame (VBlank → Active Display transition at LY=0).
+    /// Resets the screen buffer and window line counter, then performs the
+    /// standard per-scanline reset for line 0. On hardware, the circuits
+    /// persist through VBlank — this models the frame-boundary resets that
+    /// individual blocks perform, not struct destruction/recreation.
+    pub(super) fn reset_frame(&mut self) {
+        self.screen = Screen::new();
+        self.window.reset_frame();
+        self.reset_scanline(0);
     }
 
     /// Falling edge Mode 3 processing.

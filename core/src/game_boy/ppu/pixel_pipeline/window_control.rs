@@ -186,6 +186,12 @@ impl WindowControl {
         self.window_rendered = true;
     }
 
+    /// Reset for a new frame. Zeroes the window line counter (WLY),
+    /// which accumulates across scanlines but resets at frame start.
+    pub(super) fn reset_frame(&mut self) {
+        self.window_line_counter = 0;
+    }
+
     /// Reset per-scanline state.
     pub(super) fn reset_scanline(&mut self) {
         if self.window_rendered {
