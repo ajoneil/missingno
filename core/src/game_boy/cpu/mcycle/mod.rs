@@ -507,22 +507,11 @@ impl Cpu {
             // won't be promoted until the next iteration's step 0.
             self.interrupt_latch.promote();
 
-            // Emit the halted read (wakeup NOP).
-            Some(BusAction::Read {
-                address: self.program_counter,
-            })
-        } else {
-            // Halted read complete — check for wakeup.
-            self.exec_step = 0;
-            self.boundary_flag = true;
-
-            // No promote here — promotion happens at step 0 of the next
-            // halted NOP, ensuring a full M-cycle of ticking between
-            // the interrupt-setting event and dispatch.
-
+            // Co-located with promote: check for IME=1 wakeup immediately,
+            // before emitting the Read. This matches the Running path where
+            // promote and take_ready are co-located at mcycle_fetch step 1
+            // with zero dots between them.
             if self.interrupt_latch.take_ready().is_some() {
-                // IME=1 wakeup: the halted read's M-cycle served as
-                // the wakeup NOP. Transition to InterruptDispatch.
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
@@ -538,9 +527,22 @@ impl Cpu {
                     pc_lo,
                     step: 0,
                 };
+                self.exec_step = 0;
+                self.boundary_flag = true;
                 self.pending_vector_resolve = false;
                 return self.mcycle_isr(0);
             }
+
+            // No interrupt pending — emit the halted read (wakeup NOP).
+            Some(BusAction::Read {
+                address: self.program_counter,
+            })
+        } else {
+            // Halted read complete — check for wakeup.
+            // IME=1 wakeup is handled at step 0 (co-located with promote).
+            // Only IME=0 wakeup and still-halted paths remain here.
+            self.exec_step = 0;
+            self.boundary_flag = true;
 
             if self.halt_state == HaltState::Running {
                 // IME=0 wakeup: halt_wakeup_check already set Running.
