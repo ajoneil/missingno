@@ -270,9 +270,10 @@ impl Rendering {
     /// (NYKA, POKY), mode transitions (VOGA/WEGO clearing XYMU), fine
     /// scroll match (PUXA), and window WX match (PYCO).
     ///
-    /// XUPY derives from WUVU, which is clocked by XOTA rising (= our
-    /// falling phase). tick_xota() runs before tcycle_falling() in the
-    /// executor, so video.xupy() reflects the post-toggle state here.
+    /// XUPY derives from WUVU, which is clocked by XOTA rising (H→A
+    /// boundary). tick_xota() runs in the Rising phase, before
+    /// tcycle_falling() in the Falling phase, so video.xupy() reflects
+    /// the post-toggle state here.
     pub(super) fn fall(
         &mut self,
         regs: &PipelineRegisters,

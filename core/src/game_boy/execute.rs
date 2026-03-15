@@ -210,9 +210,9 @@ impl GameBoy {
         // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
         self.ppu.tcycle_rising(&self.vram_bus.vram);
 
-        // Rising half-phase of the XOTA divider chain: toggles WUVU/VENA,
-        // increments LX, detects scanline boundaries, VBlank IF, LYC.
-        let xota_result = self.ppu.tick_xota_rising(is_mcycle_boundary);
+        // XOTA rising edge (H→A boundary): toggles WUVU/VENA, increments
+        // LX, detects scanline boundaries, VBlank IF, LYC comparison.
+        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
         if xota_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -238,23 +238,6 @@ impl GameBoy {
     /// DFF9 resolve, LCD-off handling, and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
-
-        // Falling half-phase of the XOTA divider chain. No-op — dividers
-        // are clocked on the rising half-phase (tick_dot_rising).
-        let xota_result = self.ppu.tick_xota_falling(is_mcycle_boundary);
-        if xota_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        if let Some(screen) = xota_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
-            }
-            self.screen = screen;
-            new_screen = true;
-        }
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
 
         // PPU falling phase: fetcher, DFF9, LCD-off.
         let video_result = self
