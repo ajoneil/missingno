@@ -17,10 +17,10 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter at 0xABCC (matching DMG post-boot DIV).
+    /// Post-boot state: internal counter at 0xABCA (matching DMG post-boot DIV).
     pub fn new() -> Self {
         Self {
-            internal_counter: 0xABCC,
+            internal_counter: 0xABCA,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),

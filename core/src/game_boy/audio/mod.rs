@@ -55,7 +55,7 @@ impl Audio {
             volume_right: Volume::max(),
             nr50: 0x77,
 
-            prev_div_apu_bit: true, // matches initial internal_counter (0xABCC) bit 12
+            prev_div_apu_bit: true, // matches initial internal_counter (0xABCA) bit 12
             frame_sequencer_step: 0,
             sample_counter: 0.0,
             sample_buffer: Vec::new(),

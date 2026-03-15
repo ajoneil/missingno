@@ -28,7 +28,7 @@ impl Registers {
             control: Control::from_bits_retain(0x7e),
             bits_remaining: 0,
             serial_clock: false,
-            previous_counter: 0xABCC,
+            previous_counter: 0xABCA,
             output: Vec::new(),
         }
     }
