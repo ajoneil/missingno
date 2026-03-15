@@ -17,9 +17,22 @@ pub struct Timers {
 }
 
 impl Timers {
+    /// Post-boot state: internal counter at 0xABCC (matching DMG post-boot DIV).
     pub fn new() -> Self {
         Self {
             internal_counter: 0xABCC,
+            counter: 0,
+            modulo: 0,
+            control: Control(0xf8),
+            overflow_pending: false,
+            reloading: false,
+        }
+    }
+
+    /// Power-on state: everything zeroed, counter starts at 0.
+    pub fn power_on() -> Self {
+        Self {
+            internal_counter: 0,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),

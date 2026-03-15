@@ -62,6 +62,26 @@ impl Audio {
         }
     }
 
+    /// Power-on state: audio disabled, all registers zeroed.
+    pub fn power_on() -> Self {
+        Self {
+            enabled: false,
+            channels: Channels {
+                ch1: PulseSweepChannel::default(),
+                ch2: PulseChannel::default(),
+                ch3: WaveChannel::default(),
+                ch4: NoiseChannel::default(),
+            },
+            volume_left: Volume(0),
+            volume_right: Volume(0),
+            nr50: 0x00,
+            prev_div_apu_bit: false, // internal_counter starts at 0, bit 12 = 0
+            frame_sequencer_step: 0,
+            sample_counter: 0.0,
+            sample_buffer: Vec::new(),
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         self.enabled
     }

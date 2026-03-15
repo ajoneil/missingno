@@ -61,7 +61,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
             let save_data = std::fs::read(&sav_path).ok();
             let cartridge = Cartridge::new(rom, save_data);
             let title = cartridge.title().to_string();
-            let game_boy = GameBoy::new(cartridge);
+            let game_boy = GameBoy::new(cartridge, None);
             app.save_path = Some(sav_path);
             app.recent_games.add(rom_path.clone(), title);
             app.recent_games.save();

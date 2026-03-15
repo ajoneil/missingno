@@ -97,6 +97,39 @@ impl Ppu {
         }
     }
 
+    /// Power-on state: LCD off, all registers zeroed.
+    pub fn power_on() -> Self {
+        let control = Control::new(ControlFlags::empty());
+        Self {
+            registers: PipelineRegisters {
+                control_latch: DffLatch::new(0),
+                control,
+                background_viewport: BackgroundViewportPosition {
+                    x: DffLatch::new(0),
+                    y: DffLatch::new(0),
+                },
+                window: Window {
+                    y: 0,
+                    x_plus_7: DffLatch::new(0),
+                },
+                palettes: Palettes::default(),
+            },
+            video: VideoControl {
+                lx: 0,
+                wuvu: false,
+                vena: false,
+                ly: 0,
+                lyc: 0,
+                ly_match_pending: false,
+                ly_eq_lyc: true,
+                stat_flags: InterruptFlags::empty(),
+                stat_line_was_high: false,
+            },
+            oam: Oam::new(),
+            pixel_pipeline: None, // LCD off at power-on
+        }
+    }
+
     pub fn lx(&self) -> u8 {
         self.video.lx
     }

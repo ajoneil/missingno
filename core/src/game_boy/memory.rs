@@ -56,15 +56,26 @@ pub struct ExternalBus {
     pub(super) latch: u8,
     /// M-cycles remaining before `latch` decays to 0xFF.
     pub(super) decay: u8,
+
+    /// DMG boot ROM (256 bytes). When present and `boot_rom_mapped` is
+    /// true, reads from 0x0000–0x00FF return boot ROM data instead of
+    /// cartridge ROM.
+    boot_rom: Option<Box<[u8; 256]>>,
+    /// True while the boot ROM overlay is active. Cleared by writing
+    /// to 0xFF50.
+    boot_rom_mapped: bool,
 }
 
 impl ExternalBus {
-    pub fn new(cartridge: Cartridge) -> Self {
+    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> Self {
+        let boot_rom_mapped = boot_rom.is_some();
         Self {
             cartridge,
             work_ram: [0; 0x2000],
             latch: 0xFF,
             decay: 0,
+            boot_rom,
+            boot_rom_mapped,
         }
     }
 
@@ -72,9 +83,29 @@ impl ExternalBus {
     /// Does NOT update the latch — callers decide when to latch.
     pub fn read(&self, address: ExternalAddress) -> u8 {
         match address {
+            ExternalAddress::Cartridge(addr) if addr <= 0x00FF && self.boot_rom_mapped => {
+                self.boot_rom.as_ref().unwrap()[addr as usize]
+            }
             ExternalAddress::Cartridge(addr) => self.cartridge.read(addr),
             ExternalAddress::WorkRam(addr) => self.work_ram[addr as usize],
         }
+    }
+
+    pub fn has_boot_rom(&self) -> bool {
+        self.boot_rom.is_some()
+    }
+
+    pub fn boot_rom_mapped(&self) -> bool {
+        self.boot_rom_mapped
+    }
+
+    pub fn unmap_boot_rom(&mut self) {
+        self.boot_rom_mapped = false;
+    }
+
+    /// Re-map the boot ROM (for reset). Only has effect if a boot ROM was provided.
+    pub fn remap_boot_rom(&mut self) {
+        self.boot_rom_mapped = self.boot_rom.is_some();
     }
 
     /// Write to a device on this bus (cartridge or WRAM).
@@ -188,6 +219,7 @@ pub enum MappedAddress {
     AudioWaveRam(u8),
     PpuRegister(ppu::Register),
     BeginDmaTransfer,
+    BootRomUnmap,
     Unmapped,
 }
 
@@ -236,7 +268,9 @@ impl MappedAddress {
             0xff49 => Self::PpuRegister(ppu::Register::Sprite1Palette),
             0xff4a => Self::PpuRegister(ppu::Register::WindowY),
             0xff4b => Self::PpuRegister(ppu::Register::WindowX),
-            0xff4c..=0xff7f => Self::Unmapped,
+            0xff4c..=0xff4f => Self::Unmapped,
+            0xff50 => Self::BootRomUnmap,
+            0xff51..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
         }
@@ -402,6 +436,13 @@ impl GameBoy {
             MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
             MappedAddress::PpuRegister(register) => self.ppu.read_register(register),
             MappedAddress::BeginDmaTransfer => self.dma.source_register(),
+            MappedAddress::BootRomUnmap => {
+                if self.external.boot_rom_mapped() {
+                    0xFE
+                } else {
+                    0xFF
+                }
+            }
 
             MappedAddress::Unmapped => 0xFF,
         }
@@ -531,6 +572,11 @@ impl GameBoy {
                 }
             }
             MappedAddress::BeginDmaTransfer => self.dma.begin_transfer(value),
+            MappedAddress::BootRomUnmap => {
+                if value & 0x01 != 0 {
+                    self.external.unmap_boot_rom();
+                }
+            }
             MappedAddress::InterruptRegister(register) => match register {
                 interrupts::Register::EnabledInterrupts => {
                     self.interrupts.enabled = InterruptFlags::from_bits_retain(value)

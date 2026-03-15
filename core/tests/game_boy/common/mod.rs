@@ -12,7 +12,44 @@ pub fn load_rom(relative: &str) -> GameBoy {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
-    GameBoy::new(Cartridge::new(rom, None))
+    let boot_rom = try_load_boot_rom();
+    let mut gb = GameBoy::new(Cartridge::new(rom, None), boot_rom);
+    run_boot_rom(&mut gb);
+    gb
+}
+
+/// Load a ROM with a boot ROM. The boot ROM runs from 0x0000 before
+/// handing control to the cartridge at 0x0100.
+pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> GameBoy {
+    let path = rom_path(relative);
+    let rom = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
+    GameBoy::new(Cartridge::new(rom, None), Some(boot_rom))
+}
+
+/// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.
+/// Returns None if the env var is unset or the file can't be read.
+/// The boot ROM cannot be distributed with the repo for legal reasons.
+pub fn try_load_boot_rom() -> Option<Box<[u8; 256]>> {
+    let path = std::env::var("DMG_BOOT_ROM").ok()?;
+    let data = std::fs::read(&path).ok()?;
+    let boxed: Box<[u8; 256]> = data.into_boxed_slice().try_into().ok()?;
+    Some(boxed)
+}
+
+/// If a boot ROM is loaded, run it to completion (PC reaches 0x0100).
+/// This is a no-op when no boot ROM is present.
+fn run_boot_rom(gb: &mut GameBoy) {
+    if gb.cpu().program_counter != 0x0000 {
+        return;
+    }
+    for _ in 0..10_000_000 {
+        gb.step();
+        if gb.cpu().program_counter == 0x0100 {
+            return;
+        }
+    }
+    panic!("Boot ROM did not reach 0x0100 within 10M steps — does the ROM have a valid Nintendo logo?");
 }
 
 /// Run the emulator until the serial output contains any of the given needle strings,

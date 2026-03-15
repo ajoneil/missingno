@@ -140,7 +140,7 @@ impl App {
                 let cartridge = Cartridge::new(fs::read(&rom_path).unwrap(), save_data);
                 recent_games.add(rom_path, cartridge.title().to_string());
                 recent_games.save();
-                let game_boy = GameBoy::new(cartridge);
+                let game_boy = GameBoy::new(cartridge, None);
                 let game = Game::Loaded(if debugger {
                     let mut dbg = debugger::Debugger::new(game_boy);
                     dbg.set_palette(settings.palette);

@@ -14,7 +14,7 @@ use missingno_core::game_boy::ppu::sprites::{Attributes, SpriteId};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
-pub fn run(rom_path: Option<PathBuf>) {
+pub fn run(rom_path: Option<PathBuf>, boot_rom: Option<Box<[u8; 256]>>) {
     let rom_path = rom_path.unwrap_or_else(|| {
         eprintln!("error: --headless requires a ROM file");
         process::exit(1);
@@ -30,7 +30,7 @@ pub fn run(rom_path: Option<PathBuf>) {
 
     let cartridge = Cartridge::new(rom_data, save_data);
     let title = cartridge.title().to_string();
-    let game_boy = GameBoy::new(cartridge);
+    let game_boy = GameBoy::new(cartridge, boot_rom);
     let mut debugger = Debugger::new(game_boy);
 
     let server = tiny_http::Server::http("127.0.0.1:3333").unwrap_or_else(|e| {

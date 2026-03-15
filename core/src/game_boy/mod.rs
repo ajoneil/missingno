@@ -80,8 +80,14 @@ pub struct GameBoy {
 }
 
 impl GameBoy {
-    pub fn new(cartridge: Cartridge) -> GameBoy {
-        let cpu = Cpu::new(cartridge.header_checksum());
+    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> GameBoy {
+        let has_boot_rom = boot_rom.is_some();
+
+        let cpu = if has_boot_rom {
+            Cpu::power_on()
+        } else {
+            Cpu::new(cartridge.header_checksum())
+        };
         let sgb = if cartridge.supports_sgb() {
             Some(sgb::Sgb::new())
         } else {
@@ -91,14 +97,26 @@ impl GameBoy {
         let mut gb = GameBoy {
             cpu,
             screen: Screen::new(),
-            external: ExternalBus::new(cartridge),
+            external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
-            ppu: Ppu::new(),
-            audio: Audio::new(),
+            ppu: if has_boot_rom {
+                Ppu::power_on()
+            } else {
+                Ppu::new()
+            },
+            audio: if has_boot_rom {
+                Audio::power_on()
+            } else {
+                Audio::new()
+            },
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
             serial: serial_transfer::Registers::new(),
-            timers: timers::Timers::new(),
+            timers: if has_boot_rom {
+                timers::Timers::power_on()
+            } else {
+                timers::Timers::new()
+            },
             dma: Dma::new(),
             sgb,
             vram_bus: VramBus::new(),
@@ -108,23 +126,43 @@ impl GameBoy {
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
         };
-        gb.init_post_boot_vram();
+        if !has_boot_rom {
+            gb.init_post_boot_vram();
+        }
         gb
     }
 
     pub fn reset(&mut self) {
-        self.cpu = Cpu::new(self.external.cartridge.header_checksum());
+        let has_boot_rom = self.external.has_boot_rom();
+        if has_boot_rom {
+            self.cpu = Cpu::power_on();
+            self.external.remap_boot_rom();
+        } else {
+            self.cpu = Cpu::new(self.external.cartridge.header_checksum());
+        }
         self.screen = Screen::new();
         self.external.work_ram = [0; 0x2000];
         self.external.latch = 0xFF;
         self.external.decay = 0;
         self.high_ram = HighRam::new();
-        self.ppu = Ppu::new();
-        self.audio = Audio::new();
+        self.ppu = if has_boot_rom {
+            Ppu::power_on()
+        } else {
+            Ppu::new()
+        };
+        self.audio = if has_boot_rom {
+            Audio::power_on()
+        } else {
+            Audio::new()
+        };
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
         self.serial = serial_transfer::Registers::new();
-        self.timers = timers::Timers::new();
+        self.timers = if has_boot_rom {
+            timers::Timers::power_on()
+        } else {
+            timers::Timers::new()
+        };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();
         self.sgb = if self.external.cartridge.supports_sgb() {
@@ -132,7 +170,9 @@ impl GameBoy {
         } else {
             None
         };
-        self.init_post_boot_vram();
+        if !has_boot_rom {
+            self.init_post_boot_vram();
+        }
         self.bus_trace = None;
         self.clock_phase = ClockPhase::Rising;
         self.current_dot_action = DotAction::Idle;

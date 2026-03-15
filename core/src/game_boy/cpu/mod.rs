@@ -190,6 +190,38 @@ impl Cpu {
         }
     }
 
+    /// Power-on state: all registers zeroed, PC=0x0000 for boot ROM entry.
+    pub fn power_on() -> Cpu {
+        Cpu {
+            a: 0,
+            b: 0,
+            c: 0,
+            d: 0,
+            e: 0,
+            h: 0,
+            l: 0,
+            stack_pointer: 0x0000,
+            program_counter: 0x0000,
+            flags: Flags::empty(),
+            interrupt_master_enable: InterruptMasterEnable::Disabled,
+            ei_delay: None,
+            halt_state: HaltState::Running,
+            halt_bug: false,
+            phase: CpuPhase::Fetch,
+            instruction: instructions::Instruction::NoOperation,
+            dot: BusDot::ZERO,
+            mcycle_active: false,
+            current_action: None,
+            exec_step: 0,
+            scratch: 0,
+            last_dot: BusDot::ZERO,
+            pending_vector_resolve: false,
+            interrupt_latch: InterruptLatch::Empty,
+            boundary_flag: true,
+            interrupt_pending: false,
+        }
+    }
+
     pub fn get_register8(&self, register: Register8) -> u8 {
         match register {
             Register8::A => self.a,
