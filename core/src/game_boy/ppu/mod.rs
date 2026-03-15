@@ -217,20 +217,15 @@ impl Ppu {
     /// VID_RST deassert, first WUVU toggle — are simultaneous.
     ///
     /// In the emulator, `drive_ppu_bus` fires after `tick_xota_falling` has
-    /// already run for this dot, so the regular divider tick has passed.
-    /// This method bundles the VID_RST deassertion (zeroing dividers,
-    /// creating the pipeline) with the equivalent of one WUVU toggle, so
-    /// the dividers start in the correct phase.
+    /// VID_RST deasserts at G→H (XOTA falling). No WUVU latch on this
+    /// edge — WUVU is clocked by XOTA rising. All dividers start at
+    /// qp=0 (async reset). The first WUVU toggle happens on the next
+    /// tick_xota_falling (= XOTA rising = H→A edge).
     fn initialize_lcd_on(&mut self) {
-        // VID_RST deasserts: all dividers start at qp=0.
         self.video.lx = 0;
         self.video.wuvu = false;
         self.video.vena = false;
         self.video.write_ly(0);
-
-        // First WUVU toggle: the XOTA edge that coincides with VID_RST
-        // deassertion toggles WUVU from false to true.
-        self.video.wuvu = true;
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
