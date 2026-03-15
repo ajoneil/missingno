@@ -4,7 +4,7 @@
 /// stages, adding pipeline delay before the pixel clock enables. Not a
 /// processing block — just a small state machine you clock and query.
 ///
-/// - NYKA (DFF17, falling/ALET): captures lyry_prev
+/// - NYKA (DFF17, falling/ALET): captures live LYRY (combinational)
 /// - PORY (DFF17, rising/MYVO): captures NYKA
 /// - PYGO (DFF17, falling/ALET): captures PORY
 /// - POKY (NOR latch, falling): fires from PYGO
@@ -38,11 +38,12 @@ impl FetchCascade {
         }
     }
 
-    /// Falling edge: clock NYKA from lyry_prev, update lyry_prev,
+    /// Falling edge: clock NYKA from live LYRY, update lyry_prev,
     /// clock PYGO from PORY, fire POKY NOR from PYGO.
     pub(super) fn fall(&mut self, lyry: bool) {
-        // NYKA captures lyry_prev (previous phase's LYRY), not current.
-        if self.lyry_prev && !self.nyka {
+        // NYKA captures live LYRY — LYRY is combinational and updates
+        // in the same falling phase the fetcher reaches Idle.
+        if lyry && !self.nyka {
             self.nyka = true;
         }
 
