@@ -219,11 +219,12 @@ impl Ppu {
     /// On hardware, VID_RST deasserts at G→H (XOTA falling). The very
     /// next XOTA rising edge (H→A) is only 0.5 dots later — within the
     /// same falling half-phase boundary. All dividers start at qp=0
-    /// (async reset). The first WUVU toggle happens on the next
-    /// Ppu::rise() call (= XOTA rising = H→A edge).
+    /// (async reset). WUVU toggles to 1 on that first H→A edge before
+    /// any emulator-visible work happens, so we initialize wuvu=true
+    /// to capture that sub-dot toggle's net effect.
     fn initialize_lcd_on(&mut self) {
         self.video.lx = 0;
-        self.video.wuvu = false;
+        self.video.wuvu = true;
         self.video.vena = false;
         self.video.write_ly(0);
 
