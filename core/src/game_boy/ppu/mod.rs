@@ -435,6 +435,9 @@ impl Ppu {
         // so interrupts see the freshly promoted ly_eq_lyc.
         if is_mcycle {
             self.video.latch_ly_comparison();
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                rendering.latch_stat_mode(&self.video);
+            }
         }
 
         result

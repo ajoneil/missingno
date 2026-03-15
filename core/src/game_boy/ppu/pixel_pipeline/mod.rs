@@ -134,6 +134,12 @@ pub struct Rendering {
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
+    /// STAT-visible mode latch. Captures the combinational mode at each
+    /// M-cycle boundary (dot 0). STAT register reads return this value,
+    /// not the live combinational mode. Models the CPU data bus latch
+    /// timing — mode transitions within an M-cycle are not visible to
+    /// the CPU until the next M-cycle boundary.
+    latched_stat_mode: Mode,
 }
 
 impl Rendering {
@@ -153,6 +159,7 @@ impl Rendering {
             tyfa_bridge: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
+            latched_stat_mode: Mode::HorizontalBlank,
         }
     }
 
@@ -172,6 +179,7 @@ impl Rendering {
             tyfa_bridge: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
+            latched_stat_mode: Mode::HorizontalBlank,
         }
     }
 
@@ -193,18 +201,19 @@ impl Rendering {
         }
     }
 
-    /// Mode as seen by the STAT register (ACYL/XYMU/POPU-derived).
-    /// Scanning maps to mode 2 via the BESU/ACYL signal path.
-    /// TARU (mode 0 condition) reads WODU combinationally — STAT sees
-    /// mode 0 on the same phase that WODU fires, before VOGA captures.
+    /// Latch the current combinational mode for STAT register reads.
+    /// Called at M-cycle boundaries from tick_xota(), following the
+    /// same pattern as VideoControl::latch_ly_comparison().
+    pub(super) fn latch_stat_mode(&mut self, video: &VideoControl) {
+        self.latched_stat_mode = self.mode(video);
+    }
+
+    /// Mode as seen by the STAT register. Returns the latched value
+    /// captured at the last M-cycle boundary, not the live combinational
+    /// mode. Models CPU data bus latch timing — mode transitions within
+    /// an M-cycle are not visible until the next M-cycle boundary.
     pub(super) fn stat_mode(&self, _video: &VideoControl) -> Mode {
-        if self.scan.scanning() {
-            Mode::OamScan
-        } else if self.xymu && !self.wodu() {
-            Mode::Drawing
-        } else {
-            Mode::HorizontalBlank
-        }
+        self.latched_stat_mode
     }
 
     /// Whether the TAPA_INT_OAM signal is active.
