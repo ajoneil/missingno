@@ -139,7 +139,6 @@ impl Ppu {
             Register::Control => self.registers.control.bits(),
             Register::Status => {
                 let mode = match &self.pixel_pipeline {
-                    Some(rendering) if rendering.lcd_turning_on => Mode::HorizontalBlank as u8,
                     Some(rendering) if !self.video.in_vblank() => {
                         rendering.stat_mode(&self.video) as u8
                     }
@@ -286,28 +285,28 @@ impl Ppu {
 
     pub fn oam_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.oam_locked(),
+            Some(r) if !self.video.in_vblank() => r.oam_locked(),
             _ => false,
         }
     }
 
     pub fn vram_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.vram_locked(),
+            Some(r) if !self.video.in_vblank() => r.vram_locked(),
             _ => false,
         }
     }
 
     pub fn oam_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.oam_write_locked(),
+            Some(r) if !self.video.in_vblank() => r.oam_write_locked(),
             _ => false,
         }
     }
 
     pub fn vram_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !r.lcd_turning_on && !self.video.in_vblank() => r.vram_write_locked(),
+            Some(r) if !self.video.in_vblank() => r.vram_write_locked(),
             _ => false,
         }
     }
@@ -331,20 +330,16 @@ impl Ppu {
 
         let in_vblank = self.video.in_vblank();
 
-        // Interrupt mode: during LCD startup, suppress all STAT conditions
-        // by reporting Drawing (no STAT enable bit for Drawing).
         // On hardware, Mode 1 STAT fires at clock 4 of line 144, not clock 0.
-        let mode = if rendering.lcd_turning_on {
-            Mode::Drawing
-        } else if in_vblank && self.video.ly() == 144 && self.video.lx == 0 {
+        let mode = if in_vblank && self.video.ly() == 144 && self.video.lx == 0 {
             Mode::HorizontalBlank
         } else {
             self.mode()
         };
 
-        // Mode 2 interrupt active: during LCD startup or VBlank, never.
+        // Mode 2 interrupt active: during VBlank, never.
         // Otherwise delegate to the rendering pipeline's TAPA signal.
-        let mode2_active = if rendering.lcd_turning_on || in_vblank {
+        let mode2_active = if in_vblank {
             false
         } else {
             rendering.mode2_interrupt_active(&self.video)
@@ -398,7 +393,11 @@ impl Ppu {
             self.video.wuvu = false;
             self.video.vena = false;
             self.video.write_ly(0);
-            self.pixel_pipeline = Some(Rendering::new_lcd_on());
+            self.pixel_pipeline = Some(Rendering::new());
+            // Sync edge detector: the STAT line and its edge detector reach
+            // their new steady state simultaneously when VID_RST deasserts.
+            // No false edge on the first evaluation.
+            self.video.stat_line_was_high = self.stat_line_active();
         }
 
         // Pixel output, SACU, pipe shift — only during active display.

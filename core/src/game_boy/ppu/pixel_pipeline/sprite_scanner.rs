@@ -84,20 +84,28 @@ impl SpriteScanner {
         lx: u8,
         wuvu: bool,
         ly: u8,
-        lcd_turning_on: bool,
         regs: &PipelineRegisters,
         oam: &Oam,
     ) -> ScanSignals {
         // Capture FETO *before* the scanner tick — models DFF pre-edge capture.
         let feto_old = self.counter.scan_done();
 
+        // OAM comparison and sprite store population only happen during scanning.
+        // Must run before tick_clock() — compare uses current entry, then clock advances.
         if self.scanning && xupy_rising {
-            self.counter.tick(ly, &mut self.sprites, regs, oam);
+            self.counter
+                .compare_and_store(ly, &mut self.sprites, regs, oam);
+        }
+
+        // Counter ticks on XUPY regardless of scanning state. On hardware,
+        // the counter clock is XUPY gated by !VID_RST, not by BESU.
+        if xupy_rising {
+            self.counter.tick_clock();
         }
 
         // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
         // the scan counter. Suppressed on LCD turn-on first line.
-        let scan_started = lx == 0 && wuvu && !lcd_turning_on && !self.scanning;
+        let scan_started = lx == 0 && wuvu && !self.scanning;
         if scan_started {
             self.scanning = true;
             self.counter.reset();
@@ -111,7 +119,7 @@ impl SpriteScanner {
         // AVAP: combinational scan-done trigger.
         let avap = self.byba && !self.doba;
 
-        if avap && self.scanning && !lcd_turning_on {
+        if avap && self.scanning {
             self.scanning = false;
         }
 

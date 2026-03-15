@@ -93,9 +93,6 @@ pub struct PipelineSnapshot {
 
 pub struct Rendering {
     pub(super) screen: Screen,
-    /// After LCD enable, the first line's Mode 2 doesn't begin at dot 0.
-    /// The STAT mode bits read as 0 until Mode 2 actually starts.
-    pub(super) lcd_turning_on: bool,
     /// XYMU rendering latch (page 21). SET by AVAP (scan done, Mode 2→3).
     /// CLEAR by WEGO = OR2(VID_RST, VOGA). When set, the fetcher and pixel
     /// pipeline are active (Mode 3). WODU is computed combinationally from
@@ -146,28 +143,6 @@ impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
             screen: Screen::new(),
-            lcd_turning_on: false,
-            xymu: false,
-            scan: SpriteScanner::new(),
-            bg_shifter: BgShifter::new(),
-            obj_shifter: ObjShifter::new(),
-            fetcher: TileFetcher::new(),
-            cascade: FetchCascade::new(),
-            fine_scroll: FineScroll::new(),
-            window: WindowControl::new(),
-            voga: false,
-            tyfa_bridge: false,
-            lcd: LcdControl::new(),
-            sprite_state: SpriteState::Idle,
-            latched_stat_mode: Mode::HorizontalBlank,
-            pending_stat_mode: Mode::HorizontalBlank,
-        }
-    }
-
-    pub(super) fn new_lcd_on() -> Self {
-        Rendering {
-            screen: Screen::new(),
-            lcd_turning_on: true,
             xymu: false,
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
@@ -320,26 +295,15 @@ impl Rendering {
         let xupy_rising = video.xupy();
 
         // Sprite scanner falling edge: counter tick, scan-start, BYBA, AVAP.
-        let scan = self.scan.fall(
-            xupy_rising,
-            video.lx,
-            video.wuvu,
-            video.ly(),
-            self.lcd_turning_on,
-            regs,
-            oam,
-        );
+        let scan = self
+            .scan
+            .fall(xupy_rising, video.lx, video.wuvu, video.ly(), regs, oam);
 
         // React to scan signals.
-        if scan.avap && !self.lcd_turning_on {
-            // AVAP fires: Mode 2 → Mode 3 transition. Set XYMU.
+        // AVAP fires identically on normal lines and the LCD-on first line —
+        // the scan counter runs to 39 independent of BESU (scanning latch).
+        if scan.avap {
             self.xymu = true;
-            self.lcd_turning_on = false;
-            self.window.init_nuko_wx(regs.window.x_plus_7.output());
-        } else if self.lcd_turning_on && video.lx == 20 && video.talu() && !video.wuvu {
-            // LCD turn-on: Mode 0 → Mode 3 transition. Set XYMU.
-            self.xymu = true;
-            self.lcd_turning_on = false;
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
         }
 

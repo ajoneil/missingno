@@ -107,14 +107,36 @@ impl ScanCounter {
     /// hardware's 16-bit OAM bus provides both in a single access.
     /// Tile index and attributes (bytes 2–3) are not accessed until
     /// Mode 3.
-    pub(super) fn tick(
+    /// Advance the scan counter clock (GAVA). On hardware, the counter
+    /// is clocked by XUPY gated only by !VID_RST, not by BESU (scanning
+    /// latch). The counter runs whenever the LCD is enabled, including
+    /// the LCD-on first line where scanning never starts.
+    pub(super) fn tick_clock(&mut self) {
+        // GAVA freeze: once FETO fires, latch frozen=true so the
+        // counter never increments again this scanline. On hardware,
+        // FETO feeds back into GAVA's OR gate, holding the clock high.
+        if self.scan_done() {
+            self.frozen = true;
+        }
+
+        // Counter increment (GAVA), gated by frozen. Once FETO has
+        // fired and set frozen=true, no more rising edges reach the
+        // counter — it stays at 39 for the rest of the scanline.
+        if !self.frozen {
+            self.entry += 1;
+        }
+    }
+
+    /// Y comparison and sprite store write (COTA/WUDA). Only runs
+    /// when scanning is active — OAM access requires BESU. The counter
+    /// tick (`tick_clock`) must be called separately.
+    pub(super) fn compare_and_store(
         &mut self,
         line_number: u8,
         sprites: &mut SpriteStore,
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // Y comparison and sprite store write (COTA/WUDA).
         if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
             let (y_plus_16, x_plus_8) = oam.sprite_position(SpriteId(self.entry));
 
@@ -129,20 +151,6 @@ impl ScanCounter {
                 };
                 sprites.count += 1;
             }
-        }
-
-        // GAVA freeze: once FETO fires, latch frozen=true so the
-        // counter never increments again this scanline. On hardware,
-        // FETO feeds back into GAVA's OR gate, holding the clock high.
-        if self.scan_done() {
-            self.frozen = true;
-        }
-
-        // Counter increment (GAVA), gated by frozen. Once FETO has
-        // fired and set frozen=true, no more rising edges reach the
-        // counter — it stays at 39 for the rest of the scanline.
-        if !self.frozen {
-            self.entry += 1;
         }
     }
 
