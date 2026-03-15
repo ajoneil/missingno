@@ -116,6 +116,7 @@ The helper library (`scripts/debugger.sh`) provides functions for all common ope
 | `gb_goto <scanline> <mode>` | Set compound watchpoint, step to it, clear watchpoint, print PPU state. Mode: `oam_scan`, `drawing`, `hblank`, `vblank` |
 | `gb_step_to_px <value>` | Jump to a specific pixel_counter value on the current scanline (sets compound watchpoint: scanline + drawing + pixel_counter, step-frame, clears). Prints pipeline state |
 | `gb_step_dots <n>` | Step N dots, print table: step, lx, pixel_counter, loaded, lo, hi, sprite |
+| `gb_step_phases <n>` | Step N half-phases (rise/fall), print table: step, phase, lx, mode, pc, loaded |
 
 ### State reading
 
@@ -124,6 +125,7 @@ The helper library (`scripts/debugger.sh`) provides functions for all common ope
 | `gb_ppu` | `LY=N lx=N mode=N SCX=N SCY=N WX=N WY=N BGP=[...]` |
 | `gb_pipeline` | `pc=N loaded=T/F lo=N hi=N phase=X sprite=X` |
 | `gb_cpu` | `A=N B=N C=N D=N E=N H=N L=N PC=N SP=N IME=N halted=T/F` |
+| `gb_timers` | `DIV=N TIMA=N TMA=N TAC=N enabled=T/F freq=N internal=XXXX` |
 | `gb_screen_row <row>` | Space-separated color indices (0-3) for one screen row |
 | `gb_sprites_on <scanline>` | Sprites visible on that scanline: `id=N x=N y=N tile=N prio=X` |
 | `gb_tile_data <tile_id> [row]` | Decoded tile pixels (2bpp → color indices). All 8 rows, or one row if specified |
@@ -168,6 +170,10 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/step-dot`**: Same shape as `/ppu/pipeline` — returns pipeline state after the dot.
 
+**`/step-phase`**: Same shape as `/ppu/pipeline` plus a `phase` field (`"high"` or `"low"`) indicating the master clock level after execution. `"high"` = rise() just ran (next is fall). `"low"` = fall() just ran (next is rise).
+
+**`/timers`**: `div`, `tima`, `tma`, `tac`, `timer_enabled` (bool), `clock_select` (int 0-3), `frequency` (int Hz), `internal_counter` (hex string), `internal_counter_decimal` (int)
+
 ### Endpoints
 
 | Endpoint | Method | Returns |
@@ -178,6 +184,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |
 | `/sprites` | GET | All 40 OAM entries (bare array) |
+| `/timers` | GET | Timer registers (DIV, TIMA, TMA, TAC) and internal counter |
 | `/interrupts` | GET | IE and IF values + per-interrupt enabled/requested flags |
 | `/instructions` | GET | 20 disassembled instructions from current PC |
 | `/memory/{hex_addr}` | GET | Single byte: value + hex |
@@ -186,6 +193,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/breakpoints` | GET | List of breakpoint addresses |
 | `/step` | POST | Execute one instruction, return CPU state |
 | `/step-dot` | POST | Execute one PPU dot, return pipeline state |
+| `/step-phase` | POST | Execute one half-phase (rise or fall), return pipeline state + phase |
 | `/step-frame` | POST | Run to frame/breakpoint/watchpoint, return CPU state + `watchpoint_hit` |
 | `/step-over` | POST | Step over current instruction |
 | `/reset` | POST | Reset the Game Boy |

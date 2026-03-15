@@ -109,6 +109,24 @@ gb_step_dots() {
   done
 }
 
+gb_step_phases() {
+  local n="${1:?usage: gb_step_phases <count>}"
+  printf "%-4s  %-7s  %-4s  %-4s  %-3s  %s\n" \
+    "step" "phase" "lx" "mode" "pc" "loaded"
+  for i in $(seq 1 "$n"); do
+    local result ppu
+    result=$(curl -s -X POST "$GB_URL/step-phase")
+    ppu=$(curl -s "$GB_URL/ppu")
+    printf "%-4s  %-7s  %-4s  %-4s  %-3s  %s\n" \
+      "$i" \
+      "$(echo "$result" | jq -r '.phase')" \
+      "$(echo "$ppu" | jq -r '.lx')" \
+      "$(echo "$ppu" | jq -r '.stat.mode_number')" \
+      "$(echo "$result" | jq -r '.pixel_counter')" \
+      "$(echo "$result" | jq -r 'if .bg_shifter.loaded then "true" else "false" end')"
+  done
+}
+
 # ── State reading ─────────────────────────────────────────────────
 
 gb_ppu() {
@@ -124,6 +142,11 @@ gb_pipeline() {
 gb_cpu() {
   curl -s "$GB_URL/cpu" | jq -r \
     '"A=\(.a) B=\(.b) C=\(.c) D=\(.d) E=\(.e) H=\(.h) L=\(.l) PC=\(.pc) SP=\(.sp) IME=\(.ime) halted=\(.halted)"'
+}
+
+gb_timers() {
+  curl -s "$GB_URL/timers" | jq -r \
+    '"DIV=\(.div) TIMA=\(.tima) TMA=\(.tma) TAC=\(.tac) enabled=\(.timer_enabled) freq=\(.frequency) internal=\(.internal_counter)"'
 }
 
 gb_screen_row() {

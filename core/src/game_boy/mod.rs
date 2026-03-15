@@ -21,17 +21,20 @@ pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
 
+/// Master clock signal level. The clock alternates High → Low
+/// uniformly. Edge logic runs at transitions: `rise()` at the
+/// Low→High edge, `fall()` at the High→Low edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClockPhase {
-    Rising,
-    Falling,
+    High,
+    Low,
 }
 
 impl ClockPhase {
     pub fn next(self) -> ClockPhase {
         match self {
-            ClockPhase::Rising => ClockPhase::Falling,
-            ClockPhase::Falling => ClockPhase::Rising,
+            ClockPhase::High => ClockPhase::Low,
+            ClockPhase::Low => ClockPhase::High,
         }
     }
 }
@@ -122,7 +125,7 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             last_read_value: 0,
             bus_trace: None,
-            clock_phase: ClockPhase::Rising,
+            clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
         };
@@ -174,7 +177,7 @@ impl GameBoy {
             self.init_post_boot_vram();
         }
         self.bus_trace = None;
-        self.clock_phase = ClockPhase::Rising;
+        self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
     }
@@ -197,6 +200,10 @@ impl GameBoy {
 
     pub fn audio(&self) -> &Audio {
         &self.audio
+    }
+
+    pub fn clock_phase(&self) -> ClockPhase {
+        self.clock_phase
     }
 
     pub fn screen(&self) -> &Screen {

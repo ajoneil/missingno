@@ -84,6 +84,14 @@ impl Debugger {
         }
     }
 
+    pub fn step_phase(&mut self) -> Option<Screen> {
+        if self.game_boy.step_phase() {
+            Some(self.game_boy.screen().clone())
+        } else {
+            None
+        }
+    }
+
     pub fn step_dot(&mut self) -> Option<Screen> {
         if self.game_boy.step_dot() {
             Some(self.game_boy.screen().clone())
@@ -172,7 +180,7 @@ impl Debugger {
 
     fn step_frame_watched_dots(&mut self) -> Option<Screen> {
         loop {
-            let screen = self.step_dot();
+            let screen = self.step_phase();
 
             if let Some(hit) = self.check_watchpoints(&[]) {
                 self.last_watchpoint_hit = Some(hit);

@@ -63,25 +63,34 @@ impl GameBoy {
             new_screen |= ns;
 
             // Check for instruction boundary after completing a dot
-            // (clock_phase is now Rising = just finished Falling = dot complete)
-            if self.clock_phase == ClockPhase::Rising && self.cpu.at_instruction_boundary() {
+            // (clock is Low = just finished fall() = dot complete)
+            if self.clock_phase == ClockPhase::Low && self.cpu.at_instruction_boundary() {
                 break;
             }
         }
         new_screen
     }
 
-    /// Advance exactly one dot (T-cycle). Returns true if a new
-    /// frame was produced.
+    /// Advance exactly one half-phase — execute rise() or fall()
+    /// depending on current clock level. Returns true if a new frame
+    /// was produced.
+    pub fn step_phase(&mut self) -> bool {
+        let mut pending_oam_bug: Option<OamBugKind> = None;
+        self.execute_phase(&mut pending_oam_bug)
+    }
+
+    /// Advance to the next dot (T-cycle) boundary — the next Low
+    /// state. Executes 1 phase if clock is High, 2 if Low.
+    /// Returns true if a new frame was produced.
     pub fn step_dot(&mut self) -> bool {
         let mut new_screen = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
 
-        // Run phases until we complete a dot (return to Rising)
+        // Run phases until clock returns to Low (dot complete)
         loop {
             let ns = self.execute_phase(&mut pending_oam_bug);
             new_screen |= ns;
-            if self.clock_phase == ClockPhase::Rising {
+            if self.clock_phase == ClockPhase::Low {
                 break;
             }
         }
@@ -94,13 +103,13 @@ impl GameBoy {
         new_screen
     }
 
-    /// Execute one phase (half-dot) of hardware. The master clock
-    /// alternates Rising → Falling uniformly. Rising starts a new dot;
-    /// Falling completes it.
+    /// Execute one phase (half-dot) of hardware. When the clock is
+    /// Low, execute rise() (Low→High edge). When High, execute
+    /// fall() (High→Low edge).
     fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         match self.clock_phase {
-            ClockPhase::Rising => self.rise(pending_oam_bug),
-            ClockPhase::Falling => self.fall(pending_oam_bug),
+            ClockPhase::Low => self.rise(pending_oam_bug),
+            ClockPhase::High => self.fall(pending_oam_bug),
         }
     }
 
@@ -150,7 +159,7 @@ impl GameBoy {
             }
         }
 
-        self.clock_phase = ClockPhase::Falling;
+        self.clock_phase = ClockPhase::High;
         new_screen
     }
 
@@ -192,7 +201,7 @@ impl GameBoy {
             }
         }
 
-        self.clock_phase = ClockPhase::Rising;
+        self.clock_phase = ClockPhase::Low;
         new_screen
     }
 
