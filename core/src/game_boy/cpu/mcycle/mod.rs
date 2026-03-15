@@ -540,12 +540,14 @@ impl Cpu {
             }
 
             if self.halt_state == HaltState::Running {
-                // IME=0 wakeup detected at step 1. Do NOT decode read_value
-                // as the opcode -- the wakeup NOP M-cycle hasn't happened yet.
-                // Return None (boundary) so the next iteration enters step 0,
-                // which transitions to Fetch and emits the wakeup NOP read.
+                // IME=0 wakeup detected at step 1. The step 0 Read was
+                // the halted NOP where IF fired. Chain to Fetch so that
+                // mcycle_fetch(0) emits the wakeup NOP read (fetching
+                // the first instruction's opcode).
                 self.advance_ei_delay();
-                return None;
+                self.phase = CpuPhase::Fetch;
+                self.exec_step = 0;
+                return self.mcycle_fetch(0);
             }
 
             // Still halted -- advance EI delay, start next halted NOP.
