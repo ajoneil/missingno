@@ -215,6 +215,10 @@ impl GameBoy {
         self.joypad.release_button(button);
     }
 
+    pub fn timers(&self) -> &timers::Timers {
+        &self.timers
+    }
+
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.interrupts
     }
