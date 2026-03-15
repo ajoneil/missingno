@@ -393,7 +393,17 @@ impl Ppu {
             self.video.wuvu = false;
             self.video.vena = false;
             self.video.write_ly(0);
-            self.pixel_pipeline = Some(Rendering::new());
+            let mut rendering = Rendering::new();
+            // On LCD-on, the scan counter starts at entry 2 instead of 0.
+            // On normal lines, scan_started fires at dot 1 (lx==0, wuvu rising),
+            // which "wastes" one XUPY tick: the counter increments (0→1) then
+            // immediately resets (→0). Combined with the WUVU phase difference
+            // (XUPY at even dots on LCD-on vs odd dots on normal lines), the net
+            // effect is that AVAP fires 2 entries too late without this offset.
+            // Starting at entry 2 compensates, producing AVAP at lx=20 to match
+            // hardware's counter release timing at LCD enable.
+            rendering.set_scan_counter_entry(2);
+            self.pixel_pipeline = Some(rendering);
             // Sync edge detector: the STAT line and its edge detector reach
             // their new steady state simultaneously when VID_RST deasserts.
             // No false edge on the first evaluation.

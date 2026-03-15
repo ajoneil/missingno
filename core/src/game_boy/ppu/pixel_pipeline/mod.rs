@@ -160,6 +160,13 @@ impl Rendering {
         }
     }
 
+    /// Set the scan counter's initial entry value. Used for LCD-on
+    /// initialization where the counter starts ahead of zero to compensate
+    /// for the wasted XUPY tick that scan_started provides on normal lines.
+    pub(super) fn set_scan_counter_entry(&mut self, entry: u8) {
+        self.scan.set_counter_entry(entry);
+    }
+
     /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
     /// On hardware, WODU is not a latch — it's valid whenever its
     /// inputs are valid. TARU (STAT mode 0) reads WODU directly.

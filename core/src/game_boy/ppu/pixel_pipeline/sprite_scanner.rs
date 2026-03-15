@@ -40,6 +40,12 @@ impl SpriteScanner {
         }
     }
 
+    /// Set the scan counter's initial entry value. Used for LCD-on
+    /// initialization where the counter starts ahead of zero.
+    pub(super) fn set_counter_entry(&mut self, entry: u8) {
+        self.counter.set_entry(entry);
+    }
+
     /// Whether the scanner is currently active (BESU/ACYL).
     pub(super) fn scanning(&self) -> bool {
         self.scanning
