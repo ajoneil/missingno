@@ -89,6 +89,8 @@ impl Ppu {
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
+                nype: false,
+                rutu_old: false,
             },
             oam: Oam::new(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -124,6 +126,8 @@ impl Ppu {
                 ly_eq_lyc: true,
                 stat_flags: InterruptFlags::empty(),
                 stat_line_was_high: false,
+                nype: false,
+                rutu_old: false,
             },
             oam: Oam::new(),
             pixel_pipeline: None, // LCD off at power-on
@@ -227,6 +231,8 @@ impl Ppu {
         self.video.wuvu = true;
         self.video.vena = false;
         self.video.write_ly(0);
+        self.video.nype = false;
+        self.video.rutu_old = false;
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
@@ -422,6 +428,9 @@ impl Ppu {
             return result;
         }
 
+        // Save NYPE state before tick_xota updates it.
+        let nype_was = self.video.nype;
+
         // XOTA rising edge (H→A): toggle WUVU/VENA divider chain,
         // increment LX, detect scanline boundary.
         if self.video.tick_xota() {
@@ -449,11 +458,12 @@ impl Ppu {
             }
         }
 
-        // NYPE→POPU pipeline: VBlank IF fires at dot 4 of line 144,
-        // not at the scanline boundary (dot 0).
-        if self.video.lx == 1
-            && self.video.talu()
-            && !self.video.wuvu
+        // NYPE→POPU→VYPU→LOPE pipeline: VBlank IF fires on NYPE
+        // rising edge when LY=144. POPU latches XYVO_y144p_old
+        // (LY was incremented to 144 at the scanline boundary,
+        // 2 dots ago). The cascade is combinational within one tick.
+        let nype_rose = !nype_was && self.video.nype;
+        if nype_rose
             && self.video.ly() == 144
             && self.video.in_vblank()
             && self.pixel_pipeline.is_some()
