@@ -37,7 +37,7 @@ impl PipelineRegisters {
     }
 
     /// Advance DFF9 register latches by one dot. Runs after the pipeline
-    /// (in tcycle_rising) so the pipeline reads pre-tick values (reg_old),
+    /// (in fall()) so the pipeline reads pre-tick values (reg_old),
     /// matching hardware's combinational read-from-old behavior.
     pub(super) fn tick_register_latches(&mut self) {
         self.background_viewport.x.tick();

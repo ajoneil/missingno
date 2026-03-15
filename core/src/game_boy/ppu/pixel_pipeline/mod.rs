@@ -271,9 +271,9 @@ impl Rendering {
     /// scroll match (PUXA), and window WX match (PYCO).
     ///
     /// XUPY derives from WUVU, which is clocked by XOTA rising (H→A
-    /// boundary). tick_xota() runs in the Rising phase, before
-    /// tcycle_falling() in the Falling phase, so video.xupy() reflects
-    /// the post-toggle state here.
+    /// boundary). The XOTA divider toggle runs in Ppu::rise(), before
+    /// this Falling-phase method, so video.xupy() reflects the
+    /// post-toggle state here.
     pub(super) fn fall(
         &mut self,
         regs: &PipelineRegisters,
@@ -281,8 +281,9 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // XUPY rising edge detection: since tick_xota() toggled WUVU
-        // before this function, xupy()==true means WUVU just went low→high.
+        // XUPY rising edge detection: the XOTA divider toggle (in
+        // Ppu::rise()) ran before this, so xupy()==true means WUVU
+        // just went low→high.
         let xupy_rising = video.xupy();
 
         // Sprite scanner falling edge: counter tick, scan-start, BYBA, AVAP.
@@ -347,7 +348,7 @@ impl Rendering {
     }
 
     /// Reset per-line state at the scanline boundary. Called by
-    /// `Ppu::tcycle_rising` when `advance_dot` signals a new scanline.
+    /// `Ppu::rise()` when `tick_xota` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.xymu = false;
         self.scan.reset();

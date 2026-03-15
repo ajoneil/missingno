@@ -211,11 +211,11 @@ impl Ppu {
 
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
-    /// On hardware, VID_RST deasserts at G→H (XOTA falling). No WUVU
-    /// latch on this edge — WUVU is clocked by XOTA rising. All dividers
-    /// start at qp=0 (async reset). The first WUVU toggle happens on
-    /// the next tick_xota (= XOTA rising = H→A edge), which is
-    /// 0.5 dots after LCD-on.
+    /// On hardware, VID_RST deasserts at G→H (XOTA falling). The very
+    /// next XOTA rising edge (H→A) is only 0.5 dots later — within the
+    /// same falling half-phase boundary. All dividers start at qp=0
+    /// (async reset). The first WUVU toggle happens on the next
+    /// Ppu::rise() call (= XOTA rising = H→A edge).
     fn initialize_lcd_on(&mut self) {
         self.video.lx = 0;
         self.video.wuvu = false;
@@ -399,40 +399,16 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Rising edge (DELTA_ODD): LCD initialization, pixel output
-    /// pipeline (SACU, pipe shift), and DFF8 palette capture.
-    ///
-    /// DFF8 palette latches are ticked in the falling phase, so
-    /// the pipeline reads the pre-capture value on the resolve dot.
-    pub fn tcycle_rising(&mut self, vram: &Vram) {
-        if !self.control().video_enabled() {
-            return;
-        }
-
-        // Pixel output, SACU, pipe shift — only during active display.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            if !self.video.in_vblank() {
-                rendering.rise(&self.registers, &self.video, &self.oam, vram);
-            }
-        }
-
-        // DFF8 palette capture happens on the falling phase (phase H),
-        // not here. See tcycle_falling().
-    }
-
-    /// XOTA rising edge (H→A boundary): WUVU/VENA divider chain, LX
-    /// counter, scanline boundary logic, VBlank IF, and LYC comparison.
-    /// Runs during the Rising half-phase because XOTA rising coincides
-    /// with the DELTA_ODD boundary.
-    pub fn tick_xota(&mut self, is_mcycle: bool) -> PpuTickResult {
+    /// Rising half-phase (DELTA_ODD, H→A boundary): XOTA divider chain
+    /// toggle, scanline boundary handling, pixel output pipeline, VBlank
+    /// IF, and LYC comparison. All rising-phase work in a single method.
+    pub fn rise(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
         };
 
         if !self.control().video_enabled() {
-            // WUVU/VENA are held in async reset by VID_RST while LCD
-            // is disabled. Nothing to tick.
             return result;
         }
 
@@ -440,6 +416,8 @@ impl Ppu {
             return result;
         }
 
+        // XOTA rising edge (H→A): toggle WUVU/VENA divider chain,
+        // increment LX, detect scanline boundary.
         if self.video.tick_xota() {
             // Scanline boundary — LX wrapped to 0.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -455,6 +433,13 @@ impl Ppu {
                     // Lines 1-143: per-scanline reset.
                     rendering.reset_scanline(ly);
                 }
+            }
+        }
+
+        // Pixel output, SACU, pipe shift — only during active display.
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            if !self.video.in_vblank() {
+                rendering.rise(&self.registers, &self.video, &self.oam, vram);
             }
         }
 
@@ -480,9 +465,9 @@ impl Ppu {
         result
     }
 
-    /// Falling edge (DELTA_EVEN): fetcher pipeline (advance, cascade
-    /// DFFs, TYFA), DFF9 resolve, LCD-off handling.
-    pub fn tcycle_falling(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Falling half-phase (DELTA_EVEN): fetcher pipeline (advance,
+    /// cascade DFFs, TYFA), DFF8/DFF9 latches, LCD-off handling.
+    pub fn fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,

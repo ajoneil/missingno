@@ -196,9 +196,8 @@ impl GameBoy {
         new_screen
     }
 
-    /// Rising phase (DELTA_ODD) of one dot: timer tick, DFF8 palette
-    /// latch advance, PPU pixel output pipeline, master clock divider
-    /// chain (WUVU/VENA/TALU/LX).
+    /// Rising half-phase (DELTA_ODD): timer tick, PPU rising phase
+    /// (XOTA divider chain, pixel output, VBlank IF, LYC comparison).
     fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
@@ -207,16 +206,13 @@ impl GameBoy {
             self.interrupts.request(interrupt);
         }
 
-        // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
-        self.ppu.tcycle_rising(&self.vram_bus.vram);
-
-        // XOTA rising edge (H→A boundary): toggles WUVU/VENA, increments
-        // LX, detects scanline boundaries, VBlank IF, LYC comparison.
-        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
-        if xota_result.request_vblank {
+        // PPU rising phase: XOTA toggle, scanline boundary, pixel
+        // output, VBlank IF, LYC comparison — all in one call.
+        let ppu_result = self.ppu.rise(is_mcycle_boundary, &self.vram_bus.vram);
+        if ppu_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
-        if let Some(screen) = xota_result.screen {
+        if let Some(screen) = ppu_result.screen {
             if let Some(sgb) = &mut self.sgb {
                 sgb.update_screen(&screen);
             }
@@ -225,8 +221,6 @@ impl GameBoy {
         }
 
         // SUKO is combinational — check for STAT edge after every phase.
-        // Mode 0 (WODU/TARU) fires on the rising phase, so this catches
-        // it immediately rather than deferring to the next falling phase.
         if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
@@ -234,15 +228,13 @@ impl GameBoy {
         new_screen
     }
 
-    /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
-    /// DFF9 resolve, LCD-off handling, and M-cycle subsystems.
+    /// Falling half-phase (DELTA_EVEN): PPU falling phase (fetcher,
+    /// DFF8/DFF9 latches, LCD-off), and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // PPU falling phase: fetcher, DFF9, LCD-off.
-        let video_result = self
-            .ppu
-            .tcycle_falling(is_mcycle_boundary, &self.vram_bus.vram);
+        // PPU falling phase: fetcher, DFF8/DFF9, LCD-off.
+        let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
 
         // SUKO is combinational — check for STAT edge after every phase.
         if self.ppu.check_stat_edge() {
