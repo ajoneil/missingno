@@ -127,6 +127,7 @@ cargo run                                    # Build and run (debug)
 cargo run -- path/to/rom.gb                  # Load a ROM
 cargo run -- path/to/rom.gb --debugger       # Load with debugger
 cargo run -- path/to/rom.gb --headless       # Headless debugger (HTTP API)
+cargo run -- path/to/rom.gb --boot-rom path/to/dmg_boot.bin  # Run with boot ROM
 cargo check                                  # Type check
 cargo test -p missingno-core                 # Run core tests (fast, no GUI deps)
 cargo test                                   # Run all workspace tests
@@ -138,6 +139,7 @@ cargo fmt                                    # Format
 
 - Always run tests against missingno-core: `cargo test -p missingno-core`. Do not run `cargo test` against the whole workspace unless specifically asked.
 - For regression checking, use `./scripts/test-report.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/`.
+- To run a specific test with the boot ROM: `DMG_BOOT_ROM=<path> cargo test -p missingno-core <test_name>`. Boot ROMs are proprietary — ask the user for the path, never commit them. Only use on targeted tests; the boot ROM adds significant startup time per test, making full-suite runs impractical.
 - After any fix, verify no regressions before committing.
 
 ## Emulation Philosophy
@@ -175,7 +177,7 @@ The `Processor` is split across three files in `core/src/game_boy/cpu/mcycle/`:
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
 - **Enum-based MBC dispatch**: `Mbc` enum in `core/src/game_boy/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
 - **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
-- **Post-boot register initialization**: The emulator skips the boot ROM. Initial hardware state must match DMG post-boot values (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`).
+- **Boot ROM support**: The emulator optionally runs the DMG boot ROM. Without a boot ROM, it uses post-boot initialization (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`). With a boot ROM, it uses power-on state (`Cpu::power_on()`, `Ppu::power_on()`, etc.) and starts execution at 0x0000. Boot ROMs are proprietary and must never be committed to the repo. CLI: `--boot-rom <path>`. Tests: set `DMG_BOOT_ROM` env var. Running the boot ROM adds significant startup time per test — only use it on targeted tests when boot state is suspected to play a role, not across the full test suite.
 - **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
 - **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.
 

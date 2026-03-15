@@ -87,6 +87,8 @@ receipts/investigations/<session>/logs/<descriptive-name>.log
 
 **Set generous timeouts.** `cargo test` in debug mode is slow. Use at least 120s for individual tests.
 
+**Boot ROM.** If the investigation suspects boot state plays a role, ask the user for a DMG boot ROM path (boot ROMs are proprietary and cannot be in the repo). Set `DMG_BOOT_ROM=<path>` in the test command to run with the boot ROM. Only use this on targeted tests — running the boot ROM adds significant startup time per test, making it impractical for the full suite.
+
 ## What good diagnostic output looks like
 
 ```

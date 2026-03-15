@@ -103,6 +103,7 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 
 **For compatibility investigations:**
 - After capturing the baseline, invoke `/inspect` to observe the specific failing test's behavior and capture initial state.
+- **Boot ROM consideration.** If boot state is suspected to play a role (e.g., tests that depend on initial register values, VRAM contents, or hardware state that the boot ROM sets up differently from post-boot initialization), ask the user for a DMG boot ROM path and re-run the specific failing test with `DMG_BOOT_ROM=<path>`. Boot ROMs are proprietary and cannot be in the repo. Do NOT run the entire test suite with the boot ROM — it adds significant startup time per test. Use it only on targeted tests.
 - Classify the failure type:
   - **Register mismatch**: Expected vs actual CPU/hardware register values after test execution.
   - **Screenshot mismatch**: Pixel differences between rendered output and reference image.

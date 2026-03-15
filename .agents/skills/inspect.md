@@ -83,6 +83,15 @@ gb_start core/tests/game_boy/roms/dmg-acid2.gb
 
 `gb_start` handles everything: kills any existing server on the port, starts a new headless server, waits for it to be ready (polls `/cpu` with retries), and prints "ready" or fails with an error. **Never manage the server process manually** — no `cargo run &`, no `pkill`, no `lsof`.
 
+**Boot ROM.** If the investigation needs to observe boot state, ask the user for a DMG boot ROM path (boot ROMs are proprietary and cannot be in the repo), then pass `--boot-rom <path>` to the headless server. Since `gb_start` doesn't accept extra flags, start the server manually in this case:
+```bash
+gb_stop 2>/dev/null
+cargo run -- "$rom_path" --headless --boot-rom "$boot_rom_path" &>/dev/null &
+GB_PID=$!
+# Then poll for readiness as gb_start does
+```
+Only use this when boot state is suspected to play a role — the boot ROM adds significant startup time.
+
 ### Checking and stopping
 
 ```bash
