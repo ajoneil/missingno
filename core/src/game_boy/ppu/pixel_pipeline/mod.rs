@@ -131,12 +131,6 @@ pub struct Rendering {
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
-    /// Two-stage STAT mode pipeline. At each M-cycle boundary (dot 3),
-    /// `latched` is promoted from `pending`, then `pending` captures
-    /// the live combinational mode. STAT register reads return `latched`,
-    /// giving a 1-M-cycle delay. Models the CPU data bus latch timing.
-    latched_stat_mode: Mode,
-    pending_stat_mode: Mode,
 }
 
 impl Rendering {
@@ -155,8 +149,6 @@ impl Rendering {
             tyfa_bridge: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            latched_stat_mode: Mode::HorizontalBlank,
-            pending_stat_mode: Mode::HorizontalBlank,
         }
     }
 
@@ -185,20 +177,11 @@ impl Rendering {
         }
     }
 
-    /// Latch the current combinational mode for STAT register reads.
-    /// Called at M-cycle boundaries from tick_xota(), following the
-    /// same pattern as VideoControl::latch_ly_comparison().
-    pub(super) fn latch_stat_mode(&mut self, video: &VideoControl) {
-        self.latched_stat_mode = self.pending_stat_mode;
-        self.pending_stat_mode = self.mode(video);
-    }
-
-    /// Mode as seen by the STAT register. Returns the latched value
-    /// captured at the last M-cycle boundary, not the live combinational
-    /// mode. Models CPU data bus latch timing — mode transitions within
-    /// an M-cycle are not visible until the next M-cycle boundary.
-    pub(super) fn stat_mode(&self, _video: &VideoControl) -> Mode {
-        self.latched_stat_mode
+    /// Mode as seen by the STAT register. Hardware STAT mode bits are
+    /// combinational — no pipeline or latch between the mode signals
+    /// and the CPU data bus.
+    pub(super) fn stat_mode(&self, video: &VideoControl) -> Mode {
+        self.mode(video)
     }
 
     /// Whether the TAPA_INT_OAM signal is active.
