@@ -132,7 +132,7 @@ impl SpriteScanner {
     /// Falling edge (DELTA_EVEN): scanner tick, CATU scan-start, DOBA capture.
     ///
     /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
-    /// FETO is captured before the tick for BYBA to use on the next rising edge.
+    /// FETO is captured after the tick, matching hardware's combinational gate.
     pub(super) fn fall(
         &mut self,
         xupy_rising: bool,
@@ -142,9 +142,6 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // Capture FETO *before* the scanner tick — store for BYBA in next rise().
-        self.feto_old = self.counter.scan_done();
-
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
         if self.scanning && xupy_rising {
@@ -157,6 +154,10 @@ impl SpriteScanner {
         if xupy_rising {
             self.counter.tick_clock();
         }
+
+        // Capture FETO *after* the scanner tick — hardware FETO is combinational
+        // on counter bits, so it reflects the post-tick state immediately.
+        self.feto_old = self.counter.scan_done();
 
         // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
         // the scan counter. Suppressed on LCD turn-on first line.
