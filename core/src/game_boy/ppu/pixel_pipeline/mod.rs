@@ -168,7 +168,7 @@ impl Rendering {
     }
 
     pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
-        if self.scan.scanning() {
+        if self.scan.besu() {
             Mode::OamScan
         } else if self.xymu && !self.wodu() {
             Mode::Drawing
@@ -244,8 +244,8 @@ impl Rendering {
     }
 
     pub(super) fn oam_locked(&self) -> bool {
-        // Hardware: OAM blocked by ACYL (scanning) or XYMU (rendering).
-        self.scan.scanning() || self.xymu
+        // Hardware: OAM blocked by ACYL (BESU-driven) or XYMU (rendering).
+        self.scan.besu() || self.xymu
     }
 
     pub(super) fn vram_locked(&self) -> bool {
@@ -254,8 +254,8 @@ impl Rendering {
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
-        // Hardware: OAM writes blocked by ACYL (scanning) or XYMU (rendering).
-        self.scan.scanning() || self.xymu
+        // Hardware: OAM writes blocked by ACYL (BESU-driven) or XYMU (rendering).
+        self.scan.besu() || self.xymu
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
@@ -350,6 +350,7 @@ impl Rendering {
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.xymu = false;
         self.scan.reset();
+        self.scan.enable_catu();
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher = TileFetcher::new();
