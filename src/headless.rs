@@ -69,6 +69,9 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Get, "/sprites") => {
             respond_json(request, sprites_state(debugger.game_boy()));
         }
+        (&Method::Get, "/timers") => {
+            respond_json(request, timers_state(debugger.game_boy()));
+        }
         (&Method::Get, "/interrupts") => {
             respond_json(request, interrupts_state(debugger.game_boy()));
         }
@@ -675,6 +678,33 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
     })
 }
 
+fn timers_state(gb: &GameBoy) -> TimersState {
+    let timers = gb.timers();
+    let div = timers.read_register(missingno_core::game_boy::timers::Register::Divider);
+    let tima = timers.read_register(missingno_core::game_boy::timers::Register::Counter);
+    let tma = timers.read_register(missingno_core::game_boy::timers::Register::Modulo);
+    let tac = timers.read_register(missingno_core::game_boy::timers::Register::Control);
+    let internal = timers.internal_counter();
+    let clock_select = tac & 0b11;
+    let freq = match clock_select {
+        0b00 => 4096,
+        0b01 => 262144,
+        0b10 => 65536,
+        0b11.. => 16384,
+    };
+    TimersState {
+        div,
+        tima,
+        tma,
+        tac,
+        timer_enabled: tac & 0b100 != 0,
+        clock_select,
+        frequency: freq,
+        internal_counter: format!("{internal:04x}"),
+        internal_counter_decimal: internal,
+    }
+}
+
 fn respond_json(request: tiny_http::Request, body: impl Serialize) {
     let json = serde_json::to_string_pretty(&body).unwrap();
     let response = Response::from_string(json).with_header(
@@ -922,4 +952,17 @@ struct InterruptsState {
 struct InterruptLine {
     enabled: bool,
     requested: bool,
+}
+
+#[derive(Serialize)]
+struct TimersState {
+    div: u8,
+    tima: u8,
+    tma: u8,
+    tac: u8,
+    timer_enabled: bool,
+    clock_select: u8,
+    frequency: u32,
+    internal_counter: String,
+    internal_counter_decimal: u16,
 }
