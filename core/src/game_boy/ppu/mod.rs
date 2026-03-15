@@ -134,6 +134,11 @@ impl Ppu {
         self.video.lx
     }
 
+    /// Current OAM scan counter entry (0-39). Returns None when not rendering.
+    pub fn scan_counter(&self) -> Option<u8> {
+        self.pixel_pipeline.as_ref().map(|r| r.scan_counter_entry())
+    }
+
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Control => self.registers.control.bits(),

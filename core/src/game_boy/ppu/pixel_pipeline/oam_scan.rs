@@ -162,6 +162,11 @@ impl ScanCounter {
         self.entry & 0b100111 == 0b100111
     }
 
+    /// Current scan counter entry (0-39).
+    pub(super) fn entry(&self) -> u8 {
+        self.entry
+    }
+
     /// The byte address the scanner is currently driving on the OAM bus.
     /// Hardware: OAM_A[7:2] = scan_counter, OAM_A[1:0] = 0.
     pub(super) fn oam_address(&self) -> u8 {

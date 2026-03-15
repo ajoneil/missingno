@@ -19,7 +19,7 @@ Use this skill when the question can be answered by inspecting state at instruct
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at dot and instruction granularity. With `step-dot`, bus watchpoints, and `/ppu/pipeline`, most mid-scanline observations are possible. It **cannot** observe:
+This API operates at half-phase, dot, and instruction granularity. With `step-phase`, `step-dot`, bus watchpoints, `/ppu` (including scan counter), and `/ppu/pipeline`, most mid-scanline observations are possible. It **cannot** observe:
 
 - **Sub-dot timing** (what happens within a single dot tick — e.g., the order of operations inside one PPU clock)
 - **Audio channel internals** (sample values, timer counters, sweep state)
@@ -107,29 +107,85 @@ Test ROMs live under `core/tests/game_boy/roms/` (e.g. `core/tests/game_boy/roms
 
 The helper library (`scripts/debugger.sh`) provides functions for all common operations. **Always use these instead of raw curl commands.** They handle JSON parsing with `jq` — no inline Python.
 
+**CRITICAL: Use helpers for data collection, not raw curl.** When collecting data in a loop (stepping phases, stepping dots, reading state), use `gb_step_phases`, `gb_step_dots`, `gb_ppu`, `gb_pipeline`, etc. Do NOT write your own curl loops that duplicate what the helpers already do. If a helper's output format doesn't include a field you need, you may supplement with a single raw curl call per step — but the stepping and primary data collection should go through the helpers. This prevents fragile hand-rolled jq filters and keeps measurements consistent across inspections.
+
 ### Navigation
 
-| Function | Description |
-|----------|-------------|
-| `gb_reset` | Reset the Game Boy and clear all watchpoints |
-| `gb_run_frames <n>` | Step N frames silently |
-| `gb_goto <scanline> <mode>` | Set compound watchpoint, step to it, clear watchpoint, print PPU state. Mode: `oam_scan`, `drawing`, `hblank`, `vblank` |
-| `gb_step_to_px <value>` | Jump to a specific pixel_counter value on the current scanline (sets compound watchpoint: scanline + drawing + pixel_counter, step-frame, clears). Prints pipeline state |
-| `gb_step_dots <n>` | Step N dots, print table: step, lx, pixel_counter, loaded, lo, hi, sprite |
-| `gb_step_phases <n>` | Step N half-phases (rise/fall), print table: step, phase, lx, mode, pc, loaded |
+**`gb_reset`** — Reset the Game Boy and clear all watchpoints. No output.
+
+**`gb_run_frames <n>`** — Step N frames silently. No output. Uses POST `/step-frame` in a loop.
+
+**`gb_goto <scanline> <mode>`** — Jump to a specific scanline and mode. Sets a compound watchpoint (scanline + ppu_mode), runs step-frame, clears the watchpoint, then prints PPU state via `gb_ppu`. Mode values: `oam_scan`, `drawing`, `hblank`, `vblank`. Output: same as `gb_ppu` (one line).
+
+**`gb_step_to_px <value>`** — Jump to a specific pixel_counter value on the current scanline. Reads current LY, sets a compound watchpoint (scanline + drawing + pixel_counter), runs step-frame, clears the watchpoint, then prints pipeline state via `gb_pipeline`. Output: same as `gb_pipeline` (one line).
+
+**`gb_step_dots <n>`** — Step N dots, printing a table. Each row calls POST `/step-dot` then GET `/ppu`. Output columns:
+```
+step  lx    pc   loaded  lo     hi     sprite
+1     20    0    true    255    0      none
+2     20    1    true    255    0      none
+```
+- `step`: 1-based index
+- `lx`: M-cycle counter from `/ppu`
+- `pc`: pixel_counter from `/step-dot` response
+- `loaded`: bg_shifter.loaded (true/false)
+- `lo`/`hi`: bg_shifter.low/high
+- `sprite`: sprite_fetch phase or "none"
+
+**`gb_step_phases <n>`** — Step N half-phases, printing a table. Each row calls POST `/step-phase` then GET `/ppu`. Output columns:
+```
+step  phase  lx   scan  mode  pc   loaded
+1     high   0    5     0     0    false
+2     low    0    5     0     0    false
+```
+- `step`: 1-based index
+- `phase`: "high" or "low" (clock level after this step)
+- `lx`: M-cycle counter from `/ppu`
+- `scan`: scan_counter from `/ppu` (OAM scan counter 0-39, or "-" when null)
+- `mode`: stat.mode_number from `/ppu` (0-3)
+- `pc`: pixel_counter from `/step-phase` response
+- `loaded`: bg_shifter.loaded (true/false)
 
 ### State reading
 
-| Function | Output |
-|----------|--------|
-| `gb_ppu` | `LY=N lx=N mode=N SCX=N SCY=N WX=N WY=N BGP=[...]` |
-| `gb_pipeline` | `pc=N loaded=T/F lo=N hi=N phase=X sprite=X` |
-| `gb_cpu` | `A=N B=N C=N D=N E=N H=N L=N PC=N SP=N IME=N halted=T/F` |
-| `gb_timers` | `DIV=N TIMA=N TMA=N TAC=N enabled=T/F freq=N internal=XXXX` |
-| `gb_screen_row <row>` | Space-separated color indices (0-3) for one screen row |
-| `gb_sprites_on <scanline>` | Sprites visible on that scanline: `id=N x=N y=N tile=N prio=X` |
-| `gb_tile_data <tile_id> [row]` | Decoded tile pixels (2bpp → color indices). All 8 rows, or one row if specified |
-| `gb_tile_map_row <row>` | Tile indices for one BG tile map row: `col:tile_id` pairs |
+**`gb_ppu`** — Read PPU registers. Calls GET `/ppu`. Output:
+```
+LY=0 lx=20 mode=3 scan=39 SCX=0 SCY=0 WX=0 WY=0 BGP=[0,3,3,3]
+```
+`scan` shows "n/a" when scan_counter is null (not rendering).
+
+**`gb_pipeline`** — Read pixel pipeline state. Calls GET `/ppu/pipeline`. Output:
+```
+pc=5 loaded=true lo=255 hi=0 phase=null sprite=none
+```
+
+**`gb_cpu`** — Read CPU registers. Calls GET `/cpu`. Output:
+```
+A=145 B=0 C=19 D=0 E=216 H=1 L=77 PC=352 SP=65534 IME=false halted=false
+```
+
+**`gb_timers`** — Read timer registers. Calls GET `/timers`. Output:
+```
+DIV=44 TIMA=0 TMA=0 TAC=0 enabled=false freq=4096 internal=00b0
+```
+
+**`gb_screen_row <row>`** — Read one screen row. Calls GET `/screen`. Output: space-separated color indices (0-3), 160 values.
+
+**`gb_sprites_on <scanline>`** — List sprites visible on a scanline. Calls GET `/sprites`, filters by Y range. Output: one line per sprite, or "no sprites on scanline N".
+```
+id=0 x=8 y=16 tile=0 prio=above_bg
+```
+
+**`gb_tile_data <tile_id> [row]`** — Decode tile pixels from VRAM (2bpp → color indices 0-3). Calls GET `/memory`. Without row arg: all 8 rows. With row arg: single row. Output:
+```
+row 0: 0 0 0 0 0 0 0 0
+row 1: 3 3 3 3 3 3 3 3
+```
+
+**`gb_tile_map_row <row>`** — Read one row of the BG tile map (32 entries). Calls GET `/memory`. Output: `col:tile_id` pairs.
+```
+0:0  1:0  2:1  3:1  ...
+```
 
 ### Raw API access
 
@@ -144,6 +200,15 @@ curl -s "$GB_URL/memory/9800/32" | jq '.bytes'
 
 # Set a bus-write watchpoint
 curl -s -X PUT "$GB_URL/watchpoints/bus-write/FF4B"
+
+# Clear all watchpoints
+curl -s -X DELETE "$GB_URL/watchpoints"
+
+# Step one instruction
+curl -s -X POST "$GB_URL/step"
+
+# Step one frame (or to next breakpoint/watchpoint)
+curl -s -X POST "$GB_URL/step-frame"
 ```
 
 **Always use `jq` for JSON parsing**, not Python. The `jq` filters are tested against the actual response shapes and won't break on field name mismatches.
@@ -156,7 +221,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/cpu`**: `a`, `b`, `c`, `d`, `e`, `h`, `l`, `sp`, `pc`, `zero`, `negative`, `half_carry`, `carry`, `ime`, `halted`
 
-**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `lx` (M-cycle counter, increments every 4 dots, 0-113 per scanline), `lyc`, `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
+**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `lx` (M-cycle counter, increments every 4 dots, 0-113 per scanline), `lyc`, `scan_counter` (int 0-39 or null when not rendering — OAM scan counter, XUPY-clocked, triggers AVAP at 39), `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
 
 **`/ppu/pipeline`**: `pixel_counter`, `render_phase`, `bg_shifter` (object with `low`, `high`, `loaded` (bool)), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (string or null), `sprite_tile_data`
 
@@ -179,7 +244,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | Endpoint | Method | Returns |
 |----------|--------|---------|
 | `/cpu` | GET | Registers, flags, IME, halted |
-| `/ppu` | GET | LCDC, STAT, LY, dot, LYC, scroll/window regs, palettes |
+| `/ppu` | GET | LCDC, STAT, LY, lx, LYC, scan_counter, scroll/window regs, palettes |
 | `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, render_phase, sprite_fetch |
 | `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |

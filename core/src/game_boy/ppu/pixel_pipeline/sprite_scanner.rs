@@ -74,6 +74,11 @@ impl SpriteScanner {
         self.catu_enabled = true;
     }
 
+    /// Current scan counter entry (0-39).
+    pub(super) fn scan_counter_entry(&self) -> u8 {
+        self.counter.entry()
+    }
+
     /// BYBA state, for debug snapshot.
     pub(super) fn byba(&self) -> bool {
         self.byba

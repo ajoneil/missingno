@@ -210,6 +210,11 @@ impl Rendering {
         self.scan.oam_address()
     }
 
+    /// Current OAM scan counter entry (0-39).
+    pub(super) fn scan_counter_entry(&self) -> u8 {
+        self.scan.scan_counter_entry()
+    }
+
     pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
         let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();

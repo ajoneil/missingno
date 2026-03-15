@@ -111,16 +111,17 @@ gb_step_dots() {
 
 gb_step_phases() {
   local n="${1:?usage: gb_step_phases <count>}"
-  printf "%-4s  %-7s  %-4s  %-4s  %-3s  %s\n" \
-    "step" "phase" "lx" "mode" "pc" "loaded"
+  printf "%-4s  %-5s  %-3s  %-4s  %-4s  %-3s  %s\n" \
+    "step" "phase" "lx" "scan" "mode" "pc" "loaded"
   for i in $(seq 1 "$n"); do
     local result ppu
     result=$(curl -s -X POST "$GB_URL/step-phase")
     ppu=$(curl -s "$GB_URL/ppu")
-    printf "%-4s  %-7s  %-4s  %-4s  %-3s  %s\n" \
+    printf "%-4s  %-5s  %-3s  %-4s  %-4s  %-3s  %s\n" \
       "$i" \
       "$(echo "$result" | jq -r '.phase')" \
       "$(echo "$ppu" | jq -r '.lx')" \
+      "$(echo "$ppu" | jq -r '.scan_counter // "-"')" \
       "$(echo "$ppu" | jq -r '.stat.mode_number')" \
       "$(echo "$result" | jq -r '.pixel_counter')" \
       "$(echo "$result" | jq -r 'if .bg_shifter.loaded then "true" else "false" end')"
@@ -131,7 +132,7 @@ gb_step_phases() {
 
 gb_ppu() {
   curl -s "$GB_URL/ppu" | jq -r \
-    '"LY=\(.ly) lx=\(.lx) mode=\(.stat.mode_number) SCX=\(.scx) SCY=\(.scy) WX=\(.wx) WY=\(.wy) BGP=\(.bgp.colors)"'
+    '"LY=\(.ly) lx=\(.lx) mode=\(.stat.mode_number) scan=\(.scan_counter // "n/a") SCX=\(.scx) SCY=\(.scy) WX=\(.wx) WY=\(.wy) BGP=\(.bgp.colors)"'
 }
 
 gb_pipeline() {
