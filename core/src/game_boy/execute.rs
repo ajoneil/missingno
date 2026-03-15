@@ -137,7 +137,7 @@ impl GameBoy {
         }
 
         let is_mcycle_boundary = dot.boga();
-        self.tick_dot_rising(is_mcycle_boundary);
+        let new_screen = self.tick_dot_rising(is_mcycle_boundary);
 
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
@@ -151,7 +151,7 @@ impl GameBoy {
         }
 
         self.clock_phase = ClockPhase::Falling;
-        false
+        new_screen
     }
 
     /// Falling phase (second half of dot): PPU falling tick,
@@ -197,8 +197,11 @@ impl GameBoy {
     }
 
     /// Rising phase (DELTA_ODD) of one dot: timer tick, DFF8 palette
-    /// latch advance, PPU pixel output pipeline.
+    /// latch advance, PPU pixel output pipeline, master clock divider
+    /// chain (WUVU/VENA/TALU/LX).
     fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
+        let mut new_screen = false;
+
         // Timer ticks every T-cycle for DIV resolution
         if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
             self.interrupts.request(interrupt);
@@ -207,8 +210,8 @@ impl GameBoy {
         // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
         self.ppu.tcycle_rising(&self.vram_bus.vram);
 
-        // Rising half-phase of the XOTA divider chain. Currently a no-op
-        // for the dividers, but exists for per-phase ticking infrastructure.
+        // Rising half-phase of the XOTA divider chain: toggles WUVU/VENA,
+        // increments LX, detects scanline boundaries, VBlank IF, LYC.
         let xota_result = self.ppu.tick_xota_rising(is_mcycle_boundary);
         if xota_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
@@ -218,8 +221,7 @@ impl GameBoy {
                 sgb.update_screen(&screen);
             }
             self.screen = screen;
-            // Note: new_screen not returned from rising phase currently,
-            // but handle it for correctness if tick_xota_rising gains logic.
+            new_screen = true;
         }
 
         // SUKO is combinational — check for STAT edge after every phase.
@@ -229,19 +231,16 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
-        false
+        new_screen
     }
 
-    /// Falling phase (DELTA_EVEN / XOTA rising edge) of one dot:
-    /// master clock divider chain (WUVU/VENA/TALU/LX), PPU fetcher
-    /// pipeline, DFF9 resolve, LCD-off handling, and M-cycle subsystems.
+    /// Falling phase (DELTA_EVEN) of one dot: PPU fetcher pipeline,
+    /// DFF9 resolve, LCD-off handling, and M-cycle subsystems.
     fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
         let mut new_screen = false;
 
-        // XOTA rising edge: tick WUVU/VENA divider chain, LX counter,
-        // scanline boundary, VBlank IF, LYC comparison. This IS the
-        // falling half-phase — XOTA_AxCxExGx rising edge coincides
-        // with DELTA_EVEN.
+        // Falling half-phase of the XOTA divider chain. No-op — dividers
+        // are clocked on the rising half-phase (tick_dot_rising).
         let xota_result = self.ppu.tick_xota_falling(is_mcycle_boundary);
         if xota_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);

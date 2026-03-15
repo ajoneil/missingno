@@ -110,17 +110,10 @@ impl VideoControl {
         self.ly >= 144
     }
 
-    /// Rising half-phase of the XOTA clock. Currently a no-op for the
-    /// dividers (WUVU is clocked on the falling half-phase in this model),
-    /// but exists as infrastructure for per-phase ticking.
-    pub fn tick_xota_rising(&mut self) -> bool {
-        false
-    }
-
-    /// Falling half-phase of the XOTA clock. Toggles WUVU, cascades to
+    /// Rising half-phase of the XOTA clock. Toggles WUVU, cascades to
     /// VENA, increments LX on TALU rising edge. Returns true at scanline
     /// boundary (LX wraps 113→0).
-    pub fn tick_xota_falling(&mut self) -> bool {
+    pub fn tick_xota_rising(&mut self) -> bool {
         let wuvu_was = self.wuvu;
 
         // WUVU DFF17: clocked by XOTA (every dot), self-toggles.
@@ -153,6 +146,12 @@ impl VideoControl {
             }
         }
 
+        false
+    }
+
+    /// Falling half-phase of the XOTA clock. No-op — dividers are clocked
+    /// on the rising half-phase.
+    pub fn tick_xota_falling(&mut self) -> bool {
         false
     }
 }
