@@ -106,13 +106,13 @@ The helper library (`scripts/debugger.sh`) provides functions for all common ope
 | `gb_run_frames <n>` | Step N frames silently |
 | `gb_goto <scanline> <mode>` | Set compound watchpoint, step to it, clear watchpoint, print PPU state. Mode: `oam_scan`, `drawing`, `hblank`, `vblank` |
 | `gb_step_to_px <value>` | Jump to a specific pixel_counter value on the current scanline (sets compound watchpoint: scanline + drawing + pixel_counter, step-frame, clears). Prints pipeline state |
-| `gb_step_dots <n>` | Step N dots, print table: step, dot, pixel_counter, loaded, lo, hi, sprite |
+| `gb_step_dots <n>` | Step N dots, print table: step, lx, pixel_counter, loaded, lo, hi, sprite |
 
 ### State reading
 
 | Function | Output |
 |----------|--------|
-| `gb_ppu` | `LY=N dot=N mode=N SCX=N SCY=N WX=N WY=N BGP=[...]` |
+| `gb_ppu` | `LY=N lx=N mode=N SCX=N SCY=N WX=N WY=N BGP=[...]` |
 | `gb_pipeline` | `pc=N loaded=T/F lo=N hi=N phase=X sprite=X` |
 | `gb_cpu` | `A=N B=N C=N D=N E=N H=N L=N PC=N SP=N IME=N halted=T/F` |
 | `gb_screen_row <row>` | Space-separated color indices (0-3) for one screen row |
@@ -145,7 +145,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/cpu`**: `a`, `b`, `c`, `d`, `e`, `h`, `l`, `sp`, `pc`, `zero`, `negative`, `half_carry`, `carry`, `ime`, `halted`
 
-**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `dot`, `lyc`, `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
+**`/ppu`**: `lcdc` (object with `lcd_enable`, `window_tile_map`, `window_enable`, `bg_tile_data`, `bg_tile_map`, `obj_size`, `obj_enable`, `bg_window_enable`), `stat` (object with `mode` (string), `mode_number` (int 0-3)), `ly`, `lx` (M-cycle counter, increments every 4 dots, 0-113 per scanline), `lyc`, `scx`, `scy`, `wx`, `wy`, `bgp` (object with `colors` array), `obp0`, `obp1`
 
 **`/ppu/pipeline`**: `pixel_counter`, `render_phase`, `bg_shifter` (object with `low`, `high`, `loaded` (bool)), `obj_shifter` (object with `low`, `high`, `palette`, `priority`), `sprite_fetch` (string or null), `sprite_tile_data`
 

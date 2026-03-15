@@ -99,11 +99,11 @@ gb_step_to_px() {
 gb_step_dots() {
   local n="${1:?usage: gb_step_dots <count>}"
   printf "%-4s  %-4s  %-3s  %-6s  %-5s  %-5s  %s\n" \
-    "step" "dot" "pc" "loaded" "lo" "hi" "sprite"
+    "step" "lx" "pc" "loaded" "lo" "hi" "sprite"
   for i in $(seq 1 "$n"); do
     local pipe dot
     pipe=$(curl -s -X POST "$GB_URL/step-dot")
-    dot=$(curl -s "$GB_URL/ppu" | jq -r '.dot')
+    dot=$(curl -s "$GB_URL/ppu" | jq -r '.lx')
     echo "$pipe" | jq -r --arg i "$i" --arg dot "$dot" \
       '"\($i | " " * (4 - ($i|length))) \($i)  \($dot | " " * (4 - ($dot|length)))\($dot)  \(.pixel_counter | tostring | " " * (3 - length))\(.pixel_counter)  \(if .bg_shifter.loaded then "true  " else "false " end)  \(.bg_shifter.low | tostring | " " * (5 - length))\(.bg_shifter.low)  \(.bg_shifter.high | tostring | " " * (5 - length))\(.bg_shifter.high)  \(.sprite_fetch // "none")"'
   done
@@ -113,7 +113,7 @@ gb_step_dots() {
 
 gb_ppu() {
   curl -s "$GB_URL/ppu" | jq -r \
-    '"LY=\(.ly) dot=\(.dot) mode=\(.stat.mode_number) SCX=\(.scx) SCY=\(.scy) WX=\(.wx) WY=\(.wy) BGP=\(.bgp.colors)"'
+    '"LY=\(.ly) lx=\(.lx) mode=\(.stat.mode_number) SCX=\(.scx) SCY=\(.scy) WX=\(.wx) WY=\(.wy) BGP=\(.bgp.colors)"'
 }
 
 gb_pipeline() {
