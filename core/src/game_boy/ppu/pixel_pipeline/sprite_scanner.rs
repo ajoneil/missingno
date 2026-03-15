@@ -12,8 +12,16 @@ use super::oam_scan::{ScanCounter, SpriteStore};
 pub(super) struct SpriteScanner {
     /// 6-bit scan counter + Y comparator (YFEL-FONY).
     counter: ScanCounter,
-    /// BESU scanning latch. Set when OAM scan starts, cleared by AVAP.
+    /// Scan machinery active — set on all lines including LCD-on line 0.
+    /// Controls counter ticking, OAM comparisons, and mode 3 gating in fall().
     scanning: bool,
+    /// BESU scanning latch — drives ACYL for STAT mode bits and OAM bus locking.
+    /// Set by CATU only when catu_enabled is true (NOT set on LCD-on line 0).
+    besu: bool,
+    /// Models NOT(VID_RST) for CATU gating. Starts false at LCD-on (VID_RST
+    /// blocks CATU). Set to true by enable_catu() after the first scanline
+    /// completes. Persists across scanline resets.
+    catu_enabled: bool,
     /// BYBA_SCAN_DONEp_odd: captures FETO (scan_done) on XUPY rising edges.
     byba: bool,
     /// DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
@@ -34,6 +42,8 @@ impl SpriteScanner {
         Self {
             counter: ScanCounter::new(),
             scanning: false,
+            besu: false,
+            catu_enabled: false,
             byba: false,
             doba: false,
             sprites: SpriteStore::new(),
@@ -46,9 +56,20 @@ impl SpriteScanner {
         self.counter.set_entry(entry);
     }
 
-    /// Whether the scanner is currently active (BESU/ACYL).
+    /// Whether the scan machinery is currently active.
     pub(super) fn scanning(&self) -> bool {
         self.scanning
+    }
+
+    /// BESU scanning latch — drives ACYL for STAT mode and OAM bus locking.
+    pub(super) fn besu(&self) -> bool {
+        self.besu
+    }
+
+    /// Release VID_RST's blocking effect on CATU. Called after the first
+    /// scanline completes (reset_scanline), enabling BESU on subsequent lines.
+    pub(super) fn enable_catu(&mut self) {
+        self.catu_enabled = true;
     }
 
     /// BYBA state, for debug snapshot.
@@ -114,6 +135,9 @@ impl SpriteScanner {
         let scan_started = lx == 0 && wuvu && !self.scanning;
         if scan_started {
             self.scanning = true;
+            if self.catu_enabled {
+                self.besu = true;
+            }
             self.counter.reset();
         }
 
@@ -127,6 +151,7 @@ impl SpriteScanner {
 
         if avap && self.scanning {
             self.scanning = false;
+            self.besu = false;
         }
 
         ScanSignals { avap }
@@ -136,6 +161,7 @@ impl SpriteScanner {
     pub(super) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
+        self.besu = false;
         self.sprites = SpriteStore::new();
         // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
         // they naturally clear because FETO is false after counter reset.
