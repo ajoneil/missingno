@@ -61,7 +61,7 @@ pub struct VideoControl {
     pub(super) stat_line_was_high: bool,
 
     /// NYPE DFF17 (delayed line-end, GateBoyLCD.cpp line 125).
-    /// Clocked by TALU rising edge. Data: RUTU_old (previous tick's
+    /// Clocked by TALU falling edge. Data: RUTU_old (previous tick's
     /// line-end pulse). Goes high at phase_lx=4, 2 dots after RUTU.
     /// Active window: phase_lx [4, 11] within the scanline.
     pub(super) nype: bool,
@@ -75,7 +75,7 @@ pub struct VideoControl {
 
 impl VideoControl {
     /// TALU signal: buffered VENA.qp. High during phases C,D,E,F.
-    /// TALU rising edge clocks LX, ROPO, and NYPE.
+    /// TALU rising edge clocks LX and ROPO. NYPE is clocked on TALU falling.
     pub fn talu(&self) -> bool {
         self.vena
     }
@@ -144,13 +144,16 @@ impl VideoControl {
             let talu_was = self.vena;
             self.vena = !self.vena;
 
-            // TALU = VENA.qp. LX clocked on TALU rising edge.
-            if !talu_was && self.vena {
-                // NYPE DFF17: clocked by TALU rising edge.
-                // Latches rutu_old BEFORE the LX increment.
+            if talu_was && !self.vena {
+                // NYPE DFF17: clocked by TALU falling edge.
+                // Latches rutu_old set by the previous TALU-rising
+                // scanline boundary, giving a 2-dot delay (phase_lx=4).
                 self.nype = self.rutu_old;
                 self.rutu_old = false;
+            }
 
+            // TALU = VENA.qp. LX clocked on TALU rising edge.
+            if !talu_was && self.vena {
                 self.lx += 1;
 
                 // SANU detects LX=113 combinationally (no action here;
@@ -167,7 +170,7 @@ impl VideoControl {
                     }
                     self.lx = 0;
                     // Set rutu_old for NYPE to sample on the next
-                    // TALU rising edge (2 dots from now).
+                    // TALU falling edge (2 dots from now).
                     self.rutu_old = true;
                     return true;
                 }
