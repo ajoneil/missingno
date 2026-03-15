@@ -99,14 +99,14 @@ impl GameBoy {
     /// Falling completes it.
     fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         match self.clock_phase {
-            ClockPhase::Rising => self.execute_rising_phase(pending_oam_bug),
-            ClockPhase::Falling => self.execute_falling_phase(pending_oam_bug),
+            ClockPhase::Rising => self.rise(pending_oam_bug),
+            ClockPhase::Falling => self.fall(pending_oam_bug),
         }
     }
 
     /// Rising phase (first half of dot): advance CPU state machine,
     /// IE push bug, OAM bug recording, PPU rising tick, OAM bug fire.
-    fn execute_rising_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+    fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
 
@@ -156,7 +156,7 @@ impl GameBoy {
 
     /// Falling phase (second half of dot): PPU falling tick,
     /// interrupt latch capture, bus actions.
-    fn execute_falling_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
