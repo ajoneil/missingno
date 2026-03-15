@@ -487,7 +487,7 @@ impl Cpu {
     /// Halted phase: emit Read at [PC] without incrementing.
     /// Returns `None` at instruction boundaries (still-halted or wakeup
     /// completion) to defer the next M-cycle to the next `next_dot` call.
-    fn mcycle_halted(&mut self, read_value: u8) -> Option<BusAction> {
+    fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         let step = self.exec_step;
         self.exec_step += 1;
 
@@ -500,17 +500,24 @@ impl Cpu {
                 return self.mcycle_fetch(0);
             }
 
-            // Promote at the start of each halted NOP, matching the Running
+            // Emit the halted read. If an IME=1 interrupt is pending,
+            // it will be detected at step 1 after this Read completes,
+            // matching hardware's wakeup NOP timing.
+            Some(BusAction::Read {
+                address: self.program_counter,
+            })
+        } else {
+            self.exec_step = 0;
+            self.boundary_flag = true;
+
+            // Promote the interrupt latch at step 1, matching the Running
             // path where promote runs at mcycle_fetch step 1 (after the
-            // detecting fetch's 4 dots). Fresh from the previous iteration's
-            // dots becomes Ready here; Fresh set during THIS iteration's dots
-            // won't be promoted until the next iteration's step 0.
+            // detecting fetch's dots). Fresh from the previous M-cycle's
+            // dots becomes Ready here.
             self.interrupt_latch.promote();
 
-            // Co-located with promote: check for IME=1 wakeup immediately,
-            // before emitting the Read. This matches the Running path where
-            // promote and take_ready are co-located at mcycle_fetch step 1
-            // with zero dots between them.
+            // IME=1 wakeup: if an interrupt is Ready, dispatch ISR.
+            // The step 0 Read was the wakeup NOP (1 M-cycle consumed).
             if self.interrupt_latch.take_ready().is_some() {
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
@@ -528,53 +535,20 @@ impl Cpu {
                     step: 0,
                 };
                 self.exec_step = 0;
-                self.boundary_flag = true;
                 self.pending_vector_resolve = false;
                 return self.mcycle_isr(0);
             }
 
-            // No interrupt pending — emit the halted read (wakeup NOP).
-            Some(BusAction::Read {
-                address: self.program_counter,
-            })
-        } else {
-            // Halted read complete — check for wakeup.
-            // IME=1 wakeup is handled at step 0 (co-located with promote).
-            // Only IME=0 wakeup and still-halted paths remain here.
-            self.exec_step = 0;
-            self.boundary_flag = true;
-
             if self.halt_state == HaltState::Running {
-                // IME=0 wakeup: halt_wakeup_check already set Running.
-                // The halted read's value IS the opcode. Transition to
-                // Execute, treating it as a fetch.
-                let opcode = read_value;
-                if self.halt_bug {
-                    self.halt_bug = false;
-                } else {
-                    self.program_counter = self.program_counter.wrapping_add(1);
-                }
-
-                let needed = operand_count(opcode);
-                if needed == 0 {
-                    let bytes = [opcode, 0, 0];
-                    self.decode_and_transition(bytes, 1);
-                    return self.mcycle_execute(0);
-                } else {
-                    self.phase = CpuPhase::Execute {
-                        phase: Phase::Operands {
-                            pc: self.program_counter,
-                            bytes: [opcode, 0, 0],
-                            bytes_read: 1,
-                            bytes_needed: 1 + needed,
-                        },
-                        step: 0,
-                    };
-                    return self.mcycle_execute(0);
-                }
+                // IME=0 wakeup detected at step 1. Do NOT decode read_value
+                // as the opcode -- the wakeup NOP M-cycle hasn't happened yet.
+                // Return None (boundary) so the next iteration enters step 0,
+                // which transitions to Fetch and emits the wakeup NOP read.
+                self.advance_ei_delay();
+                return None;
             }
 
-            // Still halted — advance EI delay, start next halted NOP
+            // Still halted -- advance EI delay, start next halted NOP.
             self.advance_ei_delay();
             Some(BusAction::Read {
                 address: self.program_counter,
