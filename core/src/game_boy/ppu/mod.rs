@@ -211,16 +211,11 @@ impl Ppu {
 
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
-    /// On hardware, VID_RST deasserts on the same G->H edge that latches
-    /// the LCDC value. The XOTA clock edge that coincides with VID_RST
-    /// deassertion toggles WUVU immediately. All three events — DFF9 latch,
-    /// VID_RST deassert, first WUVU toggle — are simultaneous.
-    ///
-    /// In the emulator, `drive_ppu_bus` fires after `tick_xota_falling` has
-    /// VID_RST deasserts at G→H (XOTA falling). No WUVU latch on this
-    /// edge — WUVU is clocked by XOTA rising. All dividers start at
-    /// qp=0 (async reset). The first WUVU toggle happens on the next
-    /// tick_xota_falling (= XOTA rising = H→A edge).
+    /// On hardware, VID_RST deasserts at G→H (XOTA falling). No WUVU
+    /// latch on this edge — WUVU is clocked by XOTA rising. All dividers
+    /// start at qp=0 (async reset). The first WUVU toggle happens on
+    /// the next tick_xota_rising (= XOTA rising = H→A edge), which is
+    /// 0.5 dots after LCD-on.
     fn initialize_lcd_on(&mut self) {
         self.video.lx = 0;
         self.video.wuvu = false;
@@ -425,33 +420,10 @@ impl Ppu {
         // not here. See tcycle_falling().
     }
 
-    /// Rising half-phase of the master clock divider chain. Currently a
-    /// no-op (WUVU is clocked on the falling half-phase), but exists as
-    /// infrastructure for per-phase ticking.
-    pub fn tick_xota_rising(&mut self, _is_mcycle: bool) -> PpuTickResult {
-        let result = PpuTickResult {
-            screen: None,
-            request_vblank: false,
-        };
-
-        if !self.control().video_enabled() {
-            return result;
-        }
-
-        if self.pixel_pipeline.is_none() {
-            return result;
-        }
-
-        // Rising half-phase: dividers are a no-op in this model.
-        self.video.tick_xota_rising();
-
-        result
-    }
-
-    /// Falling half-phase of the master clock divider chain. Runs the
+    /// Rising half-phase of the master clock divider chain. Runs the
     /// WUVU/VENA divider chain, LX counter, scanline boundary logic,
     /// VBlank IF, and LYC comparison.
-    pub fn tick_xota_falling(&mut self, is_mcycle: bool) -> PpuTickResult {
+    pub fn tick_xota_rising(&mut self, is_mcycle: bool) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -467,7 +439,7 @@ impl Ppu {
             return result;
         }
 
-        if self.video.tick_xota_falling() {
+        if self.video.tick_xota_rising() {
             // Scanline boundary — LX wrapped to 0.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();
@@ -503,6 +475,27 @@ impl Ppu {
         if is_mcycle {
             self.video.latch_ly_comparison();
         }
+
+        result
+    }
+
+    /// Falling half-phase of the master clock divider chain. No-op —
+    /// dividers are clocked on the rising half-phase.
+    pub fn tick_xota_falling(&mut self, _is_mcycle: bool) -> PpuTickResult {
+        let result = PpuTickResult {
+            screen: None,
+            request_vblank: false,
+        };
+
+        if !self.control().video_enabled() {
+            return result;
+        }
+
+        if self.pixel_pipeline.is_none() {
+            return result;
+        }
+
+        self.video.tick_xota_falling();
 
         result
     }
