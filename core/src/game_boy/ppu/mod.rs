@@ -379,30 +379,16 @@ impl Ppu {
         }
 
         if self.pixel_pipeline.is_none() {
-            // WUVU/VENA come out of async reset at qp=0. The CPU write to LCDC
-            // takes effect at DELTA_GH. The combination of divider phase offset
-            // (4 dots) and write timing within the M-cycle (4 dots) produces an
-            // 8-dot shortening of the first scanline (448 dots instead of 456).
-            //
-            // Model: start LX at 2 with phase 0. This skips 8 dots (2 LX values
-            // x 4 dots/LX), so LX=113 is reached after 444 dots from LX=2's
-            // perspective, giving 444 + 8 skipped = ~448 total dots for the first
-            // scanline as seen by the CPU.
-            self.video.lx = 2;
-            // WUVU/VENA start at qp=false after VID_RST deasserts.
+            // VID_RST async reset deasserts when LCDC bit 7 is set.
+            // All dividers start at qp=0: WUVU=false, VENA=false, LX=0.
+            // The first scanline's shortened duration (448 vs 456 dots)
+            // emerges from the divider phase relationship — TALU rises
+            // after 2 XOTA edges instead of 4, shortening LX=0's window.
+            self.video.lx = 0;
             self.video.wuvu = false;
             self.video.vena = false;
             self.video.write_ly(0);
-            let mut rendering = Rendering::new();
-            // On LCD-on, the scan counter starts at entry 2 instead of 0.
-            // On normal lines, scan_started fires at dot 1 (lx==0, wuvu rising),
-            // which "wastes" one XUPY tick: the counter increments (0→1) then
-            // immediately resets (→0). Combined with the WUVU phase difference
-            // (XUPY at even dots on LCD-on vs odd dots on normal lines), the net
-            // effect is that AVAP fires 2 entries too late without this offset.
-            // Starting at entry 2 compensates, producing AVAP at lx=20 to match
-            // hardware's counter release timing at LCD enable.
-            rendering.set_scan_counter_entry(2);
+            let rendering = Rendering::new();
             self.pixel_pipeline = Some(rendering);
             // Sync edge detector: the STAT line and its edge detector reach
             // their new steady state simultaneously when VID_RST deasserts.
@@ -421,12 +407,33 @@ impl Ppu {
         // not here. See tcycle_falling().
     }
 
-    /// Master clock tick (XOTA rising edge). Runs the WUVU/VENA divider
-    /// chain, LX counter, scanline boundary logic, VBlank IF, and LYC
-    /// comparison. Called once per dot by the executor, independent of
-    /// the rising/falling half-phase split — on hardware, the master
-    /// clock is not part of either half-phase.
-    pub fn tick_xota(&mut self, is_mcycle: bool) -> PpuTickResult {
+    /// Rising half-phase of the master clock divider chain. Currently a
+    /// no-op (WUVU is clocked on the falling half-phase), but exists as
+    /// infrastructure for per-phase ticking.
+    pub fn tick_xota_rising(&mut self, _is_mcycle: bool) -> PpuTickResult {
+        let result = PpuTickResult {
+            screen: None,
+            request_vblank: false,
+        };
+
+        if !self.control().video_enabled() {
+            return result;
+        }
+
+        if self.pixel_pipeline.is_none() {
+            return result;
+        }
+
+        // Rising half-phase: dividers are a no-op in this model.
+        self.video.tick_xota_rising();
+
+        result
+    }
+
+    /// Falling half-phase of the master clock divider chain. Runs the
+    /// WUVU/VENA divider chain, LX counter, scanline boundary logic,
+    /// VBlank IF, and LYC comparison.
+    pub fn tick_xota_falling(&mut self, is_mcycle: bool) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -442,7 +449,7 @@ impl Ppu {
             return result;
         }
 
-        if self.video.tick_xota() {
+        if self.video.tick_xota_falling() {
             // Scanline boundary — LX wrapped to 0.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();

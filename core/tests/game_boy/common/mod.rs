@@ -49,7 +49,9 @@ fn run_boot_rom(gb: &mut GameBoy) {
             return;
         }
     }
-    panic!("Boot ROM did not reach 0x0100 within 10M steps — does the ROM have a valid Nintendo logo?");
+    panic!(
+        "Boot ROM did not reach 0x0100 within 10M steps — does the ROM have a valid Nintendo logo?"
+    );
 }
 
 /// Run the emulator until the serial output contains any of the given needle strings,

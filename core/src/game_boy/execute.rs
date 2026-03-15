@@ -207,6 +207,21 @@ impl GameBoy {
         // PPU rising phase: DFF8 palette latches, LCD init, pixel output.
         self.ppu.tcycle_rising(&self.vram_bus.vram);
 
+        // Rising half-phase of the XOTA divider chain. Currently a no-op
+        // for the dividers, but exists for per-phase ticking infrastructure.
+        let xota_result = self.ppu.tick_xota_rising(is_mcycle_boundary);
+        if xota_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        if let Some(screen) = xota_result.screen {
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&screen);
+            }
+            self.screen = screen;
+            // Note: new_screen not returned from rising phase currently,
+            // but handle it for correctness if tick_xota_rising gains logic.
+        }
+
         // SUKO is combinational — check for STAT edge after every phase.
         // Mode 0 (WODU/TARU) fires on the rising phase, so this catches
         // it immediately rather than deferring to the next falling phase.
@@ -227,7 +242,7 @@ impl GameBoy {
         // scanline boundary, VBlank IF, LYC comparison. This IS the
         // falling half-phase — XOTA_AxCxExGx rising edge coincides
         // with DELTA_EVEN.
-        let xota_result = self.ppu.tick_xota(is_mcycle_boundary);
+        let xota_result = self.ppu.tick_xota_falling(is_mcycle_boundary);
         if xota_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
