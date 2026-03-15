@@ -23,9 +23,13 @@ pub(super) struct SpriteScanner {
     /// completes. Persists across scanline resets.
     catu_enabled: bool,
     /// BYBA_SCAN_DONEp_odd: captures FETO (scan_done) on XUPY rising edges.
+    /// Hardware: _odd suffix → latches on rising edge (DELTA_ODD).
     byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA on every rising edge.
+    /// DOBA_SCAN_DONEp_evn: captures BYBA.
+    /// Hardware: _evn suffix → latches on falling edge (DELTA_EVEN).
     doba: bool,
+    /// Stored FETO value from fall() for BYBA capture in the next rise().
+    feto_old: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -46,6 +50,7 @@ impl SpriteScanner {
             catu_enabled: false,
             byba: false,
             doba: false,
+            feto_old: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -103,15 +108,31 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge: DOBA captures BYBA.
-    pub(super) fn rise(&mut self) {
-        self.doba = self.byba;
+    /// Rising edge (DELTA_ODD): BYBA captures stored FETO, AVAP evaluated.
+    ///
+    /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
+    /// AVAP is combinational (BYBA && !DOBA), evaluated after BYBA updates.
+    pub(super) fn rise(&mut self, xupy_rising: bool) -> ScanSignals {
+        // BYBA_SCAN_DONEp_odd: capture stored FETO on XUPY rising edge.
+        if xupy_rising {
+            self.byba = self.feto_old;
+        }
+
+        // AVAP: combinational scan-done trigger.
+        let avap = self.byba && !self.doba;
+
+        if avap && self.scanning {
+            self.scanning = false;
+            self.besu = false;
+        }
+
+        ScanSignals { avap }
     }
 
-    /// Falling edge: scanner tick, CATU scan-start, BYBA capture, AVAP check.
+    /// Falling edge (DELTA_EVEN): scanner tick, CATU scan-start, DOBA capture.
     ///
-    /// Takes explicit inputs from the video control and pipeline state.
-    /// Returns `ScanSignals` indicating whether AVAP fired.
+    /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
+    /// FETO is captured before the tick for BYBA to use on the next rising edge.
     pub(super) fn fall(
         &mut self,
         xupy_rising: bool,
@@ -120,9 +141,9 @@ impl SpriteScanner {
         ly: u8,
         regs: &PipelineRegisters,
         oam: &Oam,
-    ) -> ScanSignals {
-        // Capture FETO *before* the scanner tick — models DFF pre-edge capture.
-        let feto_old = self.counter.scan_done();
+    ) {
+        // Capture FETO *before* the scanner tick — store for BYBA in next rise().
+        self.feto_old = self.counter.scan_done();
 
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
@@ -148,20 +169,8 @@ impl SpriteScanner {
             self.counter.reset();
         }
 
-        // BYBA_SCAN_DONEp_odd: capture pre-tick FETO on XUPY rising edge.
-        if xupy_rising {
-            self.byba = feto_old;
-        }
-
-        // AVAP: combinational scan-done trigger.
-        let avap = self.byba && !self.doba;
-
-        if avap && self.scanning {
-            self.scanning = false;
-            self.besu = false;
-        }
-
-        ScanSignals { avap }
+        // DOBA_SCAN_DONEp_evn: captures BYBA on falling edge.
+        self.doba = self.byba;
     }
 
     /// Reset at scanline boundary.
@@ -175,5 +184,6 @@ impl SpriteScanner {
         // But we reset them for cleanliness.
         self.byba = false;
         self.doba = false;
+        self.feto_old = false;
     }
 }

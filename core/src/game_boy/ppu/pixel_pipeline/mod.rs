@@ -270,10 +270,10 @@ impl Rendering {
 
     /// Falling edge (DELTA_EVEN): setup phase.
     ///
-    /// On hardware, the falling edge handles XUPY-derived logic (BYBA,
-    /// CATU, scan-counter, AVAP mode transitions), fetcher control signals
-    /// (NYKA, POKY), mode transitions (VOGA/WEGO clearing XYMU), fine
-    /// scroll match (PUXA), and window WX match (PYCO).
+    /// On hardware, the falling edge handles XUPY-derived logic (DOBA,
+    /// CATU, scan-counter), fetcher control signals (NYKA, POKY), mode
+    /// transitions (VOGA/WEGO clearing XYMU), fine scroll match (PUXA),
+    /// and window WX match (PYCO). AVAP moved to rise() with BYBA.
     ///
     /// XUPY derives from WUVU, which is clocked by XOTA rising (H→A
     /// boundary). The XOTA divider toggle runs in Ppu::rise(), before
@@ -291,18 +291,9 @@ impl Rendering {
         // just went low→high.
         let xupy_rising = video.xupy();
 
-        // Sprite scanner falling edge: counter tick, scan-start, BYBA, AVAP.
-        let scan = self
-            .scan
+        // Sprite scanner falling edge: counter tick, scan-start, DOBA capture.
+        self.scan
             .fall(xupy_rising, video.lx, video.wuvu, video.ly(), regs, oam);
-
-        // React to scan signals.
-        // AVAP fires identically on normal lines and the LCD-on first line —
-        // the scan counter runs to 39 independent of BESU (scanning latch).
-        if scan.avap {
-            self.xymu = true;
-            self.window.init_nuko_wx(regs.window.x_plus_7.output());
-        }
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
@@ -333,8 +324,9 @@ impl Rendering {
 
     /// Rising edge (DELTA_ODD): output phase.
     ///
-    /// On hardware, the rising edge handles DOBA capture, pixel counter
-    /// increment, fine counter increment, pipe shift, and sprite X matching.
+    /// On hardware, the rising edge handles BYBA capture, AVAP evaluation,
+    /// pixel counter increment, fine counter increment, pipe shift, and
+    /// sprite X matching.
     pub(super) fn rise(
         &mut self,
         regs: &PipelineRegisters,
@@ -342,8 +334,17 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // Sprite scanner rising edge: DOBA captures BYBA.
-        self.scan.rise();
+        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated.
+        let xupy_rising = video.xupy();
+        let scan = self.scan.rise(xupy_rising);
+
+        // React to scan signals.
+        // AVAP fires identically on normal lines and the LCD-on first line —
+        // the scan counter runs to 39 independent of BESU (scanning latch).
+        if scan.avap {
+            self.xymu = true;
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+        }
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when XYMU is set (rendering active).
