@@ -93,12 +93,6 @@ impl ScanCounter {
         self.frozen = false;
     }
 
-    /// Set the scan counter entry directly. Used for LCD-on initialization
-    /// where the counter needs a non-zero starting value.
-    pub(super) fn set_entry(&mut self, entry: u8) {
-        self.entry = entry;
-    }
-
     /// Process one scan tick. On hardware, GAVA clocks the counter
     /// and COTA latches OAM data on the same sub-phase (A/E), but
     /// COTA latches the *previous* tick's data (pipeline delay).

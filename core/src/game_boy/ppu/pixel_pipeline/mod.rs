@@ -152,11 +152,11 @@ impl Rendering {
         }
     }
 
-    /// Set the scan counter's initial entry value. Used for LCD-on
-    /// initialization where the counter starts ahead of zero to compensate
-    /// for the wasted XUPY tick that scan_started provides on normal lines.
-    pub(super) fn set_scan_counter_entry(&mut self, entry: u8) {
-        self.scan.set_counter_entry(entry);
+    /// Pre-set scanning active for LCD-on. Models VID_RST deassertion
+    /// releasing the scan counter simultaneously with the rest of the
+    /// pipeline.
+    pub(super) fn start_scanning(&mut self) {
+        self.scan.start_scanning();
     }
 
     /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).

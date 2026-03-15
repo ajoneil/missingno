@@ -229,6 +229,9 @@ impl Ppu {
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            rendering.start_scanning();
+        }
 
         // Sync the STAT edge detector: the STAT line and its edge detector
         // reach their new steady state simultaneously when VID_RST deasserts.

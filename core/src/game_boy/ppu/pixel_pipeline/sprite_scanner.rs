@@ -50,10 +50,12 @@ impl SpriteScanner {
         }
     }
 
-    /// Set the scan counter's initial entry value. Used for LCD-on
-    /// initialization where the counter starts ahead of zero.
-    pub(super) fn set_counter_entry(&mut self, entry: u8) {
-        self.counter.set_entry(entry);
+    /// Set scanning active for LCD-on initialization. On hardware, VID_RST
+    /// deassertion releases the scan counter and comparison logic
+    /// simultaneously — there is no separate CATU "start scanning" event
+    /// on the first line. The counter is already at 0 from async reset.
+    pub(super) fn start_scanning(&mut self) {
+        self.scanning = true;
     }
 
     /// Whether the scan machinery is currently active.
