@@ -134,12 +134,12 @@ pub struct Rendering {
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
-    /// STAT-visible mode latch. Captures the combinational mode at each
-    /// M-cycle boundary (dot 0). STAT register reads return this value,
-    /// not the live combinational mode. Models the CPU data bus latch
-    /// timing — mode transitions within an M-cycle are not visible to
-    /// the CPU until the next M-cycle boundary.
+    /// Two-stage STAT mode pipeline. At each M-cycle boundary (dot 3),
+    /// `latched` is promoted from `pending`, then `pending` captures
+    /// the live combinational mode. STAT register reads return `latched`,
+    /// giving a 1-M-cycle delay. Models the CPU data bus latch timing.
     latched_stat_mode: Mode,
+    pending_stat_mode: Mode,
 }
 
 impl Rendering {
@@ -160,6 +160,7 @@ impl Rendering {
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             latched_stat_mode: Mode::HorizontalBlank,
+            pending_stat_mode: Mode::HorizontalBlank,
         }
     }
 
@@ -180,6 +181,7 @@ impl Rendering {
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             latched_stat_mode: Mode::HorizontalBlank,
+            pending_stat_mode: Mode::HorizontalBlank,
         }
     }
 
@@ -205,7 +207,8 @@ impl Rendering {
     /// Called at M-cycle boundaries from tick_xota(), following the
     /// same pattern as VideoControl::latch_ly_comparison().
     pub(super) fn latch_stat_mode(&mut self, video: &VideoControl) {
-        self.latched_stat_mode = self.mode(video);
+        self.latched_stat_mode = self.pending_stat_mode;
+        self.pending_stat_mode = self.mode(video);
     }
 
     /// Mode as seen by the STAT register. Returns the latched value
