@@ -209,6 +209,38 @@ impl Ppu {
         false
     }
 
+    /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
+    ///
+    /// On hardware, VID_RST deasserts on the same G->H edge that latches
+    /// the LCDC value. The XOTA clock edge that coincides with VID_RST
+    /// deassertion toggles WUVU immediately. All three events — DFF9 latch,
+    /// VID_RST deassert, first WUVU toggle — are simultaneous.
+    ///
+    /// In the emulator, `drive_ppu_bus` fires after `tick_xota_falling` has
+    /// already run for this dot, so the regular divider tick has passed.
+    /// This method bundles the VID_RST deassertion (zeroing dividers,
+    /// creating the pipeline) with the equivalent of one WUVU toggle, so
+    /// the dividers start in the correct phase.
+    fn initialize_lcd_on(&mut self) {
+        // VID_RST deasserts: all dividers start at qp=0.
+        self.video.lx = 0;
+        self.video.wuvu = false;
+        self.video.vena = false;
+        self.video.write_ly(0);
+
+        // First WUVU toggle: the XOTA edge that coincides with VID_RST
+        // deassertion toggles WUVU from false to true.
+        self.video.wuvu = true;
+
+        // Create the pixel pipeline (VID_RST released).
+        self.pixel_pipeline = Some(Rendering::new());
+
+        // Sync the STAT edge detector: the STAT line and its edge detector
+        // reach their new steady state simultaneously when VID_RST deasserts.
+        // No false edge on the first evaluation.
+        self.video.stat_line_was_high = self.stat_line_active();
+    }
+
     pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
         let is_drawing = self.is_rendering();
 
@@ -228,11 +260,17 @@ impl Ppu {
                 }
             }
             Register::Control => {
+                let was_enabled = self.registers.control.video_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
                 self.write_register_immediate(&register, value);
                 self.registers.control_latch.write_immediate(value);
+
+                // VID_RST deasserts when bit 7 transitions 0→1.
+                if !was_enabled && self.registers.control.video_enabled() {
+                    self.initialize_lcd_on();
+                }
                 false
             }
             Register::BackgroundViewportY => {
@@ -378,24 +416,6 @@ impl Ppu {
             return;
         }
 
-        if self.pixel_pipeline.is_none() {
-            // VID_RST async reset deasserts when LCDC bit 7 is set.
-            // All dividers start at qp=0: WUVU=false, VENA=false, LX=0.
-            // The first scanline's shortened duration (448 vs 456 dots)
-            // emerges from the divider phase relationship — TALU rises
-            // after 2 XOTA edges instead of 4, shortening LX=0's window.
-            self.video.lx = 0;
-            self.video.wuvu = false;
-            self.video.vena = false;
-            self.video.write_ly(0);
-            let rendering = Rendering::new();
-            self.pixel_pipeline = Some(rendering);
-            // Sync edge detector: the STAT line and its edge detector reach
-            // their new steady state simultaneously when VID_RST deasserts.
-            // No false edge on the first evaluation.
-            self.video.stat_line_was_high = self.stat_line_active();
-        }
-
         // Pixel output, SACU, pipe shift — only during active display.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             if !self.video.in_vblank() {
@@ -501,13 +521,6 @@ impl Ppu {
         };
 
         if self.control().video_enabled() {
-            // When video is enabled but the pipeline hasn't been created yet
-            // (LCDC was just written, rising phase hasn't run), skip all
-            // work. The pipeline is initialized on the next rising phase.
-            if self.pixel_pipeline.is_none() {
-                return result;
-            }
-
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
