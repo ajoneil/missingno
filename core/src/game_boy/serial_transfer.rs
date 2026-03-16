@@ -3,8 +3,8 @@ use bitflags::bitflags;
 use crate::game_boy::interrupts::Interrupt;
 
 /// Bit of the internal counter whose falling edge clocks the serial shift register.
-/// On DMG, this is bit 7 (0x80), giving a base period of 256 T-cycles.
-const CLOCK_BIT: u16 = 0x80;
+/// On DMG, this is bit 5 of the M-cycle counter, giving a base period of 256 T-cycles.
+const CLOCK_BIT: u16 = 1 << 5;
 
 #[derive(Clone)]
 pub struct Registers {
@@ -28,7 +28,7 @@ impl Registers {
             control: Control::from_bits_retain(0x7e),
             bits_remaining: 0,
             serial_clock: false,
-            previous_counter: 0xABCA,
+            previous_counter: 0x2AF2,
             output: Vec::new(),
         }
     }

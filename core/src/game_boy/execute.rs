@@ -158,10 +158,14 @@ impl GameBoy {
             self.last_read_value = self.cpu_read(*address);
         }
 
-        // Timer ticks every T-cycle for DIV resolution.
+        // Timer ticks once per M-cycle (BOGA). On hardware, DIV00 is
+        // clocked by BOGA — the entire ripple counter advances once per
+        // M-cycle, not per T-cycle.
         let is_mcycle_boundary = dot.boga();
-        if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
-            self.interrupts.request(interrupt);
+        if is_mcycle_boundary {
+            if let Some(interrupt) = self.timers.mcycle() {
+                self.interrupts.request(interrupt);
+            }
         }
 
         // PPU rising phase: XOTA toggle, scanline boundary, pixel

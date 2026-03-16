@@ -20,7 +20,7 @@ impl Timers {
     /// Post-boot state: internal counter at 0xABCA (matching DMG post-boot DIV).
     pub fn new() -> Self {
         Self {
-            internal_counter: 0xABCA,
+            internal_counter: 0x2AF2,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
@@ -54,21 +54,18 @@ impl Timers {
         }
     }
 
-    /// Advance by one T-cycle. Call this every T-cycle (4 times per M-cycle).
-    /// `is_mcycle_boundary` should be true on the 4th T-cycle of each M-cycle,
-    /// when overflow/reload processing should occur.
-    pub fn tcycle(&mut self, is_mcycle_boundary: bool) -> Option<Interrupt> {
+    /// Advance by one M-cycle. On hardware, DIV00 is clocked by BOGA
+    /// (one pulse per M-cycle). The entire 16-bit ripple counter
+    /// advances once per M-cycle.
+    pub fn mcycle(&mut self) -> Option<Interrupt> {
         let mut interrupt = None;
 
-        // Handle delayed reload only at M-cycle boundaries
-        if is_mcycle_boundary {
-            self.reloading = false;
-            if self.overflow_pending {
-                self.overflow_pending = false;
-                self.reloading = true;
-                self.counter = self.modulo;
-                interrupt = Some(Interrupt::Timer);
-            }
+        self.reloading = false;
+        if self.overflow_pending {
+            self.overflow_pending = false;
+            self.reloading = true;
+            self.counter = self.modulo;
+            interrupt = Some(Interrupt::Timer);
         }
 
         let was_set = self.selected_bit_set();
@@ -88,7 +85,7 @@ impl Timers {
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::Divider => (self.internal_counter >> 8) as u8,
+            Register::Divider => (self.internal_counter >> 6) as u8,
             Register::Counter => self.counter,
             Register::Modulo => self.modulo,
             Register::Control => self.control.0 | 0xF8,
