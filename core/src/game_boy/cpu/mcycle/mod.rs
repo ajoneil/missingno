@@ -534,22 +534,13 @@ impl Cpu {
             return self.mcycle_isr(0);
         }
 
-        // ── IME=0 wakeup: consume pending flag ──
-        // The flag was set by update_interrupt_state during the previous
-        // M-cycle's dots. Consume it now, set Running, and emit one more
-        // idle Read[PC] — the wakeup NOP. The *next* mcycle_halted call
-        // will see Running and chain to mcycle_fetch.
+        // ── IME=0 wakeup: chain directly to fetch ──
+        // The wakeup NOP IS the first instruction's opcode fetch on
+        // hardware — one M-cycle, not two. When the pending flag is
+        // consumed, transition straight to Fetch phase.
         if self.halt_wakeup_pending {
             self.halt_wakeup_pending = false;
             self.halt_state = HaltState::Running;
-            self.advance_ei_delay();
-            return Some(BusAction::Read {
-                address: self.program_counter,
-            });
-        }
-
-        // ── IME=0 wakeup: transition to Fetch ──
-        if self.halt_state == HaltState::Running {
             self.advance_ei_delay();
             self.phase = CpuPhase::Fetch;
             self.exec_step = 0;
