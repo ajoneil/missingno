@@ -3,7 +3,6 @@ use std::process;
 
 use missingno_core::debugger::instructions::InstructionsIterator;
 use missingno_core::debugger::{Debugger, WatchCondition};
-use missingno_core::game_boy::{ClockPhase, GameBoy};
 use missingno_core::game_boy::cartridge::Cartridge;
 use missingno_core::game_boy::cpu::flags::Flags;
 use missingno_core::game_boy::cpu::instructions::Instruction;
@@ -11,6 +10,7 @@ use missingno_core::game_boy::interrupts;
 use missingno_core::game_boy::ppu;
 use missingno_core::game_boy::ppu::pixel_pipeline::Mode;
 use missingno_core::game_boy::ppu::sprites::{Attributes, SpriteId};
+use missingno_core::game_boy::{ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -97,10 +97,11 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Post, "/step-phase") => {
             debugger.step_phase();
             let mut response = serde_json::to_value(pipeline_state(debugger.game_boy())).unwrap();
-            response["phase"] = serde_json::Value::String(match debugger.game_boy().clock_phase() {
-                ClockPhase::High => "high".to_string(),
-                ClockPhase::Low => "low".to_string(),
-            });
+            response["phase"] =
+                serde_json::Value::String(match debugger.game_boy().clock_phase() {
+                    ClockPhase::High => "high".to_string(),
+                    ClockPhase::Low => "low".to_string(),
+                });
             respond_json(request, response);
         }
         (&Method::Post, "/step-frame") => {
