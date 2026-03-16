@@ -534,8 +534,13 @@ impl Cpu {
             return self.mcycle_isr(0);
         }
 
-        // ── IME=0 wakeup ──
-        if self.halt_state == HaltState::Running {
+        // ── IME=0 wakeup: chain directly to fetch ──
+        // The wakeup NOP IS the first instruction's opcode fetch on
+        // hardware — one M-cycle, not two. When the pending flag is
+        // consumed, transition straight to Fetch phase.
+        if self.halt_wakeup_pending {
+            self.halt_wakeup_pending = false;
+            self.halt_state = HaltState::Running;
             self.advance_ei_delay();
             self.phase = CpuPhase::Fetch;
             self.exec_step = 0;
@@ -1026,12 +1031,14 @@ impl Cpu {
             InterruptMasterEnable::Disabled => InterruptLatch::Empty,
         };
 
-        // IME=0 halt wakeup
+        // IME=0 halt wakeup: set the pending flag instead of immediately
+        // transitioning to Running. The current idle M-cycle completes as
+        // idle; mcycle_halted consumes the flag at the next M-cycle boundary.
         if self.halt_state == HaltState::Halted
             && self.interrupt_master_enable == InterruptMasterEnable::Disabled
             && triggered.is_some()
         {
-            self.halt_state = HaltState::Running;
+            self.halt_wakeup_pending = true;
         }
     }
 }
