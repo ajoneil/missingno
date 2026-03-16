@@ -17,10 +17,12 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter at 0xABCA (matching DMG post-boot DIV).
+    /// Post-boot state: internal counter matching DMG post-boot DIV.
+    /// 0x2AF3 accounts for the timer tick occurring on the falling
+    /// edge (after bus reads on the rising edge).
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x2AF2,
+            internal_counter: 0x2AF3,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
