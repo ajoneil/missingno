@@ -25,7 +25,7 @@ pub enum Register {
 const SAMPLE_RATE: f32 = 44100.0;
 const M_CYCLES_PER_SECOND: f32 = 1_048_576.0;
 const M_CYCLES_PER_SAMPLE: f32 = M_CYCLES_PER_SECOND / SAMPLE_RATE;
-const DIV_APU_BIT: u16 = 1 << 12; // Bit 12 of system counter drives frame sequencer
+const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
 
 #[derive(Clone)]
 pub struct Audio {
@@ -55,7 +55,7 @@ impl Audio {
             volume_right: Volume::max(),
             nr50: 0x77,
 
-            prev_div_apu_bit: true, // matches initial internal_counter (0xABCA) bit 12
+            prev_div_apu_bit: false, // matches initial internal_counter (0x2AF3) bit 10
             frame_sequencer_step: 0,
             sample_counter: 0.0,
             sample_buffer: Vec::new(),
@@ -162,7 +162,7 @@ impl Audio {
         if self.enabled && old_counter & DIV_APU_BIT != 0 {
             self.tick_frame_sequencer();
         }
-        self.prev_div_apu_bit = false; // counter is now 0, bit 12 is clear
+        self.prev_div_apu_bit = false; // counter is now 0, bit 10 is clear
     }
 
     fn mix(&self) -> (f32, f32) {

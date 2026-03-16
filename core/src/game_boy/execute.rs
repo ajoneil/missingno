@@ -113,9 +113,11 @@ impl GameBoy {
         }
     }
 
-    /// Rising phase (first half of dot): advance CPU state machine,
-    /// IE push bug, OAM bug recording, PPU rising tick, OAM bug fire.
+    /// Rising edge: advance CPU state machine, capture bus reads,
+    /// tick timer and PPU, fire OAM bugs.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+        let mut new_screen = false;
+
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
 
@@ -146,78 +148,21 @@ impl GameBoy {
         }
 
         let is_mcycle_boundary = dot.boga();
-        let new_screen = self.tick_dot_rising(is_mcycle_boundary);
-
-        // MOPA rising edge (dot 2): fire OAM bug.
-        if dot.mopa()
-            && !dot.boga()
-            && let Some(kind) = pending_oam_bug.take()
-        {
-            match kind {
-                OamBugKind::Read => self.ppu.oam_bug_read(),
-                OamBugKind::Write => self.ppu.oam_bug_write(),
-            }
-        }
-
-        self.clock_phase = ClockPhase::High;
-        new_screen
-    }
-
-    /// Falling phase (second half of dot): PPU falling tick,
-    /// interrupt latch capture, bus actions.
-    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
-        let dot = self.current_dot;
-        let is_mcycle_boundary = dot.boga();
-
-        let new_screen = self.tick_dot_falling(is_mcycle_boundary);
-
-        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
-        // Must run after BOTH phases so it sees all interrupt sources.
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
-
-        // Bus actions after phase ticks.
-        match &self.current_dot_action {
-            DotAction::Idle | DotAction::InternalOamBug { .. } => {}
-            DotAction::Read { address } => {
-                if (0xFE00..=0xFEFF).contains(address) {
-                    *pending_oam_bug = Some(OamBugKind::Read);
-                }
-                self.last_read_value = self.cpu_read(*address);
-            }
-            DotAction::Write { address, value } => {
-                let address = *address;
-                let value = *value;
-                if (0xFE00..=0xFEFF).contains(&address) {
-                    *pending_oam_bug = Some(OamBugKind::Write);
-                }
-                // PPU register writes (DFF8/DFF9) latch at AFAS falling
-                // (G→H boundary, end of dot 3). drive_ppu_bus handles
-                // the PPU write; write_byte handles everything else.
-                if self.drive_ppu_bus(address, value) {
-                    self.interrupts.request(Interrupt::VideoStatus);
-                }
-                self.write_byte(address, value);
-            }
-        }
-
-        self.clock_phase = ClockPhase::Low;
-        new_screen
-    }
-
-    /// Rising half-phase (DELTA_ODD): timer tick, PPU rising phase
-    /// (XOTA divider chain, pixel output, VBlank IF, LYC comparison).
-    fn tick_dot_rising(&mut self, is_mcycle_boundary: bool) -> bool {
-        let mut new_screen = false;
-
-        // Timer ticks every T-cycle for DIV resolution
-        if let Some(interrupt) = self.timers.tcycle(is_mcycle_boundary) {
-            self.interrupts.request(interrupt);
-        }
 
         // PPU rising phase: XOTA toggle, scanline boundary, pixel
-        // output, VBlank IF, LYC comparison — all in one call.
+        // output, VBlank IF, LYC comparison.
         let ppu_result = self.ppu.rise(is_mcycle_boundary, &self.vram_bus.vram);
+
+        // CPU data latch: capture bus value on the rising edge, after
+        // PPU rise so the read sees the current PPU mode (for OAM/VRAM
+        // blocking). The timer tick is on the falling edge, so reads
+        // naturally see the pre-increment counter value.
+        if let DotAction::Read { address } = &self.current_dot_action {
+            if (0xFE00..=0xFEFF).contains(address) {
+                *pending_oam_bug = Some(OamBugKind::Read);
+            }
+            self.last_read_value = self.cpu_read(*address);
+        }
         if ppu_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
@@ -234,13 +179,27 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
+        // MOPA rising edge (dot 2): fire OAM bug.
+        if dot.mopa()
+            && !dot.boga()
+            && let Some(kind) = pending_oam_bug.take()
+        {
+            match kind {
+                OamBugKind::Read => self.ppu.oam_bug_read(),
+                OamBugKind::Write => self.ppu.oam_bug_write(),
+            }
+        }
+
+        self.clock_phase = ClockPhase::High;
         new_screen
     }
 
-    /// Falling half-phase (DELTA_EVEN): PPU falling phase (fetcher,
-    /// DFF8/DFF9 latches, LCD-off), and M-cycle subsystems.
-    fn tick_dot_falling(&mut self, is_mcycle_boundary: bool) -> bool {
+    /// Falling edge: PPU falling phase, interrupt latch capture,
+    /// bus writes, M-cycle subsystems (serial, DMA, audio).
+    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let mut new_screen = false;
+        let dot = self.current_dot;
+        let is_mcycle_boundary = dot.boga();
 
         // PPU falling phase: fetcher, DFF8/DFF9, LCD-off.
         let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
@@ -259,7 +218,38 @@ impl GameBoy {
             new_screen = true;
         }
 
+        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
+        // Must run after BOTH phases so it sees all interrupt sources.
+        let triggered = self.interrupts.triggered();
+        self.cpu.update_interrupt_state(triggered);
+
+        // Bus writes on the falling edge.
+        match &self.current_dot_action {
+            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
+            DotAction::Write { address, value } => {
+                let address = *address;
+                let value = *value;
+                if (0xFE00..=0xFEFF).contains(&address) {
+                    *pending_oam_bug = Some(OamBugKind::Write);
+                }
+                // PPU register writes (DFF8/DFF9) latch at AFAS falling
+                // (G→H boundary, end of dot 3). drive_ppu_bus handles
+                // the PPU write; write_byte handles everything else.
+                if self.drive_ppu_bus(address, value) {
+                    self.interrupts.request(Interrupt::VideoStatus);
+                }
+                self.write_byte(address, value);
+            }
+        }
+
         if is_mcycle_boundary {
+            // Timer ticks once per M-cycle (BOGA). On the falling edge
+            // so that bus writes (e.g. DIV reset) take effect before
+            // the counter increments.
+            if let Some(interrupt) = self.timers.mcycle() {
+                self.interrupts.request(interrupt);
+            }
+
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter) {
@@ -304,6 +294,7 @@ impl GameBoy {
             self.audio.mcycle(self.timers.internal_counter());
         }
 
+        self.clock_phase = ClockPhase::Low;
         new_screen
     }
 }
