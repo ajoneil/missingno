@@ -419,8 +419,7 @@ impl Cpu {
                 self.halt_state = HaltState::Halted;
                 self.phase = CpuPhase::Halted;
                 self.exec_step = 0;
-                // Promote interrupt latch at Halted entry
-                self.interrupt_latch.promote();
+                self.first_halted_cycle = true;
                 // Signal boundary and chain into the first halted NOP.
                 self.boundary_flag = true;
                 return self.mcycle_halted(0);
@@ -486,19 +485,32 @@ impl Cpu {
 
     /// Halted phase: one HALT idle M-cycle.
     ///
-    /// Checks the interrupt pipeline (promote + dispatch), then emits
+    /// On the first call after HALT entry (`first_halted_cycle`), emits
+    /// Read[PC] unconditionally — the wakeup NOP. On subsequent calls,
+    /// checks the interrupt pipeline (promote + dispatch), then emits
     /// Read[PC] without incrementing if still halted. Each call is
-    /// exactly one M-cycle, matching hardware's per-M-cycle g42 DFF
-    /// latching.
+    /// exactly one M-cycle.
     fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
 
+        // ── First HALT idle M-cycle: unconditional wakeup NOP ──
+        // On hardware, the DFF pipeline (g42 -> g43 -> g49) needs at
+        // least one idle M-cycle to propagate the wakeup signal. The
+        // first call after HALT entry always emits Read[PC] without
+        // checking for interrupt dispatch.
+        if self.first_halted_cycle {
+            self.first_halted_cycle = false;
+            self.advance_ei_delay();
+            return Some(BusAction::Read {
+                address: self.program_counter,
+            });
+        }
+
         // ── Interrupt pipeline ──
         // Promote the latch: Fresh (set during previous M-cycle's dots
-        // by update_interrupt_state) becomes Ready. This models the
-        // g42 DFF latching SeqControl_1 on every CLK9 rising edge.
+        // by update_interrupt_state) becomes Ready.
         self.interrupt_latch.promote();
 
         // ── IME=1 wakeup ──
