@@ -147,21 +147,22 @@ impl GameBoy {
             }
         }
 
-        // CPU data latch: capture bus value on the rising edge. The
-        // timer tick is on the falling edge, so reads naturally see
-        // the pre-increment counter value.
+        let is_mcycle_boundary = dot.boga();
+
+        // PPU rising phase: XOTA toggle, scanline boundary, pixel
+        // output, VBlank IF, LYC comparison.
+        let ppu_result = self.ppu.rise(is_mcycle_boundary, &self.vram_bus.vram);
+
+        // CPU data latch: capture bus value on the rising edge, after
+        // PPU rise so the read sees the current PPU mode (for OAM/VRAM
+        // blocking). The timer tick is on the falling edge, so reads
+        // naturally see the pre-increment counter value.
         if let DotAction::Read { address } = &self.current_dot_action {
             if (0xFE00..=0xFEFF).contains(address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
             self.last_read_value = self.cpu_read(*address);
         }
-
-        let is_mcycle_boundary = dot.boga();
-
-        // PPU rising phase: XOTA toggle, scanline boundary, pixel
-        // output, VBlank IF, LYC comparison.
-        let ppu_result = self.ppu.rise(is_mcycle_boundary, &self.vram_bus.vram);
         if ppu_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
