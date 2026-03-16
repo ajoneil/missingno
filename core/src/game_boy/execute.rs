@@ -115,9 +115,43 @@ impl GameBoy {
 
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
+    ///
+    /// At M-cycle boundaries, the PPU rising phase and interrupt capture
+    /// run BEFORE the CPU's M-cycle transition (`next_dot`), so that the
+    /// CPU's dispatch check (`take_ready()` inside `mcycle_fetch` /
+    /// `mcycle_halted`) sees interrupts fired at this boundary. This
+    /// models the hardware's combinational path where the g42 DFF
+    /// samples `IF & IE` at the same clock edge that the PPU fires IF.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let mut new_screen = false;
+        let is_mcycle_boundary = !self.cpu.mcycle_active;
 
+        // ── M-cycle boundary: PPU + interrupt capture BEFORE CPU transition ──
+        if is_mcycle_boundary {
+            // PPU rising phase (is_mcycle = true: this IS the BOGA boundary).
+            let ppu_result = self.ppu.rise(true, &self.vram_bus.vram);
+            if ppu_result.request_vblank {
+                self.interrupts.request(Interrupt::VideoBetweenFrames);
+            }
+            if let Some(screen) = ppu_result.screen {
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.update_screen(&screen);
+                }
+                self.screen = screen;
+                new_screen = true;
+            }
+
+            // SUKO is combinational — check for STAT edge after PPU rise.
+            if self.ppu.check_stat_edge() {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
+
+            // Capture interrupt state so the CPU's dispatch check sees it.
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
+        }
+
+        // ── CPU dot advance ──
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
 
@@ -147,11 +181,33 @@ impl GameBoy {
             }
         }
 
-        let is_mcycle_boundary = dot.boga();
+        // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
+        if !is_mcycle_boundary {
+            let is_mcycle_signal = dot.boga();
 
-        // PPU rising phase: XOTA toggle, scanline boundary, pixel
-        // output, VBlank IF, LYC comparison.
-        let ppu_result = self.ppu.rise(is_mcycle_boundary, &self.vram_bus.vram);
+            // PPU rising phase (is_mcycle = false for non-boundary dots,
+            // except at boga which fires BOGA for the PPU's internal use).
+            let ppu_result = self.ppu.rise(is_mcycle_signal, &self.vram_bus.vram);
+            if ppu_result.request_vblank {
+                self.interrupts.request(Interrupt::VideoBetweenFrames);
+            }
+            if let Some(screen) = ppu_result.screen {
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.update_screen(&screen);
+                }
+                self.screen = screen;
+                new_screen = true;
+            }
+
+            // SUKO is combinational — check for STAT edge after PPU rise.
+            if self.ppu.check_stat_edge() {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
+
+            // Capture interrupt state for non-boundary dots.
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
+        }
 
         // CPU data latch: capture bus value on the rising edge, after
         // PPU rise so the read sees the current PPU mode (for OAM/VRAM
@@ -162,21 +218,6 @@ impl GameBoy {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
             self.last_read_value = self.cpu_read(*address);
-        }
-        if ppu_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        if let Some(screen) = ppu_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
-            }
-            self.screen = screen;
-            new_screen = true;
-        }
-
-        // SUKO is combinational — check for STAT edge after every phase.
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
         }
 
         // g151: CLK9-clocked DFF delays timer overflow → IF by 1 dot.
@@ -224,11 +265,6 @@ impl GameBoy {
             self.screen = screen;
             new_screen = true;
         }
-
-        // Interrupt latch capture (every dot) — models g42 CLK9-edge sampling.
-        // Must run after BOTH phases so it sees all interrupt sources.
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
 
         // Bus writes on the falling edge.
         match &self.current_dot_action {

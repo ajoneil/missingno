@@ -19,9 +19,8 @@ pub enum InterruptMasterEnable {
 /// continues to tick hardware (PPU, timers, etc.) each M-cycle but
 /// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
 /// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
-/// resume until the next M-cycle — the wakeup NOP. The `InterruptLatch`
-/// enum's Fresh→Ready promotion at fetch entry naturally models this
-/// 1 M-cycle propagation delay.
+/// resume until the next M-cycle — the wakeup NOP. The
+/// `first_halted_cycle` flag models this 1 M-cycle propagation delay.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -54,34 +53,24 @@ pub enum EiDelay {
     Fired,
 }
 
-/// Models the sequencer DFF (g42) pipeline for interrupt dispatch.
+/// Models the CPU's interrupt dispatch latch (g42 DFF).
 ///
-/// On hardware, an IF flag set during M-cycle N is captured in the
-/// sequencer DFF at N's boundary but doesn't reach the dispatch
-/// decision until M-cycle N+1. `promote()` advances Fresh→Ready.
+/// On hardware, the g42 DFF samples `IF & IE` combinationally at the
+/// M-cycle boundary. The PPU fires IF and the CPU checks dispatch at
+/// the same edge — there is no multi-cycle pipeline delay. The
+/// executor ensures `update_interrupt_state` runs after PPU rise and
+/// before the CPU's M-cycle transition so that `take_ready()` sees
+/// interrupts from the current boundary.
 #[derive(Clone, Copy)]
 pub(super) enum InterruptLatch {
-    /// No interrupt pending in the sequencer pipeline.
+    /// No interrupt pending.
     Empty,
-    /// Interrupt captured during this step's M-cycle boundary ticks.
-    /// The DFF has latched the value but it hasn't propagated to the
-    /// dispatch output yet.
-    Fresh(super::interrupts::Interrupt),
-    /// Interrupt that has propagated through the DFF pipeline (carried
-    /// over from a previous step). Dispatch can consume it.
+    /// Interrupt ready for dispatch. `take_ready()` consumes it.
     Ready(super::interrupts::Interrupt),
 }
 
 impl InterruptLatch {
-    /// Advance the DFF pipeline: Fresh becomes Ready.
-    pub(super) fn promote(&mut self) {
-        if let InterruptLatch::Fresh(interrupt) = *self {
-            *self = InterruptLatch::Ready(interrupt);
-        }
-    }
-
-    /// Take the interrupt if it has propagated (Ready). Returns None
-    /// and leaves the latch unchanged for Fresh and Empty.
+    /// Take the interrupt if ready. Returns None for Empty.
     pub(super) fn take_ready(&mut self) -> Option<super::interrupts::Interrupt> {
         if let InterruptLatch::Ready(interrupt) = *self {
             *self = InterruptLatch::Empty;

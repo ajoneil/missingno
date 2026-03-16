@@ -425,9 +425,6 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Promote interrupt latch: Fresh -> Ready
-            self.interrupt_latch.promote();
-
             // Check for interrupt dispatch
             if self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
@@ -507,11 +504,6 @@ impl Cpu {
                 address: self.program_counter,
             });
         }
-
-        // ── Interrupt pipeline ──
-        // Promote the latch: Fresh (set during previous M-cycle's dots
-        // by update_interrupt_state) becomes Ready.
-        self.interrupt_latch.promote();
 
         // ── IME=1 wakeup ──
         if self.interrupt_latch.take_ready().is_some() {
@@ -1022,10 +1014,7 @@ impl Cpu {
 
         self.interrupt_latch = match self.interrupt_master_enable {
             InterruptMasterEnable::Enabled => match triggered {
-                Some(interrupt) => match self.interrupt_latch {
-                    InterruptLatch::Ready(_) => InterruptLatch::Ready(interrupt),
-                    _ => InterruptLatch::Fresh(interrupt),
-                },
+                Some(interrupt) => InterruptLatch::Ready(interrupt),
                 None => InterruptLatch::Empty,
             },
             InterruptMasterEnable::Disabled => InterruptLatch::Empty,
