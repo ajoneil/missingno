@@ -147,10 +147,9 @@ impl GameBoy {
             }
         }
 
-        // CPU data latch: capture bus value on the rising edge, before
-        // hardware ticks. On hardware, the CPU latch and DIV increment
-        // both fire at BOGA — but the DFF output holds the old value at
-        // capture time, so the CPU reads pre-increment state.
+        // CPU data latch: capture bus value on the rising edge. The
+        // timer tick is on the falling edge, so reads naturally see
+        // the pre-increment counter value.
         if let DotAction::Read { address } = &self.current_dot_action {
             if (0xFE00..=0xFEFF).contains(address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
@@ -158,15 +157,7 @@ impl GameBoy {
             self.last_read_value = self.cpu_read(*address);
         }
 
-        // Timer ticks once per M-cycle (BOGA). On hardware, DIV00 is
-        // clocked by BOGA — the entire ripple counter advances once per
-        // M-cycle, not per T-cycle.
         let is_mcycle_boundary = dot.boga();
-        if is_mcycle_boundary {
-            if let Some(interrupt) = self.timers.mcycle() {
-                self.interrupts.request(interrupt);
-            }
-        }
 
         // PPU rising phase: XOTA toggle, scanline boundary, pixel
         // output, VBlank IF, LYC comparison.
@@ -251,6 +242,13 @@ impl GameBoy {
         }
 
         if is_mcycle_boundary {
+            // Timer ticks once per M-cycle (BOGA). On the falling edge
+            // so that bus writes (e.g. DIV reset) take effect before
+            // the counter increments.
+            if let Some(interrupt) = self.timers.mcycle() {
+                self.interrupts.request(interrupt);
+            }
+
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter) {
