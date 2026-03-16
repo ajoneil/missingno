@@ -179,6 +179,13 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
+        // g151: CLK9-clocked DFF delays timer overflow → IF by 1 dot.
+        // Drain at every rising edge so that overflow detected at fall()
+        // is visible to update_interrupt_state in the next fall().
+        if let Some(interrupt) = self.timers.take_pending_interrupt() {
+            self.interrupts.request(interrupt);
+        }
+
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
             && !dot.boga()
@@ -245,10 +252,9 @@ impl GameBoy {
         if is_mcycle_boundary {
             // Timer ticks once per M-cycle (BOGA). On the falling edge
             // so that bus writes (e.g. DIV reset) take effect before
-            // the counter increments.
-            if let Some(interrupt) = self.timers.mcycle() {
-                self.interrupts.request(interrupt);
-            }
+            // the counter increments. Overflow sets g151_pending; the
+            // interrupt is drained on the next CLK9 rising edge.
+            self.timers.mcycle();
 
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();

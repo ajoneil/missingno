@@ -14,6 +14,12 @@ pub struct Timers {
     /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
     /// Writes to TIMA during this cycle are ignored.
     reloading: bool,
+    /// Models g151: CLK9-clocked DFF that delays timer overflow
+    /// before it reaches the IF register (g154). When mcycle()
+    /// detects overflow, it sets this to true instead of returning
+    /// the interrupt immediately. On the next CLK9 tick (next dot),
+    /// this is drained and the interrupt is returned.
+    g151_pending: bool,
 }
 
 impl Timers {
@@ -28,6 +34,7 @@ impl Timers {
             control: Control(0xf8),
             overflow_pending: false,
             reloading: false,
+            g151_pending: false,
         }
     }
 
@@ -40,6 +47,7 @@ impl Timers {
             control: Control(0xf8),
             overflow_pending: false,
             reloading: false,
+            g151_pending: false,
         }
     }
 
@@ -59,15 +67,17 @@ impl Timers {
     /// Advance by one M-cycle. On hardware, DIV00 is clocked by BOGA
     /// (one pulse per M-cycle). The entire 16-bit ripple counter
     /// advances once per M-cycle.
-    pub fn mcycle(&mut self) -> Option<Interrupt> {
-        let mut interrupt = None;
-
+    ///
+    /// Overflow sets `g151_pending` instead of returning the interrupt
+    /// immediately. The caller must drain via `take_pending_interrupt()`
+    /// on the next CLK9 rising edge.
+    pub fn mcycle(&mut self) {
         self.reloading = false;
         if self.overflow_pending {
             self.overflow_pending = false;
             self.reloading = true;
             self.counter = self.modulo;
-            interrupt = Some(Interrupt::Timer);
+            self.g151_pending = true;
         }
 
         let was_set = self.selected_bit_set();
@@ -77,8 +87,17 @@ impl Timers {
         if was_set && !is_set {
             self.increment_tima();
         }
+    }
 
-        interrupt
+    /// Drain the g151 DFF. Models the CLK9 rising edge latching g151's
+    /// output, which then clocks g154 to set the timer IF bit.
+    pub fn take_pending_interrupt(&mut self) -> Option<Interrupt> {
+        if self.g151_pending {
+            self.g151_pending = false;
+            Some(Interrupt::Timer)
+        } else {
+            None
+        }
     }
 
     pub fn internal_counter(&self) -> u16 {
