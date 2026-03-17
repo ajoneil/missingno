@@ -132,11 +132,10 @@ pub struct Rendering {
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
-    /// TYFA result computed in falling phase, consumed by rising phase. TYFA
-    /// is combinational in hardware (falling phase), but downstream SACU is
-    /// combinational in the rising phase. This bridge carries the
-    /// falling-phase TYFA result to rising-phase SACU.
-    tyfa_bridge: bool,
+    /// TYFA_CLKPIPE_evn: AND3(SOCY_WIN_HITn, POKY, VYBO_CLKPIPE).
+    /// Combinational pixel clock enable, active on falling (EVEN) phases
+    /// only. Read by SACU on the next rising phase.
+    tyfa: bool,
     /// LCD Control block (die page 24): pixel X counter, LCD clock
     /// gating (WUSA), POVA trigger, LCD shift register, data latch.
     lcd: LcdControl,
@@ -157,7 +156,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
             voga: false,
-            tyfa_bridge: false,
+            tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
         }
@@ -397,7 +396,7 @@ impl Rendering {
         self.window.reset_scanline();
 
         self.voga = false;
-        self.tyfa_bridge = false;
+        self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
@@ -490,7 +489,7 @@ impl Rendering {
         // constant during falling phases per GateBoy).
         // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
         // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
-        self.tyfa_bridge = match self.sprite_state {
+        self.tyfa = match self.sprite_state {
             SpriteState::Idle => !self.window.rydy() && self.cascade.poky(),
             _ => false,
         };
@@ -563,10 +562,10 @@ impl Rendering {
         // PUXA capture: ROXO fires when TYFA is active. TYFA is
         // combinational (AND3(SOCY, POKY, VYBO)), but POKY only updates
         // on the falling edge — PORY just latched above, but PYGO won't
-        // capture PORY until the next falling phase. Use tyfa_bridge
+        // capture PORY until the next falling phase. Use tyfa
         // (computed at the end of the previous falling phase) which has
         // the correct cascade-propagated POKY value.
-        let pova = if self.tyfa_bridge {
+        let pova = if self.tyfa {
             self.fine_scroll.capture_rising()
         } else {
             false
@@ -619,7 +618,7 @@ impl Rendering {
             SpriteState::Idle => {
                 // TYFA was computed in falling phase and bridged. SACU is
                 // computed here in rising — hardware-correct phase for SACU.
-                let tyfa = self.tyfa_bridge;
+                let tyfa = self.tyfa;
 
                 // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
                 // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
@@ -668,7 +667,7 @@ impl Rendering {
                 );
                 let toba = self.lcd.rise(sacu, pixel, pova);
 
-                if !toba && self.tyfa_bridge {
+                if !toba && self.tyfa {
                     // Consume window_zero_pixel during pre-visible TYFA
                     // cycles (fine scroll gating, pre-WUSA). On hardware,
                     // the data pins update on every TYFA edge — the window
