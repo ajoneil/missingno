@@ -5,14 +5,6 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 use super::super::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
-/// Which half of a 2-dot clock cycle. Used by the sprite fetcher
-/// (which does NOT have the LEBO head start optimization).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FetcherTick {
-    T1,
-    T2,
-}
-
 pub(super) struct TileFetcher {
     /// Hardware's phase_tfetch counter: 0-11 (6 dots x 2 half-phases).
     /// Incremented by 2 each dot (since advance() is called once per dot,

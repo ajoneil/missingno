@@ -7,7 +7,6 @@ use crate::game_boy::ppu::{
 
 use super::super::sprites::{self, SpriteId, SpriteSize};
 use super::super::tiles::{TileAddressMode, TileIndex};
-use super::fetcher::FetcherTick;
 use super::oam_scan::SpriteStoreEntry;
 use super::shifters::ObjShifter;
 
@@ -29,19 +28,14 @@ pub enum SpriteFetchPhase {
     Done,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SpriteStep {
-    GetTile,
-    GetTileDataLow,
-    GetTileDataHigh,
-}
-
 pub(super) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(super) entry: SpriteStoreEntry,
     pub(super) phase: SpriteFetchPhase,
-    step: SpriteStep,
-    tick: FetcherTick,
+    /// Hardware's sprite fetch counter: 0-5 (6 dots).
+    /// VRAM reads happen at counter values 3 (tile data low)
+    /// and 5 (tile data high). Incremented by 1 each dot.
+    phase_sfetch: u8,
     tile_data_low: u8,
     tile_data_high: u8,
 }
@@ -51,8 +45,7 @@ impl SpriteFetch {
         Self {
             entry,
             phase: SpriteFetchPhase::WaitingForFetcher,
-            step: SpriteStep::GetTile,
-            tick: FetcherTick::T1,
+            phase_sfetch: 0,
             tile_data_low: 0,
             tile_data_high: 0,
         }
@@ -94,36 +87,23 @@ impl SpriteFetch {
     }
 
     /// Advance the sprite fetch pipeline by one dot. Returns `true` when
-    /// the fetch is complete (GetTileDataHigh T2 has fired).
+    /// the fetch is complete (phase_sfetch == 5, tile data high read).
     pub(super) fn advance(&mut self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram) -> bool {
-        match self.step {
-            SpriteStep::GetTile => {
-                if self.tick == FetcherTick::T1 {
-                    self.tick = FetcherTick::T2;
-                } else {
-                    // Tile index comes from OAM via the sprite store's oam_index
-                    self.tick = FetcherTick::T1;
-                    self.step = SpriteStep::GetTileDataLow;
-                }
+        match self.phase_sfetch {
+            3 => {
+                // Tile data low VRAM read.
+                self.tile_data_low = self.read_tile_data(regs, oam, vram, false);
             }
-            SpriteStep::GetTileDataLow => {
-                if self.tick == FetcherTick::T1 {
-                    self.tick = FetcherTick::T2;
-                } else {
-                    self.tile_data_low = self.read_tile_data(regs, oam, vram, false);
-                    self.tick = FetcherTick::T1;
-                    self.step = SpriteStep::GetTileDataHigh;
-                }
+            5 => {
+                // Tile data high VRAM read. Fetch complete.
+                self.tile_data_high = self.read_tile_data(regs, oam, vram, true);
+                return true;
             }
-            SpriteStep::GetTileDataHigh => {
-                if self.tick == FetcherTick::T1 {
-                    self.tick = FetcherTick::T2;
-                } else {
-                    self.tile_data_high = self.read_tile_data(regs, oam, vram, true);
-                    return true;
-                }
+            _ => {
+                // GetTile wait (0, 1) and data wait (2, 4): no VRAM action.
             }
         }
+        self.phase_sfetch += 1;
         false
     }
 
