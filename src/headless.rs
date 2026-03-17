@@ -591,7 +591,7 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
                 None => serde_json::Value::Null,
             },
             "lcd_x": snap.lcd_x,
-            "fetcher_step": format!("{:?}", snap.fetcher_step),
+            "fetcher_step": format!("phase_tfetch={}", snap.phase_tfetch),
             "rydy": snap.rydy,
             "wusa": snap.wusa,
             "pova": snap.pova,

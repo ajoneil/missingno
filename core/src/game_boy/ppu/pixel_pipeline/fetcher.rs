@@ -5,26 +5,6 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 use super::super::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
-/// Background tile fetcher step. The initial fetch after AVAP takes 5 dots:
-/// GetTile(1) + DataLowWait(1) + DataLow(1) + DataHighWait(1) +
-/// DataHigh(1), then Idle until reload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FetcherStep {
-    /// Tilemap lookup — VRAM read (1 dot).
-    GetTile,
-    /// Delay before tile data low read (1 dot).
-    GetTileDataLowWait,
-    /// Tile data low bitplane — VRAM read (1 dot).
-    GetTileDataLow,
-    /// Delay before tile data high read (1 dot).
-    GetTileDataHighWait,
-    /// Tile data high bitplane — VRAM read (1 dot).
-    GetTileDataHigh,
-    /// The fetcher has completed all three VRAM reads and is frozen,
-    /// waiting for the SEKO-triggered reload (fine_count == 7).
-    Idle,
-}
-
 /// Which half of a 2-dot clock cycle. Used by the sprite fetcher
 /// (which does NOT have the LEBO head start optimization).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +14,11 @@ pub enum FetcherTick {
 }
 
 pub(super) struct TileFetcher {
-    pub(super) step: FetcherStep,
+    /// Hardware's phase_tfetch counter: 0-11 (6 dots x 2 half-phases).
+    /// Incremented by 2 each dot (since advance() is called once per dot,
+    /// but the hardware counter ticks twice per dot on both half-phases).
+    /// Reset to 0 on TAVE (pipe load) or window trigger.
+    pub(super) phase_tfetch: u8,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     pub(super) window_tile_x: u8,
@@ -66,9 +50,14 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 }
 
 impl TileFetcher {
+    /// LYRY: combinational decode. Fetch done when counter >= 10.
+    pub(super) fn lyry(&self) -> bool {
+        self.phase_tfetch >= 10
+    }
+
     pub(super) fn new() -> Self {
         Self {
-            step: FetcherStep::GetTile,
+            phase_tfetch: 0,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -161,11 +150,11 @@ impl TileFetcher {
 
     /// Advance the background tile fetcher by one dot.
     ///
-    /// Each fetch cycle is 5 dots total:
-    ///   GetTile (1 dot, VRAM read) →
-    ///   GetTileDataLowWait (1 dot) → GetTileDataLow (1 dot, VRAM read) →
-    ///   GetTileDataHighWait (1 dot) → GetTileDataHigh (1 dot, VRAM read) →
-    ///   Idle (waits for reload).
+    /// The hardware fetcher is driven by a 4-bit counter (phase_tfetch)
+    /// that increments on both half-phases. We call advance() once per
+    /// dot and increment by 2 to model both half-phases. VRAM reads
+    /// happen at counter values 0, 4, 8; waits are the gaps between.
+    /// The counter saturates at 10 (Idle) until reset.
     ///
     /// The hardware VRAM address bus is combinational — addresses always
     /// reflect current register values (SCX, SCY, LCDC) at the moment
@@ -178,40 +167,30 @@ impl TileFetcher {
         video: &VideoControl,
         vram: &Vram,
     ) {
-        match self.step {
-            FetcherStep::GetTile => {
-                // Compute tilemap address from live registers and read VRAM.
+        match self.phase_tfetch {
+            0 => {
+                // Tilemap VRAM read (dot 0).
                 self.vram_address =
                     self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                 self.tile_index = vram.read_byte(self.vram_address);
-                self.step = FetcherStep::GetTileDataLowWait;
             }
-            FetcherStep::GetTileDataLowWait => {
-                // Timing delay — first half of LEBO's 2-dot clock cycle.
-                self.step = FetcherStep::GetTileDataLow;
-            }
-            FetcherStep::GetTileDataLow => {
-                // Compute tile data address from live registers and read VRAM.
+            4 => {
+                // Tile data low VRAM read (dot 2).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
                 self.tile_data_low = vram.read_byte(self.vram_address);
-                self.step = FetcherStep::GetTileDataHighWait;
             }
-            FetcherStep::GetTileDataHighWait => {
-                // Timing delay.
-                self.step = FetcherStep::GetTileDataHigh;
-            }
-            FetcherStep::GetTileDataHigh => {
-                // Compute tile data address from live registers and read VRAM.
+            8 => {
+                // Tile data high VRAM read (dot 4).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
                 self.tile_data_high = vram.read_byte(self.vram_address);
-                self.step = FetcherStep::Idle;
             }
-            FetcherStep::Idle => {
-                // The fetcher is frozen — it waits here until the
-                // SEKO-triggered reload (fine_count == 7) fires from
-                // mode3_rising, which calls load_into() and resets
-                // the fetcher to GetTile.
+            _ => {
+                // Wait dots (2, 6) and idle (10): no action.
             }
+        }
+        // Advance by 2 (two half-phases per dot), saturate at 10.
+        if self.phase_tfetch < 10 {
+            self.phase_tfetch += 2;
         }
     }
 
@@ -222,12 +201,12 @@ impl TileFetcher {
         if self.fetching_window {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
-        self.step = FetcherStep::GetTile;
+        self.phase_tfetch = 0;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
-        self.step = FetcherStep::GetTile;
+        self.phase_tfetch = 0;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }

@@ -10,7 +10,6 @@ mod sprite_fetch;
 mod sprite_scanner;
 mod window_control;
 
-pub use fetcher::FetcherStep;
 pub use sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
@@ -91,7 +90,7 @@ pub struct PipelineSnapshot {
     pub sprite_fetch_phase: Option<SpriteFetchPhase>,
     pub sprite_tile_data: Option<(u8, u8)>,
     pub lcd_x: u8,
-    pub fetcher_step: FetcherStep,
+    pub phase_tfetch: u8,
     pub rydy: bool,
     pub wusa: bool,
     pub pova: bool,
@@ -266,7 +265,7 @@ impl Rendering {
             sprite_fetch_phase,
             sprite_tile_data,
             lcd_x: self.lcd.lcd_x(),
-            fetcher_step: self.fetcher.step,
+            phase_tfetch: self.fetcher.phase_tfetch,
             rydy: self.window.rydy(),
             wusa: self.lcd.wusa(),
             pova: self.lcd.pova(),
@@ -452,7 +451,7 @@ impl Rendering {
         // its current tile fetch (step == Idle). Captured here immediately
         // after fetcher.advance() and before TAVE resets the fetcher to
         // GetTile — once TAVE fires, the fetcher is no longer Idle.
-        let lyry = self.fetcher.step == FetcherStep::Idle;
+        let lyry = self.fetcher.lyry();
 
         // Sprite wait exit: when the BG fetcher reaches Idle during
         // sprite wait (WaitingForFetcher) and the shifter is non-empty,

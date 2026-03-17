@@ -1,7 +1,7 @@
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 
 use super::fetch_cascade::FetchCascade;
-use super::fetcher::{FetcherStep, TileFetcher};
+use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
 
 /// Window control block (die page 27).
@@ -155,7 +155,7 @@ impl WindowControl {
         // Reactivation requires the initial window fetch to have completed
         // (RYDY=0), modeling hardware's !window_is_being_fetched.
         if fetcher.fetching_window {
-            if !rydy_snapshot && fetcher.step == FetcherStep::GetTile {
+            if !rydy_snapshot && fetcher.phase_tfetch < 2 {
                 self.window_zero_pixel = true;
             }
             return;

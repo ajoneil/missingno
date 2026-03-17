@@ -10,7 +10,7 @@ use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
 pub use pixel_pipeline::{
-    FetcherStep, PipelineSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot, SpriteStoreSnapshot,
+    PipelineSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot, SpriteStoreSnapshot,
 };
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
