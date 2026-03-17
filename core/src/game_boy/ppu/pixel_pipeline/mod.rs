@@ -300,9 +300,9 @@ impl Rendering {
     /// Falling edge (DELTA_EVEN): setup phase.
     ///
     /// On hardware, the falling edge handles XUPY-derived logic (DOBA,
-    /// CATU, scan-counter), fetcher control signals (NYKA, POKY), mode
+    /// scan-counter), fetcher control signals (NYKA, POKY), mode
     /// transitions (VOGA/WEGO clearing XYMU), fine scroll match (PUXA),
-    /// and window WX match (PYCO). AVAP moved to rise() with BYBA.
+    /// and window WX match (PYCO). AVAP and CATU moved to rise().
     ///
     /// XUPY derives from WUVU, which is clocked by XOTA rising (H→A
     /// boundary). The XOTA divider toggle runs in Ppu::rise(), before
@@ -320,9 +320,8 @@ impl Rendering {
         // just went low→high.
         let xupy_rising = video.xupy();
 
-        // Sprite scanner falling edge: counter tick, scan-start, DOBA capture.
-        self.scan
-            .fall(xupy_rising, video.lx, video.wuvu, video.ly(), regs, oam);
+        // Sprite scanner falling edge: counter tick, DOBA capture.
+        self.scan.fall(xupy_rising, video.ly(), regs, oam);
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
@@ -363,9 +362,10 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated.
+        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated,
+        // CATU scan-start fires.
         let xupy_rising = video.xupy();
-        let scan = self.scan.rise(xupy_rising);
+        let scan = self.scan.rise(xupy_rising, video.lx, video.wuvu);
 
         // React to scan signals.
         // AVAP fires identically on normal lines and the LCD-on first line —
