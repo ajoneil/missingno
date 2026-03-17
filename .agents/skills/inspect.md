@@ -169,6 +169,8 @@ A=145 B=0 C=19 D=0 E=216 H=1 L=77 PC=352 SP=65534 IME=false halted=false
 DIV=44 TIMA=0 TMA=0 TAC=0 enabled=false freq=4096 internal=00b0
 ```
 
+**`gb_screenshot <path>`** — Save the screen as a BMP file. Calls GET `/screen/bitmap` and writes to the given path. Use this to visually compare test output. Example: `gb_screenshot /tmp/lcdon_test.bmp`. The file can then be read with the Read tool (which can display images).
+
 **`gb_screen_row <row>`** — Read one screen row. Calls GET `/screen`. Output: space-separated color indices (0-3), 160 values.
 
 **`gb_sprites_on <scanline>`** — List sprites visible on a scanline. Calls GET `/sprites`, filters by Y range. Output: one line per sprite, or "no sprites on scanline N".
@@ -246,8 +248,12 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/cpu` | GET | Registers, flags, IME, halted |
 | `/ppu` | GET | LCDC, STAT, LY, lx, LYC, scan_counter, scroll/window regs, palettes |
 | `/ppu/pipeline` | GET | Pixel pipeline: shifters, pixel_counter, render_phase, sprite_fetch |
-| `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` |
+| `/screen` | GET | 144x160 color index array (0-3) — large, prefer `/screen/ascii` or `/screen/bitmap` |
 | `/screen/ascii` | GET | 144 strings of 160 chars: ` `=lightest `.`=light `o`=dark `#`=darkest |
+| `/screen/bitmap` | GET | 160x144 greyscale BMP image (`Content-Type: image/bmp`). Save to file and view. |
+| `/tiles/bitmap` | GET | All 384 tiles (3 blocks × 128) in a 16×24 grid, 128×192 greyscale BMP. |
+| `/tilemap/0/bitmap` | GET | Tile map 0 as 256×256 greyscale BMP (32×32 tiles). |
+| `/tilemap/1/bitmap` | GET | Tile map 1 as 256×256 greyscale BMP (32×32 tiles). |
 | `/sprites` | GET | All 40 OAM entries (bare array) |
 | `/timers` | GET | Timer registers (DIV, TIMA, TMA, TAC) and internal counter |
 | `/interrupts` | GET | IE and IF values + per-interrupt enabled/requested flags |

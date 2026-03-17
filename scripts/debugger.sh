@@ -150,6 +150,12 @@ gb_timers() {
     '"DIV=\(.div) TIMA=\(.tima) TMA=\(.tma) TAC=\(.tac) enabled=\(.timer_enabled) freq=\(.frequency) internal=\(.internal_counter)"'
 }
 
+gb_screenshot() {
+  local path="${1:?usage: gb_screenshot <path>}"
+  curl -s "$GB_URL/screen/bitmap" -o "$path"
+  echo "saved $path"
+}
+
 gb_screen_row() {
   local row="${1:?usage: gb_screen_row <row>}"
   curl -s "$GB_URL/screen" | jq -r ".pixels[$row] | map(tostring) | join(\" \")"
