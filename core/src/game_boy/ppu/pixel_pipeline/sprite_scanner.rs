@@ -117,11 +117,14 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (DELTA_ODD): BYBA captures stored FETO, AVAP evaluated.
+    /// Rising edge (DELTA_ODD): BYBA captures stored FETO, AVAP evaluated,
+    /// and CATU scan-start fires.
     ///
     /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
     /// AVAP is combinational (BYBA && !DOBA), evaluated after BYBA updates.
-    pub(super) fn rise(&mut self, xupy_rising: bool) -> ScanSignals {
+    /// CATU fires on the XUPY rising edge; BESU→ACYL→STAT is fully
+    /// combinational, so mode 2 is visible on the bus in the same phase.
+    pub(super) fn rise(&mut self, xupy_rising: bool, lx: u8, wuvu: bool) -> ScanSignals {
         // BYBA_SCAN_DONEp_odd: capture stored FETO on XUPY rising edge.
         if xupy_rising {
             self.byba = self.feto_old;
@@ -136,24 +139,29 @@ impl SpriteScanner {
         // 39's comparison still runs (scanning is true through fall()).
         self.last_avap = avap;
 
+        // CATU_LINE_ENDp: at dot 1, CATU fires on the XUPY rising edge,
+        // setting BESU and resetting the scan counter. BESU→ACYL→STAT is
+        // fully combinational — mode 2 is visible on the bus immediately.
+        // Suppressed on LCD turn-on first line (catu_enabled is false).
+        let scan_started = lx == 0 && wuvu && !self.scanning;
+        if scan_started {
+            self.scanning = true;
+            if self.catu_enabled {
+                self.besu = true;
+            }
+            self.counter.reset();
+        }
+
         ScanSignals { avap }
     }
 
-    /// Falling edge (DELTA_EVEN): scanner tick, CATU scan-start, DOBA capture,
-    /// and scanning termination on AVAP.
+    /// Falling edge (DELTA_EVEN): scanner tick, DOBA capture, and scanning
+    /// termination on AVAP.
     ///
     /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
     /// FETO is sampled after tick_clock(), matching hardware's combinational gate.
     /// BESU clears on the falling edge via AVAP → EPOR.
-    pub(super) fn fall(
-        &mut self,
-        xupy_rising: bool,
-        lx: u8,
-        wuvu: bool,
-        ly: u8,
-        regs: &PipelineRegisters,
-        oam: &Oam,
-    ) {
+    pub(super) fn fall(&mut self, xupy_rising: bool, ly: u8, regs: &PipelineRegisters, oam: &Oam) {
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
         // Scanning is still true here even on the AVAP dot, because rise() no
@@ -178,17 +186,6 @@ impl SpriteScanner {
         if self.last_avap && self.scanning {
             self.scanning = false;
             self.besu = false;
-        }
-
-        // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
-        // the scan counter. Suppressed on LCD turn-on first line.
-        let scan_started = lx == 0 && wuvu && !self.scanning;
-        if scan_started {
-            self.scanning = true;
-            if self.catu_enabled {
-                self.besu = true;
-            }
-            self.counter.reset();
         }
 
         // DOBA_SCAN_DONEp_evn: captures BYBA on falling edge.
