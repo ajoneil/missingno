@@ -150,6 +150,12 @@ pub struct Cpu {
     /// Updated every dot by `update_interrupt_state`. Used by the CPU
     /// state machine for the HALT bug check.
     pub(super) interrupt_pending: bool,
+    /// g42 DFF output: latched interrupt-pending state for HALT wakeup.
+    /// Sampled from `interrupt_pending` (IF & IE != 0) at dot 1 of every
+    /// M-cycle. Only consulted by `mcycle_halted` — running-mode dispatch
+    /// in `mcycle_fetch` uses the existing `interrupt_latch` / `take_ready()`
+    /// path without gating.
+    pub(super) g42_interrupt_pending: bool,
 }
 
 impl Cpu {
@@ -191,6 +197,7 @@ impl Cpu {
             boundary_flag: true, // Start at an instruction boundary
             first_halted_cycle: false,
             interrupt_pending: false,
+            g42_interrupt_pending: false,
         }
     }
 
@@ -225,6 +232,7 @@ impl Cpu {
             boundary_flag: true,
             first_halted_cycle: false,
             interrupt_pending: false,
+            g42_interrupt_pending: false,
         }
     }
 

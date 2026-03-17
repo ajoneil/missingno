@@ -506,7 +506,10 @@ impl Cpu {
         }
 
         // ── IME=1 wakeup ──
-        if self.interrupt_latch.take_ready().is_some() {
+        // g42 DFF gate: only dispatch if g42 saw IF & IE at the previous
+        // M-cycle boundary. This models the 1 MC propagation delay through
+        // g42 -> g43 -> g49 while PHI is stopped.
+        if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
@@ -530,7 +533,7 @@ impl Cpu {
         // The wakeup NOP IS the first instruction's opcode fetch on
         // hardware — one M-cycle, not two. When the pending flag is
         // consumed, transition straight to Fetch phase.
-        if self.halt_wakeup_pending {
+        if self.g42_interrupt_pending && self.halt_wakeup_pending {
             self.halt_wakeup_pending = false;
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
@@ -919,6 +922,7 @@ impl Cpu {
     fn enter_fetch(&mut self) -> BusAction {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
+        self.g42_interrupt_pending = false;
 
         // Run HALT bug check and EI delay advance at the instruction
         // boundary, INSIDE the CPU, so the timing is exact regardless

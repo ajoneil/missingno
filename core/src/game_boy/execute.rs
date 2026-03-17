@@ -149,6 +149,11 @@ impl GameBoy {
             // Capture interrupt state so the CPU's dispatch check sees it.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
+
+            // g42 DFF: sample IF & IE at the M-cycle boundary for HALT wakeup.
+            // On hardware, g42 latches at the BOGA edge. Only matters for the
+            // halted path — running-mode dispatch checks IF directly.
+            self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
         }
 
         // ── CPU dot advance ──
