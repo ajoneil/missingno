@@ -3,7 +3,6 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl};
 use super::fetch_cascade::FetchCascade;
 use super::fetcher::{FetcherStep, TileFetcher};
 use super::fine_scroll::FineScroll;
-use super::shifters::BgShifter;
 
 /// Window control block (die page 27).
 ///
@@ -117,7 +116,6 @@ impl WindowControl {
         rydy_snapshot: bool,
         fetcher: &mut TileFetcher,
         cascade: &mut FetchCascade,
-        bg_shifter: &BgShifter,
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
         pygo: bool,
@@ -157,7 +155,7 @@ impl WindowControl {
         // Reactivation requires the initial window fetch to have completed
         // (RYDY=0), modeling hardware's !window_is_being_fetched.
         if fetcher.fetching_window {
-            if !rydy_snapshot && bg_shifter.poky() && fetcher.step == FetcherStep::GetTile {
+            if !rydy_snapshot && fetcher.step == FetcherStep::GetTile {
                 self.window_zero_pixel = true;
             }
             return;

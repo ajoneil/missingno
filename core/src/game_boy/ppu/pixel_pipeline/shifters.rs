@@ -12,40 +12,22 @@
 /// SACU clock edge unconditionally. Zero shifts in from bit 0. Tile
 /// data is loaded in parallel via async SET/RST (SEKO signal).
 ///
-/// The `loaded` flag models the POKY_PRELOAD_LATCHp signal on hardware,
-/// which gates SACU_CLKPIPE (pixel clock) until the first tile load
-/// completes. Once latched, it stays set until a window trigger or
-/// scanline reset clears it. Exposed via `poky()`.
 pub(super) struct BgShifter {
     low: u8,
     high: u8,
-    loaded: bool,
 }
 
 impl BgShifter {
     pub(super) fn new() -> Self {
-        Self {
-            low: 0,
-            high: 0,
-            loaded: false,
-        }
-    }
-
-    /// Whether the POKY_PRELOAD_LATCHp signal is set. POKY gates the pixel
-    /// clock (TYFA/SACU) and indicates the first tile load has completed.
-    /// Set by tile load, cleared by window trigger or scanline reset.
-    pub(super) fn poky(&self) -> bool {
-        self.loaded
+        Self { low: 0, high: 0 }
     }
 
     /// Parallel load from a tile fetch. On hardware, the DFF22 shift
     /// register cells use async SET/RST pins, so a load unconditionally
     /// overwrites the current contents (SEKO pre-load at tile boundaries).
-    /// Sets the POKY preload latch.
     pub(super) fn load(&mut self, low: u8, high: u8) {
         self.low = low;
         self.high = high;
-        self.loaded = true;
     }
 
     /// Read the MSB bitplane values — the shift register's output pins.
@@ -64,8 +46,8 @@ impl BgShifter {
         self.high <<= 1;
     }
 
-    pub(super) fn registers(&self) -> (u8, u8, bool) {
-        (self.low, self.high, self.loaded)
+    pub(super) fn registers(&self) -> (u8, u8) {
+        (self.low, self.high)
     }
 }
 

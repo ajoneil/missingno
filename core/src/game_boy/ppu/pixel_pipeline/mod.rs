@@ -84,7 +84,6 @@ pub struct PipelineSnapshot {
     pub xymu: bool,
     pub bg_low: u8,
     pub bg_high: u8,
-    pub bg_loaded: bool,
     pub obj_low: u8,
     pub obj_high: u8,
     pub obj_palette: u8,
@@ -249,7 +248,7 @@ impl Rendering {
     }
 
     pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
-        let (bg_low, bg_high, bg_loaded) = self.bg_shifter.registers();
+        let (bg_low, bg_high) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
             SpriteState::Fetching(sf) => (Some(sf.phase), Some(sf.tile_data())),
@@ -260,7 +259,6 @@ impl Rendering {
             xymu: self.xymu,
             bg_low,
             bg_high,
-            bg_loaded,
             obj_low,
             obj_high,
             obj_palette,
@@ -716,7 +714,6 @@ impl Rendering {
             inputs.rydy,
             &mut self.fetcher,
             &mut self.cascade,
-            &self.bg_shifter,
             &mut self.fine_scroll,
             inputs.pixel_counter,
             pygo,
