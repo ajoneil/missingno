@@ -102,6 +102,33 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             );
             let _ = request.respond(response);
         }
+        (&Method::Get, "/sprite-store") => {
+            match debugger.game_boy().ppu().sprite_store() {
+                Some(store) => {
+                    let entries: Vec<serde_json::Value> = store
+                        .entries
+                        .iter()
+                        .map(|e| {
+                            serde_json::json!({
+                                "oam_index": e.oam_index,
+                                "line_offset": e.line_offset,
+                                "x": e.x,
+                                "fetched": e.fetched,
+                            })
+                        })
+                        .collect();
+                    respond_json(
+                        request,
+                        serde_json::json!({
+                            "count": store.count,
+                            "fetched_mask": store.fetched,
+                            "entries": entries,
+                        }),
+                    );
+                }
+                None => respond_json(request, serde_json::Value::Null),
+            }
+        }
         (&Method::Get, "/sprites") => {
             respond_json(request, sprites_state(debugger.game_boy()));
         }

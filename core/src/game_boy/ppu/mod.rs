@@ -9,7 +9,10 @@ use pixel_pipeline::Rendering;
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
-pub use pixel_pipeline::{FetcherStep, PipelineSnapshot, SpriteFetchPhase};
+pub use pixel_pipeline::{
+    FetcherStep, PipelineSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
+    SpriteStoreSnapshot,
+};
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
@@ -563,5 +566,11 @@ impl Ppu {
             }
             _ => None,
         }
+    }
+
+    pub fn sprite_store(&self) -> Option<SpriteStoreSnapshot> {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|r| r.sprite_store_snapshot())
     }
 }

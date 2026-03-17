@@ -65,6 +65,19 @@ struct RisingPhaseInputs {
     pixel_counter: u8,
 }
 
+pub struct SpriteStoreSnapshot {
+    pub count: u8,
+    pub fetched: u16,
+    pub entries: Vec<SpriteStoreEntrySnapshot>,
+}
+
+pub struct SpriteStoreEntrySnapshot {
+    pub oam_index: u8,
+    pub line_offset: u8,
+    pub x: u8,
+    pub fetched: bool,
+}
+
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
     /// XYMU rendering latch (page 21). True = Mode 3 rendering active.
@@ -213,6 +226,26 @@ impl Rendering {
     /// Current OAM scan counter entry (0-39).
     pub(super) fn scan_counter_entry(&self) -> u8 {
         self.scan.scan_counter_entry()
+    }
+
+    /// Snapshot of the sprite store for debugging.
+    pub(super) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
+        let sprites = &self.scan.sprites_ref();
+        SpriteStoreSnapshot {
+            count: sprites.count,
+            fetched: sprites.fetched,
+            entries: (0..sprites.count as usize)
+                .map(|i| {
+                    let e = &sprites.entries[i];
+                    SpriteStoreEntrySnapshot {
+                        oam_index: e.oam_index,
+                        line_offset: e.line_offset,
+                        x: e.x,
+                        fetched: sprites.fetched & (1 << i) != 0,
+                    }
+                })
+                .collect(),
+        }
     }
 
     pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
