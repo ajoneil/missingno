@@ -5,22 +5,12 @@ use crate::game_boy::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 use super::super::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
-/// Background tile fetcher step. The initial fetch after AVAP takes 6 dots:
-/// GetTileWait(1) + GetTile(1) + DataLowWait(1) + DataLow(1) +
-/// DataHighWait(1) + DataHigh(1), then Idle until reload. Subsequent
-/// fetches (after SEKO reload) and window resets skip GetTileWait,
-/// entering at GetTile directly (LEBO head start).
+/// Background tile fetcher step. The initial fetch after AVAP takes 5 dots:
+/// GetTile(1) + DataLowWait(1) + DataLow(1) + DataHighWait(1) +
+/// DataHigh(1), then Idle until reload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FetcherStep {
-    /// Initial wait dot before the first tilemap read. Only used for the
-    /// very first fetch after AVAP — LEBO hasn't started yet, so there's
-    /// no head-start optimization. Subsequent fetches enter at GetTile
-    /// directly (LEBO is already running).
-    GetTileWait,
-    /// Tilemap lookup — VRAM read (1 dot). Entry point after SEKO reload
-    /// and window reset. LEBO head start skips the wait dot: NYXU resets
-    /// the counter to 0, then LEBO immediately clocks it to 1, so GetTile
-    /// is always the read half of the 2-dot cycle.
+    /// Tilemap lookup — VRAM read (1 dot).
     GetTile,
     /// Delay before tile data low read (1 dot).
     GetTileDataLowWait,
@@ -78,7 +68,7 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 impl TileFetcher {
     pub(super) fn new() -> Self {
         Self {
-            step: FetcherStep::GetTileWait,
+            step: FetcherStep::GetTile,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -171,16 +161,11 @@ impl TileFetcher {
 
     /// Advance the background tile fetcher by one dot.
     ///
-    /// The initial fetch cycle is 6 dots total:
-    ///   GetTileWait (1 dot) → GetTile (1 dot, VRAM read) →
+    /// Each fetch cycle is 5 dots total:
+    ///   GetTile (1 dot, VRAM read) →
     ///   GetTileDataLowWait (1 dot) → GetTileDataLow (1 dot, VRAM read) →
     ///   GetTileDataHighWait (1 dot) → GetTileDataHigh (1 dot, VRAM read) →
     ///   Idle (waits for reload).
-    ///
-    /// Subsequent fetches (via load_into/reset_for_window) enter at GetTile,
-    /// skipping GetTileWait (LEBO head start). GetTileDataLow and
-    /// GetTileDataHigh each have a wait dot before the read, modeling the
-    /// full 2-dot period of LEBO's clock.
     ///
     /// The hardware VRAM address bus is combinational — addresses always
     /// reflect current register values (SCX, SCY, LCDC) at the moment
@@ -194,10 +179,6 @@ impl TileFetcher {
         vram: &Vram,
     ) {
         match self.step {
-            FetcherStep::GetTileWait => {
-                // Setup dot — LEBO hasn't clocked yet. No VRAM access.
-                self.step = FetcherStep::GetTile;
-            }
             FetcherStep::GetTile => {
                 // Compute tilemap address from live registers and read VRAM.
                 self.vram_address =
