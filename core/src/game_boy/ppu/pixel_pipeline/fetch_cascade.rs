@@ -4,7 +4,7 @@
 /// stages, adding pipeline delay before the pixel clock enables. Not a
 /// processing block — just a small state machine you clock and query.
 ///
-/// - NYKA (DFF17, falling/ALET): captures live LYRY (combinational)
+/// - NYKA (DFF17, falling/ALET): captures state_old LYRY (previous falling)
 /// - PORY (DFF17, rising/MYVO): captures NYKA
 /// - PYGO (DFF17, falling/ALET): captures PORY
 /// - POKY (NOR latch, falling): fires from PYGO
@@ -17,7 +17,8 @@
 pub(super) struct FetchCascade {
     /// Previous falling phase's LYRY value. Models DFF17 `state_old` read.
     lyry_prev: bool,
-    /// NYKA_FETCH_DONEp_evn: latches on falling edge (ALET).
+    /// NYKA_FETCH_DONEp_evn: DFF17, latches on falling edge (ALET).
+    /// Reads state_old LYRY (lyry_prev), not the live value.
     nyka: bool,
     /// PORY_FETCH_DONEp_odd: latches on rising edge (MYVO).
     pory: bool,
@@ -38,16 +39,17 @@ impl FetchCascade {
         }
     }
 
-    /// Falling edge: clock NYKA from live LYRY, update lyry_prev,
-    /// clock PYGO from PORY, fire POKY NOR from PYGO.
+    /// Falling edge: clock NYKA from state_old LYRY (lyry_prev),
+    /// update lyry_prev, clock PYGO from PORY, fire POKY NOR from PYGO.
     pub(super) fn fall(&mut self, lyry: bool) {
-        // NYKA captures live LYRY — LYRY is combinational and updates
-        // in the same falling phase the fetcher reaches Idle.
-        if lyry && !self.nyka {
+        // NYKA DFF17: captures state_old LYRY (previous falling's value).
+        // On hardware, NYKA reads reg_old.LYRY before the clock edge
+        // updates it, adding a 1-dot pipeline delay.
+        if self.lyry_prev && !self.nyka {
             self.nyka = true;
         }
 
-        // Update lyry_prev for next falling phase.
+        // Update lyry_prev AFTER NYKA reads it — this is the new state.
         self.lyry_prev = lyry;
 
         // PYGO captures PORY on falling edge (ALET clock).
