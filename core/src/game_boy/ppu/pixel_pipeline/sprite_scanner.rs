@@ -103,6 +103,11 @@ impl SpriteScanner {
         }
     }
 
+    /// Read access to the sprite store for debug snapshots.
+    pub(super) fn sprites_ref(&self) -> &SpriteStore {
+        &self.sprites
+    }
+
     /// Mutable access to the sprite store for X matching and marking fetched slots.
     pub(super) fn sprites_mut(&mut self) -> &mut SpriteStore {
         &mut self.sprites
@@ -152,12 +157,15 @@ impl SpriteScanner {
         // Counter ticks on XUPY regardless of scanning state. On hardware,
         // the counter clock is XUPY gated by !VID_RST, not by BESU.
         if xupy_rising {
+            // Capture FETO *before* the counter tick. On hardware, FETO is
+            // combinational on counter bits, but BYBA latches it on the
+            // next rising edge. The pre-tick value ensures entry 39's
+            // comparison completes before AVAP fires: when comparing entry
+            // 38, FETO is false (counter still 38), so AVAP doesn't fire
+            // until after the next tick where entry 39 is compared.
+            self.feto_old = self.counter.scan_done();
             self.counter.tick_clock();
         }
-
-        // Capture FETO *after* the scanner tick — hardware FETO is combinational
-        // on counter bits, so it reflects the post-tick state immediately.
-        self.feto_old = self.counter.scan_done();
 
         // CATU_LINE_ENDp: at dot 1, CATU fires, setting BESU and resetting
         // the scan counter. Suppressed on LCD turn-on first line.
