@@ -1,7 +1,16 @@
+mod age;
 mod blargg;
+mod bully;
 mod common;
 mod dmg_acid2;
+mod gambatte;
 mod gbmicrotest;
+mod little_things;
+mod mbc3_tester;
 mod mealybug_tearoom;
 mod mooneye;
+mod mooneye_wilbertpol;
 mod samesuite;
+mod scribbltests;
+mod strikethrough;
+mod turtle_tests;

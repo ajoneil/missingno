@@ -74,6 +74,14 @@ pub fn run_until_serial_match(gb: &mut GameBoy, needles: &[&str], timeout_frames
     output
 }
 
+/// Run the emulator for a fixed number of frames. Used for ROMs that display
+/// results but don't terminate with an infinite loop.
+pub fn run_frames(gb: &mut GameBoy, frames: u32) {
+    for _ in 0..frames {
+        while !gb.step() {}
+    }
+}
+
 /// Run the emulator until it enters an infinite loop, or until a timeout (in frames) is reached.
 ///
 /// After the frame-by-frame scan, does one final per-instruction scan (one frame's worth
@@ -106,6 +114,27 @@ pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
             // Check for LD B,B breakpoint before executing
             let pc = gb.cpu().program_counter;
             if gb.read(pc) == 0x40 {
+                return true;
+            }
+            if gb.step() {
+                break;
+            }
+        }
+    }
+    false
+}
+
+/// Run the emulator until opcode 0xED (undefined) is about to execute, or until
+/// an infinite loop is detected, or until a timeout. The wilbertpol Mooneye fork
+/// uses 0xED as its test exit condition.
+pub fn run_until_undefined_opcode(gb: &mut GameBoy, timeout_frames: u32) -> bool {
+    for _ in 0..timeout_frames {
+        loop {
+            let pc = gb.cpu().program_counter;
+            if gb.read(pc) == 0xED {
+                return true;
+            }
+            if is_infinite_loop(gb) {
                 return true;
             }
             if gb.step() {
