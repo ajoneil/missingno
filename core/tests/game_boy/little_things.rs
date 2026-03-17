@@ -20,8 +20,5 @@ fn firstwhite() {
         }
     }
 
-    assert_eq!(
-        mismatches, 0,
-        "firstwhite: {mismatches} pixel mismatches"
-    );
+    assert_eq!(mismatches, 0, "firstwhite: {mismatches} pixel mismatches");
 }

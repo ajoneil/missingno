@@ -282,14 +282,8 @@ gambatte_hex_test!(
 
 // ── div ─────────────────────────────────────────────────────────────────
 
-gambatte_hex_test!(
-    div_start_inc_1,
-    "gambatte/div/start_inc_1_dmg08_outAB.gb"
-);
-gambatte_hex_test!(
-    div_start_inc_2,
-    "gambatte/div/start_inc_2_dmg08_outAC.gb"
-);
+gambatte_hex_test!(div_start_inc_1, "gambatte/div/start_inc_1_dmg08_outAB.gb");
+gambatte_hex_test!(div_start_inc_2, "gambatte/div/start_inc_2_dmg08_outAC.gb");
 
 // ── miscmstatirq ────────────────────────────────────────────────────────
 

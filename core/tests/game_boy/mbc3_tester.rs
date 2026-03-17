@@ -20,8 +20,5 @@ fn mbc3_tester() {
         }
     }
 
-    assert_eq!(
-        mismatches, 0,
-        "MBC3 tester: {mismatches} pixel mismatches"
-    );
+    assert_eq!(mismatches, 0, "MBC3 tester: {mismatches} pixel mismatches");
 }

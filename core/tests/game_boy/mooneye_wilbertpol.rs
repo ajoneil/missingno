@@ -215,10 +215,7 @@ wilbertpol_test!(
 );
 
 // acceptance/timer/
-wilbertpol_test!(
-    timer_if,
-    "mooneye-wilbertpol/acceptance/timer/timer_if.gb"
-);
+wilbertpol_test!(timer_if, "mooneye-wilbertpol/acceptance/timer/timer_if.gb");
 
 // emulator-only/ — MBC tests
 wilbertpol_test!(
