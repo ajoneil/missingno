@@ -467,10 +467,11 @@ impl Rendering {
         // (VONU/TOBU) is separate from the BG fetcher clock (LEBO).
         // Sprite wait exit uses PYGO (cascade DFF output) instead of
         // POKY (bg_shifter.loaded). Both go high on the same falling phase
-        // and remain high for the rest of the scanline.
+        // and remain high for the rest of the scanline. On hardware, TEKY
+        // checks live LYRY_BFETCH_DONEp directly.
         if let SpriteState::Fetching(ref mut sf) = self.sprite_state
             && sf.phase == SpriteFetchPhase::WaitingForFetcher
-            && self.cascade.lyry_prev()
+            && lyry
             && self.cascade.pygo()
         {
             sf.phase = SpriteFetchPhase::FetchingData;
@@ -650,10 +651,8 @@ impl Rendering {
                     self.fetcher.load_into(&mut self.bg_shifter);
                     // SEKO resets the fetcher counter (TEVO -> LOVY/LAXU/TYFO
                     // reset), which drives LYRY low combinationally (phase < 10).
-                    // Clear lyry_prev so the next falling phase sees the reset
-                    // state — otherwise a sprite triggered at an X%8==0 boundary
-                    // would see stale lyry_prev=true and exit wait immediately.
-                    self.cascade.clear_lyry();
+                    // No stale-state concern: sprite wait exit checks live LYRY,
+                    // which naturally reflects the reset fetcher state.
                 }
 
                 // LCD Control (page 24): pixel counter, XAJO, TOBA, shift

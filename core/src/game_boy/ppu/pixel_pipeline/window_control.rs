@@ -175,11 +175,9 @@ impl WindowControl {
         fine_scroll.reset_for_window();
         self.rydy = true;
         fetcher.reset_for_window();
-        // NAFY: window mode trigger always resets NYKA, PORY, and lyry_prev,
-        // forcing the startup cascade (NYKA→PORY→PYGO) to re-propagate after
-        // the window tile fetch completes before the pixel clock can resume.
-        // lyry_prev must also be cleared so the window refetch does not inherit
-        // stale LYRY state from the previous fetch.
+        // NAFY: window mode trigger always resets NYKA and PORY, forcing the
+        // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
+        // tile fetch completes before the pixel clock can resume.
         cascade.reset_window();
         self.window_rendered = true;
     }

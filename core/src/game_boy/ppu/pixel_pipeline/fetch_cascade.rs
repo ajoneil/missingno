@@ -4,10 +4,15 @@
 /// stages, adding pipeline delay before the pixel clock enables. Not a
 /// processing block — just a small state machine you clock and query.
 ///
-/// - NYKA (DFF17, falling/ALET): captures state_old LYRY (previous falling)
+/// - NYKA (DFF17, falling/ALET): captures LYRY
 /// - PORY (DFF17, rising/MYVO): captures NYKA
 /// - PYGO (DFF17, falling/ALET): captures PORY
 /// - POKY (NOR latch, falling): fires from PYGO
+///
+/// On hardware, LYRY fires on ODD (rising) and NYKA captures on EVEN
+/// (falling). The clock edge separation provides the pipeline delay —
+/// no artificial `_prev` variable needed. In our model, NYKA captures
+/// the live LYRY value passed to `fall()`.
 ///
 /// Consumers read DFF state via accessors:
 /// - `poky()` → TYFA (pixel clock enable)
@@ -15,10 +20,7 @@
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
 pub(super) struct FetchCascade {
-    /// Previous falling phase's LYRY value. Models DFF17 `state_old` read.
-    lyry_prev: bool,
     /// NYKA_FETCH_DONEp_evn: DFF17, latches on falling edge (ALET).
-    /// Reads state_old LYRY (lyry_prev), not the live value.
     nyka: bool,
     /// PORY_FETCH_DONEp_odd: latches on rising edge (MYVO).
     pory: bool,
@@ -31,7 +33,6 @@ pub(super) struct FetchCascade {
 impl FetchCascade {
     pub(super) fn new() -> Self {
         FetchCascade {
-            lyry_prev: false,
             nyka: false,
             pory: false,
             pygo: false,
@@ -39,18 +40,16 @@ impl FetchCascade {
         }
     }
 
-    /// Falling edge: clock NYKA from state_old LYRY (lyry_prev),
-    /// update lyry_prev, clock PYGO from PORY, fire POKY NOR from PYGO.
+    /// Falling edge: clock NYKA from LYRY, clock PYGO from PORY,
+    /// fire POKY NOR from PYGO.
     pub(super) fn fall(&mut self, lyry: bool) {
-        // NYKA DFF17: captures state_old LYRY (previous falling's value).
-        // On hardware, NYKA reads reg_old.LYRY before the clock edge
-        // updates it, adding a 1-dot pipeline delay.
-        if self.lyry_prev && !self.nyka {
+        // NYKA DFF17: captures LYRY on falling edge (ALET clock).
+        // On hardware, NYKA is on EVEN and LYRY fires on ODD — the
+        // clock edge boundary is the delay. In our model, both are
+        // in the same half-phase, so NYKA captures live LYRY.
+        if lyry && !self.nyka {
             self.nyka = true;
         }
-
-        // Update lyry_prev AFTER NYKA reads it — this is the new state.
-        self.lyry_prev = lyry;
 
         // PYGO captures PORY on falling edge (ALET clock).
         if self.pory && !self.pygo {
@@ -72,30 +71,19 @@ impl FetchCascade {
 
     /// Scanline reset: clear all DFFs.
     pub(super) fn reset(&mut self) {
-        self.lyry_prev = false;
         self.nyka = false;
         self.pory = false;
         self.pygo = false;
         self.poky = false;
     }
 
-    /// NAFY window-trigger reset: clear NYKA, PORY, and lyry_prev.
+    /// NAFY window-trigger reset: clear NYKA and PORY.
     /// PYGO and POKY are not reset by window triggers.
     pub(super) fn reset_window(&mut self) {
         self.nyka = false;
         self.pory = false;
-        self.lyry_prev = false;
     }
 
-    /// Clear lyry_prev so the cascade sees a reset fetcher state.
-    /// Used when a sprite fetch resets the fetcher counter (SEKO).
-    pub(super) fn clear_lyry(&mut self) {
-        self.lyry_prev = false;
-    }
-
-    pub(super) fn lyry_prev(&self) -> bool {
-        self.lyry_prev
-    }
     pub(super) fn nyka(&self) -> bool {
         self.nyka
     }

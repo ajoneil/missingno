@@ -28,8 +28,14 @@ pub(super) struct SpriteScanner {
     /// DOBA_SCAN_DONEp_evn: captures BYBA.
     /// Hardware: _evn suffix → latches on falling edge (DELTA_EVEN).
     doba: bool,
-    /// Stored FETO value from fall() for BYBA capture in the next rise().
+    /// Current GAVA tick's FETO value. Updated in fall() when xupy fires.
     feto_old: bool,
+    /// Previous GAVA tick's FETO value. On hardware, BYBA reads
+    /// `reg_old.FETO.out_old()` — the FETO from the start of the current
+    /// half-phase, which is the value latched during the PREVIOUS GAVA
+    /// tick. This gives a 1-GAVA-cycle pipeline delay (4 HP / 2 dots)
+    /// from FETO firing to BYBA capturing it.
+    feto_prev: bool,
     /// AVAP signal from the most recent rise(), consumed by fall()
     /// to gate scanning termination on the correct (falling) edge.
     last_avap: bool,
@@ -54,6 +60,7 @@ impl SpriteScanner {
             byba: false,
             doba: false,
             feto_old: false,
+            feto_prev: false,
             last_avap: false,
             sprites: SpriteStore::new(),
         }
@@ -125,9 +132,19 @@ impl SpriteScanner {
     /// CATU fires on the XUPY rising edge; BESU→ACYL→STAT is fully
     /// combinational, so mode 2 is visible on the bus in the same phase.
     pub(super) fn rise(&mut self, xupy_rising: bool, lx: u8, wuvu: bool) -> ScanSignals {
-        // BYBA_SCAN_DONEp_odd: capture stored FETO on XUPY rising edge.
+        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
+        // On normal lines (catu_enabled), use feto_prev — the FETO value
+        // from the previous GAVA tick. This matches hardware's reg_old.FETO
+        // pipeline where BYBA reads the value latched one GAVA cycle earlier.
+        // On the LCD-on first line (!catu_enabled), the WUVU phase
+        // initialization already provides the correct alignment, so BYBA
+        // captures feto_old directly.
         if xupy_rising {
-            self.byba = self.feto_old;
+            self.byba = if self.catu_enabled {
+                self.feto_prev
+            } else {
+                self.feto_old
+            };
         }
 
         // AVAP: combinational scan-done trigger.
@@ -176,8 +193,9 @@ impl SpriteScanner {
             self.counter.tick_clock();
             // FETO is combinational on counter bits — sample after tick so
             // that when the counter reaches 39, feto_old captures true on
-            // the same clock edge. BYBA latches this on the next XUPY
-            // rising edge (2-dot pipeline, matching hardware).
+            // the same clock edge. Shift feto_old into feto_prev before
+            // updating, so BYBA sees a 1-GAVA-cycle-delayed value.
+            self.feto_prev = self.feto_old;
             self.feto_old = self.counter.scan_done();
         }
 
@@ -204,6 +222,7 @@ impl SpriteScanner {
         self.byba = false;
         self.doba = false;
         self.feto_old = false;
+        self.feto_prev = false;
         self.last_avap = false;
     }
 }
