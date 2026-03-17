@@ -99,7 +99,7 @@ impl VideoControl {
     /// from LX=1 onward, `ly()` returns 0. The internal counter
     /// remains at 153 until RUTU at LX=113 naturally wraps it 153→0.
     pub fn ly(&self) -> u8 {
-        if self.ly == 153 && self.lx >= 1 && self.lx < 113 {
+        if self.ly == 153 && self.lx >= 1 {
             0
         } else {
             self.ly
