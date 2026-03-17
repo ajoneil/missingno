@@ -66,6 +66,42 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Get, "/screen/ascii") => {
             respond_json(request, screen_ascii(debugger.game_boy()));
         }
+        (&Method::Get, "/screen/bitmap") => {
+            let bmp = screen_bitmap(debugger.game_boy());
+            let response = Response::from_data(bmp).with_header(
+                "Content-Type: image/bmp"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = request.respond(response);
+        }
+        (&Method::Get, "/tiles/bitmap") => {
+            let bmp = tiles_bitmap(debugger.game_boy());
+            let response = Response::from_data(bmp).with_header(
+                "Content-Type: image/bmp"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = request.respond(response);
+        }
+        (&Method::Get, "/tilemap/0/bitmap") => {
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::tile_maps::TileMapId(0));
+            let response = Response::from_data(bmp).with_header(
+                "Content-Type: image/bmp"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = request.respond(response);
+        }
+        (&Method::Get, "/tilemap/1/bitmap") => {
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::tile_maps::TileMapId(1));
+            let response = Response::from_data(bmp).with_header(
+                "Content-Type: image/bmp"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = request.respond(response);
+        }
         (&Method::Get, "/sprites") => {
             respond_json(request, sprites_state(debugger.game_boy()));
         }
@@ -578,6 +614,135 @@ fn screen_ascii(gb: &GameBoy) -> ScreenAscii {
         lines.push(row);
     }
     ScreenAscii { lines }
+}
+
+fn write_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
+    let row_stride = ((width * 3 + 3) & !3) as usize;
+    let pixel_data_size = row_stride * height as usize;
+    let file_size = 54 + pixel_data_size;
+
+    let mut bmp = Vec::with_capacity(file_size);
+
+    // BMP file header (14 bytes)
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(file_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&0u16.to_le_bytes());
+    bmp.extend_from_slice(&0u16.to_le_bytes());
+    bmp.extend_from_slice(&54u32.to_le_bytes());
+
+    // DIB header (40 bytes)
+    bmp.extend_from_slice(&40u32.to_le_bytes());
+    bmp.extend_from_slice(&width.to_le_bytes());
+    bmp.extend_from_slice(&(height as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes());
+    bmp.extend_from_slice(&24u16.to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&(pixel_data_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&2835u32.to_le_bytes());
+    bmp.extend_from_slice(&2835u32.to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+
+    // Pixel data (bottom-up)
+    let padding = row_stride - width as usize * 3;
+    for y in (0..height).rev() {
+        let row_start = (y * width) as usize * 3;
+        bmp.extend_from_slice(&pixels[row_start..row_start + width as usize * 3]);
+        for _ in 0..padding {
+            bmp.push(0);
+        }
+    }
+
+    bmp
+}
+
+fn screen_bitmap(gb: &GameBoy) -> Vec<u8> {
+    let screen = gb.screen();
+    let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+
+    let mut pixels = Vec::with_capacity(160 * 144 * 3);
+    for y in 0..144u8 {
+        for x in 0..160u8 {
+            let shade = greys[screen.pixel(x, y).0 as usize];
+            pixels.push(shade);
+            pixels.push(shade);
+            pixels.push(shade);
+        }
+    }
+
+    write_bmp(160, 144, &pixels)
+}
+
+/// Renders all 384 tiles (3 blocks of 128) in a 16-wide grid.
+fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
+    let vram = gb.vram();
+    let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+
+    // 16 tiles wide, 24 tiles tall (384 tiles total)
+    let cols = 16u32;
+    let rows = 24u32;
+    let w = cols * 8;
+    let h = rows * 8;
+
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+
+    for block_id in 0..3u8 {
+        let block = vram.tile_block(ppu::tiles::TileBlockId(block_id));
+        for tile_idx in 0..128u8 {
+            let tile = block.tile(ppu::tiles::TileIndex(tile_idx));
+            let global_idx = block_id as u32 * 128 + tile_idx as u32;
+            let grid_x = global_idx % cols;
+            let grid_y = global_idx / cols;
+            for ty in 0..8u8 {
+                for tx in 0..8u8 {
+                    let shade = greys[tile.pixel(tx, ty).0 as usize];
+                    let px = (grid_x * 8 + tx as u32) as usize;
+                    let py = (grid_y * 8 + ty as u32) as usize;
+                    let offset = (py * w as usize + px) * 3;
+                    pixels[offset] = shade;
+                    pixels[offset + 1] = shade;
+                    pixels[offset + 2] = shade;
+                }
+            }
+        }
+    }
+
+    write_bmp(w, h, &pixels)
+}
+
+/// Renders a 32x32 tile map as a 256x256 bitmap.
+fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::tile_maps::TileMapId) -> Vec<u8> {
+    let vram = gb.vram();
+    let tile_map = vram.tile_map(map_id);
+    let addr_mode = gb.ppu().control().tile_address_mode();
+    let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+
+    let w = 256u32;
+    let h = 256u32;
+
+    let mut pixels = vec![0u8; (w * h * 3) as usize];
+
+    for map_y in 0..32u8 {
+        for map_x in 0..32u8 {
+            let tile_index = tile_map.get_tile(map_x, map_y);
+            let (block_id, block_index) = addr_mode.tile(tile_index);
+            let block = vram.tile_block(block_id);
+            let tile = block.tile(block_index);
+            for ty in 0..8u8 {
+                for tx in 0..8u8 {
+                    let shade = greys[tile.pixel(tx, ty).0 as usize];
+                    let px = (map_x as u32 * 8 + tx as u32) as usize;
+                    let py = (map_y as u32 * 8 + ty as u32) as usize;
+                    let offset = (py * w as usize + px) * 3;
+                    pixels[offset] = shade;
+                    pixels[offset + 1] = shade;
+                    pixels[offset + 2] = shade;
+                }
+            }
+        }
+    }
+
+    write_bmp(w, h, &pixels)
 }
 
 fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {

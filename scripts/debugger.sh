@@ -201,3 +201,19 @@ gb_tile_map_row() {
   curl -s "$GB_URL/memory/$addr/32" | jq -r \
     '.bytes | to_entries | map("\(.key):\(.value)") | join("  ")'
 }
+
+gb_screenshot() {
+  local out="${1:?usage: gb_screenshot <output.bmp>}"
+  curl -s "$GB_URL/screen/bitmap" -o "$out"
+}
+
+gb_tiles_screenshot() {
+  local out="${1:?usage: gb_tiles_screenshot <output.bmp>}"
+  curl -s "$GB_URL/tiles/bitmap" -o "$out"
+}
+
+gb_tilemap_screenshot() {
+  local map="${1:?usage: gb_tilemap_screenshot <0|1> <output.bmp>}"
+  local out="${2:?usage: gb_tilemap_screenshot <0|1> <output.bmp>}"
+  curl -s "$GB_URL/tilemap/$map/bitmap" -o "$out"
+}
