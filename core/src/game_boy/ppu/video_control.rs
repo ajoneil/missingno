@@ -60,7 +60,7 @@ pub struct VideoControl {
     pub(super) stat_line_was_high: bool,
 
     /// NYPE DFF17 (delayed line-end, GateBoyLCD.cpp line 125).
-    /// Clocked by TALU falling edge. Data: RUTU_old (previous tick's
+    /// Clocked by TALU rising edge. Data: RUTU_old (previous tick's
     /// line-end pulse). Goes high at phase_lx=4, 2 dots after RUTU.
     /// Active window: phase_lx [4, 11] within the scanline.
     pub(super) nype: bool,
@@ -96,7 +96,7 @@ pub struct VideoControl {
 
 impl VideoControl {
     /// TALU signal: buffered VENA.qp. High during phases C,D,E,F.
-    /// TALU rising edge clocks LX and ROPO. NYPE is clocked on TALU falling.
+    /// TALU rising edge clocks LX, ROPO, and NYPE.
     pub fn talu(&self) -> bool {
         self.vena
     }
@@ -172,25 +172,15 @@ impl VideoControl {
         talu_was
     }
 
-    /// TALU rising edge: increment LX (unless RUTU just fired), clear RUTU
-    /// pulse, detect SANU (LX=113). On hardware, MUDE async-resets the LX
-    /// ripple counter at the same TALU falling edge as RUTU. The counter
-    /// outputs 0 for the full TALU period (B+0 to B+3). The first
-    /// incrementing clock edge (B+6) takes LX from 0 to 1.
+    /// TALU rising edge: NYPE latch, then increment LX (unless RUTU just
+    /// fired), clear RUTU pulse, detect SANU (LX=113). On hardware, MUDE
+    /// async-resets the LX ripple counter at the same TALU falling edge as
+    /// RUTU. The counter outputs 0 for the full TALU period (B+0 to B+3).
+    /// The first incrementing clock edge (B+6) takes LX from 0 to 1.
     pub fn tick_talu_rise(&mut self) {
-        if !self.rutu_active {
-            self.lx += 1;
-        }
-        self.rutu_active = false;
-        self.sanu = self.lx == 113;
-    }
-
-    /// TALU falling edge: NYPE latch, RUTU fire. Returns true at
-    /// scanline boundary (RUTU fires when SANU detected LX=113).
-    pub fn tick_talu_fall(&mut self) -> bool {
-        // NYPE DFF17: clocked by TALU falling edge.
+        // NYPE DFF17: clocked by TALU rising edge.
         // Latches rutu_old from the PREVIOUS TALU falling.
-        // Must execute BEFORE RUTU so it sees pre-fire rutu_old.
+        // Must execute BEFORE LX increment so it sees pre-increment state.
         let nype_was = self.nype;
         self.nype = self.rutu_old;
         self.rutu_old = false;
@@ -206,6 +196,16 @@ impl VideoControl {
             }
         }
 
+        if !self.rutu_active {
+            self.lx += 1;
+        }
+        self.rutu_active = false;
+        self.sanu = self.lx == 113;
+    }
+
+    /// TALU falling edge: RUTU fire. Returns true at scanline boundary
+    /// (RUTU fires when SANU detected LX=113).
+    pub fn tick_talu_fall(&mut self) -> bool {
         // RUTU DFF17: clocked by SONO (TALU falling). Latches SANU.
         if self.sanu {
             self.sanu = false;
