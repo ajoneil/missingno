@@ -128,8 +128,11 @@ impl GameBoy {
 
         // ── M-cycle boundary: PPU + interrupt capture BEFORE CPU transition ──
         if is_mcycle_boundary {
-            // PPU rising phase (is_mcycle = true: this IS the BOGA boundary).
-            let ppu_result = self.ppu.rise(true, &self.vram_bus.vram);
+            // PPU rising phase at the M-cycle boundary (dot 0).
+            // is_mcycle = false: the LYC latch (ROPO) should only fire once
+            // per M-cycle at boga (dot 3), not here. Passing true here caused
+            // latch_ly_comparison() to double-advance the two-stage pipeline.
+            let ppu_result = self.ppu.rise(false, &self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
