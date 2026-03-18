@@ -419,7 +419,7 @@ impl Ppu {
     /// Rising half-phase (DELTA_ODD, H→A boundary): XOTA divider chain
     /// toggle, scanline boundary handling, pixel output pipeline, VBlank
     /// IF, and LYC comparison. All rising-phase work in a single method.
-    pub fn rise(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    pub fn rise(&mut self, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             screen: None,
             request_vblank: false,
@@ -450,8 +450,9 @@ impl Ppu {
             }
 
             if !talu_was && self.video.vena {
-                // TALU rising edge: LX increment, SANU detect.
+                // TALU rising edge: LX increment, SANU detect, ROPO latch.
                 self.video.tick_talu_rise();
+                self.video.latch_ly_comparison();
             }
         }
 
@@ -485,13 +486,6 @@ impl Ppu {
         // so this detects the combinational cascade within one tick.
         if self.video.popu && !popu_was && self.pixel_pipeline.is_some() {
             result.request_vblank = true;
-        }
-
-        // M-cycle-rate LYC comparison — AFTER tick_xota so the
-        // comparison sees post-increment LY, BEFORE STAT edge detection
-        // so interrupts see the freshly promoted ly_eq_lyc.
-        if is_mcycle {
-            self.video.latch_ly_comparison();
         }
 
         result
