@@ -22,20 +22,28 @@ pub(super) struct SpriteScanner {
     /// blocks CATU). Set to true by enable_catu() after the first scanline
     /// completes. Persists across scanline resets.
     catu_enabled: bool,
-    /// BYBA_SCAN_DONEp_odd: captures FETO (scan_done) on XUPY rising edges.
-    /// Hardware: _odd suffix → latches on rising edge (DELTA_ODD).
+    /// CATU_LINE_ENDp DFF17: clocked by XUPY rising, D = ABOV_LINE_ENDp_old.
+    /// On hardware, CATU captures RUTU_old — the line-end signal from the
+    /// PREVIOUS XUPY cycle. Two-stage pipeline: boundary sets `rutu` →
+    /// first XUPY rise shifts to `rutu_old` → second XUPY rise CATU fires.
+    /// Total delay: 2 XUPY cycles (4 dots) from boundary to scan-start.
+    catu: bool,
+    /// RUTU signal: set true at the scanline boundary. Shifted to
+    /// rutu_old on the next XUPY rising edge.
+    rutu: bool,
+    /// RUTU_old: CATU's D input. Set from rutu on XUPY rise, consumed
+    /// by CATU on the following XUPY rise. This two-stage shift models
+    /// GateBoy's `_old` evaluation — CATU reads the value RUTU had at
+    /// the start of the previous XUPY cycle, not the current one.
+    rutu_old: bool,
+    /// BYBA_SCAN_DONEp_odd: DFF17 capturing FETO on rising edge.
+    /// FETO is combinational from scan_done(). Since rise() runs before
+    /// fall() each dot, BYBA naturally sees the counter state from the
+    /// previous dot's fall() — the DFF pipeline delay emerges from the
+    /// rise/fall ordering, no intermediate state needed.
     byba: bool,
-    /// DOBA_SCAN_DONEp_evn: captures BYBA.
-    /// Hardware: _evn suffix → latches on falling edge (DELTA_EVEN).
+    /// DOBA_SCAN_DONEp_evn: DFF17 capturing BYBA on falling edge.
     doba: bool,
-    /// Current GAVA tick's FETO value. Updated in fall() when xupy fires.
-    feto_old: bool,
-    /// Previous GAVA tick's FETO value. On hardware, BYBA reads
-    /// `reg_old.FETO.out_old()` — the FETO from the start of the current
-    /// half-phase, which is the value latched during the PREVIOUS GAVA
-    /// tick. This gives a 1-GAVA-cycle pipeline delay (4 HP / 2 dots)
-    /// from FETO firing to BYBA capturing it.
-    feto_prev: bool,
     /// AVAP signal from the most recent rise(), consumed by fall()
     /// to gate scanning termination on the correct (falling) edge.
     last_avap: bool,
@@ -57,10 +65,11 @@ impl SpriteScanner {
             scanning: false,
             besu: false,
             catu_enabled: false,
+            catu: false,
+            rutu: false,
+            rutu_old: false,
             byba: false,
             doba: false,
-            feto_old: false,
-            feto_prev: false,
             last_avap: false,
             sprites: SpriteStore::new(),
         }
@@ -124,27 +133,17 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (DELTA_ODD): BYBA captures stored FETO, AVAP evaluated,
+    /// Rising edge (DELTA_ODD): BYBA captures FETO, AVAP evaluated,
     /// and CATU scan-start fires.
     ///
     /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
-    /// AVAP is combinational (BYBA && !DOBA), evaluated after BYBA updates.
-    /// CATU fires on the XUPY rising edge; BESU→ACYL→STAT is fully
-    /// combinational, so mode 2 is visible on the bus in the same phase.
-    pub(super) fn rise(&mut self, xupy_rising: bool, lx: u8, wuvu: bool) -> ScanSignals {
-        // BYBA_SCAN_DONEp_odd: capture FETO on XUPY rising edge.
-        // On normal lines (catu_enabled), use feto_prev — the FETO value
-        // from the previous GAVA tick. This matches hardware's reg_old.FETO
-        // pipeline where BYBA reads the value latched one GAVA cycle earlier.
-        // On the LCD-on first line (!catu_enabled), the WUVU phase
-        // initialization already provides the correct alignment, so BYBA
-        // captures feto_old directly.
+    /// FETO is combinational from scan_done(). Since rise() runs before
+    /// fall() each dot, BYBA sees the counter state from the previous
+    /// fall() — the half-phase boundary IS the pipeline delay.
+    pub(super) fn rise(&mut self, xupy_rising: bool) -> ScanSignals {
+        // BYBA: DFF capturing FETO (combinational scan_done) on rising edge.
         if xupy_rising {
-            self.byba = if self.catu_enabled {
-                self.feto_prev
-            } else {
-                self.feto_old
-            };
+            self.byba = self.counter.scan_done();
         }
 
         // AVAP: combinational scan-done trigger.
@@ -156,17 +155,29 @@ impl SpriteScanner {
         // 39's comparison still runs (scanning is true through fall()).
         self.last_avap = avap;
 
-        // CATU_LINE_ENDp: at dot 1, CATU fires on the XUPY rising edge,
-        // setting BESU and resetting the scan counter. BESU→ACYL→STAT is
-        // fully combinational — mode 2 is visible on the bus immediately.
+        // CATU_LINE_ENDp DFF17: clocked by XUPY rising edge.
+        // D = ABOV_old = AND(RUTU_old, !y144_old). On each XUPY rise,
+        // shift rutu → rutu_old, then CATU captures rutu_old. This
+        // two-stage pipeline means CATU fires 2 XUPY cycles (4 dots)
+        // after the scanline boundary, matching hardware phase_lx timing.
+        if xupy_rising {
+            // Shift: current rutu becomes rutu_old for CATU's D input.
+            // Clear rutu after shift — it's a one-shot from the boundary.
+            let was_rutu = self.rutu;
+            self.rutu = false;
+            self.catu = self.rutu_old;
+            self.rutu_old = was_rutu;
+        }
+
+        // CATU output drives BESU (scanning latch) and counter reset.
         // Suppressed on LCD turn-on first line (catu_enabled is false).
-        let scan_started = lx == 0 && wuvu && !self.scanning;
-        if scan_started {
+        if self.catu && !self.scanning {
             self.scanning = true;
             if self.catu_enabled {
                 self.besu = true;
             }
             self.counter.reset();
+            self.catu = false;
         }
 
         ScanSignals { avap }
@@ -191,12 +202,6 @@ impl SpriteScanner {
 
         if xupy_rising {
             self.counter.tick_clock();
-            // FETO is combinational on counter bits — sample after tick so
-            // that when the counter reaches 39, feto_old captures true on
-            // the same clock edge. Shift feto_old into feto_prev before
-            // updating, so BYBA sees a 1-GAVA-cycle-delayed value.
-            self.feto_prev = self.feto_old;
-            self.feto_old = self.counter.scan_done();
         }
 
         // Clear scanning on AVAP (falling edge). On hardware, BESU has
@@ -210,7 +215,9 @@ impl SpriteScanner {
         self.doba = self.byba;
     }
 
-    /// Reset at scanline boundary.
+    /// Reset at scanline boundary. Sets rutu = true so the CATU DFF
+    /// pipeline will fire after 2 XUPY cycles (4 dots), matching
+    /// hardware's RUTU → RUTU_old → CATU propagation.
     pub(super) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
@@ -221,8 +228,11 @@ impl SpriteScanner {
         // But we reset them for cleanliness.
         self.byba = false;
         self.doba = false;
-        self.feto_old = false;
-        self.feto_prev = false;
         self.last_avap = false;
+        self.catu = false;
+        self.rutu_old = false;
+        // RUTU fires at the scanline boundary. It will shift to rutu_old
+        // on the first XUPY rise, then CATU captures it on the second.
+        self.rutu = true;
     }
 }
