@@ -35,11 +35,10 @@ pub struct VideoControl {
     pub(super) vena: bool,
 
     /// LY counter (MUWY-LAFO ripple counter, page 21). Clocked by RUTU
-    /// at LX=113, counting 0–153 and wrapping. On line 153, MYTA
-    /// (frame-end DFF, clocked by NYPE one half-cycle after RUTU) drives
-    /// LAMA low, resetting all LY bits to 0. The CPU sees LY=153 only
-    /// during the first M-cycle (LX=0); from LX=1 onward, `ly()`
-    /// returns 0.
+    /// at LX=113, counting 0-153 and wrapping. On line 153, MYTA fires
+    /// when NYPE rises (TALU falling of LX=0), driving LAMA low and
+    /// resetting the CPU-visible LY to 0 via `ly()`. The internal counter
+    /// remains at 153 until RUTU at LX=113 naturally wraps it.
     pub(super) ly: u8,
 
     /// LYC register (FF45). CPU-writable comparison value.
@@ -82,6 +81,12 @@ pub struct VideoControl {
     /// behavior where MUDE's async reset of the LX DFFs is invisible
     /// to all readers until the next tick (all comparators use _old values).
     pub(super) rutu_pending: bool,
+
+    /// MYTA frame-end flag (GateBoyLCD.cpp line 127). Set when NYPE rises
+    /// while LY==153 (NOKO detected). Drives LAMA low, which async-resets
+    /// all LY DFFs to 0. Cleared when the internal counter wraps 153->0
+    /// at RUTU. While set, `ly()` returns 0.
+    pub(super) myta: bool,
 }
 
 impl VideoControl {
@@ -105,16 +110,11 @@ impl VideoControl {
     }
 
     /// CPU-visible LY value. On line 153, MYTA (frame-end DFF clocked
-    /// by NYPE) drives LAMA low, resetting all LY bits to 0 after
-    /// the first M-cycle. The CPU sees LY=153 only during LX=0;
-    /// from LX=1 onward, `ly()` returns 0. The internal counter
-    /// remains at 153 until RUTU at LX=113 naturally wraps it 153→0.
+    /// by NYPE) drives LAMA low, resetting all LY bits to 0. The `myta`
+    /// flag models this: set when NYPE rises while LY==153, cleared when
+    /// the internal counter wraps at RUTU.
     pub fn ly(&self) -> u8 {
-        if self.ly == 153 && self.lx >= 1 {
-            0
-        } else {
-            self.ly
-        }
+        if self.myta { 0 } else { self.ly }
     }
 
     pub fn ly_eq_lyc(&self) -> bool {
@@ -181,14 +181,22 @@ impl VideoControl {
         // NYPE DFF17: clocked by TALU falling edge.
         // Latches rutu_old from the PREVIOUS TALU falling.
         // Must execute BEFORE RUTU so it sees pre-fire rutu_old.
+        let nype_was = self.nype;
         self.nype = self.rutu_old;
         self.rutu_old = false;
+
+        // MYTA: set when NYPE rises while LY==153 (NOKO detected).
+        // Models MYTA DFF17 latching NOKO_old at NYPE rising edge.
+        if !nype_was && self.nype && self.ly == 153 {
+            self.myta = true;
+        }
 
         // RUTU DFF17: clocked by SONO (TALU falling). Latches SANU.
         if self.sanu {
             self.sanu = false;
             if self.ly >= 153 {
                 self.ly = 0;
+                self.myta = false; // Frame boundary complete; clear MYTA.
             } else {
                 self.ly += 1;
             }
