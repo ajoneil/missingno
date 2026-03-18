@@ -36,11 +36,13 @@ pub(super) struct SpriteScanner {
     /// GateBoy's `_old` evaluation — CATU reads the value RUTU had at
     /// the start of the previous XUPY cycle, not the current one.
     rutu_old: bool,
-    /// BYBA_SCAN_DONEp_odd: DFF17 capturing FETO on rising edge.
-    /// FETO is combinational from scan_done(). Since rise() runs before
-    /// fall() each dot, BYBA naturally sees the counter state from the
-    /// previous dot's fall() — the DFF pipeline delay emerges from the
-    /// rise/fall ordering, no intermediate state needed.
+    /// Latched scan_done() from the previous XUPY cycle. Shifts through
+    /// a one-stage pipeline: scan_done() → feto_old → BYBA.
+    feto_old: bool,
+    /// BYBA_SCAN_DONEp_odd: DFF17 capturing FETO_old on rising edge.
+    /// FETO_old is scan_done() latched from the previous XUPY cycle,
+    /// not the live combinational value. This one-cycle pipeline delay
+    /// adds 2 dots to Mode 2 (80 total), matching hardware.
     byba: bool,
     /// DOBA_SCAN_DONEp_evn: DFF17 capturing BYBA on falling edge.
     doba: bool,
@@ -68,6 +70,7 @@ impl SpriteScanner {
             catu: false,
             rutu: false,
             rutu_old: false,
+            feto_old: false,
             byba: false,
             doba: false,
             last_avap: false,
@@ -138,17 +141,20 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (DELTA_ODD): BYBA captures FETO, AVAP evaluated,
+    /// Rising edge (DELTA_ODD): BYBA captures FETO_old, AVAP evaluated,
     /// and CATU scan-start fires.
     ///
     /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
-    /// FETO is combinational from scan_done(). Since rise() runs before
-    /// fall() each dot, BYBA sees the counter state from the previous
-    /// fall() — the half-phase boundary IS the pipeline delay.
+    /// BYBA reads feto_old (the previous XUPY cycle's scan_done), then
+    /// feto_old is updated with the current scan_done(). This one-stage
+    /// pipeline adds 2 dots to Mode 2 (80 total), matching hardware.
     pub(super) fn rise(&mut self, xupy_rising: bool) -> ScanSignals {
-        // BYBA: DFF capturing FETO (combinational scan_done) on rising edge.
+        // BYBA: DFF capturing FETO_old (previous XUPY cycle's scan_done)
+        // on rising edge. Read before write: BYBA sees last cycle's value,
+        // then feto_old is updated for the next cycle.
         if xupy_rising {
-            self.byba = self.counter.scan_done();
+            self.byba = self.feto_old;
+            self.feto_old = self.counter.scan_done();
         }
 
         // AVAP: combinational scan-done trigger.
@@ -231,6 +237,7 @@ impl SpriteScanner {
         // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
         // they naturally clear because FETO is false after counter reset.
         // But we reset them for cleanliness.
+        self.feto_old = false;
         self.byba = false;
         self.doba = false;
         self.last_avap = false;
