@@ -130,7 +130,7 @@ impl VideoControl {
         // Promote the previous cycle's raw comparison to the STAT-visible
         // latch, then compute the fresh comparison for next cycle.
         self.ly_eq_lyc = self.ly_match_pending;
-        self.ly_match_pending = self.ly == self.lyc;
+        self.ly_match_pending = self.ly() == self.lyc;
     }
 
     /// Whether the PPU is in VBlank (lines 144-153). Derived from the
