@@ -194,26 +194,25 @@ impl Rendering {
         self.mode(video)
     }
 
+    /// Whether this is the LCD-enable first line (no prior scanline boundary).
+    fn is_first_line(&self) -> bool {
+        !self.scan.catu_enabled()
+    }
+
     /// Whether the TAPA_INT_OAM signal is active.
     ///
-    /// On hardware, TAPA derives from RUTU_LINE_ENDp — a DFF that pulses
-    /// high for dots 0-3 at each line boundary, gated by NOT_VBLANK.
-    /// TAPA is independent of ACYL/BESU (the scanning latch that drives
-    /// the STAT register mode bits). It fires *before* ACYL activates.
+    /// On hardware, TAPA = AND(TOLU_VBLANKn, SELA), where SELA derives from
+    /// RUTU_LINE_ENDp — a pulse high for dots 0-3 at each line boundary.
+    /// The emulator models this as `lx == 0` (4-dot window), with POPU
+    /// gating at the call site handling the VBlank delay on normal line 0.
     ///
-    /// Line 0 has no RUTU pulse (suppressed by first_line). The mode 2
-    /// interrupt on line 0 fires at dot 4 through a separate path.
+    /// On the LCD-enable first line, RUTU is suppressed (no scanline
+    /// boundary has occurred), so TAPA never fires.
     pub(super) fn mode2_interrupt_active(&self, video: &VideoControl) -> bool {
-        let ly = video.ly();
-
-        if ly == 0 {
-            // Line 0: no TAPA pulse. Mode 2 interrupt fires at LX=1
-            // phase 0 (dot 4), when OamScan mode activates.
-            video.lx == 1 && video.talu() && !video.wuvu
-        } else {
-            // Lines 1-143: TAPA pulse during LX=0 (dots 0-3).
-            video.lx == 0
+        if self.is_first_line() {
+            return false;
         }
+        video.lx == 0
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {

@@ -93,6 +93,11 @@ impl SpriteScanner {
         self.besu
     }
 
+    /// Whether CATU is enabled (NOT first line after LCD-on).
+    pub(super) fn catu_enabled(&self) -> bool {
+        self.catu_enabled
+    }
+
     /// Release VID_RST's blocking effect on CATU. Called after the first
     /// scanline completes (reset_scanline), enabling BESU on subsequent lines.
     pub(super) fn enable_catu(&mut self) {
