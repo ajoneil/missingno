@@ -138,6 +138,13 @@ impl VideoControl {
         self.ly_match_pending = self.ly() == self.lyc;
     }
 
+    /// PALY is a combinational comparator — it updates instantly whenever LY
+    /// or LYC changes. Call this after any LY modification (RUTU, MYTA) so
+    /// that the next ROPO latch at TALU rising sees the post-change value.
+    pub fn update_paly(&mut self) {
+        self.ly_match_pending = self.ly() == self.lyc;
+    }
+
     /// Whether the RUTU line-end pulse is active (2-dot window at
     /// scanline boundary, B+0 to B+1).
     pub fn rutu_active(&self) -> bool {

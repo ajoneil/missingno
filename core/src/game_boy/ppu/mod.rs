@@ -445,8 +445,11 @@ impl Ppu {
             let talu_was = self.video.tick_vena();
 
             if talu_was && !self.video.vena {
-                // TALU falling edge: NYPE latch, RUTU fire.
+                // TALU falling edge: RUTU fire, LY increment.
                 scanline_boundary = self.video.tick_talu_fall();
+                // PALY is combinational — recompute after any LY change
+                // so the next ROPO latch (TALU rising) sees the fresh value.
+                self.video.update_paly();
             }
 
             if !talu_was && self.video.vena {
