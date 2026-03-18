@@ -95,6 +95,7 @@ impl Ppu {
                 rutu_old: false,
                 sanu: false,
                 rutu_pending: false,
+                myta: true,
             },
             oam: Oam::new(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -134,6 +135,7 @@ impl Ppu {
                 rutu_old: false,
                 sanu: false,
                 rutu_pending: false,
+                myta: false,
             },
             oam: Oam::new(),
             pixel_pipeline: None, // LCD off at power-on
@@ -240,6 +242,7 @@ impl Ppu {
         self.video.nype = false;
         self.video.rutu_old = false;
         self.video.rutu_pending = false;
+        self.video.myta = false;
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
