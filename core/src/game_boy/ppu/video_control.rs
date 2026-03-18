@@ -75,12 +75,12 @@ pub struct VideoControl {
     /// on the next TALU falling edge (2 dots later, same M-cycle).
     pub(super) sanu: bool,
 
-    /// Deferred LX reset flag. Set at TALU falling when RUTU fires
-    /// (LX=113 detected). Consumed at the next TALU rising edge, which
-    /// resets LX to 0 instead of incrementing. Models the hardware
-    /// behavior where MUDE's async reset of the LX DFFs is invisible
-    /// to all readers until the next tick (all comparators use _old values).
-    pub(super) rutu_pending: bool,
+    /// RUTU pulse active flag. Set at TALU falling when RUTU fires
+    /// (LX=113 detected, scanline boundary). Cleared at the next TALU
+    /// rising edge. Models the hardware RUTU_LINE_ENDp signal that
+    /// drives TAPA (mode 2 interrupt) and the line-144 VBlank STAT
+    /// condition. Duration: 2 dots (B+0 to B+1).
+    pub(super) rutu_active: bool,
 
     /// MYTA frame-end flag (GateBoyLCD.cpp line 127). Set when NYPE rises
     /// while LY==153 (NOKO detected). Drives LAMA low, which async-resets
@@ -138,6 +138,12 @@ impl VideoControl {
         self.ly_match_pending = self.ly() == self.lyc;
     }
 
+    /// Whether the RUTU line-end pulse is active (2-dot window at
+    /// scanline boundary, B+0 to B+1).
+    pub fn rutu_active(&self) -> bool {
+        self.rutu_active
+    }
+
     /// POPU VBlank latch output. True during VBlank (lines 144-153),
     /// activated at NYPE rising edge rather than immediately at LY increment.
     pub fn popu(&self) -> bool {
@@ -166,16 +172,16 @@ impl VideoControl {
         talu_was
     }
 
-    /// TALU rising edge: increment LX, detect SANU (LX=113).
-    /// If RUTU fired on the previous TALU falling, reset LX to 0
-    /// instead of incrementing (deferred MUDE reset).
+    /// TALU rising edge: increment LX (unless RUTU just fired), clear RUTU
+    /// pulse, detect SANU (LX=113). On hardware, MUDE async-resets the LX
+    /// ripple counter at the same TALU falling edge as RUTU. The counter
+    /// outputs 0 for the full TALU period (B+0 to B+3). The first
+    /// incrementing clock edge (B+6) takes LX from 0 to 1.
     pub fn tick_talu_rise(&mut self) {
-        if self.rutu_pending {
-            self.lx = 0;
-            self.rutu_pending = false;
-        } else {
+        if !self.rutu_active {
             self.lx += 1;
         }
+        self.rutu_active = false;
         self.sanu = self.lx == 113;
     }
 
@@ -209,7 +215,8 @@ impl VideoControl {
             } else {
                 self.ly += 1;
             }
-            self.rutu_pending = true;
+            self.lx = 0;
+            self.rutu_active = true;
             self.rutu_old = true;
             return true;
         }
