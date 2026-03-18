@@ -94,7 +94,7 @@ impl Ppu {
                 nype: false,
                 rutu_old: false,
                 sanu: false,
-                rutu_pending: false,
+                rutu_active: false,
                 myta: true,
                 popu: true,
             },
@@ -135,7 +135,7 @@ impl Ppu {
                 nype: false,
                 rutu_old: false,
                 sanu: false,
-                rutu_pending: false,
+                rutu_active: false,
                 myta: false,
                 popu: false,
             },
@@ -241,7 +241,7 @@ impl Ppu {
         self.video.write_ly(0);
         self.video.nype = false;
         self.video.rutu_old = false;
-        self.video.rutu_pending = false;
+        self.video.rutu_active = false;
         self.video.myta = false;
         self.video.popu = false;
 
@@ -395,7 +395,7 @@ impl Ppu {
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts. With POPU, this is only true at
         // LX=0 of line 144 (the first M-cycle where POPU is high).
-        let vblank_line_144 = self.video.popu && self.video.ly() == 144 && self.video.lx == 0;
+        let vblank_line_144 = self.video.popu && self.video.ly() == 144 && self.video.rutu_active();
 
         (self
             .video
@@ -456,8 +456,8 @@ impl Ppu {
         }
 
         if scanline_boundary {
-            // Scanline boundary — RUTU fired, LY incremented. LX reset
-            // is deferred to the next TALU rising edge (rutu_pending).
+            // Scanline boundary — RUTU fired, LY incremented. LX was
+            // reset to 0 in tick_talu_fall().
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {

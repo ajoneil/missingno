@@ -202,9 +202,8 @@ impl Rendering {
     /// Whether the TAPA_INT_OAM signal is active.
     ///
     /// On hardware, TAPA = AND(TOLU_VBLANKn, SELA), where SELA derives from
-    /// RUTU_LINE_ENDp — a pulse high for dots 0-3 at each line boundary.
-    /// The emulator models this as `lx == 0` (4-dot window), with POPU
-    /// gating at the call site handling the VBlank delay on normal line 0.
+    /// RUTU_LINE_ENDp — a 2-dot pulse at each scanline boundary. POPU
+    /// gating at the call site handles the VBlank delay on normal line 0.
     ///
     /// On the LCD-enable first line, RUTU is suppressed (no scanline
     /// boundary has occurred), so TAPA never fires.
@@ -212,7 +211,7 @@ impl Rendering {
         if self.is_first_line() {
             return false;
         }
-        video.lx == 0
+        video.rutu_active()
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
