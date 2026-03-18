@@ -228,15 +228,15 @@ impl Ppu {
 
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
-    /// On hardware, VID_RST deasserts at G→H (XOTA falling). The very
-    /// next XOTA rising edge (H→A) is only 0.5 dots later — within the
-    /// same falling half-phase boundary. All dividers start at qp=0
-    /// (async reset). WUVU toggles to 1 on that first H→A edge before
-    /// any emulator-visible work happens, so we initialize wuvu=true
-    /// to capture that sub-dot toggle's net effect.
+    /// On hardware, VID_RST deasserts at G→H (XOTA falling). All
+    /// dividers start at qp=0 (async reset). We initialize wuvu=false
+    /// to model this reset state. The first rise() call will toggle
+    /// WUVU 0→1 (phase A), and the second rise() call will toggle
+    /// WUVU 1→0 (phase C), triggering the first TALU rise and LX
+    /// increment. This gives LX=0 the correct 3-half-phase duration.
     fn initialize_lcd_on(&mut self) {
         self.video.lx = 0;
-        self.video.wuvu = true;
+        self.video.wuvu = false;
         self.video.vena = false;
         self.video.write_ly(0);
         self.video.nype = false;
