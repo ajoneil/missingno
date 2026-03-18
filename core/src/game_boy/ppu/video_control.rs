@@ -75,6 +75,13 @@ pub struct VideoControl {
     /// TALU rising edge where LX increments to 113. Consumed by RUTU
     /// on the next TALU falling edge (2 dots later, same M-cycle).
     pub(super) sanu: bool,
+
+    /// Deferred LX reset flag. Set at TALU falling when RUTU fires
+    /// (LX=113 detected). Consumed at the next TALU rising edge, which
+    /// resets LX to 0 instead of incrementing. Models the hardware
+    /// behavior where MUDE's async reset of the LX DFFs is invisible
+    /// to all readers until the next tick (all comparators use _old values).
+    pub(super) rutu_pending: bool,
 }
 
 impl VideoControl {
@@ -156,8 +163,15 @@ impl VideoControl {
     }
 
     /// TALU rising edge: increment LX, detect SANU (LX=113).
+    /// If RUTU fired on the previous TALU falling, reset LX to 0
+    /// instead of incrementing (deferred MUDE reset).
     pub fn tick_talu_rise(&mut self) {
-        self.lx += 1;
+        if self.rutu_pending {
+            self.lx = 0;
+            self.rutu_pending = false;
+        } else {
+            self.lx += 1;
+        }
         self.sanu = self.lx == 113;
     }
 
@@ -178,7 +192,7 @@ impl VideoControl {
             } else {
                 self.ly += 1;
             }
-            self.lx = 0;
+            self.rutu_pending = true;
             self.rutu_old = true;
             return true;
         }

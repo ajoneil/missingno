@@ -94,6 +94,7 @@ impl Ppu {
                 nype: false,
                 rutu_old: false,
                 sanu: false,
+                rutu_pending: false,
             },
             oam: Oam::new(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -132,6 +133,7 @@ impl Ppu {
                 nype: false,
                 rutu_old: false,
                 sanu: false,
+                rutu_pending: false,
             },
             oam: Oam::new(),
             pixel_pipeline: None, // LCD off at power-on
@@ -237,6 +239,7 @@ impl Ppu {
         self.video.write_ly(0);
         self.video.nype = false;
         self.video.rutu_old = false;
+        self.video.rutu_pending = false;
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
@@ -455,7 +458,8 @@ impl Ppu {
         }
 
         if scanline_boundary {
-            // Scanline boundary — RUTU fired, LX=0, LY incremented.
+            // Scanline boundary — RUTU fired, LY incremented. LX reset
+            // is deferred to the next TALU rising edge (rutu_pending).
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {
