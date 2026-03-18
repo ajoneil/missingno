@@ -93,6 +93,7 @@ impl Ppu {
                 stat_line_was_high: false,
                 nype: false,
                 rutu_old: false,
+                sanu: false,
             },
             oam: Oam::new(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -130,6 +131,7 @@ impl Ppu {
                 stat_line_was_high: false,
                 nype: false,
                 rutu_old: false,
+                sanu: false,
             },
             oam: Oam::new(),
             pixel_pipeline: None, // LCD off at power-on
@@ -430,18 +432,34 @@ impl Ppu {
             return result;
         }
 
-        // Save NYPE state before tick_xota updates it.
+        // Save NYPE state before divider chain updates it.
         let nype_was = self.video.nype;
 
-        // XOTA rising edge (H→A): toggle WUVU/VENA divider chain,
-        // increment LX, detect scanline boundary.
-        if self.video.tick_xota() {
-            // Scanline boundary — LX wrapped to 0.
+        // XOTA rising edge: toggle WUVU (dot-rate clock).
+        self.video.tick_xota();
+
+        // VENA/TALU cascade: only fires when WUVU falls.
+        let mut scanline_boundary = false;
+        if self.video.wuvu_fell() {
+            let talu_was = self.video.tick_vena();
+
+            if talu_was && !self.video.vena {
+                // TALU falling edge: NYPE latch, RUTU fire.
+                scanline_boundary = self.video.tick_talu_fall();
+            }
+
+            if !talu_was && self.video.vena {
+                // TALU rising edge: LX increment, SANU detect.
+                self.video.tick_talu_rise();
+            }
+        }
+
+        if scanline_boundary {
+            // Scanline boundary — RUTU fired, LX=0, LY incremented.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {
                     // Line 144: extract completed frame, enter VBlank.
-                    // Pipeline persists — circuits are idle, not destroyed.
                     result.screen = Some(rendering.screen.clone());
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.

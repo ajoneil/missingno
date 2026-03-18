@@ -66,11 +66,15 @@ pub struct VideoControl {
     /// Active window: phase_lx [4, 11] within the scanline.
     pub(super) nype: bool,
 
-    /// Previous tick's scanline-boundary state, serving as RUTU_old
-    /// input to the NYPE DFF. Set true on the tick where tick_xota
-    /// returns true (LX wraps 113->0), consumed by NYPE on the next
-    /// TALU rising edge.
+    /// Previous RUTU state, serving as RUTU_old input to the NYPE DFF.
+    /// Set true when RUTU fires (TALU falling of the LX=113 M-cycle),
+    /// consumed by NYPE on the next TALU falling edge.
     pub(super) rutu_old: bool,
+
+    /// SANU_x113p: combinational AND4 detecting LX=113. Set on the
+    /// TALU rising edge where LX increments to 113. Consumed by RUTU
+    /// on the next TALU falling edge (2 dots later, same M-cycle).
+    pub(super) sanu: bool,
 }
 
 impl VideoControl {
@@ -129,52 +133,54 @@ impl VideoControl {
         self.ly >= 144
     }
 
-    /// XOTA rising edge (H→A boundary): toggles WUVU, cascades to VENA,
-    /// increments LX on TALU rising edge. Returns true at scanline
-    /// boundary (LX wraps 113→0). Runs during the Rising half-phase
-    /// because XOTA rising coincides with the DELTA_ODD boundary.
-    pub fn tick_xota(&mut self) -> bool {
-        let wuvu_was = self.wuvu;
-
-        // WUVU DFF17: clocked by XOTA (every dot), self-toggles.
+    /// XOTA rising edge: toggles WUVU. Called every dot.
+    pub fn tick_xota(&mut self) {
         self.wuvu = !self.wuvu;
+    }
 
-        // VENA DFF17: clocked by WUVU.qn rising = WUVU.qp falling.
-        if wuvu_was && !self.wuvu {
-            let talu_was = self.vena;
-            self.vena = !self.vena;
+    /// WUVU falling edge: toggles VENA. Returns true if WUVU just fell.
+    /// Caller should check this after tick_xota() to know if VENA changed.
+    pub fn wuvu_fell(&self) -> bool {
+        // WUVU just toggled in tick_xota(). It fell if it's now false
+        // (was true before toggle). Since tick_xota sets wuvu = !wuvu,
+        // wuvu=false means it was true before = falling edge.
+        !self.wuvu
+    }
 
-            if talu_was && !self.vena {
-                // NYPE DFF17: clocked by TALU falling edge.
-                // Latches rutu_old set by the previous TALU-rising
-                // scanline boundary, giving a 2-dot delay (phase_lx=4).
-                self.nype = self.rutu_old;
-                self.rutu_old = false;
+    /// Toggle VENA. Called when WUVU falls. Returns the previous TALU
+    /// (VENA) state so the caller can detect TALU edges.
+    pub fn tick_vena(&mut self) -> bool {
+        let talu_was = self.vena;
+        self.vena = !self.vena;
+        talu_was
+    }
+
+    /// TALU rising edge: increment LX, detect SANU (LX=113).
+    pub fn tick_talu_rise(&mut self) {
+        self.lx += 1;
+        self.sanu = self.lx == 113;
+    }
+
+    /// TALU falling edge: NYPE latch, RUTU fire. Returns true at
+    /// scanline boundary (RUTU fires when SANU detected LX=113).
+    pub fn tick_talu_fall(&mut self) -> bool {
+        // NYPE DFF17: clocked by TALU falling edge.
+        // Latches rutu_old from the PREVIOUS TALU falling.
+        // Must execute BEFORE RUTU so it sees pre-fire rutu_old.
+        self.nype = self.rutu_old;
+        self.rutu_old = false;
+
+        // RUTU DFF17: clocked by SONO (TALU falling). Latches SANU.
+        if self.sanu {
+            self.sanu = false;
+            if self.ly >= 153 {
+                self.ly = 0;
+            } else {
+                self.ly += 1;
             }
-
-            // TALU = VENA.qp. LX clocked on TALU rising edge.
-            if !talu_was && self.vena {
-                self.lx += 1;
-
-                // SANU detects LX=113 combinationally (no action here;
-                // RUTU latches on the NEXT TALU edge).
-
-                // RUTU fires when LX reaches 114: resets LX to 0 (via MUDE)
-                // and clocks the LY ripple counter. Both are driven by the
-                // same RUTU DFF output.
-                if self.lx >= 114 {
-                    if self.ly >= 153 {
-                        self.ly = 0;
-                    } else {
-                        self.ly += 1;
-                    }
-                    self.lx = 0;
-                    // Set rutu_old for NYPE to sample on the next
-                    // TALU falling edge (2 dots from now).
-                    self.rutu_old = true;
-                    return true;
-                }
-            }
+            self.lx = 0;
+            self.rutu_old = true;
+            return true;
         }
 
         false
