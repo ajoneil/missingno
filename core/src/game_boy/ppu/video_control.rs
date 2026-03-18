@@ -87,6 +87,11 @@ pub struct VideoControl {
     /// all LY DFFs to 0. Cleared when the internal counter wraps 153->0
     /// at RUTU. While set, `ly()` returns 0.
     pub(super) myta: bool,
+
+    /// POPU VBlank latch (GateBoyLCD.cpp line 126). DFF17 clocked by NYPE
+    /// rising edge, latching XYVO_old (LY >= 144 from the previous cycle).
+    /// When high, the PPU reports VBlank mode. Async-reset by VID_RST.
+    pub(super) popu: bool,
 }
 
 impl VideoControl {
@@ -133,11 +138,10 @@ impl VideoControl {
         self.ly_match_pending = self.ly() == self.lyc;
     }
 
-    /// Whether the PPU is in VBlank (lines 144-153). Derived from the
-    /// internal line counter, not the CPU-visible LY (which reads 0 on
-    /// line 153 due to MYTA early reset).
-    pub fn in_vblank(&self) -> bool {
-        self.ly >= 144
+    /// POPU VBlank latch output. True during VBlank (lines 144-153),
+    /// activated at NYPE rising edge rather than immediately at LY increment.
+    pub fn popu(&self) -> bool {
+        self.popu
     }
 
     /// XOTA rising edge: toggles WUVU. Called every dot.
@@ -185,10 +189,15 @@ impl VideoControl {
         self.nype = self.rutu_old;
         self.rutu_old = false;
 
-        // MYTA: set when NYPE rises while LY==153 (NOKO detected).
-        // Models MYTA DFF17 latching NOKO_old at NYPE rising edge.
-        if !nype_was && self.nype && self.ly == 153 {
-            self.myta = true;
+        let nype_rose = !nype_was && self.nype;
+        if nype_rose {
+            // POPU DFF17: latches XYVO_old (LY >= 144) at NYPE rising edge.
+            self.popu = self.ly >= 144;
+
+            // MYTA DFF17: latches NOKO_old (LY == 153) at NYPE rising edge.
+            if self.ly == 153 {
+                self.myta = true;
+            }
         }
 
         // RUTU DFF17: clocked by SONO (TALU falling). Latches SANU.
