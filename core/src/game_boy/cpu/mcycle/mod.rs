@@ -530,9 +530,10 @@ impl Cpu {
         }
 
         // ── IME=1 wakeup ──
-        // g42 DFF gate: only dispatch if g42 saw IF & IE at the previous
-        // M-cycle boundary.
-        if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
+        // Use combinational interrupt_pending (updated after PPU rise on
+        // every dot) rather than the DFF-latched g42.  HALT has no
+        // pipeline to drain, so the combinational state is correct.
+        if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
             if self.g42_was_pending {
                 // g42 was already latched at the prior M-cycle boundary —
                 // the g42→g43→g49 pipeline propagated during the idle
@@ -571,7 +572,7 @@ impl Cpu {
         // The wakeup NOP IS the first instruction's opcode fetch on
         // hardware — one M-cycle, not two. When the pending flag is
         // consumed, transition straight to Fetch phase.
-        if self.g42_interrupt_pending && self.halt_wakeup_pending {
+        if self.interrupt_pending && self.halt_wakeup_pending {
             self.halt_wakeup_pending = false;
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
