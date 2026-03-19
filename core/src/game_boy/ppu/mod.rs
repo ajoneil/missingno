@@ -262,18 +262,10 @@ impl Ppu {
 
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
-                if is_drawing {
-                    let latch = match register {
-                        Register::BackgroundPalette => &mut self.registers.palettes.background,
-                        Register::Sprite0Palette => &mut self.registers.palettes.sprite0,
-                        Register::Sprite1Palette => &mut self.registers.palettes.sprite1,
-                        _ => unreachable!(),
-                    };
-                    latch.write(value);
-                    false
-                } else {
-                    self.write_register_immediate(&register, value)
-                }
+                // Palette DFF8 registers settle combinationally within a single
+                // dot (~10 gates), well before CLKPIPE fires (~16 gates). No
+                // deferred latch needed — always write immediately.
+                self.write_register_immediate(&register, value)
             }
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
