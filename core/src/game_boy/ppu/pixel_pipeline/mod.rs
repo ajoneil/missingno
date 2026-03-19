@@ -132,6 +132,9 @@ pub struct Rendering {
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
+    /// Latched WODU from the previous dot. VOGA captures this instead of
+    /// live WODU, modeling the ~15-gate propagation delay on hardware.
+    wodu_latch: bool,
     /// TYFA_CLKPIPE_evn: AND3(SOCY_WIN_HITn, POKY, VYBO_CLKPIPE).
     /// Combinational pixel clock enable, active on falling (EVEN) phases
     /// only. Read by SACU on the next rising phase.
@@ -156,6 +159,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
             voga: false,
+            wodu_latch: false,
             tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
@@ -326,18 +330,23 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU
-        // combinationally. XYMU is still set at this point (VOGA
-        // hasn't cleared it yet), so wodu() is valid to sample.
-        let wodu = self.wodu();
-        if wodu {
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures the
+        // PREVIOUS dot's WODU (from wodu_latch), modeling the ~15-gate
+        // propagation delay on hardware. XYMU is still set at this point
+        // (VOGA hasn't cleared it yet), so wodu() is valid to sample
+        // for the latch update.
+        let prev_wodu = self.wodu_latch;
+        if prev_wodu {
             self.voga = true;
         }
+
+        // Update wodu_latch with this dot's live WODU for next falling phase.
+        self.wodu_latch = self.wodu();
 
         // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
-        self.lcd.fall(self.voga, wodu, &mut self.screen);
+        self.lcd.fall(self.voga, prev_wodu, &mut self.screen);
         if self.voga {
             self.xymu = false;
         }
@@ -394,6 +403,7 @@ impl Rendering {
         self.window.reset_scanline();
 
         self.voga = false;
+        self.wodu_latch = false;
         self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
@@ -486,10 +496,14 @@ impl Rendering {
         // SOCY = NOT(RYDY): self.rydy was set in the preceding rising by
         // check_window_trigger and is stable during falling (rising signal,
         // constant during falling phases per GateBoy).
-        // VYBO: structurally guaranteed — SpriteState::Idle means no FEPO,
-        // and we're in Drawing (no WODU). During sprite fetch, TYFA=0.
+        // VYBO = NOR3(FEPO_old, WODU_old, MYVO). When wodu_latch is true
+        // (WODU fired on previous dot), TYFA must be suppressed to stop the
+        // pixel clock at PX=167. Without this gate, SACU would fire one
+        // extra time, advancing PX to 168 and causing a mode flicker (XUGU
+        // goes false, mode() briefly reports Drawing). During sprite fetch,
+        // TYFA=0 (FEPO suppresses VYBO).
         self.tyfa = match self.sprite_state {
-            SpriteState::Idle => !self.window.rydy() && self.cascade.poky(),
+            SpriteState::Idle => !self.wodu_latch && !self.window.rydy() && self.cascade.poky(),
             _ => false,
         };
 
