@@ -529,17 +529,42 @@ impl Cpu {
             return self.mcycle_isr(0);
         }
 
-        // ── IME=1 wakeup: emit wakeup NOP ──
+        // ── IME=1 wakeup ──
         // g42 DFF gate: only dispatch if g42 saw IF & IE at the previous
-        // M-cycle boundary. Emit Read[PC] as the wakeup NOP — a dummy
-        // fetch that is discarded. On hardware, PC increments here and
-        // ISR M0 decrements it back; we skip both for the same net effect.
+        // M-cycle boundary.
         if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            self.halt_isr_dispatch_pending = true;
-            self.advance_ei_delay();
-            return Some(BusAction::Read {
-                address: self.program_counter,
-            });
+            if self.g42_was_pending {
+                // g42 was already latched at the prior M-cycle boundary —
+                // the g42→g43→g49 pipeline propagated during the idle
+                // M-cycle. Skip the wakeup NOP and dispatch ISR directly.
+                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                self.ei_delay = None;
+                self.halt_state = HaltState::Running;
+
+                let pc = self.program_counter;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.pending_vector_resolve = false;
+                return self.mcycle_isr(0);
+            } else {
+                // g42 just latched this boundary — emit Read[PC] as the
+                // wakeup NOP. A dummy fetch that is discarded. On hardware,
+                // PC increments here and ISR M0 decrements it back; we skip
+                // both for the same net effect.
+                self.halt_isr_dispatch_pending = true;
+                self.advance_ei_delay();
+                return Some(BusAction::Read {
+                    address: self.program_counter,
+                });
+            }
         }
 
         // ── IME=0 wakeup: chain directly to fetch ──
@@ -935,6 +960,7 @@ impl Cpu {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.g42_interrupt_pending = false;
+        self.g42_was_pending = false;
 
         // Run HALT bug check and EI delay advance at the instruction
         // boundary, INSIDE the CPU, so the timing is exact regardless
