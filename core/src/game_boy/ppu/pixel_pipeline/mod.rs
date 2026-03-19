@@ -132,8 +132,9 @@ pub struct Rendering {
     /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
     /// XYMU (rendering latch). Reset by TADY (line reset).
     voga: bool,
-    /// Latched WODU from the previous dot. VOGA captures this instead of
-    /// live WODU, modeling the ~15-gate propagation delay on hardware.
+    /// Latched WODU from the current dot's falling phase. Used by the
+    /// TYFA gate (VYBO = NOR3(FEPO_old, WODU_old, MYVO)) to suppress
+    /// the pixel clock after PX=167. VOGA captures live WODU directly.
     wodu_latch: bool,
     /// TYFA_CLKPIPE_evn: AND3(SOCY_WIN_HITn, POKY, VYBO_CLKPIPE).
     /// Combinational pixel clock enable, active on falling (EVEN) phases
@@ -330,23 +331,27 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures the
-        // PREVIOUS dot's WODU (from wodu_latch), modeling the ~15-gate
-        // propagation delay on hardware. XYMU is still set at this point
-        // (VOGA hasn't cleared it yet), so wodu() is valid to sample
-        // for the latch update.
-        let prev_wodu = self.wodu_latch;
-        if prev_wodu {
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures live WODU
+        // — XYMU clears on the same dot that WODU fires, not one dot
+        // later. wodu_latch is maintained separately for the TYFA gate
+        // (VYBO = NOR3(FEPO_old, WODU_old, MYVO)) so that PX=167's
+        // last pixel clock fires before the gate suppresses it.
+        let wodu = self.wodu();
+
+        // wodu_latch is maintained for TYFA gating in mode3_falling().
+        // On the dot PX=167, wodu_latch is still false (from previous
+        // dot), so TYFA can fire one last time. On the next dot,
+        // wodu_latch=true suppresses TYFA.
+        self.wodu_latch = wodu;
+
+        if wodu {
             self.voga = true;
         }
-
-        // Update wodu_latch with this dot's live WODU for next falling phase.
-        self.wodu_latch = self.wodu();
 
         // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
         // and XYMU (rendering latch). VID_RST is handled separately in
         // reset_scanline; here we model the VOGA path.
-        self.lcd.fall(self.voga, prev_wodu, &mut self.screen);
+        self.lcd.fall(self.voga, wodu, &mut self.screen);
         if self.voga {
             self.xymu = false;
         }
