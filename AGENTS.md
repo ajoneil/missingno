@@ -178,6 +178,16 @@ The `Processor` is split across three files in `core/src/game_boy/cpu/mcycle/`:
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
 - **Enum-based MBC dispatch**: `Mbc` enum in `core/src/game_boy/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
 - **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
+- **PPU propagation delay analysis**: The sibling project [`gmb-ppu-analysis`](https://github.com/ajoneil/gmb-ppu-analysis) (local clone: `../gmb-ppu-analysis/`) provides static analysis of GateBoy's PPU netlist, identifying deep combinatorial paths and signal races that cause propagation delay on real hardware. Key outputs in `../gmb-ppu-analysis/output/`:
+  - `critical_paths_report.md` — Overview and key findings (start here)
+  - `operational_paths.md` — Per-dot/per-scanline paths by functional area
+  - `race_pairs_report.md` — Signal race pairs with observable effects and depth differentials
+  - `signal_concordance.md` — GateBoy cell name ↔ Pan Docs register name mapping
+  - `race_pairs.json`, `critical_paths.json`, `ppu_graph.json` — Machine-readable data
+  - Interactive explorer: [ajoneil.github.io/gmb-ppu-analysis](https://ajoneil.github.io/gmb-ppu-analysis/)
+
+  This data is a primary source for understanding PPU timing. When investigating one-dot discrepancies, consult the race pairs and critical paths to identify which propagation delays could explain the behavior. The signal concordance maps between GateBoy's 4-letter cell names and standard register/signal names.
+
 - **Boot ROM support**: The emulator optionally runs the DMG boot ROM. Without a boot ROM, it uses post-boot initialization (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`). With a boot ROM, it uses power-on state (`Cpu::power_on()`, `Ppu::power_on()`, etc.) and starts execution at 0x0000. Boot ROMs are proprietary and must never be committed to the repo. CLI: `--boot-rom <path>`. Tests: set `DMG_BOOT_ROM` env var. Running the boot ROM adds significant startup time per test — only use it on targeted tests when boot state is suspected to play a role, not across the full test suite.
 - **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
 - **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.

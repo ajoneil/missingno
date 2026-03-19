@@ -27,7 +27,14 @@ These describe what the hardware actually does. They are the source of truth.
 1. **Project docs and existing research**: Check AGENTS.md, README, commit messages, and `receipts/research/` — they often document hardware edge cases already discovered.
 2. **Platform technical docs**: Search for the definitive hardware reference for the target system (e.g. Pan Docs for Game Boy). These are the highest-quality written sources.
 3. **Hardware test results and analysis**: Documents, blog posts, or wiki pages where someone has measured real hardware behavior with an oscilloscope, logic analyzer, or test ROM and reported the raw results. These are direct observations of the hardware, not interpretations or models.
-4. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
+4. **PPU propagation delay analysis** (Game Boy PPU questions only): The sibling project `../gmb-ppu-analysis/` provides static analysis of GateBoy's PPU netlist identifying signal races and deep combinatorial paths that cause propagation delay on real hardware. This is especially valuable for one-dot timing discrepancies. Key files in `../gmb-ppu-analysis/output/`:
+   - `race_pairs_report.md` — Signal race pairs with observable effects (e.g. "OAM scan extends one dot", "tile fetch runs one extra cycle")
+   - `critical_paths_report.md` — Overview of deepest combinatorial paths
+   - `operational_paths.md` — Per-dot paths grouped by functional area
+   - `signal_concordance.md` — Maps GateBoy 4-letter cell names to Pan Docs register names
+   - `race_pairs.json` / `critical_paths.json` — Machine-readable data for specific signal lookups
+   When researching PPU timing, check whether the behavior in question involves a known race pair or deep path. The race pairs report groups findings by observable effect, making it easy to match against emulator symptoms.
+5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
 
 ### Secondary sources (community knowledge)
 

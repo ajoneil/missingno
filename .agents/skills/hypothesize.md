@@ -20,6 +20,7 @@ The caller provides:
 ## Process
 
 1. **Re-read summary.md.** The Current understanding, Hardware model, and Model divergence sections are your starting point. The Root cause analysis tree shows what's already been tried and ruled out.
+1b. **For PPU timing issues, consult the propagation delay analysis.** Read `../gmb-ppu-analysis/output/race_pairs_report.md` and `../gmb-ppu-analysis/output/operational_paths.md`. These identify signal races where inputs to a DFF arrive at different gate depths — the hardware captures different values than an emulator that resolves all signals simultaneously. Match the observable effects listed in the race pairs report (e.g. "tile fetch runs one extra cycle", "sprite X-position off by one dot") against the symptoms in the investigation. Known races are high-leverage hypotheses because they have a structural explanation.
 2. **Classify the gap.** Before generating hypotheses, identify what type of gap exists between the hardware and the emulator's model. The gap is one or more of:
    - **Missing state**: Hardware has state our model doesn't track (e.g., a pipeline stage, a latch, a counter we don't model)
    - **Wrong transitions**: Our state machine has the right states but transitions at the wrong time or under the wrong conditions

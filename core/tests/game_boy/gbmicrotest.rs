@@ -173,43 +173,17 @@ gbmicrotest!(lcdon_to_stat0_d);
 gbmicrotest!(lcdon_to_stat1_a);
 gbmicrotest!(lcdon_to_stat1_b);
 gbmicrotest!(lcdon_to_stat1_c);
-// These two tests require a hardware mechanism not yet understood at the gate
-// level. GateBoy (die-photo-derived simulation) also fails them identically —
-// the mode 0 "glitch" at the line 153→0 boundary involves an unmodeled bus
-// latch or analog timing effect.
-#[test]
-#[ignore]
-fn lcdon_to_stat1_d() {
-    run_gbmicrotest("lcdon_to_stat1_d");
-}
-#[test]
-#[ignore]
-fn lcdon_to_stat1_e() {
-    run_gbmicrotest("lcdon_to_stat1_e");
-}
-// The first scanline after LCD enable is 6 dots (1.5 M-cycles) too long.
-// Hardware (Mooneye lcdon_timing-GS, verified on DMG/MGB/SGB/SGB2) shows LY
-// incrementing from 0→1 at bus-read M-cycle 112 after LCD enable. Our emulator
-// increments at M-cycle 113 (454 dots vs the ≤448 hardware needs). The test
-// reads STAT at M-cycle 112 expecting 0x80 (no LYC match, because LY=1≠LYC=0
-// on hardware), but our emulator still has LY=0 at that point, so LY=LYC=0
-// matches and STAT reads 0x84.
-//
-// Root cause: the WUVU/VENA/TALU clock initialization at LCD enable takes 6
-// extra dots before the first LX count begins. Neither GateBoy (gate-level)
-// nor LogicBoy (behavioral) get this right — both also fail stat2_a. LogicBoy
-// overshoots by ~3.5 dots (903 phases vs ≤896). The correct startup timing
-// is faster than any known gate-level model predicts.
-//
-// This is NOT an ROPO/LYC pipeline issue — the coincidence flag correctly
-// reflects LY vs LYC. The fix is to shorten the first scanline by adjusting
-// the LCD-enable clock init chain. Constraint: must not regress stat0_c/d
-// (mode 3→0 gap timing) or stat2_b.
-#[test]
-#[ignore]
-fn lcdon_to_stat2_a() {
-    run_gbmicrotest("lcdon_to_stat2_a");
-}
+// These two tests fail — the mode 0 "glitch" at the line 153→0 boundary may
+// be caused by propagation delay races (GateBoy also fails them, but GateBoy
+// resolves combinatorial logic instantly, so it has the same limitation).
+// See ../gmb-ppu-analysis for relevant signal races.
+gbmicrotest!(lcdon_to_stat1_d);
+gbmicrotest!(lcdon_to_stat1_e);
+// First scanline after LCD enable is 6 dots too long (454 vs ≤448). The
+// WUVU/VENA/TALU clock init chain may involve propagation delays that make
+// hardware startup faster than gate-level models predict — neither GateBoy
+// nor LogicBoy get this right. Fix must not regress stat0_c/d or stat2_b.
+gbmicrotest!(lcdon_to_stat2_a);
 gbmicrotest!(lcdon_to_stat2_b);
 gbmicrotest!(lcdon_to_stat2_c);
 gbmicrotest!(lcdon_to_stat2_d);
