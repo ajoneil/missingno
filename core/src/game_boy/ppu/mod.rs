@@ -77,11 +77,11 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: internal line 153, LX=99, VBlank.
+            // Post-boot PPU state: internal line 153, LX=98, VBlank.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
-                lx: 99,
+                lx: 98,
                 wuvu: false,
                 vena: false,
                 ly: 153,
