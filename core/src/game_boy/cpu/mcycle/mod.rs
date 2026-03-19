@@ -484,9 +484,10 @@ impl Cpu {
     ///
     /// On the first call after HALT entry (`first_halted_cycle`), emits
     /// Read[PC] unconditionally — the wakeup NOP. On subsequent calls,
-    /// checks the interrupt pipeline (promote + dispatch), then emits
-    /// Read[PC] without incrementing if still halted. Each call is
-    /// exactly one M-cycle.
+    /// checks the interrupt pipeline. When an IME=1 interrupt is detected,
+    /// emits a wakeup NOP Read[PC] and defers ISR dispatch to the next
+    /// M-cycle via `halt_isr_dispatch_pending`. Each call is exactly one
+    /// M-cycle.
     fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
@@ -505,11 +506,10 @@ impl Cpu {
             });
         }
 
-        // ── IME=1 wakeup ──
-        // g42 DFF gate: only dispatch if g42 saw IF & IE at the previous
-        // M-cycle boundary. This models the 1 MC propagation delay through
-        // g42 -> g43 -> g49 while PHI is stopped.
-        if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
+        // ── IME=1 wakeup: deferred ISR dispatch ──
+        // If the wakeup NOP was emitted last M-cycle, now dispatch to ISR.
+        if self.halt_isr_dispatch_pending {
+            self.halt_isr_dispatch_pending = false;
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
@@ -527,6 +527,19 @@ impl Cpu {
             };
             self.pending_vector_resolve = false;
             return self.mcycle_isr(0);
+        }
+
+        // ── IME=1 wakeup: emit wakeup NOP ──
+        // g42 DFF gate: only dispatch if g42 saw IF & IE at the previous
+        // M-cycle boundary. Emit Read[PC] as the wakeup NOP — a dummy
+        // fetch that is discarded. On hardware, PC increments here and
+        // ISR M0 decrements it back; we skip both for the same net effect.
+        if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
+            self.halt_isr_dispatch_pending = true;
+            self.advance_ei_delay();
+            return Some(BusAction::Read {
+                address: self.program_counter,
+            });
         }
 
         // ── IME=0 wakeup: chain directly to fetch ──
@@ -840,10 +853,9 @@ impl Cpu {
         *step += 1;
 
         match current_step {
-            // M0: IDU PC- — undo the detecting fetch's PC increment.
-            // On real hardware this is a full internal M-cycle even though the
-            // emulator avoids incrementing PC during detection. The cycle must
-            // still be burned for correct timing.
+            // M0: IDU PC- — on hardware this undoes the wakeup NOP's PC
+            // increment. The emulator skips both the increment and decrement
+            // for the same net effect.
             0 => Some(BusAction::Internal),
             1 => Some(BusAction::InternalOamBug { address: sp }),
             2 => {

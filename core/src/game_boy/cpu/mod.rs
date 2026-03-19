@@ -156,6 +156,10 @@ pub struct Cpu {
     /// in `mcycle_fetch` uses the existing `interrupt_latch` / `take_ready()`
     /// path without gating.
     pub(super) g42_interrupt_pending: bool,
+    /// Set when the wakeup NOP Read[PC] has been emitted and the next
+    /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
+    /// extra M-cycle between HALT wakeup detection and ISR dispatch.
+    pub(super) halt_isr_dispatch_pending: bool,
 }
 
 impl Cpu {
@@ -198,6 +202,7 @@ impl Cpu {
             first_halted_cycle: false,
             interrupt_pending: false,
             g42_interrupt_pending: false,
+            halt_isr_dispatch_pending: false,
         }
     }
 
@@ -233,6 +238,7 @@ impl Cpu {
             first_halted_cycle: false,
             interrupt_pending: false,
             g42_interrupt_pending: false,
+            halt_isr_dispatch_pending: false,
         }
     }
 
