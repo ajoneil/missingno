@@ -153,6 +153,9 @@ impl GameBoy {
             // g42 DFF: sample IF & IE at the M-cycle boundary for HALT wakeup.
             // On hardware, g42 latches at the BOGA edge. Only matters for the
             // halted path — running-mode dispatch checks IF directly.
+            // Save the previous g42 state before updating — if g42 was already
+            // pending, the pipeline has propagated during the idle M-cycle.
+            self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
             self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
         }
 

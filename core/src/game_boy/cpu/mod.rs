@@ -156,6 +156,11 @@ pub struct Cpu {
     /// in `mcycle_fetch` uses the existing `interrupt_latch` / `take_ready()`
     /// path without gating.
     pub(super) g42_interrupt_pending: bool,
+    /// Snapshot of `g42_interrupt_pending` from the PREVIOUS M-cycle boundary.
+    /// When true at the point of wakeup detection, the g42→g43→g49 pipeline
+    /// has already propagated during the idle M-cycle, so the wakeup NOP can
+    /// be skipped and ISR dispatch proceeds immediately.
+    pub(super) g42_was_pending: bool,
     /// Set when the wakeup NOP Read[PC] has been emitted and the next
     /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
     /// extra M-cycle between HALT wakeup detection and ISR dispatch.
@@ -202,6 +207,7 @@ impl Cpu {
             first_halted_cycle: false,
             interrupt_pending: false,
             g42_interrupt_pending: false,
+            g42_was_pending: false,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -238,6 +244,7 @@ impl Cpu {
             first_halted_cycle: false,
             interrupt_pending: false,
             g42_interrupt_pending: false,
+            g42_was_pending: false,
             halt_isr_dispatch_pending: false,
         }
     }
