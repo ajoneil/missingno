@@ -426,7 +426,7 @@ impl Cpu {
             }
 
             // Check for interrupt dispatch
-            if self.interrupt_latch.take_ready().is_some() {
+            if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
@@ -959,8 +959,6 @@ impl Cpu {
     fn enter_fetch(&mut self) -> BusAction {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
-        self.g42_interrupt_pending = false;
-        self.g42_was_pending = false;
 
         // Run HALT bug check and EI delay advance at the instruction
         // boundary, INSIDE the CPU, so the timing is exact regardless

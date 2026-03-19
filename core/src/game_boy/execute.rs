@@ -116,18 +116,26 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At M-cycle boundaries, the PPU rising phase and interrupt capture
-    /// run BEFORE the CPU's M-cycle transition (`next_dot`), so that the
-    /// CPU's dispatch check (`take_ready()` inside `mcycle_fetch` /
-    /// `mcycle_halted`) sees interrupts fired at this boundary. This
-    /// models the hardware's combinational path where the g42 DFF
-    /// samples `IF & IE` at the same clock edge that the PPU fires IF.
+    /// At M-cycle boundaries, the g42 DFF latches interrupt state from
+    /// the previous M-cycle BEFORE the PPU's rising phase fires new IF
+    /// bits. Then the PPU rise and interrupt capture run, updating
+    /// interrupt_pending for the NEXT g42 latch. Finally, `next_dot`
+    /// transitions the CPU, where dispatch checks gate on the just-
+    /// latched g42 value.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
         let mut new_screen = false;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: PPU + interrupt capture BEFORE CPU transition ──
+        // ── M-cycle boundary: g42 latch, then PPU + interrupt capture, BEFORE CPU transition ──
         if is_mcycle_boundary {
+            // g42 DFF: latch IF & IE from the PREVIOUS M-cycle boundary.
+            // On hardware, the DFF captures its input before the current
+            // edge's combinational logic (PPU mode transitions, IF assertion)
+            // propagates. At this point, interrupt_pending still holds the
+            // value from the previous M-cycle's update_interrupt_state.
+            self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
+            self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
+
             // PPU rising phase at the M-cycle boundary (dot 0).
             let ppu_result = self.ppu.rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
@@ -149,14 +157,6 @@ impl GameBoy {
             // Capture interrupt state so the CPU's dispatch check sees it.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
-
-            // g42 DFF: sample IF & IE at the M-cycle boundary for HALT wakeup.
-            // On hardware, g42 latches at the BOGA edge. Only matters for the
-            // halted path — running-mode dispatch checks IF directly.
-            // Save the previous g42 state before updating — if g42 was already
-            // pending, the pipeline has propagated during the idle M-cycle.
-            self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
-            self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
         }
 
         // ── CPU dot advance ──
