@@ -140,18 +140,13 @@ impl TileFetcher {
         tile_data_offset(block_id, mapped_idx, fine_y, high)
     }
 
-    /// Advance the background tile fetcher by one dot.
+    /// Falling-edge advance: VRAM reads and counter increment.
     ///
-    /// The hardware fetcher is driven by a 4-bit counter (phase_tfetch)
-    /// that increments on both half-phases. We call advance() once per
-    /// dot and increment by 2 to model both half-phases. VRAM reads
-    /// happen at counter values 0, 4, 8; waits are the gaps between.
-    /// The counter saturates at 10 (Idle) until reset.
-    ///
-    /// The hardware VRAM address bus is combinational — addresses always
-    /// reflect current register values (SCX, SCY, LCDC) at the moment
-    /// of each VRAM read.
-    pub(super) fn advance(
+    /// The hardware fetcher counter (LAXU/MESU/NYVA) increments on both
+    /// half-phases. VRAM reads happen at counter values 0, 4, 8 (falling
+    /// edge, driven by LEBO = NAND(ALET, MOCE)). The counter saturates
+    /// at 10 (Idle) until reset.
+    pub(super) fn advance_falling(
         &mut self,
         pixel_counter: u8,
         window_line_counter: u8,
@@ -161,28 +156,36 @@ impl TileFetcher {
     ) {
         match self.phase_tfetch {
             0 => {
-                // Tilemap VRAM read (dot 0).
+                // Tilemap VRAM read (dot 0, falling).
                 self.vram_address =
                     self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                 self.tile_index = vram.read_byte(self.vram_address);
             }
             4 => {
-                // Tile data low VRAM read (dot 2).
+                // Tile data low VRAM read (dot 2, falling).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
                 self.tile_data_low = vram.read_byte(self.vram_address);
             }
             8 => {
-                // Tile data high VRAM read (dot 4).
+                // Tile data high VRAM read (dot 4, falling).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
                 self.tile_data_high = vram.read_byte(self.vram_address);
             }
-            _ => {
-                // Wait dots (2, 6) and idle (10): no action.
-            }
+            _ => {}
         }
-        // Advance by 2 (two half-phases per dot), saturate at 10.
         if self.phase_tfetch < 10 {
-            self.phase_tfetch += 2;
+            self.phase_tfetch += 1;
+        }
+    }
+
+    /// Rising-edge advance: counter increment only.
+    ///
+    /// No VRAM reads on rising. When phase_tfetch reaches 10, LYRY
+    /// fires combinationally on the rising edge — the hardware-correct
+    /// phase for the fetch-done signal.
+    pub(super) fn advance_rising(&mut self) {
+        if self.phase_tfetch < 10 {
+            self.phase_tfetch += 1;
         }
     }
 

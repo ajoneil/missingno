@@ -432,10 +432,10 @@ impl Rendering {
             })
         );
 
-        // BG fetcher advances on the falling phase (LEBO clock), gated
-        // only by sprite data fetch. LEBO = NAND2(ALET, MOCE).
+        // BG fetcher falling-edge advance: VRAM reads + counter increment.
+        // Gated by sprite data fetch. LEBO = NAND2(ALET, MOCE).
         if !sprite_data_fetch {
-            self.fetcher.advance(
+            self.fetcher.advance_falling(
                 self.lcd.pixel_counter(),
                 self.window.window_line_counter(),
                 regs,
@@ -517,6 +517,19 @@ impl Rendering {
             rydy: self.window.rydy(),
             pixel_counter: self.lcd.pixel_counter(),
         };
+
+        // BG fetcher rising-edge advance: counter increment only.
+        // Gated by sprite data fetch (same as falling advance).
+        let sprite_data_fetch = matches!(
+            self.sprite_state,
+            SpriteState::Fetching(SpriteFetch {
+                phase: SpriteFetchPhase::FetchingData,
+                ..
+            })
+        );
+        if !sprite_data_fetch {
+            self.fetcher.advance_rising();
+        }
 
         self.cascade.rise();
 
