@@ -243,7 +243,7 @@ impl GameBoy {
     /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
     /// and tile map entries for the logo display.
     fn init_post_boot_vram(&mut self) {
-        use ppu::tiles::TileIndex;
+        use ppu::types::tiles::TileIndex;
 
         // 1. Decompress Nintendo logo from cartridge header (0x0104-0x0133)
         // into tiles 1-24 in tile block 0.

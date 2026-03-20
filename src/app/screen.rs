@@ -3,7 +3,7 @@ use rgb::RGB8;
 
 use missingno_core::game_boy::{
     ppu::{
-        palette::{Palette, PaletteChoice},
+        types::palette::{Palette, PaletteChoice},
         screen::{self, Screen},
     },
     sgb::SgbRenderData,

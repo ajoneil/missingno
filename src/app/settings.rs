@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use missingno_core::game_boy::ppu::palette::PaletteChoice;
+use missingno_core::game_boy::ppu::types::palette::PaletteChoice;
 
 #[derive(Default)]
 pub struct Settings {

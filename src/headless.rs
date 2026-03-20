@@ -8,8 +8,8 @@ use missingno_core::game_boy::cpu::flags::Flags;
 use missingno_core::game_boy::cpu::instructions::Instruction;
 use missingno_core::game_boy::interrupts;
 use missingno_core::game_boy::ppu;
-use missingno_core::game_boy::ppu::pixel_pipeline::Mode;
-use missingno_core::game_boy::ppu::sprites::{Attributes, SpriteId};
+use missingno_core::game_boy::ppu::rendering::Mode;
+use missingno_core::game_boy::ppu::types::sprites::{Attributes, SpriteId};
 use missingno_core::game_boy::{ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
@@ -85,7 +85,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             let _ = request.respond(response);
         }
         (&Method::Get, "/tilemap/0/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::tile_maps::TileMapId(0));
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tile_maps::TileMapId(0));
             let response = Response::from_data(bmp).with_header(
                 "Content-Type: image/bmp"
                     .parse::<tiny_http::Header>()
@@ -94,7 +94,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             let _ = request.respond(response);
         }
         (&Method::Get, "/tilemap/1/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::tile_maps::TileMapId(1));
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tile_maps::TileMapId(1));
             let response = Response::from_data(bmp).with_header(
                 "Content-Type: image/bmp"
                     .parse::<tiny_http::Header>()
@@ -529,13 +529,13 @@ fn ppu_state(gb: &GameBoy) -> PpuState {
             window_tile_map: control.window_tile_map().0,
             window_enabled: control.window_enabled(),
             tile_address_mode: match control.tile_address_mode() {
-                ppu::tiles::TileAddressMode::Block0Block1 => "8000",
-                ppu::tiles::TileAddressMode::Block2Block1 => "8800",
+                ppu::types::tiles::TileAddressMode::Block0Block1 => "8000",
+                ppu::types::tiles::TileAddressMode::Block2Block1 => "8800",
             },
             bg_tile_map: control.background_tile_map().0,
             sprite_size: match control.sprite_size() {
-                ppu::sprites::SpriteSize::Single => "8x8",
-                ppu::sprites::SpriteSize::Double => "8x16",
+                ppu::types::sprites::SpriteSize::Single => "8x8",
+                ppu::types::sprites::SpriteSize::Double => "8x16",
             },
             sprites_enabled: control.sprites_enabled(),
             bg_and_window_enabled: control.background_and_window_enabled(),
@@ -543,10 +543,10 @@ fn ppu_state(gb: &GameBoy) -> PpuState {
         stat: StatState {
             raw: ppu.read_register(ppu::Register::Status),
             mode: match mode {
-                ppu::pixel_pipeline::Mode::HorizontalBlank => "hblank",
-                ppu::pixel_pipeline::Mode::VerticalBlank => "vblank",
-                ppu::pixel_pipeline::Mode::OamScan => "oam_scan",
-                ppu::pixel_pipeline::Mode::Drawing => "drawing",
+                ppu::rendering::Mode::HorizontalBlank => "hblank",
+                ppu::rendering::Mode::VerticalBlank => "vblank",
+                ppu::rendering::Mode::OamScan => "oam_scan",
+                ppu::rendering::Mode::Drawing => "drawing",
             },
             mode_number: mode as u8,
         },
@@ -709,9 +709,9 @@ fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
     let mut pixels = vec![0u8; (w * h * 3) as usize];
 
     for block_id in 0..3u8 {
-        let block = vram.tile_block(ppu::tiles::TileBlockId(block_id));
+        let block = vram.tile_block(ppu::types::tiles::TileBlockId(block_id));
         for tile_idx in 0..128u8 {
-            let tile = block.tile(ppu::tiles::TileIndex(tile_idx));
+            let tile = block.tile(ppu::types::tiles::TileIndex(tile_idx));
             let global_idx = block_id as u32 * 128 + tile_idx as u32;
             let grid_x = global_idx % cols;
             let grid_y = global_idx / cols;
@@ -733,7 +733,7 @@ fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
 }
 
 /// Renders a 32x32 tile map as a 256x256 bitmap.
-fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::tile_maps::TileMapId) -> Vec<u8> {
+fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::types::tile_maps::TileMapId) -> Vec<u8> {
     let vram = gb.vram();
     let tile_map = vram.tile_map(map_id);
     let addr_mode = gb.ppu().control().tile_address_mode();
@@ -821,11 +821,11 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
     let vram = gb.vram();
     let mut tile_blocks = Vec::with_capacity(3);
     for block_id in 0..3u8 {
-        let block = vram.tile_block(ppu::tiles::TileBlockId(block_id));
+        let block = vram.tile_block(ppu::types::tiles::TileBlockId(block_id));
         let base_addr = 0x8000u16 + block_id as u16 * 0x800;
         let mut tiles = Vec::with_capacity(128);
         for tile_idx in 0..128u8 {
-            let tile = block.tile(ppu::tiles::TileIndex(tile_idx));
+            let tile = block.tile(ppu::types::tiles::TileIndex(tile_idx));
             let offset = tile_idx as usize * 16;
             let raw: Vec<u8> = block.data[offset..offset + 16].to_vec();
             let hex: Vec<String> = raw.iter().map(|b| format!("{b:02x}")).collect();
@@ -856,7 +856,7 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
 
     let mut maps = Vec::with_capacity(2);
     for map_id in 0..2u8 {
-        let tile_map = vram.tile_map(ppu::tile_maps::TileMapId(map_id));
+        let tile_map = vram.tile_map(ppu::types::tile_maps::TileMapId(map_id));
         let base_addr = 0x9800u16 + map_id as u16 * 0x400;
         let mut rows = Vec::with_capacity(32);
         for y in 0..32u8 {

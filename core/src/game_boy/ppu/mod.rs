@@ -1,15 +1,15 @@
-use pixel_pipeline::Mode;
+use rendering::Mode;
 use screen::Screen;
-use sprites::{Sprite, SpriteId};
+use types::sprites::{Sprite, SpriteId};
 
-use control::{Control, ControlFlags};
+use types::control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
-use palette::Palettes;
-use pixel_pipeline::Rendering;
+use types::palette::Palettes;
+use rendering::Rendering;
 use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
-pub use pixel_pipeline::{
+pub use rendering::{
     PipelineSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot, SpriteStoreSnapshot,
 };
 pub use registers::{PipelineRegisters, Window};
@@ -20,17 +20,15 @@ pub struct PpuTickResult {
     pub request_vblank: bool,
 }
 
-pub mod control;
+pub mod types;
 mod dff;
 pub mod memory;
 mod oam_corruption;
-pub mod palette;
-pub mod pixel_pipeline;
+pub mod rendering;
 mod registers;
 pub mod screen;
-pub mod sprites;
-pub mod tile_maps;
-pub mod tiles;
+mod draw;
+mod scan;
 mod video_control;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,7 +324,7 @@ impl Ppu {
         self.oam.write(address, value);
     }
 
-    pub fn mode(&self) -> pixel_pipeline::Mode {
+    pub fn mode(&self) -> rendering::Mode {
         match &self.pixel_pipeline {
             Some(rendering) if !self.video.popu => rendering.mode(&self.video),
             Some(_) => Mode::VerticalBlank,

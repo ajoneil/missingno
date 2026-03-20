@@ -2,18 +2,18 @@
 
 use crate::game_boy::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 
-use super::super::tiles::{TileBlockId, TileIndex};
+use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
-pub(super) struct TileFetcher {
+pub(in crate::game_boy::ppu) struct TileFetcher {
     /// Hardware's fetch_counter counter: 0-11 (6 dots x 2 half-phases).
     /// Incremented by 2 each dot (since advance() is called once per dot,
     /// but the hardware counter ticks twice per dot on both half-phases).
     /// Reset to 0 on TAVE (pipe load) or window trigger.
-    pub(super) fetch_counter: u8,
+    pub(in crate::game_boy::ppu) fetch_counter: u8,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
-    pub(super) window_tile_x: u8,
+    pub(in crate::game_boy::ppu) window_tile_x: u8,
     /// Cached tile index from GetTile step.
     tile_index: u8,
     /// Cached low byte of tile row from GetTileDataLow step.
@@ -21,7 +21,7 @@ pub(super) struct TileFetcher {
     /// Cached high byte of tile row from GetTileDataHigh step.
     tile_data_high: u8,
     /// Whether we're fetching from the window tilemap.
-    pub(super) fetching_window: bool,
+    pub(in crate::game_boy::ppu) fetching_window: bool,
     /// Last VRAM address used by the fetcher. Set at T2 when the address
     /// is computed and VRAM is read. Retained for debugger visibility.
     vram_address: u16,
@@ -43,11 +43,11 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 
 impl TileFetcher {
     /// LYRY: combinational decode. Fetch done when counter >= 10.
-    pub(super) fn lyry(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn lyry(&self) -> bool {
         self.fetch_counter >= 10
     }
 
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             fetch_counter: 0,
             window_tile_x: 0,
@@ -146,7 +146,7 @@ impl TileFetcher {
     /// half-phases. VRAM reads happen at counter values 0, 4, 8 (falling
     /// edge, driven by LEBO = NAND(ALET, MOCE)). The counter saturates
     /// at 10 (Idle) until reset.
-    pub(super) fn advance_falling(
+    pub(in crate::game_boy::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,
         window_line_counter: u8,
@@ -183,7 +183,7 @@ impl TileFetcher {
     /// No VRAM reads on rising. When fetch_counter reaches 10, LYRY
     /// fires combinationally on the rising edge — the hardware-correct
     /// phase for the fetch-done signal.
-    pub(super) fn advance_rising(&mut self) {
+    pub(in crate::game_boy::ppu) fn advance_rising(&mut self) {
         if self.fetch_counter < 10 {
             self.fetch_counter += 1;
         }
@@ -191,7 +191,7 @@ impl TileFetcher {
 
     /// Load fetched tile data into the BG shifter and reset the fetcher to
     /// GetTile for the next tile.
-    pub(super) fn load_into(&mut self, bg_shifter: &mut BgShifter) {
+    pub(in crate::game_boy::ppu) fn load_into(&mut self, bg_shifter: &mut BgShifter) {
         bg_shifter.load(self.tile_data_low, self.tile_data_high);
         if self.fetching_window {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
@@ -200,7 +200,7 @@ impl TileFetcher {
     }
 
     /// Reset the fetcher for a window trigger.
-    pub(super) fn reset_for_window(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_for_window(&mut self) {
         self.fetch_counter = 0;
         self.window_tile_x = 0;
         self.fetching_window = true;

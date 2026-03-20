@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use crate::game_boy::{
     BusAccess, BusAccessKind, GameBoy,
     cpu::instructions::Instruction,
-    ppu::{self, pixel_pipeline::Mode, screen::Screen},
+    ppu::{self, rendering::Mode, screen::Screen},
 };
 use instructions::InstructionsIterator;
 

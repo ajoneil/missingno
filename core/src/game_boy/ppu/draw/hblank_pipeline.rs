@@ -12,7 +12,7 @@
 /// Race pair data (mode3-race-pairs.md):
 ///   VOGA: depth 7, diff 15 — mode transition boundary shifted one dot
 ///   XYMU: depth 1 from VOGA, fan-out 25
-pub(super) struct HblankPipeline {
+pub(in crate::game_boy::ppu) struct HblankPipeline {
     /// XYMU rendering latch (page 21). SET by AVAP (Mode 2→3),
     /// CLEAR by WEGO = OR2(VID_RST, VOGA).
     xymu: bool,
@@ -27,7 +27,7 @@ pub(super) struct HblankPipeline {
 }
 
 impl HblankPipeline {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             xymu: false,
             voga: false,
@@ -38,7 +38,7 @@ impl HblankPipeline {
     /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
     /// On hardware, WODU is not a latch — it's valid whenever its
     /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
-    pub(super) fn wodu(&self, xugu: bool) -> bool {
+    pub(in crate::game_boy::ppu) fn wodu(&self, xugu: bool) -> bool {
         self.xymu && xugu && !self.fepo
     }
 
@@ -49,7 +49,7 @@ impl HblankPipeline {
     /// the VOGA path.
     ///
     /// Returns the WODU value for callers that need it (TYFA, LCD).
-    pub(super) fn fall(&mut self, xugu: bool) -> bool {
+    pub(in crate::game_boy::ppu) fn fall(&mut self, xugu: bool) -> bool {
         let wodu = self.wodu(xugu);
         if wodu {
             self.voga = true;
@@ -62,24 +62,24 @@ impl HblankPipeline {
 
     /// Latch FEPO for the next dot's wodu() evaluation. Called in
     /// mode3_falling after FEPO is evaluated but before it changes.
-    pub(super) fn latch_fepo(&mut self, fepo: bool) {
+    pub(in crate::game_boy::ppu) fn latch_fepo(&mut self, fepo: bool) {
         self.fepo = fepo;
     }
 
     /// AVAP: Mode 2→3 transition, set XYMU.
-    pub(super) fn set_xymu(&mut self) {
+    pub(in crate::game_boy::ppu) fn set_xymu(&mut self) {
         self.xymu = true;
     }
 
-    pub(super) fn xymu(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn xymu(&self) -> bool {
         self.xymu
     }
 
-    pub(super) fn voga(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn voga(&self) -> bool {
         self.voga
     }
 
-    pub(super) fn reset(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset(&mut self) {
         self.xymu = false;
         self.voga = false;
         self.fepo = false;

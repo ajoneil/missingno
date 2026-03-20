@@ -1,18 +1,4 @@
-mod fetch_cascade;
-mod fetcher;
-mod fine_scroll;
-mod hblank_pipeline;
-mod lcd_control;
-mod lcd_shift_register;
-mod oam_scan;
-mod pixel_output;
-mod shifters;
-mod sprite_fetch;
-mod sprite_scanner;
-mod sprite_trigger;
-mod window_control;
-
-pub use sprite_fetch::SpriteFetchPhase;
+pub use super::draw::sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
 
@@ -22,16 +8,17 @@ use crate::game_boy::ppu::{
     screen::Screen,
 };
 
-use fetch_cascade::FetchCascade;
-use fetcher::TileFetcher;
-use fine_scroll::FineScroll;
-use hblank_pipeline::HblankPipeline;
-use lcd_control::LcdControl;
-use shifters::{BgShifter, ObjShifter};
-use sprite_fetch::{SpriteFetch, SpriteState};
-use sprite_scanner::SpriteScanner;
-use sprite_trigger::SpriteTrigger;
-use window_control::WindowControl;
+use super::draw::fetch_cascade::FetchCascade;
+use super::draw::fetcher::TileFetcher;
+use super::draw::fine_scroll::FineScroll;
+use super::draw::hblank_pipeline::HblankPipeline;
+use super::draw::lcd_control::LcdControl;
+use super::draw::pixel_output;
+use super::draw::shifters::{BgShifter, ObjShifter};
+use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
+use super::draw::sprite_trigger::SpriteTrigger;
+use super::draw::window_control::WindowControl;
+use super::scan::scanner::SpriteScanner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]

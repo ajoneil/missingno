@@ -12,7 +12,7 @@ use crate::app::{
         ppu::tile_atlas::tile_block_atlas,
     },
 };
-use missingno_core::game_boy::ppu::{memory::Vram, palette::Palette, tiles::TileBlockId};
+use missingno_core::game_boy::ppu::{memory::Vram, types::palette::Palette, types::tiles::TileBlockId};
 
 pub struct TilesPane;
 

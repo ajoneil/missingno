@@ -20,7 +20,7 @@
 
 use crate::game_boy::ppu::{
     PipelineRegisters,
-    palette::{PaletteIndex, PaletteMap},
+    types::palette::{PaletteIndex, PaletteMap},
 };
 
 use super::shifters::{BgShifter, ObjShifter};
@@ -76,7 +76,7 @@ fn resolve_pixel(
 /// Handles `window_zero_pixel`: when set, substitutes BG color 0
 /// without reading the BG shifter. The OBJ shifter is still read
 /// so sprite pixels mix against the zero background.
-pub(super) fn resolve_current_pixel(
+pub(in crate::game_boy::ppu) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     window_zero_pixel: &mut bool,
@@ -133,7 +133,7 @@ pub(super) fn resolve_current_pixel(
 /// from the pipe MSBs — now containing merged sprite data. Updates
 /// the lcd_data_latch so the next TOBA edge captures the post-merge
 /// pixel instead of the pre-merge BG-only data.
-pub(super) fn sprite_overwrite_data_latch(
+pub(in crate::game_boy::ppu) fn sprite_overwrite_data_latch(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     lcd_data_latch: &mut PaletteIndex,

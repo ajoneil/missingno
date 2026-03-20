@@ -18,7 +18,7 @@ use super::fine_scroll::FineScroll;
 /// (cascade clear signal), register values (WX, WY, LCDC).
 /// Outputs: RYDY (gates TYFA), window_zero_pixel (to pixel mux),
 /// window_line_counter (to fetcher for tile address).
-pub(super) struct WindowControl {
+pub(in crate::game_boy::ppu) struct WindowControl {
     /// RYDY NOR latch — window hit signal. When high, gates TYFA
     /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
     /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
@@ -59,7 +59,7 @@ pub(super) struct WindowControl {
 }
 
 impl WindowControl {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         WindowControl {
             rydy: false,
             wx_triggered: false,
@@ -72,14 +72,14 @@ impl WindowControl {
     }
 
     /// Initialize the NUKO WX cache on Mode 3 entry.
-    pub(super) fn init_nuko_wx(&mut self, wx: u8) {
+    pub(in crate::game_boy::ppu) fn init_nuko_wx(&mut self, wx: u8) {
         self.nuko_wx = wx;
     }
 
     /// Update NUKO's WX input from the live DFF8 output. Called
     /// unconditionally at the end of every mode3_rising so the cache
     /// tracks the DFF output even during sprite fetch.
-    pub(super) fn update_nuko_wx(&mut self, wx: u8) {
+    pub(in crate::game_boy::ppu) fn update_nuko_wx(&mut self, wx: u8) {
         self.nuko_wx = wx;
     }
 
@@ -90,7 +90,7 @@ impl WindowControl {
     ///
     /// Returns true if RYDY transitioned 1→0 (SUZU fires), signaling
     /// the caller to load window tile data and reset the fine counter.
-    pub(super) fn clear_rydy_on_pory(&mut self, pory: bool) -> bool {
+    pub(in crate::game_boy::ppu) fn clear_rydy_on_pory(&mut self, pory: bool) -> bool {
         if pory && self.rydy {
             self.rydy = false;
             true
@@ -111,7 +111,7 @@ impl WindowControl {
     ///
     /// `rydy_snapshot` is the phase-boundary snapshot (state_old) used
     /// for the reactivation check.
-    pub(super) fn check_trigger(
+    pub(in crate::game_boy::ppu) fn check_trigger(
         &mut self,
         rydy_snapshot: bool,
         fetcher: &mut TileFetcher,
@@ -184,12 +184,12 @@ impl WindowControl {
 
     /// Reset for a new frame. Zeroes the window line counter (WLY),
     /// which accumulates across scanlines but resets at frame start.
-    pub(super) fn reset_frame(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_frame(&mut self) {
         self.window_line_counter = 0;
     }
 
     /// Reset per-scanline state.
-    pub(super) fn reset_scanline(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_scanline(&mut self) {
         if self.window_rendered {
             self.window_line_counter += 1;
         }
@@ -203,25 +203,25 @@ impl WindowControl {
 
     // --- Accessors ---
 
-    pub(super) fn rydy(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn rydy(&self) -> bool {
         self.rydy
     }
 
-    pub(super) fn wx_triggered(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn wx_triggered(&self) -> bool {
         self.wx_triggered
     }
 
-    pub(super) fn window_line_counter(&self) -> u8 {
+    pub(in crate::game_boy::ppu) fn window_line_counter(&self) -> u8 {
         self.window_line_counter
     }
 
-    pub(super) fn window_zero_pixel_mut(&mut self) -> &mut bool {
+    pub(in crate::game_boy::ppu) fn window_zero_pixel_mut(&mut self) -> &mut bool {
         &mut self.window_zero_pixel
     }
 
     /// Consume the window zero pixel flag (set to false). Used during
     /// pre-visible TYFA cycles when TOBA doesn't fire.
-    pub(super) fn consume_window_zero_pixel(&mut self) {
+    pub(in crate::game_boy::ppu) fn consume_window_zero_pixel(&mut self) {
         self.window_zero_pixel = false;
     }
 }

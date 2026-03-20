@@ -8,7 +8,7 @@ use crate::app::{
     core::sizes::m,
     debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
-use missingno_core::game_boy::ppu::{Ppu, palette::Palette, pixel_pipeline::Mode};
+use missingno_core::game_boy::ppu::{Ppu, types::palette::Palette, rendering::Mode};
 
 use background_and_window::background_and_window;
 use tile_maps::tile_address_mode;

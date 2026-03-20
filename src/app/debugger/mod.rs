@@ -11,7 +11,7 @@ use crate::app::{
 use missingno_core::game_boy::{
     GameBoy,
     joypad::Button,
-    ppu::palette::PaletteChoice,
+    ppu::types::palette::PaletteChoice,
     recording::{Input, Recording},
     sgb::MaskMode,
 };

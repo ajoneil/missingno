@@ -10,7 +10,7 @@ use crate::app::{
 };
 use missingno_core::game_boy::ppu::{
     Ppu,
-    palette::{Palette, PaletteMap},
+    types::palette::{Palette, PaletteMap},
 };
 
 pub fn background_and_window(ppu: &Ppu, palette: &Palette) -> Element<'static, Message> {

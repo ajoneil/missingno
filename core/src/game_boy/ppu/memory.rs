@@ -1,4 +1,4 @@
-use super::{
+use super::types::{
     sprites::{self, Sprite, SpriteId},
     tile_maps::{TileMap, TileMapId},
     tiles::{TileBlock, TileBlockId, TileIndex},

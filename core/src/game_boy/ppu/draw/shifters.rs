@@ -12,27 +12,27 @@
 /// SACU clock edge unconditionally. Zero shifts in from bit 0. Tile
 /// data is loaded in parallel via async SET/RST (SEKO signal).
 ///
-pub(super) struct BgShifter {
+pub(in crate::game_boy::ppu) struct BgShifter {
     low: u8,
     high: u8,
 }
 
 impl BgShifter {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self { low: 0, high: 0 }
     }
 
     /// Parallel load from a tile fetch. On hardware, the DFF22 shift
     /// register cells use async SET/RST pins, so a load unconditionally
     /// overwrites the current contents (SEKO pre-load at tile boundaries).
-    pub(super) fn load(&mut self, low: u8, high: u8) {
+    pub(in crate::game_boy::ppu) fn load(&mut self, low: u8, high: u8) {
         self.low = low;
         self.high = high;
     }
 
     /// Read the MSB bitplane values — the shift register's output pins.
     /// On hardware, bit 7 is always readable regardless of pipe state.
-    pub(super) fn read(&self) -> (u8, u8) {
+    pub(in crate::game_boy::ppu) fn read(&self) -> (u8, u8) {
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
         (lo, hi)
@@ -41,12 +41,12 @@ impl BgShifter {
     /// Shift the register left by one position (SACU clock edge).
     /// On hardware, the BG pipe shifts unconditionally — zero fills
     /// in from bit 0 on every clock edge.
-    pub(super) fn shift(&mut self) {
+    pub(in crate::game_boy::ppu) fn shift(&mut self) {
         self.low <<= 1;
         self.high <<= 1;
     }
 
-    pub(super) fn registers(&self) -> (u8, u8) {
+    pub(in crate::game_boy::ppu) fn registers(&self) -> (u8, u8) {
         (self.low, self.high)
     }
 }
@@ -66,7 +66,7 @@ impl BgShifter {
 /// Sprites are merged via async SET/RST (same DFF22 mechanism as BG tile
 /// loads). The transparency mask prevents new sprite data from overwriting
 /// positions that already contain opaque pixels from a higher-priority sprite.
-pub(super) struct ObjShifter {
+pub(in crate::game_boy::ppu) struct ObjShifter {
     low: u8,
     high: u8,
     palette: u8,
@@ -74,7 +74,7 @@ pub(super) struct ObjShifter {
 }
 
 impl ObjShifter {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             low: 0,
             high: 0,
@@ -87,7 +87,7 @@ impl ObjShifter {
     /// On hardware, bit 7 is always readable. When the pipe contains
     /// all zeros (no sprite loaded or transparent pixel), the color
     /// index is 0 and the pixel mux treats it as transparent.
-    pub(super) fn read(&self) -> (u8, u8, u8, u8) {
+    pub(in crate::game_boy::ppu) fn read(&self) -> (u8, u8, u8, u8) {
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
         let pal = (self.palette >> 7) & 1;
@@ -98,14 +98,14 @@ impl ObjShifter {
     /// Shift the register left by one position (SACU clock edge).
     /// On hardware, the OBJ pipe shifts unconditionally — zero fills
     /// in from bit 0 on every clock edge regardless of pipe contents.
-    pub(super) fn shift(&mut self) {
+    pub(in crate::game_boy::ppu) fn shift(&mut self) {
         self.low <<= 1;
         self.high <<= 1;
         self.palette <<= 1;
         self.priority <<= 1;
     }
 
-    pub(super) fn registers(&self) -> (u8, u8, u8, u8) {
+    pub(in crate::game_boy::ppu) fn registers(&self) -> (u8, u8, u8, u8) {
         (self.low, self.high, self.palette, self.priority)
     }
 
@@ -120,7 +120,7 @@ impl ObjShifter {
     /// `sprite_low`/`sprite_high` are the raw bitplane bytes from the
     /// sprite tile fetch (already X-flipped if needed). `palette_bit`
     /// and `priority_bit` are uniform for all 8 pixels of this sprite.
-    pub(super) fn merge(
+    pub(in crate::game_boy::ppu) fn merge(
         &mut self,
         sprite_low: u8,
         sprite_high: u8,

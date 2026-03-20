@@ -9,7 +9,7 @@ use super::oam_scan::{ScanCounter, SpriteStore};
 /// Mode 3. Communicates with the rest of the pipeline through explicit
 /// signals: AVAP (scan complete) triggers the Mode 2→3 transition,
 /// and the populated `SpriteStore` is consumed by the X matchers.
-pub(super) struct SpriteScanner {
+pub(in crate::game_boy::ppu) struct SpriteScanner {
     /// 6-bit scan counter + Y comparator (YFEL-FONY).
     counter: ScanCounter,
     /// Scan machinery active — set on all lines including LCD-on line 0.
@@ -53,13 +53,13 @@ pub(super) struct SpriteScanner {
 }
 
 /// Signals produced by `SpriteScanner::fall()` for the rest of the pipeline.
-pub(super) struct ScanSignals {
+pub(in crate::game_boy::ppu) struct ScanSignals {
     /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
-    pub(super) avap: bool,
+    pub(in crate::game_boy::ppu) avap: bool,
 }
 
 impl SpriteScanner {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             counter: ScanCounter::new(),
             scanning: false,
@@ -79,48 +79,48 @@ impl SpriteScanner {
     /// deassertion releases the scan counter and comparison logic
     /// simultaneously — there is no separate CATU "start scanning" event
     /// on the first line. The counter is already at 0 from async reset.
-    pub(super) fn start_scanning(&mut self) {
+    pub(in crate::game_boy::ppu) fn start_scanning(&mut self) {
         self.scanning = true;
     }
 
     /// Whether the scan machinery is currently active.
-    pub(super) fn scanning(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn scanning(&self) -> bool {
         self.scanning
     }
 
     /// BESU scanning latch — drives ACYL for STAT mode and OAM bus locking.
-    pub(super) fn besu(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn besu(&self) -> bool {
         self.besu
     }
 
     /// Whether CATU is enabled (NOT first line after LCD-on).
-    pub(super) fn catu_enabled(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn catu_enabled(&self) -> bool {
         self.catu_enabled
     }
 
     /// Release VID_RST's blocking effect on CATU. Called after the first
     /// scanline completes (reset_scanline), enabling BESU on subsequent lines.
-    pub(super) fn enable_catu(&mut self) {
+    pub(in crate::game_boy::ppu) fn enable_catu(&mut self) {
         self.catu_enabled = true;
     }
 
     /// Current scan counter entry (0-39).
-    pub(super) fn scan_counter_entry(&self) -> u8 {
+    pub(in crate::game_boy::ppu) fn scan_counter_entry(&self) -> u8 {
         self.counter.entry()
     }
 
     /// BYBA state, for debug snapshot.
-    pub(super) fn byba(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn byba(&self) -> bool {
         self.byba
     }
 
     /// DOBA state, for debug snapshot.
-    pub(super) fn doba(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn doba(&self) -> bool {
         self.doba
     }
 
     /// The OAM address the scanner is currently driving, if scanning.
-    pub(super) fn oam_address(&self) -> Option<u8> {
+    pub(in crate::game_boy::ppu) fn oam_address(&self) -> Option<u8> {
         if self.scanning {
             Some(self.counter.oam_address())
         } else {
@@ -129,12 +129,12 @@ impl SpriteScanner {
     }
 
     /// Read access to the sprite store for debug snapshots.
-    pub(super) fn sprites_ref(&self) -> &SpriteStore {
+    pub(in crate::game_boy::ppu) fn sprites_ref(&self) -> &SpriteStore {
         &self.sprites
     }
 
     /// Mutable access to the sprite store for X matching and marking fetched slots.
-    pub(super) fn sprites_mut(&mut self) -> &mut SpriteStore {
+    pub(in crate::game_boy::ppu) fn sprites_mut(&mut self) -> &mut SpriteStore {
         &mut self.sprites
     }
 
@@ -145,7 +145,7 @@ impl SpriteScanner {
     /// BYBA captures scan_done() directly. Because rise() runs before fall()
     /// (which ticks the counter), BYBA sees the counter state from the
     /// previous XUPY cycle — matching GateBoy's `reg_old.FETO.out_old()`.
-    pub(super) fn rise(&mut self, xupy_rising: bool, ly: u8) -> ScanSignals {
+    pub(in crate::game_boy::ppu) fn rise(&mut self, xupy_rising: bool, ly: u8) -> ScanSignals {
         // BYBA: DFF capturing scan_done() on rising edge. rise() runs
         // before fall(), so the counter hasn't ticked yet — BYBA naturally
         // sees the previous XUPY cycle's value.
@@ -200,7 +200,7 @@ impl SpriteScanner {
     /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
     /// FETO is sampled after tick_clock(), matching hardware's combinational gate.
     /// BESU clears on the falling edge via AVAP → EPOR.
-    pub(super) fn fall(&mut self, xupy_rising: bool, ly: u8, regs: &PipelineRegisters, oam: &Oam) {
+    pub(in crate::game_boy::ppu) fn fall(&mut self, xupy_rising: bool, ly: u8, regs: &PipelineRegisters, oam: &Oam) {
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
         // Scanning is still true here even on the AVAP dot, because rise() no
@@ -229,7 +229,7 @@ impl SpriteScanner {
     /// Reset at scanline boundary. Sets rutu = true so the CATU DFF
     /// pipeline will fire after 2 XUPY cycles (4 dots), matching
     /// hardware's RUTU → RUTU_old → CATU propagation.
-    pub(super) fn reset(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
         self.besu = false;

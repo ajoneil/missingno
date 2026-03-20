@@ -25,7 +25,7 @@
 ///   - `taka()` → gates pixel clock (TYFA suppressed while taka is set),
 ///     gates sprite fetch advance in mode3_rising
 ///   - `ryce()` return from `fall()` → triggers sprite fetch start
-pub(super) struct SpriteTrigger {
+pub(in crate::game_boy::ppu) struct SpriteTrigger {
     /// SOBU_SFETCH_REQp_evn: DFF17, latches on TAVA falling edge.
     sobu: bool,
     /// SUDA_SFETCH_REQp_odd: DFF17, latches on LAPE rising edge.
@@ -36,7 +36,7 @@ pub(super) struct SpriteTrigger {
 }
 
 impl SpriteTrigger {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             sobu: false,
             suda: false,
@@ -53,7 +53,7 @@ impl SpriteTrigger {
     ///
     /// RYCE is a combinational rising-edge detect: SOBU just went high,
     /// SUDA still holds the value from the previous rising phase.
-    pub(super) fn fall(&mut self, teky: bool) -> bool {
+    pub(in crate::game_boy::ppu) fn fall(&mut self, teky: bool) -> bool {
         self.sobu = teky;
         let ryce = self.sobu && !self.suda;
         if ryce {
@@ -63,23 +63,23 @@ impl SpriteTrigger {
     }
 
     /// Rising edge (LAPE clock): SUDA captures SOBU.
-    pub(super) fn rise(&mut self) {
+    pub(in crate::game_boy::ppu) fn rise(&mut self) {
         self.suda = self.sobu;
     }
 
     /// Clear TAKA when sprite fetch completes (VEKU).
-    pub(super) fn clear_taka(&mut self) {
+    pub(in crate::game_boy::ppu) fn clear_taka(&mut self) {
         self.taka = false;
     }
 
     /// Reset all state at scanline boundary.
-    pub(super) fn reset(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset(&mut self) {
         self.sobu = false;
         self.suda = false;
         self.taka = false;
     }
 
-    pub(super) fn taka(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn taka(&self) -> bool {
         self.taka
     }
 }

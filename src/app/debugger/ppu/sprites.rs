@@ -20,9 +20,9 @@ use crate::app::{
 use missingno_core::game_boy::ppu::{
     Ppu,
     memory::Vram,
-    palette::{Palette, PaletteMap},
-    sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
-    tiles::{TileAddressMode, TileIndex},
+    types::palette::{Palette, PaletteMap},
+    types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
+    types::tiles::{TileAddressMode, TileIndex},
 };
 
 pub struct SpritesPane {

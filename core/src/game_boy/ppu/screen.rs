@@ -1,4 +1,4 @@
-use super::palette::PaletteIndex;
+use super::types::palette::PaletteIndex;
 
 pub const NUM_SCANLINES: u8 = 144;
 pub const PIXELS_PER_LINE: u8 = 160;

@@ -19,7 +19,7 @@
 /// - `pygo()` → sprite wait exit, TAVE guard, window trigger gate
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
-pub(super) struct FetchCascade {
+pub(in crate::game_boy::ppu) struct FetchCascade {
     /// NYKA_FETCH_DONEp_evn: DFF17, latches on falling edge (ALET).
     nyka: bool,
     /// PORY_FETCH_DONEp_odd: latches on rising edge (MYVO).
@@ -31,7 +31,7 @@ pub(super) struct FetchCascade {
 }
 
 impl FetchCascade {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         FetchCascade {
             nyka: false,
             pory: false,
@@ -46,7 +46,7 @@ impl FetchCascade {
     /// LYRY fires on the preceding rising edge (fetcher counter reaches
     /// 10 in advance_rising). NYKA captures live LYRY here — the
     /// rise-to-fall separation provides the 1 half-phase DFF delay.
-    pub(super) fn fall(&mut self, lyry: bool) {
+    pub(in crate::game_boy::ppu) fn fall(&mut self, lyry: bool) {
         // NYKA DFF17: captures live LYRY on falling edge (ALET clock).
         if lyry && !self.nyka {
             self.nyka = true;
@@ -64,14 +64,14 @@ impl FetchCascade {
     }
 
     /// Rising edge: clock PORY from NYKA.
-    pub(super) fn rise(&mut self) {
+    pub(in crate::game_boy::ppu) fn rise(&mut self) {
         if self.nyka && !self.pory {
             self.pory = true;
         }
     }
 
     /// Scanline reset: clear all DFFs.
-    pub(super) fn reset(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset(&mut self) {
         self.nyka = false;
         self.pory = false;
         self.pygo = false;
@@ -80,21 +80,21 @@ impl FetchCascade {
 
     /// NAFY window-trigger reset: clear NYKA and PORY.
     /// PYGO and POKY are not reset by window triggers.
-    pub(super) fn reset_window(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_window(&mut self) {
         self.nyka = false;
         self.pory = false;
     }
 
-    pub(super) fn nyka(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn nyka(&self) -> bool {
         self.nyka
     }
-    pub(super) fn pory(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn pory(&self) -> bool {
         self.pory
     }
-    pub(super) fn pygo(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn pygo(&self) -> bool {
         self.pygo
     }
-    pub(super) fn poky(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn poky(&self) -> bool {
         self.poky
     }
 }

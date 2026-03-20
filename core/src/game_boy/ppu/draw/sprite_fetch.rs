@@ -5,9 +5,9 @@ use crate::game_boy::ppu::{
     memory::{Oam, Vram},
 };
 
-use super::super::sprites::{self, SpriteId, SpriteSize};
-use super::super::tiles::{TileAddressMode, TileIndex};
-use super::oam_scan::SpriteStoreEntry;
+use super::super::types::sprites::{self, SpriteId, SpriteSize};
+use super::super::types::tiles::{TileAddressMode, TileIndex};
+use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::shifters::ObjShifter;
 
 /// The phases of a sprite fetch on real hardware.
@@ -26,9 +26,9 @@ pub enum SpriteFetchPhase {
 /// Active sprite data fetch. Models the 3-bit counter (TOXE/TULY/TESE)
 /// that counts 0-5 over 6 dots, performing OAM reads (counter 0-1) and
 /// VRAM reads (counter 3 and 5) for sprite tile data.
-pub(super) struct SpriteFetch {
+pub(in crate::game_boy::ppu) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
-    pub(super) entry: SpriteStoreEntry,
+    pub(in crate::game_boy::ppu) entry: SpriteStoreEntry,
     /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
     /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
     /// Self-stops at 5 via TAME clock gating.
@@ -41,7 +41,7 @@ impl SpriteFetch {
     /// Start the 6-dot sprite data fetch. The variable 0-5 dot penalty
     /// is handled by TEKY/SOBU staying low until the BG fetcher is done,
     /// not by a separate waiting state.
-    pub(super) fn new_fetching(entry: SpriteStoreEntry) -> Self {
+    pub(in crate::game_boy::ppu) fn new_fetching(entry: SpriteStoreEntry) -> Self {
         Self {
             entry,
             fetch_counter: 0,
@@ -50,7 +50,7 @@ impl SpriteFetch {
         }
     }
 
-    pub(super) fn tile_data(&self) -> (u8, u8) {
+    pub(in crate::game_boy::ppu) fn tile_data(&self) -> (u8, u8) {
         (self.tile_data_low, self.tile_data_high)
     }
 
@@ -87,7 +87,7 @@ impl SpriteFetch {
 
     /// Advance the sprite fetch pipeline by one dot. Returns `true` when
     /// the fetch is complete (fetch_counter == 5, tile data high read).
-    pub(super) fn advance(&mut self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram) -> bool {
+    pub(in crate::game_boy::ppu) fn advance(&mut self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram) -> bool {
         match self.fetch_counter {
             3 => {
                 // Tile data low VRAM read.
@@ -107,7 +107,7 @@ impl SpriteFetch {
     }
 
     /// Merge fetched sprite pixels into the OBJ shifter.
-    pub(super) fn merge_into(&self, obj_shifter: &mut ObjShifter, oam: &Oam) {
+    pub(in crate::game_boy::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter, oam: &Oam) {
         let sprite = oam.sprite(SpriteId(self.entry.oam_index));
 
         // X-flip: hardware reverses the bit order when loading the shift
@@ -143,7 +143,7 @@ impl SpriteFetch {
 /// Sprite fetch lifecycle. On hardware, FEPO (sprite X match) freezes
 /// the pixel clock, the fetch runs, then the pixel clock resumes
 /// normally on the next dot (state_old.FEPO=0).
-pub(super) enum SpriteState {
+pub(in crate::game_boy::ppu) enum SpriteState {
     /// No sprite activity. Pixel clock runs normally.
     Idle,
     /// Sprite fetch in progress (wait + data phases).

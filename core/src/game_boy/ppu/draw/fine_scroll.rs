@@ -17,9 +17,9 @@ enum Roxy {
 /// Hardware fine scroll counter (RYKU/ROGA/RUBU) and pixel clock
 /// gate (ROXY). The ROXY latch gates the pixel clock (SACU) until
 /// the counter matches SCX & 7, implementing sub-tile fine scrolling.
-pub(super) struct FineScroll {
+pub(in crate::game_boy::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
-    pub(super) count: u8,
+    pub(in crate::game_boy::ppu) count: u8,
     /// ROXY NOR latch — gates SACU until fine scroll match fires.
     roxy: Roxy,
     /// NYZE DFF — captures PUXA (fine scroll match) from previous
@@ -32,7 +32,7 @@ pub(super) struct FineScroll {
 }
 
 impl FineScroll {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         Self {
             count: 0,
             roxy: Roxy::Gating,
@@ -42,20 +42,20 @@ impl FineScroll {
     }
 
     /// Whether the pixel clock is active (SACU ungated).
-    pub(super) fn pixel_clock_active(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn pixel_clock_active(&self) -> bool {
         self.roxy == Roxy::Done
     }
 
     /// Advance the fine counter by one dot (PECU clock).
     /// Self-stops at 7 (ROZE gate: nand3(CNT2, CNT1, CNT0)).
-    pub(super) fn tick(&mut self) {
+    pub(in crate::game_boy::ppu) fn tick(&mut self) {
         if self.count < 7 {
             self.count += 1;
         }
     }
 
     /// TEVO → PASO: reset the fine counter to 0.
-    pub(super) fn reset_counter(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_counter(&mut self) {
         self.count = 0;
     }
 
@@ -63,7 +63,7 @@ impl FineScroll {
     /// On hardware, POHU is combinational (count == SCX & 7), and ROXO
     /// captures it into PUXA on the falling edge. We store it for the
     /// next rising phase's capture step.
-    pub(super) fn compare_falling(&mut self, scx: u8) {
+    pub(in crate::game_boy::ppu) fn compare_falling(&mut self, scx: u8) {
         self.pohu = self.count == (scx & 7);
     }
 
@@ -72,7 +72,7 @@ impl FineScroll {
     ///
     /// Only call when TYFA is active (ROXO fires).
     /// Returns POVA = AND2(PUXA, !NYZE).
-    pub(super) fn capture_rising(&mut self) -> bool {
+    pub(in crate::game_boy::ppu) fn capture_rising(&mut self) -> bool {
         let puxa = self.pohu;
         let pova = puxa && !self.nyze;
         self.nyze = puxa;
@@ -86,7 +86,7 @@ impl FineScroll {
 
     /// Reset for window trigger — counter resets, gating clears
     /// (window has no fine scroll).
-    pub(super) fn reset_for_window(&mut self) {
+    pub(in crate::game_boy::ppu) fn reset_for_window(&mut self) {
         self.count = 0;
         self.roxy = Roxy::Done;
         self.pohu = false;

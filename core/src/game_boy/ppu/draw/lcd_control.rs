@@ -1,4 +1,4 @@
-use crate::game_boy::ppu::{palette::PaletteIndex, screen::Screen};
+use crate::game_boy::ppu::{types::palette::PaletteIndex, screen::Screen};
 
 use super::lcd_shift_register::LcdShiftRegister;
 
@@ -16,7 +16,7 @@ const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21).
 /// Outputs: XUGU (pixel counter decode for WODU on page 21), TOBA
 /// (gated LCD clock, returned from `rise()`).
-pub(super) struct LcdControl {
+pub(in crate::game_boy::ppu) struct LcdControl {
     /// Hardware pixel counter (XEHO-SYBE). Counts from 0 when the
     /// pixel clock starts after startup. Drives WODU (hblank gate)
     /// at PX=167. Not reset on window trigger — PX is a monotonic
@@ -44,7 +44,7 @@ pub(super) struct LcdControl {
 }
 
 impl LcdControl {
-    pub(super) fn new() -> Self {
+    pub(in crate::game_boy::ppu) fn new() -> Self {
         LcdControl {
             pixel_counter: 0,
             wusa: false,
@@ -60,7 +60,7 @@ impl LcdControl {
     ///
     /// Returns TOBA (gated LCD clock) so the caller can gate
     /// window_zero_pixel consumption.
-    pub(super) fn rise(&mut self, sacu: bool, pixel: PaletteIndex, pova: bool) -> bool {
+    pub(in crate::game_boy::ppu) fn rise(&mut self, sacu: bool, pixel: PaletteIndex, pova: bool) -> bool {
         // Pixel counter increment (SACU clock).
         if sacu {
             self.pixel_counter += 1;
@@ -96,7 +96,7 @@ impl LcdControl {
     /// clears WUSA. On the WODU dot (last_pixel), also
     /// shifts in the final pixel and latches the shift register to
     /// the screen.
-    pub(super) fn fall(&mut self, voga: bool, last_pixel: bool, screen: &mut Screen) {
+    pub(in crate::game_boy::ppu) fn fall(&mut self, voga: bool, last_pixel: bool, screen: &mut Screen) {
         if !voga {
             return;
         }
@@ -110,18 +110,18 @@ impl LcdControl {
     /// Update the LCD data latch directly. Used for out-of-band
     /// updates (SUZU/TEVO window tile load, sprite overwrite) that
     /// happen outside the normal SACU-driven `rise()` path.
-    pub(super) fn set_data_latch(&mut self, pixel: PaletteIndex) {
+    pub(in crate::game_boy::ppu) fn set_data_latch(&mut self, pixel: PaletteIndex) {
         self.data_latch = pixel;
     }
 
     /// XUGU decode: PX bits 0+1+2+5+7 all set (PX=167).
     /// Output signal from page 24 → page 21 for WODU computation.
-    pub(super) fn xugu(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn xugu(&self) -> bool {
         self.pixel_counter & XUGU_MASK == XUGU_MASK
     }
 
     /// Reset per-scanline state.
-    pub(super) fn reset(&mut self, scanline: u8) {
+    pub(in crate::game_boy::ppu) fn reset(&mut self, scanline: u8) {
         self.pixel_counter = 0;
         self.wusa = false;
         self.pova = false;
@@ -131,23 +131,23 @@ impl LcdControl {
 
     // --- Accessors ---
 
-    pub(super) fn pixel_counter(&self) -> u8 {
+    pub(in crate::game_boy::ppu) fn pixel_counter(&self) -> u8 {
         self.pixel_counter
     }
 
-    pub(super) fn wusa(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn wusa(&self) -> bool {
         self.wusa
     }
 
-    pub(super) fn pova(&self) -> bool {
+    pub(in crate::game_boy::ppu) fn pova(&self) -> bool {
         self.pova
     }
 
-    pub(super) fn lcd_x(&self) -> u8 {
+    pub(in crate::game_boy::ppu) fn lcd_x(&self) -> u8 {
         self.shift_register.count()
     }
 
-    pub(super) fn data_latch_mut(&mut self) -> &mut PaletteIndex {
+    pub(in crate::game_boy::ppu) fn data_latch_mut(&mut self) -> &mut PaletteIndex {
         &mut self.data_latch
     }
 }

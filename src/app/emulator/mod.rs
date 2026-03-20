@@ -13,7 +13,7 @@ use crate::app::{
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
 use missingno_core::game_boy::{
-    GameBoy, joypad::Button, ppu::palette::PaletteChoice, sgb::MaskMode,
+    GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode,
 };
 
 pub struct Emulator {

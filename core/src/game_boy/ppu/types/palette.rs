@@ -84,7 +84,7 @@ impl PaletteMap {
     }
 }
 
-use super::DffLatch;
+use super::super::DffLatch;
 
 pub struct Palettes {
     pub background: DffLatch,
