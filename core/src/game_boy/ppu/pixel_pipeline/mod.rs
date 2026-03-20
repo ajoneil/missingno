@@ -761,6 +761,53 @@ impl Rendering {
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
     }
 
+    /// Retroactive sprite fetch correction after LCDC write.
+    ///
+    /// On hardware, AROR = AND(RENDERING, XYLO) is combinational.
+    /// When XYLO changes mid-dot, AROR changes instantly, and FEPO
+    /// (the sprite X match output) reflects the new state. This
+    /// method models that combinational settling after the emulator
+    /// has already evaluated the match with the old LCDC value.
+    pub(super) fn correct_sprite_fetch_for_lcdc(&mut self, regs: &PipelineRegisters) {
+        if regs.control.sprites_enabled() {
+            // OBJ was just ENABLED. If sprite_state is Idle, a match
+            // may have been suppressed on the boundary rise because
+            // sprites_enabled() was false at that time. Re-run the
+            // trigger check with the new (enabled) LCDC value.
+            if matches!(self.sprite_state, SpriteState::Idle) {
+                self.check_sprite_trigger(regs);
+            }
+        } else {
+            // OBJ was just DISABLED. If sprite_state is Fetching and
+            // the fetch is still in WaitingForFetcher, the match fired
+            // on the boundary rise with the old (enabled) LCDC value.
+            // On hardware, the match would not have fired because AROR
+            // would be low. Cancel the fetch.
+            if let SpriteState::Fetching(ref sf) = self.sprite_state {
+                if sf.phase == SpriteFetchPhase::WaitingForFetcher {
+                    // Undo the match: un-mark the fetched bit for the
+                    // sprite that was matched so it can potentially be
+                    // fetched later if sprites are re-enabled.
+                    let entry_x = sf.entry.x;
+                    let sprites = self.scan.sprites_mut();
+                    for i in 0..sprites.count as usize {
+                        if sprites.fetched & (1 << i) != 0 && sprites.entries[i].x == entry_x {
+                            sprites.fetched &= !(1 << i);
+                            break;
+                        }
+                    }
+                    self.sprite_state = SpriteState::Idle;
+
+                    // Recompute TYFA: mode3_falling already ran with
+                    // sprite_state=Fetching, which forced TYFA=false.
+                    // On hardware, FEPO was never high (AROR=0), so TYFA
+                    // was never suppressed. Recompute with Idle state.
+                    self.tyfa = !self.wodu_latch && !self.window.rydy() && self.cascade.poky();
+                }
+            }
+        }
+    }
+
     /// Check if a sprite should start fetching at the current pixel position.
     /// Scans all store slots in parallel, matching the hardware's 10
     /// independent X comparators. The lowest-indexed matching slot wins.

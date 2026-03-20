@@ -286,6 +286,13 @@ impl GameBoy {
                 if self.drive_ppu_bus(address, value) {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
+                // Retroactive correction: if this was an LCDC write, the
+                // sprite fetch state may need adjustment. On hardware,
+                // AROR reads XYLO combinationally — the write and sprite
+                // match settle simultaneously.
+                if address == 0xFF40 {
+                    self.ppu.correct_sprite_fetch_for_lcdc();
+                }
                 self.write_byte(address, value);
             }
         }

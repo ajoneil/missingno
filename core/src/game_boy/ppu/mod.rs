@@ -362,6 +362,19 @@ impl Ppu {
         }
     }
 
+    /// After an LCDC write, retroactively correct sprite fetch state.
+    /// Models the combinational path: XYLO → AROR → FEPO. On hardware,
+    /// AROR updates instantly when XYLO changes — a write disabling OBJ
+    /// suppresses an in-progress match, and a write enabling OBJ can
+    /// trigger a match that was suppressed.
+    pub fn correct_sprite_fetch_for_lcdc(&mut self) {
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            if rendering.xymu {
+                rendering.correct_sprite_fetch_for_lcdc(&self.registers);
+            }
+        }
+    }
+
     pub fn control(&self) -> Control {
         self.registers.control
     }
