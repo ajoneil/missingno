@@ -142,7 +142,9 @@ impl ScanCounter {
 
             let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
             let height = regs.control.sprite_size().height();
-            if delta < height {
+            let is_match = delta < height;
+
+            if is_match {
                 let line_offset = delta;
                 sprites.entries[sprites.count as usize] = SpriteStoreEntry {
                     oam_index: self.entry,

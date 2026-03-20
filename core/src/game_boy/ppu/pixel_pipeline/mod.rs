@@ -152,9 +152,15 @@ pub struct Rendering {
     /// TAKA NAND latch: sprite fetch running. Set by SECA (RYCE edge detect),
     /// cleared by VEKU (sprite fetch done).
     taka: bool,
-    /// Latched FEPO value from the start of the falling phase. Used by
-    /// `wodu()` and TYFA computation instead of sprite_state matching.
+    /// Latched FEPO value for `wodu()` and TYFA computation.
     fepo_latch: bool,
+    /// FEPO from the start of the previous rising phase (before pixel_counter
+    /// increments). Used to compute TEKY with `_old` input semantics.
+    fepo_old: bool,
+    /// TEKY evaluated during the rising phase using `_old` inputs. TEKY is an
+    /// `_odd` signal — it only updates during rising (odd) half-phases. SOBU
+    /// captures this value on the following falling phase.
+    teky_latch: bool,
 }
 
 impl Rendering {
@@ -178,6 +184,8 @@ impl Rendering {
             suda: false,
             taka: false,
             fepo_latch: false,
+            fepo_old: false,
+            teky_latch: false,
         }
     }
 
@@ -434,6 +442,8 @@ impl Rendering {
         self.suda = false;
         self.taka = false;
         self.fepo_latch = false;
+        self.fepo_old = false;
+        self.teky_latch = false;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -461,10 +471,8 @@ impl Rendering {
         _oam: &Oam,
         vram: &Vram,
     ) {
-        // Pre-mutation snapshot: capture TEKY and FEPO before any state
-        // changes. SOBU captures TEKY_old (value from previous cycle).
-        // FEPO_old feeds VYBO for TYFA suppression.
-        let teky_old = self.teky(regs);
+        // FEPO_old feeds VYBO for TYFA suppression. Captured before any
+        // falling-phase mutations.
         let fepo_old = self.fepo(regs);
 
         // BG fetcher falling-edge advance: VRAM reads + counter increment.
@@ -487,8 +495,11 @@ impl Rendering {
 
         self.cascade.fall(lyry);
 
-        // SOBU DFF: captures TEKY_old on TAVA falling edge.
-        self.sobu = teky_old;
+        // SOBU DFF: captures TEKY on TAVA falling edge. TEKY is an _odd
+        // signal — it was computed during the preceding rising phase using
+        // _old inputs (fepo_old, lyry_old, taka_old, rydy_old). The saved
+        // teky_latch value models this correctly.
+        self.sobu = self.teky_latch;
 
         // RYCE: combinational rising edge detect. SOBU just went high,
         // SUDA still holds the value from the previous rising phase.
@@ -530,6 +541,18 @@ impl Rendering {
     ) {
         // SUDA DFF: captures SOBU on LAPE rising edge.
         self.suda = self.sobu;
+
+        // TEKY is an `_odd` signal — it only updates during rising (odd)
+        // half-phases. All its inputs use `_old` values (from the previous
+        // half-phase). Capture fepo_old (FEPO from BEFORE pixel_counter
+        // increments this rising phase) and compute TEKY for the next
+        // falling phase's SOBU capture.
+        let fepo_now = self.fepo(regs);
+        self.teky_latch = self.fepo_old
+            && !self.window.rydy()
+            && self.fetcher.lyry()
+            && !self.taka;
+        self.fepo_old = fepo_now;
 
         // Phase-boundary snapshot: capture pre-edge values of signals
         // that are both read and written within this half-phase. All
