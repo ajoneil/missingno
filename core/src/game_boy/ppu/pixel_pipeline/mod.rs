@@ -278,7 +278,9 @@ impl Rendering {
         let (bg_low, bg_high) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
-            SpriteState::Fetching(sf) => (Some(sf.phase), Some(sf.tile_data())),
+            SpriteState::Fetching(sf) => {
+                (Some(SpriteFetchPhase::FetchingData), Some(sf.tile_data()))
+            }
             SpriteState::Idle => (None, None),
         };
         PipelineSnapshot {
@@ -548,10 +550,7 @@ impl Rendering {
         // increments this rising phase) and compute TEKY for the next
         // falling phase's SOBU capture.
         let fepo_now = self.fepo(regs);
-        self.teky_latch = self.fepo_old
-            && !self.window.rydy()
-            && self.fetcher.lyry()
-            && !self.taka;
+        self.teky_latch = self.fepo_old && !self.window.rydy() && self.fetcher.lyry() && !self.taka;
         self.fepo_old = fepo_now;
 
         // Phase-boundary snapshot: capture pre-edge values of signals
@@ -622,37 +621,30 @@ impl Rendering {
         };
 
         if self.taka {
-            // Sprite fetch active: advance sprite data pipeline or handle Done.
+            // Sprite fetch active: advance sprite data pipeline.
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
-                    match sf.phase {
-                        SpriteFetchPhase::FetchingData => {
-                            // BG fetcher is frozen. Advance the sprite data pipeline.
-                            let done = sf.advance(regs, oam, vram);
-                            if done {
-                                sf.merge_into(&mut self.obj_shifter, oam);
-                                sf.phase = SpriteFetchPhase::Done;
-                            }
-                        }
-                        SpriteFetchPhase::Done => {
-                            // Data-pin pixel overwrite (sfetch-done dot).
-                            //
-                            // No SEMU edge fires during sprite fetch (SACU
-                            // frozen → TOBA=0), but the data pins (REMY/RAVO)
-                            // update combinationally after sprite merge.
-                            // Overwrite the last SEMU-written position with
-                            // the merged pixel data (data-pin model).
-                            pixel_output::sprite_overwrite_data_latch(
-                                &self.bg_shifter,
-                                &self.obj_shifter,
-                                self.lcd.data_latch_mut(),
-                                self.window.window_zero_pixel_mut(),
-                                regs,
-                            );
-                            self.sprite_state = SpriteState::Idle;
-                            // VEKU clears TAKA — sprite fetch complete.
-                            self.taka = false;
-                        }
+                    let done = sf.advance(regs, oam, vram);
+                    if done {
+                        // WUTY fires on the rising phase of counter=5 (the
+                        // same dot as the tile data HIGH read). On hardware,
+                        // sprite pixel merge (RACA latch) and TAKA clear
+                        // happen on the same dot — no separate "done" phase.
+                        sf.merge_into(&mut self.obj_shifter, oam);
+
+                        // Data-pin pixel overwrite: REMY/RAVO update
+                        // combinationally after sprite merge. Overwrite the
+                        // last SEMU-written position with merged pixel data.
+                        pixel_output::sprite_overwrite_data_latch(
+                            &self.bg_shifter,
+                            &self.obj_shifter,
+                            self.lcd.data_latch_mut(),
+                            self.window.window_zero_pixel_mut(),
+                            regs,
+                        );
+                        self.sprite_state = SpriteState::Idle;
+                        // VEKU clears TAKA — sprite fetch complete.
+                        self.taka = false;
                     }
                 }
                 SpriteState::Idle => {
