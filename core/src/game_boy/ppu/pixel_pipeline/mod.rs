@@ -544,12 +544,15 @@ impl Rendering {
         self.suda = self.sobu;
 
         // TEKY is an `_odd` signal — it only updates during rising (odd)
-        // half-phases. All its inputs use `_old` values (from the previous
-        // half-phase). Capture fepo_old (FEPO from BEFORE pixel_counter
-        // increments this rising phase) and compute TEKY for the next
-        // falling phase's SOBU capture.
+        // half-phases. On hardware, TEKY's inputs (FEPO, LYRY, TAKA, RYDY)
+        // are combinational and settle within the same phase. GateBoy uses
+        // `_old` values because its simulation model can't represent
+        // intra-phase settling, but the race pair analysis (13-gate
+        // differential, ~65ns vs ~120ns half-cycle) shows the path settles
+        // within a half T-cycle. Use live values to match hardware's
+        // combinational settling.
         let fepo_now = self.fepo(regs);
-        self.teky_latch = self.fepo_old && !self.window.rydy() && self.fetcher.lyry() && !self.taka;
+        self.teky_latch = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.taka;
         self.fepo_old = fepo_now;
 
         // Phase-boundary snapshot: capture pre-edge values of signals
