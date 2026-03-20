@@ -6,18 +6,13 @@ use super::types::{
 
 /// VRAM: tile data and tile maps. Physically on the VRAM data bus
 /// (0x8000–0x9FFF), separate from OAM.
+#[derive(Default)]
 pub struct Vram {
     pub(crate) tiles: [TileBlock; 3],
     pub(crate) tile_maps: [TileMap; 2],
 }
 
 impl Vram {
-    pub fn new() -> Self {
-        Self {
-            tiles: [TileBlock::new(); 3],
-            tile_maps: [TileMap::new(); 2],
-        }
-    }
 
     pub fn read(&self, address: VramAddress) -> u8 {
         match address {
@@ -75,12 +70,15 @@ pub struct Oam {
     sprites: [Sprite; 40],
 }
 
-impl Oam {
-    pub fn new() -> Self {
+impl Default for Oam {
+    fn default() -> Self {
         Self {
-            sprites: [Sprite::new(); 40],
+            sprites: [Sprite::default(); 40],
         }
     }
+}
+
+impl Oam {
 
     pub fn read(&self, address: OamAddress) -> u8 {
         let sprite = &self.sprites[address.sprite.0 as usize];

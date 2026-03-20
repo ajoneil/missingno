@@ -154,7 +154,7 @@ pub struct Rendering {
 impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
-            screen: Screen::new(),
+            screen: Screen::default(),
             hblank: HblankPipeline::new(),
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
@@ -416,7 +416,7 @@ impl Rendering {
     /// persist through VBlank — this models the frame-boundary resets that
     /// individual blocks perform, not struct destruction/recreation.
     pub(super) fn reset_frame(&mut self) {
-        self.screen = Screen::new();
+        self.screen = Screen::default();
         self.window.reset_frame();
         self.reset_scanline(0);
     }
@@ -747,16 +747,6 @@ impl Rendering {
             }
         }
         false
-    }
-
-    /// TEKY = AND4(FEPO, !WIN_HIT, LYRY, !TAKA). Combinational signal
-    /// that indicates a sprite fetch should start. Checked each falling
-    /// phase; SOBU captures the result.
-    fn teky(&self, regs: &PipelineRegisters) -> bool {
-        self.fepo(regs)
-            && !self.window.rydy()   // TUKU_WIN_HITn = NOT(RYDY)
-            && self.fetcher.lyry()   // LYRY_BFETCH_DONEp
-            && !self.sprite_trigger.taka() // SOWO = NOT(TAKA)
     }
 
     /// Start sprite fetch for the first matching unfetched sprite.

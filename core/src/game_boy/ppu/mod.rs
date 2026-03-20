@@ -96,7 +96,7 @@ impl Ppu {
                 myta: true,
                 popu: true,
             },
-            oam: Oam::new(),
+            oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
             // popu is true, so pipeline ticking is gated off.
             pixel_pipeline: Some(Rendering::new()),
@@ -137,7 +137,7 @@ impl Ppu {
                 myta: false,
                 popu: false,
             },
-            oam: Oam::new(),
+            oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
         }
     }
@@ -464,7 +464,7 @@ impl Ppu {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {
                     // Line 144: extract completed frame, enter VBlank.
-                    result.screen = Some(rendering.screen.clone());
+                    result.screen = Some(rendering.screen);
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.
                     rendering.reset_frame();
@@ -476,10 +476,8 @@ impl Ppu {
         }
 
         // Pixel output, SACU, pipe shift — only during active display.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            if !self.video.popu {
-                rendering.rise(&self.registers, &self.video, &self.oam, vram);
-            }
+        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.popu) {
+            rendering.rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
@@ -503,10 +501,8 @@ impl Ppu {
         if self.control().video_enabled() {
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
-            if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                if !self.video.popu {
-                    rendering.fall(&self.registers, &self.video, &self.oam, vram);
-                }
+            if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.popu) {
+                rendering.fall(&self.registers, &self.video, &self.oam, vram);
             }
 
             // DFF8 palette capture (TEPO rising, phase H). On hardware,
@@ -528,7 +524,7 @@ impl Ppu {
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
                 self.registers.clear_latches();
-                result.screen = Some(Screen::new());
+                result.screen = Some(Screen::default());
             }
             // ly_eq_lyc is intentionally NOT updated — comparison clock
             // stops when the PPU is off, freezing the last result.

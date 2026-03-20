@@ -16,10 +16,13 @@ pub struct TileBlock {
     pub data: [u8; 0x800],
 }
 
-impl TileBlock {
-    pub fn new() -> Self {
+impl Default for TileBlock {
+    fn default() -> Self {
         Self { data: [0; 0x800] }
     }
+}
+
+impl TileBlock {
 
     pub fn tile(&self, index: TileIndex) -> Tile {
         let offset = index.0 as usize * 16;

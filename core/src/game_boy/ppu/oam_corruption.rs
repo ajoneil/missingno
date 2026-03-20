@@ -37,7 +37,7 @@ impl Ppu {
     /// scanner's current row.
     pub fn oam_bug_write(&mut self) {
         let row = match self.corrupted_oam_row() {
-            Some(row) if row >= 8 && row < 160 => row,
+            Some(row) if (8..160).contains(&row) => row,
             _ => return,
         };
 
@@ -74,7 +74,7 @@ impl Ppu {
     /// The formulas here target DMG behaviour.
     pub fn oam_bug_read(&mut self) {
         let row = match self.corrupted_oam_row() {
-            Some(row) if row >= 8 && row < 160 => row,
+            Some(row) if (8..160).contains(&row) => row,
             _ => return,
         };
 

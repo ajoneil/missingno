@@ -167,7 +167,7 @@ impl Sgb {
             current_player: 0,
             command_state: CommandState::Idle,
             prev_p14_p15_both_low: false,
-            last_screen: Screen::new(),
+            last_screen: Screen::default(),
             pending_transfer: None,
         }
     }

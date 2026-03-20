@@ -99,7 +99,7 @@ impl GameBoy {
 
         let mut gb = GameBoy {
             cpu,
-            screen: Screen::new(),
+            screen: Screen::default(),
             external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
             ppu: if has_boot_rom {
@@ -143,7 +143,7 @@ impl GameBoy {
         } else {
             self.cpu = Cpu::new(self.external.cartridge.header_checksum());
         }
-        self.screen = Screen::new();
+        self.screen = Screen::default();
         self.external.work_ram = [0; 0x2000];
         self.external.latch = 0xFF;
         self.external.decay = 0;

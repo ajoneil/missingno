@@ -150,7 +150,7 @@ pub struct VramBus {
 impl VramBus {
     pub fn new() -> Self {
         Self {
-            vram: Vram::new(),
+            vram: Vram::default(),
             latch: 0xFF,
         }
     }

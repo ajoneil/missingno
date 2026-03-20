@@ -50,7 +50,7 @@ pub struct ScreenView {
 impl ScreenView {
     pub fn new() -> Self {
         Self {
-            screen: Screen::new(),
+            screen: Screen::default(),
             palette: PaletteChoice::default(),
             sgb_render_data: None,
         }
@@ -65,7 +65,7 @@ impl ScreenView {
             ScreenDisplay::GameBoy(GameBoyScreen::Off) => {
                 // NOTE: On real hardware, LCD off produces a different shade than
                 // palette index 0. We currently render both the same way.
-                self.screen = Screen::new();
+                self.screen = Screen::default();
                 self.sgb_render_data = None;
             }
             ScreenDisplay::Sgb(SgbScreen::Display(screen, sgb_data)) => {

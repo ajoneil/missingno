@@ -11,8 +11,8 @@ pub struct Sprite {
     pub attributes: Attributes,
 }
 
-impl Sprite {
-    pub fn new() -> Self {
+impl Default for Sprite {
+    fn default() -> Self {
         Self {
             position: Position {
                 x_plus_8: 0,
@@ -22,6 +22,9 @@ impl Sprite {
             attributes: Attributes::empty(),
         }
     }
+}
+
+impl Sprite {
 }
 
 #[derive(Clone, Copy)]
