@@ -8,6 +8,7 @@ mod pixel_output;
 mod shifters;
 mod sprite_fetch;
 mod sprite_scanner;
+mod sprite_trigger;
 mod window_control;
 
 pub use sprite_fetch::SpriteFetchPhase;
@@ -27,6 +28,7 @@ use lcd_control::LcdControl;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
 use sprite_scanner::SpriteScanner;
+use sprite_trigger::SpriteTrigger;
 use window_control::WindowControl;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,21 +147,17 @@ pub struct Rendering {
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
-    /// SOBU DFF: captures TEKY_old on each falling phase (TAVA falling edge).
-    sobu: bool,
-    /// SUDA DFF: captures SOBU on each rising phase (LAPE rising edge).
-    suda: bool,
-    /// TAKA NAND latch: sprite fetch running. Set by SECA (RYCE edge detect),
-    /// cleared by VEKU (sprite fetch done).
-    taka: bool,
+    /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
+    /// See `sprite_trigger.rs` for clock domain and race pair documentation.
+    sprite_trigger: SpriteTrigger,
     /// Latched FEPO value for `wodu()` and TYFA computation.
     fepo_latch: bool,
     /// FEPO from the start of the previous rising phase (before pixel_counter
     /// increments). Used to compute TEKY with `_old` input semantics.
     fepo_old: bool,
-    /// TEKY evaluated during the rising phase using `_old` inputs. TEKY is an
-    /// `_odd` signal — it only updates during rising (odd) half-phases. SOBU
-    /// captures this value on the following falling phase.
+    /// TEKY: combinational sprite fetch request, computed during rising from
+    /// live FEPO/RYDY/LYRY/TAKA. Bridged to the next falling phase where
+    /// `sprite_trigger.fall(teky_latch)` captures it into SOBU via TAVA clock.
     teky_latch: bool,
 }
 
@@ -180,9 +178,7 @@ impl Rendering {
             tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
-            sobu: false,
-            suda: false,
-            taka: false,
+            sprite_trigger: SpriteTrigger::new(),
             fepo_latch: false,
             fepo_old: false,
             teky_latch: false,
@@ -438,9 +434,7 @@ impl Rendering {
         self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
-        self.sobu = false;
-        self.suda = false;
-        self.taka = false;
+        self.sprite_trigger.reset();
         self.fepo_latch = false;
         self.fepo_old = false;
         self.teky_latch = false;
@@ -496,20 +490,11 @@ impl Rendering {
 
         self.cascade.fall(lyry);
 
-        // SOBU DFF: captures TEKY on TAVA falling edge. TEKY is an _odd
-        // signal — it was computed during the preceding rising phase using
-        // _old inputs (fepo_old, lyry_old, taka_old, rydy_old). The saved
-        // teky_latch value models this correctly.
-        self.sobu = self.teky_latch;
-
-        // RYCE: combinational rising edge detect. SOBU just went high,
-        // SUDA still holds the value from the previous rising phase.
-        let ryce = self.sobu && !self.suda;
+        // Sprite trigger pipeline: SOBU captures TEKY on TAVA falling
+        // edge (depth 7, after ALET at 5). RYCE edge-detects SOBU rising.
+        let ryce = self.sprite_trigger.fall(self.teky_latch);
 
         if ryce {
-            // SECA = NOR(RYCE, VID_RST, LINE_RST) -> SECA goes low -> TAKA sets.
-            self.taka = true;
-
             // Find and mark the matching sprite entry, start the fetch.
             self.start_sprite_fetch(regs);
         }
@@ -540,8 +525,8 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
-        // SUDA DFF: captures SOBU on LAPE rising edge.
-        self.suda = self.sobu;
+        // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
+        self.sprite_trigger.rise();
 
         // TEKY is an `_odd` signal — it only updates during rising (odd)
         // half-phases. On hardware, TEKY's inputs (FEPO, LYRY, TAKA, RYDY)
@@ -552,7 +537,7 @@ impl Rendering {
         // within a half T-cycle. Use live values to match hardware's
         // combinational settling.
         let fepo_now = self.fepo(regs);
-        self.teky_latch = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.taka;
+        self.teky_latch = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
         self.fepo_old = fepo_now;
 
         // Phase-boundary snapshot: capture pre-edge values of signals
@@ -621,7 +606,7 @@ impl Rendering {
             false
         };
 
-        if self.taka {
+        if self.sprite_trigger.taka() {
             // Sprite fetch active: advance sprite data pipeline.
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
@@ -649,7 +634,7 @@ impl Rendering {
                         // SACU can fire on this same dot. On hardware,
                         // SACU is combinational — when TAKA clears and
                         // TYFA is true, the pixel clock fires immediately.
-                        self.taka = false;
+                        self.sprite_trigger.clear_taka();
                     }
                 }
                 SpriteState::Idle => {
@@ -660,7 +645,7 @@ impl Rendering {
             }
         }
 
-        if !self.taka {
+        if !self.sprite_trigger.taka() {
             // Normal pixel pipeline — no sprite fetch active.
 
             // TYFA was computed in falling phase and bridged. SACU is
@@ -794,7 +779,7 @@ impl Rendering {
         self.fepo(regs)
             && !self.window.rydy()   // TUKU_WIN_HITn = NOT(RYDY)
             && self.fetcher.lyry()   // LYRY_BFETCH_DONEp
-            && !self.taka // SOWO = NOT(TAKA)
+            && !self.sprite_trigger.taka() // SOWO = NOT(TAKA)
     }
 
     /// Start sprite fetch for the first matching unfetched sprite.
