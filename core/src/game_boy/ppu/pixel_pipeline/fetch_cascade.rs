@@ -12,7 +12,7 @@
 /// LYRY fires on the rising edge (the fetcher counter reaches 10 during
 /// advance_rising). NYKA captures on the next falling edge — the natural
 /// 1 half-phase DFF delay. No extra storage is needed because LYRY is
-/// combinational on phase_tfetch, which persists between half-phases.
+/// combinational on fetch_counter, which persists between half-phases.
 ///
 /// Consumers read DFF state via accessors:
 /// - `poky()` → TYFA (pixel clock enable)

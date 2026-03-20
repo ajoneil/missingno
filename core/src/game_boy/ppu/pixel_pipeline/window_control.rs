@@ -155,7 +155,7 @@ impl WindowControl {
         // Reactivation requires the initial window fetch to have completed
         // (RYDY=0), modeling hardware's !window_is_being_fetched.
         if fetcher.fetching_window {
-            if !rydy_snapshot && fetcher.phase_tfetch < 2 {
+            if !rydy_snapshot && fetcher.fetch_counter < 2 {
                 self.window_zero_pixel = true;
             }
             return;

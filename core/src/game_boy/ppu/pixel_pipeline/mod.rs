@@ -94,7 +94,7 @@ pub struct PipelineSnapshot {
     pub sprite_fetch_phase: Option<SpriteFetchPhase>,
     pub sprite_tile_data: Option<(u8, u8)>,
     pub lcd_x: u8,
-    pub phase_tfetch: u8,
+    pub fetch_counter: u8,
     pub rydy: bool,
     pub wusa: bool,
     pub pova: bool,
@@ -291,7 +291,7 @@ impl Rendering {
             sprite_fetch_phase,
             sprite_tile_data,
             lcd_x: self.lcd.lcd_x(),
-            phase_tfetch: self.fetcher.phase_tfetch,
+            fetch_counter: self.fetcher.fetch_counter,
             rydy: self.window.rydy(),
             wusa: self.lcd.wusa(),
             pova: self.lcd.pova(),
@@ -436,7 +436,7 @@ impl Rendering {
 
     /// Falling edge Mode 3 processing.
     ///
-    /// Fetcher advances (phase_tfetch falling half), cascade DFFs (NYKA,
+    /// Fetcher advances (fetch_counter falling half), cascade DFFs (NYKA,
     /// PYGO), NOR latches (POKY), combinational signals (TYFA bridge),
     /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(

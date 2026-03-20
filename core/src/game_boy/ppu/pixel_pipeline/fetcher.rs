@@ -6,11 +6,11 @@ use super::super::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
 pub(super) struct TileFetcher {
-    /// Hardware's phase_tfetch counter: 0-11 (6 dots x 2 half-phases).
+    /// Hardware's fetch_counter counter: 0-11 (6 dots x 2 half-phases).
     /// Incremented by 2 each dot (since advance() is called once per dot,
     /// but the hardware counter ticks twice per dot on both half-phases).
     /// Reset to 0 on TAVE (pipe load) or window trigger.
-    pub(super) phase_tfetch: u8,
+    pub(super) fetch_counter: u8,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     pub(super) window_tile_x: u8,
@@ -44,12 +44,12 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 impl TileFetcher {
     /// LYRY: combinational decode. Fetch done when counter >= 10.
     pub(super) fn lyry(&self) -> bool {
-        self.phase_tfetch >= 10
+        self.fetch_counter >= 10
     }
 
     pub(super) fn new() -> Self {
         Self {
-            phase_tfetch: 0,
+            fetch_counter: 0,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -154,7 +154,7 @@ impl TileFetcher {
         video: &VideoControl,
         vram: &Vram,
     ) {
-        match self.phase_tfetch {
+        match self.fetch_counter {
             0 => {
                 // Tilemap VRAM read (dot 0, falling).
                 self.vram_address =
@@ -173,19 +173,19 @@ impl TileFetcher {
             }
             _ => {}
         }
-        if self.phase_tfetch < 10 {
-            self.phase_tfetch += 1;
+        if self.fetch_counter < 10 {
+            self.fetch_counter += 1;
         }
     }
 
     /// Rising-edge advance: counter increment only.
     ///
-    /// No VRAM reads on rising. When phase_tfetch reaches 10, LYRY
+    /// No VRAM reads on rising. When fetch_counter reaches 10, LYRY
     /// fires combinationally on the rising edge — the hardware-correct
     /// phase for the fetch-done signal.
     pub(super) fn advance_rising(&mut self) {
-        if self.phase_tfetch < 10 {
-            self.phase_tfetch += 1;
+        if self.fetch_counter < 10 {
+            self.fetch_counter += 1;
         }
     }
 
@@ -196,12 +196,12 @@ impl TileFetcher {
         if self.fetching_window {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
-        self.phase_tfetch = 0;
+        self.fetch_counter = 0;
     }
 
     /// Reset the fetcher for a window trigger.
     pub(super) fn reset_for_window(&mut self) {
-        self.phase_tfetch = 0;
+        self.fetch_counter = 0;
         self.window_tile_x = 0;
         self.fetching_window = true;
     }

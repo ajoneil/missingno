@@ -32,7 +32,7 @@ pub(super) struct SpriteFetch {
     /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
     /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
     /// Self-stops at 5 via TAME clock gating.
-    phase_sfetch: u8,
+    fetch_counter: u8,
     tile_data_low: u8,
     tile_data_high: u8,
 }
@@ -44,7 +44,7 @@ impl SpriteFetch {
     pub(super) fn new_fetching(entry: SpriteStoreEntry) -> Self {
         Self {
             entry,
-            phase_sfetch: 0,
+            fetch_counter: 0,
             tile_data_low: 0,
             tile_data_high: 0,
         }
@@ -86,9 +86,9 @@ impl SpriteFetch {
     }
 
     /// Advance the sprite fetch pipeline by one dot. Returns `true` when
-    /// the fetch is complete (phase_sfetch == 5, tile data high read).
+    /// the fetch is complete (fetch_counter == 5, tile data high read).
     pub(super) fn advance(&mut self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram) -> bool {
-        match self.phase_sfetch {
+        match self.fetch_counter {
             3 => {
                 // Tile data low VRAM read.
                 self.tile_data_low = self.read_tile_data(regs, oam, vram, false);
@@ -102,7 +102,7 @@ impl SpriteFetch {
                 // GetTile wait (0, 1) and data wait (2, 4): no VRAM action.
             }
         }
-        self.phase_sfetch += 1;
+        self.fetch_counter += 1;
         false
     }
 
