@@ -52,6 +52,9 @@ pub struct Debugger {
     breakpoints: BTreeSet<u16>,
     watchpoints: Vec<WatchCondition>,
     last_watchpoint_hit: Option<WatchCondition>,
+    /// T-cycle counter. Increments once per dot. Not hardware state —
+    /// debugging/tracing infrastructure built on top of the emulation core.
+    dot_count: u64,
 }
 
 impl Debugger {
@@ -61,6 +64,7 @@ impl Debugger {
             breakpoints: BTreeSet::new(),
             watchpoints: Vec::new(),
             last_watchpoint_hit: None,
+            dot_count: 0,
         }
     }
 
@@ -76,8 +80,14 @@ impl Debugger {
         self.game_boy
     }
 
+    pub fn dot_count(&self) -> u64 {
+        self.dot_count
+    }
+
     pub fn step(&mut self) -> Option<Screen> {
-        if self.game_boy.step() {
+        let result = self.game_boy.step();
+        self.dot_count += result.dots as u64;
+        if result.new_screen {
             Some(self.game_boy.screen().clone())
         } else {
             None
@@ -93,6 +103,7 @@ impl Debugger {
     }
 
     pub fn step_dot(&mut self) -> Option<Screen> {
+        self.dot_count += 1;
         if self.game_boy.step_dot() {
             Some(self.game_boy.screen().clone())
         } else {
@@ -160,8 +171,9 @@ impl Debugger {
 
     fn step_frame_watched_traced(&mut self) -> Option<Screen> {
         loop {
-            let (new_screen, trace) = self.game_boy.step_traced(true);
-            let screen = if new_screen {
+            let (result, trace) = self.game_boy.step_traced(true);
+            self.dot_count += result.dots as u64;
+            let screen = if result.new_screen {
                 Some(self.game_boy.screen().clone())
             } else {
                 None
@@ -258,6 +270,7 @@ impl Debugger {
 
     pub fn reset(&mut self) {
         self.game_boy.reset();
+        self.dot_count = 0;
     }
 
     pub fn breakpoints(&self) -> &BTreeSet<u16> {

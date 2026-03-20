@@ -59,7 +59,7 @@ fn run_boot_rom(gb: &mut GameBoy) {
 pub fn run_until_serial_match(gb: &mut GameBoy, needles: &[&str], timeout_frames: u32) -> String {
     let mut output = String::new();
     for _ in 0..timeout_frames {
-        while !gb.step() {}
+        while !gb.step().new_screen {}
         let bytes = gb.drain_serial_output();
         if !bytes.is_empty() {
             output.push_str(&String::from_utf8_lossy(&bytes));
@@ -78,7 +78,7 @@ pub fn run_until_serial_match(gb: &mut GameBoy, needles: &[&str], timeout_frames
 /// results but don't terminate with an infinite loop.
 pub fn run_frames(gb: &mut GameBoy, frames: u32) {
     for _ in 0..frames {
-        while !gb.step() {}
+        while !gb.step().new_screen {}
     }
 }
 
@@ -88,7 +88,7 @@ pub fn run_frames(gb: &mut GameBoy, frames: u32) {
 /// of T-cycles) to catch HALT-based loops that aren't visible at frame boundaries.
 pub fn run_until_infinite_loop(gb: &mut GameBoy, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
-        while !gb.step() {}
+        while !gb.step().new_screen {}
         if is_infinite_loop(gb) {
             return true;
         }
@@ -116,7 +116,7 @@ pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
             if gb.read(pc) == 0x40 {
                 return true;
             }
-            if gb.step() {
+            if gb.step().new_screen {
                 break;
             }
         }
@@ -137,7 +137,7 @@ pub fn run_until_undefined_opcode(gb: &mut GameBoy, timeout_frames: u32) -> bool
             if is_infinite_loop(gb) {
                 return true;
             }
-            if gb.step() {
+            if gb.step().new_screen {
                 break;
             }
         }

@@ -70,7 +70,7 @@ impl Emulator {
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
             Message::EmulateFrame => {
-                while !self.game_boy.step() {}
+                while !self.game_boy.step().new_screen {}
                 let screen = *self.game_boy.screen();
                 let video_enabled = self.game_boy.ppu().control().video_enabled();
                 let display = if let Some(sgb) = self.game_boy.sgb() {

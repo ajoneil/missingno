@@ -4,7 +4,7 @@ use crate::common;
 fn dmg_acid2() {
     let mut gb = common::load_rom("dmg-acid2/dmg-acid2.gb");
     for _ in 0..5 {
-        while !gb.step() {}
+        while !gb.step().new_screen {}
     }
 
     let actual = common::screen_to_greyscale(gb.screen());

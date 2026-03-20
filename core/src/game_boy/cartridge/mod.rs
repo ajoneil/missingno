@@ -81,6 +81,10 @@ impl Cartridge {
         self.mbc.ram()
     }
 
+    pub fn rom(&self) -> &[u8] {
+        &self.rom
+    }
+
     pub fn header_checksum(&self) -> u8 {
         self.rom[0x14d]
     }

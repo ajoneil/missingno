@@ -11,14 +11,22 @@ pub(super) enum OamBugKind {
     Write,
 }
 
+/// Result of executing one instruction.
+pub struct StepResult {
+    /// Whether a new video frame was produced during this instruction.
+    pub new_screen: bool,
+    /// Number of T-cycles (dots) consumed by this instruction.
+    pub dots: u32,
+}
+
 impl GameBoy {
-    pub fn step(&mut self) -> bool {
+    pub fn step(&mut self) -> StepResult {
         self.step_traced(false).0
     }
 
     /// Step one instruction, optionally recording all bus accesses.
-    /// Returns (new_screen, trace). Trace is empty when `trace` is false.
-    pub fn step_traced(&mut self, trace: bool) -> (bool, Vec<BusAccess>) {
+    /// Returns (result, trace). Trace is empty when `trace` is false.
+    pub fn step_traced(&mut self, trace: bool) -> (StepResult, Vec<BusAccess>) {
         if trace {
             self.bus_trace = Some(Vec::new());
         }
@@ -26,13 +34,18 @@ impl GameBoy {
         // If step_dot() left us mid-instruction, drain to the next
         // boundary first, then run one full instruction.
         let mut new_screen = false;
+        let mut dots = 0u32;
         if !self.cpu.at_instruction_boundary() {
-            new_screen |= self.step_instruction();
+            let r = self.step_instruction();
+            new_screen |= r.new_screen;
+            dots += r.dots;
         }
-        new_screen |= self.step_instruction();
+        let r = self.step_instruction();
+        new_screen |= r.new_screen;
+        dots += r.dots;
 
         let trace = self.bus_trace.take().unwrap_or_default();
-        (new_screen, trace)
+        (StepResult { new_screen, dots }, trace)
     }
 
     /// Run one complete instruction from start to finish.
@@ -40,7 +53,7 @@ impl GameBoy {
     /// Runs phases until the CPU returns to the Fetch phase at a fresh
     /// M-cycle boundary (instruction boundary). At that point, EI delay
     /// is advanced and control returns to the caller.
-    fn step_instruction(&mut self) -> bool {
+    fn step_instruction(&mut self) -> StepResult {
         let mut new_screen = false;
         let mut pending_oam_bug: Option<OamBugKind> = None;
         self.last_read_value = 0;
@@ -51,6 +64,7 @@ impl GameBoy {
 
         const PHASE_BUDGET: u32 = 400;
         let mut phases_remaining = PHASE_BUDGET;
+        let mut dots = 0u32;
 
         loop {
             assert!(
@@ -64,11 +78,14 @@ impl GameBoy {
 
             // Check for instruction boundary after completing a dot
             // (clock is Low = just finished fall() = dot complete)
-            if self.clock_phase == ClockPhase::Low && self.cpu.at_instruction_boundary() {
-                break;
+            if self.clock_phase == ClockPhase::Low {
+                dots += 1;
+                if self.cpu.at_instruction_boundary() {
+                    break;
+                }
             }
         }
-        new_screen
+        StepResult { new_screen, dots }
     }
 
     /// Advance exactly one half-phase — execute rise() or fall()
