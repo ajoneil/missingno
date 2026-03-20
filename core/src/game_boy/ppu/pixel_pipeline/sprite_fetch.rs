@@ -13,38 +13,37 @@ use super::shifters::ObjShifter;
 /// The phases of a sprite fetch on real hardware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteFetchPhase {
-    /// The BG fetcher continues advancing through its normal steps.
-    /// The wait ends when the fetcher has completed GetTileDataHigh
-    /// (reached Load) AND the BG shifter is non-empty — both conditions
-    /// must be true simultaneously. The variable sprite penalty (0-5
-    /// dots) emerges from how many fetcher steps this phase consumes.
-    WaitingForFetcher,
     /// The BG fetcher is frozen at its current position. Sprite tile
     /// data is read through the SpriteStep state machine (6 dots total).
+    /// On hardware, the 3-bit counter (TOXE/TULY/TESE) counts 0-5,
+    /// self-stopping at 5 via TAME clock gating. WUTY (fetch done)
+    /// fires on the rising phase of counter=5, the same dot as the
+    /// tile data HIGH read and sprite pixel merge. There is no separate
+    /// "done" dot — TAKA clears on the same dot.
     FetchingData,
-    /// Data fetch complete. Pixel clock still frozen (hardware: state_old.FEPO=1).
-    /// Sprite data is merged into the OBJ shifter on this dot.
-    /// Transitions to Idle on the next dot.
-    Done,
 }
 
+/// Active sprite data fetch. Models the 3-bit counter (TOXE/TULY/TESE)
+/// that counts 0-5 over 6 dots, performing OAM reads (counter 0-1) and
+/// VRAM reads (counter 3 and 5) for sprite tile data.
 pub(super) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(super) entry: SpriteStoreEntry,
-    pub(super) phase: SpriteFetchPhase,
-    /// Hardware's sprite fetch counter: 0-5 (6 dots).
-    /// VRAM reads happen at counter values 3 (tile data low)
-    /// and 5 (tile data high). Incremented by 1 each dot.
+    /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
+    /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
+    /// Self-stops at 5 via TAME clock gating.
     phase_sfetch: u8,
     tile_data_low: u8,
     tile_data_high: u8,
 }
 
 impl SpriteFetch {
-    pub(super) fn new(entry: SpriteStoreEntry) -> Self {
+    /// Start the 6-dot sprite data fetch. The variable 0-5 dot penalty
+    /// is handled by TEKY/SOBU staying low until the BG fetcher is done,
+    /// not by a separate waiting state.
+    pub(super) fn new_fetching(entry: SpriteStoreEntry) -> Self {
         Self {
             entry,
-            phase: SpriteFetchPhase::WaitingForFetcher,
             phase_sfetch: 0,
             tile_data_low: 0,
             tile_data_high: 0,
