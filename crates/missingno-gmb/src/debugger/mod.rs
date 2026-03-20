@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::game_boy::{
+use crate::{
     BusAccess, BusAccessKind, GameBoy,
     cpu::instructions::Instruction,
     ppu::{self, rendering::Mode, screen::Screen},

@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::app::{Message, texture_renderer::TextureRenderer};
-use missingno_gmb::game_boy::ppu::{
+use missingno_gmb::ppu::{
     types::control::Control, memory::Vram, types::palette::Palette, types::tiles::TileBlock,
 };
 
@@ -25,7 +25,7 @@ pub fn tile_block_atlas(block: &TileBlock, palette: &Palette) -> Element<'static
             // For each tile in this row
             for tile_col in 0..16 {
                 let tile_index = tile_row * 16 + tile_col;
-                let tile = block.tile(missingno_gmb::game_boy::ppu::types::tiles::TileIndex(tile_index));
+                let tile = block.tile(missingno_gmb::ppu::types::tiles::TileIndex(tile_index));
 
                 // For each pixel in this tile's row
                 for pixel_x in 0..8 {
@@ -45,7 +45,7 @@ pub fn tile_block_atlas(block: &TileBlock, palette: &Palette) -> Element<'static
 
 /// Renders a tile map as a single texture atlas
 pub fn tile_map_atlas(
-    tile_map: &missingno_gmb::game_boy::ppu::types::tile_maps::TileMap,
+    tile_map: &missingno_gmb::ppu::types::tile_maps::TileMap,
     control: Control,
     vram: &Vram,
     palette: &Palette,

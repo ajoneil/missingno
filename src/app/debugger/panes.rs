@@ -36,7 +36,7 @@ use crate::app::{
     screen::ScreenView,
 };
 use missingno_gmb::debugger::Debugger;
-use missingno_gmb::game_boy::ppu::types::{
+use missingno_gmb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tile_maps::TileMapId,
 };

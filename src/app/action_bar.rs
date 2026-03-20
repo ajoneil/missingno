@@ -18,7 +18,7 @@ use crate::app::{
     },
     load,
 };
-use missingno_gmb::game_boy::ppu::types::palette::PaletteChoice;
+use missingno_gmb::ppu::types::palette::PaletteChoice;
 
 #[derive(Debug, Clone)]
 pub enum Message {

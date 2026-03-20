@@ -12,7 +12,7 @@ use crate::app::{
     core::icons::{self, Icon},
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
-use missingno_gmb::game_boy::{
+use missingno_gmb::{
     GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode,
 };
 

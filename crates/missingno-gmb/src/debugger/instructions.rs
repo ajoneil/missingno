@@ -1,4 +1,4 @@
-use crate::game_boy::GameBoy;
+use crate::GameBoy;
 
 pub struct InstructionsIterator<'a> {
     pub address: Option<u16>,

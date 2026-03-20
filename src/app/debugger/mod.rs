@@ -8,7 +8,7 @@ use crate::app::{
     emulator::Emulator,
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
-use missingno_gmb::game_boy::{
+use missingno_gmb::{
     GameBoy,
     joypad::Button,
     ppu::types::palette::PaletteChoice,
@@ -109,7 +109,7 @@ impl Debugger {
 
     fn screen_update_task(
         &self,
-        screen: Option<missingno_gmb::game_boy::ppu::screen::Screen>,
+        screen: Option<missingno_gmb::ppu::screen::Screen>,
     ) -> Task<app::Message> {
         let video_enabled = self.debugger.game_boy().ppu().control().video_enabled();
         let display = if let Some(sgb) = self.debugger.game_boy().sgb() {

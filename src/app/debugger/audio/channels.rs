@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::app::Message;
-use missingno_gmb::game_boy::audio::channels::{
+use missingno_gmb::audio::channels::{
     Enabled,
     noise::NoiseChannel,
     pulse::PulseChannel,

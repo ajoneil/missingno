@@ -17,7 +17,7 @@ use crate::app::{
         ppu::{palette::palette3, tile_widget::tile_flip},
     },
 };
-use missingno_gmb::game_boy::ppu::{
+use missingno_gmb::ppu::{
     Ppu,
     memory::Vram,
     types::palette::{Palette, PaletteMap},
