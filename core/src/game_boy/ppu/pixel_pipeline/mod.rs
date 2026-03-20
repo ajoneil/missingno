@@ -359,17 +359,15 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures live WODU
-        // — XYMU clears on the same dot that WODU fires, not one dot
-        // later. wodu_latch is maintained separately for the TYFA gate
-        // (VYBO = NOR3(FEPO_old, WODU_old, MYVO)) so that PX=167's
-        // last pixel clock fires before the gate suppresses it.
+        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU_old
+        // — the WODU value from the previous half-phase. Since fall()
+        // runs after rise(), self.wodu() here reflects the state after
+        // the most recent rise() — this IS WODU_old for the falling edge.
         let wodu = self.wodu();
 
-        // wodu_latch is maintained for TYFA gating in mode3_falling().
-        // On the dot PX=167, wodu_latch is still false (from previous
-        // dot), so TYFA can fire one last time. On the next dot,
-        // wodu_latch=true suppresses TYFA.
+        // wodu_latch maintained for TYFA gating in mode3_falling().
+        // Updated AFTER VOGA capture so VOGA sees current wodu (= WODU_old)
+        // and mode3_falling sees the value from this dot.
         self.wodu_latch = wodu;
 
         if wodu {
