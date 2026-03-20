@@ -145,6 +145,16 @@ pub struct Rendering {
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
+    /// SOBU DFF: captures TEKY_old on each falling phase (TAVA falling edge).
+    sobu: bool,
+    /// SUDA DFF: captures SOBU on each rising phase (LAPE rising edge).
+    suda: bool,
+    /// TAKA NAND latch: sprite fetch running. Set by SECA (RYCE edge detect),
+    /// cleared by VEKU (sprite fetch done).
+    taka: bool,
+    /// Latched FEPO value from the start of the falling phase. Used by
+    /// `wodu()` and TYFA computation instead of sprite_state matching.
+    fepo_latch: bool,
 }
 
 impl Rendering {
@@ -164,6 +174,10 @@ impl Rendering {
             tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
+            sobu: false,
+            suda: false,
+            taka: false,
+            fepo_latch: false,
         }
     }
 
@@ -183,8 +197,7 @@ impl Rendering {
     /// On hardware, WODU is not a latch — it's valid whenever its
     /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
     pub(super) fn wodu(&self) -> bool {
-        let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
-        self.xymu && self.lcd.xugu() && !fepo
+        self.xymu && self.lcd.xugu() && !self.fepo_latch
     }
 
     pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
@@ -417,6 +430,10 @@ impl Rendering {
         self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
+        self.sobu = false;
+        self.suda = false;
+        self.taka = false;
+        self.fepo_latch = false;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -441,20 +458,18 @@ impl Rendering {
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        oam: &Oam,
+        _oam: &Oam,
         vram: &Vram,
     ) {
-        let sprite_data_fetch = matches!(
-            self.sprite_state,
-            SpriteState::Fetching(SpriteFetch {
-                phase: SpriteFetchPhase::FetchingData,
-                ..
-            })
-        );
+        // Pre-mutation snapshot: capture TEKY and FEPO before any state
+        // changes. SOBU captures TEKY_old (value from previous cycle).
+        // FEPO_old feeds VYBO for TYFA suppression.
+        let teky_old = self.teky(regs);
+        let fepo_old = self.fepo(regs);
 
         // BG fetcher falling-edge advance: VRAM reads + counter increment.
-        // Gated by sprite data fetch. LEBO = NAND2(ALET, MOCE).
-        if !sprite_data_fetch {
+        // Gated by TAKA (sprite data fetch active). LEBO = NAND2(ALET, MOCE).
+        if !self.taka {
             self.fetcher.advance_falling(
                 self.lcd.pixel_counter(),
                 self.window.window_line_counter(),
@@ -470,52 +485,32 @@ impl Rendering {
         // GetTile — once TAVE fires, the fetcher is no longer Idle.
         let lyry = self.fetcher.lyry();
 
-        // Sprite wait exit: when the BG fetcher reaches Idle during
-        // sprite wait (WaitingForFetcher) and the shifter is non-empty,
-        // transition to sprite data fetch. Co-located with the fetcher
-        // advance to preserve 0-delay relative timing.
-        //
-        // The transition sets the phase to FetchingData. The first
-        // sprite fetch advance fires on the next rising phase (sprite
-        // data fetch runs on rising in mode3_rising). This is a phase
-        // change from the old code where both the exit check and the
-        // first sf.advance() ran on the same rising -- now exit is on
-        // falling and first advance is on next rising. However, this is
-        // actually more correct: on hardware, the sprite fetch clock
-        // (VONU/TOBU) is separate from the BG fetcher clock (LEBO).
-        // Sprite wait exit uses PYGO (cascade DFF output) instead of
-        // POKY (bg_shifter.loaded). Both go high on the same falling phase
-        // and remain high for the rest of the scanline. On hardware, TEKY
-        // checks live LYRY_BFETCH_DONEp directly.
-        if let SpriteState::Fetching(ref mut sf) = self.sprite_state
-            && sf.phase == SpriteFetchPhase::WaitingForFetcher
-            && lyry
-            && self.cascade.pygo()
-        {
-            sf.phase = SpriteFetchPhase::FetchingData;
-            // The first sprite fetch step fires immediately on the
-            // same dot as the wait exit. This preserves the old
-            // timing where both the exit check and first sf.advance()
-            // ran on the same phase.
-            sf.advance(regs, oam, vram);
-        }
-
         self.cascade.fall(lyry);
 
+        // SOBU DFF: captures TEKY_old on TAVA falling edge.
+        self.sobu = teky_old;
+
+        // RYCE: combinational rising edge detect. SOBU just went high,
+        // SUDA still holds the value from the previous rising phase.
+        let ryce = self.sobu && !self.suda;
+
+        if ryce {
+            // SECA = NOR(RYCE, VID_RST, LINE_RST) -> SECA goes low -> TAKA sets.
+            self.taka = true;
+
+            // Find and mark the matching sprite entry, start the fetch.
+            self.start_sprite_fetch(regs);
+        }
+
+        // Latch FEPO_old for wodu() and TYFA computation.
+        self.fepo_latch = fepo_old;
+
         // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
-        // SOCY = NOT(RYDY): self.rydy was set in the preceding rising by
-        // check_window_trigger and is stable during falling (rising signal,
-        // constant during falling phases per GateBoy).
-        // VYBO = NOR3(FEPO_old, WODU_old, MYVO). When wodu_latch is true
-        // (WODU fired on previous dot), TYFA must be suppressed to stop the
-        // pixel clock at PX=167. Without this gate, SACU would fire one
-        // extra time, advancing PX to 168 and causing a mode flicker (XUGU
-        // goes false, mode() briefly reports Drawing). During sprite fetch,
-        // TYFA=0 (FEPO suppresses VYBO).
-        self.tyfa = match self.sprite_state {
-            SpriteState::Idle => !self.wodu_latch && !self.window.rydy() && self.cascade.poky(),
-            _ => false,
-        };
+        // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
+        // FEPO_old suppresses TYFA during sprite X match (before and during
+        // fetch). When wodu_latch is true (WODU fired on previous dot), TYFA
+        // must be suppressed to stop the pixel clock at PX=167.
+        self.tyfa = !fepo_old && !self.wodu_latch && !self.window.rydy() && self.cascade.poky();
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -533,6 +528,9 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // SUDA DFF: captures SOBU on LAPE rising edge.
+        self.suda = self.sobu;
+
         // Phase-boundary snapshot: capture pre-edge values of signals
         // that are both read and written within this half-phase. All
         // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
@@ -543,15 +541,8 @@ impl Rendering {
         };
 
         // BG fetcher rising-edge advance: counter increment only.
-        // Gated by sprite data fetch (same as falling advance).
-        let sprite_data_fetch = matches!(
-            self.sprite_state,
-            SpriteState::Fetching(SpriteFetch {
-                phase: SpriteFetchPhase::FetchingData,
-                ..
-            })
-        );
-        if !sprite_data_fetch {
+        // Gated by TAKA (sprite data fetch active).
+        if !self.taka {
             self.fetcher.advance_rising();
         }
 
@@ -607,127 +598,119 @@ impl Rendering {
             false
         };
 
-        match self.sprite_state {
-            SpriteState::Fetching(ref mut sf) => {
-                match sf.phase {
-                    SpriteFetchPhase::WaitingForFetcher => {
-                        // BG fetcher advances on falling (mode3_falling).
-                        // Wait exit check is in mode3_falling.
-                    }
-                    SpriteFetchPhase::FetchingData => {
-                        // BG fetcher is frozen. Advance the sprite data pipeline.
-                        let done = sf.advance(regs, oam, vram);
-                        if done {
-                            sf.merge_into(&mut self.obj_shifter, oam);
-                            sf.phase = SpriteFetchPhase::Done;
+        if self.taka {
+            // Sprite fetch active: advance sprite data pipeline or handle Done.
+            match self.sprite_state {
+                SpriteState::Fetching(ref mut sf) => {
+                    match sf.phase {
+                        SpriteFetchPhase::FetchingData => {
+                            // BG fetcher is frozen. Advance the sprite data pipeline.
+                            let done = sf.advance(regs, oam, vram);
+                            if done {
+                                sf.merge_into(&mut self.obj_shifter, oam);
+                                sf.phase = SpriteFetchPhase::Done;
+                            }
+                        }
+                        SpriteFetchPhase::Done => {
+                            // Data-pin pixel overwrite (sfetch-done dot).
+                            //
+                            // No SEMU edge fires during sprite fetch (SACU
+                            // frozen → TOBA=0), but the data pins (REMY/RAVO)
+                            // update combinationally after sprite merge.
+                            // Overwrite the last SEMU-written position with
+                            // the merged pixel data (data-pin model).
+                            pixel_output::sprite_overwrite_data_latch(
+                                &self.bg_shifter,
+                                &self.obj_shifter,
+                                self.lcd.data_latch_mut(),
+                                self.window.window_zero_pixel_mut(),
+                                regs,
+                            );
+                            self.sprite_state = SpriteState::Idle;
+                            // VEKU clears TAKA — sprite fetch complete.
+                            self.taka = false;
                         }
                     }
-                    SpriteFetchPhase::Done => {
-                        // Data-pin pixel overwrite (sfetch-done dot).
-                        //
-                        // No SEMU edge fires during sprite fetch (SACU
-                        // frozen → TOBA=0), but the data pins (REMY/RAVO)
-                        // update combinationally after sprite merge.
-                        // Overwrite the last SEMU-written position with
-                        // the merged pixel data (data-pin model).
-                        pixel_output::sprite_overwrite_data_latch(
-                            &self.bg_shifter,
-                            &self.obj_shifter,
-                            self.lcd.data_latch_mut(),
-                            self.window.window_zero_pixel_mut(),
-                            regs,
-                        );
-                        self.sprite_state = SpriteState::Idle;
-
-                        // Re-evaluate FEPO: check if another sprite matches at
-                        // the same pixel_counter. On hardware, FEPO is the OR
-                        // of all 10 store comparators — when sfetch_done clears
-                        // the fetched sprite's store_x to 0xFF, FEPO immediately
-                        // re-evaluates against the still-frozen pix_count. If
-                        // another sprite matches, a new fetch begins without any
-                        // pixel counter advancement. This chains all same-X
-                        // sprite fetches back-to-back.
-                        self.check_sprite_trigger(regs);
-                    }
+                }
+                SpriteState::Idle => {
+                    // TAKA set but no sprite fetching yet — RYCE just fired
+                    // on the falling phase and start_sprite_fetch set up the
+                    // fetch. The first advance will happen on the next rising.
                 }
             }
-            SpriteState::Idle => {
-                // TYFA was computed in falling phase and bridged. SACU is
-                // computed here in rising — hardware-correct phase for SACU.
-                let tyfa = self.tyfa;
+        } else {
+            // Normal pixel pipeline — no sprite fetch active.
 
-                // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
-                // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
-                // Net: SACU fires when TYFA is high AND ROXY is done (fine
-                // scroll complete). Drives pipe shift registers and pixel counter.
-                let sacu = tyfa && self.fine_scroll.pixel_clock_active();
+            // TYFA was computed in falling phase and bridged. SACU is
+            // computed here in rising — hardware-correct phase for SACU.
+            let tyfa = self.tyfa;
 
-                // Hardware within-tick ordering for DFF22 shift register cells:
-                // 1. Synchronous shift (SACU clock edge)
-                // 2. Async parallel load (LOZE SET/RST — overwrites shift)
-                // 3. Pixel output reads final state
-                if sacu {
-                    self.bg_shifter.shift();
-                    self.obj_shifter.shift();
-                }
+            // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
+            // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
+            // Net: SACU fires when TYFA is high AND ROXY is done (fine
+            // scroll complete). Drives pipe shift registers and pixel counter.
+            let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
-                // RYFA DFF captures (count==7 && !RYDY) on each dot.
-                // SEKO is the rising-edge detector on RYFA — it fires one dot
-                // after count reaches 7. Reading count HERE (before tick)
-                // naturally models this one-dot DFF delay. PANY gates RYFA
-                // on !RYDY (window hit blocks tile boundary detection).
-                let seko_fire = self.fine_scroll.count == 7 && !inputs.rydy;
+            // Hardware within-tick ordering for DFF22 shift register cells:
+            // 1. Synchronous shift (SACU clock edge)
+            // 2. Async parallel load (LOZE SET/RST — overwrites shift)
+            // 3. Pixel output reads final state
+            if sacu {
+                self.bg_shifter.shift();
+                self.obj_shifter.shift();
+            }
 
-                // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
-                // overwrites the shift result on the same tick — the load
-                // naturally wins because the shift already fired above
-                // (matching DFF22 behavior).
-                if seko_fire {
-                    self.fetcher.load_into(&mut self.bg_shifter);
-                    // SEKO resets the fetcher counter (TEVO -> LOVY/LAXU/TYFO
-                    // reset), which drives LYRY low combinationally (phase < 10).
-                    // No stale-state concern: sprite wait exit checks live LYRY,
-                    // which naturally reflects the reset fetcher state.
-                }
+            // RYFA DFF captures (count==7 && !RYDY) on each dot.
+            // SEKO is the rising-edge detector on RYFA — it fires one dot
+            // after count reaches 7. Reading count HERE (before tick)
+            // naturally models this one-dot DFF delay. PANY gates RYFA
+            // on !RYDY (window hit blocks tile boundary detection).
+            let seko_fire = self.fine_scroll.count == 7 && !inputs.rydy;
 
-                // LCD Control (page 24): pixel counter, XAJO, TOBA, shift
-                // register, data latch — all internal to the block. We
-                // provide SACU, the resolved pixel, and POVA.
-                let pixel = pixel_output::resolve_current_pixel(
-                    &self.bg_shifter,
-                    &self.obj_shifter,
-                    self.window.window_zero_pixel_mut(),
-                    regs,
-                );
-                let toba = self.lcd.rise(sacu, pixel, pova);
+            // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
+            // overwrites the shift result on the same tick — the load
+            // naturally wins because the shift already fired above
+            // (matching DFF22 behavior).
+            if seko_fire {
+                self.fetcher.load_into(&mut self.bg_shifter);
+                // SEKO resets the fetcher counter (TEVO -> LOVY/LAXU/TYFO
+                // reset), which drives LYRY low combinationally (phase < 10).
+            }
 
-                if !toba && self.tyfa {
-                    // Consume window_zero_pixel during pre-visible TYFA
-                    // cycles (fine scroll gating, pre-WUSA). On hardware,
-                    // the data pins update on every TYFA edge — the window
-                    // zero pixel is consumed even when SACU/TOBA don't fire.
-                    self.window.consume_window_zero_pixel();
-                }
+            // LCD Control (page 24): pixel counter, XAJO, TOBA, shift
+            // register, data latch — all internal to the block. We
+            // provide SACU, the resolved pixel, and POVA.
+            let pixel = pixel_output::resolve_current_pixel(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                self.window.window_zero_pixel_mut(),
+                regs,
+            );
+            let toba = self.lcd.rise(sacu, pixel, pova);
 
-                // Sprite trigger check.
-                self.check_sprite_trigger(regs);
+            if !toba && self.tyfa {
+                // Consume window_zero_pixel during pre-visible TYFA
+                // cycles (fine scroll gating, pre-WUSA). On hardware,
+                // the data pins update on every TYFA edge — the window
+                // zero pixel is consumed even when SACU/TOBA don't fire.
+                self.window.consume_window_zero_pixel();
+            }
 
-                // BG fetcher advances on falling (mode3_falling).
-                // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
+            // BG fetcher advances on falling (mode3_falling).
+            // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
 
-                // PECU (fine counter clock) derives from ROXO, which derives
-                // from TYFA. Fine scroll ticks whenever the pixel clock is
-                // enabled, regardless of ROXY (fine scroll itself).
-                if tyfa {
-                    self.fine_scroll.tick();
-                }
+            // PECU (fine counter clock) derives from ROXO, which derives
+            // from TYFA. Fine scroll ticks whenever the pixel clock is
+            // enabled, regardless of ROXY (fine scroll itself).
+            if tyfa {
+                self.fine_scroll.tick();
+            }
 
-                // TEVO → PASO: when SEKO fired this dot, reset the fine
-                // counter to 0. Placed after tick() because tick() self-stops
-                // at 7 (ROZE gate) — PASO then clears the stopped counter.
-                if seko_fire {
-                    self.fine_scroll.reset_counter();
-                }
+            // TEVO → PASO: when SEKO fired this dot, reset the fine
+            // counter to 0. Placed after tick() because tick() self-stops
+            // at 7 (ROZE gate) — PASO then clears the stopped counter.
+            if seko_fire {
+                self.fine_scroll.reset_counter();
             }
         }
 
@@ -761,85 +744,53 @@ impl Rendering {
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
     }
 
-    /// Retroactive sprite fetch correction after LCDC write.
-    ///
-    /// On hardware, AROR = AND(RENDERING, XYLO) is combinational.
-    /// When XYLO changes mid-dot, AROR changes instantly, and FEPO
-    /// (the sprite X match output) reflects the new state. This
-    /// method models that combinational settling after the emulator
-    /// has already evaluated the match with the old LCDC value.
-    pub(super) fn correct_sprite_fetch_for_lcdc(&mut self, regs: &PipelineRegisters) {
-        if regs.control.sprites_enabled() {
-            // OBJ was just ENABLED. If sprite_state is Idle, a match
-            // may have been suppressed on the boundary rise because
-            // sprites_enabled() was false at that time. Re-run the
-            // trigger check with the new (enabled) LCDC value.
-            if matches!(self.sprite_state, SpriteState::Idle) {
-                self.check_sprite_trigger(regs);
-            }
-        } else {
-            // OBJ was just DISABLED. If sprite_state is Fetching and
-            // the fetch is still in WaitingForFetcher, the match fired
-            // on the boundary rise with the old (enabled) LCDC value.
-            // On hardware, the match would not have fired because AROR
-            // would be low. Cancel the fetch.
-            if let SpriteState::Fetching(ref sf) = self.sprite_state {
-                if sf.phase == SpriteFetchPhase::WaitingForFetcher {
-                    // Undo the match: un-mark the fetched bit for the
-                    // sprite that was matched so it can potentially be
-                    // fetched later if sprites are re-enabled.
-                    let entry_x = sf.entry.x;
-                    let sprites = self.scan.sprites_mut();
-                    for i in 0..sprites.count as usize {
-                        if sprites.fetched & (1 << i) != 0 && sprites.entries[i].x == entry_x {
-                            sprites.fetched &= !(1 << i);
-                            break;
-                        }
-                    }
-                    self.sprite_state = SpriteState::Idle;
-
-                    // Recompute TYFA: mode3_falling already ran with
-                    // sprite_state=Fetching, which forced TYFA=false.
-                    // On hardware, FEPO was never high (AROR=0), so TYFA
-                    // was never suppressed. Recompute with Idle state.
-                    self.tyfa = !self.wodu_latch && !self.window.rydy() && self.cascade.poky();
-                }
-            }
-        }
-    }
-
-    /// Check if a sprite should start fetching at the current pixel position.
-    /// Scans all store slots in parallel, matching the hardware's 10
-    /// independent X comparators. The lowest-indexed matching slot wins.
-    fn check_sprite_trigger(&mut self, regs: &PipelineRegisters) {
+    /// FEPO: combinational OR of all unfetched sprite store X comparators,
+    /// gated by AROR (sprites_enabled). True when any unfetched sprite
+    /// matches the current pixel counter.
+    fn fepo(&self, regs: &PipelineRegisters) -> bool {
         if !regs.control.sprites_enabled() {
-            return;
+            return false; // AROR = AND(RENDERING, XYLO). XYLO off -> FEPO low.
         }
 
         let match_x = self.lcd.pixel_counter();
-
-        let sprites = self.scan.sprites_mut();
+        let sprites = self.scan.sprites_ref();
         for i in 0..sprites.count as usize {
             if sprites.fetched & (1 << i) != 0 {
-                continue; // Already fetched — reset flag is set
-            }
-
-            let entry = &sprites.entries[i];
-
-            if entry.x != match_x {
-                continue; // X doesn't match current pixel counter
-            }
-
-            if entry.x >= 168 {
-                // Off-screen right — mark as fetched so we don't check again
-                sprites.fetched |= 1 << i;
                 continue;
             }
+            if sprites.entries[i].x == match_x && sprites.entries[i].x < 168 {
+                return true;
+            }
+        }
+        false
+    }
 
-            // Match found — trigger sprite fetch, mark slot as fetched
-            sprites.fetched |= 1 << i;
-            self.sprite_state = SpriteState::Fetching(SpriteFetch::new(*entry));
-            break; // Only one sprite fetch at a time
+    /// TEKY = AND4(FEPO, !WIN_HIT, LYRY, !TAKA). Combinational signal
+    /// that indicates a sprite fetch should start. Checked each falling
+    /// phase; SOBU captures the result.
+    fn teky(&self, regs: &PipelineRegisters) -> bool {
+        self.fepo(regs)
+            && !self.window.rydy()   // TUKU_WIN_HITn = NOT(RYDY)
+            && self.fetcher.lyry()   // LYRY_BFETCH_DONEp
+            && !self.taka // SOWO = NOT(TAKA)
+    }
+
+    /// Start sprite fetch for the first matching unfetched sprite.
+    /// Called when RYCE fires (SOBU rising edge detected).
+    fn start_sprite_fetch(&mut self, _regs: &PipelineRegisters) {
+        let match_x = self.lcd.pixel_counter();
+        let sprites = self.scan.sprites_mut();
+
+        for i in 0..sprites.count as usize {
+            if sprites.fetched & (1 << i) != 0 {
+                continue;
+            }
+            let entry = &sprites.entries[i];
+            if entry.x == match_x && entry.x < 168 {
+                sprites.fetched |= 1 << i;
+                self.sprite_state = SpriteState::Fetching(SpriteFetch::new_fetching(*entry));
+                break;
+            }
         }
     }
 }

@@ -254,17 +254,15 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // LCDC writes must land before ppu.fall() so that
-        // correct_sprite_fetch_for_lcdc catches the sprite in
-        // WaitingForFetcher. On hardware, AROR reads XYLO
-        // combinationally — the write settles before DFF9 advances.
+        // LCDC writes land before ppu.fall() so that XYLO (sprites_enabled)
+        // is current when FEPO/TEKY are evaluated. On hardware, AROR reads
+        // XYLO combinationally — the write settles before DFF9 advances.
         let lcdc_handled = if let DotAction::Write { address, value } = &self.current_dot_action
             && *address == 0xFF40
         {
             if self.drive_ppu_bus(0xFF40, *value) {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
-            self.ppu.correct_sprite_fetch_for_lcdc();
             true
         } else {
             false

@@ -13,12 +13,6 @@ use super::shifters::ObjShifter;
 /// The phases of a sprite fetch on real hardware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteFetchPhase {
-    /// The BG fetcher continues advancing through its normal steps.
-    /// The wait ends when the fetcher has completed GetTileDataHigh
-    /// (reached Load) AND the BG shifter is non-empty — both conditions
-    /// must be true simultaneously. The variable sprite penalty (0-5
-    /// dots) emerges from how many fetcher steps this phase consumes.
-    WaitingForFetcher,
     /// The BG fetcher is frozen at its current position. Sprite tile
     /// data is read through the SpriteStep state machine (6 dots total).
     FetchingData,
@@ -41,10 +35,13 @@ pub(super) struct SpriteFetch {
 }
 
 impl SpriteFetch {
-    pub(super) fn new(entry: SpriteStoreEntry) -> Self {
+    /// Start directly in FetchingData — the variable 0-5 dot penalty is
+    /// handled by TEKY/SOBU staying low until the BG fetcher is done,
+    /// not by a separate waiting state.
+    pub(super) fn new_fetching(entry: SpriteStoreEntry) -> Self {
         Self {
             entry,
-            phase: SpriteFetchPhase::WaitingForFetcher,
+            phase: SpriteFetchPhase::FetchingData,
             phase_sfetch: 0,
             tile_data_low: 0,
             tile_data_high: 0,

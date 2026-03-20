@@ -581,7 +581,6 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
                 "priority": snap.obj_priority,
             },
             "sprite_fetch": match snap.sprite_fetch_phase {
-                Some(ppu::SpriteFetchPhase::WaitingForFetcher) => serde_json::Value::String("waiting".into()),
                 Some(ppu::SpriteFetchPhase::FetchingData) => serde_json::Value::String("fetching_data".into()),
                 Some(ppu::SpriteFetchPhase::Done) => serde_json::Value::String("done".into()),
                 None => serde_json::Value::Null,
