@@ -161,6 +161,12 @@ pub struct Rendering {
     /// `_odd` signal — it only updates during rising (odd) half-phases. SOBU
     /// captures this value on the following falling phase.
     teky_latch: bool,
+    /// Bitmask of sprite store entries whose store_x should be cleared on
+    /// the next falling phase. Models the 1-dot propagation delay of
+    /// DYNA_STORE0_RSTn (depth 17) — the reset signal arrives late,
+    /// keeping store_x (and therefore FEPO) valid for 1 extra dot after
+    /// WUTY fires.
+    pending_store_clear: u16,
 }
 
 impl Rendering {
@@ -186,6 +192,7 @@ impl Rendering {
             fepo_latch: false,
             fepo_old: false,
             teky_latch: false,
+            pending_store_clear: 0,
         }
     }
 
@@ -446,6 +453,7 @@ impl Rendering {
         self.fepo_latch = false;
         self.fepo_old = false;
         self.teky_latch = false;
+        self.pending_store_clear = 0;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -473,6 +481,20 @@ impl Rendering {
         _oam: &Oam,
         vram: &Vram,
     ) {
+        // Apply store_x clears from the previous rising phase's WUTY.
+        // Models DYNA_STORE0_RSTn depth-17 propagation: the reset signal
+        // arrives on the falling phase after WUTY fires, clearing store_x
+        // so FEPO's comparators no longer match.
+        if self.pending_store_clear != 0 {
+            let sprites = self.scan.sprites_mut();
+            for i in 0..sprites.count as usize {
+                if self.pending_store_clear & (1 << i) != 0 {
+                    sprites.entries[i].x = 0xFF;
+                }
+            }
+            self.pending_store_clear = 0;
+        }
+
         // FEPO_old feeds VYBO for TYFA suppression. Captured before any
         // falling-phase mutations.
         let fepo_old = self.fepo(regs);
@@ -642,9 +664,14 @@ impl Rendering {
                             self.window.window_zero_pixel_mut(),
                             regs,
                         );
+                        // Mark this entry for store_x clear on the next
+                        // falling phase. Models DYNA depth-17 propagation
+                        // delay — store_x stays valid for 1 extra dot.
+                        let store_index = sf.store_index;
                         self.sprite_state = SpriteState::Idle;
                         // VEKU clears TAKA — sprite fetch complete.
                         self.taka = false;
+                        self.pending_store_clear |= 1 << store_index;
                     }
                 }
                 SpriteState::Idle => {
@@ -770,9 +797,6 @@ impl Rendering {
         let match_x = self.lcd.pixel_counter();
         let sprites = self.scan.sprites_ref();
         for i in 0..sprites.count as usize {
-            if sprites.fetched & (1 << i) != 0 {
-                continue;
-            }
             if sprites.entries[i].x == match_x && sprites.entries[i].x < 168 {
                 return true;
             }
@@ -803,7 +827,8 @@ impl Rendering {
             let entry = &sprites.entries[i];
             if entry.x == match_x && entry.x < 168 {
                 sprites.fetched |= 1 << i;
-                self.sprite_state = SpriteState::Fetching(SpriteFetch::new_fetching(*entry));
+                self.sprite_state =
+                    SpriteState::Fetching(SpriteFetch::new_fetching(*entry, i as u8));
                 break;
             }
         }

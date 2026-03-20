@@ -29,6 +29,9 @@ pub enum SpriteFetchPhase {
 pub(super) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(super) entry: SpriteStoreEntry,
+    /// Index into the sprite store for this entry. Used to set
+    /// `pending_store_clear` when the fetch completes (WUTY fires).
+    pub(super) store_index: u8,
     /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
     /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
     /// Self-stops at 5 via TAME clock gating.
@@ -41,9 +44,10 @@ impl SpriteFetch {
     /// Start the 6-dot sprite data fetch. The variable 0-5 dot penalty
     /// is handled by TEKY/SOBU staying low until the BG fetcher is done,
     /// not by a separate waiting state.
-    pub(super) fn new_fetching(entry: SpriteStoreEntry) -> Self {
+    pub(super) fn new_fetching(entry: SpriteStoreEntry, store_index: u8) -> Self {
         Self {
             entry,
+            store_index,
             phase_sfetch: 0,
             tile_data_low: 0,
             tile_data_high: 0,
