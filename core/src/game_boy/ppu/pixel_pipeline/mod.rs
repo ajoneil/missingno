@@ -642,6 +642,10 @@ impl Rendering {
                         );
                         self.sprite_state = SpriteState::Idle;
                         // VEKU clears TAKA — sprite fetch complete.
+                        // Fall through to the pixel pipeline below so
+                        // SACU can fire on this same dot. On hardware,
+                        // SACU is combinational — when TAKA clears and
+                        // TYFA is true, the pixel clock fires immediately.
                         self.taka = false;
                     }
                 }
@@ -651,7 +655,9 @@ impl Rendering {
                     // fetch. The first advance will happen on the next rising.
                 }
             }
-        } else {
+        }
+
+        if !self.taka {
             // Normal pixel pipeline — no sprite fetch active.
 
             // TYFA was computed in falling phase and bridged. SACU is
