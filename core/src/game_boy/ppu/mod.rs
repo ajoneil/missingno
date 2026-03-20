@@ -379,8 +379,6 @@ impl Ppu {
             None => return false,
         };
 
-        let mode = self.mode();
-
         // Mode 2 interrupt active: during VBlank, never.
         // Otherwise delegate to the rendering pipeline's TAPA signal.
         let mode2_active = if self.video.popu {
@@ -394,16 +392,21 @@ impl Ppu {
         // LX=0 of line 144 (the first M-cycle where POPU is high).
         let vblank_line_144 = self.video.popu && self.video.ly() == 144 && self.video.rutu_active();
 
+        // TARU = AND(WODU-or-VOGA, NOT(VBlank)). WODU is combinational
+        // (true for 1 rising-phase window), VOGA latches on the falling
+        // edge and stays true through HBlank. Together they cover the
+        // full HBlank period.
         (self
             .video
             .stat_flags
             .contains(InterruptFlags::HORIZONTAL_BLANK)
-            && mode == Mode::HorizontalBlank)
+            && !self.video.popu
+            && (rendering.voga() || rendering.wodu()))
             || (self
                 .video
                 .stat_flags
                 .contains(InterruptFlags::VERTICAL_BLANK)
-                && mode == Mode::VerticalBlank)
+                && self.video.popu)
             || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
                 && (mode2_active || vblank_line_144))
             || (self

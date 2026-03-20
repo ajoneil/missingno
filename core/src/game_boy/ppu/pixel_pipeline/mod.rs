@@ -174,10 +174,15 @@ impl Rendering {
         self.scan.start_scanning();
     }
 
+    /// VOGA latch: true from the dot WODU fires through the rest of HBlank.
+    pub(super) fn voga(&self) -> bool {
+        self.voga
+    }
+
     /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
     /// On hardware, WODU is not a latch — it's valid whenever its
     /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
-    fn wodu(&self) -> bool {
+    pub(super) fn wodu(&self) -> bool {
         let fepo = matches!(self.sprite_state, SpriteState::Fetching(_));
         self.xymu && self.lcd.xugu() && !fepo
     }
