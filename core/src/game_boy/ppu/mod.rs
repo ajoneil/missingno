@@ -51,7 +51,7 @@ pub struct Ppu {
     /// held in reset). Some = LCD on — the pipeline persists through both
     /// active display and VBlank, matching hardware where these circuits
     /// are always present. VBlank vs active display is derived from
-    /// `video.popu` (POPU DFF latch).
+    /// `video.vblank` (POPU DFF latch).
     pixel_pipeline: Option<Rendering>,
     registers: PipelineRegisters,
     video: VideoControl,
@@ -79,22 +79,22 @@ impl Ppu {
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
-                lx: 98,
-                wuvu: false,
-                vena: false,
+                dot_position: 98,
+                dot_divider: false,
+                mcycle_divider: false,
                 ly: 153,
                 lyc: 0,
-                ly_match_pending: true,
-                ly_eq_lyc: true,
+                ly_comparison_pending: true,
+                ly_comparison_latched: true,
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
-                nype: false,
-                rutu_old: false,
-                sanu: false,
-                rutu_active: false,
-                myta: true,
-                popu: true,
+                delayed_line_end: false,
+                line_end_pending: false,
+                line_end_detected: false,
+                line_end_active: false,
+                frame_end_reset: true,
+                vblank: true,
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -121,21 +121,21 @@ impl Ppu {
                 palettes: Palettes::default(),
             },
             video: VideoControl {
-                lx: 0,
-                wuvu: false,
-                vena: false,
+                dot_position: 0,
+                dot_divider: false,
+                mcycle_divider: false,
                 ly: 0,
                 lyc: 0,
-                ly_match_pending: false,
-                ly_eq_lyc: true,
+                ly_comparison_pending: false,
+                ly_comparison_latched: true,
                 stat_flags: InterruptFlags::empty(),
                 stat_line_was_high: false,
-                nype: false,
-                rutu_old: false,
-                sanu: false,
-                rutu_active: false,
-                myta: false,
-                popu: false,
+                delayed_line_end: false,
+                line_end_pending: false,
+                line_end_detected: false,
+                line_end_active: false,
+                frame_end_reset: false,
+                vblank: false,
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
@@ -143,7 +143,7 @@ impl Ppu {
     }
 
     pub fn lx(&self) -> u8 {
-        self.video.lx
+        self.video.dot_position
     }
 
     /// Current OAM scan counter entry (0-39). Returns None when not rendering.
@@ -156,7 +156,7 @@ impl Ppu {
             Register::Control => self.registers.control.bits(),
             Register::Status => {
                 let mode = match &self.pixel_pipeline {
-                    Some(rendering) if !self.video.popu => rendering.stat_mode(&self.video) as u8,
+                    Some(rendering) if !self.video.vblank => rendering.stat_mode(&self.video) as u8,
                     Some(_) => Mode::VerticalBlank as u8,
                     None => 0,
                 };
@@ -215,7 +215,7 @@ impl Ppu {
             Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
             Register::InterruptOnScanline => {
                 self.video.lyc = value;
-                self.video.update_paly();
+                self.video.update_ly_comparison();
             }
             Register::BackgroundPalette => {
                 self.registers.palettes.background.write_immediate(value)
@@ -236,17 +236,18 @@ impl Ppu {
     /// WUVU 1→0 (phase C), triggering the first TALU rise and LX
     /// increment. This gives LX=0 the correct 3-half-phase duration.
     fn initialize_lcd_on(&mut self) {
-        self.video.lx = 0;
-        self.video.wuvu = false;
-        self.video.vena = false;
+        self.video.dot_position = 0;
+        self.video.dot_divider = false;
+        self.video.mcycle_divider = false;
         self.video.write_ly(0);
-        self.video.nype = false;
-        self.video.rutu_old = false;
-        self.video.rutu_active = false;
-        self.video.myta = false;
-        self.video.popu = false;
-        self.video.ly_eq_lyc = false;
-        self.video.update_paly();
+        self.video.delayed_line_end = false;
+        self.video.line_end_pending = false;
+        self.video.line_end_active = false;
+        self.video.line_end_detected = false;
+        self.video.frame_end_reset = false;
+        self.video.vblank = false;
+        self.video.ly_comparison_latched = false;
+        self.video.update_ly_comparison();
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
@@ -326,7 +327,7 @@ impl Ppu {
 
     pub fn mode(&self) -> rendering::Mode {
         match &self.pixel_pipeline {
-            Some(rendering) if !self.video.popu => rendering.mode(&self.video),
+            Some(rendering) if !self.video.vblank => rendering.mode(&self.video),
             Some(_) => Mode::VerticalBlank,
             None => Mode::VerticalBlank,
         }
@@ -334,28 +335,28 @@ impl Ppu {
 
     pub fn oam_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.oam_locked(),
+            Some(r) if !self.video.vblank => r.oam_locked(),
             _ => false,
         }
     }
 
     pub fn vram_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.vram_locked(),
+            Some(r) if !self.video.vblank => r.vram_locked(),
             _ => false,
         }
     }
 
     pub fn oam_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.oam_write_locked(),
+            Some(r) if !self.video.vblank => r.oam_write_locked(),
             _ => false,
         }
     }
 
     pub fn vram_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.vram_write_locked(),
+            Some(r) if !self.video.vblank => r.vram_write_locked(),
             _ => false,
         }
     }
@@ -366,7 +367,7 @@ impl Ppu {
 
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.xymu(),
+            Some(r) if !self.video.vblank => r.xymu(),
             _ => false,
         }
     }
@@ -379,7 +380,7 @@ impl Ppu {
 
         // Mode 2 interrupt active: during VBlank, never.
         // Otherwise delegate to the rendering pipeline's TAPA signal.
-        let mode2_active = if self.video.popu {
+        let mode2_active = if self.video.vblank {
             false
         } else {
             rendering.mode2_interrupt_active(&self.video)
@@ -388,7 +389,7 @@ impl Ppu {
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts. With POPU, this is only true at
         // LX=0 of line 144 (the first M-cycle where POPU is high).
-        let vblank_line_144 = self.video.popu && self.video.ly() == 144 && self.video.rutu_active();
+        let vblank_line_144 = self.video.vblank && self.video.ly() == 144 && self.video.line_end_active();
 
         // TARU = AND(WODU-or-VOGA, NOT(VBlank)). WODU is combinational
         // (true for 1 rising-phase window), VOGA latches on the falling
@@ -398,13 +399,13 @@ impl Ppu {
             .video
             .stat_flags
             .contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !self.video.popu
+            && !self.video.vblank
             && (rendering.voga() || rendering.wodu()))
             || (self
                 .video
                 .stat_flags
                 .contains(InterruptFlags::VERTICAL_BLANK)
-                && self.video.popu)
+                && self.video.vblank)
             || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
                 && (mode2_active || vblank_line_144))
             || (self
@@ -432,25 +433,25 @@ impl Ppu {
         }
 
         // Save POPU state before divider chain updates it.
-        let popu_was = self.video.popu;
+        let popu_was = self.video.vblank;
 
         // XOTA rising edge: toggle WUVU (dot-rate clock).
-        self.video.tick_xota();
+        self.video.tick_dot();
 
         // VENA/TALU cascade: only fires when WUVU falls.
         let mut scanline_boundary = false;
-        if self.video.wuvu_fell() {
-            let talu_was = self.video.tick_vena();
+        if self.video.dot_divider_fell() {
+            let talu_was = self.video.tick_mcycle_divider();
 
-            if talu_was && !self.video.vena {
+            if talu_was && !self.video.mcycle_divider {
                 // TALU falling edge: RUTU fire, LY increment.
                 scanline_boundary = self.video.tick_talu_fall();
                 // PALY is combinational — recompute after any LY change
                 // so the next ROPO latch (TALU rising) sees the fresh value.
-                self.video.update_paly();
+                self.video.update_ly_comparison();
             }
 
-            if !talu_was && self.video.vena {
+            if !talu_was && self.video.mcycle_divider {
                 // TALU rising edge: LX increment, SANU detect, ROPO latch.
                 self.video.tick_talu_rise();
                 self.video.latch_ly_comparison();
@@ -468,7 +469,7 @@ impl Ppu {
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.
                     rendering.reset_frame();
-                } else if !self.video.popu {
+                } else if !self.video.vblank {
                     // Lines 1-143: per-scanline reset.
                     rendering.reset_scanline(ly);
                 }
@@ -476,14 +477,14 @@ impl Ppu {
         }
 
         // Pixel output, SACU, pipe shift — only during active display.
-        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.popu) {
+        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
             rendering.rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
         // transitions from low to high. POPU latches at NYPE rising edge,
         // so this detects the combinational cascade within one tick.
-        if self.video.popu && !popu_was && self.pixel_pipeline.is_some() {
+        if self.video.vblank && !popu_was && self.pixel_pipeline.is_some() {
             result.request_vblank = true;
         }
 
@@ -501,7 +502,7 @@ impl Ppu {
         if self.control().video_enabled() {
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
-            if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.popu) {
+            if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
                 rendering.fall(&self.registers, &self.video, &self.oam, vram);
             }
 
@@ -526,7 +527,7 @@ impl Ppu {
                 self.registers.clear_latches();
                 result.screen = Some(Screen::default());
             }
-            // ly_eq_lyc is intentionally NOT updated — comparison clock
+            // ly_comparison_latched is intentionally NOT updated — comparison clock
             // stops when the PPU is off, freezing the last result.
             return result;
         }
@@ -565,7 +566,7 @@ impl Ppu {
 
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         match &self.pixel_pipeline {
-            Some(rendering) if !self.video.popu => Some(rendering.pipeline_state(&self.video)),
+            Some(rendering) if !self.video.vblank => Some(rendering.pipeline_state(&self.video)),
             _ => None,
         }
     }

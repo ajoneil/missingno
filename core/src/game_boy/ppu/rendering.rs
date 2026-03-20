@@ -225,7 +225,7 @@ impl Rendering {
         if self.is_first_line() {
             return false;
         }
-        video.rutu_active()
+        video.line_end_active()
     }
 
     pub(super) fn scanner_oam_address(&self) -> Option<u8> {
@@ -390,7 +390,7 @@ impl Rendering {
     }
 
     /// Reset per-line state at the scanline boundary. Called by
-    /// `Ppu::rise()` when `tick_xota` signals a new scanline.
+    /// `Ppu::rise()` when `tick_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.hblank.reset();
         self.scan.reset();

@@ -10,48 +10,45 @@ bitflags! {
     }
 }
 
-/// Video control (schematic page 21): the LY counter, LYC comparator,
-/// ROPO comparison latch, and STAT interrupt enable flags. Bidirectional —
-/// the pipeline writes LY, the CPU writes LYC and STAT flags, and the
-/// interrupt logic reads the latched comparison result. These signals
-/// sit together on the die's video control section.
+/// Video timing and control (schematic page 21).
+///
+/// Owns the dot clock dividers (WUVU/VENA), the scanline position
+/// counter (LX), the scanline number counter (LY), the LYC comparator,
+/// and the STAT interrupt enable flags. These signals sit together on
+/// the die's video control section.
 pub struct VideoControl {
-    /// LX counter (SAXO-TYRY ripple counter, page 21).
-    /// Counts 0-113 per scanline. Clocked by TALU (every 4 dots).
-    /// SANU fires at LX=113, clocking RUTU (line-end).
-    pub(super) lx: u8,
+    /// Dot position within the current scanline (SAXO-TYRY ripple counter).
+    /// Counts 0-113, clocked by TALU (every 4 dots). When it reaches 113,
+    /// the line-end sequence fires (SANU → RUTU).
+    pub(super) dot_position: u8,
 
-    /// WUVU divide-by-2 toggle DFF (GateBoyClocks.cpp).
-    /// Clocked by XOTA (master clock rising edge, once per dot).
-    /// Self-toggles: data = WUVU.qn_old. Period = 2 dots.
-    /// High during phases A,B,E,F (`WUVU_ABxxEFxx`).
-    pub(super) wuvu: bool,
+    /// 2-dot clock divider (WUVU DFF). Toggles every dot on XOTA rising.
+    /// Period = 2 dots. XUPY (= WUVU.qp) clocks the OAM scan counter.
+    pub(super) dot_divider: bool,
 
-    /// VENA divide-by-2 toggle DFF (GateBoyClocks.cpp).
-    /// Clocked by WUVU.qn rising edge (= WUVU falling edge).
-    /// Self-toggles: data = VENA.qn_old. Period = 4 dots = 1 M-cycle.
-    /// High during phases C,D,E,F (`VENA_xxCDEFxx`).
-    /// TALU = VENA.qp (buffered). TALU rising edge clocks LX.
-    pub(super) vena: bool,
+    /// 4-dot clock divider (VENA DFF). Toggles on WUVU falling edge.
+    /// Period = 4 dots = 1 M-cycle. TALU (= VENA.qp) clocks LX, ROPO,
+    /// and NYPE.
+    pub(super) mcycle_divider: bool,
 
-    /// LY counter (MUWY-LAFO ripple counter, page 21). Clocked by RUTU
-    /// at LX=113, counting 0-153 and wrapping. On line 153, MYTA fires
-    /// when NYPE rises (TALU falling of LX=0), driving LAMA low and
-    /// resetting the CPU-visible LY to 0 via `ly()`. The internal counter
-    /// remains at 153 until RUTU at LX=113 naturally wraps it.
+    /// Internal scanline counter (MUWY-LAFO ripple counter). Counts
+    /// 0-153, incrementing at each RUTU line-end pulse. On line 153,
+    /// MYTA fires to reset the CPU-visible value to 0 early — see
+    /// `ly()`. The internal counter stays at 153 until RUTU wraps it.
     pub(super) ly: u8,
 
-    /// LYC register (FF45). CPU-writable comparison value.
+    /// LYC register (FF45). CPU-writable comparison target.
     pub(super) lyc: u8,
 
-    /// Raw LY==LYC comparison from the current M-cycle (PALY_LY_MATCHa).
-    /// On the next M-cycle, this is promoted to `ly_eq_lyc` (the ROPO
-    /// output). Models the `_old` input to ROPO DFF17 — ROPO always
-    /// samples the previous cycle's comparison result.
-    pub(super) ly_match_pending: bool,
+    /// Pending LY==LYC comparison result (PALY combinational comparator).
+    /// Computed each M-cycle, promoted to `ly_comparison_latched` on the
+    /// next TALU rising edge by the ROPO DFF. Models the `_old` input
+    /// to ROPO — ROPO always samples the previous cycle's comparison.
+    pub(super) ly_comparison_pending: bool,
 
-    /// Latched LY==LYC comparison result (ROPO_LY_MATCH_SYNCp, page 21).
-    pub(super) ly_eq_lyc: bool,
+    /// Latched LY==LYC result (ROPO DFF output). This is what STAT
+    /// bit 2 reads and what drives the LYC STAT interrupt source.
+    pub(super) ly_comparison_latched: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
     pub(super) stat_flags: InterruptFlags,
@@ -59,172 +56,171 @@ pub struct VideoControl {
     /// Previous STAT line state for rising-edge detection.
     pub(super) stat_line_was_high: bool,
 
-    /// NYPE DFF17 (delayed line-end, GateBoyLCD.cpp line 125).
-    /// Clocked by TALU rising edge. Data: RUTU_old (previous tick's
-    /// line-end pulse). Goes high at phase_lx=4, 2 dots after RUTU.
-    /// Active window: phase_lx [4, 11] within the scanline.
-    pub(super) nype: bool,
+    /// Delayed line-end signal (NYPE DFF). Clocked by TALU rising edge,
+    /// captures the previous RUTU state. Goes high 2 dots after RUTU,
+    /// providing the delayed clock for POPU (VBlank) and MYTA (frame-end).
+    pub(super) delayed_line_end: bool,
 
-    /// Previous RUTU state, serving as RUTU_old input to the NYPE DFF.
-    /// Set true when RUTU fires (TALU falling of the LX=113 M-cycle),
-    /// consumed by NYPE on the next TALU falling edge.
-    pub(super) rutu_old: bool,
+    /// Pending line-end state for NYPE's D input. Set true when RUTU
+    /// fires (TALU falling of the LX=113 M-cycle), consumed by NYPE
+    /// on the next TALU rising edge.
+    pub(super) line_end_pending: bool,
 
-    /// SANU_x113p: combinational AND4 detecting LX=113. Set on the
-    /// TALU rising edge where LX increments to 113. Consumed by RUTU
-    /// on the next TALU falling edge (2 dots later, same M-cycle).
-    pub(super) sanu: bool,
+    /// Line-end detected flag (SANU combinational gate). True when
+    /// dot_position == 113. Set on TALU rising, consumed by RUTU on
+    /// the next TALU falling (2 dots later, same M-cycle).
+    pub(super) line_end_detected: bool,
 
-    /// RUTU pulse active flag. Set at TALU falling when RUTU fires
-    /// (LX=113 detected, scanline boundary). Cleared at the next TALU
-    /// rising edge. Models the hardware RUTU_LINE_ENDp signal that
-    /// drives TAPA (mode 2 interrupt) and the line-144 VBlank STAT
-    /// condition. Duration: 2 dots (B+0 to B+1).
-    pub(super) rutu_active: bool,
+    /// Line-end pulse active (RUTU). Set at TALU falling when the
+    /// scanline boundary fires, cleared at the next TALU rising.
+    /// Duration: 2 dots. Drives TAPA (Mode 2 interrupt) and the
+    /// line-144 VBlank STAT condition.
+    pub(super) line_end_active: bool,
 
-    /// MYTA frame-end flag (GateBoyLCD.cpp line 127). Set when NYPE rises
-    /// while LY==153 (NOKO detected). Drives LAMA low, which async-resets
-    /// all LY DFFs to 0. Cleared when the internal counter wraps 153->0
-    /// at RUTU. While set, `ly()` returns 0.
-    pub(super) myta: bool,
+    /// Frame-end reset flag (MYTA DFF). Set when NYPE rises while
+    /// LY==153, causing `ly()` to return 0 (LAMA async-resets all LY
+    /// DFFs). Cleared when the internal counter wraps 153→0 at RUTU.
+    pub(super) frame_end_reset: bool,
 
-    /// POPU VBlank latch (GateBoyLCD.cpp line 126). DFF17 clocked by NYPE
-    /// rising edge, latching XYVO_old (LY >= 144 from the previous cycle).
-    /// When high, the PPU reports VBlank mode. Async-reset by VID_RST.
-    pub(super) popu: bool,
+    /// VBlank latch (POPU DFF). Clocked by NYPE rising edge, captures
+    /// whether LY >= 144 from the previous cycle. When high, the PPU
+    /// reports VBlank mode. Async-reset by VID_RST (LCD off).
+    pub(super) vblank: bool,
 }
 
 impl VideoControl {
-    /// TALU signal: buffered VENA.qp. High during phases C,D,E,F.
-    /// TALU rising edge clocks LX, ROPO, and NYPE.
+    /// TALU signal: buffered VENA.qp (4-dot M-cycle clock).
+    /// Rising edge clocks LX, ROPO, and NYPE.
     pub fn talu(&self) -> bool {
-        self.vena
+        self.mcycle_divider
     }
 
-    /// XUPY signal: buffered WUVU.qp. High during phases A,B,E,F.
+    /// XUPY signal: buffered WUVU.qp (2-dot clock).
     /// Clocks OAM scan counter (via GAVA), BYBA/CATU pipeline DFFs.
     pub fn xupy(&self) -> bool {
-        self.wuvu
+        self.dot_divider
     }
 
-    /// NYPE DFF17 output. High for one TALU period (4 dots) starting
-    /// at phase_lx=4 of each scanline. Used for VBlank IF (POPU) and
-    /// MYTA (frame-end) clocking.
-    pub fn nype(&self) -> bool {
-        self.nype
+    /// Delayed line-end signal (NYPE output). High for one TALU period
+    /// (4 dots) starting 2 dots after RUTU fires.
+    pub fn delayed_line_end(&self) -> bool {
+        self.delayed_line_end
     }
 
-    /// CPU-visible LY value. On line 153, MYTA (frame-end DFF clocked
-    /// by NYPE) drives LAMA low, resetting all LY bits to 0. The `myta`
-    /// flag models this: set when NYPE rises while LY==153, cleared when
-    /// the internal counter wraps at RUTU.
+    /// CPU-visible LY value. On line 153, the frame-end reset (MYTA)
+    /// drives LAMA low, making LY read as 0 while the internal counter
+    /// is still 153. Cleared when the internal counter wraps at RUTU.
     pub fn ly(&self) -> u8 {
-        if self.myta { 0 } else { self.ly }
+        if self.frame_end_reset { 0 } else { self.ly }
     }
 
     pub fn ly_eq_lyc(&self) -> bool {
-        self.ly_eq_lyc
+        self.ly_comparison_latched
     }
 
     pub fn write_ly(&mut self, value: u8) {
         self.ly = value;
     }
 
+    /// ROPO DFF latch: promote the pending comparison to the STAT-visible
+    /// output, then recompute the pending value for next cycle.
     pub fn latch_ly_comparison(&mut self) {
-        // ROPO DFF17 latches PALY_LY_MATCHa_old on TALU rising edge.
-        // Promote the previous cycle's raw comparison to the STAT-visible
-        // latch, then compute the fresh comparison for next cycle.
-        self.ly_eq_lyc = self.ly_match_pending;
-        self.ly_match_pending = self.ly() == self.lyc;
+        self.ly_comparison_latched = self.ly_comparison_pending;
+        self.ly_comparison_pending = self.ly() == self.lyc;
     }
 
-    /// PALY is a combinational comparator — it updates instantly whenever LY
-    /// or LYC changes. Call this after any LY modification (RUTU, MYTA) so
-    /// that the next ROPO latch at TALU rising sees the post-change value.
-    pub fn update_paly(&mut self) {
-        self.ly_match_pending = self.ly() == self.lyc;
+    /// PALY combinational comparator: recompute the pending LY==LYC
+    /// result. Call after any LY modification (RUTU increment, MYTA
+    /// reset) so the next ROPO latch sees the updated value.
+    pub fn update_ly_comparison(&mut self) {
+        self.ly_comparison_pending = self.ly() == self.lyc;
     }
 
-    /// Whether the RUTU line-end pulse is active (2-dot window at
-    /// scanline boundary, B+0 to B+1).
-    pub fn rutu_active(&self) -> bool {
-        self.rutu_active
+    /// Whether the line-end pulse is active (RUTU, 2-dot window at
+    /// each scanline boundary).
+    pub fn line_end_active(&self) -> bool {
+        self.line_end_active
     }
 
-    /// POPU VBlank latch output. True during VBlank (lines 144-153),
-    /// activated at NYPE rising edge rather than immediately at LY increment.
-    pub fn popu(&self) -> bool {
-        self.popu
+    /// VBlank latch output (POPU). True during VBlank (lines 144-153),
+    /// activated at NYPE rising edge rather than immediately at LY change.
+    pub fn vblank(&self) -> bool {
+        self.vblank
     }
 
-    /// XOTA rising edge: toggles WUVU. Called every dot.
-    pub fn tick_xota(&mut self) {
-        self.wuvu = !self.wuvu;
+    // ── Clock divider ticks ──────────────────────────────────
+
+    /// XOTA rising edge: toggle the 2-dot divider (WUVU). Called every dot.
+    pub fn tick_dot(&mut self) {
+        self.dot_divider = !self.dot_divider;
     }
 
-    /// WUVU falling edge: toggles VENA. Returns true if WUVU just fell.
-    /// Caller should check this after tick_xota() to know if VENA changed.
-    pub fn wuvu_fell(&self) -> bool {
-        // WUVU just toggled in tick_xota(). It fell if it's now false
-        // (was true before toggle). Since tick_xota sets wuvu = !wuvu,
-        // wuvu=false means it was true before = falling edge.
-        !self.wuvu
+    /// Whether the 2-dot divider (WUVU) just fell. Check after `tick_dot()`
+    /// to know if the M-cycle divider should toggle.
+    pub fn dot_divider_fell(&self) -> bool {
+        !self.dot_divider
     }
 
-    /// Toggle VENA. Called when WUVU falls. Returns the previous TALU
-    /// (VENA) state so the caller can detect TALU edges.
-    pub fn tick_vena(&mut self) -> bool {
-        let talu_was = self.vena;
-        self.vena = !self.vena;
+    /// Toggle the M-cycle divider (VENA). Called when the 2-dot divider
+    /// falls. Returns the previous TALU state so the caller can detect edges.
+    pub fn tick_mcycle_divider(&mut self) -> bool {
+        let talu_was = self.mcycle_divider;
+        self.mcycle_divider = !self.mcycle_divider;
         talu_was
     }
 
-    /// TALU rising edge: NYPE latch, then increment LX (unless RUTU just
-    /// fired), clear RUTU pulse, detect SANU (LX=113). On hardware, MUDE
-    /// async-resets the LX ripple counter at the same TALU falling edge as
-    /// RUTU. The counter outputs 0 for the full TALU period (B+0 to B+3).
-    /// The first incrementing clock edge (B+6) takes LX from 0 to 1.
+    // ── TALU rising edge: NYPE, POPU, MYTA, LX, SANU ────────
+
+    /// TALU rising edge processing. Four hardware events fire in sequence:
+    ///
+    /// 1. NYPE DFF captures the pending line-end state
+    /// 2. NYPE rising edge clocks POPU (VBlank) and MYTA (frame-end)
+    /// 3. LX advances (suppressed during RUTU line-end pulse)
+    /// 4. SANU detects LX=113 (line-end for this scanline)
     pub fn tick_talu_rise(&mut self) {
-        // NYPE DFF17: clocked by TALU rising edge.
-        // Latches rutu_old from the PREVIOUS TALU falling.
-        // Must execute BEFORE LX increment so it sees pre-increment state.
-        let nype_was = self.nype;
-        self.nype = self.rutu_old;
-        self.rutu_old = false;
+        // 1. NYPE DFF: latch pending line-end on TALU rising.
+        let nype_was = self.delayed_line_end;
+        self.delayed_line_end = self.line_end_pending;
+        self.line_end_pending = false;
 
-        let nype_rose = !nype_was && self.nype;
-        if nype_rose {
-            // POPU DFF17: latches XYVO_old (LY >= 144) at NYPE rising edge.
-            self.popu = self.ly >= 144;
+        // 2. NYPE rising edge → POPU (VBlank latch) and MYTA (frame-end).
+        if !nype_was && self.delayed_line_end {
+            // POPU DFF: latch whether we're in VBlank (LY >= 144).
+            self.vblank = self.ly >= 144;
 
-            // MYTA DFF17: latches NOKO_old (LY == 153) at NYPE rising edge.
+            // MYTA DFF: latch frame-end (LY == 153). Makes ly() return 0.
             if self.ly == 153 {
-                self.myta = true;
+                self.frame_end_reset = true;
             }
         }
 
-        if !self.rutu_active {
-            self.lx += 1;
+        // 3. Advance dot position (LX). Suppressed during RUTU line-end
+        //    pulse — MUDE async-resets LX at the same TALU falling as RUTU.
+        if !self.line_end_active {
+            self.dot_position += 1;
         }
-        self.rutu_active = false;
-        self.sanu = self.lx == 113;
+        self.line_end_active = false;
+
+        // 4. SANU: combinational detect of LX reaching 113.
+        self.line_end_detected = self.dot_position == 113;
     }
 
-    /// TALU falling edge: RUTU fire. Returns true at scanline boundary
-    /// (RUTU fires when SANU detected LX=113).
+    // ── TALU falling edge: RUTU ──────────────────────────────
+
+    /// TALU falling edge: fire RUTU if line-end was detected.
+    /// Returns true at scanline boundary (RUTU fires).
     pub fn tick_talu_fall(&mut self) -> bool {
-        // RUTU DFF17: clocked by SONO (TALU falling). Latches SANU.
-        if self.sanu {
-            self.sanu = false;
+        if self.line_end_detected {
+            self.line_end_detected = false;
             if self.ly >= 153 {
                 self.ly = 0;
-                self.myta = false; // Frame boundary complete; clear MYTA.
+                self.frame_end_reset = false;
             } else {
                 self.ly += 1;
             }
-            self.lx = 0;
-            self.rutu_active = true;
-            self.rutu_old = true;
+            self.dot_position = 0;
+            self.line_end_active = true;
+            self.line_end_pending = true;
             return true;
         }
 
