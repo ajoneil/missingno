@@ -382,7 +382,7 @@ impl Rendering {
         // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated,
         // CATU scan-start fires.
         let xupy_rising = video.xupy();
-        let scan = self.scan.rise(xupy_rising);
+        let scan = self.scan.rise(xupy_rising, video.ly());
 
         // React to scan signals.
         // AVAP fires identically on normal lines and the LCD-on first line —

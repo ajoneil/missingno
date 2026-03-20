@@ -145,7 +145,7 @@ impl SpriteScanner {
     /// BYBA captures scan_done() directly. Because rise() runs before fall()
     /// (which ticks the counter), BYBA sees the counter state from the
     /// previous XUPY cycle — matching GateBoy's `reg_old.FETO.out_old()`.
-    pub(super) fn rise(&mut self, xupy_rising: bool) -> ScanSignals {
+    pub(super) fn rise(&mut self, xupy_rising: bool, ly: u8) -> ScanSignals {
         // BYBA: DFF capturing scan_done() on rising edge. rise() runs
         // before fall(), so the counter hasn't ticked yet — BYBA naturally
         // sees the previous XUPY cycle's value.
@@ -163,16 +163,20 @@ impl SpriteScanner {
         self.last_avap = avap;
 
         // CATU_LINE_ENDp DFF17: clocked by XUPY rising edge.
-        // D = ABOV_old = AND(RUTU_old, !y144_old). On each XUPY rise,
-        // shift rutu → rutu_old, then CATU captures rutu_old. This
-        // two-stage pipeline means CATU fires 2 XUPY cycles (4 dots)
-        // after the scanline boundary, matching hardware phase_lx timing.
+        // D = ABOV = AND(RUTU_old, NOT(XYVO_old)), where XYVO = AND(LY4, LY7).
+        // XYVO suppresses CATU during VBlank (LY 144-153). On line 153,
+        // MYTA resets LY to 0, clearing XYVO and allowing CATU to fire
+        // 2 dots later than normal lines. On each XUPY rise, shift
+        // rutu → rutu_old, then CATU captures ABOV. This two-stage
+        // pipeline means CATU fires 2 XUPY cycles (4 dots) after the
+        // scanline boundary, matching hardware phase_lx timing.
         if xupy_rising {
             // Shift: current rutu becomes rutu_old for CATU's D input.
             // Clear rutu after shift — it's a one-shot from the boundary.
             let was_rutu = self.rutu;
             self.rutu = false;
-            self.catu = self.rutu_old;
+            let xyvo = ly & 0x90 == 0x90; // XYVO = AND(LY4, LY7)
+            self.catu = self.rutu_old && !xyvo; // ABOV = AND(RUTU_old, NOT(XYVO_old))
             self.rutu_old = was_rutu;
         }
 
