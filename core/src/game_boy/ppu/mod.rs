@@ -368,7 +368,7 @@ impl Ppu {
 
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.popu => r.xymu,
+            Some(r) if !self.video.popu => r.xymu(),
             _ => false,
         }
     }

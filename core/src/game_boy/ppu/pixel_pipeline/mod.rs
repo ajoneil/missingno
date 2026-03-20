@@ -1,6 +1,7 @@
 mod fetch_cascade;
 mod fetcher;
 mod fine_scroll;
+mod hblank_pipeline;
 mod lcd_control;
 mod lcd_shift_register;
 mod oam_scan;
@@ -24,6 +25,7 @@ use crate::game_boy::ppu::{
 use fetch_cascade::FetchCascade;
 use fetcher::TileFetcher;
 use fine_scroll::FineScroll;
+use hblank_pipeline::HblankPipeline;
 use lcd_control::LcdControl;
 use shifters::{BgShifter, ObjShifter};
 use sprite_fetch::{SpriteFetch, SpriteState};
@@ -106,11 +108,9 @@ pub struct PipelineSnapshot {
 
 pub struct Rendering {
     pub(super) screen: Screen,
-    /// XYMU rendering latch (page 21). SET by AVAP (scan done, Mode 2→3).
-    /// CLEAR by WEGO = OR2(VID_RST, VOGA). When set, the fetcher and pixel
-    /// pipeline are active (Mode 3). WODU is computed combinationally from
-    /// XUGU and !FEPO while XYMU is set.
-    pub(super) xymu: bool,
+    /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
+    /// See `hblank_pipeline.rs` for clock domain and race pair documentation.
+    hblank: HblankPipeline,
     /// Sprite scanner — scan counter, scanning latch, BYBA/DOBA pipeline,
     /// and the sprite store that bridges Mode 2 and Mode 3.
     scan: SpriteScanner,
@@ -129,15 +129,6 @@ pub struct Rendering {
     /// Window control block (die page 27): RYDY latch, WX comparator,
     /// window line counter, window zero pixel.
     window: WindowControl,
-    /// VOGA DFF17 — hblank pipeline register (page 21). Clocked on
-    /// falling phases (ALET). Captures WODU from the previous rising phase.
-    /// Feeds WEGO = OR2(VID_RST, VOGA), which clears both WUSA and
-    /// XYMU (rendering latch). Reset by TADY (line reset).
-    voga: bool,
-    /// Latched WODU from the current dot's falling phase. Used by the
-    /// TYFA gate (VYBO = NOR3(FEPO_old, WODU_old, MYVO)) to suppress
-    /// the pixel clock after PX=167. VOGA captures live WODU directly.
-    wodu_latch: bool,
     /// TYFA_CLKPIPE_evn: AND3(SOCY_WIN_HITn, POKY, VYBO_CLKPIPE).
     /// Combinational pixel clock enable, active on falling (EVEN) phases
     /// only. Read by SACU on the next rising phase.
@@ -150,11 +141,6 @@ pub struct Rendering {
     /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
     /// See `sprite_trigger.rs` for clock domain and race pair documentation.
     sprite_trigger: SpriteTrigger,
-    /// Latched FEPO value for `wodu()` and TYFA computation.
-    fepo_latch: bool,
-    /// FEPO from the start of the previous rising phase (before pixel_counter
-    /// increments). Used to compute TEKY with `_old` input semantics.
-    fepo_old: bool,
     /// TEKY: combinational sprite fetch request, computed during rising from
     /// live FEPO/RYDY/LYRY/TAKA. Bridged to the next falling phase where
     /// `sprite_trigger.fall(teky_latch)` captures it into SOBU via TAVA clock.
@@ -165,7 +151,7 @@ impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
             screen: Screen::new(),
-            xymu: false,
+            hblank: HblankPipeline::new(),
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -173,14 +159,10 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            voga: false,
-            wodu_latch: false,
             tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
-            fepo_latch: false,
-            fepo_old: false,
             teky_latch: false,
         }
     }
@@ -192,22 +174,24 @@ impl Rendering {
         self.scan.start_scanning();
     }
 
+    pub(super) fn xymu(&self) -> bool {
+        self.hblank.xymu()
+    }
+
     /// VOGA latch: true from the dot WODU fires through the rest of HBlank.
     pub(super) fn voga(&self) -> bool {
-        self.voga
+        self.hblank.voga()
     }
 
     /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
-    /// On hardware, WODU is not a latch — it's valid whenever its
-    /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
     pub(super) fn wodu(&self) -> bool {
-        self.xymu && self.lcd.xugu() && !self.fepo_latch
+        self.hblank.wodu(self.lcd.xugu())
     }
 
     pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
         if self.scan.besu() {
             Mode::OamScan
-        } else if self.xymu && !self.wodu() {
+        } else if self.hblank.xymu() && !self.wodu() {
             Mode::Drawing
         } else {
             Mode::HorizontalBlank
@@ -281,7 +265,7 @@ impl Rendering {
         };
         PipelineSnapshot {
             pixel_counter: self.lcd.pixel_counter(),
-            xymu: self.xymu,
+            xymu: self.hblank.xymu(),
             bg_low,
             bg_high,
             obj_low,
@@ -306,22 +290,22 @@ impl Rendering {
 
     pub(super) fn oam_locked(&self) -> bool {
         // Hardware: OAM blocked by ACYL (BESU-driven) or XYMU (rendering).
-        self.scan.besu() || self.xymu
+        self.scan.besu() || self.hblank.xymu()
     }
 
     pub(super) fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp.
-        self.xymu
+        self.hblank.xymu()
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
         // Hardware: OAM writes blocked by ACYL (BESU-driven) or XYMU (rendering).
-        self.scan.besu() || self.xymu
+        self.scan.besu() || self.hblank.xymu()
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
         // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
-        self.xymu
+        self.hblank.xymu()
     }
 
     /// Falling edge (DELTA_EVEN): setup phase.
@@ -355,32 +339,18 @@ impl Rendering {
             return;
         }
 
-        // VOGA DFF17 (DELTA_EVEN, clocked on ALET). Captures WODU_old
-        // — the WODU value from the previous half-phase. Since fall()
-        // runs after rise(), self.wodu() here reflects the state after
-        // the most recent rise() — this IS WODU_old for the falling edge.
-        let wodu = self.wodu();
+        // Hblank pipeline falling edge: evaluate WODU, capture into
+        // VOGA (ALET clock), apply WEGO (clears XYMU). Returns WODU
+        // for TYFA and LCD consumers.
+        let wodu = self.hblank.fall(self.lcd.xugu());
 
-        // wodu_latch maintained for TYFA gating in mode3_falling().
-        // Updated AFTER VOGA capture so VOGA sees current wodu (= WODU_old)
-        // and mode3_falling sees the value from this dot.
-        self.wodu_latch = wodu;
-
-        if wodu {
-            self.voga = true;
-        }
-
-        // WEGO = OR2(VID_RST, VOGA). Clears both WUSA (LCD clock gate)
-        // and XYMU (rendering latch). VID_RST is handled separately in
-        // reset_scanline; here we model the VOGA path.
-        self.lcd.fall(self.voga, wodu, &mut self.screen);
-        if self.voga {
-            self.xymu = false;
-        }
+        // WEGO = OR2(VID_RST, VOGA). Clears WUSA (LCD clock gate).
+        // VID_RST handled separately in reset_scanline.
+        self.lcd.fall(self.hblank.voga(), wodu, &mut self.screen);
 
         // Mode 3 falling-phase processing
-        if self.xymu {
-            self.mode3_falling(regs, video, oam, vram);
+        if self.hblank.xymu() {
+            self.mode3_falling(wodu, regs, video, oam, vram);
         }
     }
 
@@ -405,13 +375,13 @@ impl Rendering {
         // AVAP fires identically on normal lines and the LCD-on first line —
         // the scan counter runs to 39 independent of BESU (scanning latch).
         if scan.avap {
-            self.xymu = true;
+            self.hblank.set_xymu();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
         }
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when XYMU is set (rendering active).
-        if self.xymu {
+        if self.hblank.xymu() {
             self.mode3_rising(regs, video, oam, vram);
         }
     }
@@ -419,7 +389,7 @@ impl Rendering {
     /// Reset per-line state at the scanline boundary. Called by
     /// `Ppu::rise()` when `tick_xota` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
-        self.xymu = false;
+        self.hblank.reset();
         self.scan.reset();
         self.scan.enable_catu();
         self.bg_shifter = BgShifter::new();
@@ -429,14 +399,10 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
 
-        self.voga = false;
-        self.wodu_latch = false;
         self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.sprite_trigger.reset();
-        self.fepo_latch = false;
-        self.fepo_old = false;
         self.teky_latch = false;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
@@ -460,14 +426,15 @@ impl Rendering {
     /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(
         &mut self,
+        wodu: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
         _oam: &Oam,
         vram: &Vram,
     ) {
-        // FEPO_old feeds VYBO for TYFA suppression. Captured before any
-        // falling-phase mutations.
-        let fepo_old = self.fepo(regs);
+        // FEPO evaluated before any falling-phase mutations. Feeds VYBO
+        // (TYFA suppression) and is latched into hblank for next dot's wodu().
+        let fepo = self.fepo(regs);
 
         // BG fetcher falling-edge advance: VRAM reads + counter increment.
         // LEBO = NAND2(ALET, MOCE) — no dependency on TAKA or TEXY.
@@ -499,15 +466,14 @@ impl Rendering {
             self.start_sprite_fetch(regs);
         }
 
-        // Latch FEPO_old for wodu() and TYFA computation.
-        self.fepo_latch = fepo_old;
+        // Latch FEPO for next dot's wodu() evaluation.
+        self.hblank.latch_fepo(fepo);
 
         // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
         // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
-        // FEPO_old suppresses TYFA during sprite X match (before and during
-        // fetch). When wodu_latch is true (WODU fired on previous dot), TYFA
-        // must be suppressed to stop the pixel clock at PX=167.
-        self.tyfa = !fepo_old && !self.wodu_latch && !self.window.rydy() && self.cascade.poky();
+        // FEPO suppresses TYFA during sprite X match (before and during
+        // fetch). WODU suppresses TYFA to stop the pixel clock at PX=167.
+        self.tyfa = !fepo && !wodu && !self.window.rydy() && self.cascade.poky();
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -538,7 +504,6 @@ impl Rendering {
         // combinational settling.
         let fepo_now = self.fepo(regs);
         self.teky_latch = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
-        self.fepo_old = fepo_now;
 
         // Phase-boundary snapshot: capture pre-edge values of signals
         // that are both read and written within this half-phase. All
