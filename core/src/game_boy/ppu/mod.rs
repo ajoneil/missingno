@@ -215,7 +215,10 @@ impl Ppu {
             }
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
-            Register::InterruptOnScanline => self.video.lyc = value,
+            Register::InterruptOnScanline => {
+                self.video.lyc = value;
+                self.video.update_paly();
+            }
             Register::BackgroundPalette => {
                 self.registers.palettes.background.write_immediate(value)
             }
@@ -244,6 +247,8 @@ impl Ppu {
         self.video.rutu_active = false;
         self.video.myta = false;
         self.video.popu = false;
+        self.video.ly_eq_lyc = false;
+        self.video.update_paly();
 
         // Create the pixel pipeline (VID_RST released).
         self.pixel_pipeline = Some(Rendering::new());
