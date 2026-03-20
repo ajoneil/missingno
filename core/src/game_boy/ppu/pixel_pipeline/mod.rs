@@ -478,16 +478,17 @@ impl Rendering {
         let fepo_old = self.fepo(regs);
 
         // BG fetcher falling-edge advance: VRAM reads + counter increment.
-        // Gated by TAKA (sprite data fetch active). LEBO = NAND2(ALET, MOCE).
-        if !self.taka {
-            self.fetcher.advance_falling(
-                self.lcd.pixel_counter(),
-                self.window.window_line_counter(),
-                regs,
-                video,
-                vram,
-            );
-        }
+        // LEBO = NAND2(ALET, MOCE) — no dependency on TAKA or TEXY.
+        // The BG fetcher counter keeps ticking unconditionally during sprite
+        // fetch. On hardware, VRAM bus ownership switches (TEXY gates sprite
+        // addresses onto the bus), but the counter itself runs freely.
+        self.fetcher.advance_falling(
+            self.lcd.pixel_counter(),
+            self.window.window_line_counter(),
+            regs,
+            video,
+            vram,
+        );
 
         // LYRY: combinational gate, high when the fetcher has completed
         // its current tile fetch (step == Idle). Captured here immediately
@@ -563,10 +564,9 @@ impl Rendering {
         };
 
         // BG fetcher rising-edge advance: counter increment only.
-        // Gated by TAKA (sprite data fetch active).
-        if !self.taka {
-            self.fetcher.advance_rising();
-        }
+        // LEBO has no TAKA dependency — the BG counter runs freely
+        // during sprite fetch, same as the falling advance above.
+        self.fetcher.advance_rising();
 
         self.cascade.rise();
 
