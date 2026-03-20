@@ -106,6 +106,28 @@ pub struct PipelineSnapshot {
     pub doba: bool,
 }
 
+/// Values bridged between half-phases. The pipeline alternates:
+/// fall() consumes RisingToFalling, produces FallingToRising.
+/// rise() consumes FallingToRising, produces RisingToFalling.
+///
+/// The enum makes it structurally impossible to read a stale bridge
+/// from the wrong phase — the wrong variant won't match.
+enum PhaseBridge {
+    /// Produced by mode3_falling, consumed by mode3_rising.
+    FallingToRising {
+        /// TYFA_CLKPIPE_evn: pixel clock enable.
+        /// AND(!FEPO, !WODU, !RYDY, POKY).
+        tyfa: bool,
+    },
+    /// Produced by mode3_rising, consumed by mode3_falling.
+    RisingToFalling {
+        /// TEKY: combinational sprite fetch request, computed from
+        /// live FEPO/RYDY/LYRY/TAKA. sprite_trigger.fall() captures
+        /// this into SOBU on the next falling phase (TAVA clock).
+        teky: bool,
+    },
+}
+
 pub struct Rendering {
     pub(super) screen: Screen,
     /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
@@ -129,10 +151,9 @@ pub struct Rendering {
     /// Window control block (die page 27): RYDY latch, WX comparator,
     /// window line counter, window zero pixel.
     window: WindowControl,
-    /// TYFA_CLKPIPE_evn: AND3(SOCY_WIN_HITn, POKY, VYBO_CLKPIPE).
-    /// Combinational pixel clock enable, active on falling (EVEN) phases
-    /// only. Read by SACU on the next rising phase.
-    tyfa: bool,
+    /// Combinational values crossing the half-phase boundary. Alternates
+    /// between FallingToRising (tyfa) and RisingToFalling (teky).
+    phase_bridge: PhaseBridge,
     /// LCD Control block (die page 24): pixel X counter, LCD clock
     /// gating (WUSA), POVA trigger, LCD shift register, data latch.
     lcd: LcdControl,
@@ -141,10 +162,6 @@ pub struct Rendering {
     /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
     /// See `sprite_trigger.rs` for clock domain and race pair documentation.
     sprite_trigger: SpriteTrigger,
-    /// TEKY: combinational sprite fetch request, computed during rising from
-    /// live FEPO/RYDY/LYRY/TAKA. Bridged to the next falling phase where
-    /// `sprite_trigger.fall(teky_latch)` captures it into SOBU via TAVA clock.
-    teky_latch: bool,
 }
 
 impl Rendering {
@@ -159,11 +176,10 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            tyfa: false,
+            phase_bridge: PhaseBridge::RisingToFalling { teky: false },
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
-            teky_latch: false,
         }
     }
 
@@ -399,11 +415,10 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
 
-        self.tyfa = false;
+        self.phase_bridge = PhaseBridge::RisingToFalling { teky: false };
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.sprite_trigger.reset();
-        self.teky_latch = false;
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -459,7 +474,11 @@ impl Rendering {
 
         // Sprite trigger pipeline: SOBU captures TEKY on TAVA falling
         // edge (depth 7, after ALET at 5). RYCE edge-detects SOBU rising.
-        let ryce = self.sprite_trigger.fall(self.teky_latch);
+        let teky = match self.phase_bridge {
+            PhaseBridge::RisingToFalling { teky } => teky,
+            PhaseBridge::FallingToRising { .. } => false, // Mode 3 just started
+        };
+        let ryce = self.sprite_trigger.fall(teky);
 
         if ryce {
             // Find and mark the matching sprite entry, start the fetch.
@@ -469,11 +488,12 @@ impl Rendering {
         // Latch FEPO for next dot's wodu() evaluation.
         self.hblank.latch_fepo(fepo);
 
-        // TYFA = AND3(SOCY, POKY, VYBO). Compute in falling, store for rising.
+        // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
         // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
         // FEPO suppresses TYFA during sprite X match (before and during
         // fetch). WODU suppresses TYFA to stop the pixel clock at PX=167.
-        self.tyfa = !fepo && !wodu && !self.window.rydy() && self.cascade.poky();
+        let tyfa = !fepo && !wodu && !self.window.rydy() && self.cascade.poky();
+        self.phase_bridge = PhaseBridge::FallingToRising { tyfa };
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -491,6 +511,14 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) {
+        // Consume TYFA from falling phase. On the first rising phase
+        // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
+        // (pixel clock not yet enabled).
+        let tyfa = match self.phase_bridge {
+            PhaseBridge::FallingToRising { tyfa } => tyfa,
+            PhaseBridge::RisingToFalling { .. } => false,
+        };
+
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
         self.sprite_trigger.rise();
 
@@ -503,7 +531,8 @@ impl Rendering {
         // within a half T-cycle. Use live values to match hardware's
         // combinational settling.
         let fepo_now = self.fepo(regs);
-        self.teky_latch = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
+        let teky = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
+        self.phase_bridge = PhaseBridge::RisingToFalling { teky };
 
         // Phase-boundary snapshot: capture pre-edge values of signals
         // that are both read and written within this half-phase. All
@@ -565,7 +594,7 @@ impl Rendering {
         // capture PORY until the next falling phase. Use tyfa
         // (computed at the end of the previous falling phase) which has
         // the correct cascade-propagated POKY value.
-        let pova = if self.tyfa {
+        let pova = if tyfa {
             self.fine_scroll.capture_rising()
         } else {
             false
@@ -613,10 +642,6 @@ impl Rendering {
         if !self.sprite_trigger.taka() {
             // Normal pixel pipeline — no sprite fetch active.
 
-            // TYFA was computed in falling phase and bridged. SACU is
-            // computed here in rising — hardware-correct phase for SACU.
-            let tyfa = self.tyfa;
-
             // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
             // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
             // Net: SACU fires when TYFA is high AND ROXY is done (fine
@@ -660,7 +685,7 @@ impl Rendering {
             );
             let toba = self.lcd.rise(sacu, pixel, pova);
 
-            if !toba && self.tyfa {
+            if !toba && tyfa {
                 // Consume window_zero_pixel during pre-visible TYFA
                 // cycles (fine scroll gating, pre-WUSA). On hardware,
                 // the data pins update on every TYFA edge — the window
