@@ -254,6 +254,22 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
+        // LCDC writes must land before ppu.fall() so that
+        // correct_sprite_fetch_for_lcdc catches the sprite in
+        // WaitingForFetcher. On hardware, AROR reads XYLO
+        // combinationally — the write settles before DFF9 advances.
+        let lcdc_handled = if let DotAction::Write { address, value } = &self.current_dot_action
+            && *address == 0xFF40
+        {
+            if self.drive_ppu_bus(0xFF40, *value) {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
+            self.ppu.correct_sprite_fetch_for_lcdc();
+            true
+        } else {
+            false
+        };
+
         // PPU falling phase: fetcher, DFF8/DFF9, LCD-off.
         let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
 
@@ -280,18 +296,11 @@ impl GameBoy {
                 if (0xFE00..=0xFEFF).contains(&address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
-                // PPU register writes (DFF8/DFF9) latch at AFAS falling
-                // (G→H boundary, end of dot 3). drive_ppu_bus handles
-                // the PPU write; write_byte handles everything else.
-                if self.drive_ppu_bus(address, value) {
-                    self.interrupts.request(Interrupt::VideoStatus);
-                }
-                // Retroactive correction: if this was an LCDC write, the
-                // sprite fetch state may need adjustment. On hardware,
-                // AROR reads XYLO combinationally — the write and sprite
-                // match settle simultaneously.
-                if address == 0xFF40 {
-                    self.ppu.correct_sprite_fetch_for_lcdc();
+                // Skip drive_ppu_bus for LCDC — already handled before ppu.fall().
+                if !lcdc_handled {
+                    if self.drive_ppu_bus(address, value) {
+                        self.interrupts.request(Interrupt::VideoStatus);
+                    }
                 }
                 self.write_byte(address, value);
             }
