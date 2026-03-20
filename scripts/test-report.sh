@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate a structured test report for missingno-core.
+# Generate a structured test report for missingno-gmb.
 # Usage:
 #   ./scripts/test-report.sh                  # Run tests, print report
 #   ./scripts/test-report.sh --save-baseline  # Run tests and save as baseline
@@ -15,7 +15,7 @@ REPORT_DIR="$PROJECT_DIR/receipts/test-reports"
 mkdir -p "$REPORT_DIR"
 
 # Run tests and capture output
-RAW_OUTPUT=$(cargo test -p missingno-core 2>&1 || true)
+RAW_OUTPUT=$(cargo test -p missingno-gmb 2>&1 || true)
 
 # Extract test lines (ok/FAILED) and sort for stable diffing
 PASSED=$(echo "$RAW_OUTPUT" | grep '^\s*test .* ok$' | sed 's/^\s*test //' | sed 's/ \.\.\. ok$//' | sort)

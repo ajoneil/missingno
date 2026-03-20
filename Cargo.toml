@@ -1,5 +1,5 @@
 [workspace]
-members = ["core"]
+members = ["crates/missingno-gmb"]
 
 [package]
 name = "missingno"
@@ -13,7 +13,7 @@ name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
-missingno-core = { path = "core" }
+missingno-gmb = { path = "crates/missingno-gmb" }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
@@ -41,5 +41,5 @@ opt-level = 0
 [profile.dev.package."*"]
 opt-level = 2
 
-[profile.dev.package.missingno-core]
+[profile.dev.package.missingno-gmb]
 opt-level = 1

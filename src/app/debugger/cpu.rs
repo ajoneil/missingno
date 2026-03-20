@@ -18,8 +18,8 @@ use crate::app::{
         panes::{DebuggerPane, checkbox_title_bar, pane},
     },
 };
-use missingno_core::debugger::Debugger;
-use missingno_core::game_boy::cpu::{
+use missingno_gmb::debugger::Debugger;
+use missingno_gmb::game_boy::cpu::{
     Cpu,
     flags::Flags,
     registers::{Register8, Register16},
@@ -37,7 +37,7 @@ impl CpuPane {
             checkbox_title_bar(
                 "CPU",
                 debugger.game_boy().cpu().halt_state
-                    == missingno_core::game_boy::cpu::HaltState::Running,
+                    == missingno_gmb::game_boy::cpu::HaltState::Running,
                 DebuggerPane::Cpu,
             ),
             scrollable(

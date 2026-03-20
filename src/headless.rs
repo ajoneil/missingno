@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_core::debugger::instructions::InstructionsIterator;
-use missingno_core::debugger::{Debugger, WatchCondition};
-use missingno_core::game_boy::cartridge::Cartridge;
-use missingno_core::game_boy::cpu::flags::Flags;
-use missingno_core::game_boy::cpu::instructions::Instruction;
-use missingno_core::game_boy::interrupts;
-use missingno_core::game_boy::ppu;
-use missingno_core::game_boy::ppu::rendering::Mode;
-use missingno_core::game_boy::ppu::types::sprites::{Attributes, SpriteId};
-use missingno_core::game_boy::{ClockPhase, GameBoy};
+use missingno_gmb::debugger::instructions::InstructionsIterator;
+use missingno_gmb::debugger::{Debugger, WatchCondition};
+use missingno_gmb::game_boy::cartridge::Cartridge;
+use missingno_gmb::game_boy::cpu::flags::Flags;
+use missingno_gmb::game_boy::cpu::instructions::Instruction;
+use missingno_gmb::game_boy::interrupts;
+use missingno_gmb::game_boy::ppu;
+use missingno_gmb::game_boy::ppu::rendering::Mode;
+use missingno_gmb::game_boy::ppu::types::sprites::{Attributes, SpriteId};
+use missingno_gmb::game_boy::{ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -492,7 +492,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
             carry: cpu.flags.contains(Flags::CARRY),
         },
         ime: cpu.interrupts_enabled(),
-        halted: cpu.halt_state != missingno_core::game_boy::cpu::HaltState::Running,
+        halted: cpu.halt_state != missingno_gmb::game_boy::cpu::HaltState::Running,
     }
 }
 
@@ -878,10 +878,10 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
 
 fn timers_state(gb: &GameBoy) -> TimersState {
     let timers = gb.timers();
-    let div = timers.read_register(missingno_core::game_boy::timers::Register::Divider);
-    let tima = timers.read_register(missingno_core::game_boy::timers::Register::Counter);
-    let tma = timers.read_register(missingno_core::game_boy::timers::Register::Modulo);
-    let tac = timers.read_register(missingno_core::game_boy::timers::Register::Control);
+    let div = timers.read_register(missingno_gmb::game_boy::timers::Register::Divider);
+    let tima = timers.read_register(missingno_gmb::game_boy::timers::Register::Counter);
+    let tma = timers.read_register(missingno_gmb::game_boy::timers::Register::Modulo);
+    let tac = timers.read_register(missingno_gmb::game_boy::timers::Register::Control);
     let internal = timers.internal_counter();
     let clock_select = tac & 0b11;
     let freq = match clock_select {

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use missingno_core::game_boy::{GameBoy, cartridge::Cartridge, cpu::Cpu, ppu::screen::Screen};
+use missingno_gmb::game_boy::{GameBoy, cartridge::Cartridge, cpu::Cpu, ppu::screen::Screen};
 
 fn rom_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -153,7 +153,7 @@ fn is_infinite_loop(gb: &GameBoy) -> bool {
         return true;
     }
 
-    if gb.cpu().halt_state != missingno_core::game_boy::cpu::HaltState::Running {
+    if gb.cpu().halt_state != missingno_gmb::game_boy::cpu::HaltState::Running {
         // Permanent halt: IE register is empty, so no interrupt can ever wake
         // the CPU. Used by SameSuite's exit sequence (di; IE=0; halt; nop).
         if gb.interrupts().enabled.is_empty() {

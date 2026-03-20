@@ -9,7 +9,7 @@ use crate::app::{
     core::sizes::m,
     debugger::panes::{DebuggerPane, pane, title_bar},
 };
-use missingno_core::game_boy::ppu::{
+use missingno_gmb::game_boy::ppu::{
     Ppu, types::control::Control, memory::Vram, types::palette::Palette, types::tile_maps::TileMapId,
     types::tiles::TileAddressMode,
 };

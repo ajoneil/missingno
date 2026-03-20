@@ -8,7 +8,7 @@ use crate::app::{
     emulator::Emulator,
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
-use missingno_core::game_boy::{
+use missingno_gmb::game_boy::{
     GameBoy,
     joypad::Button,
     ppu::types::palette::PaletteChoice,
@@ -56,7 +56,7 @@ struct ActivePlayback {
 }
 
 pub struct Debugger {
-    debugger: missingno_core::debugger::Debugger,
+    debugger: missingno_gmb::debugger::Debugger,
     panes: DebuggerPanes,
     running: bool,
     frame: u64,
@@ -68,7 +68,7 @@ pub struct Debugger {
 impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
-            debugger: missingno_core::debugger::Debugger::new(game_boy),
+            debugger: missingno_gmb::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::new(),
             running: false,
             frame: 0,
@@ -80,7 +80,7 @@ impl Debugger {
 
     pub fn from_emulator(game_boy: GameBoy, screen_view: ScreenView) -> Self {
         Self {
-            debugger: missingno_core::debugger::Debugger::new(game_boy),
+            debugger: missingno_gmb::debugger::Debugger::new(game_boy),
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
             frame: 0,
@@ -109,7 +109,7 @@ impl Debugger {
 
     fn screen_update_task(
         &self,
-        screen: Option<missingno_core::game_boy::ppu::screen::Screen>,
+        screen: Option<missingno_gmb::game_boy::ppu::screen::Screen>,
     ) -> Task<app::Message> {
         let video_enabled = self.debugger.game_boy().ppu().control().video_enabled();
         let display = if let Some(sgb) = self.debugger.game_boy().sgb() {

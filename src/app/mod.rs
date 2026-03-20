@@ -20,7 +20,7 @@ use core::{
     sizes::{l, s, xl},
     text,
 };
-use missingno_core::game_boy::{
+use missingno_gmb::game_boy::{
     GameBoy,
     cartridge::Cartridge,
     joypad::{self, Button},
