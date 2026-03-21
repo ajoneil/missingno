@@ -34,19 +34,25 @@ These describe what the hardware actually does. They are the source of truth.
    - `signal_concordance.md` — Maps GateBoy 4-letter cell names to Pan Docs register names
    - `race_pairs.json` / `critical_paths.json` — Machine-readable data for specific signal lookups
    When researching PPU timing, check whether the behavior in question involves a known race pair or deep path. The race pairs report groups findings by observable effect, making it easy to match against emulator symptoms.
-5. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
+5. **Cross-emulator execution traces (gbtrace)**: The sibling project `../gbtrace/` provides tooling for capturing and comparing execution traces across emulators. When investigating a test failure, capturing traces from missingno and a reference emulator running the same ROM can pinpoint the exact instruction where behavior diverges.
+   - **Capture**: `GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gmb --features gbtrace -- <test_name>` → writes `receipts/traces/<rom>.parquet`.
+   - **Inspect**: `gbtrace-cli info <file>` shows summary; `gbtrace-cli query <file> --where pc=0x0150` finds specific entries.
+   - **Compare**: `gbtrace-cli diff <missingno.parquet> <sameboy.parquet> --skip-boot` reports first divergence and per-field divergence counts.
+   - **Trim**: `gbtrace-cli trim <file> --until pc=0x0100` to isolate regions of interest.
+   - Available profiles: `cpu_basic`, `ppu_timing`, `timer_edge` (in `../gbtrace/profiles/`).
+6. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
 
 ### Secondary sources (community knowledge)
 
 Useful for filling gaps, but may reflect incomplete understanding or outdated models.
 
-5. **Community resources**: Forums, wikis, and blog posts from the emulation development community. These often document obscure hardware quirks, but treat them as leads to verify against primary sources rather than as facts. Community consensus can be wrong — the history of emulation is full of "everyone implemented it this way" turning out to be inaccurate when someone finally tested on hardware.
+7. **Community resources**: Forums, wikis, and blog posts from the emulation development community. These often document obscure hardware quirks, but treat them as leads to verify against primary sources rather than as facts. Community consensus can be wrong — the history of emulation is full of "everyone implemented it this way" turning out to be inaccurate when someone finally tested on hardware.
 
 ### Tertiary sources (confirmation only)
 
 **Emulator source code is a model of the hardware, not the hardware itself.** Another developer's reverse-engineered approximation is not a primary source, no matter how accurate the emulator is. Use it only to confirm or fill in details after you already have a primary-source understanding.
 
-6. **Highly accurate emulator source (confirmation and gap-filling)**: Emulator source from projects with strong hardware accuracy (e.g. SameBoy, Gambatte) may be consulted **after** you have established the expected behavior from primary sources. Their role is to:
+8. **Highly accurate emulator source (confirmation and gap-filling)**: Emulator source from projects with strong hardware accuracy (e.g. SameBoy, Gambatte) may be consulted **after** you have established the expected behavior from primary sources. Their role is to:
    - **Confirm** a timing value or edge case you already found in docs/tests/hardware measurements.
    - **Fill gaps** where primary sources are silent — but flag these findings as `Confidence: low` since you're trusting another developer's reverse engineering rather than a direct hardware observation.
    

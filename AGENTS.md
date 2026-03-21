@@ -188,6 +188,23 @@ The `Processor` is split across three files in `crates/missingno-gmb/src/cpu/mcy
 
   This data is a primary source for understanding PPU timing. When investigating one-dot discrepancies, consult the race pairs and critical paths to identify which propagation delays could explain the behavior. The signal concordance maps between GateBoy's 4-letter cell names and standard register/signal names.
 
+- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gmb`:
+  - **`crates/missingno-gmb/src/trace.rs`** — `Tracer` struct captures per-instruction state to parquet files using profile-driven field selection.
+  - **Test runner integration** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`. Activated by env var:
+    ```bash
+    GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gmb --features gbtrace -- <test_name>
+    ```
+    Writes to `receipts/traces/<rom_name>.parquet`.
+  - **Profiles** (in `../gbtrace/profiles/`): `cpu_basic` (CPU registers per instruction), `ppu_timing` (CPU + PPU + interrupts), `timer_edge` (CPU + timers + interrupts).
+  - **gbtrace-cli** (`../gbtrace/crates/gbtrace-cli/`) — CLI for working with trace files. Build with `cargo build -p gbtrace-cli` from the gbtrace repo. Commands:
+    - `gbtrace-cli info <file>` — summary: emulator, model, entry count, cycle range, file size.
+    - `gbtrace-cli query <file> --where pc=0x0150` — find entries matching conditions, with optional `--context N` for surrounding entries.
+    - `gbtrace-cli diff <trace_a> <trace_b>` — compare two traces, report first divergence and per-field divergence counts. Supports `--skip-boot`, `--fields pc,a,f`, `--exclude ime`, `--align sequence|cycle`.
+    - `gbtrace-cli trim <file> --until pc=0x0100` / `--after pc=0x0150` — cut a trace at a condition.
+    - `gbtrace-cli strip-boot <file>` — remove boot ROM entries, rebase cycle counts.
+    - `gbtrace-cli convert <file>` — convert between JSONL (`.gbtrace`) and Parquet (`.parquet`).
+  - **Comparison workflow**: Capture traces from missingno and a reference emulator (SameBoy, Gambatte) running the same ROM, then use `gbtrace-cli diff` to identify the first divergence point. This is especially valuable for debugging accuracy failures — rather than guessing where behavior diverges, you can pinpoint the exact instruction and cycle.
+
 - **Boot ROM support**: The emulator optionally runs the DMG boot ROM. Without a boot ROM, it uses post-boot initialization (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`). With a boot ROM, it uses power-on state (`Cpu::power_on()`, `Ppu::power_on()`, etc.) and starts execution at 0x0000. Boot ROMs are proprietary and must never be committed to the repo. CLI: `--boot-rom <path>`. Tests: set `DMG_BOOT_ROM` env var. Running the boot ROM adds significant startup time per test — only use it on targeted tests when boot state is suspected to play a role, not across the full test suite.
 - **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
 - **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.
