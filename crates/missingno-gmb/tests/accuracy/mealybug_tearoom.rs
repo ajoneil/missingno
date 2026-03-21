@@ -4,14 +4,14 @@ fn run_mealybug_test(rom_name: &str) {
     let rom_path = format!("mealybug-tearoom/{rom_name}.gb");
     let reference_path = format!("mealybug-tearoom/{rom_name}-expected.png");
 
-    let mut gb = common::load_rom(&rom_path);
-    let found_breakpoint = common::run_until_breakpoint(&mut gb, 1200);
+    let mut run = common::load_rom(&rom_path);
+    let found_breakpoint = common::run_until_breakpoint(&mut run, 1200);
     assert!(
         found_breakpoint,
         "Mealybug test {rom_name} timed out without reaching LD B,B breakpoint"
     );
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(&reference_path);
 
     let mut mismatches = 0;

@@ -2,18 +2,18 @@ use crate::common;
 
 fn run_gbmicrotest(rom_name: &str) {
     let rom_path = format!("gbmicrotest/{rom_name}.gb");
-    let mut gb = common::load_rom(&rom_path);
+    let mut run = common::load_rom(&rom_path);
 
     // Step instruction-by-instruction, checking for result after each step.
     // Most gbmicrotests complete in a few hundred cycles. Tests that disable
     // the LCD never produce a frame, so we can't use frame-based timeouts.
     // 500K steps is generous (~2 million T-cycles, ~30 frames).
     for _ in 0..500_000 {
-        gb.step();
-        if gb.read(0xFF82) != 0 {
-            let actual = gb.read(0xFF80);
-            let expected = gb.read(0xFF81);
-            let pass_flag = gb.read(0xFF82);
+        run.step();
+        if run.gb.read(0xFF82) != 0 {
+            let actual = run.gb.read(0xFF80);
+            let expected = run.gb.read(0xFF81);
+            let pass_flag = run.gb.read(0xFF82);
             assert_eq!(
                 pass_flag, 0x01,
                 "gbmicrotest {rom_name} FAILED: got 0x{actual:02X}, expected 0x{expected:02X}"

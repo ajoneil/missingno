@@ -4,11 +4,11 @@ fn run_turtle_test(rom_name: &str) {
     let rom_path = format!("turtle-tests/{rom_name}.gb");
     let reference_path = format!("turtle-tests/{rom_name}-dmg.png");
 
-    let mut gb = common::load_rom(&rom_path);
+    let mut run = common::load_rom(&rom_path);
     // TurtleTests display results after ~30 frames; don't terminate with a loop
-    common::run_frames(&mut gb, 30);
+    common::run_frames(&mut run, 30);
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(&reference_path);
 
     let mut mismatches = 0;

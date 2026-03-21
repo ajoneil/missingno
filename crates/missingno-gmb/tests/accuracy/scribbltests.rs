@@ -4,14 +4,14 @@ fn run_scribbltest(rom_name: &str, timeout_frames: u32) {
     let rom_path = format!("scribbltests/{rom_name}.gb");
     let reference_path = format!("scribbltests/{rom_name}-dmg.png");
 
-    let mut gb = common::load_rom(&rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    let mut run = common::load_rom(&rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
     assert!(
         found_loop,
         "Scribbltest {rom_name} timed out without reaching infinite loop"
     );
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(&reference_path);
 
     let mut mismatches = 0;

@@ -2,15 +2,15 @@ use crate::common;
 
 fn run_age_fibonacci_test(rom_file: &str) {
     let rom_path = format!("age-test-roms/{rom_file}");
-    let mut gb = common::load_rom(&rom_path);
+    let mut run = common::load_rom(&rom_path);
     // AGE tests use LD B,B (0x40) as exit condition
-    let found = common::run_until_breakpoint(&mut gb, 1200);
+    let found = common::run_until_breakpoint(&mut run, 1200);
     assert!(
         found,
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let cpu = gb.cpu();
+    let cpu = run.gb.cpu();
     assert!(
         common::check_mooneye_pass(cpu),
         "AGE test {rom_file} failed. Registers: {}",
@@ -22,14 +22,14 @@ fn run_age_screenshot_test(rom_file: &str, reference_file: &str) {
     let rom_path = format!("age-test-roms/{rom_file}");
     let reference_path = format!("age-test-roms/{reference_file}");
 
-    let mut gb = common::load_rom(&rom_path);
-    let found = common::run_until_breakpoint(&mut gb, 1200);
+    let mut run = common::load_rom(&rom_path);
+    let found = common::run_until_breakpoint(&mut run, 1200);
     assert!(
         found,
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(&reference_path);
 
     let mut mismatches = 0;

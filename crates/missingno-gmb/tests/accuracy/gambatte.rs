@@ -192,10 +192,10 @@ fn extract_expected_hex(filename: &str) -> &str {
 }
 
 fn run_gambatte_hex_test(rom_path: &str) {
-    let mut gb = common::load_rom(rom_path);
-    common::run_frames(&mut gb, FRAMES);
+    let mut run = common::load_rom(rom_path);
+    common::run_frames(&mut run, FRAMES);
 
-    let screen = common::screen_to_greyscale(gb.screen());
+    let screen = common::screen_to_greyscale(run.gb.screen());
     let filename = rom_path.rsplit('/').next().unwrap();
     let expected_hex = extract_expected_hex(filename);
 
@@ -206,10 +206,10 @@ fn run_gambatte_hex_test(rom_path: &str) {
 }
 
 fn run_gambatte_screenshot_test(rom_path: &str, reference_path: &str) {
-    let mut gb = common::load_rom(rom_path);
-    common::run_frames(&mut gb, FRAMES);
+    let mut run = common::load_rom(rom_path);
+    common::run_frames(&mut run, FRAMES);
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(reference_path);
 
     let mut mismatches = 0;
@@ -230,10 +230,10 @@ fn run_gambatte_screenshot_test(rom_path: &str, reference_path: &str) {
 }
 
 fn run_gambatte_blank_test(rom_path: &str) {
-    let mut gb = common::load_rom(rom_path);
-    common::run_frames(&mut gb, FRAMES);
+    let mut run = common::load_rom(rom_path);
+    common::run_frames(&mut run, FRAMES);
 
-    let screen = common::screen_to_greyscale(gb.screen());
+    let screen = common::screen_to_greyscale(run.gb.screen());
     // Blank screen = all pixels should be background color (0xFF)
     let non_blank = screen.iter().filter(|&&p| p != 0xFF).count();
     assert_eq!(

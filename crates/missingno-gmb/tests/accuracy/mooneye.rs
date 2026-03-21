@@ -7,14 +7,14 @@ fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {
 }
 
 fn run_mooneye_screen_test_with_timeout(rom_path: &str, reference_path: &str, timeout_frames: u32) {
-    let mut gb = common::load_rom(rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    let mut run = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
     assert!(
         found_loop,
         "Mooneye test {rom_path} timed out without reaching infinite loop"
     );
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(reference_path);
 
     let mut mismatches = 0;
@@ -35,11 +35,11 @@ fn run_mooneye_screen_test_with_timeout(rom_path: &str, reference_path: &str, ti
 }
 
 fn run_mooneye_test(rom_path: &str) {
-    let mut gb = common::load_rom(rom_path);
+    let mut run = common::load_rom(rom_path);
     let mut serial_output = String::new();
-    let found_loop = common::run_until_infinite_loop(&mut gb, TIMEOUT_FRAMES);
+    let found_loop = common::run_until_infinite_loop(&mut run, TIMEOUT_FRAMES);
     // Drain any serial output for diagnostic purposes
-    let bytes = gb.drain_serial_output();
+    let bytes = run.gb.drain_serial_output();
     if !bytes.is_empty() {
         serial_output.push_str(&String::from_utf8_lossy(&bytes));
     }
@@ -47,7 +47,7 @@ fn run_mooneye_test(rom_path: &str) {
         found_loop,
         "Mooneye test {rom_path} timed out without reaching infinite loop"
     );
-    let cpu = gb.cpu();
+    let cpu = run.gb.cpu();
     if !common::check_mooneye_pass(cpu) {
         // Most Mooneye tests set registers to Fibonacci values (3,5,8,13,21,34)
         // in order as sub-tests pass. Some tests (e.g. lcdon_timing-GS) use

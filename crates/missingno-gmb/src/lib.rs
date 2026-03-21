@@ -21,6 +21,8 @@ pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
+#[cfg(feature = "gbtrace")]
+pub mod trace;
 
 /// Master clock signal level. The clock alternates High → Low
 /// uniformly. Edge logic runs at transitions: `rise()` at the

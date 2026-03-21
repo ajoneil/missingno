@@ -3,13 +3,13 @@ use crate::common;
 const TIMEOUT_FRAMES: u32 = 7200;
 
 fn run_samesuite_test(rom_path: &str) {
-    let mut gb = common::load_rom(rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut gb, TIMEOUT_FRAMES);
+    let mut run = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut run, TIMEOUT_FRAMES);
     assert!(
         found_loop,
         "SameSuite test {rom_path} timed out without reaching infinite loop"
     );
-    let cpu = gb.cpu();
+    let cpu = run.gb.cpu();
     if !common::check_mooneye_pass(cpu) {
         let all_same =
             cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;

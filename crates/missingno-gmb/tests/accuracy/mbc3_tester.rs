@@ -2,11 +2,11 @@ use crate::common;
 
 #[test]
 fn mbc3_tester() {
-    let mut gb = common::load_rom("mbc3-tester/mbc3-tester.gb");
+    let mut run = common::load_rom("mbc3-tester/mbc3-tester.gb");
     // MBC3 tester loops indefinitely; result visible after 40 frames
-    common::run_frames(&mut gb, 40);
+    common::run_frames(&mut run, 40);
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png("mbc3-tester/mbc3-tester-dmg.png");
 
     let mut mismatches = 0;

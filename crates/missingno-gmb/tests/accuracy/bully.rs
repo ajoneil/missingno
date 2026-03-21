@@ -2,12 +2,12 @@ use crate::common;
 
 #[test]
 fn bully() {
-    let mut gb = common::load_rom("bully/bully.gb");
+    let mut run = common::load_rom("bully/bully.gb");
     // Bully needs ~0.5s emulated time (~30 frames)
-    let found_loop = common::run_until_infinite_loop(&mut gb, 60);
+    let found_loop = common::run_until_infinite_loop(&mut run, 60);
     assert!(found_loop, "Bully timed out without reaching infinite loop");
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png("bully/bully-dmg.png");
 
     let mut mismatches = 0;

@@ -2,11 +2,11 @@ use crate::common;
 
 #[test]
 fn firstwhite() {
-    let mut gb = common::load_rom("little-things-gb/firstwhite.gb");
+    let mut run = common::load_rom("little-things-gb/firstwhite.gb");
     // Result is visible nearly immediately; doesn't terminate with a loop
-    common::run_frames(&mut gb, 30);
+    common::run_frames(&mut run, 30);
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png("little-things-gb/firstwhite-dmg.png");
 
     let mut mismatches = 0;

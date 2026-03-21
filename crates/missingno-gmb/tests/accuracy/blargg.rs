@@ -5,8 +5,8 @@ fn run_blargg_test(rom_path: &str) {
 }
 
 fn run_blargg_test_with_timeout(rom_path: &str, timeout_frames: u32) {
-    let mut gb = common::load_rom(rom_path);
-    let output = common::run_until_serial_match(&mut gb, &["Passed", "Failed"], timeout_frames);
+    let mut run = common::load_rom(rom_path);
+    let output = common::run_until_serial_match(&mut run, &["Passed", "Failed"], timeout_frames);
     assert!(
         output.contains("Passed"),
         "Blargg test {rom_path} failed. Serial output:\n{output}"
@@ -14,14 +14,14 @@ fn run_blargg_test_with_timeout(rom_path: &str, timeout_frames: u32) {
 }
 
 fn run_blargg_screen_test(rom_path: &str, reference_path: &str, timeout_frames: u32) {
-    let mut gb = common::load_rom(rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    let mut run = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
     assert!(
         found_loop,
         "Blargg test {rom_path} timed out without reaching infinite loop"
     );
 
-    let actual = common::screen_to_greyscale(gb.screen());
+    let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png(reference_path);
 
     let mut mismatches = 0;
@@ -226,21 +226,21 @@ fn oam_bug() {
 
 // OAM bug — individual sub-tests (screen-only, use cart RAM for result text)
 fn run_blargg_cart_ram_test(rom_path: &str, timeout_frames: u32) {
-    let mut gb = common::load_rom(rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut gb, timeout_frames);
+    let mut run = common::load_rom(rom_path);
+    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
 
     // Read result text from cart RAM at $A004 (zero-terminated string)
     // Signature at $A001-$A003 should be $DE $B0 $61
     let mut text = String::new();
     for i in 0..512u16 {
-        let b = gb.read(0xA004 + i);
+        let b = run.gb.read(0xA004 + i);
         if b == 0 {
             break;
         }
         text.push(b as char);
     }
 
-    let result_code = gb.read(0xA000);
+    let result_code = run.gb.read(0xA000);
 
     assert!(
         found_loop,

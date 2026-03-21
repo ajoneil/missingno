@@ -3,14 +3,14 @@ use crate::common;
 const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
 
 fn run_wilbertpol_test(rom_path: &str) {
-    let mut gb = common::load_rom(rom_path);
+    let mut run = common::load_rom(rom_path);
     // Wilbertpol tests use 0xED (undefined opcode) as their exit condition
-    let found = common::run_until_undefined_opcode(&mut gb, TIMEOUT_FRAMES);
+    let found = common::run_until_undefined_opcode(&mut run, TIMEOUT_FRAMES);
     assert!(
         found,
         "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
     );
-    let cpu = gb.cpu();
+    let cpu = run.gb.cpu();
     if !common::check_mooneye_pass(cpu) {
         let all_same =
             cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;

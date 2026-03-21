@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use missingno_gmb::{GameBoy, cartridge::Cartridge, cpu::Cpu, ppu::screen::Screen};
+use missingno_gmb::{GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, ppu::screen::Screen};
+
+#[cfg(feature = "gbtrace")]
+use missingno_gmb::trace::Tracer;
 
 fn rom_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -8,23 +11,105 @@ fn rom_path(relative: &str) -> PathBuf {
         .join(relative)
 }
 
-pub fn load_rom(relative: &str) -> GameBoy {
+/// A test run wrapping a GameBoy and an optional trace writer.
+///
+/// When the `gbtrace` feature is enabled and the `GBTRACE_PROFILE` env var
+/// is set (to a profile name like `cpu_basic`), each `step()` captures state
+/// into a parquet trace file under `receipts/traces/`.
+pub struct TestRun {
+    pub gb: GameBoy,
+    #[cfg(feature = "gbtrace")]
+    tracer: Option<Tracer>,
+}
+
+impl TestRun {
+    fn new(gb: GameBoy, _rom_relative: &str) -> Self {
+        #[cfg(feature = "gbtrace")]
+        let tracer = try_create_tracer(&gb, _rom_relative);
+
+        Self {
+            gb,
+            #[cfg(feature = "gbtrace")]
+            tracer,
+        }
+    }
+
+    /// Step one instruction, capturing trace state if active.
+    pub fn step(&mut self) -> StepResult {
+        #[cfg(feature = "gbtrace")]
+        if let Some(tracer) = &mut self.tracer {
+            tracer.capture(&self.gb).unwrap();
+        }
+
+        let result = self.gb.step();
+
+        #[cfg(feature = "gbtrace")]
+        if let Some(tracer) = &mut self.tracer {
+            tracer.advance(result.dots);
+        }
+
+        result
+    }
+
+    /// Finalize the trace file (if active). Call when the test is done.
+    pub fn finish(self) {
+        #[cfg(feature = "gbtrace")]
+        if let Some(tracer) = self.tracer {
+            tracer.finish().unwrap();
+        }
+    }
+}
+
+#[cfg(feature = "gbtrace")]
+fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
+    let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
+
+    let profile_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../gbtrace/profiles")
+        .join(format!("{profile_name}.toml"));
+    let profile = gbtrace::Profile::load(&profile_path)
+        .unwrap_or_else(|e| panic!("Failed to load gbtrace profile {}: {e}", profile_path.display()));
+
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../receipts/traces");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    // Use the ROM filename (without extension) as the trace filename.
+    let rom_stem = Path::new(rom_relative)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy();
+    let output_path = output_dir.join(format!("{rom_stem}.parquet"));
+
+    let boot_rom = if gb.cpu().program_counter == 0x0000 {
+        gbtrace::BootRom::Skip // TODO: detect actual boot ROM
+    } else {
+        gbtrace::BootRom::Skip
+    };
+
+    eprintln!("gbtrace: writing {}", output_path.display());
+
+    Some(
+        Tracer::create(&output_path, &profile, gb, boot_rom)
+            .unwrap_or_else(|e| panic!("Failed to create tracer: {e}")),
+    )
+}
+
+pub fn load_rom(relative: &str) -> TestRun {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
     let boot_rom = try_load_boot_rom();
     let mut gb = GameBoy::new(Cartridge::new(rom, None), boot_rom);
     run_boot_rom(&mut gb);
-    gb
+    TestRun::new(gb, relative)
 }
 
 /// Load a ROM with a boot ROM. The boot ROM runs from 0x0000 before
 /// handing control to the cartridge at 0x0100.
-pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> GameBoy {
-    let path = rom_path(relative);
-    let rom = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
-    GameBoy::new(Cartridge::new(rom, None), Some(boot_rom))
+pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun {
+    let gb = GameBoy::new(Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None), Some(boot_rom));
+    TestRun::new(gb, relative)
 }
 
 /// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.
@@ -56,18 +141,18 @@ fn run_boot_rom(gb: &mut GameBoy) {
 
 /// Run the emulator until the serial output contains any of the given needle strings,
 /// or until an infinite loop is detected at a frame boundary, or until a timeout is reached.
-pub fn run_until_serial_match(gb: &mut GameBoy, needles: &[&str], timeout_frames: u32) -> String {
+pub fn run_until_serial_match(run: &mut TestRun, needles: &[&str], timeout_frames: u32) -> String {
     let mut output = String::new();
     for _ in 0..timeout_frames {
-        while !gb.step().new_screen {}
-        let bytes = gb.drain_serial_output();
+        while !run.step().new_screen {}
+        let bytes = run.gb.drain_serial_output();
         if !bytes.is_empty() {
             output.push_str(&String::from_utf8_lossy(&bytes));
             if needles.iter().any(|needle| output.contains(needle)) {
                 return output;
             }
         }
-        if is_infinite_loop(gb) {
+        if is_infinite_loop(&run.gb) {
             return output;
         }
     }
@@ -76,9 +161,9 @@ pub fn run_until_serial_match(gb: &mut GameBoy, needles: &[&str], timeout_frames
 
 /// Run the emulator for a fixed number of frames. Used for ROMs that display
 /// results but don't terminate with an infinite loop.
-pub fn run_frames(gb: &mut GameBoy, frames: u32) {
+pub fn run_frames(run: &mut TestRun, frames: u32) {
     for _ in 0..frames {
-        while !gb.step().new_screen {}
+        while !run.step().new_screen {}
     }
 }
 
@@ -86,17 +171,17 @@ pub fn run_frames(gb: &mut GameBoy, frames: u32) {
 ///
 /// After the frame-by-frame scan, does one final per-instruction scan (one frame's worth
 /// of T-cycles) to catch HALT-based loops that aren't visible at frame boundaries.
-pub fn run_until_infinite_loop(gb: &mut GameBoy, timeout_frames: u32) -> bool {
+pub fn run_until_infinite_loop(run: &mut TestRun, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
-        while !gb.step().new_screen {}
-        if is_infinite_loop(gb) {
+        while !run.step().new_screen {}
+        if is_infinite_loop(&run.gb) {
             return true;
         }
     }
     // Per-instruction scan for HALT-based completion loops
     for _ in 0..70224 {
-        gb.step();
-        if is_infinite_loop(gb) {
+        run.step();
+        if is_infinite_loop(&run.gb) {
             return true;
         }
     }
@@ -108,15 +193,15 @@ pub fn run_until_infinite_loop(gb: &mut GameBoy, timeout_frames: u32) -> bool {
 /// The Mealybug Tearoom test suite uses `LD B,B` as a software breakpoint to signal
 /// "take a screenshot now." The ROM continues running after the breakpoint, so we
 /// detect it per-instruction rather than waiting for an infinite loop.
-pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
+pub fn run_until_breakpoint(run: &mut TestRun, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
             // Check for LD B,B breakpoint before executing
-            let pc = gb.cpu().program_counter;
-            if gb.read(pc) == 0x40 {
+            let pc = run.gb.cpu().program_counter;
+            if run.gb.read(pc) == 0x40 {
                 return true;
             }
-            if gb.step().new_screen {
+            if run.step().new_screen {
                 break;
             }
         }
@@ -127,17 +212,17 @@ pub fn run_until_breakpoint(gb: &mut GameBoy, timeout_frames: u32) -> bool {
 /// Run the emulator until opcode 0xED (undefined) is about to execute, or until
 /// an infinite loop is detected, or until a timeout. The wilbertpol Mooneye fork
 /// uses 0xED as its test exit condition.
-pub fn run_until_undefined_opcode(gb: &mut GameBoy, timeout_frames: u32) -> bool {
+pub fn run_until_undefined_opcode(run: &mut TestRun, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
-            let pc = gb.cpu().program_counter;
-            if gb.read(pc) == 0xED {
+            let pc = run.gb.cpu().program_counter;
+            if run.gb.read(pc) == 0xED {
                 return true;
             }
-            if is_infinite_loop(gb) {
+            if is_infinite_loop(&run.gb) {
                 return true;
             }
-            if gb.step().new_screen {
+            if run.step().new_screen {
                 break;
             }
         }
