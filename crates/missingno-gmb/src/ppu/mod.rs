@@ -535,6 +535,18 @@ impl Ppu {
         result
     }
 
+    /// Settle ALET-clocked DFFs (VOGA/XYMU) before CPU bus read.
+    /// On hardware, ALET falls at F->G before BUKE opens at G-H --
+    /// this models that ordering so the CPU sees post-XYMU state.
+    pub fn settle_alet(&mut self) {
+        if !self.control().video_enabled() {
+            return;
+        }
+        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
+            rendering.settle_alet();
+        }
+    }
+
     /// Detect a rising edge on the STAT interrupt line (SUKO).
     /// On hardware, SUKO is purely combinational — it can fire on
     /// any phase where an enabled condition transitions from inactive

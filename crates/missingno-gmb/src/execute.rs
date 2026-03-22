@@ -231,10 +231,20 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
+        // ALET settle: VOGA captures WODU_old, XYMU clears.
+        // On hardware, ALET falls at F->G before BUKE opens at G-H.
+        // Both M-cycle boundary and non-boundary paths converge here.
+        self.ppu.settle_alet();
+
+        // SUKO is combinational — recheck STAT edge after XYMU may have changed.
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
         // CPU data latch: capture bus value on the rising edge, after
-        // PPU rise so the read sees the current PPU mode (for OAM/VRAM
-        // blocking). The timer tick is on the falling edge, so reads
-        // naturally see the pre-increment counter value.
+        // PPU rise and ALET settle so the read sees the current PPU mode
+        // (for OAM/VRAM blocking). The timer tick is on the falling edge,
+        // so reads naturally see the pre-increment counter value.
         if let DotAction::Read { address } = &self.current_dot_action {
             if (0xFE00..=0xFEFF).contains(address) {
                 *pending_oam_bug = Some(OamBugKind::Read);

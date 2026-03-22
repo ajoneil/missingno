@@ -191,6 +191,16 @@ impl Rendering {
         self.hblank.wodu(self.lcd.xugu())
     }
 
+    /// Pre-CPU-read settling: VOGA captures WODU_old, XYMU clears.
+    /// Called after PPU rise, before CPU bus read. On hardware, ALET
+    /// falls at F->G before BUKE opens at G-H.
+    pub(super) fn settle_alet(&mut self) {
+        if self.scan.scanning() {
+            return; // Mode 2: no hblank logic
+        }
+        self.hblank.settle_alet();
+    }
+
     pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
         if self.scan.besu() {
             Mode::OamScan
@@ -342,16 +352,19 @@ impl Rendering {
             return;
         }
 
-        // Hblank pipeline falling edge: VOGA captures WODU_old (previous
-        // dot), WEGO clears XYMU. Returns (wodu_current, wodu_old).
+        // Hblank pipeline: if settle_alet() already ran this dot,
+        // returns cached values. Otherwise computes fresh (e.g.
+        // Mode 2→3 transition where scanning was active during settle).
         let (wodu, wodu_old) = self.hblank.fall(self.lcd.xugu());
 
         // lcd.fall() receives current-dot wodu for last_pixel (the final
         // pixel shift-in happens on the dot WODU fires, not one dot later).
         self.lcd.fall(self.hblank.voga(), wodu, &mut self.screen);
 
-        if self.hblank.xymu() {
-            // mode3_falling receives wodu_old for TYFA (VYBO uses WODU_old).
+        if self.hblank.xymu_before_settle() {
+            // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
+            // already cleared XYMU, but mode3_falling still needs to run
+            // for the final fetcher/TYFA work.
             self.mode3_falling(wodu_old, regs, video, oam, vram);
         }
     }
