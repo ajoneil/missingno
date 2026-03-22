@@ -102,12 +102,8 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 - Classify the problem type and write it in summary.md.
 
 **For compatibility investigations:**
-- After capturing the baseline, invoke `/inspect` to observe the specific failing test's behavior and capture initial state.
-- **Execution tracing.** For any failing test, capture a gbtrace execution trace early in the investigation. This provides a complete instruction-by-instruction record that can be compared against reference emulators or queried for specific state:
-  ```bash
-  GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gmb --features gbtrace -- <failing_test>
-  ```
-  Use `gbtrace-cli query` to inspect state at specific points, and `gbtrace-cli diff` to compare against a reference trace if one is available. See AGENTS.md "Execution tracing (gbtrace)" for full CLI reference.
+- After capturing the baseline, **invoke `/compare-traces` first** to find the exact divergence point between missingno and a reference emulator. This is faster and more precise than interactive debugging — it shows you exactly where and how execution differs. Only fall back to `/inspect` (debugger) when you need sub-dot observation that traces can't provide.
+- **When `/compare-traces` is not enough:** If the trace comparison can't answer the question (e.g. you need internal pipeline state, sub-dot phase timing, or the reference emulator has no trace available), invoke `/inspect` for targeted observation at the divergence point that `/compare-traces` identified.
 - **Boot ROM consideration.** If boot state is suspected to play a role (e.g., tests that depend on initial register values, VRAM contents, or hardware state that the boot ROM sets up differently from post-boot initialization), ask the user for a DMG boot ROM path and re-run the specific failing test with `DMG_BOOT_ROM=<path>`. Boot ROMs are proprietary and cannot be in the repo. Do NOT run the entire test suite with the boot ROM — it adds significant startup time per test. Use it only on targeted tests.
 - Classify the failure type:
   - **Register mismatch**: Expected vs actual CPU/hardware register values after test execution.
@@ -159,7 +155,7 @@ Investigate owns test state tracking directly, the same way it owns branch hygie
 
 **Invoke `/analyze` to interpret.** When `/inspect` or `/instrument` returns, invoke `/analyze` with the receipt path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret results inline.
 
-**Every diagnostic observation goes through `/inspect` or `/instrument`**, not directly. Do not run diagnostics yourself.
+**Every diagnostic observation goes through `/compare-traces`, `/inspect`, or `/instrument`**, not directly. Do not run diagnostics yourself. Prefer `/compare-traces` for initial diagnosis of compatibility failures — it shows exactly where execution diverges without guessing. Use `/inspect` for targeted follow-up when you need sub-dot timing or internal pipeline state that traces don't capture. If `/compare-traces` can't answer the question, report what's missing so gbtrace tooling can be improved.
 
 ### 6. Analyze and fix
 
@@ -241,7 +237,7 @@ When a fix produces unexpected results:
 
 **Reference value trap:** A common failure mode is: research finds "reference emulator uses value X" → design changes our code to use X → implementation fails → design tries X-1, X+1, -X, etc. This is trial-and-error with extra steps. The problem is not the value — it's that you don't understand what the value *controls* in your own code. When a reference-emulator-sourced value produces unexpected results, the next step is NEVER "try a different value." It is ALWAYS: invoke `/research` to understand how our code uses that value (rule 9 in discipline requirements), then `/analyze` to reconcile the hardware model with our mechanism.
 
-The loop is: **`/hypothesize` → `/inspect` → `/analyze` → (repeat until confident) → `/design` → `/implement` → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks".
+The loop is: **`/hypothesize` → `/compare-traces` or `/inspect` → `/analyze` → (repeat until confident) → `/design` → `/implement` → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks". For compatibility investigations, prefer `/compare-traces` for the observation step — it finds divergence points faster than interactive debugging.
 
 **For compatibility investigations:**
 - **Design fixes based on hardware behavior, not other emulators' code.** The intermediate step is always understanding what the real hardware does — then modeling that behavior in your architecture. Never shortcut from "emulator X does Y" to "we should do Y". Instead: research establishes what the hardware does → design models that behavior in your architecture → implementation follows the design. Reference emulators are evidence about hardware behavior, not templates to copy. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
