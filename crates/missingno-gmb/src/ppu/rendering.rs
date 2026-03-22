@@ -191,6 +191,16 @@ impl Rendering {
         self.hblank.wodu(self.lcd.xugu())
     }
 
+    /// Pre-CPU-read settling: VOGA captures WODU_old, XYMU clears.
+    /// Called after PPU rise, before CPU bus read. On hardware, ALET
+    /// falls at F->G before BUKE opens at G-H.
+    pub(super) fn settle_alet(&mut self) {
+        if self.scan.scanning() {
+            return; // Mode 2: no hblank logic
+        }
+        self.hblank.settle_alet();
+    }
+
     pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
         if self.scan.besu() {
             Mode::OamScan
@@ -342,18 +352,20 @@ impl Rendering {
             return;
         }
 
-        // Hblank pipeline falling edge: evaluate WODU, capture into
-        // VOGA (ALET clock), apply WEGO (clears XYMU). Returns WODU
-        // for TYFA and LCD consumers.
-        let wodu = self.hblank.fall(self.lcd.xugu());
+        // Hblank pipeline: if settle_alet() already ran this dot,
+        // returns cached values. Otherwise computes fresh (e.g.
+        // Mode 2→3 transition where scanning was active during settle).
+        let (wodu, wodu_old) = self.hblank.fall(self.lcd.xugu());
 
-        // WEGO = OR2(VID_RST, VOGA). Clears WUSA (LCD clock gate).
-        // VID_RST handled separately in reset_scanline.
+        // lcd.fall() receives current-dot wodu for last_pixel (the final
+        // pixel shift-in happens on the dot WODU fires, not one dot later).
         self.lcd.fall(self.hblank.voga(), wodu, &mut self.screen);
 
-        // Mode 3 falling-phase processing
-        if self.hblank.xymu() {
-            self.mode3_falling(wodu, regs, video, oam, vram);
+        if self.hblank.xymu_before_settle() {
+            // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
+            // already cleared XYMU, but mode3_falling still needs to run
+            // for the final fetcher/TYFA work.
+            self.mode3_falling(wodu_old, regs, video, oam, vram);
         }
     }
 
@@ -428,7 +440,7 @@ impl Rendering {
     /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(
         &mut self,
-        wodu: bool,
+        wodu_old: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
         _oam: &Oam,
@@ -477,9 +489,9 @@ impl Rendering {
 
         // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
         // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
-        // FEPO suppresses TYFA during sprite X match (before and during
-        // fetch). WODU suppresses TYFA to stop the pixel clock at PX=167.
-        let tyfa = !fepo && !wodu && !self.window.rydy() && self.cascade.poky();
+        // Both FEPO and WODU are odd-phase signals read as reg_old by the
+        // even-phase VYBO (GateBoy line 948, comment at 946-947).
+        let tyfa = !fepo && !wodu_old && !self.window.rydy() && self.cascade.poky();
         self.phase_bridge = PhaseBridge::FallingToRising { tyfa };
 
         // POHU: combinational comparator, count == SCX & 7.

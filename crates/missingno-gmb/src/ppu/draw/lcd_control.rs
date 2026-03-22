@@ -96,14 +96,21 @@ impl LcdControl {
     /// clears WUSA. On the WODU dot (last_pixel), also
     /// shifts in the final pixel and latches the shift register to
     /// the screen.
-    pub(in crate::ppu) fn fall(&mut self, voga: bool, last_pixel: bool, screen: &mut Screen) {
-        if !voga {
-            return;
-        }
-        self.wusa = false;
-        if last_pixel {
+    pub(in crate::ppu) fn fall(&mut self, voga: bool, wodu: bool, screen: &mut Screen) {
+        // WODU fires combinationally on the dot pixel_counter reaches 167.
+        // The final pixel shift-in and latch happen on the WODU dot, before
+        // VOGA captures (one dot later). TOBA = AND(WUSA, SACU) still fires
+        // on the WODU dot because WUSA hasn't been cleared yet and SACU is
+        // still active.
+        if wodu {
             self.shift_register.shift_in(self.data_latch);
             self.shift_register.latch_to_screen(screen);
+        }
+
+        // WUSA is cleared by WEGO = OR2(VID_RST, VOGA). VOGA fires one
+        // dot after WODU (DFF17 delay). This is the correct hardware timing.
+        if voga {
+            self.wusa = false;
         }
     }
 
