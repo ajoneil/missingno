@@ -1555,6 +1555,7 @@ name = "gbtrace"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "bytes",
  "flate2",
  "parquet",
  "serde",
