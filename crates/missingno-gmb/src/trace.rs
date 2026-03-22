@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
+pub use gbtrace::Trigger;
 use gbtrace::{BootRom, ParquetTraceWriter, Profile, TraceEntry, TraceHeader};
 use sha2::{Digest, Sha256};
 
@@ -9,7 +11,9 @@ use crate::GameBoy;
 pub struct Tracer {
     writer: ParquetTraceWriter,
     fields: Vec<String>,
+    memory: BTreeMap<String, u16>,
     dot_count: u64,
+    trigger: Trigger,
 }
 
 impl Tracer {
@@ -26,6 +30,8 @@ impl Tracer {
             format!("{:x}", hasher.finalize())
         };
 
+        let trigger = profile.trigger.clone();
+
         let header = TraceHeader {
             _header: true,
             format_version: "0.1.0".into(),
@@ -37,6 +43,7 @@ impl Tracer {
             profile: profile.name.clone(),
             fields: profile.fields.clone(),
             trigger: profile.trigger.clone(),
+            cy_unit: gbtrace::CycleUnit::Tcycle,
             notes: String::new(),
         };
 
@@ -45,17 +52,28 @@ impl Tracer {
         Ok(Self {
             writer,
             fields: profile.fields.clone(),
+            memory: profile.memory.clone(),
             dot_count: 0,
+            trigger,
         })
     }
 
+    /// The trigger granularity for this trace.
+    pub fn trigger(&self) -> Trigger {
+        self.trigger.clone()
+    }
+
     /// Capture the current state and write a trace entry.
-    ///
-    /// Call this before each `step()` for instruction-triggered profiles.
     pub fn capture(&mut self, gb: &GameBoy) -> Result<(), gbtrace::Error> {
         let mut entry = TraceEntry::new();
 
         for field in &self.fields {
+            // Check if this is a memory-mapped field first.
+            if let Some(&addr) = self.memory.get(field) {
+                entry.set_u8(field, gb.peek(addr));
+                continue;
+            }
+
             match field.as_str() {
                 "cy" => entry.set_cy(self.dot_count),
                 "a" => entry.set_u8("a", gb.cpu().a),
@@ -97,7 +115,12 @@ impl Tracer {
         self.writer.write_entry(&entry)
     }
 
-    /// Record that T-cycles have elapsed (call after each step).
+    /// Advance the dot counter by one T-cycle.
+    pub fn advance_dot(&mut self) {
+        self.dot_count += 1;
+    }
+
+    /// Advance the dot counter by multiple T-cycles (for instruction-level tracing).
     pub fn advance(&mut self, dots: u32) {
         self.dot_count += dots as u64;
     }

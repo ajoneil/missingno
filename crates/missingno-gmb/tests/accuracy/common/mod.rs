@@ -35,20 +35,66 @@ impl TestRun {
     }
 
     /// Step one instruction, capturing trace state if active.
+    ///
+    /// For tcycle-triggered profiles, this steps dot-by-dot and captures
+    /// state at every T-cycle. For instruction-triggered profiles, it
+    /// captures once before the instruction executes.
     pub fn step(&mut self) -> StepResult {
         #[cfg(feature = "gbtrace")]
-        if let Some(tracer) = &mut self.tracer {
+        {
+            if let Some(tracer) = &mut self.tracer {
+                if tracer.trigger() == missingno_gmb::trace::Trigger::Tcycle {
+                    return self.step_traced_tcycle();
+                }
+                tracer.capture(&self.gb).unwrap();
+            }
+
+            let result = self.gb.step();
+
+            if let Some(tracer) = &mut self.tracer {
+                tracer.advance(result.dots);
+            }
+
+            return result;
+        }
+
+        #[cfg(not(feature = "gbtrace"))]
+        self.gb.step()
+    }
+
+    /// Step one instruction by advancing one dot at a time, capturing at each dot.
+    ///
+    /// Uses `step_phase()` to advance half-dots, capturing state at each
+    /// dot boundary (when clock returns to Low). Detects instruction
+    /// boundaries via the CPU's boundary flag to know when the instruction
+    /// is complete.
+    #[cfg(feature = "gbtrace")]
+    fn step_traced_tcycle(&mut self) -> StepResult {
+        let mut new_screen = false;
+        let mut dots = 0u32;
+
+        // Consume the current instruction boundary so we can detect the next one.
+        self.gb.cpu_mut().take_instruction_boundary();
+
+        loop {
+            // Capture state at the start of each dot (before rise).
+            let tracer = self.tracer.as_mut().unwrap();
             tracer.capture(&self.gb).unwrap();
+
+            // Execute rise phase.
+            new_screen |= self.gb.step_phase();
+            // Execute fall phase.
+            new_screen |= self.gb.step_phase();
+
+            tracer.advance_dot();
+            dots += 1;
+
+            if self.gb.cpu().at_instruction_boundary() {
+                break;
+            }
         }
 
-        let result = self.gb.step();
-
-        #[cfg(feature = "gbtrace")]
-        if let Some(tracer) = &mut self.tracer {
-            tracer.advance(result.dots);
-        }
-
-        result
+        StepResult { new_screen, dots }
     }
 
     /// Finalize the trace file (if active). Call when the test is done.
@@ -64,9 +110,16 @@ impl TestRun {
 fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
 
-    let profile_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../gbtrace/profiles")
-        .join(format!("{profile_name}.toml"));
+    let gbtrace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gbtrace");
+    // Look in profiles/ first, then docs/tests/<profile_name>/ for test-suite-specific profiles.
+    let profile_path = {
+        let in_profiles = gbtrace_root.join("profiles").join(format!("{profile_name}.toml"));
+        if in_profiles.exists() {
+            in_profiles
+        } else {
+            gbtrace_root.join("docs/tests").join(&profile_name).join(format!("{profile_name}.toml"))
+        }
+    };
     let profile = gbtrace::Profile::load(&profile_path)
         .unwrap_or_else(|e| panic!("Failed to load gbtrace profile {}: {e}", profile_path.display()));
 

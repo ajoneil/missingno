@@ -193,6 +193,10 @@ impl GameBoy {
         &self.cpu
     }
 
+    pub fn cpu_mut(&mut self) -> &mut Cpu {
+        &mut self.cpu
+    }
+
     pub fn ppu(&self) -> &Ppu {
         &self.ppu
     }

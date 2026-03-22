@@ -8,21 +8,29 @@ fn run_gbmicrotest(rom_name: &str) {
     // Most gbmicrotests complete in a few hundred cycles. Tests that disable
     // the LCD never produce a frame, so we can't use frame-based timeouts.
     // 500K steps is generous (~2 million T-cycles, ~30 frames).
+    let mut result = None;
     for _ in 0..500_000 {
         run.step();
         if run.gb.read(0xFF82) != 0 {
-            let actual = run.gb.read(0xFF80);
-            let expected = run.gb.read(0xFF81);
-            let pass_flag = run.gb.read(0xFF82);
+            result = Some((run.gb.read(0xFF80), run.gb.read(0xFF81), run.gb.read(0xFF82)));
+            break;
+        }
+    }
+
+    // Finalize the trace before asserting, so the file is written even on failure.
+    run.finish();
+
+    match result {
+        Some((actual, expected, pass_flag)) => {
             assert_eq!(
                 pass_flag, 0x01,
                 "gbmicrotest {rom_name} FAILED: got 0x{actual:02X}, expected 0x{expected:02X}"
             );
-            return;
+        }
+        None => {
+            panic!("gbmicrotest {rom_name} timed out (0xFF82 still 0x00 after 500K steps)");
         }
     }
-
-    panic!("gbmicrotest {rom_name} timed out (0xFF82 still 0x00 after 500K steps)");
 }
 
 macro_rules! gbmicrotest {
