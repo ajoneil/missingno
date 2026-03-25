@@ -20,6 +20,11 @@ pub struct Tracer {
     /// Accumulated pixel output since the last capture, for the `pix` field.
     /// Shade characters ('0'-'3') appended by `push_pixel()`, drained on capture.
     pix_buffer: String,
+    /// Pending VRAM write address (0 = no write). Set by `push_vram_write()`,
+    /// drained on capture.
+    vram_write_addr: u16,
+    /// Pending VRAM write data.
+    vram_write_data: u8,
 }
 
 /// PPU internal field names that require a PpuTraceSnapshot.
@@ -82,6 +87,8 @@ impl Tracer {
             trigger,
             needs_ppu_snapshot,
             pix_buffer: String::new(),
+            vram_write_addr: 0,
+            vram_write_data: 0,
         })
     }
 
@@ -94,6 +101,13 @@ impl Tracer {
     /// returned by `PhaseResult` between captures.
     pub fn push_pixel(&mut self, shade: u8) {
         self.pix_buffer.push((b'0' + (shade & 3)) as char);
+    }
+
+    /// Record a VRAM write (address 0x8000-0x9FFF). Call after each
+    /// phase when the bus performed a write to VRAM.
+    pub fn push_vram_write(&mut self, addr: u16, data: u8) {
+        self.vram_write_addr = addr;
+        self.vram_write_data = data;
     }
 
     /// Capture the current state and write a trace entry.
@@ -162,6 +176,9 @@ impl Tracer {
                         entry.set_u8("pix_x", snap.pix_count);
                     }
                 }
+                // VRAM write tracking
+                "vram_addr" => entry.set_u16("vram_addr", self.vram_write_addr),
+                "vram_data" => entry.set_u8("vram_data", self.vram_write_data),
                 // PPU internal fields — use snapshot
                 field_name if PPU_INTERNAL_FIELDS.contains(&field_name) => {
                     Self::emit_ppu_field(&mut entry, field_name, &ppu_snap);
@@ -173,6 +190,8 @@ impl Tracer {
         // Drain the pixel buffer after emitting — it covers the interval
         // since the last capture.
         self.pix_buffer.clear();
+        self.vram_write_addr = 0;
+        self.vram_write_data = 0;
 
         self.writer.write_entry(&entry)
     }

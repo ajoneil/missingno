@@ -217,6 +217,12 @@ impl GameBoy {
         &self.screen
     }
 
+    /// The bus action for the most recently completed dot.
+    /// Use after `step_phase()` to detect memory writes (e.g. VRAM writes).
+    pub fn last_dot_action(&self) -> &cpu::mcycle::DotAction {
+        &self.current_dot_action
+    }
+
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         self.audio.drain_samples()
     }
