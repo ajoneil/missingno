@@ -102,11 +102,6 @@ impl TestRun {
             tracer.advance_dot();
             dots += 1;
 
-            // Mark frame boundary at VBlank so the viewer splits frames.
-            if rise.new_screen || fall.new_screen {
-                self.tracer.as_mut().unwrap().mark_frame().unwrap();
-            }
-
             if self.gb.cpu().at_instruction_boundary() {
                 break;
             }
