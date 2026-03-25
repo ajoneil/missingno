@@ -167,18 +167,29 @@ impl Tracer {
                 // Serial
                 "sb" => entry.set_u8("sb", gb.peek(0xFF01)),
                 "sc" => entry.set_u8("sc", gb.peek(0xFF02)),
-                // Pixel output
+                // Pixel output — null when no pixel this cycle
                 "pix" => {
-                    entry.set_str("pix", &self.pix_buffer);
+                    if !self.pix_buffer.is_empty() {
+                        entry.set_str("pix", &self.pix_buffer);
+                    }
+                    // else: field absent → writer emits null
                 }
                 "pix_x" => {
                     if let Some(snap) = &ppu_snap {
                         entry.set_u8("pix_x", snap.pix_count);
                     }
                 }
-                // VRAM write tracking
-                "vram_addr" => entry.set_u16("vram_addr", self.vram_write_addr),
-                "vram_data" => entry.set_u8("vram_data", self.vram_write_data),
+                // VRAM write tracking — null when no write this cycle
+                "vram_addr" => {
+                    if self.vram_write_addr != 0 {
+                        entry.set_u16("vram_addr", self.vram_write_addr);
+                    }
+                }
+                "vram_data" => {
+                    if self.vram_write_addr != 0 {
+                        entry.set_u8("vram_data", self.vram_write_data);
+                    }
+                }
                 // PPU internal fields — use snapshot
                 field_name if PPU_INTERNAL_FIELDS.contains(&field_name) => {
                     Self::emit_ppu_field(&mut entry, field_name, &ppu_snap);
