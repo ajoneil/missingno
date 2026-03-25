@@ -176,10 +176,13 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
 
     eprintln!("gbtrace: writing {}", output_path.display());
 
-    Some(
-        Tracer::create(&output_path, &profile, gb, boot_rom)
-            .unwrap_or_else(|e| panic!("Failed to create tracer: {e}")),
-    )
+    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom)
+        .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
+
+    // Mark entry 0 as a frame boundary so the setup period is included.
+    tracer.mark_frame().unwrap();
+
+    Some(tracer)
 }
 
 pub fn load_rom(relative: &str) -> TestRun {
