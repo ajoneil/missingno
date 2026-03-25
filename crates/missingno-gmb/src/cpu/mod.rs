@@ -92,6 +92,9 @@ pub struct Cpu {
 
     pub stack_pointer: u16,
     pub program_counter: u16,
+    /// The PC at the start of the current instruction. Latched at each
+    /// instruction boundary — stays constant during operand fetches.
+    pub instruction_pc: u16,
 
     pub flags: Flags,
 
@@ -180,6 +183,7 @@ impl Cpu {
 
             stack_pointer: 0xfffe,
             program_counter: 0x0100,
+            instruction_pc: 0x0100,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -224,6 +228,7 @@ impl Cpu {
             l: 0,
             stack_pointer: 0x0000,
             program_counter: 0x0000,
+            instruction_pc: 0x0000,
             flags: Flags::empty(),
             interrupt_master_enable: InterruptMasterEnable::Disabled,
             ei_delay: None,

@@ -140,8 +140,8 @@ impl Tracer {
                 "h" => entry.set_u8("h", gb.cpu().h),
                 "l" => entry.set_u8("l", gb.cpu().l),
                 "sp" => entry.set_u16("sp", gb.cpu().stack_pointer),
-                "pc" => entry.set_u16("pc", gb.cpu().program_counter),
-                "op" => entry.set_u8("op", gb.peek(gb.cpu().program_counter)),
+                "pc" => entry.set_u16("pc", gb.cpu().instruction_pc),
+                "op" => entry.set_u8("op", gb.peek(gb.cpu().instruction_pc)),
                 "ime" => entry.set_bool("ime", gb.cpu().interrupts_enabled()),
                 // PPU registers
                 "lcdc" => entry.set_u8("lcdc", gb.peek(0xFF40)),

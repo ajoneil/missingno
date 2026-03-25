@@ -422,6 +422,7 @@ impl Cpu {
                 self.first_halted_cycle = true;
                 // Signal boundary and chain into the first halted NOP.
                 self.boundary_flag = true;
+                self.instruction_pc = self.program_counter;
                 return self.mcycle_halted(0);
             }
 
@@ -492,6 +493,7 @@ impl Cpu {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
+        self.instruction_pc = self.program_counter;
 
         // ── First HALT idle M-cycle: unconditional wakeup NOP ──
         // On hardware, the DFF pipeline (g42 -> g43 -> g49) needs at
@@ -968,6 +970,7 @@ impl Cpu {
         self.advance_ei_delay();
 
         self.boundary_flag = true;
+        self.instruction_pc = self.program_counter;
 
         // Chain into the first fetch M-cycle. If check_halt_bug
         // transitioned to Halting/Halted, mcycle_fetch will handle it.
