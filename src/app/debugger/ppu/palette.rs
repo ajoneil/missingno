@@ -9,7 +9,7 @@ use crate::app::{
     core::sizes::{m, s, xs},
     screen::iced_color,
 };
-use missingno_gmb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
+use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
 
 pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(

@@ -14,14 +14,14 @@ Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the
 ## Prerequisites
 
 1. **gbtrace-cli** built: `cd ../gbtrace && cargo build -p gbtrace-cli`
-2. **gbtrace feature** on missingno: `cargo test -p missingno-gmb --features gbtrace`
+2. **gbtrace feature** on missingno: `cargo test -p missingno-gb --features gbtrace`
 3. **GBTRACE_PROFILE** env var set to the profile name (e.g. `gbmicrotest`, `ppu_timing`)
 
 ## Generating traces
 
 ### Missingno trace
 ```bash
-GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gmb --features gbtrace -- <test_name>
+GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
 # Writes to: receipts/traces/<rom_name>.parquet
 ```
 

@@ -2509,7 +2509,7 @@ dependencies = [
  "gilrs",
  "iced",
  "jiff",
- "missingno-gmb",
+ "missingno-gb",
  "open",
  "replace_with",
  "rfd",
@@ -2522,7 +2522,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "missingno-gmb"
+name = "missingno-gb"
 version = "0.0.1"
 dependencies = [
  "bitflags 2.11.0",

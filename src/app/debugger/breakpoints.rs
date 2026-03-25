@@ -16,7 +16,7 @@ use crate::app::{
         panes::{self, DebuggerPane, pane, title_bar},
     },
 };
-use missingno_gmb::debugger::Debugger;
+use missingno_gb::debugger::Debugger;
 
 pub struct BreakpointsPane {
     breakpoint_input: String,

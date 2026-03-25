@@ -67,7 +67,7 @@ Use the next sequential log number in the investigation's logs folder.
 
 **Always tee to a log file.** Never run `cargo test` without capturing output. Use:
 ```bash
-cargo test -p missingno-gmb 2>&1 | tee <log_path>
+cargo test -p missingno-gb 2>&1 | tee <log_path>
 ```
 
 ### 5. Assess the result

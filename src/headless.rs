@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_gmb::debugger::instructions::InstructionsIterator;
-use missingno_gmb::debugger::{Debugger, WatchCondition};
-use missingno_gmb::cartridge::Cartridge;
-use missingno_gmb::cpu::flags::Flags;
-use missingno_gmb::cpu::instructions::Instruction;
-use missingno_gmb::interrupts;
-use missingno_gmb::ppu;
-use missingno_gmb::ppu::rendering::Mode;
-use missingno_gmb::ppu::types::sprites::{Attributes, SpriteId};
-use missingno_gmb::{ClockPhase, GameBoy};
+use missingno_gb::debugger::instructions::InstructionsIterator;
+use missingno_gb::debugger::{Debugger, WatchCondition};
+use missingno_gb::cartridge::Cartridge;
+use missingno_gb::cpu::flags::Flags;
+use missingno_gb::cpu::instructions::Instruction;
+use missingno_gb::interrupts;
+use missingno_gb::ppu;
+use missingno_gb::ppu::rendering::Mode;
+use missingno_gb::ppu::types::sprites::{Attributes, SpriteId};
+use missingno_gb::{ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -492,7 +492,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
             carry: cpu.flags.contains(Flags::CARRY),
         },
         ime: cpu.interrupts_enabled(),
-        halted: cpu.halt_state != missingno_gmb::cpu::HaltState::Running,
+        halted: cpu.halt_state != missingno_gb::cpu::HaltState::Running,
     }
 }
 
@@ -878,10 +878,10 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
 
 fn timers_state(gb: &GameBoy) -> TimersState {
     let timers = gb.timers();
-    let div = timers.read_register(missingno_gmb::timers::Register::Divider);
-    let tima = timers.read_register(missingno_gmb::timers::Register::Counter);
-    let tma = timers.read_register(missingno_gmb::timers::Register::Modulo);
-    let tac = timers.read_register(missingno_gmb::timers::Register::Control);
+    let div = timers.read_register(missingno_gb::timers::Register::Divider);
+    let tima = timers.read_register(missingno_gb::timers::Register::Counter);
+    let tma = timers.read_register(missingno_gb::timers::Register::Modulo);
+    let tac = timers.read_register(missingno_gb::timers::Register::Control);
     let internal = timers.internal_counter();
     let clock_select = tac & 0b11;
     let freq = match clock_select {

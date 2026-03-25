@@ -7,7 +7,7 @@ use crate::app::{
     Message,
     core::sizes::{m, s, xs},
 };
-use missingno_gmb::GameBoy;
+use missingno_gb::GameBoy;
 
 pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
     column![
@@ -26,21 +26,21 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(missingno_gmb::interrupts::Interrupt::Joypad)
+                    .enabled(missingno_gb::interrupts::Interrupt::Joypad)
             )
             .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(missingno_gmb::interrupts::Interrupt::Serial)
+                    .enabled(missingno_gb::interrupts::Interrupt::Serial)
             )
             .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(missingno_gmb::interrupts::Interrupt::Timer)
+                    .enabled(missingno_gb::interrupts::Interrupt::Timer)
             )
             .label("Timer")
             .width(Length::FillPortion(2)),
@@ -49,14 +49,14 @@ fn enabled(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(missingno_gmb::interrupts::Interrupt::VideoStatus)
+                    .enabled(missingno_gb::interrupts::Interrupt::VideoStatus)
             )
             .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .enabled(missingno_gmb::interrupts::Interrupt::VideoBetweenFrames)
+                    .enabled(missingno_gb::interrupts::Interrupt::VideoBetweenFrames)
             )
             .label("Between Frames")
             .width(Length::FillPortion(4)),
@@ -73,21 +73,21 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(missingno_gmb::interrupts::Interrupt::Joypad)
+                    .requested(missingno_gb::interrupts::Interrupt::Joypad)
             )
             .label("Joypad")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(missingno_gmb::interrupts::Interrupt::Serial)
+                    .requested(missingno_gb::interrupts::Interrupt::Serial)
             )
             .label("Serial")
             .width(Length::FillPortion(2)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(missingno_gmb::interrupts::Interrupt::Timer)
+                    .requested(missingno_gb::interrupts::Interrupt::Timer)
             )
             .label("Timer")
             .width(Length::FillPortion(2)),
@@ -96,14 +96,14 @@ fn requested(game_boy: &GameBoy) -> Element<'static, Message> {
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(missingno_gmb::interrupts::Interrupt::VideoStatus)
+                    .requested(missingno_gb::interrupts::Interrupt::VideoStatus)
             )
             .label("Video Status")
             .width(Length::FillPortion(3)),
             checkbox(
                 game_boy
                     .interrupts()
-                    .requested(missingno_gmb::interrupts::Interrupt::VideoBetweenFrames)
+                    .requested(missingno_gb::interrupts::Interrupt::VideoBetweenFrames)
             )
             .label("Between Frames")
             .width(Length::FillPortion(4)),

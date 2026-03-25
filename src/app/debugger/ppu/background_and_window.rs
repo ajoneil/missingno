@@ -8,7 +8,7 @@ use crate::app::{
     core::sizes::{m, s},
     debugger::ppu::{palette::palette4, tile_maps::tile_map_choice},
 };
-use missingno_gmb::ppu::{
+use missingno_gb::ppu::{
     Ppu,
     types::palette::{Palette, PaletteMap},
 };

@@ -35,7 +35,7 @@ These describe what the hardware actually does. They are the source of truth.
    - `race_pairs.json` / `critical_paths.json` — Machine-readable data for specific signal lookups
    When researching PPU timing, check whether the behavior in question involves a known race pair or deep path. The race pairs report groups findings by observable effect, making it easy to match against emulator symptoms.
 5. **Cross-emulator execution traces (gbtrace)**: The sibling project `../gbtrace/` provides tooling for capturing and comparing execution traces across emulators. When investigating a test failure, capturing traces from missingno and a reference emulator running the same ROM can pinpoint the exact instruction where behavior diverges.
-   - **Capture**: `GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gmb --features gbtrace -- <test_name>` → writes `receipts/traces/<rom>.parquet`.
+   - **Capture**: `GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gb --features gbtrace -- <test_name>` → writes `receipts/traces/<rom>.parquet`.
    - **Inspect**: `gbtrace-cli info <file>` shows summary; `gbtrace-cli query <file> --where pc=0x0150` finds specific entries.
    - **Compare**: `gbtrace-cli diff <missingno.parquet> <sameboy.parquet> --skip-boot` reports first divergence and per-field divergence counts.
    - **Trim**: `gbtrace-cli trim <file> --until pc=0x0100` to isolate regions of interest.

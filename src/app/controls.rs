@@ -7,7 +7,7 @@ use iced::{
 };
 
 use crate::app;
-use missingno_gmb::joypad;
+use missingno_gb::joypad;
 
 pub fn event_handler(
     event: Event,

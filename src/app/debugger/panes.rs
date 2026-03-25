@@ -35,8 +35,8 @@ use crate::app::{
     },
     screen::ScreenView,
 };
-use missingno_gmb::debugger::Debugger;
-use missingno_gmb::ppu::types::{
+use missingno_gb::debugger::Debugger;
+use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
     tile_maps::TileMapId,
 };

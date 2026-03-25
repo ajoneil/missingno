@@ -5,7 +5,7 @@ use crate::app::{
     core::sizes::{l, s},
     debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
-use missingno_gmb::audio::Audio;
+use missingno_gb::audio::Audio;
 
 mod channels;
 

@@ -4,7 +4,7 @@ use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::{self, App, Game, LoadedGame};
-use missingno_gmb::{GameBoy, cartridge::Cartridge};
+use missingno_gb::{GameBoy, cartridge::Cartridge};
 
 #[derive(Debug, Clone)]
 pub enum Message {

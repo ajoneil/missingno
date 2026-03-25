@@ -129,7 +129,7 @@ cargo run -- path/to/rom.gb --debugger       # Load with debugger
 cargo run -- path/to/rom.gb --headless       # Headless debugger (HTTP API)
 cargo run -- path/to/rom.gb --boot-rom path/to/dmg_boot.bin  # Run with boot ROM
 cargo check                                  # Type check
-cargo test -p missingno-gmb                 # Run core tests (fast, no GUI deps)
+cargo test -p missingno-gb                 # Run core tests (fast, no GUI deps)
 cargo test                                   # Run all workspace tests
 cargo clippy                                 # Lint
 cargo fmt                                    # Format
@@ -137,10 +137,10 @@ cargo fmt                                    # Format
 
 ## Testing
 
-- Always run tests against missingno-gmb: `cargo test -p missingno-gmb`. Do not run `cargo test` against the whole workspace unless specifically asked.
+- Always run tests against missingno-gb: `cargo test -p missingno-gb`. Do not run `cargo test` against the whole workspace unless specifically asked.
 - For regression checking, use `./scripts/test-report.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/`.
 - To save a baseline before experimenting: `./scripts/test-report.sh --save-baseline`. Always save a baseline from `main` (or the known-good state) before making changes, so `--diff` has an accurate reference point.
-- To run a specific test with the boot ROM: `DMG_BOOT_ROM=<path> cargo test -p missingno-gmb <test_name>`. Boot ROMs are proprietary — ask the user for the path, never commit them. Only use on targeted tests; the boot ROM adds significant startup time per test, making full-suite runs impractical.
+- To run a specific test with the boot ROM: `DMG_BOOT_ROM=<path> cargo test -p missingno-gb <test_name>`. Boot ROMs are proprietary — ask the user for the path, never commit them. Only use on targeted tests; the boot ROM adds significant startup time per test, making full-suite runs impractical.
 - After any fix, verify no regressions before committing.
 
 ## Emulation Philosophy
@@ -154,20 +154,20 @@ cargo fmt                                    # Format
 
 The project is a Cargo workspace with two crates:
 
-- **`crates/missingno-gmb/`** (`missingno-gmb`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
-  - **`crates/missingno-gmb/src/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
-  - **`crates/missingno-gmb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
-  - **`crates/missingno-gmb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
+- **`crates/missingno-gb/`** (`missingno-gb`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
+  - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
+  - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
+  - **`crates/missingno-gb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
 - **Root crate** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `src/app/`.
 
 ### Instruction Execution
 
-`GameBoy::step()` in `crates/missingno-gmb/src/execute.rs` runs one instruction in two phases:
+`GameBoy::step()` in `crates/missingno-gb/src/execute.rs` runs one instruction in two phases:
 
 1. **Fetch/decode**: Reads the opcode byte, ticks hardware, then reads operand bytes one at a time (ticking hardware after each). `operand_count()` determines byte count from the opcode alone. The buffered bytes are passed to `Instruction::decode()`.
-2. **Process**: A `Processor` state machine (`crates/missingno-gmb/src/cpu/mcycle/`) yields one `BusAction` per M-cycle for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware.
+2. **Process**: A `Processor` state machine (`crates/missingno-gb/src/cpu/mcycle/`) yields one `BusAction` per M-cycle for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware.
 
-The `Processor` is split across three files in `crates/missingno-gmb/src/cpu/mcycle/`:
+The `Processor` is split across three files in `crates/missingno-gb/src/cpu/mcycle/`:
 - `mod.rs` — `Phase` enum, `BusAction` enum, `Processor` struct and `next()` method
 - `build.rs` — Constructs the `Phase` for each instruction type
 - `apply.rs` — Pure CPU mutations (ALU, flags, DAA, etc.)
@@ -176,7 +176,7 @@ The `Processor` is split across three files in `crates/missingno-gmb/src/cpu/mcy
 
 - **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently.
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
-- **Enum-based MBC dispatch**: `Mbc` enum in `crates/missingno-gmb/src/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
+- **Enum-based MBC dispatch**: `Mbc` enum in `crates/missingno-gb/src/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
 - **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
 - **PPU propagation delay analysis**: The sibling project [`gmb-ppu-analysis`](https://github.com/ajoneil/gmb-ppu-analysis) (local clone: `../gmb-ppu-analysis/`) provides static analysis of GateBoy's PPU netlist, identifying deep combinatorial paths and signal races that cause propagation delay on real hardware. Key outputs in `../gmb-ppu-analysis/output/`:
   - `critical_paths_report.md` — Overview and key findings (start here)
@@ -188,11 +188,11 @@ The `Processor` is split across three files in `crates/missingno-gmb/src/cpu/mcy
 
   This data is a primary source for understanding PPU timing. When investigating one-dot discrepancies, consult the race pairs and critical paths to identify which propagation delays could explain the behavior. The signal concordance maps between GateBoy's 4-letter cell names and standard register/signal names.
 
-- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gmb`:
-  - **`crates/missingno-gmb/src/trace.rs`** — `Tracer` struct captures per-instruction state to parquet files using profile-driven field selection.
+- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
+  - **`crates/missingno-gb/src/trace.rs`** — `Tracer` struct captures per-instruction state to parquet files using profile-driven field selection.
   - **Test runner integration** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`. Activated by env var:
     ```bash
-    GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gmb --features gbtrace -- <test_name>
+    GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gb --features gbtrace -- <test_name>
     ```
     Writes to `receipts/traces/<rom_name>.parquet`.
   - **Profiles** (in `../gbtrace/profiles/`): `cpu_basic` (CPU registers per instruction), `ppu_timing` (CPU + PPU + interrupts), `timer_edge` (CPU + timers + interrupts).
@@ -211,4 +211,4 @@ The `Processor` is split across three files in `crates/missingno-gmb/src/cpu/mcy
 ### Debugger
 
 - **Pane system**: `src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants. Each pane is a separate module with a struct (e.g. `CpuPane`, `PlaybackPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum with `Into<app::Message>` impl for routing through the nested message chain (`PaneMessage` → `panes::Message` → `debugger::Message` → `app::Message`). Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
-- **Input recording**: `crates/missingno-gmb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`src/app/debugger/playback.rs`) provides the UI.
+- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`src/app/debugger/playback.rs`) provides the UI.

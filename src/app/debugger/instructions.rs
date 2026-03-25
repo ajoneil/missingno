@@ -17,8 +17,8 @@ use crate::app::{
         panes::{DebuggerPane, pane, title_bar},
     },
 };
-use missingno_gmb::debugger::instructions::InstructionsIterator;
-use missingno_gmb::{GameBoy, cpu::instructions::Instruction};
+use missingno_gb::debugger::instructions::InstructionsIterator;
+use missingno_gb::{GameBoy, cpu::instructions::Instruction};
 
 pub struct InstructionsPane;
 

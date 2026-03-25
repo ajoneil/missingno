@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use missingno_gmb::{GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, ppu::screen::Screen};
+use missingno_gb::{GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, ppu::screen::Screen};
 
 #[cfg(feature = "gbtrace")]
-use missingno_gmb::trace::Tracer;
+use missingno_gb::trace::Tracer;
 
 fn rom_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43,7 +43,7 @@ impl TestRun {
         #[cfg(feature = "gbtrace")]
         {
             if let Some(tracer) = &mut self.tracer {
-                if tracer.trigger() == missingno_gmb::trace::Trigger::Tcycle {
+                if tracer.trigger() == missingno_gb::trace::Trigger::Tcycle {
                     return self.step_traced_tcycle();
                 }
                 tracer.capture(&self.gb).unwrap();
@@ -328,7 +328,7 @@ fn is_infinite_loop(gb: &GameBoy) -> bool {
         return true;
     }
 
-    if gb.cpu().halt_state != missingno_gmb::cpu::HaltState::Running {
+    if gb.cpu().halt_state != missingno_gb::cpu::HaltState::Running {
         // Permanent halt: IE register is empty, so no interrupt can ever wake
         // the CPU. Used by SameSuite's exit sequence (di; IE=0; halt; nop).
         if gb.interrupts().enabled.is_empty() {

@@ -11,7 +11,7 @@ use crate::app::{
     },
     screen::{ScreenDisplay, ScreenView},
 };
-use missingno_gmb::ppu::types::palette::PaletteChoice;
+use missingno_gb::ppu::types::palette::PaletteChoice;
 
 pub struct ScreenPane {
     screen_view: ScreenView,
