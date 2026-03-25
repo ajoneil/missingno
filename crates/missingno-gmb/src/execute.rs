@@ -1,6 +1,6 @@
 use super::{
     BusAccess, BusAccessKind, ClockPhase, GameBoy, cpu::mcycle::DotAction, interrupts::Interrupt,
-    memory::Bus, ppu,
+    memory::Bus, ppu::{self, PpuTickResult, types::palette::PaletteIndex},
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -17,6 +17,14 @@ pub struct StepResult {
     pub new_screen: bool,
     /// Number of T-cycles (dots) consumed by this instruction.
     pub dots: u32,
+}
+
+/// Result of executing one half-phase (rise or fall).
+pub struct PhaseResult {
+    /// Whether a new video frame was produced.
+    pub new_screen: bool,
+    /// Pixel pushed to the LCD during this phase, if any.
+    pub pixel: Option<ppu::PixelOutput>,
 }
 
 impl GameBoy {
@@ -73,8 +81,8 @@ impl GameBoy {
             );
             phases_remaining -= 1;
 
-            let ns = self.execute_phase(&mut pending_oam_bug);
-            new_screen |= ns;
+            let result = self.execute_phase(&mut pending_oam_bug);
+            new_screen |= result.new_screen;
 
             // Check for instruction boundary after completing a dot
             // (clock is Low = just finished fall() = dot complete)
@@ -89,9 +97,8 @@ impl GameBoy {
     }
 
     /// Advance exactly one half-phase — execute rise() or fall()
-    /// depending on current clock level. Returns true if a new frame
-    /// was produced.
-    pub fn step_phase(&mut self) -> bool {
+    /// depending on current clock level.
+    pub fn step_phase(&mut self) -> PhaseResult {
         let mut pending_oam_bug: Option<OamBugKind> = None;
         self.execute_phase(&mut pending_oam_bug)
     }
@@ -105,8 +112,8 @@ impl GameBoy {
 
         // Run phases until clock returns to Low (dot complete)
         loop {
-            let ns = self.execute_phase(&mut pending_oam_bug);
-            new_screen |= ns;
+            let result = self.execute_phase(&mut pending_oam_bug);
+            new_screen |= result.new_screen;
             if self.clock_phase == ClockPhase::Low {
                 break;
             }
@@ -123,7 +130,7 @@ impl GameBoy {
     /// Execute one phase (half-dot) of hardware. When the clock is
     /// Low, execute rise() (Low→High edge). When High, execute
     /// fall() (High→Low edge).
-    fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+    fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         match self.clock_phase {
             ClockPhase::Low => self.rise(pending_oam_bug),
             ClockPhase::High => self.fall(pending_oam_bug),
@@ -139,8 +146,9 @@ impl GameBoy {
     /// interrupt_pending for the NEXT g42 latch. Finally, `next_dot`
     /// transitions the CPU, where dispatch checks gate on the just-
     /// latched g42 value.
-    fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+    fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
+        let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
         // ── M-cycle boundary: g42 latch, then PPU + interrupt capture, BEFORE CPU transition ──
@@ -158,13 +166,9 @@ impl GameBoy {
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
-            if let Some(screen) = ppu_result.screen {
-                if let Some(sgb) = &mut self.sgb {
-                    sgb.update_screen(&screen);
-                }
-                self.screen = screen;
-                new_screen = true;
-            }
+            let (ns, pix) = self.apply_ppu_result(&ppu_result);
+            new_screen |= ns;
+            if pixel.is_none() { pixel = pix; }
 
             // SUKO is combinational — check for STAT edge after PPU rise.
             if self.ppu.check_stat_edge() {
@@ -213,13 +217,9 @@ impl GameBoy {
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
-            if let Some(screen) = ppu_result.screen {
-                if let Some(sgb) = &mut self.sgb {
-                    sgb.update_screen(&screen);
-                }
-                self.screen = screen;
-                new_screen = true;
-            }
+            let (ns, pix) = self.apply_ppu_result(&ppu_result);
+            new_screen |= ns;
+            if pixel.is_none() { pixel = pix; }
 
             // SUKO is combinational — check for STAT edge after PPU rise.
             if self.ppu.check_stat_edge() {
@@ -271,12 +271,12 @@ impl GameBoy {
         }
 
         self.clock_phase = ClockPhase::High;
-        new_screen
+        PhaseResult { new_screen, pixel }
     }
 
     /// Falling edge: PPU falling phase, interrupt latch capture,
     /// bus writes, M-cycle subsystems (serial, DMA, audio).
-    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> bool {
+    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
@@ -303,14 +303,8 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
-        // LCD-off produces a blank screen.
-        if let Some(screen) = video_result.screen {
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&screen);
-            }
-            self.screen = screen;
-            new_screen = true;
-        }
+        let (ns, pixel) = self.apply_ppu_result(&video_result);
+        new_screen |= ns;
 
         // Bus writes on the falling edge.
         match &self.current_dot_action {
@@ -383,6 +377,24 @@ impl GameBoy {
         }
 
         self.clock_phase = ClockPhase::Low;
-        new_screen
+        PhaseResult { new_screen, pixel }
+    }
+
+    /// Process a PPU tick result: write pixel to back buffer, present
+    /// on frame boundary. Returns `(new_frame, pixel)`.
+    fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
+        if let Some(pixel) = result.pixel {
+            if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
+                self.screen.draw_pixel(pixel.x, pixel.y, PaletteIndex(pixel.shade));
+            }
+        }
+        if result.new_frame {
+            self.screen.present();
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&self.screen);
+            }
+            return (true, result.pixel);
+        }
+        (false, result.pixel)
     }
 }

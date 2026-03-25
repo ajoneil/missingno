@@ -53,6 +53,9 @@ impl TestRun {
 
             if let Some(tracer) = &mut self.tracer {
                 tracer.advance(result.dots);
+                if result.new_screen {
+                    tracer.mark_frame().unwrap();
+                }
             }
 
             return result;
@@ -77,17 +80,32 @@ impl TestRun {
         self.gb.cpu_mut().take_instruction_boundary();
 
         loop {
-            // Capture state at the start of each dot (before rise).
+            // Execute rise phase — feed any pixel to the tracer.
+            let rise = self.gb.step_phase();
+            new_screen |= rise.new_screen;
+            if let Some(pixel) = rise.pixel {
+                self.tracer.as_mut().unwrap().push_pixel(pixel.shade);
+            }
+
+            // Execute fall phase.
+            let fall = self.gb.step_phase();
+            new_screen |= fall.new_screen;
+            if let Some(pixel) = fall.pixel {
+                self.tracer.as_mut().unwrap().push_pixel(pixel.shade);
+            }
+
+            // Capture state after both phases — pix buffer contains this
+            // dot's pixel output, registers reflect post-phase state.
+            // Matches GateBoy's convention of capturing at end of tcycle.
             let tracer = self.tracer.as_mut().unwrap();
             tracer.capture(&self.gb).unwrap();
-
-            // Execute rise phase.
-            new_screen |= self.gb.step_phase();
-            // Execute fall phase.
-            new_screen |= self.gb.step_phase();
-
             tracer.advance_dot();
             dots += 1;
+
+            // Mark frame boundary at VBlank so the viewer splits frames.
+            if rise.new_screen || fall.new_screen {
+                self.tracer.as_mut().unwrap().mark_frame().unwrap();
+            }
 
             if self.gb.cpu().at_instruction_boundary() {
                 break;
@@ -98,10 +116,19 @@ impl TestRun {
     }
 
     /// Finalize the trace file (if active). Call when the test is done.
-    pub fn finish(self) {
+    pub fn finish(mut self) {
         #[cfg(feature = "gbtrace")]
-        if let Some(tracer) = self.tracer {
+        if let Some(tracer) = self.tracer.take() {
             tracer.finish().unwrap();
+        }
+    }
+}
+
+#[cfg(feature = "gbtrace")]
+impl Drop for TestRun {
+    fn drop(&mut self) {
+        if let Some(tracer) = self.tracer.take() {
+            let _ = tracer.finish();
         }
     }
 }
@@ -111,14 +138,18 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
 
     let gbtrace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gbtrace");
-    // Look in profiles/ first, then docs/tests/<profile_name>/ for test-suite-specific profiles.
+    // Search for the profile in several locations:
+    // 1. profiles/<name>.toml (standard profiles)
+    // 2. test-suites/<name>/profile.toml (test-suite-specific)
+    // 3. docs/tests/<name>/<name>.toml (legacy location)
     let profile_path = {
-        let in_profiles = gbtrace_root.join("profiles").join(format!("{profile_name}.toml"));
-        if in_profiles.exists() {
-            in_profiles
-        } else {
-            gbtrace_root.join("docs/tests").join(&profile_name).join(format!("{profile_name}.toml"))
-        }
+        let candidates = [
+            gbtrace_root.join("profiles").join(format!("{profile_name}.toml")),
+            gbtrace_root.join("test-suites").join(&profile_name).join("profile.toml"),
+            gbtrace_root.join("docs/tests").join(&profile_name).join(format!("{profile_name}.toml")),
+        ];
+        candidates.into_iter().find(|p| p.exists())
+            .unwrap_or_else(|| panic!("gbtrace profile '{profile_name}' not found in any search path"))
     };
     let profile = gbtrace::Profile::load(&profile_path)
         .unwrap_or_else(|e| panic!("Failed to load gbtrace profile {}: {e}", profile_path.display()));

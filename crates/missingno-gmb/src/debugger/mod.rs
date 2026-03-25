@@ -95,7 +95,7 @@ impl Debugger {
     }
 
     pub fn step_phase(&mut self) -> Option<Screen> {
-        if self.game_boy.step_phase() {
+        if self.game_boy.step_phase().new_screen {
             Some(self.game_boy.screen().clone())
         } else {
             None

@@ -112,7 +112,7 @@ impl DebuggerPanes {
             if let PaneInstance::Screen(screen_pane) = pane {
                 let view = screen_pane.screen_view();
                 return ScreenView {
-                    screen: view.screen,
+                    screen: view.screen.clone(),
                     palette: view.palette,
                     sgb_render_data: view.sgb_render_data,
                 };
@@ -229,7 +229,7 @@ impl DebuggerPanes {
                 PaneMessage::Screen(message) => {
                     self.panes.iter_mut().for_each(|(_, pane)| {
                         if let PaneInstance::Screen(screen_pane) = pane {
-                            screen_pane.update(*message);
+                            screen_pane.update(message.clone());
                         }
                     });
                 }

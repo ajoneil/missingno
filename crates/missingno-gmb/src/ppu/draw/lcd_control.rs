@@ -1,6 +1,5 @@
-use crate::ppu::{types::palette::PaletteIndex, screen::Screen};
-
-use super::lcd_shift_register::LcdShiftRegister;
+use crate::ppu::PixelOutput;
+use crate::ppu::types::palette::PaletteIndex;
 
 /// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
 /// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
@@ -9,8 +8,12 @@ const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
 /// LCD Control block (die page 24).
 ///
 /// Owns the pixel X position counter (XEHO-SYBE), LCD clock gating
-/// (WUSA NOR latch), POVA fine-match trigger, LCD shift register
-/// (TAXA chain), and LCD data pin latch (REMY/RAVO).
+/// (WUSA NOR latch), POVA fine-match trigger, and LCD data pin latch
+/// (REMY/RAVO).
+///
+/// Pixel output is returned as a [`PixelOutput`] signal rather than
+/// written to an internal framebuffer — the caller (emulation loop)
+/// is responsible for building whatever representation it needs.
 ///
 /// Inputs: SACU (pixel clock edge from page 27), pixel data (from
 /// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21).
@@ -31,15 +34,20 @@ pub(in crate::ppu) struct LcdControl {
     /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
     /// providing the 160th LCD clock edge before WUSA opens.
     pova: bool,
-    /// LCD shift register — 159-stage pixel buffer between the pixel
-    /// mux and the Screen. Replaces direct framebuffer writes.
-    shift_register: LcdShiftRegister,
+    /// Number of pixels pushed to the LCD on this line. Replaces the
+    /// old shift register's count — nothing reads intermediate pixel
+    /// data, so only the count is needed for lcd_x tracking.
+    lcd_push_count: u8,
+    /// The scanline this line is rendering. Captured at reset time so
+    /// pixel output uses the correct Y even if LY has incremented by
+    /// HBlank. Matches the old shift register's scanline field.
+    scanline: u8,
     /// LCD data pin latch (REMY/RAVO qp_ext_old model). On hardware,
     /// the LCD data pins are combinational from the pipe MSBs, but the
     /// LCD captures `qp_ext_old()` — the previous half-cycle's value.
     /// This buffer holds the resolved pixel from the previous SACU edge.
-    /// TOBA shifts this buffered value into the LCD shift register,
-    /// giving a 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
+    /// TOBA shifts this buffered value to the LCD output, giving a
+    /// 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
     data_latch: PaletteIndex,
 }
 
@@ -49,18 +57,25 @@ impl LcdControl {
             pixel_counter: 0,
             wusa: false,
             pova: false,
-            shift_register: LcdShiftRegister::new(),
+            lcd_push_count: 0,
+            scanline: 0,
             data_latch: PaletteIndex(0),
         }
     }
 
     /// Rising edge: pixel counter increment, XAJO/WUSA set, TOBA
-    /// shift, data latch update. All internal to LCD Control on the
-    /// die — the caller provides SACU, the resolved pixel, and POVA.
+    /// pixel output, data latch update. All internal to LCD Control
+    /// on the die — the caller provides SACU, the resolved pixel,
+    /// and POVA.
     ///
-    /// Returns TOBA (gated LCD clock) so the caller can gate
-    /// window_zero_pixel consumption.
-    pub(in crate::ppu) fn rise(&mut self, sacu: bool, pixel: PaletteIndex, pova: bool) -> bool {
+    /// Returns `(toba, pixel_out)` where `toba` is the gated LCD clock
+    /// and `pixel_out` is the pixel pushed to the LCD (if any).
+    pub(in crate::ppu) fn rise(
+        &mut self,
+        sacu: bool,
+        pixel: PaletteIndex,
+        pova: bool,
+    ) -> (bool, Option<PixelOutput>) {
         // Pixel counter increment (SACU clock).
         if sacu {
             self.pixel_counter += 1;
@@ -75,13 +90,28 @@ impl LcdControl {
         // TOBA = AND2(WUSA, SACU) — the gated LCD clock.
         let toba = self.wusa && sacu;
 
-        // LCD data pin lag: TOBA shifts the BUFFERED pixel (from the
-        // previous SACU edge) into the shift register, then the latch
-        // updates to the current pipe state. 1-dot offset: TOBA at
+        // LCD data pin lag: TOBA pushes the BUFFERED pixel (from the
+        // previous SACU edge) to the LCD. 1-dot offset: TOBA at
         // PX=9 outputs PX=8's pixel, etc.
-        if toba {
-            self.shift_register.shift_in(self.data_latch);
-        }
+        //
+        // On real hardware, TOBA fires one extra time after WODU
+        // (WUSA isn't cleared until VOGA, one dot later). The 159-stage
+        // shift register naturally absorbed this — the extra pixel
+        // pushed the first (junk) pixel off the end. With direct
+        // output we skip it: only the first 159 TOBA pixels are visible.
+        let pixel_out = if toba && self.lcd_push_count < 159
+            && self.scanline < crate::ppu::screen::NUM_SCANLINES
+        {
+            let out = PixelOutput {
+                x: self.lcd_push_count,
+                y: self.scanline,
+                shade: self.data_latch.0,
+            };
+            self.lcd_push_count += 1;
+            Some(out)
+        } else {
+            None
+        };
 
         // Update the LCD data latch with the current pipe state.
         self.data_latch = pixel;
@@ -89,29 +119,44 @@ impl LcdControl {
         // Store POVA.
         self.pova = pova;
 
-        toba
+        (toba, pixel_out)
     }
 
     /// Falling edge: WEGO = OR2(VID_RST, VOGA). When VOGA is set,
-    /// clears WUSA. On the WODU dot (last_pixel), also
-    /// shifts in the final pixel and latches the shift register to
-    /// the screen.
-    pub(in crate::ppu) fn fall(&mut self, voga: bool, wodu: bool, screen: &mut Screen) {
+    /// clears WUSA. On the WODU dot (last_pixel), pushes the final
+    /// pixel to the LCD.
+    ///
+    /// Returns the pixel pushed to the LCD on the WODU dot (if any).
+    pub(in crate::ppu) fn fall(
+        &mut self,
+        voga: bool,
+        wodu: bool,
+    ) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
-        // The final pixel shift-in and latch happen on the WODU dot, before
-        // VOGA captures (one dot later). TOBA = AND(WUSA, SACU) still fires
-        // on the WODU dot because WUSA hasn't been cleared yet and SACU is
-        // still active.
-        if wodu {
-            self.shift_register.shift_in(self.data_latch);
-            self.shift_register.latch_to_screen(screen);
-        }
+        // The final pixel push happens on the WODU dot, before VOGA
+        // captures (one dot later).
+        let pixel_out = if wodu
+            && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
+            && self.scanline < crate::ppu::screen::NUM_SCANLINES
+        {
+            let out = PixelOutput {
+                x: self.lcd_push_count,
+                y: self.scanline,
+                shade: self.data_latch.0,
+            };
+            self.lcd_push_count += 1;
+            Some(out)
+        } else {
+            None
+        };
 
         // WUSA is cleared by WEGO = OR2(VID_RST, VOGA). VOGA fires one
         // dot after WODU (DFF17 delay). This is the correct hardware timing.
         if voga {
             self.wusa = false;
         }
+
+        pixel_out
     }
 
     /// Update the LCD data latch directly. Used for out-of-band
@@ -129,10 +174,16 @@ impl LcdControl {
 
     /// Reset per-scanline state.
     pub(in crate::ppu) fn reset(&mut self, scanline: u8) {
+        debug_assert!(
+            self.lcd_push_count == 0 || self.lcd_push_count == 160,
+            "lcd_push_count={} at reset (scanline {scanline}), expected 0 or 160",
+            self.lcd_push_count,
+        );
         self.pixel_counter = 0;
         self.wusa = false;
         self.pova = false;
-        self.shift_register.reset(scanline);
+        self.lcd_push_count = 0;
+        self.scanline = scanline;
         self.data_latch = PaletteIndex(0);
     }
 
@@ -151,7 +202,7 @@ impl LcdControl {
     }
 
     pub(in crate::ppu) fn lcd_x(&self) -> u8 {
-        self.shift_register.count()
+        self.lcd_push_count
     }
 
     pub(in crate::ppu) fn data_latch_mut(&mut self) -> &mut PaletteIndex {

@@ -11,19 +11,19 @@ use missingno_gmb::{
 
 use super::texture_renderer::TextureRenderer;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum ScreenDisplay {
     GameBoy(GameBoyScreen),
     Sgb(SgbScreen),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum GameBoyScreen {
     Display(Screen),
     Off,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum SgbScreen {
     Display(Screen, SgbRenderData),
     Freeze(SgbRenderData),

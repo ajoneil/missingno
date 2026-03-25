@@ -211,6 +211,10 @@ impl WindowControl {
         self.wx_triggered
     }
 
+    pub(in crate::ppu) fn window_rendered(&self) -> bool {
+        self.window_rendered
+    }
+
     pub(in crate::ppu) fn window_line_counter(&self) -> u8 {
         self.window_line_counter
     }

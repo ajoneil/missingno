@@ -1,5 +1,4 @@
 use rendering::Mode;
-use screen::Screen;
 use types::sprites::{Sprite, SpriteId};
 
 use types::control::{Control, ControlFlags};
@@ -10,13 +9,32 @@ use registers::BackgroundViewportPosition;
 
 pub use dff::DffLatch;
 pub use rendering::{
-    PipelineSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot, SpriteStoreSnapshot,
+    PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
+    SpriteStoreSnapshot,
 };
 pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
+/// A pixel pushed to the LCD — the PPU's primary output signal.
+/// One pixel per SEMU clock edge during Mode 3.
+#[derive(Clone, Copy, Debug)]
+pub struct PixelOutput {
+    /// LCD X position (0-159).
+    pub x: u8,
+    /// Scanline (0-143).
+    pub y: u8,
+    /// Post-palette shade (0-3).
+    pub shade: u8,
+}
+
 pub struct PpuTickResult {
-    pub screen: Option<Screen>,
+    /// A pixel pushed to the LCD, if any. The caller is responsible
+    /// for writing this into a framebuffer or capturing it in a trace.
+    pub pixel: Option<PixelOutput>,
+    /// A completed frame is ready to present. Fires at VBlank (line 144)
+    /// or when the LCD is turned off. The caller should swap/present
+    /// its back buffer and clear for the next frame.
+    pub new_frame: bool,
     pub request_vblank: bool,
 }
 
@@ -56,6 +74,9 @@ pub struct Ppu {
     registers: PipelineRegisters,
     video: VideoControl,
     pub(super) oam: Oam,
+    /// Frame counter for gbtrace output. Incremented each time a
+    /// completed frame is extracted from the rendering pipeline.
+    frame_number: u16,
 }
 
 impl Ppu {
@@ -100,6 +121,7 @@ impl Ppu {
             // Pipeline persists through VBlank — video.ly=153 means
             // popu is true, so pipeline ticking is gated off.
             pixel_pipeline: Some(Rendering::new()),
+            frame_number: 0,
         }
     }
 
@@ -139,6 +161,7 @@ impl Ppu {
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
+            frame_number: 0,
         }
     }
 
@@ -420,7 +443,8 @@ impl Ppu {
     /// IF, and LYC comparison. All rising-phase work in a single method.
     pub fn rise(&mut self, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
-            screen: None,
+            pixel: None,
+            new_frame: false,
             request_vblank: false,
         };
 
@@ -464,10 +488,11 @@ impl Ppu {
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {
-                    // Line 144: extract completed frame, enter VBlank.
-                    result.screen = Some(rendering.screen);
+                    // Line 144: frame complete, enter VBlank.
+                    result.new_frame = true;
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.
+                    self.frame_number = self.frame_number.wrapping_add(1);
                     rendering.reset_frame();
                 } else if !self.video.vblank {
                     // Lines 1-143: per-scanline reset.
@@ -478,7 +503,7 @@ impl Ppu {
 
         // Pixel output, SACU, pipe shift — only during active display.
         if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
-            rendering.rise(&self.registers, &self.video, &self.oam, vram);
+            result.pixel = rendering.rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
@@ -495,7 +520,8 @@ impl Ppu {
     /// cascade DFFs, TYFA), DFF8/DFF9 latches, LCD-off handling.
     pub fn fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
-            screen: None,
+            pixel: None,
+            new_frame: false,
             request_vblank: false,
         };
 
@@ -503,7 +529,7 @@ impl Ppu {
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
             if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
-                rendering.fall(&self.registers, &self.video, &self.oam, vram);
+                result.pixel = rendering.fall(&self.registers, &self.video, &self.oam, vram);
             }
 
             // DFF8 palette capture (TEPO rising, phase H). On hardware,
@@ -525,7 +551,7 @@ impl Ppu {
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
                 self.registers.clear_latches();
-                result.screen = Some(Screen::default());
+                result.new_frame = true;
             }
             // ly_comparison_latched is intentionally NOT updated — comparison clock
             // stops when the PPU is off, freezing the last result.
@@ -583,9 +609,18 @@ impl Ppu {
         }
     }
 
+    pub fn trace_snapshot(&self) -> Option<PpuTraceSnapshot> {
+        self.pixel_pipeline.as_ref().map(|r| {
+            let mut snap = r.trace_snapshot(&self.oam);
+            snap.frame_num = self.frame_number;
+            snap
+        })
+    }
+
     pub fn sprite_store(&self) -> Option<SpriteStoreSnapshot> {
         self.pixel_pipeline
             .as_ref()
             .map(|r| r.sprite_store_snapshot())
     }
+
 }

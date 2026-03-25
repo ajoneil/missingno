@@ -17,7 +17,7 @@ pub struct ScreenPane {
     screen_view: ScreenView,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     Update(ScreenDisplay),
 }

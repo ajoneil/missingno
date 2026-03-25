@@ -47,6 +47,14 @@ impl TileFetcher {
         self.fetch_counter >= 10
     }
 
+    pub(in crate::ppu) fn tile_data_low(&self) -> u8 {
+        self.tile_data_low
+    }
+
+    pub(in crate::ppu) fn tile_data_high(&self) -> u8 {
+        self.tile_data_high
+    }
+
     pub(in crate::ppu) fn new() -> Self {
         Self {
             fetch_counter: 0,

@@ -11,7 +11,7 @@ gbtrace = ["dep:gbtrace", "dep:sha2"]
 [dependencies]
 bitflags = { workspace = true }
 rgb = { workspace = true }
-gbtrace = { path = "../../../gbtrace/crates/gbtrace", optional = true, features = ["parquet"] }
+gbtrace = { git = "https://github.com/ajoneil/gbtrace", optional = true, features = ["parquet"] }
 sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]

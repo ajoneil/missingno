@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, VideoControl,
+    PixelOutput, PipelineRegisters, VideoControl,
     memory::{Oam, Vram},
-    screen::Screen,
+    types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -68,6 +68,45 @@ pub struct SpriteStoreEntrySnapshot {
     pub fetched: bool,
 }
 
+/// Snapshot of all PPU internal state for gbtrace output.
+/// Field names and semantics match the gbtrace spec's `ppu_internal` group.
+pub struct PpuTraceSnapshot {
+    /// Sprite store: 10 entries × (x, tile_index, attributes).
+    /// `oamN_x` = X position, `oamN_id` = tile index from OAM byte 2,
+    /// `oamN_attr` = attribute flags from OAM byte 3.
+    /// Slots beyond `sprite_count` are zeroed.
+    pub sprite_x: [u8; 10],
+    pub sprite_id: [u8; 10],
+    pub sprite_attr: [u8; 10],
+    /// Pixel FIFO shift registers.
+    pub bgw_fifo_a: u8,
+    pub bgw_fifo_b: u8,
+    pub spr_fifo_a: u8,
+    pub spr_fifo_b: u8,
+    pub mask_pipe: u8,
+    pub pal_pipe: u8,
+    /// Background tile fetcher counter (0-11 internal, mapped to 3-bit
+    /// hardware counter by dividing by 2).
+    pub tfetch_state: u8,
+    /// Sprite fetcher counter (0-5). 0 when no sprite fetch active.
+    pub sfetch_state: u8,
+    /// Tile data temporary latches from the fetcher.
+    pub tile_temp_a: u8,
+    pub tile_temp_b: u8,
+    /// Pixel counter (0-167).
+    pub pix_count: u8,
+    /// Number of sprites found during OAM scan (0-10).
+    pub sprite_count: u8,
+    /// OAM scan counter entry (0-39).
+    pub scan_count: u8,
+    /// XYMU rendering latch — true during Mode 3.
+    pub rendering: bool,
+    /// Window mode latch — true when window is being rendered.
+    pub win_mode: bool,
+    /// Frame counter (wrapping u16, incremented each VBlank).
+    pub frame_num: u16,
+}
+
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
     /// XYMU rendering latch (page 21). True = Mode 3 rendering active.
@@ -116,7 +155,6 @@ enum PhaseBridge {
 }
 
 pub struct Rendering {
-    pub(super) screen: Screen,
     /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
     /// See `hblank_pipeline.rs` for clock domain and race pair documentation.
     hblank: HblankPipeline,
@@ -154,7 +192,6 @@ pub struct Rendering {
 impl Rendering {
     pub(super) fn new() -> Self {
         Rendering {
-            screen: Screen::default(),
             hblank: HblankPipeline::new(),
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
@@ -267,6 +304,52 @@ impl Rendering {
         }
     }
 
+    /// Snapshot of all PPU internal state for gbtrace output.
+    pub(super) fn trace_snapshot(&self, oam: &Oam) -> PpuTraceSnapshot {
+        let sprites = self.scan.sprites_ref();
+        let mut sprite_x = [0u8; 10];
+        let mut sprite_id = [0u8; 10];
+        let mut sprite_attr = [0u8; 10];
+        for i in 0..sprites.count as usize {
+            let entry = &sprites.entries[i];
+            sprite_x[i] = entry.x;
+            // Look up tile index (byte 2) and attributes (byte 3) from OAM.
+            let oam_sprite = oam.sprite(SpriteId(entry.oam_index));
+            sprite_id[i] = oam_sprite.tile.0;
+            sprite_attr[i] = oam_sprite.attributes.0;
+        }
+
+        let (bg_low, bg_high) = self.bg_shifter.registers();
+        let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
+
+        let sfetch_state = match &self.sprite_state {
+            SpriteState::Fetching(sf) => sf.fetch_counter(),
+            SpriteState::Idle => 0,
+        };
+
+        PpuTraceSnapshot {
+            sprite_x,
+            sprite_id,
+            sprite_attr,
+            bgw_fifo_a: bg_low,
+            bgw_fifo_b: bg_high,
+            spr_fifo_a: obj_low,
+            spr_fifo_b: obj_high,
+            mask_pipe: obj_priority,
+            pal_pipe: obj_palette,
+            tfetch_state: self.fetcher.fetch_counter / 2,
+            sfetch_state,
+            tile_temp_a: self.fetcher.tile_data_low(),
+            tile_temp_b: self.fetcher.tile_data_high(),
+            pix_count: self.lcd.pixel_counter(),
+            sprite_count: sprites.count,
+            scan_count: self.scan.scan_counter_entry(),
+            rendering: self.hblank.xymu(),
+            win_mode: self.window.window_rendered(),
+            frame_num: 0, // Set by Ppu::trace_snapshot()
+        }
+    }
+
     pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
         let (bg_low, bg_high) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
@@ -338,7 +421,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-    ) {
+    ) -> Option<PixelOutput> {
         // XUPY rising edge detection: the XOTA divider toggle (in
         // Ppu::rise()) ran before this, so xupy()==true means WUVU
         // just went low→high.
@@ -349,7 +432,7 @@ impl Rendering {
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
-            return;
+            return None;
         }
 
         // Hblank pipeline: if settle_alet() already ran this dot,
@@ -358,8 +441,8 @@ impl Rendering {
         let (wodu, wodu_old) = self.hblank.fall(self.lcd.xugu());
 
         // lcd.fall() receives current-dot wodu for last_pixel (the final
-        // pixel shift-in happens on the dot WODU fires, not one dot later).
-        self.lcd.fall(self.hblank.voga(), wodu, &mut self.screen);
+        // pixel push happens on the dot WODU fires, not one dot later).
+        let pixel = self.lcd.fall(self.hblank.voga(), wodu);
 
         if self.hblank.xymu_before_settle() {
             // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
@@ -367,6 +450,8 @@ impl Rendering {
             // for the final fetcher/TYFA work.
             self.mode3_falling(wodu_old, regs, video, oam, vram);
         }
+
+        pixel
     }
 
     /// Rising edge (DELTA_ODD): output phase.
@@ -380,7 +465,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-    ) {
+    ) -> Option<PixelOutput> {
         // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated,
         // CATU scan-start fires.
         let xupy_rising = video.xupy();
@@ -397,7 +482,9 @@ impl Rendering {
         // Mode 3 (drawing) — pixel output phase.
         // Runs when XYMU is set (rendering active).
         if self.hblank.xymu() {
-            self.mode3_rising(regs, video, oam, vram);
+            self.mode3_rising(regs, video, oam, vram)
+        } else {
+            None
         }
     }
 
@@ -428,7 +515,6 @@ impl Rendering {
     /// persist through VBlank — this models the frame-boundary resets that
     /// individual blocks perform, not struct destruction/recreation.
     pub(super) fn reset_frame(&mut self) {
-        self.screen = Screen::default();
         self.window.reset_frame();
         self.reset_scanline(0);
     }
@@ -509,7 +595,9 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-    ) {
+    ) -> Option<PixelOutput> {
+        let mut pixel_out: Option<PixelOutput> = None;
+
         // Consume TYFA from falling phase. On the first rising phase
         // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
         // (pixel clock not yet enabled).
@@ -682,7 +770,8 @@ impl Rendering {
                 self.window.window_zero_pixel_mut(),
                 regs,
             );
-            let toba = self.lcd.rise(sacu, pixel, pova);
+            let (toba, pix) = self.lcd.rise(sacu, pixel, pova);
+            pixel_out = pix;
 
             if !toba && tyfa {
                 // Consume window_zero_pixel during pre-visible TYFA
@@ -738,6 +827,8 @@ impl Rendering {
         // DFF8 slave captures on every clock edge regardless of XYMU
         // or sprite fetch state.
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
+
+        pixel_out
     }
 
     /// FEPO: combinational OR of all unfetched sprite store X comparators,

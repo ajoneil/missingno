@@ -54,6 +54,10 @@ impl SpriteFetch {
         (self.tile_data_low, self.tile_data_high)
     }
 
+    pub(in crate::ppu) fn fetch_counter(&self) -> u8 {
+        self.fetch_counter
+    }
+
     /// Read one byte of sprite tile data (low or high bitplane).
     ///
     /// On the die, the sprite fetcher (page 29) uses the OAM index

@@ -174,7 +174,7 @@ impl Sgb {
 
     /// Update the stored screen snapshot (called each frame from execute loop).
     pub fn update_screen(&mut self, screen: &Screen) {
-        self.last_screen = *screen;
+        self.last_screen = screen.clone();
         if let Some((countdown, transfer)) = self.pending_transfer {
             if countdown <= 1 {
                 self.pending_transfer = None;
