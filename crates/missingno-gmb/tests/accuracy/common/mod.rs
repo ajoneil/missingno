@@ -94,10 +94,18 @@ impl TestRun {
                 self.tracer.as_mut().unwrap().push_pixel(pixel.shade);
             }
 
+            // Mark frame boundary at VSYNC (LY=144), matching GateBoy's
+            // MEDA_VSYNC_OUTn rising edge. Must come before capture so
+            // the boundary sits between the last dot of the previous
+            // frame and the first VBlank dot.
+            let tracer = self.tracer.as_mut().unwrap();
+            if rise.new_screen || fall.new_screen {
+                tracer.mark_frame().unwrap();
+            }
+
             // Capture state after both phases — pix buffer contains this
             // dot's pixel output, registers reflect post-phase state.
             // Matches GateBoy's convention of capturing at end of tcycle.
-            let tracer = self.tracer.as_mut().unwrap();
             tracer.capture(&self.gb).unwrap();
             tracer.advance_dot();
             dots += 1;

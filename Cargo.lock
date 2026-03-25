@@ -1553,7 +1553,7 @@ dependencies = [
 [[package]]
 name = "gbtrace"
 version = "0.1.0"
-source = "git+https://github.com/ajoneil/gbtrace#983955e2fc4a37401894dab004c5bd95b2eccbbf"
+source = "git+https://github.com/ajoneil/gbtrace#3d72be60cba3ea9a6f4f300caaaa1e93acdef5bb"
 dependencies = [
  "arrow",
  "bytes",

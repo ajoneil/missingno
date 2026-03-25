@@ -489,10 +489,12 @@ impl Ppu {
                 let ly = self.video.ly();
                 if ly == screen::NUM_SCANLINES {
                     // Line 144: frame complete, enter VBlank.
+                    // Increment frame counter here (VSYNC start) to match
+                    // GateBoy's MEDA_VSYNC_OUTn rising edge timing.
+                    self.frame_number = self.frame_number.wrapping_add(1);
                     result.new_frame = true;
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.
-                    self.frame_number = self.frame_number.wrapping_add(1);
                     rendering.reset_frame();
                 } else if !self.video.vblank {
                     // Lines 1-143: per-scanline reset.
