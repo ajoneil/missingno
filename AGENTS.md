@@ -152,13 +152,14 @@ cargo fmt                                    # Format
 
 ## Architecture
 
-The project is a Cargo workspace with two crates:
+The project is a Cargo workspace with crates under `crates/`:
 
 - **`crates/missingno-gb/`** (`missingno-gb`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
   - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
   - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
   - **`crates/missingno-gb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
-- **Root crate** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `src/app/`.
+- **`crates/missingno-gb-apu/`** (`missingno-gb-apu`) — Game Boy APU (audio) emulation, extracted for standalone use (e.g. WASM audio playback). Re-exported by `missingno-gb` as `audio`.
+- **`crates/missingno/`** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `crates/missingno/src/app/`.
 
 ### Instruction Execution
 
@@ -210,5 +211,5 @@ The `Processor` is split across three files in `crates/missingno-gb/src/cpu/mcyc
 
 ### Debugger
 
-- **Pane system**: `src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants. Each pane is a separate module with a struct (e.g. `CpuPane`, `PlaybackPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum with `Into<app::Message>` impl for routing through the nested message chain (`PaneMessage` → `panes::Message` → `debugger::Message` → `app::Message`). Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
-- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`src/app/debugger/playback.rs`) provides the UI.
+- **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants. Each pane is a separate module with a struct (e.g. `CpuPane`, `PlaybackPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum with `Into<app::Message>` impl for routing through the nested message chain (`PaneMessage` → `panes::Message` → `debugger::Message` → `app::Message`). Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
+- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `crates/missingno/src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`crates/missingno/src/app/debugger/playback.rs`) provides the UI.

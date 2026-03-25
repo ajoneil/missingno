@@ -1,35 +1,6 @@
 [workspace]
-members = ["crates/missingno-gb", "crates/missingno-gb-apu"]
-
-[package]
-name = "missingno"
-version = "26.3.0"
-authors = ["Andrew O'Neil <andy@andyofniall.net>"]
-edition = "2024"
-license = "MIT"
-
-[[bin]]
-name = "missingno"
-path = "src/main.rs"
-
-[dependencies]
-missingno-gb = { path = "crates/missingno-gb" }
-cpal = "0.17"
-bytemuck = { version = "1.25", features = ["derive"] }
-clap = { version = "4.5.57", features = ["derive"] }
-iced = { version = "0.14.0", features = ["advanced", "smol", "svg", "wgpu"] }
-replace_with = "0.1.8"
-rtrb = "0.3"
-rgb = { workspace = true }
-rfd = "0.17.2"
-gilrs = "0.11"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-smol = "2"
-tiny_http = "0.12"
-jiff = "0.2"
-dirs = "6"
-open = "5"
+resolver = "3"
+members = ["crates/missingno", "crates/missingno-gb", "crates/missingno-gb-apu"]
 
 [workspace.dependencies]
 bitflags = "2.11.0"
