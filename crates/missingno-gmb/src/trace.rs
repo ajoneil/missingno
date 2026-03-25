@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub use gbtrace::Trigger;
-use gbtrace::{BootRom, ParquetTraceWriter, Profile, TraceEntry, TraceHeader};
+pub use gbtrace::{Trigger, BootRom, Profile};
+use gbtrace::{ParquetTraceWriter, TraceEntry, TraceHeader};
 use sha2::{Digest, Sha256};
 
 use crate::GameBoy;
