@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::audio::{
+use crate::{
     Audio, Register,
     channels::{noise, pulse, pulse_sweep, wave},
     volume::Volume,

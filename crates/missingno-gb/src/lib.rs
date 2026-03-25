@@ -7,7 +7,7 @@ use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
 use ppu::{Ppu, screen::Screen};
 
-pub mod audio;
+pub use missingno_gb_apu as audio;
 pub mod cartridge;
 pub mod cpu;
 pub mod debugger;

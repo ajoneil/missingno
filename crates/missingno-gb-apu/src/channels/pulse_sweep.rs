@@ -1,4 +1,4 @@
-use crate::audio::channels::{
+use crate::channels::{
     Enabled,
     registers::{
         EnvelopeDirection, PeriodHighAndControl, Signed11, VolumeAndEnvelope,

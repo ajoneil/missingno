@@ -1,44 +1,56 @@
-use crate::audio::channels::{
+use crate::channels::{
     Enabled,
-    registers::{EnvelopeDirection, VolumeAndEnvelope},
+    registers::{
+        EnvelopeDirection, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
+        WaveformAndInitialLength,
+    },
 };
+
+const DUTY_TABLE: [[u8; 8]; 4] = [
+    [0, 0, 0, 0, 0, 0, 0, 1], // 12.5%
+    [0, 0, 0, 0, 0, 0, 1, 1], // 25%
+    [0, 0, 0, 0, 1, 1, 1, 1], // 50%
+    [1, 1, 1, 1, 1, 1, 0, 0], // 75%
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
-    LengthTimer,
+    WaveformAndInitialLength,
     VolumeAndEnvelope,
-    FrequencyAndRandomness,
-    Control,
+    PeriodLow,
+    PeriodHighAndControl,
 }
 
 #[derive(Clone)]
-pub struct NoiseChannel {
+pub struct PulseChannel {
     pub enabled: Enabled,
+    pub waveform_and_initial_length: WaveformAndInitialLength,
     pub volume_and_envelope: VolumeAndEnvelope,
     pub length_enabled: bool,
-    pub frequency_and_randomness: FrequencyAndRandomness,
+    pub period: Signed11,
 
     pub frequency_timer: u16,
-    pub lfsr: u16,
+    pub wave_duty_position: u8,
     pub current_volume: u8,
     pub envelope_timer: u8,
     pub length_counter: u16,
 }
 
-impl Default for NoiseChannel {
+impl Default for PulseChannel {
     fn default() -> Self {
         Self {
             enabled: Enabled {
                 enabled: false,
                 output_left: true,
-                output_right: false,
+                output_right: true,
             },
+            waveform_and_initial_length: WaveformAndInitialLength(0x3f),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
-            frequency_and_randomness: FrequencyAndRandomness(0),
+            period: (-1).into(),
 
             frequency_timer: 0,
-            lfsr: 0x7fff,
+            wave_duty_position: 0,
             current_volume: 0,
             envelope_timer: 0,
             length_counter: 0,
@@ -46,34 +58,38 @@ impl Default for NoiseChannel {
     }
 }
 
-impl NoiseChannel {
+impl PulseChannel {
     pub fn reset(&mut self) {
-        let length_counter = self.length_counter; // DMG: NR41 length timer preserved on power-off
-        self.enabled = Enabled::disabled();
-        self.volume_and_envelope = VolumeAndEnvelope(0);
-        self.length_enabled = false;
-        self.frequency_and_randomness = FrequencyAndRandomness(0);
+        let length_counter = self.length_counter; // DMG: length timers preserved on power-off
+        *self = Self {
+            enabled: Enabled::disabled(),
+            waveform_and_initial_length: WaveformAndInitialLength(0),
+            volume_and_envelope: VolumeAndEnvelope(0),
+            length_enabled: false,
+            period: (0).into(),
 
-        self.frequency_timer = 0;
-        self.lfsr = 0x7fff;
-        self.current_volume = 0;
-        self.envelope_timer = 0;
-        self.length_counter = length_counter;
+            frequency_timer: 0,
+            wave_duty_position: 0,
+            current_volume: 0,
+            envelope_timer: 0,
+            length_counter,
+        };
     }
 
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
-            Register::LengthTimer => 0xff,
+            Register::WaveformAndInitialLength => self.waveform_and_initial_length.0 | 0x3F,
             Register::VolumeAndEnvelope => self.volume_and_envelope.0,
-            Register::FrequencyAndRandomness => self.frequency_and_randomness.0,
-            Register::Control => Control::read(self.length_enabled),
+            Register::PeriodLow => 0xff,
+            Register::PeriodHighAndControl => PeriodHighAndControl::read(self.length_enabled),
         }
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
         match register {
-            Register::LengthTimer => {
-                self.length_counter = 64 - (value & 0x3f) as u16;
+            Register::WaveformAndInitialLength => {
+                self.waveform_and_initial_length = WaveformAndInitialLength(value);
+                self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
             }
             Register::VolumeAndEnvelope => {
                 self.volume_and_envelope = VolumeAndEnvelope(value);
@@ -82,11 +98,10 @@ impl NoiseChannel {
                     self.enabled.enabled = false;
                 }
             }
-            Register::FrequencyAndRandomness => {
-                self.frequency_and_randomness = FrequencyAndRandomness(value)
-            }
-            Register::Control => {
-                let ctrl = Control(value);
+            Register::PeriodLow => self.period.set_low8(value),
+            Register::PeriodHighAndControl => {
+                let ctrl = PeriodHighAndControl(value);
+                self.period.set_high3(ctrl.period_high());
 
                 // Extra length clocking on NRx4 write
                 let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
@@ -120,12 +135,11 @@ impl NoiseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.frequency_timer = self.frequency_and_randomness.timer_period();
-        self.lfsr = 0x7fff;
+        self.frequency_timer = (2048 - self.period.0) * 4;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
 
-        // DAC check
+        // DAC check: if upper 5 bits of volume register are 0, channel is disabled
         if self.volume_and_envelope.0 & 0xf8 == 0 {
             self.enabled.enabled = false;
         }
@@ -136,18 +150,8 @@ impl NoiseChannel {
             self.frequency_timer -= 1;
         }
         if self.frequency_timer == 0 {
-            self.frequency_timer = self.frequency_and_randomness.timer_period();
-
-            // Clock LFSR
-            let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
-            self.lfsr >>= 1;
-            self.lfsr |= xor_result << 14;
-
-            // 7-bit width mode
-            if self.frequency_and_randomness.short_mode() {
-                self.lfsr &= !(1 << 6);
-                self.lfsr |= xor_result << 6;
-            }
+            self.frequency_timer = (2048 - self.period.0) * 4;
+            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
         }
     }
 
@@ -190,55 +194,8 @@ impl NoiseChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        // Output is inverted bit 0 of LFSR
-        let output = (!self.lfsr & 1) as f32;
-        output * self.current_volume as f32 / 15.0
-    }
-}
-
-struct Control(pub u8);
-
-impl Control {
-    const LENGTH: u8 = 0b0100_0000;
-
-    pub fn read(length_enabled: bool) -> u8 {
-        if length_enabled {
-            0xff
-        } else {
-            0xff ^ Self::LENGTH
-        }
-    }
-
-    pub fn trigger(&self) -> bool {
-        self.0 & 0b1000_0000 != 0
-    }
-
-    pub fn enable_length(&self) -> bool {
-        self.0 & Self::LENGTH != 0
-    }
-}
-
-#[derive(Clone)]
-pub struct FrequencyAndRandomness(pub u8);
-
-impl FrequencyAndRandomness {
-    pub fn clock_shift(&self) -> u8 {
-        self.0 >> 4
-    }
-
-    pub fn short_mode(&self) -> bool {
-        self.0 & 0b1000 != 0
-    }
-
-    pub fn divisor_code(&self) -> u8 {
-        self.0 & 0b111
-    }
-
-    fn timer_period(&self) -> u16 {
-        let divisor = match self.divisor_code() {
-            0 => 8,
-            n => (n as u16) * 16,
-        };
-        divisor << self.clock_shift()
+        let duty = self.waveform_and_initial_length.waveform() as usize;
+        let output = DUTY_TABLE[duty][self.wave_duty_position as usize];
+        output as f32 * self.current_volume as f32 / 15.0
     }
 }

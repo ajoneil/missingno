@@ -9,6 +9,7 @@ license = "MIT"
 gbtrace = ["dep:gbtrace", "dep:sha2"]
 
 [dependencies]
+missingno-gb-apu = { path = "../missingno-gb-apu" }
 bitflags = { workspace = true }
 rgb = { workspace = true }
 gbtrace = { git = "https://github.com/ajoneil/gbtrace", optional = true, features = ["parquet"] }

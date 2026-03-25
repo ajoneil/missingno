@@ -1,4 +1,4 @@
-use crate::audio::{
+use crate::{
     Audio,
     channels::{
         Enabled,
