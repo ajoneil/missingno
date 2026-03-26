@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub use gbtrace::{Trigger, BootRom, Profile};
-use gbtrace::{ParquetTraceWriter, TraceEntry, TraceHeader};
+use gbtrace::format::write::GbtraceWriter;
+use gbtrace::format::read::derive_groups_pub;
+use gbtrace::header::TraceHeader;
+use gbtrace::profile::{field_type, field_nullable, FieldType};
 use sha2::{Digest, Sha256};
 
 use crate::GameBoy;
@@ -10,24 +13,18 @@ use crate::ppu::PpuTraceSnapshot;
 
 /// Captures gbtrace-format execution traces from a GameBoy.
 pub struct Tracer {
-    writer: ParquetTraceWriter,
+    writer: GbtraceWriter,
     fields: Vec<String>,
+    field_cols: Vec<usize>,
     memory: BTreeMap<String, u16>,
     dot_count: u64,
     trigger: Trigger,
-    /// Whether any field requires a PPU trace snapshot.
     needs_ppu_snapshot: bool,
-    /// Accumulated pixel output since the last capture, for the `pix` field.
-    /// Shade characters ('0'-'3') appended by `push_pixel()`, drained on capture.
     pix_buffer: String,
-    /// Pending VRAM write address (0 = no write). Set by `push_vram_write()`,
-    /// drained on capture.
     vram_write_addr: u16,
-    /// Pending VRAM write data.
     vram_write_data: u8,
 }
 
-/// PPU internal field names that require a PpuTraceSnapshot.
 const PPU_INTERNAL_FIELDS: &[&str] = &[
     "oam0_x", "oam0_id", "oam0_attr", "oam1_x", "oam1_id", "oam1_attr",
     "oam2_x", "oam2_id", "oam2_attr", "oam3_x", "oam3_id", "oam3_attr",
@@ -42,7 +39,6 @@ const PPU_INTERNAL_FIELDS: &[&str] = &[
 ];
 
 impl Tracer {
-    /// Create a new tracer that writes to the given path.
     pub fn create(
         path: impl AsRef<Path>,
         profile: &Profile,
@@ -72,7 +68,11 @@ impl Tracer {
             notes: String::new(),
         };
 
-        let writer = ParquetTraceWriter::create(path, &header)?;
+        let groups = derive_groups_pub(&header.fields);
+        let writer = GbtraceWriter::create(path, &header, &groups)?;
+
+        // Build column index for each field
+        let field_cols: Vec<usize> = (0..profile.fields.len()).collect();
 
         let needs_ppu_snapshot = profile
             .fields
@@ -82,6 +82,7 @@ impl Tracer {
         Ok(Self {
             writer,
             fields: profile.fields.clone(),
+            field_cols,
             memory: profile.memory.clone(),
             dot_count: 0,
             trigger,
@@ -92,129 +93,140 @@ impl Tracer {
         })
     }
 
-    /// The trigger granularity for this trace.
     pub fn trigger(&self) -> Trigger {
         self.trigger.clone()
     }
 
-    /// Record a pixel output from the PPU. Call this for each pixel
-    /// returned by `PhaseResult` between captures.
     pub fn push_pixel(&mut self, shade: u8) {
         self.pix_buffer.push((b'0' + (shade & 3)) as char);
     }
 
-    /// Record a VRAM write (address 0x8000-0x9FFF). Call after each
-    /// phase when the bus performed a write to VRAM.
     pub fn push_vram_write(&mut self, addr: u16, data: u8) {
         self.vram_write_addr = addr;
         self.vram_write_data = data;
     }
 
-    /// Capture the current state and write a trace entry.
     pub fn capture(&mut self, gb: &GameBoy) -> Result<(), gbtrace::Error> {
-        let mut entry = TraceEntry::new();
-
-        // Take PPU snapshot once if any field needs it.
         let ppu_snap = if self.needs_ppu_snapshot {
             gb.ppu().trace_snapshot()
         } else {
             None
         };
 
-        for field in &self.fields {
-            // Check if this is a memory-mapped field first.
-            if let Some(&addr) = self.memory.get(field) {
-                entry.set_u8(field, gb.peek(addr));
+        for (i, field) in self.fields.clone().iter().enumerate() {
+            let col = self.field_cols[i];
+
+            // Memory-mapped field
+            if let Some(&addr) = self.memory.get(field.as_str()) {
+                self.writer.set_u8(col, gb.peek(addr));
                 continue;
             }
 
             match field.as_str() {
-                "cy" => entry.set_cy(self.dot_count),
+                "cy" => self.writer.set_u64(col, self.dot_count),
                 // CPU
-                "a" => entry.set_u8("a", gb.cpu().a),
-                "f" => entry.set_u8("f", gb.cpu().flags.bits()),
-                "b" => entry.set_u8("b", gb.cpu().b),
-                "c" => entry.set_u8("c", gb.cpu().c),
-                "d" => entry.set_u8("d", gb.cpu().d),
-                "e" => entry.set_u8("e", gb.cpu().e),
-                "h" => entry.set_u8("h", gb.cpu().h),
-                "l" => entry.set_u8("l", gb.cpu().l),
-                "sp" => entry.set_u16("sp", gb.cpu().stack_pointer),
-                "pc" => entry.set_u16("pc", gb.cpu().instruction_pc),
-                "op" => entry.set_u8("op", gb.peek(gb.cpu().instruction_pc)),
-                "ime" => entry.set_bool("ime", gb.cpu().interrupts_enabled()),
+                "a" => self.writer.set_u8(col, gb.cpu().a),
+                "f" => self.writer.set_u8(col, gb.cpu().flags.bits()),
+                "b" => self.writer.set_u8(col, gb.cpu().b),
+                "c" => self.writer.set_u8(col, gb.cpu().c),
+                "d" => self.writer.set_u8(col, gb.cpu().d),
+                "e" => self.writer.set_u8(col, gb.cpu().e),
+                "h" => self.writer.set_u8(col, gb.cpu().h),
+                "l" => self.writer.set_u8(col, gb.cpu().l),
+                "sp" => self.writer.set_u16(col, gb.cpu().stack_pointer),
+                "pc" => self.writer.set_u16(col, gb.cpu().instruction_pc),
+                "op" => self.writer.set_u8(col, gb.peek(gb.cpu().instruction_pc)),
+                "ime" => self.writer.set_bool(col, gb.cpu().interrupts_enabled()),
                 // PPU registers
-                "lcdc" => entry.set_u8("lcdc", gb.peek(0xFF40)),
-                "stat" => entry.set_u8("stat", gb.peek(0xFF41)),
-                "ly" => entry.set_u8("ly", gb.peek(0xFF44)),
-                "lyc" => entry.set_u8("lyc", gb.peek(0xFF45)),
-                "scy" => entry.set_u8("scy", gb.peek(0xFF42)),
-                "scx" => entry.set_u8("scx", gb.peek(0xFF43)),
-                "wy" => entry.set_u8("wy", gb.peek(0xFF4A)),
-                "wx" => entry.set_u8("wx", gb.peek(0xFF4B)),
-                "bgp" => entry.set_u8("bgp", gb.peek(0xFF47)),
-                "obp0" => entry.set_u8("obp0", gb.peek(0xFF48)),
-                "obp1" => entry.set_u8("obp1", gb.peek(0xFF49)),
-                "dma" => entry.set_u8("dma", gb.peek(0xFF46)),
+                "lcdc" => self.writer.set_u8(col, gb.peek(0xFF40)),
+                "stat" => self.writer.set_u8(col, gb.peek(0xFF41)),
+                "ly" => self.writer.set_u8(col, gb.peek(0xFF44)),
+                "lyc" => self.writer.set_u8(col, gb.peek(0xFF45)),
+                "scy" => self.writer.set_u8(col, gb.peek(0xFF42)),
+                "scx" => self.writer.set_u8(col, gb.peek(0xFF43)),
+                "wy" => self.writer.set_u8(col, gb.peek(0xFF4A)),
+                "wx" => self.writer.set_u8(col, gb.peek(0xFF4B)),
+                "bgp" => self.writer.set_u8(col, gb.peek(0xFF47)),
+                "obp0" => self.writer.set_u8(col, gb.peek(0xFF48)),
+                "obp1" => self.writer.set_u8(col, gb.peek(0xFF49)),
+                "dma" => self.writer.set_u8(col, gb.peek(0xFF46)),
                 // Timer
-                "div" => entry.set_u8("div", gb.peek(0xFF04)),
-                "tima" => entry.set_u8("tima", gb.peek(0xFF05)),
-                "tma" => entry.set_u8("tma", gb.peek(0xFF06)),
-                "tac" => entry.set_u8("tac", gb.peek(0xFF07)),
+                "div" => self.writer.set_u8(col, gb.peek(0xFF04)),
+                "tima" => self.writer.set_u8(col, gb.peek(0xFF05)),
+                "tma" => self.writer.set_u8(col, gb.peek(0xFF06)),
+                "tac" => self.writer.set_u8(col, gb.peek(0xFF07)),
                 // Interrupt
-                "if_" => entry.set_u8("if_", gb.peek(0xFF0F)),
-                "ie" => entry.set_u8("ie", gb.peek(0xFFFF)),
+                "if_" => self.writer.set_u8(col, gb.peek(0xFF0F)),
+                "ie" => self.writer.set_u8(col, gb.peek(0xFFFF)),
                 // Serial
-                "sb" => entry.set_u8("sb", gb.peek(0xFF01)),
-                "sc" => entry.set_u8("sc", gb.peek(0xFF02)),
-                // Pixel output — null when no pixel this cycle
+                "sb" => self.writer.set_u8(col, gb.peek(0xFF01)),
+                "sc" => self.writer.set_u8(col, gb.peek(0xFF02)),
+                // Pixel output
                 "pix" => {
-                    if !self.pix_buffer.is_empty() {
-                        entry.set_str("pix", &self.pix_buffer);
+                    if self.pix_buffer.is_empty() {
+                        self.writer.set_null(col);
+                    } else {
+                        self.writer.set_str(col, &self.pix_buffer);
                     }
-                    // else: field absent → writer emits null
                 }
                 "pix_x" => {
                     if let Some(snap) = &ppu_snap {
-                        entry.set_u8("pix_x", snap.pix_count);
+                        self.writer.set_u8(col, snap.pix_count);
+                    } else {
+                        self.writer.set_u8(col, 0);
                     }
                 }
-                // VRAM write tracking — null when no write this cycle
+                // VRAM write tracking
                 "vram_addr" => {
                     if self.vram_write_addr != 0 {
-                        entry.set_u16("vram_addr", self.vram_write_addr);
+                        self.writer.set_u16(col, self.vram_write_addr);
+                    } else {
+                        self.writer.set_null(col);
                     }
                 }
                 "vram_data" => {
                     if self.vram_write_addr != 0 {
-                        entry.set_u8("vram_data", self.vram_write_data);
+                        self.writer.set_u8(col, self.vram_write_data);
+                    } else {
+                        self.writer.set_null(col);
                     }
                 }
-                // PPU internal fields — use snapshot
+                // PPU internal fields
                 field_name if PPU_INTERNAL_FIELDS.contains(&field_name) => {
-                    Self::emit_ppu_field(&mut entry, field_name, &ppu_snap);
+                    self.emit_ppu_field(col, field_name, &ppu_snap);
                 }
-                _ => {}
+                _ => {
+                    // Unknown field — write a zero/null default
+                    let ft = field_type(field);
+                    if field_nullable(field) {
+                        self.writer.set_null(col);
+                    } else {
+                        match ft {
+                            FieldType::Bool => self.writer.set_bool(col, false),
+                            FieldType::Str => self.writer.set_str(col, ""),
+                            _ => self.writer.set_u8(col, 0),
+                        }
+                    }
+                }
             }
         }
 
-        // Drain the pixel buffer after emitting — it covers the interval
-        // since the last capture.
         self.pix_buffer.clear();
         self.vram_write_addr = 0;
         self.vram_write_data = 0;
 
-        self.writer.write_entry(&entry)
+        self.writer.finish_entry()
     }
 
-    /// Write a single PPU internal field into a trace entry.
-    fn emit_ppu_field(entry: &mut TraceEntry, field: &str, snap: &Option<PpuTraceSnapshot>) {
+    fn emit_ppu_field(&mut self, col: usize, field: &str, snap: &Option<PpuTraceSnapshot>) {
         let snap = match snap {
             Some(s) => s,
-            None => return, // LCD off — no pipeline state
+            None => {
+                self.writer.set_u8(col, 0);
+                return;
+            }
         };
 
-        // Sprite store: oamN_x, oamN_id, oamN_attr
         if let Some(rest) = field.strip_prefix("oam") {
             if let Some((idx_str, suffix)) = rest.split_once('_') {
                 if let Ok(idx) = idx_str.parse::<usize>() {
@@ -223,9 +235,9 @@ impl Tracer {
                             "x" => snap.sprite_x[idx],
                             "id" => snap.sprite_id[idx],
                             "attr" => snap.sprite_attr[idx],
-                            _ => return,
+                            _ => 0,
                         };
-                        entry.set_u8(field, val);
+                        self.writer.set_u8(col, val);
                         return;
                     }
                 }
@@ -233,53 +245,42 @@ impl Tracer {
         }
 
         match field {
-            // Pixel FIFO
-            "bgw_fifo_a" => entry.set_u8(field, snap.bgw_fifo_a),
-            "bgw_fifo_b" => entry.set_u8(field, snap.bgw_fifo_b),
-            "spr_fifo_a" => entry.set_u8(field, snap.spr_fifo_a),
-            "spr_fifo_b" => entry.set_u8(field, snap.spr_fifo_b),
-            "mask_pipe" => entry.set_u8(field, snap.mask_pipe),
-            "pal_pipe" => entry.set_u8(field, snap.pal_pipe),
-            // Fetcher
-            "tfetch_state" => entry.set_u8(field, snap.tfetch_state),
-            "sfetch_state" => entry.set_u8(field, snap.sfetch_state),
-            "tile_temp_a" => entry.set_u8(field, snap.tile_temp_a),
-            "tile_temp_b" => entry.set_u8(field, snap.tile_temp_b),
-            // Counters
-            "pix_count" => entry.set_u8(field, snap.pix_count),
-            "sprite_count" => entry.set_u8(field, snap.sprite_count),
-            "scan_count" => entry.set_u8(field, snap.scan_count),
-            // Flags
-            "rendering" => entry.set_bool(field, snap.rendering),
-            "win_mode" => entry.set_bool(field, snap.win_mode),
-            // Frame tracking
-            "frame_num" => entry.set_u16(field, snap.frame_num),
-            _ => {}
+            "bgw_fifo_a" => self.writer.set_u8(col, snap.bgw_fifo_a),
+            "bgw_fifo_b" => self.writer.set_u8(col, snap.bgw_fifo_b),
+            "spr_fifo_a" => self.writer.set_u8(col, snap.spr_fifo_a),
+            "spr_fifo_b" => self.writer.set_u8(col, snap.spr_fifo_b),
+            "mask_pipe" => self.writer.set_u8(col, snap.mask_pipe),
+            "pal_pipe" => self.writer.set_u8(col, snap.pal_pipe),
+            "tfetch_state" => self.writer.set_u8(col, snap.tfetch_state),
+            "sfetch_state" => self.writer.set_u8(col, snap.sfetch_state),
+            "tile_temp_a" => self.writer.set_u8(col, snap.tile_temp_a),
+            "tile_temp_b" => self.writer.set_u8(col, snap.tile_temp_b),
+            "pix_count" => self.writer.set_u8(col, snap.pix_count),
+            "sprite_count" => self.writer.set_u8(col, snap.sprite_count),
+            "scan_count" => self.writer.set_u8(col, snap.scan_count),
+            "rendering" => self.writer.set_bool(col, snap.rendering),
+            "win_mode" => self.writer.set_bool(col, snap.win_mode),
+            "frame_num" => self.writer.set_u16(col, snap.frame_num),
+            _ => self.writer.set_u8(col, 0),
         }
     }
 
-    /// Mark a frame boundary at the current position. Call at VBlank
-    /// so the viewer can split frames correctly.
     pub fn mark_frame(&mut self) -> Result<(), gbtrace::Error> {
-        self.writer.mark_frame()
+        self.writer.mark_frame(None)
     }
 
-    /// Advance the dot counter by one T-cycle.
     pub fn advance_dot(&mut self) {
         self.dot_count += 1;
     }
 
-    /// Advance the dot counter by multiple T-cycles (for instruction-level tracing).
     pub fn advance(&mut self, dots: u32) {
         self.dot_count += dots as u64;
     }
 
-    /// Current T-cycle count.
     pub fn dot_count(&self) -> u64 {
         self.dot_count
     }
 
-    /// Flush and finalize the trace file.
     pub fn finish(self) -> Result<(), gbtrace::Error> {
         self.writer.finish()
     }

@@ -166,7 +166,7 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
         .file_stem()
         .unwrap()
         .to_string_lossy();
-    let output_path = output_dir.join(format!("{rom_stem}.parquet"));
+    let output_path = output_dir.join(format!("{rom_stem}.gbtrace"));
 
     let boot_rom = if gb.cpu().program_counter == 0x0000 {
         gbtrace::BootRom::Skip // TODO: detect actual boot ROM
