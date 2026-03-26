@@ -35,7 +35,7 @@ const PPU_INTERNAL_FIELDS: &[&str] = &[
     "mask_pipe", "pal_pipe",
     "tfetch_state", "sfetch_state", "tile_temp_a", "tile_temp_b",
     "pix_count", "sprite_count", "scan_count",
-    "rendering", "win_mode", "frame_num",
+    "rendering", "win_mode",
 ];
 
 impl Tracer {
@@ -222,7 +222,11 @@ impl Tracer {
         let snap = match snap {
             Some(s) => s,
             None => {
-                self.writer.set_u8(col, 0);
+                // No PPU snapshot — write type-appropriate zero
+                match field {
+                    "rendering" | "win_mode" => self.writer.set_bool(col, false),
+                    _ => self.writer.set_u8(col, 0),
+                }
                 return;
             }
         };
@@ -260,7 +264,6 @@ impl Tracer {
             "scan_count" => self.writer.set_u8(col, snap.scan_count),
             "rendering" => self.writer.set_bool(col, snap.rendering),
             "win_mode" => self.writer.set_bool(col, snap.win_mode),
-            "frame_num" => self.writer.set_u16(col, snap.frame_num),
             _ => self.writer.set_u8(col, 0),
         }
     }
