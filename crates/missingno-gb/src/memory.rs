@@ -28,6 +28,13 @@ impl HighRam {
         Self([0; 0x7F])
     }
 
+    pub fn from_bytes(data: &[u8]) -> Self {
+        let mut hram = Self([0; 0x7F]);
+        let len = data.len().min(0x7F);
+        hram.0[..len].copy_from_slice(&data[..len]);
+        hram
+    }
+
     pub fn read(&self, offset: u8) -> u8 {
         self.0[offset as usize]
     }

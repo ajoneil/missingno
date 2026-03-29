@@ -254,6 +254,55 @@ impl Cpu {
         }
     }
 
+    /// Construct a CPU from a gbtrace snapshot at an instruction boundary.
+    ///
+    /// Execution state machine fields are set to their instruction-boundary
+    /// defaults (Fetch phase, step 0, no pending actions).
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::CpuSnapshot) -> Cpu {
+        Cpu {
+            a: snap.a, b: snap.b, c: snap.c, d: snap.d,
+            e: snap.e, h: snap.h, l: snap.l,
+            stack_pointer: snap.sp,
+            program_counter: snap.pc,
+            instruction_pc: snap.pc,
+            flags: Flags::from_bits_retain(snap.f),
+            interrupt_master_enable: if snap.ime {
+                InterruptMasterEnable::Enabled
+            } else {
+                InterruptMasterEnable::Disabled
+            },
+            ei_delay: match snap.ei_delay {
+                1 => Some(EiDelay::Pending),
+                2 => Some(EiDelay::Fired),
+                _ => None,
+            },
+            halt_state: match snap.halt_state {
+                1 => HaltState::Halting,
+                2 => HaltState::Halted,
+                _ => HaltState::Running,
+            },
+            halt_bug: snap.halt_bug,
+            halt_wakeup_pending: false,
+            phase: CpuPhase::Fetch,
+            instruction: instructions::Instruction::NoOperation,
+            dot: BusDot::ZERO,
+            mcycle_active: false,
+            current_action: None,
+            exec_step: 0,
+            scratch: 0,
+            last_dot: BusDot::ZERO,
+            pending_vector_resolve: false,
+            interrupt_latch: InterruptLatch::Empty,
+            boundary_flag: true,
+            first_halted_cycle: false,
+            interrupt_pending: false,
+            g42_interrupt_pending: false,
+            g42_was_pending: false,
+            halt_isr_dispatch_pending: false,
+        }
+    }
+
     pub fn get_register8(&self, register: Register8) -> u8 {
         match register {
             Register8::A => self.a,

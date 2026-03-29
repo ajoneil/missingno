@@ -2471,17 +2471,9 @@ version = "0.0.1"
 dependencies = [
  "bitflags 2.11.0",
  "gbtrace",
- "missingno-gb-apu",
  "png",
  "rgb",
  "sha2",
-]
-
-[[package]]
-name = "missingno-gb-apu"
-version = "0.0.1"
-dependencies = [
- "bitflags 2.11.0",
 ]
 
 [[package]]

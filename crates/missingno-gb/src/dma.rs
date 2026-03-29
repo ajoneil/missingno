@@ -82,11 +82,21 @@ impl Dma {
         }
     }
 
-    /// Restore DMA state from a save state.
-    pub fn restore(source_register: u8, transfer: Option<DmaTransfer>) -> Dma {
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::DmaSnapshot) -> Dma {
+        if !snap.active {
+            return Dma::new();
+        }
+        let delay = if snap.delay_remaining == 0 {
+            None
+        } else if snap.delay_remaining & 0x80 != 0 {
+            Some(DmaDelay::Startup(snap.delay_remaining & 0x7F))
+        } else {
+            Some(DmaDelay::Transfer(snap.delay_remaining))
+        };
         Dma {
-            transfer,
-            source_register,
+            transfer: Some(DmaTransfer::new(snap.source, snap.byte_index, delay)),
+            source_register: (snap.source >> 8) as u8,
         }
     }
 

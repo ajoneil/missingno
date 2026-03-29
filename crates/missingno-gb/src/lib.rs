@@ -1,4 +1,4 @@
-use audio::Audio;
+use crate::audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
 use cpu::mcycle::{BusDot, DotAction};
@@ -7,7 +7,7 @@ use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
 use ppu::{Ppu, screen::Screen};
 
-pub use missingno_gb_apu as audio;
+pub mod audio;
 pub mod cartridge;
 pub mod cpu;
 pub mod debugger;

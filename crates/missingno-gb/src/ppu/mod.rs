@@ -625,55 +625,49 @@ impl Ppu {
             .map(|r| r.sprite_store_snapshot())
     }
 
-    /// Construct a PPU from save state data.
+    /// Construct a PPU from a gbtrace snapshot.
     ///
-    /// Builds all internal state from the snapshot values. The rendering
-    /// pipeline is created if the LCD is enabled (LCDC bit 7), with
-    /// VBlank derived from LY >= 144.
-    pub fn from_save_state(
-        lcdc: u8, stat: u8, ly: u8, lyc: u8,
-        scy: u8, scx: u8, wy: u8, wx: u8,
-        bgp: u8, obp0: u8, obp1: u8,
-        dot_position: u8, stat_line_was_high: bool,
-        oam: Oam,
-    ) -> Self {
-        let control = Control::new(ControlFlags::from_bits_retain(lcdc));
+    /// The rendering pipeline is created if the LCD is enabled (LCDC bit 7),
+    /// with VBlank derived from LY >= 144.
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
+        let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
-        let stat_flags = InterruptFlags::from_bits_truncate(stat);
+        let stat_flags = InterruptFlags::from_bits_truncate(snap.stat);
 
         let video = VideoControl {
-            dot_position,
+            dot_position: snap.dot_position,
             dot_divider: false,
             mcycle_divider: false,
-            ly,
-            lyc,
-            ly_comparison_pending: ly == lyc,
-            ly_comparison_latched: ly == lyc,
+            ly: snap.ly,
+            lyc: snap.lyc,
+            ly_comparison_pending: snap.ly == snap.lyc,
+            ly_comparison_latched: snap.ly == snap.lyc,
             stat_flags,
-            stat_line_was_high,
+            stat_line_was_high: snap.stat_line_was_high,
             delayed_line_end: false,
             line_end_pending: false,
             line_end_detected: false,
             line_end_active: false,
             frame_end_reset: false,
-            vblank: ly >= 144,
+            vblank: snap.ly >= 144,
         };
 
         let registers = PipelineRegisters {
             control,
-            control_latch: DffLatch::new(lcdc),
+            control_latch: DffLatch::new(snap.lcdc),
             background_viewport: BackgroundViewportPosition {
-                x: DffLatch::new(scx),
-                y: DffLatch::new(scy),
+                x: DffLatch::new(snap.scx),
+                y: DffLatch::new(snap.scy),
             },
             window: Window {
-                y: wy,
-                x_plus_7: DffLatch::new(wx),
+                y: snap.wy,
+                x_plus_7: DffLatch::new(snap.wx),
             },
             palettes: Palettes {
-                background: DffLatch::new(bgp),
-                sprite0: DffLatch::new(obp0),
-                sprite1: DffLatch::new(obp1),
+                background: DffLatch::new(snap.bgp),
+                sprite0: DffLatch::new(snap.obp0),
+                sprite1: DffLatch::new(snap.obp1),
             },
         };
 

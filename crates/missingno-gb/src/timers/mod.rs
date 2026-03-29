@@ -147,4 +147,17 @@ impl Timers {
             }
         }
     }
+
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::TimerSnapshot) -> Self {
+        Self {
+            internal_counter: snap.internal_counter,
+            counter: snap.tima,
+            modulo: snap.tma,
+            control: Control(snap.tac),
+            overflow_pending: snap.overflow_pending,
+            reloading: snap.reloading,
+            g151_pending: false,
+        }
+    }
 }

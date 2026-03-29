@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/missingno", "crates/missingno-gb", "crates/missingno-gb-apu"]
+members = ["crates/missingno", "crates/missingno-gb"]
 
 [workspace.dependencies]
 bitflags = "2.11.0"

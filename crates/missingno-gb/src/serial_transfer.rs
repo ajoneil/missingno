@@ -33,6 +33,18 @@ impl Registers {
         }
     }
 
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::SerialSnapshot) -> Self {
+        Registers {
+            data: snap.sb,
+            control: Control::from_bits_retain(snap.sc),
+            bits_remaining: snap.bits_remaining,
+            serial_clock: snap.shift_clock,
+            previous_counter: 0,
+            output: Vec::new(),
+        }
+    }
+
     /// Called when the SC register is written. Resets serial state and starts
     /// a new transfer if ENABLE and INTERNAL_CLOCK are both set.
     pub fn start_transfer(&mut self) {
