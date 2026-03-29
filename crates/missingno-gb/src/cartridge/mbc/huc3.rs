@@ -1,5 +1,5 @@
 #[derive(Clone, Copy)]
-enum Mode {
+pub enum Mode {
     Rom,
     Ram,
     RtcCommand,
@@ -9,15 +9,15 @@ enum Mode {
 }
 
 pub struct Huc3 {
-    ram: Vec<[u8; 8 * 1024]>,
-    rom_bank: u8,
-    ram_bank: u8,
-    mode: Mode,
-    rtc_memory: [u8; 256],
-    rtc_address: u8,
-    rtc_last_command: u8,
-    rtc_response: u8,
-    rtc_semaphore: u8,
+    pub ram: Vec<[u8; 8 * 1024]>,
+    pub rom_bank: u8,
+    pub ram_bank: u8,
+    pub mode: Mode,
+    pub rtc_memory: [u8; 256],
+    pub rtc_address: u8,
+    pub rtc_last_command: u8,
+    pub rtc_response: u8,
+    pub rtc_semaphore: u8,
 }
 
 impl Huc3 {

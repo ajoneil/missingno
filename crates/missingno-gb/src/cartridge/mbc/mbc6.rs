@@ -1,14 +1,14 @@
 pub struct Mbc6 {
-    flash: Vec<u8>,
-    ram: Vec<[u8; 4 * 1024]>,
-    ram_enabled: bool,
-    flash_enabled: bool,
-    rom_bank_a: u8,
-    rom_bank_a_flash: bool,
-    rom_bank_b: u8,
-    rom_bank_b_flash: bool,
-    ram_bank_a: u8,
-    ram_bank_b: u8,
+    pub flash: Vec<u8>,
+    pub ram: Vec<[u8; 4 * 1024]>,
+    pub ram_enabled: bool,
+    pub flash_enabled: bool,
+    pub rom_bank_a: u8,
+    pub rom_bank_a_flash: bool,
+    pub rom_bank_b: u8,
+    pub rom_bank_b_flash: bool,
+    pub ram_bank_a: u8,
+    pub ram_bank_b: u8,
 }
 
 impl Mbc6 {

@@ -1,7 +1,7 @@
 pub struct Mbc2 {
-    ram: [u8; 0x200],
-    ram_enabled: bool,
-    bank: u8,
+    pub ram: [u8; 0x200],
+    pub ram_enabled: bool,
+    pub bank: u8,
 }
 
 impl Mbc2 {

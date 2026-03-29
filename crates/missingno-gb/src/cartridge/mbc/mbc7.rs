@@ -1,4 +1,4 @@
-enum EepromState {
+pub enum EepromState {
     Idle,
     ReceivingCommand {
         bits: u16,
@@ -15,13 +15,13 @@ enum EepromState {
     },
 }
 
-struct Eeprom {
-    data: [u16; 128],
-    state: EepromState,
-    write_enabled: bool,
-    do_bit: u8,
-    last_clk: bool,
-    last_cs: bool,
+pub struct Eeprom {
+    pub data: [u16; 128],
+    pub state: EepromState,
+    pub write_enabled: bool,
+    pub do_bit: u8,
+    pub last_clk: bool,
+    pub last_cs: bool,
 }
 
 impl Eeprom {
@@ -193,19 +193,19 @@ impl Eeprom {
     }
 }
 
-enum LatchState {
+pub enum LatchState {
     Idle,
     WroteErase,
 }
 
 pub struct Mbc7 {
-    eeprom: Eeprom,
-    ram_enabled_1: bool,
-    ram_enabled_2: bool,
-    rom_bank: u8,
-    accel_x: u16,
-    accel_y: u16,
-    latch_state: LatchState,
+    pub eeprom: Eeprom,
+    pub ram_enabled_1: bool,
+    pub ram_enabled_2: bool,
+    pub rom_bank: u8,
+    pub accel_x: u16,
+    pub accel_y: u16,
+    pub latch_state: LatchState,
 }
 
 impl Mbc7 {

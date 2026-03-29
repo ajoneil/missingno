@@ -35,6 +35,14 @@ impl HighRam {
     pub fn write(&mut self, offset: u8, value: u8) {
         self.0[offset as usize] = value;
     }
+
+    pub fn data(&self) -> &[u8; 0x7F] {
+        &self.0
+    }
+
+    pub fn data_mut(&mut self) -> &mut [u8; 0x7F] {
+        &mut self.0
+    }
 }
 
 /// Address on the external data bus: cartridge or work RAM.
@@ -48,14 +56,14 @@ pub enum ExternalAddress {
 /// DMG, to work RAM. The bus retains its last driven value through
 /// parasitic capacitance, decaying toward 0xFF when idle.
 pub struct ExternalBus {
-    pub(super) cartridge: Cartridge,
-    pub(super) work_ram: [u8; 0x2000],
+    pub cartridge: Cartridge,
+    pub work_ram: [u8; 0x2000],
 
     /// Retained value on the data bus. Updated on every CPU read/write
     /// to an external-bus address and by DMA when reading from this bus.
-    pub(super) latch: u8,
+    pub latch: u8,
     /// M-cycles remaining before `latch` decays to 0xFF.
-    pub(super) decay: u8,
+    pub decay: u8,
 
     /// DMG boot ROM (256 bytes). When present and `boot_rom_mapped` is
     /// true, reads from 0x0000–0x00FF return boot ROM data instead of
@@ -142,9 +150,9 @@ impl ExternalBus {
 /// The VRAM data bus connects the SoC to video RAM (0x8000–0x9FFF).
 /// The bus retains its last driven value as a latch (no decay).
 pub struct VramBus {
-    pub(super) vram: Vram,
+    pub vram: Vram,
     /// Retained value on the VRAM data bus.
-    latch: u8,
+    pub latch: u8,
 }
 
 impl VramBus {

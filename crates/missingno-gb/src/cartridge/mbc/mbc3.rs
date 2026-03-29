@@ -1,10 +1,10 @@
-enum Mapped {
+pub enum Mapped {
     Ram(u8),
     Clock(ClockRegister),
 }
 
 #[derive(Clone, Copy)]
-enum ClockRegister {
+pub enum ClockRegister {
     Seconds,
     Minutes,
     Hours,
@@ -13,12 +13,12 @@ enum ClockRegister {
 }
 
 #[derive(Clone, Copy, Default)]
-struct ClockRegisters {
-    seconds: u8,
-    minutes: u8,
-    hours: u8,
-    days_lower: u8,
-    days_upper: u8,
+pub struct ClockRegisters {
+    pub seconds: u8,
+    pub minutes: u8,
+    pub hours: u8,
+    pub days_lower: u8,
+    pub days_upper: u8,
 }
 
 impl ClockRegisters {
@@ -43,10 +43,10 @@ impl ClockRegisters {
     }
 }
 
-struct Clock {
-    registers: ClockRegisters,
-    latched: ClockRegisters,
-    latch_ready: bool,
+pub struct Clock {
+    pub registers: ClockRegisters,
+    pub latched: ClockRegisters,
+    pub latch_ready: bool,
 }
 
 impl Clock {
@@ -64,11 +64,11 @@ impl Clock {
 }
 
 pub struct Mbc3 {
-    ram: Vec<[u8; 8 * 1024]>,
-    clock: Option<Clock>,
-    ram_and_clock_enabled: bool,
-    bank: u8,
-    mapped: Mapped,
+    pub ram: Vec<[u8; 8 * 1024]>,
+    pub clock: Option<Clock>,
+    pub ram_and_clock_enabled: bool,
+    pub bank: u8,
+    pub mapped: Mapped,
 }
 
 impl Mbc3 {

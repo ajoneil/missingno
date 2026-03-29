@@ -2,14 +2,14 @@ use super::types::control::{Control, ControlFlags};
 use super::dff::DffLatch;
 use super::types::palette::Palettes;
 
-pub(super) struct BackgroundViewportPosition {
-    pub(super) x: DffLatch,
-    pub(super) y: DffLatch,
+pub struct BackgroundViewportPosition {
+    pub x: DffLatch,
+    pub y: DffLatch,
 }
 
 pub struct Window {
-    pub(super) y: u8,
-    pub(super) x_plus_7: DffLatch,
+    pub y: u8,
+    pub x_plus_7: DffLatch,
 }
 
 /// Pipeline registers (schematic pages 23/36): the DFF register file
@@ -18,19 +18,19 @@ pub struct Window {
 /// bank, and their DFF8/DFF9 write-conflict behavior during Mode 3
 /// is specific to this group.
 pub struct PipelineRegisters {
-    pub(super) control: Control,
+    pub control: Control,
     /// DFF9-style latch for full LCDC byte.
-    pub(super) control_latch: DffLatch,
-    pub(super) background_viewport: BackgroundViewportPosition,
-    pub(super) window: Window,
-    pub(super) palettes: Palettes,
+    pub control_latch: DffLatch,
+    pub background_viewport: BackgroundViewportPosition,
+    pub window: Window,
+    pub palettes: Palettes,
 }
 
 impl PipelineRegisters {
     /// Advance DFF8 palette latches by one dot. The old value persists
     /// through the write dot; the new value appears atomically on the
     /// capture tick (one dot after write).
-    pub(super) fn tick_palette_latches(&mut self) {
+    pub fn tick_palette_latches(&mut self) {
         self.palettes.background.tick();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
@@ -39,7 +39,7 @@ impl PipelineRegisters {
     /// Advance DFF9 register latches by one dot. Runs after the pipeline
     /// (in fall()) so the pipeline reads pre-tick values (reg_old),
     /// matching hardware's combinational read-from-old behavior.
-    pub(super) fn tick_register_latches(&mut self) {
+    pub fn tick_register_latches(&mut self) {
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();
@@ -50,7 +50,7 @@ impl PipelineRegisters {
 
     /// Clear all pending DFF latch state without applying final values.
     /// Called when the PPU turns off — latches freeze at their current output.
-    pub(super) fn clear_latches(&mut self) {
+    pub fn clear_latches(&mut self) {
         self.palettes.background.clear();
         self.palettes.sprite0.clear();
         self.palettes.sprite1.clear();

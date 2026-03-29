@@ -1,5 +1,5 @@
 pub struct NoMbc {
-    ram: Option<[u8; 8 * 1024]>,
+    pub ram: Option<[u8; 8 * 1024]>,
 }
 
 impl NoMbc {

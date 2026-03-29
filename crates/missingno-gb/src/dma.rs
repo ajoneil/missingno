@@ -2,7 +2,7 @@ use super::memory::Bus;
 
 /// Pre-transfer delay state for OAM DMA. `None` means the DMA is
 /// actively transferring bytes with bus conflicts enabled.
-enum DmaDelay {
+pub enum DmaDelay {
     /// Fresh DMA: M-cycles remaining before bus conflicts activate and
     /// the first byte transfers. During this delay OAM is still accessible.
     Startup(u8),
@@ -12,21 +12,21 @@ enum DmaDelay {
 }
 
 /// State for an in-progress OAM DMA transfer.
-struct DmaTransfer {
+pub struct DmaTransfer {
     /// Base source address (page * 0x100).
-    source: u16,
+    pub source: u16,
     /// Which bus the DMA source resides on.
     source_bus: Bus,
     /// Next byte index to transfer (0..160).
-    byte_index: u8,
+    pub byte_index: u8,
     /// Pre-transfer delay countdown, or `None` if actively transferring.
-    delay: Option<DmaDelay>,
+    pub delay: Option<DmaDelay>,
 }
 
 /// OAM DMA controller state.
 pub struct Dma {
     /// In-progress transfer, if any.
-    transfer: Option<DmaTransfer>,
+    pub transfer: Option<DmaTransfer>,
     /// Last value written to the DMA register (0xFF46).
     source_register: u8,
 }
@@ -82,6 +82,14 @@ impl Dma {
         }
     }
 
+    /// Restore DMA state from a save state.
+    pub fn restore(source_register: u8, transfer: Option<DmaTransfer>) -> Dma {
+        Dma {
+            transfer,
+            source_register,
+        }
+    }
+
     /// Start a new OAM DMA transfer. If a transfer is already active
     /// (past startup), bus conflicts remain in effect during the new
     /// startup period.
@@ -102,5 +110,16 @@ impl Dma {
                 DmaDelay::Startup(2)
             }),
         });
+    }
+}
+
+impl DmaTransfer {
+    pub fn new(source: u16, byte_index: u8, delay: Option<DmaDelay>) -> Self {
+        Self {
+            source,
+            source_bus: Bus::of(source).unwrap_or(Bus::External),
+            byte_index,
+            delay,
+        }
     }
 }

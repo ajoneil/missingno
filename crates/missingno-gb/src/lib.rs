@@ -22,6 +22,8 @@ pub mod serial_transfer;
 pub mod sgb;
 pub mod timers;
 #[cfg(feature = "gbtrace")]
+pub mod snapshot;
+#[cfg(feature = "gbtrace")]
 pub mod trace;
 
 /// Master clock signal level. The clock alternates High → Low
@@ -210,8 +212,16 @@ impl GameBoy {
         (0..len).map(|i| self.peek(start.wrapping_add(i))).collect()
     }
 
+    pub fn ppu_mut(&mut self) -> &mut Ppu {
+        &mut self.ppu
+    }
+
     pub fn audio(&self) -> &Audio {
         &self.audio
+    }
+
+    pub fn audio_mut(&mut self) -> &mut Audio {
+        &mut self.audio
     }
 
     pub fn clock_phase(&self) -> ClockPhase {
@@ -244,8 +254,64 @@ impl GameBoy {
         &self.timers
     }
 
+    pub fn timers_mut(&mut self) -> &mut timers::Timers {
+        &mut self.timers
+    }
+
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.interrupts
+    }
+
+    pub fn interrupts_mut(&mut self) -> &mut interrupts::Registers {
+        &mut self.interrupts
+    }
+
+    pub fn dma(&self) -> &Dma {
+        &self.dma
+    }
+
+    pub fn dma_mut(&mut self) -> &mut Dma {
+        &mut self.dma
+    }
+
+    pub fn serial(&self) -> &serial_transfer::Registers {
+        &self.serial
+    }
+
+    pub fn serial_mut(&mut self) -> &mut serial_transfer::Registers {
+        &mut self.serial
+    }
+
+    pub fn joypad(&self) -> &Joypad {
+        &self.joypad
+    }
+
+    pub fn joypad_mut(&mut self) -> &mut Joypad {
+        &mut self.joypad
+    }
+
+    pub fn external_bus(&self) -> &ExternalBus {
+        &self.external
+    }
+
+    pub fn external_bus_mut(&mut self) -> &mut ExternalBus {
+        &mut self.external
+    }
+
+    pub fn high_ram(&self) -> &HighRam {
+        &self.high_ram
+    }
+
+    pub fn high_ram_mut(&mut self) -> &mut HighRam {
+        &mut self.high_ram
+    }
+
+    pub fn vram_bus(&self) -> &VramBus {
+        &self.vram_bus
+    }
+
+    pub fn vram_bus_mut(&mut self) -> &mut VramBus {
+        &mut self.vram_bus
     }
 
     pub fn sgb(&self) -> Option<&sgb::Sgb> {

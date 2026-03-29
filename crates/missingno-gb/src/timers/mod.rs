@@ -6,20 +6,20 @@ pub mod registers;
 
 #[derive(Clone)]
 pub struct Timers {
-    internal_counter: u16,
-    counter: u8,
-    modulo: u8,
-    control: Control,
-    overflow_pending: bool,
+    pub internal_counter: u16,
+    pub counter: u8,
+    pub modulo: u8,
+    pub control: Control,
+    pub overflow_pending: bool,
     /// Set when TIMA is in the reload cycle (TMA being loaded into TIMA).
     /// Writes to TIMA during this cycle are ignored.
-    reloading: bool,
+    pub reloading: bool,
     /// Models g151: CLK9-clocked DFF that delays timer overflow
     /// before it reaches the IF register (g154). When mcycle()
     /// detects overflow, it sets this to true instead of returning
     /// the interrupt immediately. On the next CLK9 tick (next dot),
     /// this is drained and the interrupt is returned.
-    g151_pending: bool,
+    pub g151_pending: bool,
 }
 
 impl Timers {

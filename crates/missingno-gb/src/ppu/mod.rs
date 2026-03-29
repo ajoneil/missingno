@@ -43,11 +43,11 @@ mod dff;
 pub mod memory;
 mod oam_corruption;
 pub mod rendering;
-mod registers;
+pub mod registers;
 pub mod screen;
 mod draw;
 mod scan;
-mod video_control;
+pub mod video_control;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register {
@@ -71,12 +71,12 @@ pub struct Ppu {
     /// are always present. VBlank vs active display is derived from
     /// `video.vblank` (POPU DFF latch).
     pixel_pipeline: Option<Rendering>,
-    registers: PipelineRegisters,
-    video: VideoControl,
-    pub(super) oam: Oam,
+    pub registers: PipelineRegisters,
+    pub video: VideoControl,
+    pub oam: Oam,
     /// Frame counter for gbtrace output. Incremented each time a
     /// completed frame is extracted from the rendering pipeline.
-    frame_number: u16,
+    pub frame_number: u16,
 }
 
 impl Ppu {

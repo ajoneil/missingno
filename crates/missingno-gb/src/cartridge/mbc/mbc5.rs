@@ -1,9 +1,9 @@
 pub struct Mbc5 {
-    ram: Vec<[u8; 8 * 1024]>,
-    ram_enabled: bool,
-    rom_bank: u16,
-    ram_bank: u8,
-    rumble: bool,
+    pub ram: Vec<[u8; 8 * 1024]>,
+    pub ram_enabled: bool,
+    pub rom_bank: u16,
+    pub ram_bank: u8,
+    pub rumble: bool,
 }
 
 impl Mbc5 {

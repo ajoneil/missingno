@@ -11,13 +11,13 @@ pub struct Registers {
     pub data: u8,
     pub control: Control,
     /// Number of bits remaining to shift (0 = idle, 1-8 = transfer in progress).
-    bits_remaining: u8,
+    pub bits_remaining: u8,
     /// Internal serial clock state, toggled on each falling edge of the
     /// internal counter's clock bit. A shift occurs on each falling edge
     /// of this flag (i.e., every second falling edge of the clock bit).
-    serial_clock: bool,
+    pub serial_clock: bool,
     /// Counter value at the previous M-cycle boundary, for edge detection.
-    previous_counter: u16,
+    pub previous_counter: u16,
     pub output: Vec<u8>,
 }
 

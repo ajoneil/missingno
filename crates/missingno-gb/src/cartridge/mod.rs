@@ -1,4 +1,4 @@
-mod mbc;
+pub mod mbc;
 
 use mbc::{
     Mbc, huc1::Huc1, huc3::Huc3, mbc1::Mbc1, mbc2::Mbc2, mbc3::Mbc3, mbc5::Mbc5, mbc6::Mbc6,
@@ -95,5 +95,13 @@ impl Cartridge {
 
     pub fn write(&mut self, address: u16, value: u8) {
         self.mbc.write(address, value);
+    }
+
+    pub fn mbc(&self) -> &Mbc {
+        &self.mbc
+    }
+
+    pub fn mbc_mut(&mut self) -> &mut Mbc {
+        &mut self.mbc
     }
 }

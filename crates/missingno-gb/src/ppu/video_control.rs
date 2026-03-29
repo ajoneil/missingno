@@ -20,72 +20,72 @@ pub struct VideoControl {
     /// Dot position within the current scanline (SAXO-TYRY ripple counter).
     /// Counts 0-113, clocked by TALU (every 4 dots). When it reaches 113,
     /// the line-end sequence fires (SANU → RUTU).
-    pub(super) dot_position: u8,
+    pub dot_position: u8,
 
     /// 2-dot clock divider (WUVU DFF). Toggles every dot on XOTA rising.
     /// Period = 2 dots. XUPY (= WUVU.qp) clocks the OAM scan counter.
-    pub(super) dot_divider: bool,
+    pub dot_divider: bool,
 
     /// 4-dot clock divider (VENA DFF). Toggles on WUVU falling edge.
     /// Period = 4 dots = 1 M-cycle. TALU (= VENA.qp) clocks LX, ROPO,
     /// and NYPE.
-    pub(super) mcycle_divider: bool,
+    pub mcycle_divider: bool,
 
     /// Internal scanline counter (MUWY-LAFO ripple counter). Counts
     /// 0-153, incrementing at each RUTU line-end pulse. On line 153,
     /// MYTA fires to reset the CPU-visible value to 0 early — see
     /// `ly()`. The internal counter stays at 153 until RUTU wraps it.
-    pub(super) ly: u8,
+    pub ly: u8,
 
     /// LYC register (FF45). CPU-writable comparison target.
-    pub(super) lyc: u8,
+    pub lyc: u8,
 
     /// Pending LY==LYC comparison result (PALY combinational comparator).
     /// Computed each M-cycle, promoted to `ly_comparison_latched` on the
     /// next TALU rising edge by the ROPO DFF. Models the `_old` input
     /// to ROPO — ROPO always samples the previous cycle's comparison.
-    pub(super) ly_comparison_pending: bool,
+    pub ly_comparison_pending: bool,
 
     /// Latched LY==LYC result (ROPO DFF output). This is what STAT
     /// bit 2 reads and what drives the LYC STAT interrupt source.
-    pub(super) ly_comparison_latched: bool,
+    pub ly_comparison_latched: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
-    pub(super) stat_flags: InterruptFlags,
+    pub stat_flags: InterruptFlags,
 
     /// Previous STAT line state for rising-edge detection.
-    pub(super) stat_line_was_high: bool,
+    pub stat_line_was_high: bool,
 
     /// Delayed line-end signal (NYPE DFF). Clocked by TALU rising edge,
     /// captures the previous RUTU state. Goes high 2 dots after RUTU,
     /// providing the delayed clock for POPU (VBlank) and MYTA (frame-end).
-    pub(super) delayed_line_end: bool,
+    pub delayed_line_end: bool,
 
     /// Pending line-end state for NYPE's D input. Set true when RUTU
     /// fires (TALU falling of the LX=113 M-cycle), consumed by NYPE
     /// on the next TALU rising edge.
-    pub(super) line_end_pending: bool,
+    pub line_end_pending: bool,
 
     /// Line-end detected flag (SANU combinational gate). True when
     /// dot_position == 113. Set on TALU rising, consumed by RUTU on
     /// the next TALU falling (2 dots later, same M-cycle).
-    pub(super) line_end_detected: bool,
+    pub line_end_detected: bool,
 
     /// Line-end pulse active (RUTU). Set at TALU falling when the
     /// scanline boundary fires, cleared at the next TALU rising.
     /// Duration: 2 dots. Drives TAPA (Mode 2 interrupt) and the
     /// line-144 VBlank STAT condition.
-    pub(super) line_end_active: bool,
+    pub line_end_active: bool,
 
     /// Frame-end reset flag (MYTA DFF). Set when NYPE rises while
     /// LY==153, causing `ly()` to return 0 (LAMA async-resets all LY
     /// DFFs). Cleared when the internal counter wraps 153→0 at RUTU.
-    pub(super) frame_end_reset: bool,
+    pub frame_end_reset: bool,
 
     /// VBlank latch (POPU DFF). Clocked by NYPE rising edge, captures
     /// whether LY >= 144 from the previous cycle. When high, the PPU
     /// reports VBlank mode. Async-reset by VID_RST (LCD off).
-    pub(super) vblank: bool,
+    pub vblank: bool,
 }
 
 impl VideoControl {

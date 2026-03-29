@@ -1,8 +1,8 @@
 pub struct Huc1 {
-    ram: Vec<[u8; 8 * 1024]>,
-    rom_bank: u8,
-    ram_bank: u8,
-    ir_mode: bool,
+    pub ram: Vec<[u8; 8 * 1024]>,
+    pub rom_bank: u8,
+    pub ram_bank: u8,
+    pub ir_mode: bool,
 }
 
 impl Huc1 {

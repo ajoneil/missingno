@@ -1,4 +1,4 @@
-enum Ram {
+pub enum Ram {
     None,
     Unbanked { data: [u8; 8 * 1024] },
     Banked { data: [[u8; 8 * 1024]; 4] },
@@ -33,12 +33,12 @@ impl Ram {
 }
 
 pub struct Mbc1 {
-    ram: Ram,
-    ram_enabled: bool,
-    bank: u8,
-    ram_bank: u8,
-    mode1: bool,
-    multicart: bool,
+    pub ram: Ram,
+    pub ram_enabled: bool,
+    pub bank: u8,
+    pub ram_bank: u8,
+    pub mode1: bool,
+    pub multicart: bool,
 }
 
 impl Mbc1 {

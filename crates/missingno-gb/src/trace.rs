@@ -259,44 +259,7 @@ impl Tracer {
         self.apu_write_data = data;
     }
 
-    /// Write an initial memory snapshot with all readable memory regions.
-    ///
-    /// Payload format: [num_regions: u8] then for each region:
-    ///   [start_addr: u16 LE] [length: u16 LE] [data: u8 * length]
-    pub fn write_memory_snapshot(&mut self, gb: &GameBoy) -> Result<(), gbtrace::Error> {
-        let regions: &[(u16, u16)] = &[
-            (0x8000, 0x2000), // VRAM
-            (0xC000, 0x2000), // WRAM
-            (0xFE00, 0x00A0), // OAM
-            (0xFF80, 0x007F), // HRAM
-            (0xFF30, 0x0010), // Wave RAM
-        ];
-
-        let mut payload = Vec::new();
-        payload.push(regions.len() as u8);
-
-        for &(start, len) in regions {
-            payload.extend_from_slice(&start.to_le_bytes());
-            payload.extend_from_slice(&len.to_le_bytes());
-            payload.extend_from_slice(&gb.peek_range(start, len));
-        }
-
-        // Add currently mapped cartridge RAM bank if present
-        if let Some(ram) = gb.cartridge().ram() {
-            if !ram.is_empty() {
-                payload[0] += 1;
-                let start: u16 = 0xA000;
-                let len = ram.len().min(0x2000) as u16;
-                payload.extend_from_slice(&start.to_le_bytes());
-                payload.extend_from_slice(&len.to_le_bytes());
-                payload.extend_from_slice(&gb.peek_range(start, len));
-            }
-        }
-
-        self.writer.write_snapshot(SnapshotType::Memory, &payload)
-    }
-
-    /// Write an arbitrary typed snapshot.
+    /// Write a typed snapshot record into the trace stream.
     pub fn write_snapshot(&mut self, snapshot_type: SnapshotType, payload: &[u8]) -> Result<(), gbtrace::Error> {
         self.writer.write_snapshot(snapshot_type, payload)
     }

@@ -1,9 +1,9 @@
 #[derive(Clone)]
 pub struct Joypad {
-    read_buttons: bool,
-    read_dpad: bool,
+    pub read_buttons: bool,
+    pub read_dpad: bool,
 
-    pressed_buttons: Vec<Button>,
+    pub pressed_buttons: Vec<Button>,
 }
 
 #[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
