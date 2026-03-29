@@ -180,6 +180,33 @@ impl Tracer {
                 "nr50" => self.writer.set_u8(col, gb.peek(0xFF24)),
                 "nr51" => self.writer.set_u8(col, gb.peek(0xFF25)),
                 "nr52" => self.writer.set_u8(col, gb.peek(0xFF26)),
+                // APU internal state
+                "ch1_active" => self.writer.set_bool(col, gb.audio().channels().ch1.enabled.enabled),
+                "ch1_freq_cnt" => self.writer.set_u16(col, gb.audio().channels().ch1.frequency_timer),
+                "ch1_env_vol" => self.writer.set_u8(col, gb.audio().channels().ch1.current_volume),
+                "ch1_phase" => self.writer.set_u8(col, gb.audio().channels().ch1.wave_duty_position),
+                "ch1_sweep_shadow" => self.writer.set_u16(col, gb.audio().channels().ch1.shadow_frequency),
+                "ch1_len_cnt" => self.writer.set_u8(col, gb.audio().channels().ch1.length_counter as u8),
+                "ch2_active" => self.writer.set_bool(col, gb.audio().channels().ch2.enabled.enabled),
+                "ch2_freq_cnt" => self.writer.set_u16(col, gb.audio().channels().ch2.frequency_timer),
+                "ch2_env_vol" => self.writer.set_u8(col, gb.audio().channels().ch2.current_volume),
+                "ch2_phase" => self.writer.set_u8(col, gb.audio().channels().ch2.wave_duty_position),
+                "ch2_len_cnt" => self.writer.set_u8(col, gb.audio().channels().ch2.length_counter as u8),
+                "ch3_active" => self.writer.set_bool(col, gb.audio().channels().ch3.enabled.enabled),
+                "ch3_freq_cnt" => self.writer.set_u16(col, gb.audio().channels().ch3.frequency_timer),
+                "ch3_wave_idx" => self.writer.set_u8(col, gb.audio().channels().ch3.wave_position),
+                "ch3_sample" => {
+                    let ch3 = &gb.audio().channels().ch3;
+                    let byte = ch3.ram[ch3.wave_position as usize / 2];
+                    let nibble = if ch3.wave_position % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                    self.writer.set_u8(col, nibble);
+                }
+                "ch3_len_cnt" => self.writer.set_u8(col, gb.audio().channels().ch3.length_counter as u8),
+                "ch4_active" => self.writer.set_bool(col, gb.audio().channels().ch4.enabled.enabled),
+                "ch4_freq_cnt" => self.writer.set_u16(col, gb.audio().channels().ch4.frequency_timer),
+                "ch4_env_vol" => self.writer.set_u8(col, gb.audio().channels().ch4.current_volume),
+                "ch4_lfsr" => self.writer.set_u16(col, gb.audio().channels().ch4.lfsr),
+                "ch4_len_cnt" => self.writer.set_u8(col, gb.audio().channels().ch4.length_counter as u8),
                 // Pixel output
                 "pix" => {
                     if self.pix_buffer.is_empty() {
