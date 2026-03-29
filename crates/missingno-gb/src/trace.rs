@@ -84,11 +84,15 @@ static IO_FIELDS: &[(&str, u16)] = &[
     // Serial
     ("sb", 0xFF01), ("sc", 0xFF02),
     // APU registers
-    ("nr10", 0xFF10), ("nr11", 0xFF11), ("nr12", 0xFF12), ("nr13", 0xFF13), ("nr14", 0xFF14),
-    ("nr21", 0xFF16), ("nr22", 0xFF17), ("nr23", 0xFF18), ("nr24", 0xFF19),
-    ("nr30", 0xFF1A), ("nr31", 0xFF1B), ("nr32", 0xFF1C), ("nr33", 0xFF1D), ("nr34", 0xFF1E),
-    ("nr41", 0xFF20), ("nr42", 0xFF21), ("nr43", 0xFF22), ("nr44", 0xFF23),
-    ("nr50", 0xFF24), ("nr51", 0xFF25), ("nr52", 0xFF26),
+    ("ch1_sweep", 0xFF10), ("ch1_duty_len", 0xFF11), ("ch1_vol_env", 0xFF12),
+    ("ch1_freq_lo", 0xFF13), ("ch1_freq_hi", 0xFF14),
+    ("ch2_duty_len", 0xFF16), ("ch2_vol_env", 0xFF17),
+    ("ch2_freq_lo", 0xFF18), ("ch2_freq_hi", 0xFF19),
+    ("ch3_dac", 0xFF1A), ("ch3_len", 0xFF1B), ("ch3_vol", 0xFF1C),
+    ("ch3_freq_lo", 0xFF1D), ("ch3_freq_hi", 0xFF1E),
+    ("ch4_len", 0xFF20), ("ch4_vol_env", 0xFF21),
+    ("ch4_freq", 0xFF22), ("ch4_control", 0xFF23),
+    ("master_vol", 0xFF24), ("sound_pan", 0xFF25), ("sound_on", 0xFF26),
 ];
 
 fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
