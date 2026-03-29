@@ -64,7 +64,6 @@ impl Tracer {
             profile: profile.name.clone(),
             fields: profile.fields.clone(),
             trigger: profile.trigger.clone(),
-            cy_unit: gbtrace::CycleUnit::Tcycle,
             notes: String::new(),
         };
 
@@ -123,7 +122,6 @@ impl Tracer {
             }
 
             match field.as_str() {
-                "cy" => self.writer.set_u64(col, self.dot_count),
                 // CPU
                 "a" => self.writer.set_u8(col, gb.cpu().a),
                 "f" => self.writer.set_u8(col, gb.cpu().flags.bits()),
@@ -135,7 +133,6 @@ impl Tracer {
                 "l" => self.writer.set_u8(col, gb.cpu().l),
                 "sp" => self.writer.set_u16(col, gb.cpu().stack_pointer),
                 "pc" => self.writer.set_u16(col, gb.cpu().instruction_pc),
-                "op" => self.writer.set_u8(col, gb.peek(gb.cpu().instruction_pc)),
                 "ime" => self.writer.set_bool(col, gb.cpu().interrupts_enabled()),
                 // PPU registers
                 "lcdc" => self.writer.set_u8(col, gb.peek(0xFF40)),
