@@ -33,9 +33,9 @@ enum Emitter {
     // VRAM write tracking
     VramAddr,
     VramData,
-    // Wave RAM write tracking
-    WaveAddr,
-    WaveData,
+    // APU write tracking (registers + wave RAM, FF10-FF3F)
+    ApuWriteAddr,
+    ApuWriteData,
     // Unknown — write type-appropriate zero/null
     Unknown(FieldType, bool),
 }
@@ -68,8 +68,8 @@ pub struct Tracer {
     pix_buffer: String,
     vram_write_addr: u16,
     vram_write_data: u8,
-    wave_write_addr: u16,
-    wave_write_data: u8,
+    apu_write_addr: u16,
+    apu_write_data: u8,
 }
 
 static IO_FIELDS: &[(&str, u16)] = &[
@@ -128,9 +128,9 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         // VRAM writes
         "vram_addr" => Emitter::VramAddr,
         "vram_data" => Emitter::VramData,
-        // Wave RAM writes
-        "wave_addr" => Emitter::WaveAddr,
-        "wave_data" => Emitter::WaveData,
+        // APU writes (registers + wave RAM)
+        "apu_write_addr" => Emitter::ApuWriteAddr,
+        "apu_write_data" => Emitter::ApuWriteData,
         // PPU internal
         "bgw_fifo_a" => Emitter::PpuInternal(PpuField::BgwFifoA),
         "bgw_fifo_b" => Emitter::PpuInternal(PpuField::BgwFifoB),
@@ -231,8 +231,8 @@ impl Tracer {
             pix_buffer: String::new(),
             vram_write_addr: 0,
             vram_write_data: 0,
-            wave_write_addr: 0,
-            wave_write_data: 0,
+            apu_write_addr: 0,
+            apu_write_data: 0,
         })
     }
 
@@ -249,9 +249,9 @@ impl Tracer {
         self.vram_write_data = data;
     }
 
-    pub fn push_wave_write(&mut self, addr: u16, data: u8) {
-        self.wave_write_addr = addr;
-        self.wave_write_data = data;
+    pub fn push_apu_write(&mut self, addr: u16, data: u8) {
+        self.apu_write_addr = addr;
+        self.apu_write_data = data;
     }
 
     pub fn capture(&mut self, gb: &GameBoy) -> Result<(), gbtrace::Error> {
@@ -265,8 +265,8 @@ impl Tracer {
         let pix_buffer = &self.pix_buffer;
         let vram_write_addr = self.vram_write_addr;
         let vram_write_data = self.vram_write_data;
-        let wave_write_addr = self.wave_write_addr;
-        let wave_write_data = self.wave_write_data;
+        let apu_write_addr = self.apu_write_addr;
+        let apu_write_data = self.apu_write_data;
         let w = &mut self.writer;
 
         for rf in &self.emitters {
@@ -347,17 +347,17 @@ impl Tracer {
                         w.set_null(col);
                     }
                 }
-                // Wave RAM write tracking
-                Emitter::WaveAddr => {
-                    if wave_write_addr != 0 {
-                        w.set_u16(col, wave_write_addr);
+                // APU write tracking
+                Emitter::ApuWriteAddr => {
+                    if apu_write_addr != 0 {
+                        w.set_u16(col, apu_write_addr);
                     } else {
                         w.set_null(col);
                     }
                 }
-                Emitter::WaveData => {
-                    if wave_write_addr != 0 {
-                        w.set_u8(col, wave_write_data);
+                Emitter::ApuWriteData => {
+                    if apu_write_addr != 0 {
+                        w.set_u8(col, apu_write_data);
                     } else {
                         w.set_null(col);
                     }
@@ -384,8 +384,8 @@ impl Tracer {
         self.pix_buffer.clear();
         self.vram_write_addr = 0;
         self.vram_write_data = 0;
-        self.wave_write_addr = 0;
-        self.wave_write_data = 0;
+        self.apu_write_addr = 0;
+        self.apu_write_data = 0;
 
         self.writer.finish_entry()
     }
