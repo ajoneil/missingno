@@ -1,9 +1,9 @@
-//! Build gbtrace snapshot payloads from a GameBoy instance.
+//! Capture and restore gbtrace snapshot payloads from/to a GameBoy instance.
 //!
-//! This module provides a standalone function to capture the full
-//! emulator state as a set of typed snapshot payloads. These can be
-//! written into a gbtrace file (as initial state or inline snapshots)
-//! or used directly for save states.
+//! Capture functions read emulator state into gbtrace snapshot structs.
+//! Restore functions write snapshot data back into a running GameBoy,
+//! setting internal fields directly (bypassing normal write-register
+//! paths that have side effects like triggers and length reloads).
 
 use gbtrace::format::SnapshotType;
 use gbtrace::snapshot::{
@@ -11,9 +11,15 @@ use gbtrace::snapshot::{
     SerialSnapshot, TimerSnapshot, build_memory_payload,
 };
 
-use crate::GameBoy;
+use crate::{ClockPhase, GameBoy};
+use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
-use crate::cpu::{EiDelay, HaltState};
+use crate::cpu::{EiDelay, HaltState, InterruptMasterEnable};
+use crate::cpu::flags::Flags;
+use crate::dma::{Dma, DmaDelay, DmaTransfer};
+use crate::interrupts::InterruptFlags;
+use crate::serial_transfer;
+use crate::timers::registers::Control as TimerControl;
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -279,6 +285,334 @@ pub fn capture_mbc(gb: &GameBoy) -> MbcSnapshot {
         },
     }
 }
+
+// ── Restore ──────────────────────────────────────────────────────
+
+/// All the parsed snapshot data needed to construct a GameBoy.
+pub struct SaveState {
+    pub cpu: CpuSnapshot,
+    pub ppu: PpuSnapshot,
+    pub apu: ApuSnapshot,
+    pub timer: TimerSnapshot,
+    pub dma: DmaSnapshot,
+    pub serial: SerialSnapshot,
+    pub mbc: MbcSnapshot,
+    pub memory: Vec<MemoryRegion>,
+}
+
+impl GameBoy {
+    /// Construct a GameBoy from a save state and the original cartridge.
+    ///
+    /// The cartridge provides the ROM; the save state provides everything
+    /// else. The GameBoy is placed at an instruction boundary with the
+    /// clock phase at Low (ready for the next rising edge).
+    pub fn from_save_state(cartridge: Cartridge, state: SaveState) -> GameBoy {
+        use crate::cpu::mcycle::{BusDot, DotAction};
+        use crate::memory::{ExternalBus, HighRam, VramBus};
+        use crate::ppu::{screen::Screen, memory::{Oam, Vram}};
+
+        // Look up memory regions by start address.
+        let find_region = |start: u16| -> Option<&[u8]> {
+            state.memory.iter()
+                .find(|r| r.start == start)
+                .map(|r| r.data.as_slice())
+        };
+
+        // CPU
+        let cpu = restore_cpu(&state.cpu);
+
+        // Interrupts
+        let mut interrupts = crate::interrupts::Registers::new();
+        interrupts.requested = InterruptFlags::from_bits_retain(state.cpu.if_);
+        interrupts.enabled = InterruptFlags::from_bits_retain(state.cpu.ie);
+
+        // Timers
+        let timers = restore_timer(&state.timer);
+
+        // Serial
+        let serial = restore_serial(&state.serial);
+
+        // Joypad — default state (no buttons pressed, both select lines active)
+        let joypad = crate::joypad::Joypad::new();
+
+        // Audio (wave RAM from memory snapshot)
+        let mut audio = restore_apu(&state.apu);
+        if let Some(wave_data) = find_region(0xFF30) {
+            let len = wave_data.len().min(16);
+            audio.channels.ch3.ram[..len].copy_from_slice(&wave_data[..len]);
+        }
+
+        // DMA
+        let dma = restore_dma(&state.dma);
+
+        // External bus (cartridge + WRAM)
+        let mut external = ExternalBus::new(cartridge, None);
+        if let Some(wram_data) = find_region(0xC000) {
+            let len = wram_data.len().min(0x2000);
+            external.work_ram[..len].copy_from_slice(&wram_data[..len]);
+        }
+
+        // Cartridge RAM
+        if let Some(cart_ram) = find_region(0xA000) {
+            for (i, &byte) in cart_ram.iter().enumerate() {
+                external.cartridge.write(0xA000 + i as u16, byte);
+            }
+        }
+
+        // VRAM
+        let vram = find_region(0x8000)
+            .map(Vram::from_bytes)
+            .unwrap_or_default();
+        let vram_bus = VramBus { vram, latch: 0xFF };
+
+        // High RAM
+        let mut high_ram = HighRam::new();
+        if let Some(hram_data) = find_region(0xFF80) {
+            let len = hram_data.len().min(0x7F);
+            high_ram.data_mut()[..len].copy_from_slice(&hram_data[..len]);
+        }
+
+        // OAM
+        let oam = find_region(0xFE00)
+            .map(Oam::from_bytes)
+            .unwrap_or_default();
+
+        // PPU (with OAM baked in)
+        let ppu = restore_ppu(&state.ppu, oam);
+
+        // MBC state
+        restore_mbc(&state.mbc, external.cartridge.mbc_mut());
+
+        let sgb = if external.cartridge.supports_sgb() {
+            Some(crate::sgb::Sgb::new())
+        } else {
+            None
+        };
+
+        GameBoy {
+            cpu,
+            screen: Screen::default(),
+            external,
+            high_ram,
+            ppu,
+            audio,
+            joypad,
+            interrupts,
+            serial,
+            timers,
+            dma,
+            sgb,
+            vram_bus,
+            last_read_value: 0,
+            bus_trace: None,
+            clock_phase: ClockPhase::Low,
+            current_dot_action: DotAction::Idle,
+            current_dot: BusDot::ZERO,
+        }
+    }
+}
+
+fn restore_cpu(snap: &CpuSnapshot) -> crate::cpu::Cpu {
+    // Start from post-boot defaults (instruction-boundary state machine
+    // fields: phase=Fetch, exec_step=0, no pending actions, etc.)
+    // then overwrite the snapshotted register/flag fields.
+    let mut cpu = crate::cpu::Cpu::new(0);
+    cpu.a = snap.a;
+    cpu.b = snap.b;
+    cpu.c = snap.c;
+    cpu.d = snap.d;
+    cpu.e = snap.e;
+    cpu.h = snap.h;
+    cpu.l = snap.l;
+    cpu.stack_pointer = snap.sp;
+    cpu.program_counter = snap.pc;
+    cpu.instruction_pc = snap.pc;
+    cpu.flags = Flags::from_bits_retain(snap.f);
+    cpu.interrupt_master_enable = if snap.ime {
+        InterruptMasterEnable::Enabled
+    } else {
+        InterruptMasterEnable::Disabled
+    };
+    cpu.ei_delay = match snap.ei_delay {
+        1 => Some(EiDelay::Pending),
+        2 => Some(EiDelay::Fired),
+        _ => None,
+    };
+    cpu.halt_state = match snap.halt_state {
+        1 => HaltState::Halting,
+        2 => HaltState::Halted,
+        _ => HaltState::Running,
+    };
+    cpu.halt_bug = snap.halt_bug;
+    cpu
+}
+
+fn restore_ppu(snap: &PpuSnapshot, oam: crate::ppu::memory::Oam) -> crate::ppu::Ppu {
+    crate::ppu::Ppu::from_save_state(
+        snap.lcdc, snap.stat, snap.ly, snap.lyc,
+        snap.scy, snap.scx, snap.wy, snap.wx,
+        snap.bgp, snap.obp0, snap.obp1,
+        snap.dot_position, snap.stat_line_was_high,
+        oam,
+    )
+}
+
+fn restore_apu(snap: &ApuSnapshot) -> crate::audio::Audio {
+    use crate::audio::channels::{Channels, Enabled, pulse::PulseChannel, pulse_sweep::{PulseSweepChannel, Sweep}, wave::WaveChannel, noise::NoiseChannel};
+    use crate::audio::channels::registers::{Signed11, VolumeAndEnvelope, WaveformAndInitialLength};
+    use crate::audio::channels::noise::FrequencyAndRandomness;
+    use crate::audio::channels::wave::Volume as WaveVolume;
+
+    let channels = Channels {
+        ch1: PulseSweepChannel {
+            enabled: Enabled { enabled: true, output_left: true, output_right: true },
+            sweep: Sweep(snap.ch1_sweep),
+            waveform_and_initial_length: WaveformAndInitialLength(snap.ch1_duty_len),
+            volume_and_envelope: VolumeAndEnvelope(snap.ch1_vol_env),
+            length_enabled: snap.ch1_length_enabled,
+            period: Signed11(snap.ch1_period),
+            frequency_timer: 0,
+            wave_duty_position: 0,
+            current_volume: 0,
+            envelope_timer: snap.ch1_envelope_timer,
+            length_counter: 0,
+            shadow_frequency: snap.ch1_period,
+            sweep_timer: snap.ch1_sweep_timer,
+            sweep_enabled: snap.ch1_sweep_enabled,
+            sweep_negate_used: snap.ch1_sweep_negate_used,
+        },
+        ch2: PulseChannel {
+            enabled: Enabled { enabled: true, output_left: true, output_right: true },
+            waveform_and_initial_length: WaveformAndInitialLength(snap.ch2_duty_len),
+            volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
+            length_enabled: snap.ch2_length_enabled,
+            period: Signed11(snap.ch2_period),
+            frequency_timer: 0,
+            wave_duty_position: 0,
+            current_volume: 0,
+            envelope_timer: snap.ch2_envelope_timer,
+            length_counter: 0,
+        },
+        ch3: WaveChannel {
+            enabled: Enabled { enabled: true, output_left: true, output_right: true },
+            dac_enabled: snap.ch3_dac & 0x80 != 0,
+            volume: WaveVolume(snap.ch3_vol),
+            length_enabled: snap.ch3_length_enabled,
+            period: Signed11(snap.ch3_period),
+            ram: [0; 16], // Wave RAM filled from memory snapshot by caller
+            frequency_timer: 0,
+            wave_position: 0,
+            length_counter: 0,
+            sample_read_tcycle: 0xFF,
+        },
+        ch4: NoiseChannel {
+            enabled: Enabled { enabled: true, output_left: true, output_right: true },
+            volume_and_envelope: VolumeAndEnvelope(snap.ch4_vol_env),
+            length_enabled: snap.ch4_length_enabled,
+            frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),
+            frequency_timer: 0,
+            lfsr: 0x7FFF,
+            current_volume: 0,
+            envelope_timer: snap.ch4_envelope_timer,
+            length_counter: 0,
+        },
+    };
+
+    crate::audio::Audio::from_save_state(
+        snap.sound_on & 0x80 != 0,
+        channels,
+        snap.master_vol,
+        snap.prev_div_apu_bit,
+        snap.frame_sequencer_step,
+    )
+}
+
+fn restore_timer(snap: &TimerSnapshot) -> crate::timers::Timers {
+    crate::timers::Timers {
+        internal_counter: snap.internal_counter,
+        counter: snap.tima,
+        modulo: snap.tma,
+        control: TimerControl(snap.tac),
+        overflow_pending: snap.overflow_pending,
+        reloading: snap.reloading,
+        g151_pending: false,
+    }
+}
+
+fn restore_dma(snap: &DmaSnapshot) -> Dma {
+    if !snap.active {
+        return Dma::new();
+    }
+    let delay = if snap.delay_remaining == 0 {
+        None
+    } else if snap.delay_remaining & 0x80 != 0 {
+        Some(DmaDelay::Startup(snap.delay_remaining & 0x7F))
+    } else {
+        Some(DmaDelay::Transfer(snap.delay_remaining))
+    };
+    Dma::restore(
+        (snap.source >> 8) as u8,
+        Some(DmaTransfer::new(snap.source, snap.byte_index, delay)),
+    )
+}
+
+fn restore_serial(snap: &SerialSnapshot) -> serial_transfer::Registers {
+    serial_transfer::Registers {
+        data: snap.sb,
+        control: serial_transfer::Control::from_bits_retain(snap.sc),
+        bits_remaining: snap.bits_remaining,
+        serial_clock: snap.shift_clock,
+        previous_counter: 0, // Will be synced on next mcycle
+        output: Vec::new(),
+    }
+}
+
+fn restore_mbc(snap: &MbcSnapshot, mbc: &mut Mbc) {
+    match mbc {
+        Mbc::NoMbc(_) => {}
+        Mbc::Mbc1(m) => {
+            m.bank = snap.rom_bank as u8;
+            m.ram_bank = snap.ram_bank;
+            m.ram_enabled = snap.ram_enabled;
+            m.mode1 = snap.mode != 0;
+        }
+        Mbc::Mbc2(m) => {
+            m.bank = snap.rom_bank as u8;
+            m.ram_enabled = snap.ram_enabled;
+        }
+        Mbc::Mbc3(m) => {
+            m.bank = snap.rom_bank as u8;
+            m.ram_and_clock_enabled = snap.ram_enabled;
+        }
+        Mbc::Mbc5(m) => {
+            m.rom_bank = snap.rom_bank;
+            m.ram_bank = snap.ram_bank;
+            m.ram_enabled = snap.ram_enabled;
+            m.rumble = snap.mode != 0;
+        }
+        Mbc::Mbc6(m) => {
+            m.rom_bank_a = snap.rom_bank as u8;
+            m.ram_bank_a = snap.ram_bank;
+            m.ram_enabled = snap.ram_enabled;
+        }
+        Mbc::Mbc7(m) => {
+            m.rom_bank = snap.rom_bank as u8;
+            m.ram_enabled_1 = snap.ram_enabled;
+            m.ram_enabled_2 = snap.ram_enabled;
+        }
+        Mbc::Huc1(m) => {
+            m.rom_bank = snap.rom_bank as u8;
+            m.ram_bank = snap.ram_bank;
+            m.ir_mode = snap.mode != 0;
+        }
+        Mbc::Huc3(m) => {
+            m.rom_bank = snap.rom_bank as u8;
+            m.ram_bank = snap.ram_bank;
+        }
+    }
+}
+
+// ── Capture ──────────────────────────────────────────────────────
 
 pub fn capture_memory(gb: &GameBoy) -> Vec<u8> {
     let mut regions = Vec::new();

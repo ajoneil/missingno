@@ -209,4 +209,25 @@ impl Audio {
     pub fn drain_samples(&mut self) -> Vec<(f32, f32)> {
         std::mem::take(&mut self.sample_buffer)
     }
+
+    /// Construct an Audio instance from save state data.
+    pub fn from_save_state(
+        enabled: bool,
+        channels: Channels,
+        nr50: u8,
+        prev_div_apu_bit: bool,
+        frame_sequencer_step: u8,
+    ) -> Self {
+        Self {
+            enabled,
+            channels,
+            volume_left: Volume(0),
+            volume_right: Volume(0),
+            nr50,
+            prev_div_apu_bit,
+            frame_sequencer_step,
+            sample_counter: 0.0,
+            sample_buffer: Vec::new(),
+        }
+    }
 }

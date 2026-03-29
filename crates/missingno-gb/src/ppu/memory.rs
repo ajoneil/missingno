@@ -13,6 +13,24 @@ pub struct Vram {
 }
 
 impl Vram {
+    /// Construct VRAM from a flat 8KB byte slice (0x8000–0x9FFF layout).
+    pub fn from_bytes(data: &[u8]) -> Self {
+        let mut vram = Vram::default();
+        let len = data.len().min(0x2000);
+        for i in 0..len {
+            if i < 0x1800 {
+                let block = i / 0x800;
+                let within = i % 0x800;
+                vram.tiles[block].data[within] = data[i];
+            } else {
+                let map_offset = i - 0x1800;
+                let map = map_offset / 0x400;
+                let within = map_offset % 0x400;
+                vram.tile_maps[map].data[within] = TileIndex(data[i]);
+            }
+        }
+        vram
+    }
 
     pub fn read(&self, address: VramAddress) -> u8 {
         match address {
@@ -62,6 +80,21 @@ impl Vram {
             self.tile_maps[map].data[within].0
         }
     }
+
+    /// Write a byte to VRAM by flat offset (0x0000–0x1FFF).
+    pub fn write_byte(&mut self, offset: u16, value: u8) {
+        let offset = offset as usize & 0x1FFF;
+        if offset < 0x1800 {
+            let block = offset / 0x800;
+            let within = offset % 0x800;
+            self.tiles[block].data[within] = value;
+        } else {
+            let map_offset = offset - 0x1800;
+            let map = map_offset / 0x400;
+            let within = map_offset % 0x400;
+            self.tile_maps[map].data[within] = TileIndex(value);
+        }
+    }
 }
 
 /// OAM: sprite attribute memory. SoC-internal, not on either data bus.
@@ -79,6 +112,20 @@ impl Default for Oam {
 }
 
 impl Oam {
+    /// Construct OAM from a flat 160-byte slice (0xFE00–0xFE9F layout).
+    pub fn from_bytes(data: &[u8]) -> Self {
+        let mut oam = Oam::default();
+        for i in 0..40 {
+            let base = i * 4;
+            if base + 3 < data.len() {
+                oam.sprites[i].position.y_plus_16 = data[base];
+                oam.sprites[i].position.x_plus_8 = data[base + 1];
+                oam.sprites[i].tile = TileIndex(data[base + 2]);
+                oam.sprites[i].attributes = sprites::Attributes(data[base + 3]);
+            }
+        }
+        oam
+    }
 
     pub fn read(&self, address: OamAddress) -> u8 {
         let sprite = &self.sprites[address.sprite.0 as usize];
