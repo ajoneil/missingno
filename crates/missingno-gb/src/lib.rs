@@ -205,6 +205,11 @@ impl GameBoy {
         &self.vram_bus.vram
     }
 
+    /// Read a contiguous range of memory via peek (bypasses bus conflicts).
+    pub fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        (0..len).map(|i| self.peek(start.wrapping_add(i))).collect()
+    }
+
     pub fn audio(&self) -> &Audio {
         &self.audio
     }
