@@ -158,6 +158,28 @@ impl Tracer {
                 // Serial
                 "sb" => self.writer.set_u8(col, gb.peek(0xFF01)),
                 "sc" => self.writer.set_u8(col, gb.peek(0xFF02)),
+                // APU registers
+                "nr10" => self.writer.set_u8(col, gb.peek(0xFF10)),
+                "nr11" => self.writer.set_u8(col, gb.peek(0xFF11)),
+                "nr12" => self.writer.set_u8(col, gb.peek(0xFF12)),
+                "nr13" => self.writer.set_u8(col, gb.peek(0xFF13)),
+                "nr14" => self.writer.set_u8(col, gb.peek(0xFF14)),
+                "nr21" => self.writer.set_u8(col, gb.peek(0xFF16)),
+                "nr22" => self.writer.set_u8(col, gb.peek(0xFF17)),
+                "nr23" => self.writer.set_u8(col, gb.peek(0xFF18)),
+                "nr24" => self.writer.set_u8(col, gb.peek(0xFF19)),
+                "nr30" => self.writer.set_u8(col, gb.peek(0xFF1A)),
+                "nr31" => self.writer.set_u8(col, gb.peek(0xFF1B)),
+                "nr32" => self.writer.set_u8(col, gb.peek(0xFF1C)),
+                "nr33" => self.writer.set_u8(col, gb.peek(0xFF1D)),
+                "nr34" => self.writer.set_u8(col, gb.peek(0xFF1E)),
+                "nr41" => self.writer.set_u8(col, gb.peek(0xFF20)),
+                "nr42" => self.writer.set_u8(col, gb.peek(0xFF21)),
+                "nr43" => self.writer.set_u8(col, gb.peek(0xFF22)),
+                "nr44" => self.writer.set_u8(col, gb.peek(0xFF23)),
+                "nr50" => self.writer.set_u8(col, gb.peek(0xFF24)),
+                "nr51" => self.writer.set_u8(col, gb.peek(0xFF25)),
+                "nr52" => self.writer.set_u8(col, gb.peek(0xFF26)),
                 // Pixel output
                 "pix" => {
                     if self.pix_buffer.is_empty() {
