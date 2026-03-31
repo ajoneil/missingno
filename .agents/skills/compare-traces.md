@@ -5,7 +5,7 @@ Compare execution traces between missingno and a reference emulator (GateBoy, Ga
 ## When to use
 
 Use this skill when investigating a test failure where:
-- The test passes on a reference emulator (check for `_pass` traces in `../gbtrace/docs/tests/`)
+- A reference trace exists (check suite manifests at `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` or locally in `../gbtrace/test-suites/`)
 - You need to find **where** execution diverges, not just **that** it fails
 - The failure involves timing, register values, or execution path differences
 
@@ -13,9 +13,9 @@ Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the
 
 ## Prerequisites
 
-1. **gbtrace-cli** built: `cd ../gbtrace && cargo build -p gbtrace-cli`
+1. **gbtrace CLI** built: `cd ../gbtrace && cargo build -p gbtrace --features cli`
 2. **gbtrace feature** on missingno: `cargo test -p missingno-gb --features gbtrace`
-3. **GBTRACE_PROFILE** env var set to the profile name (e.g. `gbmicrotest`, `ppu_timing`)
+3. **GBTRACE_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`.
 
 ## Generating traces
 
@@ -30,8 +30,8 @@ The test runner captures state at every T-cycle (for tcycle profiles) or every i
 ### GateBoy trace (fresh, with fixed adapter)
 ```bash
 ../gbtrace/adapters/gateboy/gbtrace-gateboy \
-  --rom ../gbtrace/docs/tests/gbmicrotest/<test>.gb \
-  --profile ../gbtrace/docs/tests/gbmicrotest/gbmicrotest.toml \
+  --rom ../gbtrace/test-suites/gbmicrotest/<test>.gb \
+  --profile ../gbtrace/test-suites/gbmicrotest/profile.toml \
   --output <output_path> \
   --stop-when FF82=01 --stop-when FF82=FF \
   --frames 5
@@ -39,16 +39,31 @@ The test runner captures state at every T-cycle (for tcycle profiles) or every i
 
 The GateBoy adapter uses `bit_pack()` for IO registers and reconstructs STAT from gate-level state (mode from XYMU/ACYL/LY, LYC from RUPO, enables from reg_stat DFFs).
 
-### Pre-built reference traces
-Available in `../gbtrace/docs/tests/gbmicrotest/` for ~500 tests, with traces from GateBoy, Gambatte, SameBoy, and mGBA. Filename pattern: `<test>_<emulator>_<pass|fail>.gbtrace.parquet`.
+### Reference traces from manifests
+Reference traces for ~700 tests across 6 suites are hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/). Each suite has a `manifest.json` listing tests with per-emulator pass/fail status.
 
-Pre-built Gambatte/SameBoy traces use instruction-level trigger (not tcycle).
+**Fetch a manifest to find available traces:**
+```bash
+curl -s https://ajoneil.github.io/gbtrace/tests/gbmicrotest/manifest.json | jq '.[0]'
+# → {"name": "div_inc_timing_a", "rom": "div_inc_timing_a.gb", "emulators": {"gambatte": "pass", "gateboy": "pass", ...}}
+```
+
+**Download a reference trace:**
+```bash
+curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_gateboy_pass.gbtrace
+```
+
+URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
+
+Tracked emulators: gambatte, gateboy, mgba, missingno, sameboy. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2.
+
+Reference traces are also available locally in `../gbtrace/test-suites/` if the gbtrace repo has them built.
 
 ## Diffing traces
 
 ### Basic diff
 ```bash
-gbtrace-cli diff <missingno.parquet> <reference.gbtrace> --context 5
+gbtrace diff <missingno.parquet> <reference.gbtrace>
 ```
 
 ### Alignment gotchas
@@ -103,32 +118,54 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 
 **STAT divergence throughout:** GateBoy's STAT reconstruction from gate state is approximate (mode bits derived from XYMU/ACYL/LY, enable bits from reg_stat DFFs). Small STAT differences between GateBoy and missingno may be adapter artifacts, not real bugs.
 
+## Visual comparison with `render`
+
+For PPU tests, render frames from both traces and compare visually:
+```bash
+gbtrace render <missingno.parquet> -o receipts/traces/renders/missingno/
+gbtrace render <reference.gbtrace> -o receipts/traces/renders/reference/
+# Render specific frames only:
+gbtrace render <trace> --frames 2,3
+```
+
+This is especially useful for mealybug-tearoom and dmg-acid2 tests where the failure is a visual difference in rendered output.
+
+## Frame analysis
+
+Use `frames` to understand frame boundaries and identify which frame to focus on:
+```bash
+gbtrace frames <trace>
+```
+
 ## Useful queries
 
 ### Check test results
 ```bash
 # What did the test produce?
-gbtrace-cli query <trace> --where "test_pass=1" --max 1    # passing
-gbtrace-cli query <trace> --where "test_pass=0xFF" --max 1  # failing
+gbtrace query <trace> --where "test_pass=1" --max 1    # passing
+gbtrace query <trace> --where "test_pass=0xFF" --max 1  # failing
 ```
 
 ### Find specific events
 ```bash
 # When does LY reach 144 (VBlank)?
-gbtrace-cli query <trace> --where "ly=144" --max 1 --context 5
+gbtrace query <trace> --where "ly=144" --max 1 --context 5
 
 # When does the ISR fire?
-gbtrace-cli query <trace> --where "pc=0x48" --max 1 --context 10
+gbtrace query <trace> --where "pc=0x48" --max 1 --context 10
 
 # When does a register change?
-gbtrace-cli query <trace> --where "scx=1" --max 1 --context 3
+gbtrace query <trace> --where "scx=1" --max 1 --context 3
+
+# Show the last 5 entries (no condition needed):
+gbtrace query <trace> --last 5
 ```
 
 ### Compare test results across SCX values
 ```bash
 for scx in 0 1 2 3 4 5 6 7; do
   trace="receipts/traces/int_hblank_nops_scx${scx}.parquet"
-  result=$(gbtrace-cli query "$trace" --where "test_pass=1" --max 1 2>&1 | grep -oP 'test_result=\K\S+')
+  result=$(gbtrace query "$trace" --where "test_pass=1" --max 1 2>&1 | grep -oP 'test_result=\K\S+')
   echo "SCX=${scx}: ${result:-FAIL}"
 done
 ```

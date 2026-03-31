@@ -192,18 +192,24 @@ The `Processor` is split across three files in `crates/missingno-gb/src/cpu/mcyc
   - **`crates/missingno-gb/src/trace.rs`** — `Tracer` struct captures per-instruction state to parquet files using profile-driven field selection.
   - **Test runner integration** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`. Activated by env var:
     ```bash
-    GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gb --features gbtrace -- <test_name>
+    GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
     ```
     Writes to `receipts/traces/<rom_name>.parquet`.
-  - **Profiles** (in `../gbtrace/profiles/`): `cpu_basic` (CPU registers per instruction), `ppu_timing` (CPU + PPU + interrupts), `timer_edge` (CPU + timers + interrupts).
-  - **gbtrace-cli** (`../gbtrace/crates/gbtrace-cli/`) — CLI for working with trace files. Build with `cargo build -p gbtrace-cli` from the gbtrace repo. Commands:
-    - `gbtrace-cli info <file>` — summary: emulator, model, entry count, cycle range, file size.
-    - `gbtrace-cli query <file> --where pc=0x0150` — find entries matching conditions, with optional `--context N` for surrounding entries.
-    - `gbtrace-cli diff <trace_a> <trace_b>` — compare two traces, report first divergence and per-field divergence counts. Supports `--skip-boot`, `--fields pc,a,f`, `--exclude ime`, `--align sequence|cycle`.
-    - `gbtrace-cli trim <file> --until pc=0x0100` / `--after pc=0x0150` — cut a trace at a condition.
-    - `gbtrace-cli strip-boot <file>` — remove boot ROM entries, rebase cycle counts.
-    - `gbtrace-cli convert <file>` — convert between JSONL (`.gbtrace`) and Parquet (`.parquet`).
-  - **Comparison workflow**: Use the `/compare-traces` skill for structured trace comparison. It handles generating traces, choosing sync points, filtering noisy fields, and interpreting results. For manual use: capture traces from missingno and a reference emulator running the same ROM, then use `gbtrace-cli diff` with `--sync` (align at a meaningful event like `lcdc&0x80` for PPU-on) and `--exclude` (drop noisy initial-state fields like `div,tac,if_`). Pre-built reference traces are in `../gbtrace/docs/tests/gbmicrotest/`. 
+  - **Profiles**: Per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`. Each profile specifies a trigger type (`tcycle` or `instruction`) and field selection using layered subsystem config (`cpu = "registers"`, `ppu = "all"`, `ppu = ["registers", "output"]`, `timer = true`, `interrupt = true`, etc.) plus optional `[fields.memory]` for custom address watches. The `GBTRACE_PROFILE` env var takes the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`).
+  - **gbtrace CLI** (`../gbtrace/crates/gbtrace/`) — CLI for working with trace files. Build with `cargo build -p gbtrace --features cli` from the gbtrace repo. Commands:
+    - `gbtrace info <file>` — summary: emulator, model, entry count, frame count, cycle range, file size.
+    - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions, with optional `--context N` and `--max N`. Use `--last N` to show the last N entries without a condition.
+    - `gbtrace diff <trace_a> <trace_b>` — compare two traces, report first divergence and per-field divergence counts. Options: `--sync <CONDITION>` (default: sync on `pc`; use `none` to disable, or `field=value`/`field&mask`), `--fields pc,a,f`, `--exclude ime`, `--summary` (one-line-per-field output).
+    - `gbtrace frames <file>` — show frame boundaries detected from LY field.
+    - `gbtrace render <file>` — render LCD frames from pixel trace data to PNG files. Options: `-o <dir>` (output directory), `--frames 1,3,5` (render specific frames only). Useful for visual comparison of PPU output between emulators.
+    - `gbtrace convert <file>` — convert JSONL (`.gbtrace.jsonl`) to native `.gbtrace` format. Use `-o <file>` to specify output path.
+  - **Reference traces and test manifests**: Hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/) with structured manifests for 6 test suites (~700 tests total). Each suite has a `manifest.json` listing tests with per-emulator pass/fail status and a `profile.toml` defining trace fields. URLs follow a predictable pattern:
+    - Manifest: `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`
+    - Trace: `https://ajoneil.github.io/gbtrace/tests/{suite}/{test}_{emulator}_{status}.gbtrace`
+    - ROM: `https://ajoneil.github.io/gbtrace/tests/{suite}/{rom_path}`
+    - Tracked emulators: gambatte, gateboy, mgba, missingno, sameboy.
+    - Suites: gbmicrotest (481 tests), blargg (24), mooneye (73), gambatte-tests (97), mealybug-tearoom (24), dmg-acid2 (1).
+  - **Comparison workflow**: Use the `/compare-traces` skill for structured trace comparison. It handles generating traces, choosing sync points, filtering noisy fields, and interpreting results. For manual use: capture traces from missingno and a reference emulator running the same ROM, then use `gbtrace diff` with `--sync` (align at a meaningful event like `lcdc&0x80` for PPU-on) and `--exclude` (drop noisy initial-state fields like `div,tac,if_`). Reference traces can be downloaded from the hosted manifests or found locally in `../gbtrace/test-suites/`. 
 - **Boot ROM support**: The emulator optionally runs the DMG boot ROM. Without a boot ROM, it uses post-boot initialization (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`). With a boot ROM, it uses power-on state (`Cpu::power_on()`, `Ppu::power_on()`, etc.) and starts execution at 0x0000. Boot ROMs are proprietary and must never be committed to the repo. CLI: `--boot-rom <path>`. Tests: set `DMG_BOOT_ROM` env var. Running the boot ROM adds significant startup time per test — only use it on targeted tests when boot state is suspected to play a role, not across the full test suite.
 - **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
 - **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.

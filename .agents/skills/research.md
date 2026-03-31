@@ -34,12 +34,13 @@ These describe what the hardware actually does. They are the source of truth.
    - `signal_concordance.md` — Maps GateBoy 4-letter cell names to Pan Docs register names
    - `race_pairs.json` / `critical_paths.json` — Machine-readable data for specific signal lookups
    When researching PPU timing, check whether the behavior in question involves a known race pair or deep path. The race pairs report groups findings by observable effect, making it easy to match against emulator symptoms.
-5. **Cross-emulator execution traces (gbtrace)**: The sibling project `../gbtrace/` provides tooling for capturing and comparing execution traces across emulators. When investigating a test failure, capturing traces from missingno and a reference emulator running the same ROM can pinpoint the exact instruction where behavior diverges.
-   - **Capture**: `GBTRACE_PROFILE=cpu_basic cargo test -p missingno-gb --features gbtrace -- <test_name>` → writes `receipts/traces/<rom>.parquet`.
-   - **Inspect**: `gbtrace-cli info <file>` shows summary; `gbtrace-cli query <file> --where pc=0x0150` finds specific entries.
-   - **Compare**: `gbtrace-cli diff <missingno.parquet> <sameboy.parquet> --skip-boot` reports first divergence and per-field divergence counts.
-   - **Trim**: `gbtrace-cli trim <file> --until pc=0x0100` to isolate regions of interest.
-   - Available profiles: `cpu_basic`, `ppu_timing`, `timer_edge` (in `../gbtrace/profiles/`).
+5. **Cross-emulator execution traces (gbtrace)**: The sibling project `../gbtrace/` provides tooling for capturing and comparing execution traces across emulators. When investigating a test failure, capturing traces from missingno and a reference emulator running the same ROM can pinpoint the exact instruction where behavior diverges. Reference traces for ~700 tests across 6 suites are hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/) with structured manifests.
+   - **Capture**: `GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>` → writes `receipts/traces/<rom>.parquet`.
+   - **Inspect**: `gbtrace info <file>` shows summary; `gbtrace query <file> --where pc=0x0150` finds specific entries.
+   - **Compare**: `gbtrace diff <missingno.parquet> <reference.gbtrace> --sync "lcdc&0x80" --exclude div,tac,if_` reports first divergence and per-field divergence counts.
+   - **Render**: `gbtrace render <file> -o <dir>` renders LCD frames from pixel trace data to PNG for visual comparison.
+   - **Reference traces**: Fetch manifest with `curl -s https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`, download traces at `tests/{suite}/{test}_{emulator}_{status}.gbtrace`.
+   - Profiles are per-suite TOML files in `../gbtrace/test-suites/*/profile.toml` (e.g. `gbmicrotest`, `blargg`, `mooneye`).
 6. **Test suite sources**: Read the assembly/source for relevant test ROMs to understand exactly what they measure. The expected values in a test ROM that passes on hardware are hardware facts — they tell you what the hardware produces, with specific cycle counts and pixel values.
 
 ### Secondary sources (community knowledge)

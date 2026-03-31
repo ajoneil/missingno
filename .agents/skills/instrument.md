@@ -11,7 +11,7 @@ The caller sent you a Question (hypothesis), Context (where to instrument), and 
 ## Before you start
 
 1. **Read the hypothesis.** The caller should have told you what they're testing and why. If the request is vague ("add some logging"), ask for a specific hypothesis before proceeding.
-2. **Consider gbtrace first.** If the hypothesis can be tested by examining CPU/PPU/timer/interrupt state at instruction boundaries, a gbtrace capture may answer the question without modifying code. Capture with `GBTRACE_PROFILE=cpu_basic` (or `ppu_timing`/`timer_edge`), then query with `gbtrace-cli query <file> --where pc=0x0150 --context 5`. Use `eprintln!` instrumentation for internal state not visible through gbtrace (e.g. FIFO contents, fetcher phases, mid-instruction timing).
+2. **Consider gbtrace first.** If the hypothesis can be tested by examining CPU/PPU/timer/interrupt state at instruction boundaries, a gbtrace capture may answer the question without modifying code. Capture with `GBTRACE_PROFILE=gbmicrotest` (or the appropriate suite profile), then query with `gbtrace query <file> --where pc=0x0150 --context 5`. Use `eprintln!` instrumentation for internal state not visible through gbtrace (e.g. FIFO contents, fetcher phases, mid-instruction timing).
 3. **Check existing instrumentation.** Read the files you'll be modifying to see if diagnostic logging is already in place. Build on existing log lines rather than duplicating or conflicting with them.
 4. **Identify the measurement points.** Before writing any code, list the exact locations in the source where you'll add `eprintln!` calls. Each log line must directly address the hypothesis.
 
