@@ -50,6 +50,11 @@ pub(in crate::ppu) struct WindowControl {
     /// when window_rendered is true. Used by the fetcher for tile
     /// map address generation.
     window_line_counter: u8,
+    /// REJO NOR latch -- WY==LY frame latch. SET when LY==WY is
+    /// detected (sampled once per M-cycle via SARY). RESET only at
+    /// VBlank (REPU). Once set, stays set for the remainder of the
+    /// frame, enabling the NUKO WX comparator.
+    wy_matched: bool,
     /// Window reactivation zero pixel (DMG only). Set when WX
     /// re-matches while the window is active with specific
     /// fetcher/FIFO conditions. Causes the next pixel output to use
@@ -67,6 +72,7 @@ impl WindowControl {
             last_wx_value: 0xFF,
             nuko_wx: 0xFF,
             window_line_counter: 0,
+            wy_matched: false,
             window_zero_pixel: false,
         }
     }
@@ -122,10 +128,16 @@ impl WindowControl {
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) {
+        // SARY/REJO: sample WY==LY latch (hardware samples once/M-cycle,
+        // but per-dot is functionally identical since LY is fixed per line).
+        if !self.wy_matched && regs.control.window_enabled() && video.ly() == regs.window.y {
+            self.wy_matched = true;
+        }
+
         if !regs.control.window_enabled() {
             return;
         }
-        if video.ly() < regs.window.y {
+        if !self.wy_matched {
             return;
         }
 
@@ -186,6 +198,8 @@ impl WindowControl {
     /// which accumulates across scanlines but resets at frame start.
     pub(in crate::ppu) fn reset_frame(&mut self) {
         self.window_line_counter = 0;
+        self.window_rendered = false;
+        self.wy_matched = false;
     }
 
     /// Reset per-scanline state.
