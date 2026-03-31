@@ -158,7 +158,6 @@ The project is a Cargo workspace with crates under `crates/`:
   - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
   - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
   - **`crates/missingno-gb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
-- **`crates/missingno-gb-apu/`** (`missingno-gb-apu`) — Game Boy APU (audio) emulation, extracted for standalone use (e.g. WASM audio playback). Re-exported by `missingno-gb` as `audio`.
 - **`crates/missingno/`** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `crates/missingno/src/app/`.
 
 ### Instruction Execution
