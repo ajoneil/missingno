@@ -164,6 +164,15 @@ pub struct Cpu {
     /// has already propagated during the idle M-cycle, so the wakeup NOP can
     /// be skipped and ISR dispatch proceeds immediately.
     pub(super) g42_was_pending: bool,
+    /// g42 DFF mid-M-cycle snapshot: whether `interrupt_pending` was true
+    /// at dot 1 of the current M-cycle. When true at the next M-cycle
+    /// boundary, the g42->g43->g49 cascade has had >= 3 CLK9 edges to
+    /// propagate, so the wakeup NOP can be skipped (fast path).
+    ///
+    /// Reset to `false` at each M-cycle boundary. Set from
+    /// `interrupt_pending` at dot 1 (the first non-boundary dot after
+    /// the boundary). Not updated on dots 2-3.
+    pub(super) g42_mid_mcycle: bool,
     /// Set when the wakeup NOP Read[PC] has been emitted and the next
     /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
     /// extra M-cycle between HALT wakeup detection and ISR dispatch.
@@ -212,6 +221,7 @@ impl Cpu {
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
+            g42_mid_mcycle: false,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -250,6 +260,7 @@ impl Cpu {
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
+            g42_mid_mcycle: false,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -261,8 +272,13 @@ impl Cpu {
     #[cfg(feature = "gbtrace")]
     pub fn from_snapshot(snap: &gbtrace::snapshot::CpuSnapshot) -> Cpu {
         Cpu {
-            a: snap.a, b: snap.b, c: snap.c, d: snap.d,
-            e: snap.e, h: snap.h, l: snap.l,
+            a: snap.a,
+            b: snap.b,
+            c: snap.c,
+            d: snap.d,
+            e: snap.e,
+            h: snap.h,
+            l: snap.l,
             stack_pointer: snap.sp,
             program_counter: snap.pc,
             instruction_pc: snap.pc,
@@ -299,6 +315,7 @@ impl Cpu {
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
+            g42_mid_mcycle: false,
             halt_isr_dispatch_pending: false,
         }
     }

@@ -1,18 +1,18 @@
 use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
-use types::control::{Control, ControlFlags};
 use memory::{Oam, OamAddress, Vram};
-use types::palette::Palettes;
-use rendering::Rendering;
 use registers::BackgroundViewportPosition;
+use rendering::Rendering;
+use types::control::{Control, ControlFlags};
+use types::palette::Palettes;
 
 pub use dff::DffLatch;
+pub use registers::{PipelineRegisters, Window};
 pub use rendering::{
     PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
 };
-pub use registers::{PipelineRegisters, Window};
 pub use video_control::{InterruptFlags, VideoControl};
 
 /// A pixel pushed to the LCD — the PPU's primary output signal.
@@ -38,15 +38,15 @@ pub struct PpuTickResult {
     pub request_vblank: bool,
 }
 
-pub mod types;
 mod dff;
+mod draw;
 pub mod memory;
 mod oam_corruption;
-pub mod rendering;
 pub mod registers;
-pub mod screen;
-mod draw;
+pub mod rendering;
 mod scan;
+pub mod screen;
+pub mod types;
 pub mod video_control;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,6 +388,11 @@ impl Ppu {
         self.registers.control
     }
 
+    /// Whether the latched LY==LYC comparison is currently true (ROPO output).
+    pub fn ly_eq_lyc(&self) -> bool {
+        self.video.ly_eq_lyc()
+    }
+
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
             Some(r) if !self.video.vblank => r.xymu(),
@@ -412,7 +417,8 @@ impl Ppu {
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts. With POPU, this is only true at
         // LX=0 of line 144 (the first M-cycle where POPU is high).
-        let vblank_line_144 = self.video.vblank && self.video.ly() == 144 && self.video.line_end_active();
+        let vblank_line_144 =
+            self.video.vblank && self.video.ly() == 144 && self.video.line_end_active();
 
         // TARU = AND(WODU-or-VOGA, NOT(VBlank)). WODU is combinational
         // (true for 1 rising-phase window), VOGA latches on the falling

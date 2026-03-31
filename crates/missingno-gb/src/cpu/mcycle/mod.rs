@@ -40,6 +40,8 @@ pub struct BusDot(u8);
 impl BusDot {
     /// Dot 0 (phases A,B). First dot of the M-cycle.
     pub const ZERO: BusDot = BusDot(0);
+    /// Dot 1 (phases C,D). Second dot of the M-cycle.
+    pub const ONE: BusDot = BusDot(1);
 
     pub fn advance(self) -> BusDot {
         debug_assert!(self.0 < 3, "cannot advance past dot 3");
@@ -495,6 +497,12 @@ impl Cpu {
         self.boundary_flag = true;
         self.instruction_pc = self.program_counter;
 
+        // Consume g42_mid_mcycle: snapshot from dot 1 of the previous
+        // M-cycle. If an interrupt fired at dot 1, the g42->g43->g49
+        // cascade had enough time (3 CLK9 edges) to propagate.
+        let g42_mid = self.g42_mid_mcycle;
+        self.g42_mid_mcycle = false;
+
         // ── First HALT idle M-cycle: unconditional wakeup NOP ──
         // On hardware, the DFF pipeline (g42 -> g43 -> g49) needs at
         // least one idle M-cycle to propagate the wakeup signal. The
@@ -536,7 +544,7 @@ impl Cpu {
         // every dot) rather than the DFF-latched g42.  HALT has no
         // pipeline to drain, so the combinational state is correct.
         if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            if self.g42_was_pending {
+            if self.g42_was_pending || g42_mid {
                 // g42 was already latched at the prior M-cycle boundary —
                 // the g42→g43→g49 pipeline propagated during the idle
                 // M-cycle. Skip the wakeup NOP and dispatch ISR directly.

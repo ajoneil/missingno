@@ -1,6 +1,9 @@
 use super::{
-    BusAccess, BusAccessKind, ClockPhase, GameBoy, cpu::mcycle::DotAction, interrupts::Interrupt,
-    memory::Bus, ppu::{self, PpuTickResult, types::palette::PaletteIndex},
+    BusAccess, BusAccessKind, ClockPhase, GameBoy,
+    cpu::mcycle::DotAction,
+    interrupts::Interrupt,
+    memory::Bus,
+    ppu::{self, PpuTickResult, types::palette::PaletteIndex},
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -168,7 +171,9 @@ impl GameBoy {
             }
             let (ns, pix) = self.apply_ppu_result(&ppu_result);
             new_screen |= ns;
-            if pixel.is_none() { pixel = pix; }
+            if pixel.is_none() {
+                pixel = pix;
+            }
 
             // SUKO is combinational — check for STAT edge after PPU rise.
             if self.ppu.check_stat_edge() {
@@ -212,18 +217,60 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
+            // Snapshot LY==LYC comparison state before PPU rise.
+            // ROPO latches LYC comparison at TALU rising edge during
+            // ppu.rise(). If the comparison transitions to match,
+            // this is a TALU-cascade-driven interrupt.
+            let lyc_was_matched = self.ppu.ly_eq_lyc();
+
             // PPU rising phase for non-boundary dots.
             let ppu_result = self.ppu.rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
+
             let (ns, pix) = self.apply_ppu_result(&ppu_result);
             new_screen |= ns;
-            if pixel.is_none() { pixel = pix; }
+            if pixel.is_none() {
+                pixel = pix;
+            }
 
             // SUKO is combinational — check for STAT edge after PPU rise.
-            if self.ppu.check_stat_edge() {
+            let stat_edge = self.ppu.check_stat_edge();
+            if stat_edge {
                 self.interrupts.request(Interrupt::VideoStatus);
+            }
+
+            // g42 mid-M-cycle cascade propagation: when VBlank or LYC
+            // fires from the TALU cascade during PPU rise, g42 samples
+            // IF&IE. If the new interrupt makes IF&IE non-zero, g42
+            // captures it. On hardware, the cascade needs ~3 CLK9 edges
+            // to propagate. Our emulator's divider alignment may place
+            // these events at a different dot than hardware, so we
+            // accept any non-boundary dot and let mcycle_halted use it
+            // as the fast-path signal.
+            //
+            // Only VBlank and LYC (TALU-cascade-driven) qualify; HBlank
+            // and timer arrive through different paths and are excluded.
+            // The g42 DFF gates on IF&IE, not just IF — the interrupt
+            // source must also be in IE.
+            // VBlank fires from the TALU cascade. g42 captures IF&IE.
+            // The VBlank event can trigger either the VBlank interrupt
+            // (IF bit 0, if IE.vblank) or the STAT interrupt (IF bit 1,
+            // if IE.stat and STAT VBlank mode flag set). Either makes
+            // IF&IE non-zero, so g42 goes high for either path.
+            if ppu_result.request_vblank
+                && (self.interrupts.enabled(Interrupt::VideoBetweenFrames)
+                    || (stat_edge && self.interrupts.enabled(Interrupt::VideoStatus)))
+            {
+                self.cpu.g42_mid_mcycle = true;
+            }
+            if !lyc_was_matched
+                && self.ppu.ly_eq_lyc()
+                && stat_edge
+                && self.interrupts.enabled(Interrupt::VideoStatus)
+            {
+                self.cpu.g42_mid_mcycle = true;
             }
 
             // Capture interrupt state for non-boundary dots.
@@ -385,7 +432,8 @@ impl GameBoy {
     fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
         if let Some(pixel) = result.pixel {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
-                self.screen.draw_pixel(pixel.x, pixel.y, PaletteIndex(pixel.shade));
+                self.screen
+                    .draw_pixel(pixel.x, pixel.y, PaletteIndex(pixel.shade));
             }
         }
         if result.new_frame {
