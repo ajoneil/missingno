@@ -18,8 +18,9 @@ pub(super) enum BusAction {
     Read { address: u16 },
     /// Write a byte to the given address.
     Write { address: u16, value: u8 },
-    /// No bus activity (internal CPU work).
-    Internal,
+    /// No bus activity (internal CPU work). The address stays on the
+    /// bus pins from the previous request (hardware cpu_bus_pass).
+    Internal { address: u16 },
     /// Internal cycle where the IDU places an address on the bus, potentially
     /// triggering the DMG OAM corruption bug if the address is in 0xFE00-0xFEFF
     /// and the PPU is in Mode 2.
@@ -374,7 +375,7 @@ impl Cpu {
                     DotAction::Idle
                 }
             }
-            Some(BusAction::Internal) => DotAction::Idle,
+            Some(BusAction::Internal { .. }) => DotAction::Idle,
             None => unreachable!(),
         };
 
@@ -759,7 +760,7 @@ impl Cpu {
 
             Phase::InternalOp { count } => {
                 if current_step < *count {
-                    (Some(BusAction::Internal), true)
+                    (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
                     (Some(self.enter_fetch()), false)
                 }
@@ -788,7 +789,7 @@ impl Cpu {
                         let has_trailing =
                             matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
-                            (Some(BusAction::Internal), true)
+                            (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
                             (Some(self.enter_fetch()), false)
                         }
@@ -835,7 +836,7 @@ impl Cpu {
                     // target is placed on the bus at DELTA_EF, and PC
                     // updates to target+1 when the fetch processes.
                     self.pending_jump_target = Some(*target);
-                    (Some(BusAction::Internal), true)
+                    (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
                     (Some(self.enter_fetch()), false)
                 }
@@ -878,7 +879,7 @@ impl Cpu {
                 let sp = *sp;
                 let taken = *taken;
                 match current_step {
-                    0 => (Some(BusAction::Internal), true),
+                    0 => (Some(BusAction::Internal { address: self.pc }), true),
                     1 if !taken => (Some(self.enter_fetch()), false),
                     1 => (Some(BusAction::Read { address: sp }), true),
                     2 => {
@@ -892,7 +893,7 @@ impl Cpu {
                     }
                     3 => {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
-                        (Some(BusAction::Internal), true)
+                        (Some(BusAction::Internal { address: self.pc }), true)
                     }
                     _ => (Some(self.enter_fetch()), false),
                 }
@@ -919,7 +920,7 @@ impl Cpu {
             // M0: IDU PC- — on hardware this undoes the wakeup NOP's PC
             // increment. The emulator skips both the increment and decrement
             // for the same net effect.
-            0 => Some(BusAction::Internal),
+            0 => Some(BusAction::Internal { address: self.pc }),
             1 => Some(BusAction::InternalOamBug { address: sp }),
             2 => {
                 let addr = sp.wrapping_sub(1);

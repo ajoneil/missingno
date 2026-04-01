@@ -441,7 +441,8 @@ impl Cpu {
             Some(mcycle::BusAction::Read { address }) => *address,
             Some(mcycle::BusAction::Write { address, .. }) => *address,
             Some(mcycle::BusAction::InternalOamBug { address }) => *address,
-            Some(mcycle::BusAction::Internal) | None => 0,
+            Some(mcycle::BusAction::Internal { address }) => *address,
+            None => 0,
         }
     }
 
