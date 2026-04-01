@@ -421,7 +421,6 @@ impl Cpu {
                 self.halt_state = HaltState::Halted;
                 self.phase = CpuPhase::Halted;
                 self.exec_step = 0;
-                self.first_halted_cycle = true;
                 // Signal boundary and chain into the first halted NOP.
                 self.boundary_flag = true;
                 self.instruction_pc = self.program_counter;
@@ -485,9 +484,7 @@ impl Cpu {
 
     /// Halted phase: one HALT idle M-cycle.
     ///
-    /// On the first call after HALT entry (`first_halted_cycle`), emits
-    /// Read[PC] unconditionally — the wakeup NOP. On subsequent calls,
-    /// checks the interrupt pipeline. When an IME=1 interrupt is detected,
+    /// Checks the interrupt pipeline. When an IME=1 interrupt is detected,
     /// emits a wakeup NOP Read[PC] and defers ISR dispatch to the next
     /// M-cycle via `halt_isr_dispatch_pending`. Each call is exactly one
     /// M-cycle.
@@ -502,19 +499,6 @@ impl Cpu {
         // cascade had enough time (3 CLK9 edges) to propagate.
         let g42_mid = self.g42_mid_mcycle;
         self.g42_mid_mcycle = false;
-
-        // ── First HALT idle M-cycle: unconditional wakeup NOP ──
-        // On hardware, the DFF pipeline (g42 -> g43 -> g49) needs at
-        // least one idle M-cycle to propagate the wakeup signal. The
-        // first call after HALT entry always emits Read[PC] without
-        // checking for interrupt dispatch.
-        if self.first_halted_cycle {
-            self.first_halted_cycle = false;
-            self.advance_ei_delay();
-            return Some(BusAction::Read {
-                address: self.program_counter,
-            });
-        }
 
         // ── IME=1 wakeup: deferred ISR dispatch ──
         // If the wakeup NOP was emitted last M-cycle, now dispatch to ISR.

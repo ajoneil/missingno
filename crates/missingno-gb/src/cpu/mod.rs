@@ -19,8 +19,7 @@ pub enum InterruptMasterEnable {
 /// continues to tick hardware (PPU, timers, etc.) each M-cycle but
 /// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
 /// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
-/// resume until the next M-cycle — the wakeup NOP. The
-/// `first_halted_cycle` flag models this 1 M-cycle propagation delay.
+/// resume until the next M-cycle — the wakeup NOP.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -143,12 +142,6 @@ pub struct Cpu {
     /// reads this to detect instruction boundaries for EI delay and
     /// step_instruction().
     pub(super) boundary_flag: bool,
-    /// Set when the CPU transitions from the dummy fetch into HALT
-    /// idle mode. When true, the first `mcycle_halted()` call skips
-    /// the interrupt check and emits the wakeup NOP unconditionally.
-    /// Models the hardware constraint that g42's output from the HALT
-    /// entry M-cycle hasn't propagated through g43/g49 yet.
-    pub(super) first_halted_cycle: bool,
     /// Whether an interrupt is currently pending (IF & IE != 0).
     /// Updated every dot by `update_interrupt_state`. Used by the CPU
     /// state machine for the HALT bug check.
@@ -217,7 +210,7 @@ impl Cpu {
             pending_vector_resolve: false,
             interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true, // Start at an instruction boundary
-            first_halted_cycle: false,
+
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
@@ -256,7 +249,7 @@ impl Cpu {
             pending_vector_resolve: false,
             interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true,
-            first_halted_cycle: false,
+
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
@@ -311,7 +304,7 @@ impl Cpu {
             pending_vector_resolve: false,
             interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true,
-            first_halted_cycle: false,
+
             interrupt_pending: false,
             g42_interrupt_pending: false,
             g42_was_pending: false,
