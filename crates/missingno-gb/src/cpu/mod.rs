@@ -377,8 +377,17 @@ impl Cpu {
     }
 
     /// Microcode step counter (instruction sub-step within execution).
+    /// CPU instruction execution state, matching GateBoy's op_state:
+    /// 0 during the fetch M-cycle, then 1, 2, ... for each subsequent
+    /// execute M-cycle. For single-M-cycle instructions (NOP, etc.),
+    /// op_state is always 0.
     pub fn op_state(&self) -> u8 {
-        self.exec_step
+        match &self.phase {
+            CpuPhase::Fetch => 0,
+            CpuPhase::Execute { step, .. } => *step,
+            CpuPhase::Halted => 0,
+            CpuPhase::InterruptDispatch { step, .. } => *step,
+        }
     }
 
     /// Ring counter state (AFUR<<3|ALEF<<2|APUK<<1|ADYK<<0), matching
@@ -391,6 +400,18 @@ impl Cpu {
             2 => 0x03, // sub-phase F: AFUR=0 ALEF=0 APUK=1 ADYK=1
             3 => 0x00, // sub-phase H: AFUR=0 ALEF=0 APUK=0 ADYK=0
             _ => unreachable!(),
+        }
+    }
+
+    /// The address on the CPU bus for the current M-cycle. Returns the
+    /// address from the active BusAction (Read/Write/InternalOamBug),
+    /// or 0 for Internal/idle cycles. Persists for all 4 dots.
+    pub fn bus_address(&self) -> u16 {
+        match &self.current_action {
+            Some(mcycle::BusAction::Read { address }) => *address,
+            Some(mcycle::BusAction::Write { address, .. }) => *address,
+            Some(mcycle::BusAction::InternalOamBug { address }) => *address,
+            Some(mcycle::BusAction::Internal) | None => 0,
         }
     }
 

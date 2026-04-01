@@ -298,7 +298,7 @@ impl Tracer {
                 Emitter::CpuL => w.set_u8(col, gb.cpu().l),
                 Emitter::CpuSp => w.set_u16(col, gb.cpu().stack_pointer),
                 Emitter::CpuPc => w.set_u16(col, gb.cpu().instruction_pc),
-                Emitter::CpuBusAddr => w.set_u16(col, gb.bus_address()),
+                Emitter::CpuBusAddr => w.set_u16(col, gb.cpu().bus_address()),
                 Emitter::CpuIme => w.set_bool(col, gb.cpu().interrupts_enabled()),
                 Emitter::CpuOpState => w.set_u8(col, gb.cpu().op_state()),
                 Emitter::CpuMcyclePhase => w.set_u8(col, gb.cpu().mcycle_phase()),
