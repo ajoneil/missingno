@@ -655,9 +655,20 @@ impl Cpu {
                 *bytes_read += 1;
                 *pc = pc.wrapping_add(1);
                 self.bus_counter = *pc;
-                self.pc = self.bus_counter;
 
                 if *bytes_read >= *bytes_needed {
+                    // Last operand byte. On hardware, JP/JR use bus_pass
+                    // (not bus_read) after the last byte, so reg.pc does
+                    // NOT advance. CALL/LD/ALU/etc use bus_read, so
+                    // reg.pc advances normally.
+                    let opcode = bytes[0];
+                    let is_jump = matches!(opcode,
+                        0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA |  // JP nn / JP cc,nn
+                        0x18 | 0x20 | 0x28 | 0x30 | 0x38     // JR / JR cc
+                    );
+                    if !is_jump {
+                        self.pc = self.bus_counter;
+                    }
                     let b = *bytes;
                     let n = *bytes_read;
                     self.decode_and_transition(b, n);
