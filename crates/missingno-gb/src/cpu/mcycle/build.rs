@@ -412,10 +412,12 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
-                    // JP HL: no internal M-cycle, PC updates immediately.
+                    // JP HL: no internal M-cycle. On hardware, JP HL
+                    // redirects the bus address to HL but reg.pc retains
+                    // the post-fetch IDU value. pc updates naturally when
+                    // the next fetch step 1 fires.
                     if taken {
                         cpu.bus_counter = address;
-                        cpu.pc = cpu.bus_counter;
                     }
                     Phase::Empty
                 } else if is_relative && taken {
