@@ -409,7 +409,6 @@ impl Cpu {
         match j {
             Jump::Jump(condition, location) => {
                 let is_relative = matches!(location, jump::Location::Address(Address::Relative(_)));
-                let pc_before = cpu.bus_counter;
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
@@ -420,12 +419,13 @@ impl Cpu {
                     }
                     Phase::Empty
                 } else if is_relative && taken {
-                    // JR: PC updates immediately (relative jump has no
-                    // separate internal M-cycle for the PC load — the
-                    // InternalOamBug M-cycle serves that purpose).
+                    // JR: the internal M-cycle shows the jump target on
+                    // the bus (hardware cpu_bus_pass(reg.pc) after the
+                    // offset is applied). The OAM bug check uses the
+                    // target address, not the pre-jump address.
                     cpu.bus_counter = address;
                     cpu.pc = cpu.bus_counter;
-                    Phase::InternalOamBug { address: pc_before }
+                    Phase::InternalOamBug { address }
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
                     // M-cycle. On hardware, PC stays at the post-operand
