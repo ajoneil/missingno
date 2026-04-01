@@ -291,8 +291,30 @@ impl GameBoy {
         self.ppu.settle_alet();
 
         // SUKO is combinational — recheck STAT edge after XYMU may have changed.
-        if self.ppu.check_stat_edge() {
+        let settle_stat_edge = self.ppu.check_stat_edge();
+        if settle_stat_edge {
             self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        // settle_alet can fire hblank STAT after mcycle_halted/update_interrupt_state
+        // already ran. On hardware, the ALET-settle cascade (VOGA->XYMU->TARU->STAT)
+        // propagates within the same M-cycle, reaching g42. Re-capture interrupt
+        // state and handle HALT wakeup for the late interrupt.
+        if settle_stat_edge {
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
+
+            if is_mcycle_boundary {
+                // mcycle_halted already ran and missed this interrupt.
+                // The current idle Read[PC] serves as the wakeup NOP.
+                self.cpu.retry_halt_wakeup();
+            } else {
+                // Non-boundary: signal g42 mid-M-cycle propagation so
+                // mcycle_halted takes the fast path at the next boundary.
+                if self.cpu.is_halted() && self.interrupts.enabled(Interrupt::VideoStatus) {
+                    self.cpu.g42_mid_mcycle = true;
+                }
+            }
         }
 
         // CPU data latch: capture bus value on the rising edge, after

@@ -45,7 +45,9 @@ impl BusDot {
     pub const ONE: BusDot = BusDot(1);
 
     /// Raw dot number (0–3) for trace output.
-    pub fn as_u8(self) -> u8 { self.0 }
+    pub fn as_u8(self) -> u8 {
+        self.0
+    }
 
     pub fn advance(self) -> BusDot {
         debug_assert!(self.0 < 3, "cannot advance past dot 3");
@@ -421,9 +423,7 @@ impl Cpu {
             // is set from op_addr (which was loaded with the target
             // at DELTA_EF), while reg.pc still holds the old value.
             // Store the fetch address so step 1 can set PC correctly.
-            let fetch_addr = self.pending_jump_target
-                .take()
-                .unwrap_or(self.bus_counter);
+            let fetch_addr = self.pending_jump_target.take().unwrap_or(self.bus_counter);
             Some(BusAction::Read {
                 address: fetch_addr,
             })
@@ -668,8 +668,9 @@ impl Cpu {
                     // overwrites pc with the target. Not-taken JR/JP cc must
                     // advance pc normally to point past the operand.
                     let opcode = bytes[0];
-                    let is_jp_nn = matches!(opcode,
-                        0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA   // JP nn / JP cc,nn
+                    let is_jp_nn = matches!(
+                        opcode,
+                        0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA // JP nn / JP cc,nn
                     );
                     if !is_jp_nn {
                         self.pc = self.bus_counter;
@@ -1113,6 +1114,27 @@ impl Cpu {
         {
             self.halt_wakeup_pending = true;
         }
+    }
+
+    /// Re-evaluate HALT wakeup after a late interrupt arrived on the same
+    /// M-cycle boundary dot where mcycle_halted already emitted an idle
+    /// Read[PC].
+    ///
+    /// On hardware, the ALET-settle cascade (VOGA->XYMU->TARU->STAT->g42)
+    /// propagates within the same M-cycle. The idle read serves as the
+    /// wakeup NOP, and ISR dispatch begins on the next M-cycle boundary.
+    pub fn retry_halt_wakeup(&mut self) {
+        if self.halt_state != HaltState::Halted {
+            return;
+        }
+
+        // IME=1: consume the interrupt latch and set dispatch pending.
+        // The current idle Read[PC] becomes the wakeup NOP.
+        if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
+            self.halt_isr_dispatch_pending = true;
+        }
+
+        // IME=0: update_interrupt_state already set halt_wakeup_pending.
     }
 }
 
