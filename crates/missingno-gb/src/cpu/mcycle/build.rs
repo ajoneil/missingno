@@ -412,15 +412,23 @@ impl Cpu {
                 let pc_before = cpu.program_counter;
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
-                if taken {
-                    cpu.program_counter = address;
-                }
                 if matches!(location, jump::Location::RegisterHl) {
+                    // JP HL: no internal M-cycle, PC updates immediately.
+                    if taken {
+                        cpu.program_counter = address;
+                    }
                     Phase::Empty
                 } else if is_relative && taken {
+                    // JR: PC updates immediately (relative jump has no
+                    // separate internal M-cycle for the PC load — the
+                    // InternalOamBug M-cycle serves that purpose).
+                    cpu.program_counter = address;
                     Phase::InternalOamBug { address: pc_before }
                 } else {
-                    Phase::CondJump { taken }
+                    // JP nn / JP cc,nn: defer PC update to the internal
+                    // M-cycle. On hardware, PC stays at the post-operand
+                    // address until the CondJump executes.
+                    Phase::CondJump { taken, target: address }
                 }
             }
             Jump::Call(condition, location) => {

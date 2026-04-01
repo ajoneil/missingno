@@ -231,7 +231,7 @@ pub(crate) enum Phase {
     Push { sp: u16, hi: u8, lo: u8 },
 
     /// Conditional jump: 0 or 1 internal.
-    CondJump { taken: bool },
+    CondJump { taken: bool, target: u16 },
 
     /// Conditional call: if taken, internal + 2 writes.
     CondCall {
@@ -793,8 +793,12 @@ impl Cpu {
                 }
             }
 
-            Phase::CondJump { taken } => {
+            Phase::CondJump { taken, target } => {
                 if current_step == 0 && *taken {
+                    // Internal M-cycle: the CPU loads the target address
+                    // into PC. On hardware, PC updates here — not during
+                    // decode when operands were read.
+                    self.program_counter = *target;
                     (Some(BusAction::Internal), true)
                 } else {
                     (Some(self.enter_fetch()), false)
