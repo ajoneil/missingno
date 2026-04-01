@@ -660,16 +660,17 @@ impl Cpu {
                 self.bus_counter = *pc;
 
                 if *bytes_read >= *bytes_needed {
-                    // Last operand byte. On hardware, JP/JR use bus_pass
-                    // (not bus_read) after the last byte, so reg.pc does
-                    // NOT advance. CALL/LD/ALU/etc use bus_read, so
-                    // reg.pc advances normally.
+                    // Last operand byte. On hardware, JP nn uses bus_pass
+                    // (not bus_read) after the last operand, so reg.pc does
+                    // NOT advance past the operand. JR uses bus_read for the
+                    // operand, and taken JR's build phase immediately
+                    // overwrites pc with the target. Not-taken JR/JP cc must
+                    // advance pc normally to point past the operand.
                     let opcode = bytes[0];
-                    let is_jump = matches!(opcode,
-                        0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA |  // JP nn / JP cc,nn
-                        0x18 | 0x20 | 0x28 | 0x30 | 0x38     // JR / JR cc
+                    let is_jp_nn = matches!(opcode,
+                        0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA   // JP nn / JP cc,nn
                     );
-                    if !is_jump {
+                    if !is_jp_nn {
                         self.pc = self.bus_counter;
                     }
                     let b = *bytes;
