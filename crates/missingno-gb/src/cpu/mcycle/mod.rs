@@ -511,7 +511,7 @@ impl Cpu {
     /// emits a wakeup NOP Read[PC] and defers ISR dispatch to the next
     /// M-cycle via `halt_isr_dispatch_pending`. Each call is exactly one
     /// M-cycle.
-    fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
+    fn mcycle_halted(&mut self, read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
@@ -585,17 +585,18 @@ impl Cpu {
             }
         }
 
-        // ── IME=0 wakeup: chain directly to fetch ──
-        // The wakeup NOP IS the first instruction's opcode fetch on
-        // hardware — one M-cycle, not two. When the pending flag is
-        // consumed, transition straight to Fetch phase.
+        // ── IME=0 wakeup: consume the idle read as the opcode ──
+        // On hardware, the HALT idle loop already reads [PC] every
+        // M-cycle. When wakeup occurs, that read is consumed as the
+        // opcode — no extra fetch M-cycle. Chain directly to
+        // mcycle_fetch step 1 with the idle read's value.
         if self.interrupt_pending && self.halt_wakeup_pending {
             self.halt_wakeup_pending = false;
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
             self.phase = CpuPhase::Fetch;
-            self.exec_step = 0;
-            return self.mcycle_fetch(0);
+            self.exec_step = 1;
+            return self.mcycle_fetch(read_value);
         }
 
         // ── Still halted ──
