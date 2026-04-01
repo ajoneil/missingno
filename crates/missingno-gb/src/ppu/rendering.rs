@@ -537,6 +537,12 @@ impl Rendering {
         let fepo = self.fepo(regs);
 
         // BG fetcher falling-edge advance: VRAM reads + counter increment.
+        // LYRY: combinational gate, high when the fetcher has completed
+        // its current tile fetch (fetch_counter >= 10). Evaluate BEFORE
+        // advance_falling() so NYKA captures the rise-phase value —
+        // modeling the 1-HP DFF delay of the ALET-clocked NYKA latch.
+        let lyry = self.fetcher.lyry();
+
         // LEBO = NAND2(ALET, MOCE) — no dependency on TAKA or TEXY.
         // The BG fetcher counter keeps ticking unconditionally during sprite
         // fetch. On hardware, VRAM bus ownership switches (TEXY gates sprite
@@ -548,12 +554,6 @@ impl Rendering {
             video,
             vram,
         );
-
-        // LYRY: combinational gate, high when the fetcher has completed
-        // its current tile fetch (step == Idle). Captured here immediately
-        // after fetcher.advance() and before TAVE resets the fetcher to
-        // GetTile — once TAVE fires, the fetcher is no longer Idle.
-        let lyry = self.fetcher.lyry();
 
         self.cascade.fall(lyry);
 
