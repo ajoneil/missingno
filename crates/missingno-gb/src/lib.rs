@@ -238,6 +238,17 @@ impl GameBoy {
         &self.current_dot_action
     }
 
+    /// The address currently on the CPU bus (from the active M-cycle's
+    /// bus action). Returns 0 for internal/idle cycles.
+    pub fn bus_address(&self) -> u16 {
+        match &self.current_dot_action {
+            cpu::mcycle::DotAction::Read { address } => *address,
+            cpu::mcycle::DotAction::Write { address, .. } => *address,
+            cpu::mcycle::DotAction::InternalOamBug { address } => *address,
+            cpu::mcycle::DotAction::Idle => 0,
+        }
+    }
+
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
         self.audio.drain_samples()
     }
