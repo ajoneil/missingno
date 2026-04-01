@@ -90,7 +90,11 @@ pub struct Cpu {
     pub l: u8,
 
     pub stack_pointer: u16,
-    pub program_counter: u16,
+    /// The IDU address counter. Drives the address bus during fetch and
+    /// operand reads. Advances by 1 each time a byte is fetched. Also
+    /// used for relative jump resolution. On hardware this is the IDU
+    /// output, distinct from the PC register DFF (reg.pc).
+    pub bus_counter: u16,
     /// The PC at the start of the current instruction. Latched at each
     /// instruction boundary — stays constant during operand fetches.
     pub instruction_pc: u16,
@@ -136,7 +140,7 @@ pub struct Cpu {
     pub(super) op_state: u8,
     /// Pending jump target address. Set by CondJump's internal M-cycle,
     /// consumed by the next enter_fetch() to issue the fetch Read from
-    /// the target instead of program_counter. On hardware, the PC
+    /// the target instead of bus_counter. On hardware, the PC
     /// register stays at the post-operand address during the internal
     /// M-cycle; it only advances to target+1 when the fetch processes.
     pub(super) pending_jump_target: Option<u16>,
@@ -195,7 +199,7 @@ impl Cpu {
             l: 0x4d,
 
             stack_pointer: 0xfffe,
-            program_counter: 0x0100,
+            bus_counter: 0x0100,
             instruction_pc: 0x0100,
 
             flags: if checksum == 0 {
@@ -246,7 +250,7 @@ impl Cpu {
             h: 0,
             l: 0,
             stack_pointer: 0x0000,
-            program_counter: 0x0000,
+            bus_counter: 0x0000,
             instruction_pc: 0x0000,
             flags: Flags::empty(),
             interrupt_master_enable: InterruptMasterEnable::Disabled,
@@ -294,7 +298,7 @@ impl Cpu {
             h: snap.h,
             l: snap.l,
             stack_pointer: snap.sp,
-            program_counter: snap.pc,
+            bus_counter: snap.pc,
             instruction_pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
             interrupt_master_enable: if snap.ime {

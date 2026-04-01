@@ -35,8 +35,8 @@ impl Cpu {
             jump::Location::Address(address) => match address {
                 Address::Fixed(addr) => *addr,
                 Address::Relative(offset) => match offset {
-                    0.. => cpu.program_counter + offset.unsigned_abs() as u16,
-                    ..0 => cpu.program_counter - offset.unsigned_abs() as u16,
+                    0.. => cpu.bus_counter + offset.unsigned_abs() as u16,
+                    ..0 => cpu.bus_counter - offset.unsigned_abs() as u16,
                 },
                 _ => unreachable!(),
             },
@@ -409,20 +409,20 @@ impl Cpu {
         match j {
             Jump::Jump(condition, location) => {
                 let is_relative = matches!(location, jump::Location::Address(Address::Relative(_)));
-                let pc_before = cpu.program_counter;
+                let pc_before = cpu.bus_counter;
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
                     // JP HL: no internal M-cycle, PC updates immediately.
                     if taken {
-                        cpu.program_counter = address;
+                        cpu.bus_counter = address;
                     }
                     Phase::Empty
                 } else if is_relative && taken {
                     // JR: PC updates immediately (relative jump has no
                     // separate internal M-cycle for the PC load — the
                     // InternalOamBug M-cycle serves that purpose).
-                    cpu.program_counter = address;
+                    cpu.bus_counter = address;
                     Phase::InternalOamBug { address: pc_before }
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
@@ -435,11 +435,11 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if taken {
-                    let pc = cpu.program_counter;
+                    let pc = cpu.bus_counter;
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
-                    cpu.program_counter = address;
+                    cpu.bus_counter = address;
                     Phase::CondCall {
                         taken: true,
                         sp,
@@ -476,11 +476,11 @@ impl Cpu {
                 action: PopAction::SetPcEnableInterrupts,
             },
             Jump::Restart(address) => {
-                let pc = cpu.program_counter;
+                let pc = cpu.bus_counter;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
-                cpu.program_counter = *address as u16;
+                cpu.bus_counter = *address as u16;
                 Phase::Push {
                     sp,
                     hi: pc_hi,

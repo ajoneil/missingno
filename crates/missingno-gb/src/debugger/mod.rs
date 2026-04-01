@@ -112,7 +112,7 @@ impl Debugger {
     }
 
     pub fn step_over(&mut self) -> Option<Screen> {
-        let mut it = InstructionsIterator::new(self.game_boy.cpu().program_counter, &self.game_boy);
+        let mut it = InstructionsIterator::new(self.game_boy.cpu().bus_counter, &self.game_boy);
         Instruction::decode(&mut it);
         let next_address = it.address.unwrap();
 
@@ -207,7 +207,7 @@ impl Debugger {
 
     fn breakpoint_triggered(&self) -> bool {
         self.breakpoints
-            .contains(&self.game_boy.cpu().program_counter)
+            .contains(&self.game_boy.cpu().bus_counter)
     }
 
     fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<WatchCondition> {

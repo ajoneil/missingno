@@ -59,7 +59,7 @@ impl CpuPane {
                 text("Program Counter")
                     .align_x(Alignment::End)
                     .width(Length::FillPortion(2)),
-                text_input("Program Counter", &format!("{:04x}", cpu.program_counter))
+                text_input("Program Counter", &format!("{:04x}", cpu.bus_counter))
                     .font(fonts::monospace())
                     .width(Length::FillPortion(1))
             ]

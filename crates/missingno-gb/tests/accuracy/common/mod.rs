@@ -168,7 +168,7 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
         .to_string_lossy();
     let output_path = output_dir.join(format!("{rom_stem}.gbtrace"));
 
-    let boot_rom = if gb.cpu().program_counter == 0x0000 {
+    let boot_rom = if gb.cpu().bus_counter == 0x0000 {
         gbtrace::BootRom::Skip // TODO: detect actual boot ROM
     } else {
         gbtrace::BootRom::Skip
@@ -215,12 +215,12 @@ pub fn try_load_boot_rom() -> Option<Box<[u8; 256]>> {
 /// If a boot ROM is loaded, run it to completion (PC reaches 0x0100).
 /// This is a no-op when no boot ROM is present.
 fn run_boot_rom(gb: &mut GameBoy) {
-    if gb.cpu().program_counter != 0x0000 {
+    if gb.cpu().bus_counter != 0x0000 {
         return;
     }
     for _ in 0..10_000_000 {
         gb.step();
-        if gb.cpu().program_counter == 0x0100 {
+        if gb.cpu().bus_counter == 0x0100 {
             return;
         }
     }
@@ -287,7 +287,7 @@ pub fn run_until_breakpoint(run: &mut TestRun, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
             // Check for LD B,B breakpoint before executing
-            let pc = run.gb.cpu().program_counter;
+            let pc = run.gb.cpu().bus_counter;
             if run.gb.read(pc) == 0x40 {
                 return true;
             }
@@ -305,7 +305,7 @@ pub fn run_until_breakpoint(run: &mut TestRun, timeout_frames: u32) -> bool {
 pub fn run_until_undefined_opcode(run: &mut TestRun, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
-            let pc = run.gb.cpu().program_counter;
+            let pc = run.gb.cpu().bus_counter;
             if run.gb.read(pc) == 0xED {
                 return true;
             }
@@ -322,7 +322,7 @@ pub fn run_until_undefined_opcode(run: &mut TestRun, timeout_frames: u32) -> boo
 
 /// Check if the CPU is stuck in a known completion loop.
 fn is_infinite_loop(gb: &GameBoy) -> bool {
-    let pc = gb.cpu().program_counter;
+    let pc = gb.cpu().bus_counter;
     // JR -2 (0x18 0xFE) — standard completion loop
     if gb.read(pc) == 0x18 && gb.read(pc.wrapping_add(1)) == 0xFE {
         return true;

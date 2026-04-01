@@ -269,7 +269,7 @@ impl DebuggerPanes {
                 PaneInstance::Screen(screen) => screen.content(),
                 PaneInstance::Instructions(instructions) => instructions.content(
                     debugger.game_boy(),
-                    debugger.game_boy().cpu().program_counter,
+                    debugger.game_boy().cpu().bus_counter,
                     debugger.breakpoints(),
                 ),
                 PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),

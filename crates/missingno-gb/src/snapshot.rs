@@ -76,7 +76,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         h: cpu.h,
         l: cpu.l,
         sp: cpu.stack_pointer,
-        pc: cpu.program_counter,
+        pc: cpu.bus_counter,
         ime: cpu.interrupts_enabled(),
         if_: gb.interrupts().requested.bits(),
         ie: gb.interrupts().enabled.bits(),

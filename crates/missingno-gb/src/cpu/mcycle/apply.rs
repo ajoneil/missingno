@@ -263,11 +263,11 @@ impl Cpu {
                 cpu.set_register16(*reg, value);
             }
             PopAction::SetPc => {
-                cpu.program_counter = value;
+                cpu.bus_counter = value;
             }
             PopAction::SetPcEnableInterrupts => {
                 cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
-                cpu.program_counter = value;
+                cpu.bus_counter = value;
             }
         }
     }

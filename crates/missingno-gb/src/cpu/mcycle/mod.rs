@@ -414,13 +414,13 @@ impl Cpu {
         if step == 0 {
             // Emit the fetch read. If a jump target is pending (from
             // CondJump's internal M-cycle), fetch from that address
-            // instead of program_counter. On hardware, the bus address
+            // instead of bus_counter. On hardware, the bus address
             // is set from op_addr (which was loaded with the target
             // at DELTA_EF), while reg.pc still holds the old value.
             // Store the fetch address so step 1 can set PC correctly.
             let fetch_addr = self.pending_jump_target
                 .take()
-                .unwrap_or(self.program_counter);
+                .unwrap_or(self.bus_counter);
             Some(BusAction::Read {
                 address: fetch_addr,
             })
@@ -435,7 +435,7 @@ impl Cpu {
                 self.exec_step = 0;
                 // Signal boundary and chain into the first halted NOP.
                 self.boundary_flag = true;
-                self.instruction_pc = self.program_counter;
+                self.instruction_pc = self.bus_counter;
                 return self.mcycle_halted(0);
             }
 
@@ -446,7 +446,7 @@ impl Cpu {
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
 
-                let pc = self.program_counter;
+                let pc = self.bus_counter;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = self.stack_pointer;
@@ -465,16 +465,16 @@ impl Cpu {
             // Normal opcode consumption — set PC from the fetch address.
             // On hardware, reg.pc = bus_addr + 1 at this execute step.
             // If the fetch was from a jump target (different from
-            // program_counter), this is where PC physically updates.
+            // bus_counter), this is where PC physically updates.
             let opcode = read_value;
             let fetch_addr = match &self.current_action {
                 Some(BusAction::Read { address }) => *address,
-                _ => self.program_counter,
+                _ => self.bus_counter,
             };
             if self.halt_bug {
                 self.halt_bug = false;
             } else {
-                self.program_counter = fetch_addr.wrapping_add(1);
+                self.bus_counter = fetch_addr.wrapping_add(1);
             }
 
             let needed = operand_count(opcode);
@@ -488,7 +488,7 @@ impl Cpu {
                 // Need operand bytes — enter Execute with Operands phase
                 self.phase = CpuPhase::Execute {
                     phase: Phase::Operands {
-                        pc: self.program_counter,
+                        pc: self.bus_counter,
                         bytes: [opcode, 0, 0],
                         bytes_read: 1,
                         bytes_needed: 1 + needed,
@@ -511,7 +511,7 @@ impl Cpu {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.instruction_pc = self.program_counter;
+        self.instruction_pc = self.bus_counter;
 
         // Consume g42_mid_mcycle: snapshot from dot 1 of the previous
         // M-cycle. If an interrupt fired at dot 1, the g42->g43->g49
@@ -527,7 +527,7 @@ impl Cpu {
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
 
-            let pc = self.program_counter;
+            let pc = self.bus_counter;
             let pc_hi = (pc >> 8) as u8;
             let pc_lo = (pc & 0xff) as u8;
             let sp = self.stack_pointer;
@@ -555,7 +555,7 @@ impl Cpu {
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
 
-                let pc = self.program_counter;
+                let pc = self.bus_counter;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = self.stack_pointer;
@@ -576,7 +576,7 @@ impl Cpu {
                 self.halt_isr_dispatch_pending = true;
                 self.advance_ei_delay();
                 return Some(BusAction::Read {
-                    address: self.program_counter,
+                    address: self.bus_counter,
                 });
             }
         }
@@ -597,7 +597,7 @@ impl Cpu {
         // ── Still halted ──
         self.advance_ei_delay();
         Some(BusAction::Read {
-            address: self.program_counter,
+            address: self.bus_counter,
         })
     }
 
@@ -653,7 +653,7 @@ impl Cpu {
                 bytes[*bytes_read as usize] = read_value;
                 *bytes_read += 1;
                 *pc = pc.wrapping_add(1);
-                self.program_counter = *pc;
+                self.bus_counter = *pc;
 
                 if *bytes_read >= *bytes_needed {
                     let b = *bytes;
@@ -988,7 +988,7 @@ impl Cpu {
         self.advance_ei_delay();
 
         self.boundary_flag = true;
-        self.instruction_pc = self.program_counter;
+        self.instruction_pc = self.bus_counter;
 
         // Chain into the first fetch M-cycle. If check_halt_bug
         // transitioned to Halting/Halted, mcycle_fetch will handle it.
@@ -1010,7 +1010,7 @@ impl Cpu {
             // bug triggers — PC is not incremented. But EI's IME
             // promotion still takes effect, so the interrupt dispatches.
             self.interrupt_master_enable = InterruptMasterEnable::Enabled;
-            self.program_counter = self.program_counter.wrapping_sub(1);
+            self.bus_counter = self.bus_counter.wrapping_sub(1);
             self.halt_state = HaltState::Running;
             self.ei_delay = None;
         } else if self.interrupt_master_enable == InterruptMasterEnable::Disabled {

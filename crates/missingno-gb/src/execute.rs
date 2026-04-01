@@ -200,9 +200,9 @@ impl GameBoy {
         if self.cpu.take_pending_vector_resolve() {
             if let Some(interrupt) = self.interrupts.triggered() {
                 self.interrupts.clear(interrupt);
-                self.cpu.program_counter = interrupt.vector();
+                self.cpu.bus_counter = interrupt.vector();
             } else {
-                self.cpu.program_counter = 0x0000;
+                self.cpu.bus_counter = 0x0000;
             }
         }
 

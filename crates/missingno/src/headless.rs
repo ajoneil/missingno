@@ -484,7 +484,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
         h: cpu.h,
         l: cpu.l,
         sp: cpu.stack_pointer,
-        pc: cpu.program_counter,
+        pc: cpu.bus_counter,
         flags: FlagsState {
             zero: cpu.flags.contains(Flags::ZERO),
             negative: cpu.flags.contains(Flags::NEGATIVE),
@@ -497,7 +497,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
 }
 
 fn disassemble(gb: &GameBoy, count: usize) -> Vec<InstructionEntry> {
-    let pc = gb.cpu().program_counter;
+    let pc = gb.cpu().bus_counter;
     let mut it = InstructionsIterator::new(pc, gb);
     let mut entries = Vec::new();
 
