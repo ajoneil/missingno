@@ -416,6 +416,7 @@ impl Cpu {
                     // JP HL: no internal M-cycle, PC updates immediately.
                     if taken {
                         cpu.bus_counter = address;
+                        cpu.pc = cpu.bus_counter;
                     }
                     Phase::Empty
                 } else if is_relative && taken {
@@ -423,6 +424,7 @@ impl Cpu {
                     // separate internal M-cycle for the PC load — the
                     // InternalOamBug M-cycle serves that purpose).
                     cpu.bus_counter = address;
+                    cpu.pc = cpu.bus_counter;
                     Phase::InternalOamBug { address: pc_before }
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
@@ -440,6 +442,7 @@ impl Cpu {
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
                     cpu.bus_counter = address;
+                    cpu.pc = cpu.bus_counter;
                     Phase::CondCall {
                         taken: true,
                         sp,
@@ -481,6 +484,7 @@ impl Cpu {
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
                 cpu.bus_counter = *address as u16;
+                cpu.pc = cpu.bus_counter;
                 Phase::Push {
                     sp,
                     hi: pc_hi,

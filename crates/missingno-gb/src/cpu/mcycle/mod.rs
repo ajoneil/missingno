@@ -475,6 +475,7 @@ impl Cpu {
                 self.halt_bug = false;
             } else {
                 self.bus_counter = fetch_addr.wrapping_add(1);
+                self.pc = self.bus_counter;
             }
 
             let needed = operand_count(opcode);
@@ -654,6 +655,7 @@ impl Cpu {
                 *bytes_read += 1;
                 *pc = pc.wrapping_add(1);
                 self.bus_counter = *pc;
+                self.pc = self.bus_counter;
 
                 if *bytes_read >= *bytes_needed {
                     let b = *bytes;
@@ -1011,6 +1013,7 @@ impl Cpu {
             // promotion still takes effect, so the interrupt dispatches.
             self.interrupt_master_enable = InterruptMasterEnable::Enabled;
             self.bus_counter = self.bus_counter.wrapping_sub(1);
+            self.pc = self.bus_counter;
             self.halt_state = HaltState::Running;
             self.ei_delay = None;
         } else if self.interrupt_master_enable == InterruptMasterEnable::Disabled {

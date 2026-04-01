@@ -95,6 +95,12 @@ pub struct Cpu {
     /// used for relative jump resolution. On hardware this is the IDU
     /// output, distinct from the PC register DFF (reg.pc).
     pub bus_counter: u16,
+    /// The PC register DFF (hardware reg.pc). On hardware this latches
+    /// when the CPU issues a bus_read (reg.pc = bus_addr + 1), but does
+    /// NOT latch after the last operand byte of JP/JR (which use
+    /// bus_pass instead of bus_read). Currently mirrors bus_counter —
+    /// the divergence points will be added incrementally.
+    pub pc: u16,
     /// The PC at the start of the current instruction. Latched at each
     /// instruction boundary — stays constant during operand fetches.
     pub instruction_pc: u16,
@@ -200,6 +206,7 @@ impl Cpu {
 
             stack_pointer: 0xfffe,
             bus_counter: 0x0100,
+            pc: 0x0100,
             instruction_pc: 0x0100,
 
             flags: if checksum == 0 {
@@ -251,6 +258,7 @@ impl Cpu {
             l: 0,
             stack_pointer: 0x0000,
             bus_counter: 0x0000,
+            pc: 0x0000,
             instruction_pc: 0x0000,
             flags: Flags::empty(),
             interrupt_master_enable: InterruptMasterEnable::Disabled,
@@ -299,6 +307,7 @@ impl Cpu {
             l: snap.l,
             stack_pointer: snap.sp,
             bus_counter: snap.pc,
+            pc: snap.pc,
             instruction_pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
             interrupt_master_enable: if snap.ime {

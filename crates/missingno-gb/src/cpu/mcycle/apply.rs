@@ -264,10 +264,12 @@ impl Cpu {
             }
             PopAction::SetPc => {
                 cpu.bus_counter = value;
+                cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
                 cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
                 cpu.bus_counter = value;
+                cpu.pc = cpu.bus_counter;
             }
         }
     }
