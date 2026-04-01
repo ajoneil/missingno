@@ -437,7 +437,7 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if taken {
-                    let pc = cpu.bus_counter;
+                    let pc = cpu.pc;
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
@@ -479,7 +479,7 @@ impl Cpu {
                 action: PopAction::SetPcEnableInterrupts,
             },
             Jump::Restart(address) => {
-                let pc = cpu.bus_counter;
+                let pc = cpu.pc;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;

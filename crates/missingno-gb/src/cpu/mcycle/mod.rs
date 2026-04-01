@@ -446,7 +446,7 @@ impl Cpu {
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
 
-                let pc = self.bus_counter;
+                let pc = self.pc;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = self.stack_pointer;
@@ -528,7 +528,7 @@ impl Cpu {
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
 
-            let pc = self.bus_counter;
+            let pc = self.pc;
             let pc_hi = (pc >> 8) as u8;
             let pc_lo = (pc & 0xff) as u8;
             let sp = self.stack_pointer;
@@ -556,7 +556,7 @@ impl Cpu {
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
 
-                let pc = self.bus_counter;
+                let pc = self.pc;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = self.stack_pointer;
@@ -679,6 +679,9 @@ impl Cpu {
                     return (action, false);
                 }
 
+                // Non-last operand: issue bus_read for next byte.
+                // On hardware, reg.pc = adp fires with cpu_bus_read.
+                self.pc = self.bus_counter;
                 (Some(BusAction::Read { address: *pc }), true)
             }
 
