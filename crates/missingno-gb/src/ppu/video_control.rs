@@ -215,6 +215,7 @@ impl VideoControl {
             if self.ly >= 153 {
                 self.ly = 0;
                 self.frame_end_reset = false;
+                self.vblank = false;
             } else {
                 self.ly += 1;
             }
