@@ -412,9 +412,17 @@ impl Cpu {
         self.exec_step += 1;
 
         if step == 0 {
-            // Emit the fetch read
+            // Emit the fetch read. If a jump target is pending (from
+            // CondJump's internal M-cycle), fetch from that address
+            // instead of program_counter. On hardware, the bus address
+            // is set from op_addr (which was loaded with the target
+            // at DELTA_EF), while reg.pc still holds the old value.
+            // Store the fetch address so step 1 can set PC correctly.
+            let fetch_addr = self.pending_jump_target
+                .take()
+                .unwrap_or(self.program_counter);
             Some(BusAction::Read {
-                address: self.program_counter,
+                address: fetch_addr,
             })
         } else {
             // Opcode received — check for HALT entry first
@@ -454,12 +462,19 @@ impl Cpu {
                 return self.mcycle_isr(0);
             }
 
-            // Normal opcode consumption — increment PC (with halt_bug check)
+            // Normal opcode consumption — set PC from the fetch address.
+            // On hardware, reg.pc = bus_addr + 1 at this execute step.
+            // If the fetch was from a jump target (different from
+            // program_counter), this is where PC physically updates.
             let opcode = read_value;
+            let fetch_addr = match &self.current_action {
+                Some(BusAction::Read { address }) => *address,
+                _ => self.program_counter,
+            };
             if self.halt_bug {
                 self.halt_bug = false;
             } else {
-                self.program_counter = self.program_counter.wrapping_add(1);
+                self.program_counter = fetch_addr.wrapping_add(1);
             }
 
             let needed = operand_count(opcode);
@@ -796,10 +811,12 @@ impl Cpu {
 
             Phase::CondJump { taken, target } => {
                 if current_step == 0 && *taken {
-                    // Internal M-cycle: the CPU loads the target address
-                    // into PC. On hardware, PC updates here — not during
-                    // decode when operands were read.
-                    self.program_counter = *target;
+                    // Internal M-cycle: store the jump target for the
+                    // next fetch. On hardware, the PC register stays at
+                    // the post-operand address during this M-cycle. The
+                    // target is placed on the bus at DELTA_EF, and PC
+                    // updates to target+1 when the fetch processes.
+                    self.pending_jump_target = Some(*target);
                     (Some(BusAction::Internal), true)
                 } else {
                     (Some(self.enter_fetch()), false)

@@ -134,6 +134,12 @@ pub struct Cpu {
     /// Incremented by next_mcycle(), reset by enter_fetch().
     /// Matches the hardware op_state sequencer.
     pub(super) op_state: u8,
+    /// Pending jump target address. Set by CondJump's internal M-cycle,
+    /// consumed by the next enter_fetch() to issue the fetch Read from
+    /// the target instead of program_counter. On hardware, the PC
+    /// register stays at the post-operand address during the internal
+    /// M-cycle; it only advances to target+1 when the fetch processes.
+    pub(super) pending_jump_target: Option<u16>,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
     /// The dot position that produced the last DotAction (for the executor
@@ -214,6 +220,7 @@ impl Cpu {
             // next_dot() wraps to 0 for the first fetch M-cycle.
             // enter_fetch() resets to 0 at each instruction boundary.
             op_state: u8::MAX,
+            pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
@@ -257,6 +264,7 @@ impl Cpu {
             // next_dot() wraps to 0 for the first fetch M-cycle.
             // enter_fetch() resets to 0 at each instruction boundary.
             op_state: u8::MAX,
+            pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
@@ -316,6 +324,7 @@ impl Cpu {
             // next_dot() wraps to 0 for the first fetch M-cycle.
             // enter_fetch() resets to 0 at each instruction boundary.
             op_state: u8::MAX,
+            pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
