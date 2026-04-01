@@ -43,6 +43,9 @@ impl BusDot {
     /// Dot 1 (phases C,D). Second dot of the M-cycle.
     pub const ONE: BusDot = BusDot(1);
 
+    /// Raw dot number (0–3) for trace output.
+    pub fn as_u8(self) -> u8 { self.0 }
+
     pub fn advance(self) -> BusDot {
         debug_assert!(self.0 < 3, "cannot advance past dot 3");
         BusDot(self.0 + 1)

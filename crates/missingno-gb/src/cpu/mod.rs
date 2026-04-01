@@ -375,4 +375,20 @@ impl Cpu {
     pub fn interrupts_enabled(&self) -> bool {
         self.interrupt_master_enable != InterruptMasterEnable::Disabled
     }
+
+    /// Microcode step counter (instruction sub-step within execution).
+    pub fn op_state(&self) -> u8 {
+        self.exec_step
+    }
+
+    /// Ring counter phase within the current M-cycle (0–3 dots).
+    /// Maps to AFUR/ALEF/APUK/ADYK on hardware.
+    pub fn mcycle_phase(&self) -> u8 {
+        self.dot.as_u8()
+    }
+
+    /// Whether the CPU is currently halted.
+    pub fn is_halted(&self) -> bool {
+        self.halt_state == HaltState::Halted
+    }
 }

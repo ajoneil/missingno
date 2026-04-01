@@ -17,6 +17,7 @@ enum Emitter {
     // CPU
     CpuA, CpuF, CpuB, CpuC, CpuD, CpuE, CpuH, CpuL,
     CpuSp, CpuPc, CpuIme,
+    CpuOpState, CpuMcyclePhase, CpuHalted,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
     // Memory read (profile [fields.memory])
@@ -105,6 +106,9 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         "h" => Emitter::CpuH, "l" => Emitter::CpuL,
         "sp" => Emitter::CpuSp, "pc" => Emitter::CpuPc,
         "ime" => Emitter::CpuIme,
+        "op_state" => Emitter::CpuOpState,
+        "mcycle_phase" => Emitter::CpuMcyclePhase,
+        "halted" => Emitter::CpuHalted,
         // APU internal
         "ch1_active" => Emitter::Ch1Active,
         "ch1_freq_cnt" => Emitter::Ch1FreqCnt,
@@ -294,6 +298,9 @@ impl Tracer {
                 Emitter::CpuSp => w.set_u16(col, gb.cpu().stack_pointer),
                 Emitter::CpuPc => w.set_u16(col, gb.cpu().instruction_pc),
                 Emitter::CpuIme => w.set_bool(col, gb.cpu().interrupts_enabled()),
+                Emitter::CpuOpState => w.set_u8(col, gb.cpu().op_state()),
+                Emitter::CpuMcyclePhase => w.set_u8(col, gb.cpu().mcycle_phase()),
+                Emitter::CpuHalted => w.set_bool(col, gb.cpu().is_halted()),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
                     w.set_u8(col, gb.peek(*addr));
