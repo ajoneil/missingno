@@ -156,6 +156,13 @@ impl GameBoy {
 
         // ── M-cycle boundary: g42 latch, then PPU + interrupt capture, BEFORE CPU transition ──
         if is_mcycle_boundary {
+            // Timer ticks once per M-cycle (BOGA). On hardware, BOGA fires
+            // at the same phase A edge as the ring counter. Place the timer
+            // tick at the very start of the M-cycle boundary, before g42.
+            // Overflow sets g151_pending; the interrupt is drained on the
+            // next CLK9 rising edge via take_pending_interrupt().
+            self.timers.mcycle();
+
             // g42 DFF: latch IF & IE from the PREVIOUS M-cycle boundary.
             // On hardware, the DFF captures its input before the current
             // edge's combinational logic (PPU mode transitions, IF assertion)
@@ -373,12 +380,6 @@ impl GameBoy {
         }
 
         if is_mcycle_boundary {
-            // Timer ticks once per M-cycle (BOGA). On the falling edge
-            // so that bus writes (e.g. DIV reset) take effect before
-            // the counter increments. Overflow sets g151_pending; the
-            // interrupt is drained on the next CLK9 rising edge.
-            self.timers.mcycle();
-
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter) {

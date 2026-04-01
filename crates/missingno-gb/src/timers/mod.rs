@@ -24,11 +24,12 @@ pub struct Timers {
 
 impl Timers {
     /// Post-boot state: internal counter matching DMG post-boot DIV.
-    /// 0x2AF3 accounts for the timer tick occurring on the falling
-    /// edge (after bus reads on the rising edge).
+    /// GateBoy's fastboot sets the counter to 0xEAF2 (T-cycle model),
+    /// then runs 4 alignment phases which include one BOGA edge,
+    /// incrementing to 0xEAF3. Our M-cycle model equivalent is 0x2AF3.
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x2AF3,
+            internal_counter: 0x2AF2,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
