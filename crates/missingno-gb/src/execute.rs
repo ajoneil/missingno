@@ -279,6 +279,21 @@ impl GameBoy {
             {
                 self.cpu.g42_mid_mcycle = true;
             }
+            // HBlank (mode 0) STAT edge: the ALET-settle cascade
+            // (VOGA→XYMU→TARU→STAT→IF→g42) can propagate within the
+            // same M-cycle if the edge fires early enough. On hardware,
+            // g42 needs ~3 CLK9 edges (1.5 dots) to settle. Edges at
+            // dots 0–1 have enough remaining time; dots 2–3 do not.
+            // Only relevant during HALT — running instructions use the
+            // DFF-latched g42 pipeline which correctly excludes this.
+            if stat_edge
+                && self.cpu.is_halted()
+                && self.interrupts.enabled(Interrupt::VideoStatus)
+                && self.ppu.mode() == ppu::rendering::Mode::HorizontalBlank
+                && self.current_dot.as_u8() <= 1
+            {
+                self.cpu.g42_mid_mcycle = true;
+            }
 
             // Capture interrupt state for non-boundary dots.
             let triggered = self.interrupts.triggered();
