@@ -435,9 +435,7 @@ impl Cpu {
         }
     }
 
-    /// The address on the CPU bus for the current M-cycle. Returns the
-    /// address from the active BusAction (Read/Write/InternalOamBug),
-    /// or 0 for Internal/idle cycles. Persists for all 4 dots.
+    /// The address on the CPU bus for the current M-cycle.
     pub fn bus_address(&self) -> u16 {
         match &self.current_action {
             Some(mcycle::BusAction::Read { address }) => *address,

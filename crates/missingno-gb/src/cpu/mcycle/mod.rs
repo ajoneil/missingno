@@ -331,6 +331,8 @@ impl Cpu {
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
             self.op_state = self.op_state.wrapping_add(1);
+            // Save the previous M-cycle's bus address before replacing.
+            // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
                 .next_mcycle(read_value)
                 .expect("next_mcycle must always return Some (CPU chains at boundaries)");
