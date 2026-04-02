@@ -417,15 +417,9 @@ impl Cpu {
         self.exec_step += 1;
 
         if step == 0 {
-            // Emit the fetch read. If a jump target is pending (from
-            // CondJump's internal M-cycle), fetch from that address
-            // instead of bus_counter. Update bus_counter so that if
-            // an ISR fires at step 1 (before PC is set from the fetch
-            // address), the return address reflects the jump target.
-            if let Some(target) = self.pending_jump_target.take() {
-                self.bus_counter = target;
-                self.pc = target;
-            }
+            // Emit the fetch read from bus_counter. Any pending jump
+            // target was already consumed in enter_fetch(), which
+            // updated bus_counter to the target address.
             Some(BusAction::Read {
                 address: self.bus_counter,
             })
@@ -1013,6 +1007,15 @@ impl Cpu {
         // of when the executor detects the boundary.
         self.check_halt_bug();
         self.advance_ei_delay();
+
+        // If a jump target is pending (from CondJump's internal M-cycle),
+        // apply it now so bus_counter is correct at the instruction boundary.
+        // This matches how JR, JP HL, CALL, and RET update bus_counter
+        // before reaching enter_fetch.
+        if let Some(target) = self.pending_jump_target.take() {
+            self.bus_counter = target;
+            self.pc = target;
+        }
 
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
