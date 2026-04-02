@@ -31,6 +31,8 @@ mod controls;
 mod core;
 mod debugger;
 mod emulator;
+mod game_info_panel;
+mod hasheous;
 mod load;
 mod recent;
 mod screen;
@@ -77,6 +79,9 @@ struct App {
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     settings_shown: bool,
+    game_info: Option<hasheous::GameInfo>,
+    game_info_cover: Option<iced::widget::image::Handle>,
+    game_info_shown: bool,
 }
 
 enum Fullscreen {
@@ -114,6 +119,8 @@ enum Message {
     CompleteSetup { internet_enabled: bool },
     ShowSettings,
     Settings(settings_view::Message),
+    ToggleGameInfo,
+    GameInfoLoaded(Option<hasheous::GameInfo>),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -173,6 +180,9 @@ impl App {
                 recent_games,
                 settings,
                 settings_shown: false,
+                game_info: None,
+                game_info_cover: None,
+                game_info_shown: false,
             },
             Task::none(),
         )
@@ -317,6 +327,19 @@ impl App {
                     self.settings.save();
                 }
             },
+            Message::ToggleGameInfo => {
+                self.game_info_shown = !self.game_info_shown;
+                if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
+                    emulator.reset_hover();
+                }
+            }
+            Message::GameInfoLoaded(info) => {
+                self.game_info_cover = info
+                    .as_ref()
+                    .and_then(|i| i.cover_art.as_ref())
+                    .map(|bytes| iced::widget::image::Handle::from_bytes(bytes.clone()));
+                self.game_info = info;
+            }
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
             }
@@ -389,10 +412,25 @@ impl App {
     fn inner(&self) -> Element<'_, Message> {
         let fullscreen = matches!(self.fullscreen, Fullscreen::Active { .. });
         match &self.game {
-            Game::Loaded(game) => match game {
-                LoadedGame::Debugger(debugger) => debugger.view(),
-                LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
-            },
+            Game::Loaded(game) => {
+                let has_info = self.game_info.is_some();
+                let game_view = match game {
+                    LoadedGame::Debugger(debugger) => debugger.view(),
+                    LoadedGame::Emulator(emulator) => emulator.view(fullscreen, has_info),
+                };
+
+                if self.game_info_shown {
+                    if let Some(info) = &self.game_info {
+                        return row![
+                            container(game_view).center(Fill),
+                            game_info_panel::view(info, self.game_info_cover.as_ref()),
+                        ]
+                        .into();
+                    }
+                }
+
+                game_view
+            }
             _ if !self.settings.setup_complete => self.setup_view(),
             _ => {
                 let mut col = column![

@@ -59,10 +59,14 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
         Message::Loaded(rom_path, rom) => {
             let sav_path = save_path(&rom_path);
             let save_data = std::fs::read(&sav_path).ok();
+            let sha1 = app::hasheous::rom_sha1(&rom);
             let cartridge = Cartridge::new(rom, save_data);
             let title = cartridge.title().to_string();
             let game_boy = GameBoy::new(cartridge, None);
             app.save_path = Some(sav_path);
+            app.game_info = None;
+            app.game_info_cover = None;
+            app.game_info_shown = false;
             app.recent_games.add(rom_path.clone(), title);
             app.recent_games.save();
             let palette = app.settings.palette;
@@ -75,6 +79,13 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
                 emu.set_palette(palette);
                 emu.run();
                 app.game = Game::Loaded(LoadedGame::Emulator(emu));
+            }
+
+            if app.settings.internet_enabled {
+                return Task::perform(
+                    smol::unblock(move || app::hasheous::lookup(&sha1).ok().flatten()),
+                    |info| app::Message::GameInfoLoaded(info),
+                );
             }
         }
     }

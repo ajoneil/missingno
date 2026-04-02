@@ -14,7 +14,7 @@ missingno-gb = { path = "../missingno-gb" }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }
-iced = { version = "0.14.0", features = ["advanced", "smol", "svg", "wgpu"] }
+iced = { version = "0.14.0", features = ["advanced", "image", "smol", "svg", "wgpu"] }
 replace_with = "0.1.8"
 rtrb = "0.3"
 rgb = { workspace = true }
@@ -23,7 +23,9 @@ gilrs = "0.11"
 ron = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
 smol = "2"
+ureq = "3"
 tiny_http = "0.12"
 jiff = "0.2"
 dirs = "6"

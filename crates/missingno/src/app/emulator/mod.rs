@@ -92,11 +92,15 @@ impl Emulator {
         Task::none()
     }
 
+    pub fn reset_hover(&mut self) {
+        self.screen_hovered = false;
+    }
+
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.screen_view.palette = palette;
     }
 
-    pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
+    pub fn view(&self, fullscreen: bool, has_game_info: bool) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
             let shortest = size.width.min(size.height);
 
@@ -114,17 +118,49 @@ impl Emulator {
             screen
         } else {
             let screen_stack = if self.screen_hovered {
-                stack![
-                    screen,
-                    container(
-                        button(icons::m(Icon::Expand).style(|_, _| svg::Style {
+                use iced::widget::row;
+                use iced::Border;
+
+                fn overlay_button_style(
+                    _theme: &iced::Theme,
+                    status: button::Status,
+                ) -> button::Style {
+                    let bg_alpha = match status {
+                        button::Status::Hovered => 0.6,
+                        _ => 0.4,
+                    };
+                    button::Style {
+                        background: Some(
+                            iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
+                        ),
+                        text_color: iced::Color::WHITE,
+                        border: Border::default().rounded(4),
+                        ..Default::default()
+                    }
+                }
+
+                let mut buttons = row![
+                    button(icons::m(Icon::Expand).style(|_, _| svg::Style {
+                        color: Some(iced::Color::WHITE),
+                    }))
+                    .style(overlay_button_style)
+                    .on_press(app::Message::ToggleFullscreen)
+                ]
+                .spacing(4);
+
+                if has_game_info {
+                    buttons = buttons.push(
+                        button(icons::m(Icon::Info).style(|_, _| svg::Style {
                             color: Some(iced::Color::WHITE),
                         }))
-                        .style(button::text)
-                        .on_press(app::Message::ToggleFullscreen)
-                    )
-                    .align_right(Fill)
-                    .padding(8)
+                        .style(overlay_button_style)
+                        .on_press(app::Message::ToggleGameInfo),
+                    );
+                }
+
+                stack![
+                    screen,
+                    container(buttons).align_right(Fill).padding(8)
                 ]
                 .into()
             } else {
@@ -134,6 +170,7 @@ impl Emulator {
             mouse_area(screen_stack)
                 .on_enter(Message::ScreenHovered.into())
                 .on_exit(Message::ScreenUnhovered.into())
+                .on_move(|_| Message::ScreenHovered.into())
                 .into()
         }
     }
