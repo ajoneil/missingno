@@ -104,15 +104,11 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
 
     column![
         row![
-            buttons::subtle(
-                row![icons::m(Icon::Back), text("Library")]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(Message::Back.into()),
+            buttons::subtle(icons::m(Icon::Back))
+                .on_press(Message::Back.into()),
             app_text::xl("Settings"),
         ]
-        .spacing(xl())
+        .spacing(s())
         .padding(m())
         .align_y(Center),
         horizontal_rule(),

@@ -9,6 +9,7 @@ use crate::app::core::text;
 pub enum Icon {
     Back,
     Close,
+    Debug,
     Expand,
     Front,
     Gamepad,
@@ -27,6 +28,7 @@ fn icon_data(icon: Icon) -> Handle {
     match icon {
         Icon::Back => Handle::from_memory(include_bytes!("pixelarticons/chevron-left.svg")),
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
+        Icon::Debug => Handle::from_memory(include_bytes!("pixelarticons/debug.svg")),
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("pixelarticons/chevron-right.svg")),
         Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
@@ -42,7 +44,7 @@ fn icon_data(icon: Icon) -> Handle {
     }
 }
 
-const ICON_SIZE: f32 = 24.0;
+pub const ICON_SIZE: f32 = 24.0;
 
 pub fn m<'a>(icon: Icon) -> Svg<'a, Theme> {
     svg(icon_data(icon))

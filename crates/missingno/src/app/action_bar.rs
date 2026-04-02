@@ -3,7 +3,7 @@ use iced::{
     Element,
     Length::Fill,
     Task,
-    widget::{Button, container, pick_list, row, toggler},
+    widget::{Button, container, mouse_area, pick_list, row},
 };
 
 use crate::app::{
@@ -45,26 +45,37 @@ impl ActionBar {
         match &app.game {
             Game::Unloaded | Game::Loading => {
                 row![
-                    container(app_text::xl("Library")).width(Fill),
+                    iced::widget::Space::new().width(Fill),
                     self.settings(app)
                 ]
             }
-            Game::Loaded(_) => {
+            Game::Loaded(loaded) => {
                 let title = app
                     .current_game
                     .as_ref()
                     .map(|g| g.entry.title.clone())
                     .unwrap_or_default();
 
+                let is_debugger = matches!(loaded, LoadedGame::Debugger(_));
+                let back_action = if is_debugger {
+                    app::Message::ToggleDebugger(false)
+                } else {
+                    app::Message::BackToLibrary
+                };
+
                 row![
-                    buttons::subtle(
-                        row![icons::m(Icon::Back), "Library"]
-                            .spacing(s())
-                            .align_y(Center),
-                    )
-                    .on_press(app::Message::BackToLibrary),
                     container(
-                        app_text::xl(title).wrapping(iced::widget::text::Wrapping::None)
+                        row![
+                            buttons::subtle(icons::m(Icon::Back)).on_press(back_action),
+                            mouse_area(
+                                app_text::xl(title)
+                                    .wrapping(iced::widget::text::Wrapping::None),
+                            )
+                            .on_press(app::Message::ToggleGameInfo)
+                            .interaction(iced::mouse::Interaction::Pointer),
+                        ]
+                        .spacing(s())
+                        .align_y(Center)
                     )
                     .clip(true)
                     .width(Fill),
@@ -113,16 +124,24 @@ impl ActionBar {
             _ => row![],
         };
 
-        if matches!(app.game, Game::Loaded(_)) {
-            if !app.sgb_active() {
-                row = row.push(self.palette_selector(app.settings.palette));
+        match &app.game {
+            Game::Loaded(LoadedGame::Emulator(_)) => {
+                if !app.sgb_active() {
+                    row = row.push(self.palette_selector(app.settings.palette));
+                }
+                row = row.push(
+                    buttons::subtle(
+                        row![icons::m(Icon::Debug), "Debug"].spacing(s()).align_y(Center),
+                    )
+                    .on_press(app::Message::ToggleDebugger(true)),
+                );
             }
-            row = row.push(
-                toggler(app.debugger_enabled)
-                    .label("Debugger")
-                    .on_toggle(|enable| app::Message::ToggleDebugger(enable))
-                    .size(m()),
-            );
+            Game::Loaded(LoadedGame::Debugger(_)) => {
+                if !app.sgb_active() {
+                    row = row.push(self.palette_selector(app.settings.palette));
+                }
+            }
+            _ => {}
         }
 
         if !matches!(app.game, Game::Loaded(_)) {
