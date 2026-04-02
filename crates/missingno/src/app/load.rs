@@ -118,10 +118,15 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     }
 
     // Update app state
+    let mut play_log = library::play_log::load(&game_dir);
+    play_log.start_session();
+    library::play_log::save(&game_dir, &play_log);
+
     app.current_game = Some(CurrentGame {
         entry: entry.clone(),
         game_dir,
         cover,
+        play_log,
     });
     app.game_info_shown = false;
 

@@ -104,6 +104,7 @@ struct CurrentGame {
     entry: library::GameEntry,
     game_dir: PathBuf,
     cover: Option<iced::widget::image::Handle>,
+    play_log: library::play_log::PlayLog,
 }
 
 #[derive(Debug, Clone)]
@@ -212,12 +213,33 @@ impl App {
 
             Message::BackToLibrary => {
                 self.save();
+                if let Some(current) = &mut self.current_game {
+                    current.play_log.end_session();
+                    library::play_log::save(&current.game_dir, &current.play_log);
+                }
                 self.game = Game::Unloaded;
                 self.current_game = None;
                 self.game_info_shown = false;
             }
             Message::SaveBattery => {
                 self.save();
+                if let Some(current) = &mut self.current_game {
+                    let size = match &self.game {
+                        Game::Loaded(LoadedGame::Emulator(emu)) => {
+                            emu.game_boy().cartridge().ram()
+                                .map(|r| r.len() as u32)
+                                .unwrap_or(0)
+                        }
+                        Game::Loaded(LoadedGame::Debugger(dbg)) => {
+                            dbg.game_boy().cartridge().ram()
+                                .map(|r| r.len() as u32)
+                                .unwrap_or(0)
+                        }
+                        _ => 0,
+                    };
+                    current.play_log.record_save(size);
+                    library::play_log::save(&current.game_dir, &current.play_log);
+                }
             }
             Message::Run => self.run(),
             Message::Pause => self.pause(),
@@ -272,6 +294,10 @@ impl App {
 
             Message::CloseRequested => {
                 self.save();
+                if let Some(current) = &mut self.current_game {
+                    current.play_log.end_session();
+                    library::play_log::save(&current.game_dir, &current.play_log);
+                }
                 return window::latest().and_then(window::close);
             }
 
