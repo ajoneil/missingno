@@ -12,8 +12,9 @@ use crate::app::{
         sizes::{l, m, s},
         text as app_text,
     },
-    library,
 };
+
+use crate::app::library;
 
 // Catppuccin Mocha subtext0
 const MUTED: Color = Color::from_rgb(
@@ -61,7 +62,8 @@ impl LibraryCache {
     }
 }
 
-pub fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
+#[allow(private_interfaces)]
+pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
     if cache.is_empty() {
         return empty_view();
     }

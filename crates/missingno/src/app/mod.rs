@@ -29,13 +29,9 @@ mod controls;
 mod core;
 mod debugger;
 mod emulator;
-mod game_info_panel;
-mod hasheous;
 pub mod library;
-mod library_view;
 mod load;
 mod recent;
-mod scanner;
 mod screen;
 pub mod settings;
 mod settings_view;
@@ -81,7 +77,7 @@ struct App {
     settings_shown: bool,
     current_game: Option<CurrentGame>,
     game_info_shown: bool,
-    library_cache: library_view::LibraryCache,
+    library_cache: library::view::LibraryCache,
 }
 
 enum Fullscreen {
@@ -126,11 +122,11 @@ enum Message {
     CompleteSetup { internet_enabled: bool },
     ShowSettings,
     Settings(settings_view::Message),
-    Library(library_view::Message),
+    Library(library::view::Message),
     ScanComplete,
     EnrichComplete,
     ToggleGameInfo,
-    GameInfoLoaded(Option<hasheous::GameInfo>),
+    GameInfoLoaded(Option<library::hasheous::GameInfo>),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -155,7 +151,7 @@ impl App {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
 
-        let library_cache = library_view::LibraryCache::load();
+        let library_cache = library::view::LibraryCache::load();
 
         let mut app = Self {
             game: Game::Unloaded,
@@ -183,13 +179,13 @@ impl App {
         if !app.settings.rom_directories.is_empty() {
             let dirs = app.settings.rom_directories.clone();
             tasks.push(Task::perform(
-                smol::unblock(move || scanner::scan_directories(&dirs)),
+                smol::unblock(move || library::scanner::scan_directories(&dirs)),
                 |_| Message::ScanComplete,
             ));
         } else if app.settings.internet_enabled {
             // No directories to scan, but still enrich any unenriched games
             tasks.push(Task::perform(
-                smol::unblock(|| scanner::enrich_library()),
+                smol::unblock(|| library::scanner::enrich_library()),
                 |_| Message::EnrichComplete,
             ));
         }
@@ -352,7 +348,7 @@ impl App {
                         self.settings.save();
                         let dirs = vec![path];
                         return Task::perform(
-                            smol::unblock(move || scanner::scan_directories(&dirs)),
+                            smol::unblock(move || library::scanner::scan_directories(&dirs)),
                             |_| Message::ScanComplete,
                         );
                     }
@@ -365,7 +361,7 @@ impl App {
                 }
             },
             Message::Library(message) => match message {
-                library_view::Message::PlayGame(sha1) => {
+                library::view::Message::PlayGame(sha1) => {
                     if let Some((_game_dir, entry)) = library::find_by_sha1(&sha1) {
                         // Find a ROM path that exists
                         if let Some(rom_path) = entry.rom_paths.iter().find(|p| p.exists()) {
@@ -377,16 +373,16 @@ impl App {
                 }
             },
             Message::ScanComplete => {
-                self.library_cache = library_view::LibraryCache::load();
+                self.library_cache = library::view::LibraryCache::load();
                 if self.settings.internet_enabled {
                     return Task::perform(
-                        smol::unblock(|| scanner::enrich_library()),
+                        smol::unblock(|| library::scanner::enrich_library()),
                         |_| Message::EnrichComplete,
                     );
                 }
             }
             Message::EnrichComplete => {
-                self.library_cache = library_view::LibraryCache::load();
+                self.library_cache = library::view::LibraryCache::load();
             }
             Message::ToggleGameInfo => {
                 self.game_info_shown = !self.game_info_shown;
@@ -416,7 +412,7 @@ impl App {
                     self.recent_games
                         .update_title(&current.entry.sha1, &current.entry.title);
                     self.recent_games.save();
-                    self.library_cache = library_view::LibraryCache::load();
+                    self.library_cache = library::view::LibraryCache::load();
                 }
             }
             Message::OpenUrl(url) => {
@@ -502,7 +498,7 @@ impl App {
                     if let Some(current) = &self.current_game {
                         return row![
                             container(game_view).center(Fill),
-                            game_info_panel::view(
+                            library::info_panel::view(
                                 &current.entry,
                                 current.cover.as_ref(),
                             ),
@@ -514,7 +510,7 @@ impl App {
                 game_view
             }
             _ if !self.settings.setup_complete => self.setup_view(),
-            _ => library_view::view(&self.library_cache),
+            _ => library::view::view(&self.library_cache),
         }
     }
 

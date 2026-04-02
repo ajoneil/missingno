@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::app::{self, App, CurrentGame, Game, LoadedGame, hasheous, library};
+use crate::app::{self, App, CurrentGame, Game, LoadedGame, library};
 use missingno_gb::{GameBoy, cartridge::Cartridge};
 
 #[derive(Debug, Clone)]
@@ -62,7 +62,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 }
 
 pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
-    let sha1 = hasheous::rom_sha1(&rom);
+    let sha1 = library::hasheous::rom_sha1(&rom);
 
     // Check library for existing game
     let (game_dir, mut entry) = if let Some((dir, existing)) = library::find_by_sha1(&sha1) {
@@ -128,12 +128,12 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     // Update recent games and library cache
     app.recent_games.add(&entry.sha1, &entry.title, &rom_path);
     app.recent_games.save();
-    app.library_cache = app::library_view::LibraryCache::load();
+    app.library_cache = app::library::view::LibraryCache::load();
 
     // Fire async Hasheous lookup if internet enabled
     if app.settings.internet_enabled {
         Task::perform(
-            smol::unblock(move || hasheous::lookup(&sha1).ok().flatten()),
+            smol::unblock(move || library::hasheous::lookup(&sha1).ok().flatten()),
             |info| app::Message::GameInfoLoaded(info),
         )
     } else {

@@ -1,3 +1,8 @@
+pub(crate) mod hasheous;
+pub(crate) mod info_panel;
+pub(crate) mod scanner;
+pub(crate) mod view;
+
 use std::{
     fs,
     path::{Path, PathBuf},

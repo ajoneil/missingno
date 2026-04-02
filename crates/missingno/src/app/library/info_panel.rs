@@ -10,8 +10,9 @@ use crate::app::{
         sizes::{l, m},
         text as app_text,
     },
-    library::GameEntry,
 };
+
+use crate::app::library::GameEntry;
 
 // Catppuccin Mocha subtext0
 const MUTED: Color = Color::from_rgb(
@@ -22,7 +23,8 @@ const MUTED: Color = Color::from_rgb(
 
 const PANEL_WIDTH: f32 = 320.0;
 
-pub fn view<'a>(
+#[allow(private_interfaces)]
+pub(crate) fn view<'a>(
     entry: &'a GameEntry,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {

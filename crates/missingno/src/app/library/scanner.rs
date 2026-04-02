@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use crate::app::{hasheous, library};
+use crate::app::library::{self, hasheous};
 
 use missingno_gb::cartridge::Cartridge;
 
