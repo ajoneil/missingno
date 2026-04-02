@@ -41,7 +41,7 @@ pub(crate) fn view<'a>(
         );
     }
 
-    col = col.push(app_text::xl(&entry.title));
+    col = col.push(app_text::xl(entry.display_title()));
 
     // Subtitle: publisher · year · platform
     let subtitle_parts: Vec<&str> = [

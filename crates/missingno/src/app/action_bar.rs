@@ -53,7 +53,7 @@ impl ActionBar {
                 let title = app
                     .current_game
                     .as_ref()
-                    .map(|g| g.entry.title.clone())
+                    .map(|g| g.entry.display_title())
                     .unwrap_or_default();
 
                 let is_debugger = matches!(loaded, LoadedGame::Debugger(_));

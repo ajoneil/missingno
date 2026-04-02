@@ -43,6 +43,24 @@ impl GameEntry {
         }
     }
 
+    pub fn display_title(&self) -> String {
+        // No-Intro names put articles after the main title:
+        //   "Legend of Zelda, The - Link's Awakening"
+        //   "Final Fantasy Legend, The"
+        // Move the article back to the front of that segment.
+        for article in [", The", ", A", ", An"] {
+            // Check for "Name, The - Subtitle" or "Name, The" at end
+            if let Some(pos) = self.title.find(article) {
+                let after_article = pos + article.len();
+                let art = &article[2..]; // "The", "A", "An"
+                let base = &self.title[..pos];
+                let rest = &self.title[after_article..];
+                return format!("{art} {base}{rest}");
+            }
+        }
+        self.title.clone()
+    }
+
     pub fn add_rom_path(&mut self, path: PathBuf) {
         let path_str = path.to_string_lossy();
         if !self.rom_paths.iter().any(|p| p.to_string_lossy() == path_str) {

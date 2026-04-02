@@ -112,7 +112,7 @@ fn game_row(game: &CachedGame) -> Element<'_, app::Message> {
 
     content = content.push(cover_slot);
 
-    let mut info = column![text(&game.entry.title)].spacing(2);
+    let mut info = column![text(game.entry.display_title())].spacing(2);
 
     let subtitle_parts: Vec<&str> = [
         game.entry.publisher.as_deref(),

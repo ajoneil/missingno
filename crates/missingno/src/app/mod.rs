@@ -195,7 +195,7 @@ impl App {
 
     fn title(&self) -> String {
         if let Some(current) = &self.current_game {
-            format!("{} - Missingno", current.entry.title)
+            format!("{} - Missingno", current.entry.display_title())
         } else {
             "Missingno".into()
         }
@@ -387,7 +387,7 @@ impl App {
                 // Sync recent game titles with enriched library entries
                 for cached in &self.library_cache.entries {
                     self.recent_games
-                        .update_title(&cached.entry.sha1, &cached.entry.title);
+                        .update_title(&cached.entry.sha1, &cached.entry.display_title());
                 }
                 self.recent_games.save();
 
