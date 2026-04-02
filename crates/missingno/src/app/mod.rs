@@ -272,7 +272,7 @@ impl App {
                         self.current_game = None;
 
                         if load::select_game(self, &sha1) {
-                            self.screen = Screen::Detail;
+                            return load::play_current_game(self);
                         } else {
                             self.screen = Screen::Library;
                         }
