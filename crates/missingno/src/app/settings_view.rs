@@ -73,8 +73,13 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
             .label("Allow internet access")
             .on_toggle(|enabled| Message::SetInternetEnabled(enabled).into())
             .size(m()),
-        text("When enabled, Missingno will look up game metadata and cover art using ROM checksums.")
-            .color(MUTED),
+        row![
+            text("Game metadata provided by").color(MUTED),
+            mouse_area(text("Hasheous").color(MUTED))
+                .on_press(app::Message::OpenUrl("https://hasheous.org"))
+                .interaction(mouse::Interaction::Pointer),
+        ]
+        .spacing(s()),
     ]
     .spacing(s());
 
