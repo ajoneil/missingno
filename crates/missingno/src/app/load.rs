@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use iced::Task;
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::app::{self, App, CurrentGame, Game, LoadedGame, library};
+use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library};
 use missingno_gb::{GameBoy, cartridge::Cartridge};
 
 #[derive(Debug, Clone)]
@@ -61,6 +61,77 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     Task::none()
 }
 
+/// Select a game from the library by SHA1 and populate CurrentGame.
+/// Does NOT start emulation — just loads metadata, cover, and play log.
+pub fn select_game(app: &mut App, sha1: &str) -> bool {
+    let Some((game_dir, entry)) = library::find_by_sha1(sha1) else {
+        return false;
+    };
+
+    let cover = library::load_cover(&game_dir)
+        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+
+    let play_log = library::play_log::load(&game_dir);
+
+    app.current_game = Some(CurrentGame {
+        entry,
+        game_dir,
+        cover,
+        play_log,
+    });
+    true
+}
+
+/// Start emulation for the currently selected game.
+/// Requires current_game to be set (via select_game or setup_game).
+pub fn play_current_game(app: &mut App) -> Task<app::Message> {
+    // Extract what we need before borrowing mutably
+    let (rom_path, game_dir) = {
+        let Some(current) = &app.current_game else {
+            return Task::none();
+        };
+        let Some(rom_path) = current.entry.rom_paths.iter().find(|p| p.exists()).cloned() else {
+            return Task::none();
+        };
+        (rom_path, current.game_dir.clone())
+    };
+
+    let Ok(rom) = std::fs::read(&rom_path) else {
+        return Task::none();
+    };
+
+    let save_data = library::load_battery(&game_dir);
+    let cartridge = Cartridge::new(rom, save_data);
+    let game_boy = GameBoy::new(cartridge, None);
+    let palette = app.settings.palette;
+
+    if app.debugger_enabled {
+        let mut debugger = app::debugger::Debugger::new(game_boy);
+        debugger.set_palette(palette);
+        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+    } else {
+        let mut emu = app::emulator::Emulator::new(game_boy);
+        emu.set_palette(palette);
+        emu.run();
+        app.game = Game::Loaded(LoadedGame::Emulator(emu));
+    }
+
+    // Start play session
+    if let Some(current) = &mut app.current_game {
+        current.play_log.start_session();
+        library::play_log::save(&current.game_dir, &current.play_log);
+        app.recent_games
+            .add(&current.entry.sha1, &current.entry.display_title(), &rom_path);
+        app.recent_games.save();
+    }
+
+    app.screen = Screen::Emulator;
+    app.library_cache = app::library::view::LibraryCache::load();
+
+    Task::none()
+}
+
+/// Full pipeline for loading a ROM from a file path: create library entry + start emulation.
 pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
     let sha1 = library::hasheous::rom_sha1(&rom);
 
@@ -94,10 +165,8 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     entry.add_rom_path(rom_path.clone());
     library::save_entry(&game_dir, &entry);
 
-    // Load save data from library
+    // Load save data and cover
     let save_data = library::load_battery(&game_dir);
-
-    // Load cached cover art
     let cover = library::load_cover(&game_dir)
         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
@@ -128,10 +197,10 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         cover,
         play_log,
     });
-    app.game_info_shown = false;
+    app.screen = Screen::Emulator;
 
-    // Update recent games and library cache
-    app.recent_games.add(&entry.sha1, &entry.display_title(), &rom_path);
+    app.recent_games
+        .add(&entry.sha1, &entry.display_title(), &rom_path);
     app.recent_games.save();
     app.library_cache = app::library::view::LibraryCache::load();
 

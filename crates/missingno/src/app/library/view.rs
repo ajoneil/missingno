@@ -9,6 +9,7 @@ use crate::app::{
     self,
     core::{
         buttons,
+        icons::{self, Icon},
         sizes::{l, m, s},
     },
 };
@@ -27,7 +28,8 @@ const COVER_WIDTH: f32 = 90.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    PlayGame(String), // sha1
+    SelectGame(String),
+    QuickPlay(String),
 }
 
 impl From<Message> for app::Message {
@@ -128,12 +130,20 @@ fn game_row(game: &CachedGame) -> Element<'_, app::Message> {
 
     content = content.push(info);
 
-    let btn = buttons::subtle(content).width(Fill);
+    let detail_btn = buttons::subtle(content)
+        .width(Fill)
+        .on_press(Message::SelectGame(game.entry.sha1.clone()).into());
 
     if rom_path.is_some() {
-        btn.on_press(Message::PlayGame(game.entry.sha1.clone()).into())
-            .into()
+        row![
+            detail_btn,
+            buttons::primary(icons::m(Icon::Front))
+                .on_press(Message::QuickPlay(game.entry.sha1.clone()).into()),
+        ]
+        .spacing(s())
+        .align_y(Center)
+        .into()
     } else {
-        btn.into()
+        detail_btn.into()
     }
 }

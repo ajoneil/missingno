@@ -68,6 +68,7 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
 }
 
 struct App {
+    screen: Screen,
     game: Game,
     debugger_enabled: bool,
     fullscreen: Fullscreen,
@@ -75,10 +76,16 @@ struct App {
     audio_output: Option<AudioOutput>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
-    settings_shown: bool,
     current_game: Option<CurrentGame>,
-    game_info_shown: bool,
     library_cache: library::view::LibraryCache,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Screen {
+    Library,
+    Settings,
+    Detail,
+    Emulator,
 }
 
 enum Fullscreen {
@@ -111,7 +118,13 @@ struct CurrentGame {
 enum Message {
     Load(load::Message),
 
+    // Navigation
     BackToLibrary,
+    PlayFromDetail,
+    BackToDetail,
+    ShowSettings,
+
+    // Emulation
     Run,
     Pause,
     Reset,
@@ -123,12 +136,10 @@ enum Message {
     ToggleDebugger(bool),
     SelectPalette(PaletteChoice),
     CompleteSetup { internet_enabled: bool },
-    ShowSettings,
     Settings(settings_view::Message),
     Library(library::view::Message),
     ScanComplete,
     EnrichComplete,
-    ToggleGameInfo,
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -156,6 +167,7 @@ impl App {
         let library_cache = library::view::LibraryCache::load();
 
         let mut app = Self {
+            screen: Screen::Library,
             game: Game::Unloaded,
             debugger_enabled: debugger,
             fullscreen: Fullscreen::Windowed,
@@ -163,9 +175,7 @@ impl App {
             audio_output: AudioOutput::new(),
             recent_games,
             settings,
-            settings_shown: false,
             current_game: None,
-            game_info_shown: false,
             library_cache,
         };
 
@@ -219,7 +229,23 @@ impl App {
                 }
                 self.game = Game::Unloaded;
                 self.current_game = None;
-                self.game_info_shown = false;
+                self.screen = Screen::Library;
+            }
+            Message::PlayFromDetail => {
+                if matches!(self.game, Game::Loaded(_)) {
+                    // Resume
+                    self.run();
+                    self.screen = Screen::Emulator;
+                } else {
+                    return load::play_current_game(self);
+                }
+            }
+            Message::BackToDetail => {
+                self.pause();
+                self.screen = Screen::Detail;
+            }
+            Message::ShowSettings => {
+                self.screen = Screen::Settings;
             }
             Message::SaveBattery => {
                 self.save();
@@ -349,12 +375,9 @@ impl App {
                 self.settings.setup_complete = true;
                 self.settings.save();
             }
-            Message::ShowSettings => {
-                self.settings_shown = true;
-            }
             Message::Settings(message) => match message {
                 settings_view::Message::Back => {
-                    self.settings_shown = false;
+                    self.screen = Screen::Library;
                 }
                 settings_view::Message::SetInternetEnabled(enabled) => {
                     self.settings.internet_enabled = enabled;
@@ -391,14 +414,14 @@ impl App {
                 }
             },
             Message::Library(message) => match message {
-                library::view::Message::PlayGame(sha1) => {
-                    if let Some((_game_dir, entry)) = library::find_by_sha1(&sha1) {
-                        // Find a ROM path that exists
-                        if let Some(rom_path) = entry.rom_paths.iter().find(|p| p.exists()) {
-                            if let Ok(rom) = std::fs::read(rom_path) {
-                                return load::setup_game(self, rom_path.clone(), rom);
-                            }
-                        }
+                library::view::Message::SelectGame(sha1) => {
+                    if load::select_game(self, &sha1) {
+                        self.screen = Screen::Detail;
+                    }
+                }
+                library::view::Message::QuickPlay(sha1) => {
+                    if load::select_game(self, &sha1) {
+                        return load::play_current_game(self);
                     }
                 }
             },
@@ -428,12 +451,6 @@ impl App {
                         current.cover = library::load_thumbnail(&current.game_dir)
                             .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
                     }
-                }
-            }
-            Message::ToggleGameInfo => {
-                self.game_info_shown = !self.game_info_shown;
-                if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
-                    emulator.reset_hover();
                 }
             }
             Message::OpenUrl(url) => {
@@ -480,58 +497,63 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
-            let content = container(self.inner())
-                .center(Fill)
-                .style(|_| container::Style {
-                    background: Some(iced::Color::BLACK.into()),
-                    ..Default::default()
-                });
+        // Fullscreen emulator bypasses the normal chrome
+        if self.screen == Screen::Emulator {
+            if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
+                let content = container(self.emulator_view(true))
+                    .center(Fill)
+                    .style(|_| container::Style {
+                        background: Some(iced::Color::BLACK.into()),
+                        ..Default::default()
+                    });
 
-            let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
-            if cursor_hidden {
-                area = area.interaction(mouse::Interaction::Hidden);
+                let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
+                if cursor_hidden {
+                    area = area.interaction(mouse::Interaction::Hidden);
+                }
+                return area.into();
             }
-            area.into()
-        } else if self.settings_shown {
-            return settings_view::view(&self.settings);
-        } else {
-            column![
-                self.action_bar.view(self),
-                horizontal_rule(),
-                container(self.inner()).center(Fill)
-            ]
-            .into()
         }
+
+        // Settings has its own full layout
+        if self.screen == Screen::Settings {
+            return settings_view::view(&self.settings);
+        }
+
+        // First-boot setup
+        if !self.settings.setup_complete {
+            return self.setup_view();
+        }
+
+        // Standard layout: action bar + content
+        let content = match self.screen {
+            Screen::Library => library::view::view(&self.library_cache),
+            Screen::Detail => {
+                if let Some(current) = &self.current_game {
+                    library::detail_view::view(current, &self.game)
+                } else {
+                    library::view::view(&self.library_cache)
+                }
+            }
+            Screen::Emulator => self.emulator_view(false),
+            Screen::Settings => unreachable!(),
+        };
+
+        column![
+            self.action_bar.view(self),
+            horizontal_rule(),
+            container(content).center(Fill)
+        ]
+        .into()
     }
 
-    fn inner(&self) -> Element<'_, Message> {
-        let fullscreen = matches!(self.fullscreen, Fullscreen::Active { .. });
+    fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
         match &self.game {
-            Game::Loaded(game) => {
-                let has_info = self.current_game.is_some();
-                let game_view = match game {
-                    LoadedGame::Debugger(debugger) => debugger.view(),
-                    LoadedGame::Emulator(emulator) => emulator.view(fullscreen, has_info),
-                };
-
-                if self.game_info_shown {
-                    if let Some(current) = &self.current_game {
-                        return row![
-                            container(game_view).center(Fill),
-                            library::info_panel::view(
-                                &current.entry,
-                                current.cover.as_ref(),
-                            ),
-                        ]
-                        .into();
-                    }
-                }
-
-                game_view
-            }
-            _ if !self.settings.setup_complete => self.setup_view(),
-            _ => library::view::view(&self.library_cache),
+            Game::Loaded(game) => match game {
+                LoadedGame::Debugger(debugger) => debugger.view(),
+                LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
+            },
+            _ => text::m("No game loaded").into(),
         }
     }
 

@@ -1,5 +1,5 @@
+pub(crate) mod detail_view;
 pub(crate) mod hasheous;
-pub(crate) mod info_panel;
 pub(crate) mod play_log;
 pub(crate) mod scanner;
 pub(crate) mod view;

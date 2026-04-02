@@ -42,25 +42,42 @@ impl ActionBar {
     }
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
-        match &app.game {
-            Game::Unloaded | Game::Loading => {
+        let title = app
+            .current_game
+            .as_ref()
+            .map(|g| g.entry.display_title())
+            .unwrap_or_default();
+
+        match app.screen {
+            app::Screen::Library => {
                 row![
                     iced::widget::Space::new().width(Fill),
                     self.settings(app)
                 ]
             }
-            Game::Loaded(loaded) => {
-                let title = app
-                    .current_game
-                    .as_ref()
-                    .map(|g| g.entry.display_title())
-                    .unwrap_or_default();
-
-                let is_debugger = matches!(loaded, LoadedGame::Debugger(_));
+            app::Screen::Detail => {
+                row![
+                    container(
+                        row![
+                            buttons::subtle(icons::m(Icon::Back))
+                                .on_press(app::Message::BackToLibrary),
+                            app_text::xl(title)
+                                .wrapping(iced::widget::text::Wrapping::None),
+                        ]
+                        .spacing(s())
+                        .align_y(Center)
+                    )
+                    .clip(true)
+                    .width(Fill),
+                    self.settings(app)
+                ]
+            }
+            app::Screen::Emulator => {
+                let is_debugger = matches!(app.game, Game::Loaded(LoadedGame::Debugger(_)));
                 let back_action = if is_debugger {
                     app::Message::ToggleDebugger(false)
                 } else {
-                    app::Message::BackToLibrary
+                    app::Message::BackToDetail
                 };
 
                 row![
@@ -71,7 +88,7 @@ impl ActionBar {
                                 app_text::xl(title)
                                     .wrapping(iced::widget::text::Wrapping::None),
                             )
-                            .on_press(app::Message::ToggleGameInfo)
+                            .on_press(app::Message::BackToDetail)
                             .interaction(iced::mouse::Interaction::Pointer),
                         ]
                         .spacing(s())
@@ -82,6 +99,10 @@ impl ActionBar {
                     controls(app.running(), app.debugger_enabled),
                     self.settings(app)
                 ]
+            }
+            app::Screen::Settings => {
+                // Settings has its own header, shouldn't reach here
+                row![]
             }
         }
         .spacing(xl())
@@ -117,18 +138,17 @@ impl ActionBar {
     }
 
     fn settings(&self, app: &App) -> Element<'_, app::Message> {
-        let mut row = match &app.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                row![self.panes(debugger.panes().unshown_panes())]
-            }
-            _ => row![],
-        };
+        let mut row = row![];
 
-        match &app.game {
-            Game::Loaded(LoadedGame::Emulator(_)) => {
-                if !app.sgb_active() {
-                    row = row.push(self.palette_selector(app.settings.palette));
-                }
+        // Emulator-specific controls
+        if app.screen == app::Screen::Emulator {
+            if let Game::Loaded(LoadedGame::Debugger(debugger)) = &app.game {
+                row = row.push(self.panes(debugger.panes().unshown_panes()));
+            }
+            if !app.sgb_active() {
+                row = row.push(self.palette_selector(app.settings.palette));
+            }
+            if matches!(app.game, Game::Loaded(LoadedGame::Emulator(_))) {
                 row = row.push(
                     buttons::subtle(
                         row![icons::m(Icon::Debug), "Debug"].spacing(s()).align_y(Center),
@@ -136,15 +156,9 @@ impl ActionBar {
                     .on_press(app::Message::ToggleDebugger(true)),
                 );
             }
-            Game::Loaded(LoadedGame::Debugger(_)) => {
-                if !app.sgb_active() {
-                    row = row.push(self.palette_selector(app.settings.palette));
-                }
-            }
-            _ => {}
         }
 
-        if !matches!(app.game, Game::Loaded(_)) {
+        if app.screen == app::Screen::Library {
             row = row.push(
                 buttons::subtle("Add Game...")
                     .on_press(load::Message::Pick.into()),

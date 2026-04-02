@@ -107,15 +107,11 @@ impl Emulator {
         Task::none()
     }
 
-    pub fn reset_hover(&mut self) {
-        self.screen_hovered = false;
-    }
-
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.screen_view.palette = palette;
     }
 
-    pub fn view(&self, fullscreen: bool, has_game_info: bool) -> Element<'_, app::Message> {
+    pub fn view(&self, fullscreen: bool) -> Element<'_, app::Message> {
         let screen: Element<'_, app::Message> = responsive(|size| {
             let shortest = size.width.min(size.height);
 
@@ -133,7 +129,6 @@ impl Emulator {
             screen
         } else {
             let screen_stack = if self.screen_hovered {
-                use iced::widget::row;
                 use iced::Border;
 
                 fn overlay_button_style(
@@ -154,28 +149,17 @@ impl Emulator {
                     }
                 }
 
-                let mut buttons = row![
-                    button(icons::m(Icon::Expand).style(|_, _| svg::Style {
-                        color: Some(iced::Color::WHITE),
-                    }))
-                    .style(overlay_button_style)
-                    .on_press(app::Message::ToggleFullscreen)
-                ]
-                .spacing(4);
-
-                if has_game_info {
-                    buttons = buttons.push(
-                        button(icons::m(Icon::Info).style(|_, _| svg::Style {
+                stack![
+                    screen,
+                    container(
+                        button(icons::m(Icon::Expand).style(|_, _| svg::Style {
                             color: Some(iced::Color::WHITE),
                         }))
                         .style(overlay_button_style)
-                        .on_press(app::Message::ToggleGameInfo),
-                    );
-                }
-
-                stack![
-                    screen,
-                    container(buttons).align_right(Fill).padding(8)
+                        .on_press(app::Message::ToggleFullscreen)
+                    )
+                    .align_right(Fill)
+                    .padding(8)
                 ]
                 .into()
             } else {
