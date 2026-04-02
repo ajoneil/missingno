@@ -22,6 +22,8 @@ pub struct GameEntry {
     pub wikipedia_url: Option<String>,
     #[serde(default)]
     pub igdb_url: Option<String>,
+    #[serde(default)]
+    pub enrichment_attempted: bool,
     pub rom_paths: Vec<PathBuf>,
 }
 
@@ -36,6 +38,7 @@ impl GameEntry {
             description: None,
             wikipedia_url: None,
             igdb_url: None,
+            enrichment_attempted: false,
             rom_paths: vec![rom_path],
         }
     }
