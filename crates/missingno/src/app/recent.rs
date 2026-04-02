@@ -117,7 +117,7 @@ impl RecentGames {
             .spacing(s())
             .align_y(Center);
 
-            buttons::text(label)
+            buttons::subtle(label)
                 .on_press(load::Message::LoadPath(game.path()).into())
                 .into()
         }))

@@ -31,9 +31,9 @@ impl PlaybackPane {
         let can_play =
             debugger.has_recording() && !debugger.is_recording() && !debugger.is_playing();
         let play_button = if can_play {
-            buttons::success("Play").on_press(app::Message::StartPlayback)
+            buttons::primary("Play").on_press(app::Message::StartPlayback)
         } else {
-            buttons::success("Play")
+            buttons::primary("Play")
         };
 
         let record_button = if debugger.is_recording() {

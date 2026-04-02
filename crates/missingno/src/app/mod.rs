@@ -15,7 +15,7 @@ use replace_with::replace_with_or_abort;
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
 use core::{
-    fonts, horizontal_rule,
+    buttons, fonts, horizontal_rule,
     icons::{self, Icon},
     sizes::{l, s, xl},
     text,
@@ -40,7 +40,7 @@ pub mod settings;
 mod texture_renderer;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
-    iced::application(
+    let mut app = iced::application(
         move || App::new(rom_path.clone(), debugger),
         App::update,
         App::view,
@@ -59,8 +59,13 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
         ..Default::default()
     })
     .theme(App::theme)
-    .exit_on_close_request(false)
-    .run()
+    .exit_on_close_request(false);
+
+    for font_data in fonts::load() {
+        app = app.font(font_data);
+    }
+
+    app.run()
 }
 
 struct App {
@@ -107,6 +112,7 @@ enum Message {
 
     ToggleDebugger(bool),
     SelectPalette(PaletteChoice),
+    CompleteSetup { internet_enabled: bool },
     ShowAbout,
     DismissAbout,
     OpenUrl(&'static str),
@@ -295,6 +301,11 @@ impl App {
                     _ => {}
                 }
             }
+            Message::CompleteSetup { internet_enabled } => {
+                self.settings.internet_enabled = internet_enabled;
+                self.settings.setup_complete = true;
+                self.settings.save();
+            }
             Message::ShowAbout => self.about_shown = true,
             Message::DismissAbout => self.about_shown = false,
             Message::OpenUrl(url) => {
@@ -431,6 +442,7 @@ impl App {
                 LoadedGame::Debugger(debugger) => debugger.view(),
                 LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
             },
+            _ if !self.settings.setup_complete => self.setup_view(),
             _ => {
                 let mut col = column![
                     text::xl("Welcome to Missingno!"),
@@ -449,6 +461,33 @@ impl App {
                 col.into()
             }
         }
+    }
+
+    fn setup_view(&self) -> Element<'_, Message> {
+        column![
+            icons::xl(Icon::GameBoy)
+                .width(120)
+                .height(120)
+                .style(|_, _| svg::Style { color: None }),
+            text::xl("Welcome to Missingno"),
+            column![
+                iced_text("Missingno can connect to the internet to look up game metadata, cover art, and manuals for your games."),
+                iced_text("No data about your games or usage is sent — only ROM checksums are used for identification."),
+                iced_text("You can change this anytime in Settings."),
+            ]
+            .spacing(s())
+            .max_width(420),
+            row![
+                buttons::standard("Stay offline")
+                    .on_press(Message::CompleteSetup { internet_enabled: false }),
+                buttons::primary("Enable internet features")
+                    .on_press(Message::CompleteSetup { internet_enabled: true }),
+            ]
+            .spacing(s()),
+        ]
+        .align_x(Center)
+        .spacing(l())
+        .into()
     }
 
     fn drain_audio(&mut self) {
