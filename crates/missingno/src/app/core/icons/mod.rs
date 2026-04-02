@@ -6,52 +6,49 @@ use iced::{Theme, widget::svg};
 use crate::app::core::text;
 
 pub enum Icon {
-    Close,
-    Front,
     Back,
-    Fullscreen,
+    Close,
+    Expand,
+    Front,
+    Gamepad,
     GameBoy,
-    Globe,
+    Gear,
     GitHub,
-    BreakpointEnabled,
-    // BreakpointDisabled,
+    Globe,
+    Monitor,
+    Sliders,
+    Warning,
+    Wifi,
 }
 
 fn icon_data(icon: Icon) -> Handle {
     match icon {
-        Icon::Close => Handle::from_memory(include_bytes!("bootstrap/x-square-fill.svg")),
-
-        Icon::Front => Handle::from_memory(include_bytes!("bootstrap/front.svg")),
-        Icon::Back => Handle::from_memory(include_bytes!("bootstrap/back.svg")),
-        Icon::Fullscreen => Handle::from_memory(include_bytes!("bootstrap/fullscreen.svg")),
+        Icon::Back => Handle::from_memory(include_bytes!("pixelarticons/chevron-left.svg")),
+        Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
+        Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
+        Icon::Front => Handle::from_memory(include_bytes!("pixelarticons/chevron-right.svg")),
+        Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
         Icon::GameBoy => Handle::from_memory(include_bytes!("missingno.svg")),
-        Icon::Globe => Handle::from_memory(include_bytes!("bootstrap/globe.svg")),
+        Icon::Gear => Handle::from_memory(include_bytes!("pixelarticons/settings-cog.svg")),
         Icon::GitHub => Handle::from_memory(include_bytes!("bootstrap/github.svg")),
-        Icon::BreakpointEnabled => {
-            Handle::from_memory(include_bytes!("bootstrap/exclamation-octagon-fill.svg"))
-        } // Icon::BreakpointDisabled => {
-          //     Handle::from_memory(include_bytes!("bootstrap/exclamation-octagon.svg"))
-          // }
+        Icon::Globe => Handle::from_memory(include_bytes!("pixelarticons/globe.svg")),
+        Icon::Monitor => Handle::from_memory(include_bytes!("pixelarticons/monitor.svg")),
+        Icon::Sliders => Handle::from_memory(include_bytes!("pixelarticons/sliders.svg")),
+        Icon::Warning => Handle::from_memory(include_bytes!("pixelarticons/warning-diamond.svg")),
+        Icon::Wifi => Handle::from_memory(include_bytes!("pixelarticons/wifi.svg")),
     }
 }
 
+const ICON_SIZE: f32 = 24.0;
+
 pub fn m<'a>(icon: Icon) -> Svg<'a, Theme> {
     svg(icon_data(icon))
-        .width(text::sizes::m())
-        .height(text::sizes::m())
+        .width(ICON_SIZE)
+        .height(ICON_SIZE)
         .style(|theme: &Theme, _state| Style {
             color: Some(theme.palette().text),
         })
 }
-
-// pub fn l<'a>(icon: Icon) -> Svg<'a, Theme> {
-//     svg(icon_data(icon))
-//         .width(text::sizes::l())
-//         .height(text::sizes::l())
-//         .style(|theme: &Theme, _state| Style {
-//             color: Some(theme.palette().text),
-//         })
-// }
 
 pub fn xl<'a>(icon: Icon) -> Svg<'a, Theme> {
     svg(icon_data(icon))
@@ -63,7 +60,7 @@ pub fn xl<'a>(icon: Icon) -> Svg<'a, Theme> {
 }
 
 pub fn breakpoint_enabled() -> Svg<'static, Theme> {
-    m(Icon::BreakpointEnabled).style(|theme: &Theme, _state| Style {
+    m(Icon::Warning).style(|theme: &Theme, _state| Style {
         color: Some(theme.extended_palette().danger.strong.color),
     })
 }

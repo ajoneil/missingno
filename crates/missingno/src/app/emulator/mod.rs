@@ -117,7 +117,7 @@ impl Emulator {
                 stack![
                     screen,
                     container(
-                        button(icons::m(Icon::Fullscreen).style(|_, _| svg::Style {
+                        button(icons::m(Icon::Expand).style(|_, _| svg::Style {
                             color: Some(iced::Color::WHITE),
                         }))
                         .style(button::text)

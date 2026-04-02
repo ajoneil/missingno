@@ -10,6 +10,7 @@ use crate::app::{
     self, App, Game, LoadedGame,
     core::{
         buttons,
+        icons::{self, Icon},
         sizes::{m, s, xl},
     },
     debugger::{
@@ -100,7 +101,10 @@ impl ActionBar {
                     .on_toggle(|enable| app::Message::ToggleDebugger(enable))
                     .size(m()),
             )
-            .push(buttons::standard("About").on_press(app::Message::ShowAbout))
+            .push(
+                buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
+                    .on_press(app::Message::ShowSettings),
+            )
             .spacing(m())
             .align_y(Center),
         )

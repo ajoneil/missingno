@@ -5,9 +5,7 @@ use iced::{
     Element,
     Length::Fill,
     Subscription, Task, Theme, event, mouse, time,
-    widget::{
-        Stack, button, center, column, container, mouse_area, opaque, row, svg, text as iced_text,
-    },
+    widget::{column, container, mouse_area, row, svg, text as iced_text},
     window,
 };
 use replace_with::replace_with_or_abort;
@@ -17,7 +15,7 @@ use audio_output::AudioOutput;
 use core::{
     buttons, fonts, horizontal_rule,
     icons::{self, Icon},
-    sizes::{l, s, xl},
+    sizes::{l, s},
     text,
 };
 use missingno_gb::{
@@ -37,6 +35,7 @@ mod load;
 mod recent;
 mod screen;
 pub mod settings;
+mod settings_view;
 mod texture_renderer;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
@@ -77,7 +76,7 @@ struct App {
     save_path: Option<PathBuf>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
-    about_shown: bool,
+    settings_shown: bool,
 }
 
 enum Fullscreen {
@@ -113,8 +112,8 @@ enum Message {
     ToggleDebugger(bool),
     SelectPalette(PaletteChoice),
     CompleteSetup { internet_enabled: bool },
-    ShowAbout,
-    DismissAbout,
+    ShowSettings,
+    Settings(settings_view::Message),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -173,7 +172,7 @@ impl App {
                 save_path,
                 recent_games,
                 settings,
-                about_shown: false,
+                settings_shown: false,
             },
             Task::none(),
         )
@@ -306,8 +305,18 @@ impl App {
                 self.settings.setup_complete = true;
                 self.settings.save();
             }
-            Message::ShowAbout => self.about_shown = true,
-            Message::DismissAbout => self.about_shown = false,
+            Message::ShowSettings => {
+                self.settings_shown = true;
+            }
+            Message::Settings(message) => match message {
+                settings_view::Message::Back => {
+                    self.settings_shown = false;
+                }
+                settings_view::Message::SetInternetEnabled(enabled) => {
+                    self.settings.internet_enabled = enabled;
+                    self.settings.save();
+                }
+            },
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
             }
@@ -365,73 +374,15 @@ impl App {
                 area = area.interaction(mouse::Interaction::Hidden);
             }
             area.into()
+        } else if self.settings_shown {
+            return settings_view::view(&self.settings);
         } else {
-            let main = column![
+            column![
                 self.action_bar.view(self),
                 horizontal_rule(),
                 container(self.inner()).center(Fill)
-            ];
-
-            if self.about_shown {
-                Stack::new()
-                    .push(main)
-                    .push(opaque(
-                        mouse_area(
-                            center(
-                                container(
-                                    column![
-                                        icons::xl(Icon::GameBoy)
-                                            .width(80)
-                                            .height(80)
-                                            .style(|_, _| svg::Style { color: None }),
-                                        text::xl("Missingno"),
-                                        iced_text(format!(
-                                            "Version {}",
-                                            env!("CARGO_PKG_VERSION").trim_end_matches(".0")
-                                        )),
-                                        iced_text("A Game Boy emulator and debugger"),
-                                        iced_text("by Andrew O'Neil"),
-                                        mouse_area(
-                                            row![
-                                                icons::m(Icon::Globe),
-                                                iced_text("andyofniall.net"),
-                                            ]
-                                            .spacing(s())
-                                            .align_y(Center),
-                                        )
-                                        .on_press(Message::OpenUrl("https://andyofniall.net/"))
-                                        .interaction(mouse::Interaction::Pointer),
-                                        mouse_area(
-                                            row![
-                                                icons::m(Icon::GitHub),
-                                                iced_text("github.com/ajoneil/missingno"),
-                                            ]
-                                            .spacing(s())
-                                            .align_y(Center),
-                                        )
-                                        .on_press(Message::OpenUrl(
-                                            "https://github.com/ajoneil/missingno",
-                                        ))
-                                        .interaction(mouse::Interaction::Pointer),
-                                        button("Close").on_press(Message::DismissAbout),
-                                    ]
-                                    .spacing(l())
-                                    .align_x(Center),
-                                )
-                                .padding(xl())
-                                .style(container::bordered_box),
-                            )
-                            .style(|_| container::Style {
-                                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
-                                ..Default::default()
-                            }),
-                        )
-                        .on_press(Message::DismissAbout),
-                    ))
-                    .into()
-            } else {
-                main.into()
-            }
+            ]
+            .into()
         }
     }
 
