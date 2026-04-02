@@ -10,7 +10,7 @@ name = "missingno"
 path = "src/main.rs"
 
 [dependencies]
-missingno-gb = { path = "../missingno-gb" }
+missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.5.57", features = ["derive"] }

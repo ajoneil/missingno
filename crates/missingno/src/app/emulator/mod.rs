@@ -68,7 +68,17 @@ impl Emulator {
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
             Message::EmulateFrame => {
-                while !self.game_boy.step().new_screen {}
+                // A GB frame is ~70224 T-cycles. Allow 2x headroom to avoid
+                // hanging the UI if the PPU never produces a frame (e.g. LCD off).
+                const MAX_DOTS_PER_FRAME: u32 = 70224 * 2;
+                let mut dots = 0;
+                loop {
+                    let result = self.game_boy.step();
+                    dots += result.dots;
+                    if result.new_screen || dots >= MAX_DOTS_PER_FRAME {
+                        break;
+                    }
+                }
                 let screen = self.game_boy.screen().clone();
                 let video_enabled = self.game_boy.ppu().control().video_enabled();
                 let display = if let Some(sgb) = self.game_boy.sgb() {
