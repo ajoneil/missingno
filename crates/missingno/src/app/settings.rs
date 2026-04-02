@@ -11,6 +11,8 @@ struct SettingsFile {
     internet_enabled: bool,
     #[serde(default)]
     palette: String,
+    #[serde(default)]
+    rom_directories: Vec<PathBuf>,
 }
 
 impl Default for SettingsFile {
@@ -19,6 +21,7 @@ impl Default for SettingsFile {
             setup_complete: false,
             internet_enabled: false,
             palette: palette_to_string(PaletteChoice::default()),
+            rom_directories: Vec::new(),
         }
     }
 }
@@ -27,6 +30,7 @@ pub struct Settings {
     pub setup_complete: bool,
     pub internet_enabled: bool,
     pub palette: PaletteChoice,
+    pub rom_directories: Vec<PathBuf>,
 }
 
 impl Default for Settings {
@@ -35,6 +39,7 @@ impl Default for Settings {
             setup_complete: false,
             internet_enabled: false,
             palette: PaletteChoice::default(),
+            rom_directories: Vec::new(),
         }
     }
 }
@@ -56,6 +61,7 @@ impl Settings {
                 setup_complete: file.setup_complete,
                 internet_enabled: file.internet_enabled,
                 palette: parse_palette(&file.palette),
+                rom_directories: file.rom_directories,
             };
         }
 
@@ -81,6 +87,7 @@ impl Settings {
             setup_complete: self.setup_complete,
             internet_enabled: self.internet_enabled,
             palette: palette_to_string(self.palette),
+            rom_directories: self.rom_directories.clone(),
         };
         if let Ok(data) = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()) {
             let _ = fs::write(path, data);

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use iced::{
     Alignment::Center,
     Color, Element,
@@ -19,6 +21,9 @@ use crate::app::{
 #[derive(Debug, Clone)]
 pub enum Message {
     SetInternetEnabled(bool),
+    PickRomDirectory,
+    AddRomDirectory(PathBuf),
+    RemoveRomDirectory(usize),
     Back,
 }
 
@@ -73,6 +78,25 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
     ]
     .spacing(s());
 
+    let mut directories = column![app_text::m("ROM Folders")].spacing(s());
+
+    for (i, dir) in settings.rom_directories.iter().enumerate() {
+        directories = directories.push(
+            row![
+                text(dir.to_string_lossy().to_string()).width(Fill),
+                buttons::danger(icons::m(Icon::Close))
+                    .on_press(Message::RemoveRomDirectory(i).into()),
+            ]
+            .spacing(s())
+            .align_y(Center),
+        );
+    }
+
+    directories = directories.push(
+        buttons::standard("Add folder...")
+            .on_press(Message::PickRomDirectory.into()),
+    );
+
     column![
         container(
             buttons::subtle(
@@ -85,7 +109,7 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
         .padding(m()),
         horizontal_rule(),
         container(
-            column![header, horizontal_rule(), network]
+            column![header, horizontal_rule(), network, horizontal_rule(), directories]
                 .spacing(l())
                 .max_width(500),
         )

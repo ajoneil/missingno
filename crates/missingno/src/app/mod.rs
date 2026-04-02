@@ -34,6 +34,7 @@ mod hasheous;
 pub mod library;
 mod load;
 mod recent;
+mod scanner;
 mod screen;
 pub mod settings;
 mod settings_view;
@@ -122,6 +123,7 @@ enum Message {
     CompleteSetup { internet_enabled: bool },
     ShowSettings,
     Settings(settings_view::Message),
+    ScanComplete,
     ToggleGameInfo,
     GameInfoLoaded(Option<hasheous::GameInfo>),
     OpenUrl(&'static str),
@@ -161,16 +163,24 @@ impl App {
             game_info_shown: false,
         };
 
-        let task = if let Some(rom_path) = rom_path {
-            match fs::read(&rom_path) {
-                Ok(rom) => load::setup_game(&mut app, rom_path, rom),
-                Err(_) => Task::none(),
-            }
-        } else {
-            Task::none()
-        };
+        let mut tasks = Vec::new();
 
-        (app, task)
+        if let Some(rom_path) = rom_path {
+            if let Ok(rom) = fs::read(&rom_path) {
+                tasks.push(load::setup_game(&mut app, rom_path, rom));
+            }
+        }
+
+        // Scan configured ROM directories on startup
+        if !app.settings.rom_directories.is_empty() {
+            let dirs = app.settings.rom_directories.clone();
+            tasks.push(Task::perform(
+                smol::unblock(move || scanner::scan_directories(&dirs)),
+                |_| Message::ScanComplete,
+            ));
+        }
+
+        (app, Task::batch(tasks))
     }
 
     fn title(&self) -> String {
@@ -304,7 +314,40 @@ impl App {
                     self.settings.internet_enabled = enabled;
                     self.settings.save();
                 }
+                settings_view::Message::PickRomDirectory => {
+                    let dialog = rfd::AsyncFileDialog::new();
+                    return Task::perform(dialog.pick_folder(), |folder| {
+                        match folder {
+                            Some(handle) => {
+                                let path = handle.path().to_path_buf();
+                                settings_view::Message::AddRomDirectory(path).into()
+                            }
+                            None => Message::None,
+                        }
+                    });
+                }
+                settings_view::Message::AddRomDirectory(path) => {
+                    if !self.settings.rom_directories.contains(&path) {
+                        self.settings.rom_directories.push(path.clone());
+                        self.settings.save();
+                        let dirs = vec![path];
+                        return Task::perform(
+                            smol::unblock(move || scanner::scan_directories(&dirs)),
+                            |_| Message::ScanComplete,
+                        );
+                    }
+                }
+                settings_view::Message::RemoveRomDirectory(index) => {
+                    if index < self.settings.rom_directories.len() {
+                        self.settings.rom_directories.remove(index);
+                        self.settings.save();
+                    }
+                }
             },
+            Message::ScanComplete => {
+                // Scan done — library entries are already persisted by the scanner.
+                // Future: could refresh a library view here.
+            }
             Message::ToggleGameInfo => {
                 self.game_info_shown = !self.game_info_shown;
                 if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
