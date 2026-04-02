@@ -138,10 +138,17 @@ enum Message {
     PlayFromDetail,
     BackToDetail,
     ShowSettings,
-    /// Actually close the running game (save, end session, unload).
     ConfirmAction,
-    /// Dismiss the confirmation dialog.
     DismissConfirm,
+
+    // Game management (detail page actions)
+    OpenGameFolder,
+    RefreshMetadata,
+    ImportSave,
+    ImportSaveSelected(Option<rfd::FileHandle>),
+    RestoreSave(PathBuf),
+    RemoveGame,
+    GameMetadataRefreshed(library::hasheous::GameInfo),
 
     // Emulation
     Run,
@@ -282,6 +289,83 @@ impl App {
             Message::DismissConfirm => {
                 self.pending_action = None;
             }
+
+            // Game management
+            Message::OpenGameFolder => {
+                if let Some(sha1) = &self.viewing_sha1 {
+                    if let Some(dir) = library::find_by_sha1(sha1).map(|(d, _)| d) {
+                        let _ = open::that(&dir);
+                    }
+                }
+            }
+            Message::RefreshMetadata => {
+                if let Some(sha1) = self.viewing_sha1.clone() {
+                    return Task::perform(
+                        smol::unblock(move || library::hasheous::lookup(&sha1).ok().flatten()),
+                        move |info| {
+                            if let Some(info) = info {
+                                Message::GameMetadataRefreshed(info)
+                            } else {
+                                Message::None
+                            }
+                        },
+                    );
+                }
+            }
+            Message::GameMetadataRefreshed(info) => {
+                if let Some(sha1) = &self.viewing_sha1 {
+                    if let Some((game_dir, mut entry)) = library::find_by_sha1(sha1) {
+                        entry.title = info.name;
+                        entry.platform = info.platform;
+                        entry.publisher = info.publisher;
+                        entry.year = info.year;
+                        entry.description = info.description;
+                        entry.wikipedia_url = info.wikipedia_url;
+                        entry.igdb_url = info.igdb_url;
+                        entry.enrichment_attempted = true;
+                        library::save_entry(&game_dir, &entry);
+                        if let Some(bytes) = &info.cover_art {
+                            library::save_cover(&game_dir, bytes);
+                        }
+                        self.library_cache = library::view::LibraryCache::load();
+                    }
+                }
+            }
+            Message::ImportSave => {
+                let dialog = rfd::AsyncFileDialog::new()
+                    .add_filter("Game Boy Save", &["sav"]);
+                return Task::perform(dialog.pick_file(), |handle| {
+                    Message::ImportSaveSelected(handle)
+                });
+            }
+            Message::ImportSaveSelected(handle) => {
+                if let (Some(handle), Some(sha1)) = (handle, &self.viewing_sha1) {
+                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        let data = std::fs::read(handle.path()).ok();
+                        if let Some(data) = data {
+                            library::save_battery(&game_dir, &data);
+                        }
+                    }
+                }
+            }
+            Message::RestoreSave(path) => {
+                if let Some(sha1) = &self.viewing_sha1 {
+                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        library::restore_save(&game_dir, &path);
+                    }
+                }
+            }
+            Message::RemoveGame => {
+                if let Some(sha1) = &self.viewing_sha1 {
+                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        library::remove_game(&game_dir);
+                        self.library_cache = library::view::LibraryCache::load();
+                        self.viewing_sha1 = None;
+                        self.screen = Screen::Library;
+                    }
+                }
+            }
+
             Message::PlayFromDetail => {
                 let viewing = self.viewing_sha1.clone();
                 let same_game = viewing.as_ref().and_then(|sha1| {
@@ -693,6 +777,7 @@ impl App {
                     cover: current.cover.as_ref(),
                     play_log: Some(current.play_log.clone()),
                     is_running: matches!(self.game, Game::Loaded(_)),
+                    game_dir: Some(current.game_dir.clone()),
                 });
             }
         }
@@ -708,6 +793,7 @@ impl App {
                     cover: cached.cover.as_ref(),
                     play_log,
                     is_running: false,
+                    game_dir: game_dir.clone(),
                 });
             }
         }

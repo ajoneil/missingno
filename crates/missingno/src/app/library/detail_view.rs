@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use iced::{
     Alignment::Center,
     Color, Element,
@@ -9,12 +11,12 @@ use iced::{
 use crate::app::{
     self,
     core::{
-        buttons,
+        buttons, horizontal_rule,
         icons::{self, Icon},
         sizes::{l, m, s},
         text as app_text,
     },
-    library::{GameEntry, play_log::PlayLog},
+    library::{self, GameEntry, play_log::PlayLog},
 };
 
 // Catppuccin Mocha subtext0
@@ -29,6 +31,7 @@ pub struct DetailData<'a> {
     pub cover: Option<&'a image::Handle>,
     pub play_log: Option<PlayLog>,
     pub is_running: bool,
+    pub game_dir: Option<PathBuf>,
 }
 
 #[allow(private_interfaces)]
@@ -102,7 +105,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         col = col.push(links);
     }
 
-    // Play stats (from play_log if available)
+    // Play stats
     if let Some(log) = &data.play_log {
         let play_time = log.format_play_time();
         let sessions = log.sessions.len();
@@ -129,6 +132,56 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         }
         col = col.push(stats);
     }
+
+    // Save history
+    if let Some(game_dir) = &data.game_dir {
+        let saves = library::list_save_history(game_dir);
+        let has_battery = library::battery_path(game_dir).exists();
+
+        if has_battery || !saves.is_empty() {
+            col = col.push(horizontal_rule());
+
+            let mut save_section = column![app_text::m("Save Data")].spacing(s());
+
+            if has_battery {
+                save_section = save_section.push(text("Current save: battery.sav").color(MUTED));
+            }
+
+            // Show recent saves (limit to 10)
+            if !saves.is_empty() {
+                save_section = save_section.push(text("History:").color(MUTED).size(12));
+                for (name, path) in saves.into_iter().take(10) {
+                    save_section = save_section.push(
+                        row![
+                            text(name).color(MUTED).size(12).width(Fill),
+                            buttons::subtle("Restore")
+                                .on_press(app::Message::RestoreSave(path)),
+                        ]
+                        .spacing(s())
+                        .align_y(Center),
+                    );
+                }
+            }
+
+            save_section = save_section.push(
+                buttons::standard("Import Save...")
+                    .on_press(app::Message::ImportSave),
+            );
+
+            col = col.push(save_section);
+        }
+    }
+
+    // Management actions
+    col = col.push(horizontal_rule());
+    col = col.push(
+        row![
+            buttons::subtle("Open Folder").on_press(app::Message::OpenGameFolder),
+            buttons::subtle("Refresh Metadata").on_press(app::Message::RefreshMetadata),
+            buttons::danger("Remove").on_press(app::Message::RemoveGame),
+        ]
+        .spacing(s()),
+    );
 
     container(scrollable(container(col.padding(l())).center_x(Fill)))
         .height(Fill)

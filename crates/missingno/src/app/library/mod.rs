@@ -175,11 +175,64 @@ pub fn battery_path(game_dir: &Path) -> PathBuf {
 
 pub fn save_battery(game_dir: &Path, data: &[u8]) {
     let _ = fs::create_dir_all(game_dir);
-    let _ = fs::write(battery_path(game_dir), data);
+
+    // Archive the current save before overwriting
+    let current = battery_path(game_dir);
+    if current.exists() {
+        let saves_dir = game_dir.join("saves");
+        let _ = fs::create_dir_all(&saves_dir);
+        let timestamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S");
+        let archive_name = format!("{timestamp}.sav");
+        let _ = fs::copy(&current, saves_dir.join(archive_name));
+    }
+
+    let _ = fs::write(current, data);
 }
 
 pub fn load_battery(game_dir: &Path) -> Option<Vec<u8>> {
     fs::read(battery_path(game_dir)).ok()
+}
+
+/// List archived saves, newest first.
+pub fn list_save_history(game_dir: &Path) -> Vec<(String, PathBuf)> {
+    let saves_dir = game_dir.join("saves");
+    let Ok(entries) = fs::read_dir(&saves_dir) else {
+        return Vec::new();
+    };
+
+    let mut saves: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("sav") {
+                let name = path.file_stem()?.to_string_lossy().to_string();
+                Some((name, path))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    saves.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    saves
+}
+
+/// Restore an archived save as the current battery.sav.
+pub fn restore_save(game_dir: &Path, archive_path: &Path) -> bool {
+    let current = battery_path(game_dir);
+    // Archive the current save first
+    if current.exists() {
+        let saves_dir = game_dir.join("saves");
+        let _ = fs::create_dir_all(&saves_dir);
+        let timestamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S");
+        let _ = fs::copy(&current, saves_dir.join(format!("{timestamp}-pre-restore.sav")));
+    }
+    fs::copy(archive_path, current).is_ok()
+}
+
+/// Remove a game from the library entirely.
+pub fn remove_game(game_dir: &Path) {
+    let _ = fs::remove_dir_all(game_dir);
 }
 
 fn sanitize_folder_name(name: &str) -> String {
