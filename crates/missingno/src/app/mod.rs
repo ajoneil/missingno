@@ -19,8 +19,6 @@ use core::{
     text,
 };
 use missingno_gb::{
-    GameBoy,
-    cartridge::Cartridge,
     joypad::{self, Button},
     ppu::types::palette::PaletteChoice,
 };
@@ -33,6 +31,7 @@ mod debugger;
 mod emulator;
 mod game_info_panel;
 mod hasheous;
+pub mod library;
 mod load;
 mod recent;
 mod screen;
@@ -75,12 +74,10 @@ struct App {
     fullscreen: Fullscreen,
     action_bar: ActionBar,
     audio_output: Option<AudioOutput>,
-    save_path: Option<PathBuf>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
     settings_shown: bool,
-    game_info: Option<hasheous::GameInfo>,
-    game_info_cover: Option<iced::widget::image::Handle>,
+    current_game: Option<CurrentGame>,
     game_info_shown: bool,
 }
 
@@ -101,6 +98,12 @@ enum Game {
 enum LoadedGame {
     Debugger(debugger::Debugger),
     Emulator(emulator::Emulator),
+}
+
+struct CurrentGame {
+    entry: library::GameEntry,
+    game_dir: PathBuf,
+    cover: Option<iced::widget::image::Handle>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,61 +146,36 @@ enum Message {
 impl App {
     fn new(rom_path: Option<PathBuf>, debugger: bool) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
-        let mut recent_games = recent::RecentGames::load();
+        let recent_games = recent::RecentGames::load();
 
-        let (game, save_path) = match rom_path {
-            Some(rom_path) => {
-                let sav_path = load::save_path(&rom_path);
-                let save_data = fs::read(&sav_path).ok();
-                let cartridge = Cartridge::new(fs::read(&rom_path).unwrap(), save_data);
-                recent_games.add(rom_path, cartridge.title().to_string());
-                recent_games.save();
-                let game_boy = GameBoy::new(cartridge, None);
-                let game = Game::Loaded(if debugger {
-                    let mut dbg = debugger::Debugger::new(game_boy);
-                    dbg.set_palette(settings.palette);
-                    LoadedGame::Debugger(dbg)
-                } else {
-                    let mut emu = emulator::Emulator::new(game_boy);
-                    emu.set_palette(settings.palette);
-                    emu.run();
-                    LoadedGame::Emulator(emu)
-                });
-                (game, Some(sav_path))
-            }
-
-            None => (Game::Unloaded, None),
+        let mut app = Self {
+            game: Game::Unloaded,
+            debugger_enabled: debugger,
+            fullscreen: Fullscreen::Windowed,
+            action_bar: ActionBar::new(),
+            audio_output: AudioOutput::new(),
+            recent_games,
+            settings,
+            settings_shown: false,
+            current_game: None,
+            game_info_shown: false,
         };
 
-        (
-            Self {
-                game,
-                debugger_enabled: debugger,
-                fullscreen: Fullscreen::Windowed,
-                action_bar: ActionBar::new(),
-                audio_output: AudioOutput::new(),
-                save_path,
-                recent_games,
-                settings,
-                settings_shown: false,
-                game_info: None,
-                game_info_cover: None,
-                game_info_shown: false,
-            },
-            Task::none(),
-        )
+        let task = if let Some(rom_path) = rom_path {
+            match fs::read(&rom_path) {
+                Ok(rom) => load::setup_game(&mut app, rom_path, rom),
+                Err(_) => Task::none(),
+            }
+        } else {
+            Task::none()
+        };
+
+        (app, task)
     }
 
     fn title(&self) -> String {
-        if let Game::Loaded(game) = &self.game {
-            match game {
-                LoadedGame::Debugger(debugger) => {
-                    format!("{} - Missingno", debugger.game_boy().cartridge().title())
-                }
-                LoadedGame::Emulator(emulator) => {
-                    format!("{} - Missingno", emulator.game_boy().cartridge().title())
-                }
-            }
+        if let Some(current) = &self.current_game {
+            format!("{} - Missingno", current.entry.title)
         } else {
             "Missingno".into()
         }
@@ -334,11 +312,28 @@ impl App {
                 }
             }
             Message::GameInfoLoaded(info) => {
-                self.game_info_cover = info
-                    .as_ref()
-                    .and_then(|i| i.cover_art.as_ref())
-                    .map(|bytes| iced::widget::image::Handle::from_bytes(bytes.clone()));
-                self.game_info = info;
+                if let (Some(info), Some(current)) =
+                    (info, self.current_game.as_mut())
+                {
+                    // Enrich the library entry with Hasheous data
+                    current.entry.title = info.name;
+                    current.entry.platform = info.platform;
+                    current.entry.publisher = info.publisher;
+                    current.entry.year = info.year;
+                    current.entry.description = info.description;
+                    library::save_entry(&current.game_dir, &current.entry);
+
+                    if let Some(bytes) = &info.cover_art {
+                        library::save_cover(&current.game_dir, bytes);
+                        current.cover =
+                            Some(iced::widget::image::Handle::from_bytes(bytes.clone()));
+                    }
+
+                    // Update recent games with enriched title
+                    self.recent_games
+                        .update_title(&current.entry.sha1, &current.entry.title);
+                    self.recent_games.save();
+                }
             }
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
@@ -413,17 +408,20 @@ impl App {
         let fullscreen = matches!(self.fullscreen, Fullscreen::Active { .. });
         match &self.game {
             Game::Loaded(game) => {
-                let has_info = self.game_info.is_some();
+                let has_info = self.current_game.is_some();
                 let game_view = match game {
                     LoadedGame::Debugger(debugger) => debugger.view(),
                     LoadedGame::Emulator(emulator) => emulator.view(fullscreen, has_info),
                 };
 
                 if self.game_info_shown {
-                    if let Some(info) = &self.game_info {
+                    if let Some(current) = &self.current_game {
                         return row![
                             container(game_view).center(Fill),
-                            game_info_panel::view(info, self.game_info_cover.as_ref()),
+                            game_info_panel::view(
+                                &current.entry,
+                                current.cover.as_ref(),
+                            ),
                         ]
                         .into();
                     }
@@ -565,7 +563,7 @@ impl App {
     }
 
     fn save(&self) {
-        let Some(save_path) = &self.save_path else {
+        let Some(current) = &self.current_game else {
             return;
         };
         let cartridge = match &self.game {
@@ -577,7 +575,7 @@ impl App {
             return;
         }
         if let Some(ram) = cartridge.ram() {
-            let _ = fs::write(save_path, ram);
+            library::save_battery(&current.game_dir, &ram);
         }
     }
 

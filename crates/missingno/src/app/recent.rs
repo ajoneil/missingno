@@ -8,6 +8,7 @@ use iced::{
     Element,
     widget::{Column, column, row, text},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::app::{
     self,
@@ -21,16 +22,11 @@ use crate::app::{
 
 const MAX_RECENT: usize = 10;
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 struct RecentGame {
-    path: String,
+    sha1: String,
     title: String,
-}
-
-impl RecentGame {
-    fn path(&self) -> PathBuf {
-        PathBuf::from(&self.path)
-    }
+    rom_path: PathBuf,
 }
 
 pub struct RecentGames {
@@ -41,21 +37,7 @@ impl RecentGames {
     pub fn load() -> Self {
         let games = recent_path()
             .and_then(|path| fs::read_to_string(path).ok())
-            .map(|data| {
-                let mut games = Vec::new();
-                let mut lines = data.lines();
-                while let Some(path) = lines.next() {
-                    if path.is_empty() {
-                        continue;
-                    }
-                    let title = lines.next().unwrap_or("").to_string();
-                    games.push(RecentGame {
-                        path: path.to_string(),
-                        title,
-                    });
-                }
-                games
-            })
+            .and_then(|data| ron::from_str::<Vec<RecentGame>>(&data).ok())
             .unwrap_or_default();
 
         Self { games }
@@ -68,36 +50,43 @@ impl RecentGames {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let data: String = self
-            .games
-            .iter()
-            .map(|g| format!("{}\n{}\n", g.path, g.title))
-            .collect();
-        let _ = fs::write(path, data);
+        if let Ok(data) =
+            ron::ser::to_string_pretty(&self.games, ron::ser::PrettyConfig::default())
+        {
+            let _ = fs::write(path, data);
+        }
     }
 
-    pub fn add(&mut self, path: PathBuf, title: String) {
-        let path_str = path.to_string_lossy().into_owned();
-        self.games.retain(|g| g.path != path_str);
+    pub fn add(&mut self, sha1: &str, title: &str, rom_path: &Path) {
+        self.games.retain(|g| g.sha1 != sha1);
         self.games.insert(
             0,
             RecentGame {
-                path: path_str,
-                title,
+                sha1: sha1.to_string(),
+                title: title.to_string(),
+                rom_path: rom_path.to_path_buf(),
             },
         );
         self.games.truncate(MAX_RECENT);
     }
 
-    pub fn remove(&mut self, path: &Path) {
+    pub fn update_title(&mut self, sha1: &str, title: &str) {
+        for game in &mut self.games {
+            if game.sha1 == sha1 {
+                game.title = title.to_string();
+            }
+        }
+    }
+
+    pub fn remove_path(&mut self, path: &Path) {
         let path_str = path.to_string_lossy();
-        self.games.retain(|g| g.path != *path_str);
+        self.games.retain(|g| g.rom_path.to_string_lossy() != path_str);
     }
 
     pub fn most_recent_dir(&self) -> Option<PathBuf> {
         self.games
             .first()
-            .and_then(|g| g.path().parent().map(Path::to_path_buf))
+            .and_then(|g| g.rom_path.parent().map(Path::to_path_buf))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -110,7 +99,7 @@ impl RecentGames {
         let entries = Column::with_children(self.games.iter().map(|game| {
             let label = row![
                 text(game.title.clone()),
-                text(game.path.clone())
+                text(game.rom_path.to_string_lossy().to_string())
                     .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.4))
                     .size(12.0),
             ]
@@ -118,7 +107,7 @@ impl RecentGames {
             .align_y(Center);
 
             buttons::subtle(label)
-                .on_press(load::Message::LoadPath(game.path()).into())
+                .on_press(load::Message::LoadPath(game.rom_path.clone()).into())
                 .into()
         }))
         .spacing(0);
@@ -128,5 +117,5 @@ impl RecentGames {
 }
 
 fn recent_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("missingno").join("recent"))
+    dirs::config_dir().map(|dir| dir.join("missingno").join("recent.ron"))
 }

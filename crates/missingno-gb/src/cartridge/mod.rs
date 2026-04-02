@@ -65,6 +65,10 @@ impl Cartridge {
         }
     }
 
+    pub fn peek_title(rom: &[u8]) -> String {
+        parse_title(rom)
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }

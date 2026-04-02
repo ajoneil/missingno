@@ -1,0 +1,121 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GameEntry {
+    pub sha1: String,
+    pub title: String,
+    pub platform: Option<String>,
+    pub publisher: Option<String>,
+    pub year: Option<String>,
+    pub description: Option<String>,
+    pub rom_paths: Vec<PathBuf>,
+}
+
+impl GameEntry {
+    pub fn new(sha1: String, title: String, rom_path: PathBuf) -> Self {
+        Self {
+            sha1,
+            title,
+            platform: None,
+            publisher: None,
+            year: None,
+            description: None,
+            rom_paths: vec![rom_path],
+        }
+    }
+
+    pub fn add_rom_path(&mut self, path: PathBuf) {
+        let path_str = path.to_string_lossy();
+        if !self.rom_paths.iter().any(|p| p.to_string_lossy() == path_str) {
+            self.rom_paths.push(path);
+        }
+    }
+}
+
+pub fn library_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|dir| dir.join("missingno").join("games"))
+}
+
+pub fn game_dir_for(title: &str, sha1: &str) -> Option<PathBuf> {
+    let folder_name = format!("{}_{}", sanitize_folder_name(title), &sha1[..8.min(sha1.len())]);
+    library_dir().map(|dir| dir.join(folder_name))
+}
+
+pub fn find_by_sha1(sha1: &str) -> Option<(PathBuf, GameEntry)> {
+    let lib_dir = library_dir()?;
+    let entries = fs::read_dir(&lib_dir).ok()?;
+
+    for dir_entry in entries.flatten() {
+        let path = dir_entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(entry) = load_entry(&path) {
+            if entry.sha1 == sha1 {
+                return Some((path, entry));
+            }
+        }
+    }
+    None
+}
+
+pub fn save_entry(game_dir: &Path, entry: &GameEntry) {
+    let _ = fs::create_dir_all(game_dir);
+    let path = game_dir.join("game.ron");
+    if let Ok(data) = ron::ser::to_string_pretty(entry, ron::ser::PrettyConfig::default()) {
+        let _ = fs::write(path, data);
+    }
+}
+
+pub fn load_entry(game_dir: &Path) -> Option<GameEntry> {
+    let path = game_dir.join("game.ron");
+    let data = fs::read_to_string(path).ok()?;
+    ron::from_str(&data).ok()
+}
+
+pub fn save_cover(game_dir: &Path, bytes: &[u8]) {
+    let _ = fs::create_dir_all(game_dir);
+    let _ = fs::write(game_dir.join("cover.png"), bytes);
+}
+
+pub fn load_cover(game_dir: &Path) -> Option<Vec<u8>> {
+    fs::read(game_dir.join("cover.png")).ok()
+}
+
+pub fn battery_path(game_dir: &Path) -> PathBuf {
+    game_dir.join("battery.sav")
+}
+
+pub fn save_battery(game_dir: &Path, data: &[u8]) {
+    let _ = fs::create_dir_all(game_dir);
+    let _ = fs::write(battery_path(game_dir), data);
+}
+
+pub fn load_battery(game_dir: &Path) -> Option<Vec<u8>> {
+    fs::read(battery_path(game_dir)).ok()
+}
+
+fn sanitize_folder_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+            c => c,
+        })
+        .collect();
+
+    let trimmed = sanitized.trim().trim_matches('.').to_string();
+
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else if trimmed.len() > 64 {
+        trimmed[..64].trim_end().to_string()
+    } else {
+        trimmed
+    }
+}

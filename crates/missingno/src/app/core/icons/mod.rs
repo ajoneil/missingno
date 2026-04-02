@@ -5,6 +5,7 @@ use iced::{Theme, widget::svg};
 
 use crate::app::core::text;
 
+#[allow(dead_code)]
 pub enum Icon {
     Back,
     Close,

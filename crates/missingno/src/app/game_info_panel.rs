@@ -10,7 +10,7 @@ use crate::app::{
         sizes::{l, m},
         text as app_text,
     },
-    hasheous::GameInfo,
+    library::GameEntry,
 };
 
 // Catppuccin Mocha subtext0
@@ -23,7 +23,7 @@ const MUTED: Color = Color::from_rgb(
 const PANEL_WIDTH: f32 = 320.0;
 
 pub fn view<'a>(
-    info: &'a GameInfo,
+    entry: &'a GameEntry,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
     let mut col = column![].spacing(m());
@@ -36,13 +36,13 @@ pub fn view<'a>(
         );
     }
 
-    col = col.push(app_text::xl(&info.name));
+    col = col.push(app_text::xl(&entry.title));
 
     // Subtitle: publisher · year · platform
     let subtitle_parts: Vec<&str> = [
-        info.publisher.as_deref(),
-        info.year.as_deref(),
-        info.platform.as_deref(),
+        entry.publisher.as_deref(),
+        entry.year.as_deref(),
+        entry.platform.as_deref(),
     ]
     .into_iter()
     .flatten()
@@ -52,7 +52,7 @@ pub fn view<'a>(
         col = col.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    if let Some(description) = &info.description {
+    if let Some(description) = &entry.description {
         col = col.push(text(description.as_str()));
     }
 
