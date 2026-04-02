@@ -419,13 +419,15 @@ impl Cpu {
         if step == 0 {
             // Emit the fetch read. If a jump target is pending (from
             // CondJump's internal M-cycle), fetch from that address
-            // instead of bus_counter. On hardware, the bus address
-            // is set from op_addr (which was loaded with the target
-            // at DELTA_EF), while reg.pc still holds the old value.
-            // Store the fetch address so step 1 can set PC correctly.
-            let fetch_addr = self.pending_jump_target.take().unwrap_or(self.bus_counter);
+            // instead of bus_counter. Update bus_counter so that if
+            // an ISR fires at step 1 (before PC is set from the fetch
+            // address), the return address reflects the jump target.
+            if let Some(target) = self.pending_jump_target.take() {
+                self.bus_counter = target;
+                self.pc = target;
+            }
             Some(BusAction::Read {
-                address: fetch_addr,
+                address: self.bus_counter,
             })
         } else {
             // Opcode received — check for HALT entry first
