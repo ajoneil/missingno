@@ -89,6 +89,35 @@ impl WindowControl {
         self.nuko_wx = wx;
     }
 
+    /// Sample the REJO NOR latch (WY==LY match). On hardware, SARY
+    /// samples ROGE on every TALU edge — this runs every dot in all
+    /// modes, not just mode 3. The latch is idempotent: once set, it
+    /// stays set until VBlank.
+    pub(in crate::ppu) fn sample_wy_match(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+    ) {
+        if !self.wy_matched && regs.control.window_enabled() && video.ly() == regs.window.y {
+            self.wy_matched = true;
+        }
+    }
+
+    /// Model the XOFO combinational gate. XOFO = nand3(WIN_EN,
+    /// LINE_RSTn, VID_RSTn). When WIN_EN is low, XOFO goes high and
+    /// resets PYNU (wx_triggered). If PYNU was high (window was
+    /// active), the falling edge clocks WAZY (window line counter
+    /// increments). Called every dot during mode 3.
+    pub(in crate::ppu) fn apply_xofo(&mut self, window_enabled: bool) {
+        if !window_enabled {
+            if self.wx_triggered {
+                self.window_line_counter += 1;
+                self.window_rendered = false;
+            }
+            self.wx_triggered = false;
+        }
+    }
+
     /// PORY clears RYDY: on hardware, PORY is a reset input to the
     /// RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
     /// high while RYDY is set, RYDY clears — producing the SUZU
@@ -128,11 +157,10 @@ impl WindowControl {
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) {
-        // SARY/REJO: sample WY==LY latch (hardware samples once/M-cycle,
-        // but per-dot is functionally identical since LY is fixed per line).
-        if !self.wy_matched && regs.control.window_enabled() && video.ly() == regs.window.y {
-            self.wy_matched = true;
-        }
+        // SARY/REJO: sample WY==LY latch. Now handled by sample_wy_match()
+        // which runs every dot in all modes; call here is redundant but
+        // harmless (idempotent latch).
+        self.sample_wy_match(regs, video);
 
         if !regs.control.window_enabled() {
             return;
@@ -147,7 +175,7 @@ impl WindowControl {
             self.last_wx_value = self.nuko_wx;
         }
 
-        if pixel_counter != self.nuko_wx {
+        if pixel_counter != regs.window.x_plus_7.output() {
             return;
         }
 

@@ -479,6 +479,11 @@ impl Rendering {
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
         }
 
+        // SARY/REJO: sample the WY==LY latch every dot in all modes.
+        // On hardware, SARY is clocked by TALU (rising-edge-derived).
+        // Placing it before the xymu gate ensures mode 2 dots sample it.
+        self.window.sample_wy_match(regs, video);
+
         // Mode 3 (drawing) — pixel output phase.
         // Runs when XYMU is set (rendering active).
         if self.hblank.xymu() {
@@ -810,6 +815,12 @@ impl Rendering {
         // — it fires regardless of sprite fetch state. During sprite
         // fetch, pixel_counter is frozen, so the match just re-checks
         // the same value each dot.
+        // XOFO: combinational gate — when WIN_EN is low, resets PYNU
+        // (wx_triggered), allowing re-triggering when WIN_EN goes high.
+        // Placed before check_trigger so a fresh trigger can fire on the
+        // same dot that WIN_EN transitions high.
+        self.window.apply_xofo(regs.control.window_enabled());
+
         let pygo = self.cascade.pygo();
         self.window.check_trigger(
             inputs.rydy,
