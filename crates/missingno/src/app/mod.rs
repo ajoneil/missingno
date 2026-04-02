@@ -113,6 +113,7 @@ struct CurrentGame {
 enum Message {
     Load(load::Message),
 
+    BackToLibrary,
     Run,
     Pause,
     Reset,
@@ -212,6 +213,12 @@ impl App {
         match message {
             Message::Load(message) => return load::update(message, self),
 
+            Message::BackToLibrary => {
+                self.save();
+                self.game = Game::Unloaded;
+                self.current_game = None;
+                self.game_info_shown = false;
+            }
             Message::Run => self.run(),
             Message::Pause => self.pause(),
             Message::Reset => {

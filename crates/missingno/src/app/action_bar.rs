@@ -44,7 +44,12 @@ impl ActionBar {
         match &app.game {
             Game::Unloaded | Game::Loading => row![load(&app.game), self.settings(app)],
             Game::Loaded(_) => row![
-                load(&app.game),
+                buttons::subtle(
+                    row![icons::m(Icon::Back), "Library"]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::BackToLibrary),
                 controls(app.running(), app.debugger_enabled),
                 self.settings(app)
             ],
@@ -81,27 +86,27 @@ impl ActionBar {
     }
 
     fn settings(&self, app: &App) -> Element<'_, app::Message> {
-        let row = match &app.game {
+        let mut row = match &app.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
                 row![self.panes(debugger.panes().unshown_panes())]
             }
             _ => row![],
         };
 
-        let row = if app.sgb_active() {
-            row
-        } else {
-            row.push(self.palette_selector(app.settings.palette))
-        };
-
-        container(
-            row.push(
+        if matches!(app.game, Game::Loaded(_)) {
+            if !app.sgb_active() {
+                row = row.push(self.palette_selector(app.settings.palette));
+            }
+            row = row.push(
                 toggler(app.debugger_enabled)
                     .label("Debugger")
                     .on_toggle(|enable| app::Message::ToggleDebugger(enable))
                     .size(m()),
-            )
-            .push(
+            );
+        }
+
+        container(
+            row.push(
                 buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
                     .on_press(app::Message::ShowSettings),
             )
