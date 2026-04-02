@@ -775,8 +775,8 @@ impl App {
         // Otherwise look up from the library cache
         if let Some(sha1) = viewing_sha1 {
             if let Some(cached) = self.library_cache.entries.iter().find(|g| g.entry.sha1 == sha1) {
-                // Load play log from disk for non-running games
-                let game_dir = library::game_dir_for(&cached.entry.title, &cached.entry.sha1);
+                // Use find_by_sha1 to get the actual directory path
+                let game_dir = library::find_by_sha1(sha1).map(|(d, _)| d);
                 let play_log = game_dir.as_ref().map(|d| library::play_log::load(d));
                 let save_manifest = game_dir.as_ref().map(|d| library::saves::load_manifest(d));
                 return library::detail_view::view(library::detail_view::DetailData {
@@ -785,7 +785,7 @@ impl App {
                     play_log,
                     save_manifest,
                     is_running: false,
-                    game_dir: game_dir.clone(),
+                    game_dir,
                 });
             }
         }
