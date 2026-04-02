@@ -127,6 +127,7 @@ enum Message {
     Settings(settings_view::Message),
     Library(library_view::Message),
     ScanComplete,
+    EnrichComplete,
     ToggleGameInfo,
     GameInfoLoaded(Option<hasheous::GameInfo>),
     OpenUrl(&'static str),
@@ -183,6 +184,12 @@ impl App {
             tasks.push(Task::perform(
                 smol::unblock(move || scanner::scan_directories(&dirs)),
                 |_| Message::ScanComplete,
+            ));
+        } else if app.settings.internet_enabled {
+            // No directories to scan, but still enrich any unenriched games
+            tasks.push(Task::perform(
+                smol::unblock(|| scanner::enrich_library()),
+                |_| Message::EnrichComplete,
             ));
         }
 
@@ -363,6 +370,15 @@ impl App {
                 }
             },
             Message::ScanComplete => {
+                self.library_cache = library_view::LibraryCache::load();
+                if self.settings.internet_enabled {
+                    return Task::perform(
+                        smol::unblock(|| scanner::enrich_library()),
+                        |_| Message::EnrichComplete,
+                    );
+                }
+            }
+            Message::EnrichComplete => {
                 self.library_cache = library_view::LibraryCache::load();
             }
             Message::ToggleGameInfo => {

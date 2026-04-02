@@ -63,6 +63,31 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
     new_entries
 }
 
+pub fn enrich_library() {
+    for (game_dir, mut entry) in library::list_all() {
+        // Skip already enriched entries
+        if entry.platform.is_some() {
+            continue;
+        }
+
+        let info = match hasheous::lookup(&entry.sha1) {
+            Ok(Some(info)) => info,
+            _ => continue,
+        };
+
+        entry.title = info.name;
+        entry.platform = info.platform;
+        entry.publisher = info.publisher;
+        entry.year = info.year;
+        entry.description = info.description;
+        library::save_entry(&game_dir, &entry);
+
+        if let Some(bytes) = &info.cover_art {
+            library::save_cover(&game_dir, bytes);
+        }
+    }
+}
+
 fn is_rom_file(path: &std::path::Path) -> bool {
     path.is_file()
         && matches!(
