@@ -1,0 +1,3 @@
+[submodule "net.andyofniall.missingno"]
+	path = net.andyofniall.missingno
+	url = https://github.com/flathub/net.andyofniall.missingno
