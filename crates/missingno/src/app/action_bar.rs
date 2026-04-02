@@ -12,6 +12,7 @@ use crate::app::{
         buttons,
         icons::{self, Icon},
         sizes::{m, s, xl},
+        text as app_text,
     },
     debugger::{
         self,
@@ -42,7 +43,9 @@ impl ActionBar {
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
         match &app.game {
-            Game::Unloaded | Game::Loading => row![load(&app.game), self.settings(app)],
+            Game::Unloaded | Game::Loading => {
+                row![app_text::xl("Library"), self.settings(app)]
+            }
             Game::Loaded(_) => row![
                 buttons::subtle(
                     row![icons::m(Icon::Back), "Library"]
@@ -56,6 +59,7 @@ impl ActionBar {
         }
         .spacing(xl())
         .padding(m())
+        .align_y(Center)
         .into()
     }
 
@@ -105,6 +109,13 @@ impl ActionBar {
             );
         }
 
+        if !matches!(app.game, Game::Loaded(_)) {
+            row = row.push(
+                buttons::subtle("Add Game...")
+                    .on_press(load::Message::Pick.into()),
+            );
+        }
+
         container(
             row.push(
                 buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
@@ -116,14 +127,6 @@ impl ActionBar {
         .align_right(Fill)
         .align_y(Center)
         .into()
-    }
-}
-
-fn load(game: &Game) -> Button<'static, app::Message> {
-    let button = buttons::standard("Load ROM...");
-    match game {
-        Game::Loading => button,
-        _ => button.on_press(load::Message::Pick.into()),
     }
 }
 

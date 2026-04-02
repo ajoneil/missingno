@@ -10,7 +10,6 @@ use crate::app::{
     core::{
         buttons,
         sizes::{l, m, s},
-        text as app_text,
     },
 };
 
@@ -22,6 +21,9 @@ const MUTED: Color = Color::from_rgb(
     0xad as f32 / 255.0,
     0xc8 as f32 / 255.0,
 );
+
+const COVER_HEIGHT: f32 = 120.0;
+const COVER_WIDTH: f32 = 90.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,7 +51,7 @@ impl LibraryCache {
         let entries = games
             .into_iter()
             .map(|(game_dir, entry)| {
-                let cover = library::load_cover(&game_dir)
+                let cover = library::load_thumbnail(&game_dir)
                     .map(|bytes| image::Handle::from_bytes(bytes));
                 CachedGame { entry, cover }
             })
@@ -68,30 +70,20 @@ pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
         return empty_view();
     }
 
-    let games = Column::with_children(
-        cache
-            .entries
-            .iter()
-            .map(|game| game_row(game))
-    )
-    .spacing(s());
+    let games = Column::with_children(cache.entries.iter().map(|game| game_row(game))).spacing(s());
 
-    column![
-        app_text::xl("Library"),
-        scrollable(games).height(Fill),
-    ]
-    .spacing(l())
-    .padding(l())
+    scrollable(
+        container(games)
+            .padding(l())
+            .center_x(Fill),
+    )
+    .height(Fill)
     .into()
 }
 
 fn empty_view() -> Element<'static, app::Message> {
     container(
-        column![
-            app_text::xl("Library"),
-            text("No games yet. Load a ROM or add a ROM folder in Settings.").color(MUTED),
-        ]
-        .spacing(l()),
+        text("No games yet. Load a ROM or add a ROM folder in Settings.").color(MUTED),
     )
     .padding(l())
     .into()
@@ -102,13 +94,23 @@ fn game_row(game: &CachedGame) -> Element<'_, app::Message> {
 
     let mut content = row![].spacing(m()).align_y(Center);
 
-    if let Some(cover) = &game.cover {
-        content = content.push(
+    let cover_slot = if let Some(cover) = &game.cover {
+        container(
             image(cover.clone())
-                .height(48)
-                .content_fit(iced::ContentFit::ScaleDown),
-        );
-    }
+                .width(COVER_WIDTH)
+                .height(COVER_HEIGHT)
+                .content_fit(iced::ContentFit::Contain),
+        )
+        .width(COVER_WIDTH)
+        .height(COVER_HEIGHT)
+        .center(iced::Length::Shrink)
+    } else {
+        container(text("").width(COVER_WIDTH).height(COVER_HEIGHT))
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+    };
+
+    content = content.push(cover_slot);
 
     let mut info = column![text(&game.entry.title)].spacing(2);
 

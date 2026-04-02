@@ -104,13 +104,41 @@ pub fn load_entry(game_dir: &Path) -> Option<GameEntry> {
     ron::from_str(&data).ok()
 }
 
+const THUMBNAIL_HEIGHT: u32 = 240;
+
 pub fn save_cover(game_dir: &Path, bytes: &[u8]) {
     let _ = fs::create_dir_all(game_dir);
     let _ = fs::write(game_dir.join("cover.png"), bytes);
+    generate_thumbnail(game_dir, bytes);
 }
 
 pub fn load_cover(game_dir: &Path) -> Option<Vec<u8>> {
     fs::read(game_dir.join("cover.png")).ok()
+}
+
+pub fn load_thumbnail(game_dir: &Path) -> Option<Vec<u8>> {
+    let thumb_path = game_dir.join("thumbnail.png");
+    if thumb_path.exists() {
+        return fs::read(thumb_path).ok();
+    }
+    // Generate from cover if thumbnail is missing
+    if let Some(cover_bytes) = load_cover(game_dir) {
+        generate_thumbnail(game_dir, &cover_bytes);
+        return fs::read(game_dir.join("thumbnail.png")).ok();
+    }
+    None
+}
+
+fn generate_thumbnail(game_dir: &Path, cover_bytes: &[u8]) {
+    let Ok(img) = image::load_from_memory(cover_bytes) else {
+        return;
+    };
+    let thumbnail = img.resize(
+        u32::MAX,
+        THUMBNAIL_HEIGHT,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let _ = thumbnail.save(game_dir.join("thumbnail.png"));
 }
 
 pub fn battery_path(game_dir: &Path) -> PathBuf {

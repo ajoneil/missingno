@@ -2775,6 +2775,7 @@ dependencies = [
  "dirs",
  "gilrs",
  "iced",
+ "image",
  "jiff",
  "missingno-gb",
  "open",
