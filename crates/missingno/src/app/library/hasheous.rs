@@ -10,6 +10,8 @@ pub struct GameInfo {
     pub cover_art: Option<Vec<u8>>,
     pub year: Option<String>,
     pub publisher: Option<String>,
+    pub wikipedia_url: Option<String>,
+    pub igdb_url: Option<String>,
 }
 
 pub fn rom_sha1(rom: &[u8]) -> String {
@@ -46,7 +48,6 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     let platform = body["platform"]["name"].as_str().map(String::from);
     let publisher = body["publisher"]["name"].as_str().map(String::from);
 
-    let mut description = None;
     let mut logo_hash = None;
 
     if let Some(attributes) = body["attributes"].as_array() {
@@ -54,14 +55,8 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
             let attr_name = attr["attributeName"].as_str().unwrap_or_default();
             let attr_type = attr["attributeType"].as_str().unwrap_or_default();
 
-            match (attr_name, attr_type) {
-                ("Logo", "ImageId") => {
-                    logo_hash = attr["value"].as_str().map(String::from);
-                }
-                (_, "LongString") if attr_name.contains("Description") => {
-                    description = attr["value"].as_str().map(String::from);
-                }
-                _ => {}
+            if attr_name == "Logo" && attr_type == "ImageId" {
+                logo_hash = attr["value"].as_str().map(String::from);
             }
         }
     }
@@ -71,6 +66,23 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
         .as_str()
         .filter(|y| !y.is_empty())
         .map(String::from);
+
+    // Extract links from metadata
+    let mut wikipedia_url = None;
+    let mut igdb_url = None;
+    if let Some(metadata) = body["metadata"].as_array() {
+        for entry in metadata {
+            if entry["status"].as_str() != Some("Mapped") {
+                continue;
+            }
+            let link = entry["link"].as_str().filter(|l| !l.is_empty());
+            match entry["source"].as_str() {
+                Some("Wikipedia") => wikipedia_url = link.map(String::from),
+                Some("IGDB") => igdb_url = link.map(String::from),
+                _ => {}
+            }
+        }
+    }
 
     // Fetch cover art if available
     let cover_art = logo_hash.and_then(|hash| {
@@ -87,10 +99,12 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     Ok(Some(GameInfo {
         name,
         platform,
-        description,
+        description: None,
         cover_art,
         year,
         publisher,
+        wikipedia_url,
+        igdb_url,
     }))
 }
 

@@ -1,13 +1,16 @@
 use iced::{
+    Alignment::Center,
     Color, Element,
     Length::Fill,
-    widget::{column, container, image, scrollable, text},
+    mouse,
+    widget::{column, container, image, mouse_area, row, scrollable, text},
 };
 
 use crate::app::{
     self,
     core::{
-        sizes::{l, m},
+        icons::{self, Icon},
+        sizes::{l, m, s},
         text as app_text,
     },
 };
@@ -54,8 +57,35 @@ pub(crate) fn view<'a>(
         col = col.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    if let Some(description) = &entry.description {
-        col = col.push(text(description.as_str()));
+    // Links
+    if entry.wikipedia_url.is_some() || entry.igdb_url.is_some() {
+        let mut links = row![].spacing(m());
+
+        if let Some(url) = &entry.wikipedia_url {
+            links = links.push(
+                mouse_area(
+                    row![icons::m(Icon::Globe), text("Wikipedia").color(MUTED)]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::OpenUrl(leak_str(url)))
+                .interaction(mouse::Interaction::Pointer),
+            );
+        }
+
+        if let Some(url) = &entry.igdb_url {
+            links = links.push(
+                mouse_area(
+                    row![icons::m(Icon::Globe), text("IGDB").color(MUTED)]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::OpenUrl(leak_str(url)))
+                .interaction(mouse::Interaction::Pointer),
+            );
+        }
+
+        col = col.push(links);
     }
 
     container(scrollable(col.padding(l()).max_width(PANEL_WIDTH)))
@@ -69,4 +99,10 @@ pub(crate) fn view<'a>(
             }
         })
         .into()
+}
+
+/// Leak a string to get a `&'static str` for use in messages.
+/// This is acceptable because there are a bounded number of game entries.
+fn leak_str(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
 }

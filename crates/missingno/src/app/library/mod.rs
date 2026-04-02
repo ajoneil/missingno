@@ -18,6 +18,10 @@ pub struct GameEntry {
     pub publisher: Option<String>,
     pub year: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub wikipedia_url: Option<String>,
+    #[serde(default)]
+    pub igdb_url: Option<String>,
     pub rom_paths: Vec<PathBuf>,
 }
 
@@ -30,6 +34,8 @@ impl GameEntry {
             publisher: None,
             year: None,
             description: None,
+            wikipedia_url: None,
+            igdb_url: None,
             rom_paths: vec![rom_path],
         }
     }

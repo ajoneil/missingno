@@ -130,13 +130,5 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     app.recent_games.save();
     app.library_cache = app::library::view::LibraryCache::load();
 
-    // Fire async Hasheous lookup if internet enabled
-    if app.settings.internet_enabled {
-        Task::perform(
-            smol::unblock(move || library::hasheous::lookup(&sha1).ok().flatten()),
-            |info| app::Message::GameInfoLoaded(info),
-        )
-    } else {
-        Task::none()
-    }
+    Task::none()
 }

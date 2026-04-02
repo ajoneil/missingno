@@ -80,6 +80,8 @@ pub fn enrich_library() {
         entry.publisher = info.publisher;
         entry.year = info.year;
         entry.description = info.description;
+        entry.wikipedia_url = info.wikipedia_url;
+        entry.igdb_url = info.igdb_url;
         library::save_entry(&game_dir, &entry);
 
         if let Some(bytes) = &info.cover_art {

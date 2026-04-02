@@ -126,7 +126,6 @@ enum Message {
     ScanComplete,
     EnrichComplete,
     ToggleGameInfo,
-    GameInfoLoaded(Option<library::hasheous::GameInfo>),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -383,36 +382,27 @@ impl App {
             }
             Message::EnrichComplete => {
                 self.library_cache = library::view::LibraryCache::load();
+
+                // Sync recent game titles with enriched library entries
+                for cached in &self.library_cache.entries {
+                    self.recent_games
+                        .update_title(&cached.entry.sha1, &cached.entry.title);
+                }
+                self.recent_games.save();
+
+                // Also update the current game if loaded
+                if let Some(current) = &mut self.current_game {
+                    if let Some((_dir, entry)) = library::find_by_sha1(&current.entry.sha1) {
+                        current.entry = entry;
+                        current.cover = library::load_thumbnail(&current.game_dir)
+                            .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+                    }
+                }
             }
             Message::ToggleGameInfo => {
                 self.game_info_shown = !self.game_info_shown;
                 if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
                     emulator.reset_hover();
-                }
-            }
-            Message::GameInfoLoaded(info) => {
-                if let (Some(info), Some(current)) =
-                    (info, self.current_game.as_mut())
-                {
-                    // Enrich the library entry with Hasheous data
-                    current.entry.title = info.name;
-                    current.entry.platform = info.platform;
-                    current.entry.publisher = info.publisher;
-                    current.entry.year = info.year;
-                    current.entry.description = info.description;
-                    library::save_entry(&current.game_dir, &current.entry);
-
-                    if let Some(bytes) = &info.cover_art {
-                        library::save_cover(&current.game_dir, bytes);
-                        current.cover =
-                            Some(iced::widget::image::Handle::from_bytes(bytes.clone()));
-                    }
-
-                    // Update recent games with enriched title
-                    self.recent_games
-                        .update_title(&current.entry.sha1, &current.entry.title);
-                    self.recent_games.save();
-                    self.library_cache = library::view::LibraryCache::load();
                 }
             }
             Message::OpenUrl(url) => {
