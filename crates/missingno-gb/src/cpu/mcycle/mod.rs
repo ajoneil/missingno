@@ -966,7 +966,10 @@ impl Cpu {
                 self.halt_state = HaltState::Halting;
                 Phase::Empty
             }
-            Instruction::Invalid(op) => panic!("Invalid instruction {:02x}", op),
+            Instruction::Invalid(_) => {
+                self.halt_state = HaltState::Halting;
+                Phase::Empty
+            }
 
             Instruction::NoOperation => Phase::Empty,
             Instruction::DecimalAdjustAccumulator => {
