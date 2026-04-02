@@ -114,6 +114,7 @@ enum Message {
     Run,
     Pause,
     Reset,
+    SaveBattery,
 
     PressButton(joypad::Button),
     ReleaseButton(joypad::Button),
@@ -214,6 +215,9 @@ impl App {
                 self.game = Game::Unloaded;
                 self.current_game = None;
                 self.game_info_shown = false;
+            }
+            Message::SaveBattery => {
+                self.save();
             }
             Message::Run => self.run(),
             Message::Pause => self.pause(),

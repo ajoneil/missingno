@@ -18,6 +18,8 @@ pub(super) enum OamBugKind {
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
     pub new_screen: bool,
+    /// Whether battery-backed SRAM was written during this instruction.
+    pub sram_dirty: bool,
     /// Number of T-cycles (dots) consumed by this instruction.
     pub dots: u32,
 }
@@ -55,8 +57,9 @@ impl GameBoy {
         new_screen |= r.new_screen;
         dots += r.dots;
 
+        let sram_dirty = self.external.cartridge.take_sram_dirty();
         let trace = self.bus_trace.take().unwrap_or_default();
-        (StepResult { new_screen, dots }, trace)
+        (StepResult { new_screen, sram_dirty, dots }, trace)
     }
 
     /// Run one complete instruction from start to finish.
@@ -96,7 +99,8 @@ impl GameBoy {
                 }
             }
         }
-        StepResult { new_screen, dots }
+        let sram_dirty = self.external.cartridge.take_sram_dirty();
+        StepResult { new_screen, sram_dirty, dots }
     }
 
     /// Advance exactly one half-phase — execute rise() or fall()

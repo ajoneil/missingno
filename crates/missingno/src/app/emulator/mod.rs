@@ -72,12 +72,17 @@ impl Emulator {
                 // hanging the UI if the PPU never produces a frame (e.g. LCD off).
                 const MAX_DOTS_PER_FRAME: u32 = 70224 * 2;
                 let mut dots = 0;
+                let mut sram_dirty = false;
                 loop {
                     let result = self.game_boy.step();
                     dots += result.dots;
+                    sram_dirty |= result.sram_dirty;
                     if result.new_screen || dots >= MAX_DOTS_PER_FRAME {
                         break;
                     }
+                }
+                if sram_dirty {
+                    return Task::done(app::Message::SaveBattery);
                 }
                 let screen = self.game_boy.screen().clone();
                 let video_enabled = self.game_boy.ppu().control().video_enabled();

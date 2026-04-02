@@ -11,6 +11,7 @@ pub struct Cartridge {
     sgb_flag: bool,
     rom: Vec<u8>,
     mbc: Mbc,
+    sram_dirty: bool,
 }
 
 fn parse_title(rom: &[u8]) -> String {
@@ -60,6 +61,7 @@ impl Cartridge {
             title,
             has_battery,
             sgb_flag,
+            sram_dirty: false,
             rom,
             mbc,
         }
@@ -98,7 +100,15 @@ impl Cartridge {
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
+        if self.has_battery && (0xa000..=0xbfff).contains(&address) {
+            self.sram_dirty = true;
+        }
         self.mbc.write(address, value);
+    }
+
+    /// Returns true if SRAM has been written to since the last call.
+    pub fn take_sram_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.sram_dirty, false)
     }
 
     pub fn mbc(&self) -> &Mbc {
