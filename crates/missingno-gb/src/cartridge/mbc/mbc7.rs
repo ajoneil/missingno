@@ -255,11 +255,20 @@ impl Mbc7 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
-            0x0000..=0x1fff => self.ram_enabled_1 = value & 0x0f == 0x0a,
-            0x2000..=0x3fff => self.rom_bank = value & 0x7f,
-            0x4000..=0x5fff => self.ram_enabled_2 = value == 0x40,
+            0x0000..=0x1fff => {
+                self.ram_enabled_1 = value & 0x0f == 0x0a;
+                false
+            }
+            0x2000..=0x3fff => {
+                self.rom_bank = value & 0x7f;
+                false
+            }
+            0x4000..=0x5fff => {
+                self.ram_enabled_2 = value == 0x40;
+                false
+            }
             0xa000..=0xafff if self.ram_accessible() => {
                 let register = (address >> 4) & 0x0f;
                 match register {
@@ -269,6 +278,7 @@ impl Mbc7 {
                             self.accel_x = 0x8000;
                             self.accel_y = 0x8000;
                         }
+                        false
                     }
                     0x1 => {
                         if let LatchState::WroteErase = self.latch_state {
@@ -279,12 +289,16 @@ impl Mbc7 {
                             }
                         }
                         self.latch_state = LatchState::Idle;
+                        false
                     }
-                    0x8 => self.eeprom.write(value),
-                    _ => {}
+                    0x8 => {
+                        self.eeprom.write(value);
+                        false
+                    }
+                    _ => false,
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 }

@@ -99,7 +99,9 @@ impl GameBoy {
                 }
             }
         }
-        let sram_dirty = self.external.cartridge.take_sram_dirty();
+        // Don't drain sram_dirty here — let the caller (step_traced) do it
+        // so the flag accumulates across multiple step_instruction calls.
+        let sram_dirty = self.external.cartridge.sram_dirty;
         StepResult { new_screen, sram_dirty, dots }
     }
 

@@ -65,18 +65,30 @@ impl Huc1 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
-            0x0000..=0x1fff => self.ir_mode = value == 0x0e,
-            0x2000..=0x3fff => self.rom_bank = value & 0x3f,
-            0x4000..=0x5fff => self.ram_bank = value & 0x03,
+            0x0000..=0x1fff => {
+                self.ir_mode = value == 0x0e;
+                false
+            }
+            0x2000..=0x3fff => {
+                self.rom_bank = value & 0x3f;
+                false
+            }
+            0x4000..=0x5fff => {
+                self.ram_bank = value & 0x03;
+                false
+            }
             0xa000..=0xbfff if !self.ir_mode => {
                 let bank = self.ram_bank as usize;
                 if bank < self.ram.len() {
                     self.ram[bank][(address - 0xa000) as usize] = value;
+                    true
+                } else {
+                    false
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 }

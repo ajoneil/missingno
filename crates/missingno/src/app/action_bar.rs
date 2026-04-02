@@ -42,11 +42,22 @@ impl ActionBar {
     }
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
-        let title = app
-            .current_game
-            .as_ref()
-            .map(|g| g.entry.display_title())
-            .unwrap_or_default();
+        // Title comes from viewing context or running game
+        let title = match app.screen {
+            app::Screen::Detail => {
+                // Show the viewed game's title
+                app.viewing_sha1.as_ref()
+                    .and_then(|sha1| app.library_cache.entries.iter().find(|g| g.entry.sha1 == *sha1))
+                    .map(|g| g.entry.display_title())
+                    .unwrap_or_default()
+            }
+            _ => {
+                // Show the running game's title
+                app.current_game.as_ref()
+                    .map(|g| g.entry.display_title())
+                    .unwrap_or_default()
+            }
+        };
 
         match app.screen {
             app::Screen::Library => {

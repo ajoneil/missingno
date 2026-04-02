@@ -49,7 +49,7 @@ impl Mbc2 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
             0x0000..=0x3fff => {
                 if address & 0x100 == 0 {
@@ -57,13 +57,17 @@ impl Mbc2 {
                 } else {
                     self.bank = value & 0xf;
                 }
+                false
             }
             0xa000..=0xbfff => {
                 if self.ram_enabled {
                     self.ram[((address - 0xa000) % 0x200) as usize] = value & 0x0f;
+                    true
+                } else {
+                    false
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 }

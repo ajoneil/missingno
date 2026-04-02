@@ -33,9 +33,12 @@ impl NoMbc {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         if let Some(ram) = &mut self.ram {
             ram[(address - 0xa000) as usize] = value;
+            true
+        } else {
+            false
         }
     }
 }

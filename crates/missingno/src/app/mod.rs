@@ -5,7 +5,7 @@ use iced::{
     Element,
     Length::Fill,
     Subscription, Task, Theme, event, mouse, time,
-    widget::{column, container, mouse_area, row, svg, text as iced_text},
+    widget::{Stack, center, column, container, mouse_area, opaque, row, svg, text as iced_text},
     window,
 };
 use replace_with::replace_with_or_abort;
@@ -76,8 +76,23 @@ struct App {
     audio_output: Option<AudioOutput>,
     recent_games: recent::RecentGames,
     settings: settings::Settings,
+    /// The running emulation session. Only set when a game is actually loaded.
     current_game: Option<CurrentGame>,
+    /// SHA1 of the game being viewed in the detail page (may differ from current_game).
+    viewing_sha1: Option<String>,
     library_cache: library::view::LibraryCache,
+    /// Action waiting for user confirmation (e.g. close game before launching another).
+    pending_action: Option<PendingAction>,
+}
+
+#[derive(Debug, Clone)]
+enum PendingAction {
+    /// User wants to launch a different game — close current first.
+    SwitchGame(String),
+    /// User wants to close the app.
+    CloseApp,
+    /// User wants to reset the emulator.
+    ResetEmulator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -123,6 +138,10 @@ enum Message {
     PlayFromDetail,
     BackToDetail,
     ShowSettings,
+    /// Actually close the running game (save, end session, unload).
+    ConfirmAction,
+    /// Dismiss the confirmation dialog.
+    DismissConfirm,
 
     // Emulation
     Run,
@@ -176,7 +195,9 @@ impl App {
             recent_games,
             settings,
             current_game: None,
+            viewing_sha1: None,
             library_cache,
+            pending_action: None,
         };
 
         let mut tasks = Vec::new();
@@ -222,26 +243,72 @@ impl App {
             Message::Load(message) => return load::update(message, self),
 
             Message::BackToLibrary => {
-                self.save();
-                if let Some(current) = &mut self.current_game {
-                    current.play_log.end_session();
-                    library::play_log::save(&current.game_dir, &current.play_log);
-                }
-                self.game = Game::Unloaded;
-                self.current_game = None;
+                self.flush_pending_save();
+                self.pause();
                 self.screen = Screen::Library;
             }
+            Message::ConfirmAction => {
+                let action = self.pending_action.take();
+
+                match action {
+                    Some(PendingAction::ResetEmulator) => {
+                        self.reset();
+                    }
+                    Some(PendingAction::SwitchGame(sha1)) => {
+                        // Close current game
+                        if let Some(current) = &mut self.current_game {
+                            current.play_log.end_session();
+                            library::play_log::save(&current.game_dir, &current.play_log);
+                        }
+                        self.game = Game::Unloaded;
+                        self.current_game = None;
+
+                        if load::select_game(self, &sha1) {
+                            self.screen = Screen::Detail;
+                        } else {
+                            self.screen = Screen::Library;
+                        }
+                    }
+                    Some(PendingAction::CloseApp) => {
+                        if let Some(current) = &mut self.current_game {
+                            current.play_log.end_session();
+                            library::play_log::save(&current.game_dir, &current.play_log);
+                        }
+                        return window::latest().and_then(window::close);
+                    }
+                    None => {}
+                }
+            }
+            Message::DismissConfirm => {
+                self.pending_action = None;
+            }
             Message::PlayFromDetail => {
-                if matches!(self.game, Game::Loaded(_)) {
-                    // Resume
+                let viewing = self.viewing_sha1.clone();
+                let same_game = viewing.as_ref().and_then(|sha1| {
+                    self.current_game.as_ref().map(|c| c.entry.sha1 == *sha1)
+                }).unwrap_or(false);
+
+                if same_game {
+                    // Resume the already-loaded game
                     self.run();
                     self.screen = Screen::Emulator;
-                } else {
+                } else if matches!(self.game, Game::Loaded(_)) {
+                    // Different game loaded, confirm switch
+                    if let Some(sha1) = viewing {
+                        self.pending_action = Some(PendingAction::SwitchGame(sha1));
+                    }
+                } else if let Some(sha1) = viewing {
+                    // Nothing loaded, start the viewed game
+                    load::select_game(self, &sha1);
                     return load::play_current_game(self);
                 }
             }
             Message::BackToDetail => {
+                self.flush_pending_save();
                 self.pause();
+                if let Some(current) = &self.current_game {
+                    self.viewing_sha1 = Some(current.entry.sha1.clone());
+                }
                 self.screen = Screen::Detail;
             }
             Message::ShowSettings => {
@@ -270,8 +337,7 @@ impl App {
             Message::Run => self.run(),
             Message::Pause => self.pause(),
             Message::Reset => {
-                self.save();
-                self.reset();
+                self.pending_action = Some(PendingAction::ResetEmulator);
             }
 
             Message::ToggleFullscreen => {
@@ -319,12 +385,11 @@ impl App {
             }
 
             Message::CloseRequested => {
-                self.save();
-                if let Some(current) = &mut self.current_game {
-                    current.play_log.end_session();
-                    library::play_log::save(&current.game_dir, &current.play_log);
+                if matches!(self.game, Game::Loaded(_)) {
+                    self.pending_action = Some(PendingAction::CloseApp);
+                } else {
+                    return window::latest().and_then(window::close);
                 }
-                return window::latest().and_then(window::close);
             }
 
             Message::PressButton(button) => self.press_button(button),
@@ -415,12 +480,25 @@ impl App {
             },
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
-                    if load::select_game(self, &sha1) {
-                        self.screen = Screen::Detail;
-                    }
+                    // Just view the detail page — doesn't touch the running game
+                    self.viewing_sha1 = Some(sha1);
+                    self.screen = Screen::Detail;
                 }
                 library::view::Message::QuickPlay(sha1) => {
-                    if load::select_game(self, &sha1) {
+                    let same_game = self.current_game.as_ref()
+                        .map(|c| c.entry.sha1 == sha1)
+                        .unwrap_or(false);
+
+                    if same_game {
+                        // Already loaded, just resume
+                        self.run();
+                        self.screen = Screen::Emulator;
+                    } else if matches!(self.game, Game::Loaded(_)) {
+                        // Different game loaded, confirm first
+                        self.pending_action = Some(PendingAction::SwitchGame(sha1));
+                    } else {
+                        // Nothing loaded, go ahead
+                        load::select_game(self, &sha1);
                         return load::play_current_game(self);
                     }
                 }
@@ -528,23 +606,114 @@ impl App {
         // Standard layout: action bar + content
         let content = match self.screen {
             Screen::Library => library::view::view(&self.library_cache),
-            Screen::Detail => {
-                if let Some(current) = &self.current_game {
-                    library::detail_view::view(current, &self.game)
-                } else {
-                    library::view::view(&self.library_cache)
-                }
-            }
+            Screen::Detail => self.detail_view(),
             Screen::Emulator => self.emulator_view(false),
             Screen::Settings => unreachable!(),
         };
 
-        column![
+        let main = column![
             self.action_bar.view(self),
             horizontal_rule(),
             container(content).center(Fill)
-        ]
-        .into()
+        ];
+
+        if let Some(action) = &self.pending_action {
+            let (prompt, confirm_label) = match action {
+                PendingAction::SwitchGame(_) => ("Close the current game and switch?", "Close Game"),
+                PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
+                PendingAction::ResetEmulator => ("Reset the emulator? Unsaved progress will be lost.", "Reset"),
+            };
+
+            let mut info = column![iced_text(prompt)].spacing(s());
+
+            if let Some(current) = &self.current_game {
+                info = info.push(
+                    iced_text(current.entry.display_title())
+                        .size(text::sizes::xl())
+                        .font(fonts::heading()),
+                );
+                if let Some(last_save) = current.play_log.save_events.last() {
+                    info = info.push(
+                        iced_text(format!("Last saved {}", friendly_ago(last_save.timestamp)))
+                            .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                    );
+                } else {
+                    info = info.push(
+                        iced_text("No saves in this session")
+                            .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                    );
+                }
+            }
+
+            Stack::new()
+                .push(main)
+                .push(opaque(
+                    mouse_area(
+                        center(
+                            container(
+                                column![
+                                    info,
+                                    row![
+                                        buttons::standard("Cancel")
+                                            .on_press(Message::DismissConfirm),
+                                        buttons::danger(confirm_label)
+                                            .on_press(Message::ConfirmAction),
+                                    ]
+                                    .spacing(s()),
+                                ]
+                                .spacing(l())
+                                .align_x(Center),
+                            )
+                            .padding(l())
+                            .style(container::bordered_box),
+                        )
+                        .style(|_| container::Style {
+                            background: Some(
+                                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into(),
+                            ),
+                            ..Default::default()
+                        }),
+                    )
+                    .on_press(Message::DismissConfirm),
+                ))
+                .into()
+        } else {
+            main.into()
+        }
+    }
+
+    fn detail_view(&self) -> Element<'_, Message> {
+        let viewing_sha1 = self.viewing_sha1.as_deref();
+
+        // If viewing the running game, use CurrentGame data (has live play_log)
+        if let Some(current) = &self.current_game {
+            if viewing_sha1 == Some(current.entry.sha1.as_str()) {
+                return library::detail_view::view(library::detail_view::DetailData {
+                    entry: &current.entry,
+                    cover: current.cover.as_ref(),
+                    play_log: Some(current.play_log.clone()),
+                    is_running: matches!(self.game, Game::Loaded(_)),
+                });
+            }
+        }
+
+        // Otherwise look up from the library cache
+        if let Some(sha1) = viewing_sha1 {
+            if let Some(cached) = self.library_cache.entries.iter().find(|g| g.entry.sha1 == sha1) {
+                // Load play log from disk for non-running games
+                let game_dir = library::game_dir_for(&cached.entry.title, &cached.entry.sha1);
+                let play_log = game_dir.as_ref().map(|d| library::play_log::load(d));
+                return library::detail_view::view(library::detail_view::DetailData {
+                    entry: &cached.entry,
+                    cover: cached.cover.as_ref(),
+                    play_log,
+                    is_running: false,
+                });
+            }
+        }
+
+        // Fallback
+        library::view::view(&self.library_cache)
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
@@ -669,6 +838,30 @@ impl App {
         }
     }
 
+    /// Flush any debounced SRAM save from the emulator.
+    fn flush_pending_save(&mut self) {
+        let flushed = match &mut self.game {
+            Game::Loaded(LoadedGame::Emulator(emu)) => emu.flush_pending_save(),
+            _ => false,
+        };
+        if flushed {
+            eprintln!("[save] Flushing pending save on navigation/close");
+            self.save();
+            if let Some(current) = &mut self.current_game {
+                let size = match &self.game {
+                    Game::Loaded(LoadedGame::Emulator(emu)) => {
+                        emu.game_boy().cartridge().ram()
+                            .map(|r| r.len() as u32)
+                            .unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                current.play_log.record_save(size);
+                library::play_log::save(&current.game_dir, &current.play_log);
+            }
+        }
+    }
+
     fn save(&self) {
         let Some(current) = &self.current_game else {
             return;
@@ -721,5 +914,23 @@ impl App {
                 _ => Subscription::none(),
             },
         ])
+    }
+}
+
+fn friendly_ago(timestamp: jiff::Timestamp) -> String {
+    let secs = jiff::Timestamp::now().duration_since(timestamp).as_secs();
+    if secs < 5 {
+        "just now".to_string()
+    } else if secs < 60 {
+        format!("{secs} seconds ago")
+    } else if secs < 3600 {
+        let mins = secs / 60;
+        if mins == 1 { "1 minute ago".to_string() } else { format!("{mins} minutes ago") }
+    } else if secs < 86400 {
+        let hours = secs / 3600;
+        if hours == 1 { "1 hour ago".to_string() } else { format!("{hours} hours ago") }
+    } else {
+        let days = secs / 86400;
+        if days == 1 { "yesterday".to_string() } else { format!("{days} days ago") }
     }
 }

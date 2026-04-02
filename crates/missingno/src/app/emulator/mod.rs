@@ -14,11 +14,19 @@ use crate::app::{
 };
 use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};
 
+/// Frames of silence before we flush an SRAM save.
+/// Games often write SRAM across several consecutive frames during a save
+/// operation. We wait for writes to stop before persisting.
+const SRAM_DEBOUNCE_FRAMES: u32 = 30; // ~0.5 seconds at 60fps
+
 pub struct Emulator {
     game_boy: GameBoy,
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
+    /// Countdown: frames since last SRAM write. When this reaches
+    /// SRAM_DEBOUNCE_FRAMES, we fire SaveBattery. None = no pending save.
+    sram_save_countdown: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +49,7 @@ impl Emulator {
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
+            sram_save_countdown: None,
         }
     }
 
@@ -50,6 +59,7 @@ impl Emulator {
             screen_view,
             running: false,
             screen_hovered: false,
+            sram_save_countdown: None,
         }
     }
 
@@ -81,9 +91,6 @@ impl Emulator {
                         break;
                     }
                 }
-                if sram_dirty {
-                    return Task::done(app::Message::SaveBattery);
-                }
                 let screen = self.game_boy.screen().clone();
                 let video_enabled = self.game_boy.ppu().control().video_enabled();
                 let display = if let Some(sgb) = self.game_boy.sgb() {
@@ -99,12 +106,34 @@ impl Emulator {
                     GameBoyScreen::Display(screen).into()
                 };
                 self.screen_view.apply(display);
+
+                // Debounce SRAM saves: reset countdown on each dirty frame,
+                // fire SaveBattery after SRAM_DEBOUNCE_FRAMES of quiet.
+                if sram_dirty {
+                    if self.sram_save_countdown.is_none() {
+                        eprintln!("[save] SRAM write detected, starting debounce");
+                    }
+                    self.sram_save_countdown = Some(0);
+                } else if let Some(count) = &mut self.sram_save_countdown {
+                    *count += 1;
+                    if *count >= SRAM_DEBOUNCE_FRAMES {
+                        eprintln!("[save] Debounce complete, flushing save");
+                        self.sram_save_countdown = None;
+                        return Task::done(app::Message::SaveBattery);
+                    }
+                }
             }
             Message::ScreenHovered => self.screen_hovered = true,
             Message::ScreenUnhovered => self.screen_hovered = false,
         }
 
         Task::none()
+    }
+
+    /// Force-flush any pending SRAM save. Call when pausing or closing.
+    /// Returns true if there was a pending save.
+    pub fn flush_pending_save(&mut self) -> bool {
+        self.sram_save_countdown.take().is_some()
     }
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {

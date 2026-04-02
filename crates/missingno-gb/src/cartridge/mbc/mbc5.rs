@@ -71,14 +71,19 @@ impl Mbc5 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
-            0x0000..=0x1fff => self.ram_enabled = value & 0x0f == 0x0a,
+            0x0000..=0x1fff => {
+                self.ram_enabled = value & 0x0f == 0x0a;
+                false
+            }
             0x2000..=0x2fff => {
                 self.rom_bank = (self.rom_bank & 0x100) | value as u16;
+                false
             }
             0x3000..=0x3fff => {
                 self.rom_bank = (self.rom_bank & 0xff) | ((value as u16 & 0x01) << 8);
+                false
             }
             0x4000..=0x5fff => {
                 self.ram_bank = if self.rumble {
@@ -86,14 +91,18 @@ impl Mbc5 {
                 } else {
                     value & 0x0f
                 };
+                false
             }
             0xa000..=0xbfff if self.ram_enabled => {
                 let bank = self.ram_bank as usize;
                 if bank < self.ram.len() {
                     self.ram[bank][(address - 0xa000) as usize] = value;
+                    true
+                } else {
+                    false
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 }

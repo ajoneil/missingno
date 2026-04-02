@@ -49,7 +49,8 @@ impl Mbc {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    /// Write to cartridge address space. Returns true if SRAM was written.
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match self {
             Mbc::NoMbc(m) => m.write(address, value),
             Mbc::Mbc1(m) => m.write(address, value),

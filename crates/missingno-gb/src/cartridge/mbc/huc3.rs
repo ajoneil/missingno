@@ -140,7 +140,7 @@ impl Huc3 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
             0x0000..=0x1fff => {
                 self.mode = match value & 0x0f {
@@ -152,31 +152,44 @@ impl Huc3 {
                     0x0e => Mode::Ir,
                     _ => self.mode,
                 };
+                false
             }
-            0x2000..=0x3fff => self.rom_bank = value & 0x7f,
-            0x4000..=0x5fff => self.ram_bank = value & 0x03,
+            0x2000..=0x3fff => {
+                self.rom_bank = value & 0x7f;
+                false
+            }
+            0x4000..=0x5fff => {
+                self.ram_bank = value & 0x03;
+                false
+            }
             0xa000..=0xbfff => match self.mode {
                 Mode::Ram => {
                     let bank = self.ram_bank as usize;
                     if bank < self.ram.len() {
                         self.ram[bank][(address - 0xa000) as usize] = value;
+                        true
+                    } else {
+                        false
                     }
                 }
                 Mode::RtcCommand => {
                     self.handle_rtc_command(value);
+                    false
                 }
                 Mode::RtcSemaphore => {
                     if value == 0xfe {
                         // Trigger execution — set semaphore to ready
                         self.rtc_semaphore = 1;
                     }
+                    false
                 }
                 Mode::Ir => {
                     // IR transmitter control — ignored
+                    false
                 }
-                _ => {}
+                _ => false,
             },
-            _ => {}
+            _ => false,
         }
     }
 }

@@ -129,7 +129,8 @@ impl Mbc3 {
             0x0000..=0x3fff => rom[address as usize],
             0x4000..=0x7fff => {
                 let bank = if self.bank == 0 { 1 } else { self.bank } as usize;
-                rom[bank * 0x4000 + (address - 0x4000) as usize]
+                let addr = (bank * 0x4000 + (address - 0x4000) as usize) % rom.len();
+                rom[addr]
             }
             0xa000..=0xbfff if self.ram_and_clock_enabled => match self.mapped {
                 Mapped::Ram(ram_bank) if (ram_bank as usize) < self.ram.len() => {
@@ -142,12 +143,16 @@ impl Mbc3 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
-            0x0000..=0x1fff => self.ram_and_clock_enabled = value & 0xf == 0xa,
+            0x0000..=0x1fff => {
+                self.ram_and_clock_enabled = value & 0xf == 0xa;
+                false
+            }
             0x2000..=0x3fff => {
                 let bank = value & 0x7f;
                 self.bank = if bank == 0 { 1 } else { bank };
+                false
             }
             0x4000..=0x5fff => {
                 self.mapped = match value & 0xf {
@@ -159,6 +164,7 @@ impl Mbc3 {
                     0x0c => Mapped::Clock(ClockRegister::DayUpper),
                     _ => panic!("Invalid bank select {:2x}", value),
                 };
+                false
             }
             0x6000..=0x7fff => {
                 if let Some(clock) = &mut self.clock {
@@ -169,20 +175,23 @@ impl Mbc3 {
                         clock.latch_ready = false;
                     }
                 }
+                false
             }
 
             0xa000..=0xbfff if self.ram_and_clock_enabled => match self.mapped {
                 Mapped::Ram(ram_bank) if (ram_bank as usize) < self.ram.len() => {
                     self.ram[ram_bank as usize][(address - 0xa000) as usize] = value;
+                    true
                 }
                 Mapped::Clock(register) => {
                     if let Some(clock) = &mut self.clock {
                         clock.set_register(register, value);
                     }
+                    false
                 }
-                _ => {}
+                _ => false,
             },
-            _ => {}
+            _ => false,
         }
     }
 }

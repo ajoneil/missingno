@@ -136,24 +136,29 @@ impl Mbc1 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
             0x0000..=0x1fff => {
                 self.ram_enabled = value & 0xf == 0xa;
+                false
             }
             0x2000..=0x3fff => {
                 self.bank = value & 0x1f;
+                false
             }
             0x4000..=0x5fff => {
                 self.ram_bank = value & 0b11;
+                false
             }
             0x6000..=0x7fff => {
                 self.mode1 = value & 1 == 1;
+                false
             }
             0xa000..=0xbfff if self.ram_enabled => {
                 self.ram.write(address, value, self.effective_ram_bank());
+                true
             }
-            _ => {}
+            _ => false,
         }
     }
 }

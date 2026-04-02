@@ -11,7 +11,7 @@ pub struct Cartridge {
     sgb_flag: bool,
     rom: Vec<u8>,
     mbc: Mbc,
-    sram_dirty: bool,
+    pub(crate) sram_dirty: bool,
 }
 
 fn parse_title(rom: &[u8]) -> String {
@@ -100,10 +100,10 @@ impl Cartridge {
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        if self.has_battery && (0xa000..=0xbfff).contains(&address) {
+        let ram_written = self.mbc.write(address, value);
+        if self.has_battery && ram_written {
             self.sram_dirty = true;
         }
-        self.mbc.write(address, value);
     }
 
     /// Returns true if SRAM has been written to since the last call.

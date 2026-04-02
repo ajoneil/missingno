@@ -99,30 +99,60 @@ impl Mbc6 {
         }
     }
 
-    pub fn write(&mut self, address: u16, value: u8) {
+    pub fn write(&mut self, address: u16, value: u8) -> bool {
         match address {
-            0x0000..=0x03ff => self.ram_enabled = value & 0x0f == 0x0a,
-            0x0400..=0x07ff => self.ram_bank_a = value & 0x07,
-            0x0800..=0x0bff => self.ram_bank_b = value & 0x07,
-            0x0c00..=0x0fff => self.flash_enabled = value & 0x01 != 0,
-            0x1000..=0x1fff => {} // Flash write enable — ignored
-            0x2000..=0x27ff => self.rom_bank_a = value,
-            0x2800..=0x2fff => self.rom_bank_a_flash = value == 0x08,
-            0x3000..=0x37ff => self.rom_bank_b = value,
-            0x3800..=0x3fff => self.rom_bank_b_flash = value == 0x08,
+            0x0000..=0x03ff => {
+                self.ram_enabled = value & 0x0f == 0x0a;
+                false
+            }
+            0x0400..=0x07ff => {
+                self.ram_bank_a = value & 0x07;
+                false
+            }
+            0x0800..=0x0bff => {
+                self.ram_bank_b = value & 0x07;
+                false
+            }
+            0x0c00..=0x0fff => {
+                self.flash_enabled = value & 0x01 != 0;
+                false
+            }
+            0x1000..=0x1fff => false, // Flash write enable — ignored
+            0x2000..=0x27ff => {
+                self.rom_bank_a = value;
+                false
+            }
+            0x2800..=0x2fff => {
+                self.rom_bank_a_flash = value == 0x08;
+                false
+            }
+            0x3000..=0x37ff => {
+                self.rom_bank_b = value;
+                false
+            }
+            0x3800..=0x3fff => {
+                self.rom_bank_b_flash = value == 0x08;
+                false
+            }
             0xa000..=0xafff if self.ram_enabled => {
                 let bank = self.ram_bank_a as usize;
                 if bank < self.ram.len() {
                     self.ram[bank][(address - 0xa000) as usize] = value;
+                    true
+                } else {
+                    false
                 }
             }
             0xb000..=0xbfff if self.ram_enabled => {
                 let bank = self.ram_bank_b as usize;
                 if bank < self.ram.len() {
                     self.ram[bank][(address - 0xb000) as usize] = value;
+                    true
+                } else {
+                    false
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 }
