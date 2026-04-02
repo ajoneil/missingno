@@ -65,6 +65,7 @@ impl PlayLog {
         }
     }
 
+    #[allow(dead_code)]
     pub fn record_save(&mut self, size_bytes: u32) {
         let now = Timestamp::now();
         self.last_played = Some(now);

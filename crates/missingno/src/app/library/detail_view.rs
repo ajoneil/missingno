@@ -26,10 +26,12 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
+#[allow(dead_code)]
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
     pub cover: Option<&'a image::Handle>,
     pub play_log: Option<PlayLog>,
+    pub save_manifest: Option<library::saves::SaveManifest>,
     pub is_running: bool,
     pub game_dir: Option<PathBuf>,
 }
@@ -133,34 +135,53 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         col = col.push(stats);
     }
 
-    // Save history
-    if let Some(game_dir) = &data.game_dir {
-        let saves = library::list_save_history(game_dir);
-        let has_battery = library::battery_path(game_dir).exists();
-
-        if has_battery || !saves.is_empty() {
+    // Save data
+    if let Some(manifest) = &data.save_manifest {
+        if !manifest.saves.is_empty() {
             col = col.push(horizontal_rule());
 
-            let mut save_section = column![app_text::m("Save Data")].spacing(s());
+            let mut save_section = column![app_text::m("Saves")].spacing(s());
 
-            if has_battery {
-                save_section = save_section.push(text("Current save: battery.sav").color(MUTED));
-            }
+            let current_id = manifest.current.as_deref();
 
-            // Show recent saves (limit to 10)
-            if !saves.is_empty() {
-                save_section = save_section.push(text("History:").color(MUTED).size(12));
-                for (name, path) in saves.into_iter().take(10) {
-                    save_section = save_section.push(
-                        row![
-                            text(name).color(MUTED).size(12).width(Fill),
-                            buttons::subtle("Restore")
-                                .on_press(app::Message::RestoreSave(path)),
-                        ]
-                        .spacing(s())
-                        .align_y(Center),
+            // Group saves by session, show newest first
+            for save in manifest.saves.iter().rev().take(15) {
+                let is_current = current_id == Some(save.id.as_str());
+                let origin = match &save.origin {
+                    library::saves::SaveOrigin::Emulation => "",
+                    library::saves::SaveOrigin::Imported => " (imported)",
+                    library::saves::SaveOrigin::LegacyImport => " (imported)",
+                };
+
+                let label = format!(
+                    "{}{}{}",
+                    save.created.strftime("%Y-%m-%d %H:%M"),
+                    origin,
+                    if is_current { " ●" } else { "" },
+                );
+
+                let size_kb = save.size_bytes / 1024;
+                let detail = format!("{size_kb} KB");
+
+                let mut save_row = row![
+                    column![
+                        text(label).size(13),
+                        text(detail).color(MUTED).size(11),
+                    ]
+                    .spacing(2)
+                    .width(Fill),
+                ]
+                .spacing(s())
+                .align_y(Center);
+
+                if !is_current {
+                    save_row = save_row.push(
+                        buttons::subtle("Restore")
+                            .on_press(app::Message::RestoreSave(save.id.clone())),
                     );
                 }
+
+                save_section = save_section.push(save_row);
             }
 
             save_section = save_section.push(

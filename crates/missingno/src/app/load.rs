@@ -68,16 +68,21 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
         return false;
     };
 
+    // Migrate legacy battery.sav if present
+    library::saves::migrate_legacy_battery(&game_dir);
+
     let cover = library::load_cover(&game_dir)
         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     let play_log = library::play_log::load(&game_dir);
+    let save_manifest = library::saves::load_manifest(&game_dir);
 
     app.current_game = Some(CurrentGame {
         entry,
         game_dir,
         cover,
         play_log,
+        save_manifest,
     });
     true
 }
@@ -100,7 +105,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         return Task::none();
     };
 
-    let save_data = library::load_battery(&game_dir);
+    let save_data = library::saves::load_current_save(&game_dir);
     let cartridge = Cartridge::new(rom, save_data);
     let game_boy = GameBoy::new(cartridge, None);
     let palette = app.settings.palette;
@@ -150,23 +155,30 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
             .expect("Could not determine library directory");
 
-        // Copy .sav from next to ROM if the library doesn't have one yet
+        // Import .sav from next to ROM if the library doesn't have saves yet
         let legacy_sav = rom_path.with_extension("sav");
-        if legacy_sav.exists() && !library::battery_path(&game_dir).exists() {
-            let _ = std::fs::create_dir_all(&game_dir);
-            let _ = std::fs::copy(&legacy_sav, library::battery_path(&game_dir));
+        let mut save_manifest = library::saves::load_manifest(&game_dir);
+        if legacy_sav.exists() && save_manifest.saves.is_empty() {
+            if let Ok(data) = std::fs::read(&legacy_sav) {
+                let entry_save = save_manifest.record_legacy_import(data.len() as u32);
+                library::saves::write_save_data(&game_dir, &entry_save.id.clone(), &data);
+                library::saves::save_manifest(&game_dir, &save_manifest);
+            }
         }
 
         library::save_entry(&game_dir, &entry);
         (game_dir, entry)
     };
 
+    // Migrate legacy battery.sav if present
+    library::saves::migrate_legacy_battery(&game_dir);
+
     // Add this ROM path if not already tracked
     entry.add_rom_path(rom_path.clone());
     library::save_entry(&game_dir, &entry);
 
     // Load save data and cover
-    let save_data = library::load_battery(&game_dir);
+    let save_data = library::saves::load_current_save(&game_dir);
     let cover = library::load_cover(&game_dir)
         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
@@ -191,11 +203,14 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     play_log.start_session();
     library::play_log::save(&game_dir, &play_log);
 
+    let save_manifest = library::saves::load_manifest(&game_dir);
+
     app.current_game = Some(CurrentGame {
         entry: entry.clone(),
         game_dir,
         cover,
         play_log,
+        save_manifest,
     });
     app.screen = Screen::Emulator;
 

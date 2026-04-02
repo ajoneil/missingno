@@ -48,11 +48,18 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
                 None => continue,
             };
 
-            // Copy .sav from next to ROM if available
+            // Import .sav from next to ROM if available
             let legacy_sav = path.with_extension("sav");
-            if legacy_sav.exists() && !library::battery_path(&game_dir).exists() {
-                let _ = fs::create_dir_all(&game_dir);
-                let _ = fs::copy(&legacy_sav, library::battery_path(&game_dir));
+            if legacy_sav.exists() {
+                let mut manifest = library::saves::load_manifest(&game_dir);
+                if manifest.saves.is_empty() {
+                    if let Ok(data) = fs::read(&legacy_sav) {
+                        let save_entry = manifest.record_legacy_import(data.len() as u32);
+                        let id = save_entry.id.clone();
+                        library::saves::write_save_data(&game_dir, &id, &data);
+                        library::saves::save_manifest(&game_dir, &manifest);
+                    }
+                }
             }
 
             library::save_entry(&game_dir, &entry);

@@ -127,6 +127,7 @@ struct CurrentGame {
     game_dir: PathBuf,
     cover: Option<iced::widget::image::Handle>,
     play_log: library::play_log::PlayLog,
+    save_manifest: library::saves::SaveManifest,
 }
 
 #[derive(Debug, Clone)]
@@ -146,7 +147,7 @@ enum Message {
     RefreshMetadata,
     ImportSave,
     ImportSaveSelected(Option<rfd::FileHandle>),
-    RestoreSave(PathBuf),
+    RestoreSave(String),
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -341,17 +342,22 @@ impl App {
             Message::ImportSaveSelected(handle) => {
                 if let (Some(handle), Some(sha1)) = (handle, &self.viewing_sha1) {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        let data = std::fs::read(handle.path()).ok();
-                        if let Some(data) = data {
-                            library::save_battery(&game_dir, &data);
+                        if let Ok(data) = std::fs::read(handle.path()) {
+                            let mut manifest = library::saves::load_manifest(&game_dir);
+                            let entry = manifest.record_import(data.len() as u32);
+                            let id = entry.id.clone();
+                            library::saves::write_save_data(&game_dir, &id, &data);
+                            library::saves::save_manifest(&game_dir, &manifest);
                         }
                     }
                 }
             }
-            Message::RestoreSave(path) => {
+            Message::RestoreSave(save_id) => {
                 if let Some(sha1) = &self.viewing_sha1 {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        library::restore_save(&game_dir, &path);
+                        let mut manifest = library::saves::load_manifest(&game_dir);
+                        manifest.restore(&save_id);
+                        library::saves::save_manifest(&game_dir, &manifest);
                     }
                 }
             }
@@ -400,23 +406,6 @@ impl App {
             }
             Message::SaveBattery => {
                 self.save();
-                if let Some(current) = &mut self.current_game {
-                    let size = match &self.game {
-                        Game::Loaded(LoadedGame::Emulator(emu)) => {
-                            emu.game_boy().cartridge().ram()
-                                .map(|r| r.len() as u32)
-                                .unwrap_or(0)
-                        }
-                        Game::Loaded(LoadedGame::Debugger(dbg)) => {
-                            dbg.game_boy().cartridge().ram()
-                                .map(|r| r.len() as u32)
-                                .unwrap_or(0)
-                        }
-                        _ => 0,
-                    };
-                    current.play_log.record_save(size);
-                    library::play_log::save(&current.game_dir, &current.play_log);
-                }
             }
             Message::Run => self.run(),
             Message::Pause => self.pause(),
@@ -776,6 +765,7 @@ impl App {
                     entry: &current.entry,
                     cover: current.cover.as_ref(),
                     play_log: Some(current.play_log.clone()),
+                    save_manifest: Some(current.save_manifest.clone()),
                     is_running: matches!(self.game, Game::Loaded(_)),
                     game_dir: Some(current.game_dir.clone()),
                 });
@@ -788,10 +778,12 @@ impl App {
                 // Load play log from disk for non-running games
                 let game_dir = library::game_dir_for(&cached.entry.title, &cached.entry.sha1);
                 let play_log = game_dir.as_ref().map(|d| library::play_log::load(d));
+                let save_manifest = game_dir.as_ref().map(|d| library::saves::load_manifest(d));
                 return library::detail_view::view(library::detail_view::DetailData {
                     entry: &cached.entry,
                     cover: cached.cover.as_ref(),
                     play_log,
+                    save_manifest,
                     is_running: false,
                     game_dir: game_dir.clone(),
                 });
@@ -931,38 +923,38 @@ impl App {
             _ => false,
         };
         if flushed {
-            eprintln!("[save] Flushing pending save on navigation/close");
             self.save();
-            if let Some(current) = &mut self.current_game {
-                let size = match &self.game {
-                    Game::Loaded(LoadedGame::Emulator(emu)) => {
-                        emu.game_boy().cartridge().ram()
-                            .map(|r| r.len() as u32)
-                            .unwrap_or(0)
-                    }
-                    _ => 0,
-                };
-                current.play_log.record_save(size);
-                library::play_log::save(&current.game_dir, &current.play_log);
-            }
         }
     }
 
-    fn save(&self) {
-        let Some(current) = &self.current_game else {
-            return;
-        };
-        let cartridge = match &self.game {
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.game_boy().cartridge(),
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.game_boy().cartridge(),
+    fn save(&mut self) {
+        let ram = match &self.game {
+            Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                if !debugger.game_boy().cartridge().has_battery() { return; }
+                debugger.game_boy().cartridge().ram()
+            }
+            Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                if !emulator.game_boy().cartridge().has_battery() { return; }
+                emulator.game_boy().cartridge().ram()
+            }
             _ => return,
         };
-        if !cartridge.has_battery() {
-            return;
-        }
-        if let Some(ram) = cartridge.ram() {
-            library::save_battery(&current.game_dir, &ram);
-        }
+        let Some(ram) = ram else { return };
+        let Some(current) = &mut self.current_game else { return };
+
+        let session_index = if current.play_log.sessions.is_empty() {
+            None
+        } else {
+            Some(current.play_log.sessions.len() - 1)
+        };
+
+        let entry = current.save_manifest.record_emulation_save(
+            ram.len() as u32,
+            session_index,
+        );
+        let id = entry.id.clone();
+        library::saves::write_save_data(&current.game_dir, &id, &ram);
+        library::saves::save_manifest(&current.game_dir, &current.save_manifest);
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
