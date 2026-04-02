@@ -103,15 +103,18 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
     );
 
     column![
-        container(
+        row![
             buttons::subtle(
-                row![icons::m(Icon::Back), text("Back")]
+                row![icons::m(Icon::Back), text("Library")]
                     .spacing(s())
                     .align_y(Center),
             )
             .on_press(Message::Back.into()),
-        )
-        .padding(m()),
+            app_text::xl("Settings"),
+        ]
+        .spacing(xl())
+        .padding(m())
+        .align_y(Center),
         horizontal_rule(),
         container(
             column![header, horizontal_rule(), network, horizontal_rule(), directories]

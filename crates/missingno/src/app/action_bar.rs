@@ -46,16 +46,29 @@ impl ActionBar {
             Game::Unloaded | Game::Loading => {
                 row![app_text::xl("Library"), self.settings(app)]
             }
-            Game::Loaded(_) => row![
-                buttons::subtle(
-                    row![icons::m(Icon::Back), "Library"]
-                        .spacing(s())
-                        .align_y(Center),
-                )
-                .on_press(app::Message::BackToLibrary),
-                controls(app.running(), app.debugger_enabled),
-                self.settings(app)
-            ],
+            Game::Loaded(_) => {
+                let title = app
+                    .current_game
+                    .as_ref()
+                    .map(|g| g.entry.title.clone())
+                    .unwrap_or_default();
+
+                row![
+                    buttons::subtle(
+                        row![icons::m(Icon::Back), "Library"]
+                            .spacing(s())
+                            .align_y(Center),
+                    )
+                    .on_press(app::Message::BackToLibrary),
+                    container(
+                        app_text::xl(title).wrapping(iced::widget::text::Wrapping::None)
+                    )
+                    .clip(true)
+                    .width(Fill),
+                    controls(app.running(), app.debugger_enabled),
+                    self.settings(app)
+                ]
+            }
         }
         .spacing(xl())
         .padding(m())
