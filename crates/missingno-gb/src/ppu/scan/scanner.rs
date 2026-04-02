@@ -200,7 +200,13 @@ impl SpriteScanner {
     /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
     /// FETO is sampled after tick_clock(), matching hardware's combinational gate.
     /// BESU clears on the falling edge via AVAP → EPOR.
-    pub(in crate::ppu) fn fall(&mut self, xupy_rising: bool, ly: u8, regs: &PipelineRegisters, oam: &Oam) {
+    pub(in crate::ppu) fn fall(
+        &mut self,
+        xupy_rising: bool,
+        ly: u8,
+        regs: &PipelineRegisters,
+        oam: &Oam,
+    ) {
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
         // Scanning is still true here even on the AVAP dot, because rise() no

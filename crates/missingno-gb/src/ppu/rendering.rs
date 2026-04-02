@@ -3,7 +3,7 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PixelOutput, PipelineRegisters, VideoControl,
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
 };
@@ -618,7 +618,8 @@ impl Rendering {
         // within a half T-cycle. Use live values to match hardware's
         // combinational settling.
         let fepo_now = self.fepo(regs);
-        let teky = fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
+        let teky =
+            fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
         self.phase_bridge = PhaseBridge::RisingToFalling { teky };
 
         // Phase-boundary snapshot: capture pre-edge values of signals

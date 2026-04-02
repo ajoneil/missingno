@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_gb::debugger::instructions::InstructionsIterator;
-use missingno_gb::debugger::{Debugger, WatchCondition};
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::cpu::flags::Flags;
 use missingno_gb::cpu::instructions::Instruction;
+use missingno_gb::debugger::instructions::InstructionsIterator;
+use missingno_gb::debugger::{Debugger, WatchCondition};
 use missingno_gb::interrupts;
 use missingno_gb::ppu;
 use missingno_gb::ppu::rendering::Mode;

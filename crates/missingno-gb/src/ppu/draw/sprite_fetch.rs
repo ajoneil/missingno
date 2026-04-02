@@ -5,9 +5,9 @@ use crate::ppu::{
     memory::{Oam, Vram},
 };
 
+use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::super::types::sprites::{self, SpriteId, SpriteSize};
 use super::super::types::tiles::{TileAddressMode, TileIndex};
-use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::shifters::ObjShifter;
 
 /// The phases of a sprite fetch on real hardware.
@@ -91,7 +91,12 @@ impl SpriteFetch {
 
     /// Advance the sprite fetch pipeline by one dot. Returns `true` when
     /// the fetch is complete (fetch_counter == 5, tile data high read).
-    pub(in crate::ppu) fn advance(&mut self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram) -> bool {
+    pub(in crate::ppu) fn advance(
+        &mut self,
+        regs: &PipelineRegisters,
+        oam: &Oam,
+        vram: &Vram,
+    ) -> bool {
         match self.fetch_counter {
             3 => {
                 // Tile data low VRAM read.

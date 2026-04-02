@@ -206,8 +206,7 @@ impl Debugger {
     }
 
     fn breakpoint_triggered(&self) -> bool {
-        self.breakpoints
-            .contains(&self.game_boy.cpu().bus_counter)
+        self.breakpoints.contains(&self.game_boy.cpu().bus_counter)
     }
 
     fn check_watchpoints(&self, trace: &[BusAccess]) -> Option<WatchCondition> {

@@ -6,16 +6,16 @@
 
 use gbtrace::format::SnapshotType;
 use gbtrace::snapshot::{
-    ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, MemoryRegion, PpuSnapshot,
-    SerialSnapshot, TimerSnapshot, build_memory_payload,
+    ApuSnapshot, CpuSnapshot, DmaSnapshot, MbcSnapshot, MemoryRegion, PpuSnapshot, SerialSnapshot,
+    TimerSnapshot, build_memory_payload,
 };
 
-use crate::{ClockPhase, GameBoy};
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::{EiDelay, HaltState};
 use crate::interrupts::InterruptFlags;
+use crate::{ClockPhase, GameBoy};
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -305,10 +305,14 @@ impl GameBoy {
     pub fn from_snapshot(cartridge: Cartridge, snap: Snapshot) -> GameBoy {
         use crate::cpu::mcycle::{BusDot, DotAction};
         use crate::memory::{ExternalBus, VramBus};
-        use crate::ppu::{screen::Screen, memory::{Oam, Vram}};
+        use crate::ppu::{
+            memory::{Oam, Vram},
+            screen::Screen,
+        };
 
         let find_region = |start: u16| -> Option<&[u8]> {
-            snap.memory.iter()
+            snap.memory
+                .iter()
                 .find(|r| r.start == start)
                 .map(|r| r.data.as_slice())
         };
@@ -358,7 +362,9 @@ impl GameBoy {
                 enabled: InterruptFlags::from_bits_retain(snap.cpu.ie),
             },
             vram_bus: VramBus {
-                vram: find_region(0x8000).map(Vram::from_bytes).unwrap_or_default(),
+                vram: find_region(0x8000)
+                    .map(Vram::from_bytes)
+                    .unwrap_or_default(),
                 latch: 0xFF,
             },
             high_ram: find_region(0xFF80)

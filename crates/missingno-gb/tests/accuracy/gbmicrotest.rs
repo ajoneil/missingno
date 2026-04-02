@@ -12,7 +12,11 @@ fn run_gbmicrotest(rom_name: &str) {
     for _ in 0..500_000 {
         run.step();
         if run.gb.read(0xFF82) != 0 {
-            result = Some((run.gb.read(0xFF80), run.gb.read(0xFF81), run.gb.read(0xFF82)));
+            result = Some((
+                run.gb.read(0xFF80),
+                run.gb.read(0xFF81),
+                run.gb.read(0xFF82),
+            ));
             break;
         }
     }

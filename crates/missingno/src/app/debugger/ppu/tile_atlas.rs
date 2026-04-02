@@ -5,7 +5,7 @@ use iced::{
 
 use crate::app::{Message, texture_renderer::TextureRenderer};
 use missingno_gb::ppu::{
-    types::control::Control, memory::Vram, types::palette::Palette, types::tiles::TileBlock,
+    memory::Vram, types::control::Control, types::palette::Palette, types::tiles::TileBlock,
 };
 
 /// Renders a grid of tiles as a single texture atlas

@@ -20,9 +20,9 @@ pub mod ppu;
 pub mod recording;
 pub mod serial_transfer;
 pub mod sgb;
-pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod snapshot;
+pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
 

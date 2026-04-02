@@ -16,7 +16,6 @@ impl Default for TileMap {
 }
 
 impl TileMap {
-
     pub fn get_tile(&self, x: u8, y: u8) -> TileIndex {
         self.data[y as usize * 32 + x as usize]
     }

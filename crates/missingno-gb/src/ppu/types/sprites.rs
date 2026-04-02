@@ -24,8 +24,7 @@ impl Default for Sprite {
     }
 }
 
-impl Sprite {
-}
+impl Sprite {}
 
 #[derive(Clone, Copy)]
 pub struct Position {

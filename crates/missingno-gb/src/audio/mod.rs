@@ -213,14 +213,24 @@ impl Audio {
     /// Construct an Audio instance from a gbtrace snapshot.
     #[cfg(feature = "gbtrace")]
     pub fn from_snapshot(snap: &gbtrace::snapshot::ApuSnapshot, wave_ram: [u8; 16]) -> Self {
-        use channels::{Enabled, pulse::PulseChannel, pulse_sweep::{PulseSweepChannel, Sweep}, wave::WaveChannel, noise::NoiseChannel};
-        use channels::registers::{Signed11, VolumeAndEnvelope, WaveformAndInitialLength};
         use channels::noise::FrequencyAndRandomness;
+        use channels::registers::{Signed11, VolumeAndEnvelope, WaveformAndInitialLength};
         use channels::wave::Volume as WaveVolume;
+        use channels::{
+            Enabled,
+            noise::NoiseChannel,
+            pulse::PulseChannel,
+            pulse_sweep::{PulseSweepChannel, Sweep},
+            wave::WaveChannel,
+        };
 
         let channels = Channels {
             ch1: PulseSweepChannel {
-                enabled: Enabled { enabled: true, output_left: true, output_right: true },
+                enabled: Enabled {
+                    enabled: true,
+                    output_left: true,
+                    output_right: true,
+                },
                 sweep: Sweep(snap.ch1_sweep),
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch1_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch1_vol_env),
@@ -237,7 +247,11 @@ impl Audio {
                 sweep_negate_used: snap.ch1_sweep_negate_used,
             },
             ch2: PulseChannel {
-                enabled: Enabled { enabled: true, output_left: true, output_right: true },
+                enabled: Enabled {
+                    enabled: true,
+                    output_left: true,
+                    output_right: true,
+                },
                 waveform_and_initial_length: WaveformAndInitialLength(snap.ch2_duty_len),
                 volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
                 length_enabled: snap.ch2_length_enabled,
@@ -249,7 +263,11 @@ impl Audio {
                 length_counter: 0,
             },
             ch3: WaveChannel {
-                enabled: Enabled { enabled: true, output_left: true, output_right: true },
+                enabled: Enabled {
+                    enabled: true,
+                    output_left: true,
+                    output_right: true,
+                },
                 dac_enabled: snap.ch3_dac & 0x80 != 0,
                 volume: WaveVolume(snap.ch3_vol),
                 length_enabled: snap.ch3_length_enabled,
@@ -261,7 +279,11 @@ impl Audio {
                 sample_read_tcycle: 0xFF,
             },
             ch4: NoiseChannel {
-                enabled: Enabled { enabled: true, output_left: true, output_right: true },
+                enabled: Enabled {
+                    enabled: true,
+                    output_left: true,
+                    output_right: true,
+                },
                 volume_and_envelope: VolumeAndEnvelope(snap.ch4_vol_env),
                 length_enabled: snap.ch4_length_enabled,
                 frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),

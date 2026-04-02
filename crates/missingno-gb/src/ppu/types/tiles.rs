@@ -23,7 +23,6 @@ impl Default for TileBlock {
 }
 
 impl TileBlock {
-
     pub fn tile(&self, index: TileIndex) -> Tile {
         let offset = index.0 as usize * 16;
         Tile {

@@ -3,8 +3,8 @@ use rgb::RGB8;
 
 use missingno_gb::{
     ppu::{
-        types::palette::{Palette, PaletteChoice},
         screen::{self, Screen},
+        types::palette::{Palette, PaletteChoice},
     },
     sgb::SgbRenderData,
 };

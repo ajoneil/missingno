@@ -10,8 +10,8 @@ use crate::app::{
     debugger::panes::{DebuggerPane, pane, title_bar},
 };
 use missingno_gb::ppu::{
-    Ppu, types::control::Control, memory::Vram, types::palette::Palette, types::tile_maps::TileMapId,
-    types::tiles::TileAddressMode,
+    Ppu, memory::Vram, types::control::Control, types::palette::Palette,
+    types::tile_maps::TileMapId, types::tiles::TileAddressMode,
 };
 
 use super::tile_atlas::tile_map_atlas;

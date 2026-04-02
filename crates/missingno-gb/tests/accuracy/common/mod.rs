@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use missingno_gb::{GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, ppu::screen::Screen};
+use missingno_gb::{
+    GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, ppu::screen::Screen,
+};
 
 #[cfg(feature = "gbtrace")]
 use missingno_gb::trace::Tracer;
@@ -147,18 +149,33 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     // 3. docs/tests/<name>/<name>.toml (legacy location)
     let profile_path = {
         let candidates = [
-            gbtrace_root.join("profiles").join(format!("{profile_name}.toml")),
-            gbtrace_root.join("test-suites").join(&profile_name).join("profile.toml"),
-            gbtrace_root.join("docs/tests").join(&profile_name).join(format!("{profile_name}.toml")),
+            gbtrace_root
+                .join("profiles")
+                .join(format!("{profile_name}.toml")),
+            gbtrace_root
+                .join("test-suites")
+                .join(&profile_name)
+                .join("profile.toml"),
+            gbtrace_root
+                .join("docs/tests")
+                .join(&profile_name)
+                .join(format!("{profile_name}.toml")),
         ];
-        candidates.into_iter().find(|p| p.exists())
-            .unwrap_or_else(|| panic!("gbtrace profile '{profile_name}' not found in any search path"))
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| {
+                panic!("gbtrace profile '{profile_name}' not found in any search path")
+            })
     };
-    let profile = gbtrace::Profile::load(&profile_path)
-        .unwrap_or_else(|e| panic!("Failed to load gbtrace profile {}: {e}", profile_path.display()));
+    let profile = gbtrace::Profile::load(&profile_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to load gbtrace profile {}: {e}",
+            profile_path.display()
+        )
+    });
 
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../receipts/traces");
+    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/traces");
     std::fs::create_dir_all(&output_dir).unwrap();
 
     // Use the ROM filename (without extension) as the trace filename.
@@ -198,7 +215,10 @@ pub fn load_rom(relative: &str) -> TestRun {
 /// Load a ROM with a boot ROM. The boot ROM runs from 0x0000 before
 /// handing control to the cartridge at 0x0100.
 pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun {
-    let gb = GameBoy::new(Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None), Some(boot_rom));
+    let gb = GameBoy::new(
+        Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None),
+        Some(boot_rom),
+    );
     TestRun::new(gb, relative)
 }
 

@@ -18,12 +18,12 @@ use crate::app::{
         panes::{DebuggerPane, checkbox_title_bar, pane},
     },
 };
-use missingno_gb::debugger::Debugger;
 use missingno_gb::cpu::{
     Cpu,
     flags::Flags,
     registers::{Register8, Register16},
 };
+use missingno_gb::debugger::Debugger;
 
 pub struct CpuPane;
 
@@ -36,8 +36,7 @@ impl CpuPane {
         pane(
             checkbox_title_bar(
                 "CPU",
-                debugger.game_boy().cpu().halt_state
-                    == missingno_gb::cpu::HaltState::Running,
+                debugger.game_boy().cpu().halt_state == missingno_gb::cpu::HaltState::Running,
                 DebuggerPane::Cpu,
             ),
             scrollable(

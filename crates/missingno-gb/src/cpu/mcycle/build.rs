@@ -432,7 +432,10 @@ impl Cpu {
                     // JP nn / JP cc,nn: defer PC update to the internal
                     // M-cycle. On hardware, PC stays at the post-operand
                     // address until the CondJump executes.
-                    Phase::CondJump { taken, target: address }
+                    Phase::CondJump {
+                        taken,
+                        target: address,
+                    }
                 }
             }
             Jump::Call(condition, location) => {

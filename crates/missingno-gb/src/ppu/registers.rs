@@ -1,5 +1,5 @@
-use super::types::control::{Control, ControlFlags};
 use super::dff::DffLatch;
+use super::types::control::{Control, ControlFlags};
 use super::types::palette::Palettes;
 
 pub struct BackgroundViewportPosition {

@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub use gbtrace::{Trigger, BootRom, Profile};
-use gbtrace::format::write::GbtraceWriter;
-use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::SnapshotType;
+use gbtrace::format::read::derive_groups_pub;
+use gbtrace::format::write::GbtraceWriter;
 use gbtrace::header::TraceHeader;
-use gbtrace::profile::{field_type, field_nullable, FieldType};
+use gbtrace::profile::{FieldType, field_nullable, field_type};
+pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::GameBoy;
@@ -15,9 +15,21 @@ use crate::ppu::PpuTraceSnapshot;
 /// Pre-resolved emitter — determines how to read a field value at capture time.
 enum Emitter {
     // CPU
-    CpuA, CpuF, CpuB, CpuC, CpuD, CpuE, CpuH, CpuL,
-    CpuSp, CpuPc, CpuBusAddr, CpuIme,
-    CpuOpState, CpuMcyclePhase, CpuHalted,
+    CpuA,
+    CpuF,
+    CpuB,
+    CpuC,
+    CpuD,
+    CpuE,
+    CpuH,
+    CpuL,
+    CpuSp,
+    CpuPc,
+    CpuBusAddr,
+    CpuIme,
+    CpuOpState,
+    CpuMcyclePhase,
+    CpuHalted,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
     // Memory read (profile [fields.memory])
@@ -25,10 +37,27 @@ enum Emitter {
     // PPU internal (needs snapshot)
     PpuInternal(PpuField),
     // APU internal
-    Ch1Active, Ch1FreqCnt, Ch1EnvVol, Ch1Phase, Ch1SweepShadow, Ch1LenCnt,
-    Ch2Active, Ch2FreqCnt, Ch2EnvVol, Ch2Phase, Ch2LenCnt,
-    Ch3Active, Ch3FreqCnt, Ch3WaveIdx, Ch3Sample, Ch3LenCnt,
-    Ch4Active, Ch4FreqCnt, Ch4EnvVol, Ch4Lfsr, Ch4LenCnt,
+    Ch1Active,
+    Ch1FreqCnt,
+    Ch1EnvVol,
+    Ch1Phase,
+    Ch1SweepShadow,
+    Ch1LenCnt,
+    Ch2Active,
+    Ch2FreqCnt,
+    Ch2EnvVol,
+    Ch2Phase,
+    Ch2LenCnt,
+    Ch3Active,
+    Ch3FreqCnt,
+    Ch3WaveIdx,
+    Ch3Sample,
+    Ch3LenCnt,
+    Ch4Active,
+    Ch4FreqCnt,
+    Ch4EnvVol,
+    Ch4Lfsr,
+    Ch4LenCnt,
     // Pixel output
     Pix,
     PpuPixX,
@@ -43,16 +72,33 @@ enum Emitter {
 }
 
 enum PpuField {
-    Oam { index: usize, component: OamComponent },
-    BgwFifoA, BgwFifoB, SprFifoA, SprFifoB,
-    MaskPipe, PalPipe,
-    TfetchState, SfetchState, TileTempA, TileTempB,
-    PixCount, SpriteCount, ScanCount,
-    Rendering, WinMode,
+    Oam {
+        index: usize,
+        component: OamComponent,
+    },
+    BgwFifoA,
+    BgwFifoB,
+    SprFifoA,
+    SprFifoB,
+    MaskPipe,
+    PalPipe,
+    TfetchState,
+    SfetchState,
+    TileTempA,
+    TileTempB,
+    PixCount,
+    SpriteCount,
+    ScanCount,
+    Rendering,
+    WinMode,
 }
 
 #[derive(Copy, Clone)]
-enum OamComponent { X, Id, Attr }
+enum OamComponent {
+    X,
+    Id,
+    Attr,
+}
 
 /// Resolved field: column index + how to emit.
 struct ResolvedField {
@@ -76,35 +122,66 @@ pub struct Tracer {
 
 static IO_FIELDS: &[(&str, u16)] = &[
     // PPU registers
-    ("lcdc", 0xFF40), ("stat", 0xFF41), ("ly", 0xFF44), ("lyc", 0xFF45),
-    ("scy", 0xFF42), ("scx", 0xFF43), ("wy", 0xFF4A), ("wx", 0xFF4B),
-    ("bgp", 0xFF47), ("obp0", 0xFF48), ("obp1", 0xFF49), ("dma", 0xFF46),
+    ("lcdc", 0xFF40),
+    ("stat", 0xFF41),
+    ("ly", 0xFF44),
+    ("lyc", 0xFF45),
+    ("scy", 0xFF42),
+    ("scx", 0xFF43),
+    ("wy", 0xFF4A),
+    ("wx", 0xFF4B),
+    ("bgp", 0xFF47),
+    ("obp0", 0xFF48),
+    ("obp1", 0xFF49),
+    ("dma", 0xFF46),
     // Timer
-    ("div", 0xFF04), ("tima", 0xFF05), ("tma", 0xFF06), ("tac", 0xFF07),
+    ("div", 0xFF04),
+    ("tima", 0xFF05),
+    ("tma", 0xFF06),
+    ("tac", 0xFF07),
     // Interrupt
-    ("if_", 0xFF0F), ("ie", 0xFFFF),
+    ("if_", 0xFF0F),
+    ("ie", 0xFFFF),
     // Serial
-    ("sb", 0xFF01), ("sc", 0xFF02),
+    ("sb", 0xFF01),
+    ("sc", 0xFF02),
     // APU registers
-    ("ch1_sweep", 0xFF10), ("ch1_duty_len", 0xFF11), ("ch1_vol_env", 0xFF12),
-    ("ch1_freq_lo", 0xFF13), ("ch1_freq_hi", 0xFF14),
-    ("ch2_duty_len", 0xFF16), ("ch2_vol_env", 0xFF17),
-    ("ch2_freq_lo", 0xFF18), ("ch2_freq_hi", 0xFF19),
-    ("ch3_dac", 0xFF1A), ("ch3_len", 0xFF1B), ("ch3_vol", 0xFF1C),
-    ("ch3_freq_lo", 0xFF1D), ("ch3_freq_hi", 0xFF1E),
-    ("ch4_len", 0xFF20), ("ch4_vol_env", 0xFF21),
-    ("ch4_freq", 0xFF22), ("ch4_control", 0xFF23),
-    ("master_vol", 0xFF24), ("sound_pan", 0xFF25), ("sound_on", 0xFF26),
+    ("ch1_sweep", 0xFF10),
+    ("ch1_duty_len", 0xFF11),
+    ("ch1_vol_env", 0xFF12),
+    ("ch1_freq_lo", 0xFF13),
+    ("ch1_freq_hi", 0xFF14),
+    ("ch2_duty_len", 0xFF16),
+    ("ch2_vol_env", 0xFF17),
+    ("ch2_freq_lo", 0xFF18),
+    ("ch2_freq_hi", 0xFF19),
+    ("ch3_dac", 0xFF1A),
+    ("ch3_len", 0xFF1B),
+    ("ch3_vol", 0xFF1C),
+    ("ch3_freq_lo", 0xFF1D),
+    ("ch3_freq_hi", 0xFF1E),
+    ("ch4_len", 0xFF20),
+    ("ch4_vol_env", 0xFF21),
+    ("ch4_freq", 0xFF22),
+    ("ch4_control", 0xFF23),
+    ("master_vol", 0xFF24),
+    ("sound_pan", 0xFF25),
+    ("sound_on", 0xFF26),
 ];
 
 fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
     match field {
         // CPU
-        "a" => Emitter::CpuA, "f" => Emitter::CpuF,
-        "b" => Emitter::CpuB, "c" => Emitter::CpuC,
-        "d" => Emitter::CpuD, "e" => Emitter::CpuE,
-        "h" => Emitter::CpuH, "l" => Emitter::CpuL,
-        "sp" => Emitter::CpuSp, "pc" => Emitter::CpuPc,
+        "a" => Emitter::CpuA,
+        "f" => Emitter::CpuF,
+        "b" => Emitter::CpuB,
+        "c" => Emitter::CpuC,
+        "d" => Emitter::CpuD,
+        "e" => Emitter::CpuE,
+        "h" => Emitter::CpuH,
+        "l" => Emitter::CpuL,
+        "sp" => Emitter::CpuSp,
+        "pc" => Emitter::CpuPc,
         "bus_addr" => Emitter::CpuBusAddr,
         "ime" => Emitter::CpuIme,
         "op_state" => Emitter::CpuOpState,
@@ -169,7 +246,10 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
                                 "attr" => OamComponent::Attr,
                                 _ => return Emitter::Unknown(FieldType::UInt8, false),
                             };
-                            return Emitter::PpuInternal(PpuField::Oam { index: idx, component });
+                            return Emitter::PpuInternal(PpuField::Oam {
+                                index: idx,
+                                component,
+                            });
                         }
                     }
                 }
@@ -265,7 +345,11 @@ impl Tracer {
     }
 
     /// Write a typed snapshot record into the trace stream.
-    pub fn write_snapshot(&mut self, snapshot_type: SnapshotType, payload: &[u8]) -> Result<(), gbtrace::Error> {
+    pub fn write_snapshot(
+        &mut self,
+        snapshot_type: SnapshotType,
+        payload: &[u8],
+    ) -> Result<(), gbtrace::Error> {
         self.writer.write_snapshot(snapshot_type, payload)
     }
 
@@ -326,7 +410,11 @@ impl Tracer {
                 Emitter::Ch3WaveIdx => w.set_u8(col, channels.ch3.wave_position),
                 Emitter::Ch3Sample => {
                     let byte = channels.ch3.ram[channels.ch3.wave_position as usize / 2];
-                    let nibble = if channels.ch3.wave_position % 2 == 0 { byte >> 4 } else { byte & 0x0F };
+                    let nibble = if channels.ch3.wave_position % 2 == 0 {
+                        byte >> 4
+                    } else {
+                        byte & 0x0F
+                    };
                     w.set_u8(col, nibble);
                 }
                 Emitter::Ch3LenCnt => w.set_u8(col, channels.ch3.length_counter as u8),

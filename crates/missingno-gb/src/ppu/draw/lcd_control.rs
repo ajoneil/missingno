@@ -99,7 +99,8 @@ impl LcdControl {
         // shift register naturally absorbed this — the extra pixel
         // pushed the first (junk) pixel off the end. With direct
         // output we skip it: only the first 159 TOBA pixels are visible.
-        let pixel_out = if toba && self.lcd_push_count < 159
+        let pixel_out = if toba
+            && self.lcd_push_count < 159
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
         {
             let out = PixelOutput {
@@ -127,11 +128,7 @@ impl LcdControl {
     /// pixel to the LCD.
     ///
     /// Returns the pixel pushed to the LCD on the WODU dot (if any).
-    pub(in crate::ppu) fn fall(
-        &mut self,
-        voga: bool,
-        wodu: bool,
-    ) -> Option<PixelOutput> {
+    pub(in crate::ppu) fn fall(&mut self, voga: bool, wodu: bool) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
         // The final pixel push happens on the WODU dot, before VOGA
         // captures (one dot later).
