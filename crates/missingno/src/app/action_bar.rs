@@ -44,7 +44,10 @@ impl ActionBar {
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
         match &app.game {
             Game::Unloaded | Game::Loading => {
-                row![app_text::xl("Library"), self.settings(app)]
+                row![
+                    container(app_text::xl("Library")).width(Fill),
+                    self.settings(app)
+                ]
             }
             Game::Loaded(_) => {
                 let title = app
@@ -129,15 +132,11 @@ impl ActionBar {
             );
         }
 
-        container(
-            row.push(
-                buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
-                    .on_press(app::Message::ShowSettings),
-            )
-            .spacing(m())
-            .align_y(Center),
+        row.push(
+            buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
+                .on_press(app::Message::ShowSettings),
         )
-        .align_right(Fill)
+        .spacing(m())
         .align_y(Center)
         .into()
     }

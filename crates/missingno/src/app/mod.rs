@@ -50,6 +50,7 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
         ..Default::default()
     })
     .window(window::Settings {
+        min_size: Some(iced::Size::new(800.0, 500.0)),
         platform_specific: window::settings::PlatformSpecific {
             application_id: "net.andyofniall.missingno".to_string(),
             ..Default::default()
