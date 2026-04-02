@@ -32,6 +32,7 @@ mod emulator;
 mod game_info_panel;
 mod hasheous;
 pub mod library;
+mod library_view;
 mod load;
 mod recent;
 mod scanner;
@@ -80,6 +81,7 @@ struct App {
     settings_shown: bool,
     current_game: Option<CurrentGame>,
     game_info_shown: bool,
+    library_cache: library_view::LibraryCache,
 }
 
 enum Fullscreen {
@@ -123,6 +125,7 @@ enum Message {
     CompleteSetup { internet_enabled: bool },
     ShowSettings,
     Settings(settings_view::Message),
+    Library(library_view::Message),
     ScanComplete,
     ToggleGameInfo,
     GameInfoLoaded(Option<hasheous::GameInfo>),
@@ -150,6 +153,8 @@ impl App {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
 
+        let library_cache = library_view::LibraryCache::load();
+
         let mut app = Self {
             game: Game::Unloaded,
             debugger_enabled: debugger,
@@ -161,6 +166,7 @@ impl App {
             settings_shown: false,
             current_game: None,
             game_info_shown: false,
+            library_cache,
         };
 
         let mut tasks = Vec::new();
@@ -344,9 +350,20 @@ impl App {
                     }
                 }
             },
+            Message::Library(message) => match message {
+                library_view::Message::PlayGame(sha1) => {
+                    if let Some((_game_dir, entry)) = library::find_by_sha1(&sha1) {
+                        // Find a ROM path that exists
+                        if let Some(rom_path) = entry.rom_paths.iter().find(|p| p.exists()) {
+                            if let Ok(rom) = std::fs::read(rom_path) {
+                                return load::setup_game(self, rom_path.clone(), rom);
+                            }
+                        }
+                    }
+                }
+            },
             Message::ScanComplete => {
-                // Scan done — library entries are already persisted by the scanner.
-                // Future: could refresh a library view here.
+                self.library_cache = library_view::LibraryCache::load();
             }
             Message::ToggleGameInfo => {
                 self.game_info_shown = !self.game_info_shown;
@@ -376,6 +393,7 @@ impl App {
                     self.recent_games
                         .update_title(&current.entry.sha1, &current.entry.title);
                     self.recent_games.save();
+                    self.library_cache = library_view::LibraryCache::load();
                 }
             }
             Message::OpenUrl(url) => {
@@ -473,23 +491,7 @@ impl App {
                 game_view
             }
             _ if !self.settings.setup_complete => self.setup_view(),
-            _ => {
-                let mut col = column![
-                    text::xl("Welcome to Missingno!"),
-                    icons::xl(Icon::GameBoy)
-                        .width(200)
-                        .height(200)
-                        .style(|_, _| svg::Style { color: None })
-                ]
-                .align_x(Center)
-                .spacing(l());
-
-                if !self.recent_games.is_empty() {
-                    col = col.push(self.recent_games.view());
-                }
-
-                col.into()
-            }
+            _ => library_view::view(&self.library_cache),
         }
     }
 

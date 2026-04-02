@@ -89,10 +89,12 @@ impl RecentGames {
             .and_then(|g| g.rom_path.parent().map(Path::to_path_buf))
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.games.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn view(&self) -> Element<'_, app::Message> {
         let heading = app_text::m("Recent Games");
 

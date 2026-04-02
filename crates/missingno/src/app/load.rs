@@ -7,6 +7,7 @@ use crate::app::{self, App, CurrentGame, Game, LoadedGame, hasheous, library};
 use missingno_gb::{GameBoy, cartridge::Cartridge};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Message {
     Pick,
     Picked(Option<FileHandle>),
@@ -124,9 +125,10 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     });
     app.game_info_shown = false;
 
-    // Update recent games
+    // Update recent games and library cache
     app.recent_games.add(&entry.sha1, &entry.title, &rom_path);
     app.recent_games.save();
+    app.library_cache = app::library_view::LibraryCache::load();
 
     // Fire async Hasheous lookup if internet enabled
     if app.settings.internet_enabled {

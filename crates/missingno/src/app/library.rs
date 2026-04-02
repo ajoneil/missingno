@@ -46,6 +46,27 @@ pub fn game_dir_for(title: &str, sha1: &str) -> Option<PathBuf> {
     library_dir().map(|dir| dir.join(folder_name))
 }
 
+pub fn list_all() -> Vec<(PathBuf, GameEntry)> {
+    let Some(lib_dir) = library_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&lib_dir) else {
+        return Vec::new();
+    };
+
+    let mut games = Vec::new();
+    for dir_entry in entries.flatten() {
+        let path = dir_entry.path();
+        if path.is_dir() {
+            if let Some(entry) = load_entry(&path) {
+                games.push((path, entry));
+            }
+        }
+    }
+    games.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()));
+    games
+}
+
 pub fn find_by_sha1(sha1: &str) -> Option<(PathBuf, GameEntry)> {
     let lib_dir = library_dir()?;
     let entries = fs::read_dir(&lib_dir).ok()?;
