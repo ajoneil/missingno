@@ -235,37 +235,52 @@ fn session_entry<'a>(
         format!("{start_str} – in progress")
     };
 
-    let save_summary = if !saves.is_empty() {
+    let mut info_col = column![
+        text("Played").font(fonts::bold()),
+        app_text::detail(detail).color(MUTED),
+    ]
+    .spacing(2);
+
+    if !saves.is_empty() {
         let n = saves.len();
         let last_time = library::saves::format_local_time(&saves.last().unwrap().created);
-        format!(" · {n} save{} · last at {last_time}", if n == 1 { "" } else { "s" })
-    } else {
-        String::new()
-    };
+        info_col = info_col.push(
+            app_text::detail(format!(
+                "{n} save{} · last at {last_time}",
+                if n == 1 { "" } else { "s" }
+            ))
+            .color(MUTED),
+        );
+    }
 
     let mut header = row![
         icons::m(Icon::Play),
-        column![
-            text("Played").font(fonts::bold()),
-            app_text::detail(format!("{detail}{save_summary}")).color(MUTED),
-        ]
-        .spacing(2)
-        .width(Fill),
+        info_col.width(Fill),
     ]
     .spacing(s())
     .align_y(Center);
 
-    if is_hovered && !saves.is_empty() {
+    if !saves.is_empty() {
         let last_id = saves.last().unwrap().id.clone();
-        header = header.push(
-            row![
-                buttons::subtle(app_text::detail("Export"))
-                    .on_press(app::Message::ExportSave(last_id.clone())),
-                buttons::subtle(app_text::detail("Play from here"))
-                    .on_press(app::Message::PlayWithSave(last_id)),
-            ]
-            .spacing(s()),
-        );
+        if is_hovered {
+            header = header.push(
+                row![
+                    buttons::subtle(app_text::detail("Export"))
+                        .on_press(app::Message::ExportSave(last_id.clone())),
+                    buttons::subtle(app_text::detail("Play from here"))
+                        .on_press(app::Message::PlayWithSave(last_id)),
+                ]
+                .spacing(s()),
+            );
+        } else {
+            header = header.push(
+                row![
+                    buttons::invisible(app_text::detail("Export")),
+                    buttons::invisible(app_text::detail("Play from here")),
+                ]
+                .spacing(s()),
+            );
+        }
     }
 
     let col = column![header];
@@ -312,6 +327,14 @@ fn import_entry<'a>(
                     .on_press(app::Message::ExportSave(save_id.to_string())),
                 buttons::subtle(app_text::detail("Play from here"))
                     .on_press(app::Message::PlayWithSave(save_id.to_string())),
+            ]
+            .spacing(s()),
+        );
+    } else {
+        content = content.push(
+            row![
+                buttons::invisible(app_text::detail("Export")),
+                buttons::invisible(app_text::detail("Play from here")),
             ]
             .spacing(s()),
         );

@@ -102,6 +102,20 @@ fn subtle_style(_theme: &Theme, status: Status) -> Style {
     }
 }
 
+/// Same size as subtle but invisible. Use for layout reservation.
+pub fn invisible<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
+    button(content).style(invisible_style)
+}
+
+fn invisible_style(_theme: &Theme, _status: Status) -> Style {
+    Style {
+        background: None,
+        text_color: Color::TRANSPARENT,
+        border: Border::default().rounded(BORDER_RADIUS),
+        ..Style::default()
+    }
+}
+
 /// Destructive action. Red-tinted background, same weight as standard.
 pub fn danger<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
     button(content).style(danger_style)
