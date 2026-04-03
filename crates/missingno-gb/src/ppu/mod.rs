@@ -534,20 +534,20 @@ impl Ppu {
         };
 
         if self.control().video_enabled() {
+            // Resolve DFF8/DFF9 latches BEFORE the pipeline reads them.
+            // The tick models the clock boundary *entering* this dot:
+            // any CPU write from the previous dot (stored as pending)
+            // transfers to output here, so the pipeline sees a 1-dot
+            // delay — matching hardware's reg_new → reg_old copy at the
+            // tick boundary followed by combinational read of reg_old.
+            self.registers.tick_palette_latches();
+            self.registers.tick_register_latches();
+
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Only during active display — pipeline is idle in VBlank.
             if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
                 result.pixel = rendering.fall(&self.registers, &self.video, &self.oam, vram);
             }
-
-            // DFF8 palette capture (TEPO rising, phase H). On hardware,
-            // palette capture happens on the falling phase — after pixel
-            // output (rising) has already read the old palette value.
-            self.registers.tick_palette_latches();
-
-            // Advance DFF9 register latches after the pipeline so it reads
-            // pre-tick values (reg_old), matching hardware.
-            self.registers.tick_register_latches();
 
             // STAT edge detection moved to check_stat_edge() — called
             // after each phase by the executor, matching hardware's
