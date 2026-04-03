@@ -799,8 +799,13 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // Fullscreen emulator bypasses the normal chrome
-        if self.screen == Screen::Emulator {
+        // First-boot setup
+        if !self.settings.setup_complete {
+            return self.setup_view();
+        }
+
+        // Build the main view based on the current screen
+        let main: Element<'_, Message> = if self.screen == Screen::Emulator {
             if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
                 let content = container(self.emulator_view(true))
                     .center(Fill)
@@ -813,24 +818,22 @@ impl App {
                 if cursor_hidden {
                     area = area.interaction(mouse::Interaction::Hidden);
                 }
-                return area.into();
+                area.into()
+            } else {
+                column![
+                    self.action_bar.view(self),
+                    horizontal_rule(),
+                    container(self.emulator_view(false)).center(Fill)
+                ]
+                .into()
             }
-        }
-
-        // First-boot setup
-        if !self.settings.setup_complete {
-            return self.setup_view();
-        }
-
-        // Settings has its own full layout (no action bar)
-        let main: Element<'_, Message> = if self.screen == Screen::Settings {
+        } else if self.screen == Screen::Settings {
             settings_view::view(&self.settings, self.settings_section, self.listening_for)
         } else {
             let content = match self.screen {
                 Screen::Library => library::view::view(&self.library_cache),
                 Screen::Detail => self.detail_view(),
-                Screen::Emulator => self.emulator_view(false),
-                Screen::Settings => unreachable!(),
+                Screen::Emulator | Screen::Settings => unreachable!(),
             };
 
             column![
