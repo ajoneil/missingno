@@ -813,29 +813,29 @@ impl App {
             }
         }
 
-        // Settings has its own full layout
-        if self.screen == Screen::Settings {
-            return settings_view::view(&self.settings, self.settings_section, self.listening_for);
-        }
-
         // First-boot setup
         if !self.settings.setup_complete {
             return self.setup_view();
         }
 
-        // Standard layout: action bar + content
-        let content = match self.screen {
-            Screen::Library => library::view::view(&self.library_cache),
-            Screen::Detail => self.detail_view(),
-            Screen::Emulator => self.emulator_view(false),
-            Screen::Settings => unreachable!(),
-        };
+        // Settings has its own full layout (no action bar)
+        let main: Element<'_, Message> = if self.screen == Screen::Settings {
+            settings_view::view(&self.settings, self.settings_section, self.listening_for)
+        } else {
+            let content = match self.screen {
+                Screen::Library => library::view::view(&self.library_cache),
+                Screen::Detail => self.detail_view(),
+                Screen::Emulator => self.emulator_view(false),
+                Screen::Settings => unreachable!(),
+            };
 
-        let main = column![
-            self.action_bar.view(self),
-            horizontal_rule(),
-            container(content).center(Fill)
-        ];
+            column![
+                self.action_bar.view(self),
+                horizontal_rule(),
+                container(content).center(Fill)
+            ]
+            .into()
+        };
 
         if let Some(action) = &self.pending_action {
             let (prompt, confirm_label) = match action {
