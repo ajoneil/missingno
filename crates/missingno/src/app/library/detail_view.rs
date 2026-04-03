@@ -44,13 +44,13 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
 
 /// Left panel: game identity, play button, metadata, actions.
 fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
-    let mut col = column![].spacing(m()).width(320);
+    let mut col = column![].spacing(m()).width(400);
 
     // Cover art
     if let Some(handle) = data.cover {
         col = col.push(
             image(handle.clone())
-                .width(280)
+                .width(360)
                 .content_fit(iced::ContentFit::ScaleDown),
         );
     }
