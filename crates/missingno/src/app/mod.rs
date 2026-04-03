@@ -93,6 +93,8 @@ struct App {
     previous_screen: Option<Screen>,
     /// Whether the game was running before entering settings.
     was_running_before_settings: bool,
+    /// Keybinding capture state: which slot we're listening for input on.
+    listening_for: Option<settings_view::ListeningFor>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +231,10 @@ impl App {
             settings_section: settings_view::Section::default(),
             previous_screen: None,
             was_running_before_settings: false,
+            listening_for: None,
         };
+
+        controls::update_bindings(&app.settings.keyboard_bindings, &app.settings.gamepad_bindings);
 
         let mut tasks = Vec::new();
 
@@ -588,6 +593,7 @@ impl App {
                 }
                 settings_view::Message::Back => {
                     self.screen = self.previous_screen.take().unwrap_or(Screen::Library);
+                    self.listening_for = None;
                     if self.was_running_before_settings {
                         self.run();
                         self.was_running_before_settings = false;
@@ -645,6 +651,39 @@ impl App {
                     if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut self.game {
                         emu.set_use_sgb_colors(enabled);
                     }
+                }
+                settings_view::Message::StartListening(target) => {
+                    self.listening_for = Some(target);
+                }
+                settings_view::Message::CaptureBinding(key_str) => {
+                    if let Some(target) = self.listening_for.take() {
+                        match target {
+                            settings_view::ListeningFor::Keyboard(gb) => {
+                                self.settings.keyboard_bindings.set(gb, key_str);
+                            }
+                            settings_view::ListeningFor::Gamepad(gb) => {
+                                self.settings.gamepad_bindings.set(gb, key_str);
+                            }
+                        }
+                        self.settings.save();
+                        controls::update_bindings(
+                            &self.settings.keyboard_bindings,
+                            &self.settings.gamepad_bindings,
+                        );
+                    }
+                }
+                settings_view::Message::CancelCapture => {
+                    self.listening_for = None;
+                }
+                settings_view::Message::ResetBindings => {
+                    self.settings.keyboard_bindings = settings::KeyBindings::default_keyboard();
+                    self.settings.gamepad_bindings = settings::KeyBindings::default_gamepad();
+                    self.settings.save();
+                    self.listening_for = None;
+                    controls::update_bindings(
+                        &self.settings.keyboard_bindings,
+                        &self.settings.gamepad_bindings,
+                    );
                 }
             },
             Message::Library(message) => match message {
@@ -776,7 +815,7 @@ impl App {
 
         // Settings has its own full layout
         if self.screen == Screen::Settings {
-            return settings_view::view(&self.settings, self.settings_section);
+            return settings_view::view(&self.settings, self.settings_section, self.listening_for);
         }
 
         // First-boot setup
@@ -1067,13 +1106,22 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
+        let listening_keyboard = matches!(self.listening_for, Some(settings_view::ListeningFor::Keyboard(_)));
+        let listening_gamepad = matches!(self.listening_for, Some(settings_view::ListeningFor::Gamepad(_)));
+
         Subscription::batch([
-            if self.running() {
+            if listening_keyboard {
+                event::listen_with(controls::capture_event_handler)
+            } else if listening_gamepad {
+                Subscription::none()
+            } else if self.running() {
                 event::listen_with(controls::event_handler)
             } else {
                 Subscription::none()
             },
-            if self.running() {
+            if listening_gamepad {
+                controls::gamepad_capture_subscription()
+            } else if self.running() {
                 controls::gamepad_subscription()
             } else {
                 Subscription::none()

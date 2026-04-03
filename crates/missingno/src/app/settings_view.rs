@@ -10,12 +10,14 @@ use iced::{
 
 use crate::app::{
     self,
+    controls,
     core::{
         buttons, horizontal_rule,
         icons::{self, Icon},
         sizes::{l, m, s},
         text as app_text,
     },
+    settings::{GbButton, KeyBindings},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,6 +25,14 @@ pub enum Section {
     #[default]
     General,
     Display,
+    Controls,
+}
+
+/// What binding slot we're waiting for input on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListeningFor {
+    Keyboard(GbButton),
+    Gamepad(GbButton),
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +44,10 @@ pub enum Message {
     RemoveRomDirectory(usize),
     SelectPalette(missingno_gb::ppu::types::palette::PaletteChoice),
     SetUseSgbColors(bool),
+    StartListening(ListeningFor),
+    CaptureBinding(String),
+    CancelCapture,
+    ResetBindings,
     Back,
 }
 
@@ -50,11 +64,16 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-pub fn view(settings: &super::settings::Settings, section: Section) -> Element<'_, app::Message> {
+pub fn view(
+    settings: &super::settings::Settings,
+    section: Section,
+    listening_for: Option<ListeningFor>,
+) -> Element<'_, app::Message> {
     let sidebar = sidebar_view(section);
     let content = match section {
         Section::Display => display_section(settings),
         Section::General => general_section(settings),
+        Section::Controls => controls_section(settings, listening_for),
     };
 
     column![
@@ -77,6 +96,7 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
     let sections = [
         (Section::General, Icon::Sliders, "General"),
         (Section::Display, Icon::Monitor, "Display"),
+        (Section::Controls, Icon::Gamepad, "Controls"),
     ];
 
     let mut col = column![].spacing(s());
@@ -113,6 +133,82 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
             }
         })
         .into()
+}
+
+fn controls_section(
+    settings: &super::settings::Settings,
+    listening_for: Option<ListeningFor>,
+) -> Element<'_, app::Message> {
+    let keyboard_col = binding_column(
+        "Keyboard",
+        &settings.keyboard_bindings,
+        listening_for,
+        |gb| ListeningFor::Keyboard(gb),
+        |s| controls::display_key_name(s).to_string(),
+    );
+
+    let gamepad_col = binding_column(
+        "Controller",
+        &settings.gamepad_bindings,
+        listening_for,
+        |gb| ListeningFor::Gamepad(gb),
+        |s| controls::display_gamepad_name(s).to_string(),
+    );
+
+    let content = column![
+        row![keyboard_col, gamepad_col]
+            .spacing(l()),
+        horizontal_rule(),
+        buttons::standard("Reset to defaults")
+            .on_press(Message::ResetBindings.into()),
+    ]
+    .spacing(m())
+    .max_width(600);
+
+    iced::widget::scrollable(
+        container(content)
+            .padding(l())
+            .width(Fill),
+    )
+    .height(Fill)
+    .into()
+}
+
+fn binding_column<'a>(
+    title: &'a str,
+    bindings: &KeyBindings,
+    listening_for: Option<ListeningFor>,
+    make_target: impl Fn(GbButton) -> ListeningFor,
+    display_name: impl Fn(&str) -> String,
+) -> Element<'a, app::Message> {
+    let mut col = column![app_text::label(title)].spacing(s());
+
+    for gb_button in GbButton::ALL {
+        let target = make_target(gb_button);
+        let is_listening = listening_for == Some(target);
+
+        let label = text(format!("{gb_button}")).width(80);
+
+        let binding_btn = if is_listening {
+            buttons::primary(
+                text("Press a key...").color(iced::Color::WHITE),
+            )
+            .width(150)
+        } else {
+            let display = display_name(bindings.get(gb_button));
+            buttons::standard(text(display))
+                .on_press(Message::StartListening(target).into())
+                .width(150)
+        };
+
+        col = col.push(
+            row![label, binding_btn]
+                .spacing(s())
+                .align_y(Center),
+        );
+    }
+
+    col.into()
 }
 
 fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {
@@ -168,6 +264,7 @@ fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
     }
 
     content = content.push(palette_row);
+    let content = content.max_width(600);
 
     iced::widget::scrollable(
         container(content)
@@ -260,7 +357,7 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
         directories,
     ]
     .spacing(m())
-    .max_width(500);
+    .max_width(600);
 
     iced::widget::scrollable(
         container(content)

@@ -1,7 +1,136 @@
-use std::{fs, path::PathBuf};
+use std::{fmt, fs, path::PathBuf};
 
 use missingno_gb::ppu::types::palette::PaletteChoice;
 use serde::{Deserialize, Serialize};
+
+/// The 8 Game Boy buttons, as a flat enum for keybinding configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GbButton {
+    A,
+    B,
+    Start,
+    Select,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl GbButton {
+    pub const ALL: [GbButton; 8] = [
+        GbButton::Up,
+        GbButton::Down,
+        GbButton::Left,
+        GbButton::Right,
+        GbButton::A,
+        GbButton::B,
+        GbButton::Start,
+        GbButton::Select,
+    ];
+}
+
+impl fmt::Display for GbButton {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GbButton::A => write!(f, "A"),
+            GbButton::B => write!(f, "B"),
+            GbButton::Start => write!(f, "Start"),
+            GbButton::Select => write!(f, "Select"),
+            GbButton::Up => write!(f, "Up"),
+            GbButton::Down => write!(f, "Down"),
+            GbButton::Left => write!(f, "Left"),
+            GbButton::Right => write!(f, "Right"),
+        }
+    }
+}
+
+/// Serializable keybinding map: one string per Game Boy button.
+#[derive(Serialize, Deserialize, Clone, Hash)]
+pub struct KeyBindings {
+    pub a: String,
+    pub b: String,
+    pub start: String,
+    pub select: String,
+    pub up: String,
+    pub down: String,
+    pub left: String,
+    pub right: String,
+}
+
+impl KeyBindings {
+    pub fn get(&self, button: GbButton) -> &str {
+        match button {
+            GbButton::A => &self.a,
+            GbButton::B => &self.b,
+            GbButton::Start => &self.start,
+            GbButton::Select => &self.select,
+            GbButton::Up => &self.up,
+            GbButton::Down => &self.down,
+            GbButton::Left => &self.left,
+            GbButton::Right => &self.right,
+        }
+    }
+
+    pub fn set(&mut self, button: GbButton, value: String) {
+        match button {
+            GbButton::A => self.a = value,
+            GbButton::B => self.b = value,
+            GbButton::Start => self.start = value,
+            GbButton::Select => self.select = value,
+            GbButton::Up => self.up = value,
+            GbButton::Down => self.down = value,
+            GbButton::Left => self.left = value,
+            GbButton::Right => self.right = value,
+        }
+    }
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self::default_keyboard()
+    }
+}
+
+impl KeyBindings {
+    pub const DEFAULT_KEYBOARD: Self = Self {
+        a: String::new(), b: String::new(), start: String::new(), select: String::new(),
+        up: String::new(), down: String::new(), left: String::new(), right: String::new(),
+    };
+
+    pub const DEFAULT_GAMEPAD: Self = Self {
+        a: String::new(), b: String::new(), start: String::new(), select: String::new(),
+        up: String::new(), down: String::new(), left: String::new(), right: String::new(),
+    };
+
+    pub fn default_keyboard() -> Self {
+        Self {
+            a: "x".to_string(),
+            b: "z".to_string(),
+            start: "Enter".to_string(),
+            select: "Shift".to_string(),
+            up: "ArrowUp".to_string(),
+            down: "ArrowDown".to_string(),
+            left: "ArrowLeft".to_string(),
+            right: "ArrowRight".to_string(),
+        }
+    }
+
+    pub fn default_gamepad() -> Self {
+        Self {
+            a: "South".to_string(),
+            b: "East".to_string(),
+            start: "Start".to_string(),
+            select: "Select".to_string(),
+            up: "DPadUp".to_string(),
+            down: "DPadDown".to_string(),
+            left: "DPadLeft".to_string(),
+            right: "DPadRight".to_string(),
+        }
+    }
+}
+
+fn default_keyboard_bindings() -> KeyBindings { KeyBindings::default_keyboard() }
+fn default_gamepad_bindings() -> KeyBindings { KeyBindings::default_gamepad() }
 
 #[derive(Serialize, Deserialize)]
 struct SettingsFile {
@@ -19,6 +148,10 @@ struct SettingsFile {
     window_width: Option<f32>,
     #[serde(default)]
     window_height: Option<f32>,
+    #[serde(default = "default_keyboard_bindings")]
+    keyboard_bindings: KeyBindings,
+    #[serde(default = "default_gamepad_bindings")]
+    gamepad_bindings: KeyBindings,
 }
 
 impl Default for SettingsFile {
@@ -31,6 +164,8 @@ impl Default for SettingsFile {
             use_sgb_colors: true,
             window_width: None,
             window_height: None,
+            keyboard_bindings: KeyBindings::default_keyboard(),
+            gamepad_bindings: KeyBindings::default_gamepad(),
         }
     }
 }
@@ -45,6 +180,8 @@ pub struct Settings {
     pub use_sgb_colors: bool,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
+    pub keyboard_bindings: KeyBindings,
+    pub gamepad_bindings: KeyBindings,
 }
 
 impl Default for Settings {
@@ -57,6 +194,8 @@ impl Default for Settings {
             use_sgb_colors: true,
             window_width: None,
             window_height: None,
+            keyboard_bindings: KeyBindings::default_keyboard(),
+            gamepad_bindings: KeyBindings::default_gamepad(),
         }
     }
 }
@@ -82,6 +221,8 @@ impl Settings {
                 use_sgb_colors: file.use_sgb_colors,
                 window_width: file.window_width,
                 window_height: file.window_height,
+                keyboard_bindings: file.keyboard_bindings,
+                gamepad_bindings: file.gamepad_bindings,
             };
         }
 
@@ -111,6 +252,8 @@ impl Settings {
             use_sgb_colors: self.use_sgb_colors,
             window_width: self.window_width,
             window_height: self.window_height,
+            keyboard_bindings: self.keyboard_bindings.clone(),
+            gamepad_bindings: self.gamepad_bindings.clone(),
         };
         if let Ok(data) = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()) {
             let _ = fs::write(path, data);
