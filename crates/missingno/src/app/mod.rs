@@ -97,6 +97,8 @@ enum PendingAction {
     ResetEmulator,
     /// User wants to stop and unload the game.
     StopGame,
+    /// User wants to remove the game from the library.
+    RemoveGameFromLibrary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -296,6 +298,16 @@ impl App {
                         self.library_cache = library::view::LibraryCache::load();
                         self.screen = Screen::Detail;
                     }
+                    Some(PendingAction::RemoveGameFromLibrary) => {
+                        if let Some(sha1) = &self.viewing_sha1 {
+                            if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                                library::remove_game(&game_dir);
+                            }
+                        }
+                        self.viewing_sha1 = None;
+                        self.library_cache = library::view::LibraryCache::load();
+                        self.screen = Screen::Library;
+                    }
                     Some(PendingAction::CloseApp) => {
                         if let Some(current) = &mut self.current_game {
                             current.play_log.end_session();
@@ -396,14 +408,7 @@ impl App {
                 self.hovered_log_entry = None;
             }
             Message::RemoveGame => {
-                if let Some(sha1) = &self.viewing_sha1 {
-                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        library::remove_game(&game_dir);
-                        self.library_cache = library::view::LibraryCache::load();
-                        self.viewing_sha1 = None;
-                        self.screen = Screen::Library;
-                    }
-                }
+                self.pending_action = Some(PendingAction::RemoveGameFromLibrary);
             }
 
             Message::PlayFromDetail => {
@@ -741,6 +746,7 @@ impl App {
                 PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
                 PendingAction::ResetEmulator => ("Reset the emulator? Unsaved progress will be lost.", "Reset"),
                 PendingAction::StopGame => ("Stop playing and end this session?", "Stop"),
+                PendingAction::RemoveGameFromLibrary => ("Remove this game and all its save data?", "Remove"),
             };
 
             let mut info = column![iced_text(prompt)].spacing(s());
