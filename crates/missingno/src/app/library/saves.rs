@@ -99,16 +99,33 @@ impl SaveManifest {
     }
 }
 
-/// Format a timestamp in the user's local timezone.
+/// Format a timestamp as locale-aware date + time (e.g. "3 Apr 2026, 2:32 PM").
 pub fn format_local(ts: &Timestamp) -> String {
-    let tz = jiff::tz::TimeZone::system();
-    ts.to_zoned(tz).strftime("%d %b %Y, %H:%M").to_string()
+    libc_strftime("%e %b %Y, %X", ts.as_second())
 }
 
-/// Format a timestamp as a short local time (just time, for within-session).
+/// Format a timestamp as locale-aware time only (e.g. "2:32 PM").
 pub fn format_local_time(ts: &Timestamp) -> String {
-    let tz = jiff::tz::TimeZone::system();
-    ts.to_zoned(tz).strftime("%H:%M").to_string()
+    libc_strftime("%X", ts.as_second())
+}
+
+/// Use libc's strftime which respects LC_TIME for locale-aware formatting.
+fn libc_strftime(fmt: &str, unix_secs: i64) -> String {
+    use std::ffi::CString;
+    let fmt_c = CString::new(fmt).unwrap();
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let time = unix_secs as libc::time_t;
+    unsafe { libc::localtime_r(&time, &mut tm) };
+    let mut buf = vec![0u8; 256];
+    let len = unsafe {
+        libc::strftime(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            fmt_c.as_ptr(),
+            &tm,
+        )
+    };
+    String::from_utf8_lossy(&buf[..len]).trim().to_string()
 }
 
 // ── Filesystem operations ──────────────────────────────────────────────

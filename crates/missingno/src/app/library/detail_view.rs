@@ -215,20 +215,23 @@ fn session_entry<'a>(
     end: Option<jiff::Timestamp>,
     saves: &[&library::saves::SaveEntry],
 ) -> Element<'a, app::Message> {
-    let start_str = library::saves::format_local(&start);
-    let duration = if let Some(end) = end {
+    let detail = if let Some(end) = end {
         let secs = end.duration_since(start).as_secs();
         let mins = secs / 60;
         let hours = mins / 60;
-        if hours > 0 {
+        let duration = if hours > 0 {
             format!("{}h {}m", hours, mins % 60)
         } else if mins > 0 {
             format!("{mins}m")
         } else {
             "< 1m".to_string()
-        }
+        };
+        let start_str = library::saves::format_local(&start);
+        let end_time = library::saves::format_local_time(&end);
+        format!("{start_str} – {end_time} ({duration})")
     } else {
-        "in progress".to_string()
+        let start_str = library::saves::format_local(&start);
+        format!("{start_str} – in progress")
     };
 
     let mut col = column![
@@ -236,7 +239,7 @@ fn session_entry<'a>(
             icons::m(Icon::Play),
             column![
                 text("Played").font(fonts::bold()),
-                app_text::detail(format!("{start_str} · {duration}")).color(MUTED),
+                app_text::detail(detail).color(MUTED),
             ]
             .spacing(2),
         ]

@@ -29,5 +29,6 @@ smol = "2"
 ureq = "3"
 tiny_http = "0.12"
 jiff = { version = "0.2", features = ["serde"] }
+libc = "0.2"
 dirs = "6"
 open = "5"
