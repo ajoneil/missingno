@@ -206,9 +206,9 @@ impl shader::Pipeline for TexturePipeline {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
@@ -443,8 +443,25 @@ var texture: texture_2d<f32>;
 @group(0) @binding(1)
 var texture_sampler: sampler;
 
+// Sharp bilinear filtering: each source texel maps to a uniform-sized
+// block of screen pixels. Bilinear blending only occurs in a 1-pixel
+// band at the boundary between texels, keeping interiors crisp.
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(texture, texture_sampler, input.tex_coords);
+    let tex_size = vec2<f32>(textureDimensions(texture));
+    let texel = input.tex_coords * tex_size - vec2(0.5);
+
+    let texel_floor = floor(texel);
+    let frac = texel - texel_floor;
+
+    // Screen pixels per texel in each axis
+    let scale = tex_size * fwidth(input.tex_coords);
+
+    // Remap the fractional part: hold at 0 for most of the texel,
+    // then ramp linearly across one screen pixel at the boundary.
+    let sharp = clamp((frac - (vec2(1.0) - scale)) / scale, vec2(0.0), vec2(1.0));
+
+    let snapped = (texel_floor + vec2(0.5) + sharp) / tex_size;
+    return textureSample(texture, texture_sampler, snapped);
 }
 "#;
