@@ -30,6 +30,7 @@ pub struct DetailData<'a> {
     pub play_log: Option<PlayLog>,
     pub save_manifest: Option<library::saves::SaveManifest>,
     pub is_running: bool,
+    pub hovered_log_entry: Option<usize>,
 }
 
 #[allow(private_interfaces)]
@@ -181,8 +182,12 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
 
-    for event in &events {
-        match event {
+    let hovered = data.hovered_log_entry;
+
+    for (event_idx, event) in events.iter().enumerate() {
+        let is_hovered = hovered == Some(event_idx);
+
+        let card = match event {
             LogEvent::Session { index, start, end } => {
                 let session_saves: Vec<&library::saves::SaveEntry> = manifest
                     .map(|m| {
@@ -193,16 +198,20 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                     })
                     .unwrap_or_default();
 
-                log = log.push(session_entry(*start, *end, &session_saves));
+                session_entry(*start, *end, &session_saves, is_hovered)
             }
             LogEvent::Import {
                 save_id,
                 timestamp,
                 size_bytes,
-            } => {
-                log = log.push(import_entry(save_id, *timestamp, *size_bytes));
-            }
-        }
+            } => import_entry(save_id, *timestamp, *size_bytes, is_hovered),
+        };
+
+        log = log.push(
+            mouse_area(card)
+                .on_enter(app::Message::HoverLogEntry(event_idx))
+                .on_exit(app::Message::UnhoverLogEntry),
+        );
     }
 
     scrollable(log.padding(l()))
@@ -214,6 +223,7 @@ fn session_entry<'a>(
     start: jiff::Timestamp,
     end: Option<jiff::Timestamp>,
     saves: &[&library::saves::SaveEntry],
+    is_hovered: bool,
 ) -> Element<'a, app::Message> {
     let detail = if let Some(end) = end {
         let secs = end.duration_since(start).as_secs();
@@ -234,40 +244,39 @@ fn session_entry<'a>(
         format!("{start_str} – in progress")
     };
 
-    let mut col = column![
-        row![
-            icons::m(Icon::Play),
-            column![
-                text("Played").font(fonts::bold()),
-                app_text::detail(detail).color(MUTED),
-            ]
-            .spacing(2),
-        ]
-        .spacing(s())
-        .align_y(Center),
-    ]
-    .spacing(s());
-
-    if !saves.is_empty() {
+    let save_summary = if !saves.is_empty() {
         let n = saves.len();
-        let last_save = saves.last().unwrap();
-        let last_time = library::saves::format_local_time(&last_save.created);
+        let last_time = library::saves::format_local_time(&saves.last().unwrap().created);
+        format!(" · {n} save{} · last at {last_time}", if n == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
 
-        let summary = format!(
-            "{n} save{} · last at {last_time}",
-            if n == 1 { "" } else { "s" }
-        );
+    let mut header = row![
+        icons::m(Icon::Play),
+        column![
+            text("Played").font(fonts::bold()),
+            app_text::detail(format!("{detail}{save_summary}")).color(MUTED),
+        ]
+        .spacing(2)
+        .width(Fill),
+    ]
+    .spacing(s())
+    .align_y(Center);
 
-        col = col.push(
-            row![
-                app_text::detail(summary).color(MUTED).width(Fill),
-                buttons::subtle("Play from here")
-                    .on_press(app::Message::PlayWithSave(last_save.id.clone())),
-            ]
-            .spacing(s())
-            .align_y(Center),
+    if is_hovered {
+        let play_save_id = if !saves.is_empty() {
+            saves.last().unwrap().id.clone()
+        } else {
+            String::new()
+        };
+        header = header.push(
+            buttons::subtle(app_text::detail("Play from here"))
+                .on_press(app::Message::PlayWithSave(play_save_id)),
         );
     }
+
+    let col = column![header];
 
     container(col)
         .width(Fill)
@@ -287,11 +296,12 @@ fn import_entry<'a>(
     save_id: &str,
     timestamp: jiff::Timestamp,
     size_bytes: u32,
+    is_hovered: bool,
 ) -> Element<'a, app::Message> {
     let time = library::saves::format_local(&timestamp);
     let size_kb = size_bytes / 1024;
 
-    let content = row![
+    let mut content = row![
         icons::m(Icon::Download),
         column![
             text("Save imported").font(fonts::bold()),
@@ -299,11 +309,16 @@ fn import_entry<'a>(
         ]
         .spacing(2)
         .width(Fill),
-        buttons::subtle("Play from here")
-            .on_press(app::Message::PlayWithSave(save_id.to_string())),
     ]
     .spacing(s())
     .align_y(Center);
+
+    if is_hovered {
+        content = content.push(
+            buttons::subtle(app_text::detail("Play from here"))
+                .on_press(app::Message::PlayWithSave(save_id.to_string())),
+        );
+    }
 
     container(content)
     .width(Fill)

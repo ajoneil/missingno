@@ -83,6 +83,8 @@ struct App {
     library_cache: library::view::LibraryCache,
     /// Action waiting for user confirmation (e.g. close game before launching another).
     pending_action: Option<PendingAction>,
+    /// Index of the activity log entry currently hovered on the detail page.
+    hovered_log_entry: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +150,8 @@ enum Message {
     ImportSave,
     ImportSaveSelected(Option<rfd::FileHandle>),
     PlayWithSave(String),
+    HoverLogEntry(usize),
+    UnhoverLogEntry,
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -206,6 +210,7 @@ impl App {
             viewing_sha1: None,
             library_cache,
             pending_action: None,
+            hovered_log_entry: None,
         };
 
         let mut tasks = Vec::new();
@@ -369,6 +374,12 @@ impl App {
                         return load::play_with_save(self, &save_id);
                     }
                 }
+            }
+            Message::HoverLogEntry(idx) => {
+                self.hovered_log_entry = Some(idx);
+            }
+            Message::UnhoverLogEntry => {
+                self.hovered_log_entry = None;
             }
             Message::RemoveGame => {
                 if let Some(sha1) = &self.viewing_sha1 {
@@ -784,6 +795,7 @@ impl App {
                     play_log: Some(current.play_log.clone()),
                     save_manifest: Some(current.save_manifest.clone()),
                     is_running: matches!(self.game, Game::Loaded(_)),
+                    hovered_log_entry: self.hovered_log_entry,
                 });
             }
         }
@@ -801,6 +813,7 @@ impl App {
                     play_log,
                     save_manifest,
                     is_running: false,
+                    hovered_log_entry: self.hovered_log_entry,
                 });
             }
         }
