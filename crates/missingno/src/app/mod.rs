@@ -89,6 +89,10 @@ struct App {
     /// Index of the activity log entry currently hovered on the detail page.
     hovered_log_entry: Option<usize>,
     settings_section: settings_view::Section,
+    /// Screen to return to when leaving settings.
+    previous_screen: Option<Screen>,
+    /// Whether the game was running before entering settings.
+    was_running_before_settings: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +227,8 @@ impl App {
             pending_action: None,
             hovered_log_entry: None,
             settings_section: settings_view::Section::default(),
+            previous_screen: None,
+            was_running_before_settings: false,
         };
 
         let mut tasks = Vec::new();
@@ -468,6 +474,9 @@ impl App {
                 self.screen = Screen::Detail;
             }
             Message::ShowSettings => {
+                self.previous_screen = Some(self.screen);
+                self.was_running_before_settings = self.running();
+                self.pause();
                 self.screen = Screen::Settings;
             }
             Message::SaveBattery => {
@@ -578,7 +587,11 @@ impl App {
                     self.settings_section = section;
                 }
                 settings_view::Message::Back => {
-                    self.screen = Screen::Library;
+                    self.screen = self.previous_screen.take().unwrap_or(Screen::Library);
+                    if self.was_running_before_settings {
+                        self.run();
+                        self.was_running_before_settings = false;
+                    }
                 }
                 settings_view::Message::SetInternetEnabled(enabled) => {
                     self.settings.internet_enabled = enabled;

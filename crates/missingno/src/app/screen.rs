@@ -4,7 +4,7 @@ use rgb::RGB8;
 use missingno_gb::{
     ppu::{
         screen::{self, Screen},
-        types::palette::{Palette, PaletteChoice},
+        types::palette::{Palette, PaletteChoice, PaletteIndex},
     },
     sgb::SgbRenderData,
 };
@@ -123,7 +123,11 @@ pub fn screen_to_pixels(
             let palette_index = screen.pixel(x, y);
             let color = if let Some(sgb_data) = sgb {
                 if !sgb_data.video_enabled {
-                    RGB8::new(255, 255, 255)
+                    if use_sgb_colors {
+                        RGB8::new(255, 255, 255)
+                    } else {
+                        palette.color(PaletteIndex(0))
+                    }
                 } else {
                     match sgb_data.mask_mode {
                         MaskMode::Black => RGB8::new(0, 0, 0),
