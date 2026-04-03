@@ -60,7 +60,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     );
 
     // Title
-    col = col.push(app_text::xl(data.entry.display_title()));
+    col = col.push(app_text::heading(data.entry.display_title()));
 
     // Subtitle: publisher · year · platform
     let subtitle_parts: Vec<&str> = [
@@ -129,7 +129,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
             stats = stats.push(
                 text(format!("First played: {}", first.strftime("%Y-%m-%d")))
                     .color(MUTED)
-                    .size(12),
+                    .size(14),
             );
         }
         col = col.push(stats);
@@ -140,7 +140,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         if !manifest.saves.is_empty() {
             col = col.push(horizontal_rule());
 
-            let mut save_section = column![app_text::m("Saves")].spacing(s());
+            let mut save_section = column![app_text::label("Saves")].spacing(s());
 
             let current_id = manifest.current.as_deref();
 
@@ -165,8 +165,8 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
 
                 let mut save_row = row![
                     column![
-                        text(label).size(13),
-                        text(detail).color(MUTED).size(11),
+                        text(label).size(14),
+                        text(detail).color(MUTED).size(14),
                     ]
                     .spacing(2)
                     .width(Fill),

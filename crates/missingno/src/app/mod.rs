@@ -800,7 +800,7 @@ impl App {
                 LoadedGame::Debugger(debugger) => debugger.view(),
                 LoadedGame::Emulator(emulator) => emulator.view(fullscreen),
             },
-            _ => text::m("No game loaded").into(),
+            _ => text::label("No game loaded").into(),
         }
     }
 
@@ -811,7 +811,7 @@ impl App {
                     .width(120)
                     .height(120)
                     .style(|_, _| svg::Style { color: None }),
-                text::xl("Welcome to Missingno"),
+                text::heading("Welcome to Missingno"),
                 column![
                     iced_text("Missingno can connect to the internet to look up game metadata, cover art, and manuals for your games."),
                     iced_text("No data about your games or usage is sent — only ROM checksums are used for identification."),

@@ -372,7 +372,7 @@ pub fn title_style(theme: &Theme) -> container::Style {
 }
 
 pub fn title_bar(label: &str, pane: DebuggerPane) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(text::m(label).font(fonts::title()).into(), pane)
+    tbar(text::label(label).font(fonts::title()).into(), pane)
 }
 
 pub fn checkbox_title_bar(

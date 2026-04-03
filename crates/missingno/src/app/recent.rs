@@ -96,7 +96,7 @@ impl RecentGames {
 
     #[allow(dead_code)]
     pub fn view(&self) -> Element<'_, app::Message> {
-        let heading = app_text::m("Recent Games");
+        let heading = app_text::label("Recent Games");
 
         let entries = Column::with_children(self.games.iter().map(|game| {
             let label = row![

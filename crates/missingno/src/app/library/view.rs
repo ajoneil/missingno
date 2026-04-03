@@ -136,7 +136,7 @@ fn empty_view() -> Element<'static, app::Message> {
             .width(120)
             .height(120)
             .style(|_, _| iced::widget::svg::Style { color: None }),
-            app_text::xl("Welcome to Missingno"),
+            app_text::heading("Welcome to Missingno"),
             column![
                 text("Add a ROM file, or point Missingno at a folder").color(MUTED),
                 text("of ROMs in Settings and they'll appear here.").color(MUTED),
@@ -190,8 +190,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     // Title — bold, readable size
     let mut info = column![
         text(game.entry.display_title())
-            .font(fonts::bold())
-            .size(15),
+            .font(fonts::bold()),
     ]
     .spacing(4);
 
@@ -205,7 +204,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     .collect();
 
     if !subtitle_parts.is_empty() {
-        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED).size(13));
+        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED).size(14));
     }
 
     // Last played / play time
@@ -213,7 +212,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         info = info.push(
             text(format!("Played {} · {}", last, game.play_time))
                 .color(MUTED)
-                .size(12),
+                .size(14),
         );
     } else if game.save_count > 0 {
         // Only show save count if we don't already have play info
@@ -221,7 +220,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         info = info.push(
             text(format!("{n} save{}", if n == 1 { "" } else { "s" }))
                 .color(MUTED)
-                .size(12),
+                .size(14),
         );
     }
 

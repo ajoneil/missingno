@@ -49,7 +49,7 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
             .height(64)
             .style(|_, _| svg::Style { color: None }),
         column![
-            app_text::xl("Missingno"),
+            app_text::heading("Missingno"),
             row![
                 text(format!("Version {version}")).color(MUTED),
                 text("·").color(MUTED),
@@ -83,7 +83,7 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
     ]
     .spacing(s());
 
-    let mut directories = column![app_text::m("ROM Folders")].spacing(s());
+    let mut directories = column![app_text::label("ROM Folders")].spacing(s());
 
     for (i, dir) in settings.rom_directories.iter().enumerate() {
         directories = directories.push(
@@ -106,7 +106,7 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
         row![
             buttons::subtle(icons::m(Icon::Back))
                 .on_press(Message::Back.into()),
-            app_text::xl("Settings"),
+            app_text::heading("Settings"),
         ]
         .spacing(s())
         .padding(m())

@@ -72,7 +72,7 @@ impl ActionBar {
                         row![
                             buttons::subtle(icons::m(Icon::Back))
                                 .on_press(app::Message::BackToLibrary),
-                            app_text::xl(title)
+                            app_text::heading(title)
                                 .wrapping(iced::widget::text::Wrapping::None),
                         ]
                         .spacing(s())
@@ -96,7 +96,7 @@ impl ActionBar {
                         row![
                             buttons::subtle(icons::m(Icon::Back)).on_press(back_action),
                             mouse_area(
-                                app_text::xl(title)
+                                app_text::heading(title)
                                     .wrapping(iced::widget::text::Wrapping::None),
                             )
                             .on_press(app::Message::BackToDetail)

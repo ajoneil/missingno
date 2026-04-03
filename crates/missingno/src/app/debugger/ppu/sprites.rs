@@ -69,12 +69,12 @@ impl SpritesPane {
                 column![
                     self.sprite_size(ppu.control().sprite_size()),
                     row![
-                        text::m("Palette 0"),
+                        text::label("Palette 0"),
                         palette3(&PaletteMap(ppu.palettes().sprite0.output()), palette)
                     ]
                     .spacing(m()),
                     row![
-                        text::m("Palette 1"),
+                        text::label("Palette 1"),
                         palette3(&PaletteMap(ppu.palettes().sprite1.output()), palette)
                     ]
                     .spacing(m()),
@@ -93,7 +93,7 @@ impl SpritesPane {
 
     fn sprite_size(&self, size: SpriteSize) -> Element<'static, app::Message> {
         row![
-            text::m("Size"),
+            text::label("Size"),
             radio(
                 SpriteSize::Single.to_string(),
                 SpriteSize::Single,
@@ -129,7 +129,7 @@ impl SpritesPane {
             .peekable();
 
         if sprites.peek().is_none() {
-            text::m("No on-screen sprites").into()
+            text::label("No on-screen sprites").into()
         } else {
             Row::with_children(sprites.map(|s| self.sprite(ppu, vram, s, palette)))
                 .spacing(l())
