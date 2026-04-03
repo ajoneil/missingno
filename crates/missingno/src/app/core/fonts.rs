@@ -18,6 +18,13 @@ pub fn default() -> Font {
     Font::with_name("Space Grotesk")
 }
 
+pub fn bold() -> Font {
+    Font {
+        weight: Weight::Bold,
+        ..default()
+    }
+}
+
 pub fn heading() -> Font {
     Font::with_name("Chakra Petch")
 }

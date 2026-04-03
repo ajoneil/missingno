@@ -25,9 +25,11 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-const COVER_HEIGHT: f32 = 100.0;
-const COVER_WIDTH: f32 = 75.0;
-const CARD_MIN_WIDTH: f32 = 350.0;
+use crate::app::core::fonts;
+
+const COVER_HEIGHT: f32 = 160.0;
+const COVER_WIDTH: f32 = 120.0;
+const CARD_MIN_WIDTH: f32 = 400.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -174,17 +176,20 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();
             container::Style {
-                background: Some(palette.background.weak.color.into()),
+                background: Some(palette.background.strong.color.into()),
+                border: iced::Border::default().rounded(4),
                 ..Default::default()
             }
         })
     };
 
-    // Info column
+    // Title — bold, readable size
     let mut info = column![
-        text(game.entry.display_title()).size(14),
+        text(game.entry.display_title())
+            .font(fonts::bold())
+            .size(15),
     ]
-    .spacing(3);
+    .spacing(4);
 
     // Publisher · Year
     let subtitle_parts: Vec<&str> = [
@@ -196,7 +201,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     .collect();
 
     if !subtitle_parts.is_empty() {
-        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED).size(11));
+        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED).size(13));
     }
 
     // Last played / play time
@@ -204,39 +209,38 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         info = info.push(
             text(format!("Played {} · {}", last, game.play_time))
                 .color(MUTED)
-                .size(11),
+                .size(12),
         );
-    }
-
-    // Save count
-    if game.save_count > 0 {
+    } else if game.save_count > 0 {
+        // Only show save count if we don't already have play info
         let n = game.save_count;
         info = info.push(
             text(format!("{n} save{}", if n == 1 { "" } else { "s" }))
                 .color(MUTED)
-                .size(11),
+                .size(12),
         );
     }
 
     // Card layout: cover | info | quick-play
     let mut card_row = row![cover, info.width(Fill)]
         .spacing(m())
-        .align_y(Center);
+        .align_y(Center)
+        .height(COVER_HEIGHT);
 
     if has_rom {
         card_row = card_row.push(
-            buttons::primary(icons::m(Icon::Front))
+            buttons::subtle(icons::m(Icon::Front))
                 .on_press(Message::QuickPlay(game.entry.sha1.clone()).into()),
         );
     }
 
-    let card = container(card_row.padding(s()))
+    let card = container(card_row.padding(m()))
         .width(Fill)
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();
             container::Style {
                 background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(6),
+                border: iced::Border::default().rounded(8),
                 ..Default::default()
             }
         });
