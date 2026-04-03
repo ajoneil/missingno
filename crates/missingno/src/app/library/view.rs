@@ -102,10 +102,14 @@ pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
         let chunks: Vec<&[CachedGame]> = cache.entries.chunks(cols).collect();
 
         for chunk in chunks {
-            let cards: Vec<Element<'_, app::Message>> = chunk
+            let mut cards: Vec<Element<'_, app::Message>> = chunk
                 .iter()
                 .map(|game| game_card(game))
                 .collect();
+            // Pad incomplete rows with empty spacers so cards don't stretch
+            while cards.len() < cols {
+                cards.push(iced::widget::Space::new().width(Fill).into());
+            }
             rows_vec.push(
                 row(cards).spacing(m()).into(),
             );
