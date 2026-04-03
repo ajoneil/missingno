@@ -13,6 +13,10 @@ struct SettingsFile {
     palette: String,
     #[serde(default)]
     rom_directories: Vec<PathBuf>,
+    #[serde(default)]
+    window_width: Option<f32>,
+    #[serde(default)]
+    window_height: Option<f32>,
 }
 
 impl Default for SettingsFile {
@@ -22,6 +26,8 @@ impl Default for SettingsFile {
             internet_enabled: false,
             palette: palette_to_string(PaletteChoice::default()),
             rom_directories: Vec::new(),
+            window_width: None,
+            window_height: None,
         }
     }
 }
@@ -31,6 +37,8 @@ pub struct Settings {
     pub internet_enabled: bool,
     pub palette: PaletteChoice,
     pub rom_directories: Vec<PathBuf>,
+    pub window_width: Option<f32>,
+    pub window_height: Option<f32>,
 }
 
 impl Default for Settings {
@@ -40,6 +48,8 @@ impl Default for Settings {
             internet_enabled: false,
             palette: PaletteChoice::default(),
             rom_directories: Vec::new(),
+            window_width: None,
+            window_height: None,
         }
     }
 }
@@ -62,6 +72,8 @@ impl Settings {
                 internet_enabled: file.internet_enabled,
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
+                window_width: file.window_width,
+                window_height: file.window_height,
             };
         }
 
@@ -88,6 +100,8 @@ impl Settings {
             internet_enabled: self.internet_enabled,
             palette: palette_to_string(self.palette),
             rom_directories: self.rom_directories.clone(),
+            window_width: self.window_width,
+            window_height: self.window_height,
         };
         if let Ok(data) = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()) {
             let _ = fs::write(path, data);

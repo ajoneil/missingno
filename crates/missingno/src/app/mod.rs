@@ -38,6 +38,11 @@ mod settings_view;
 mod texture_renderer;
 
 pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
+    // Load settings early to get saved window size
+    let saved = settings::Settings::load();
+    let window_width = saved.window_width.unwrap_or(1280.0);
+    let window_height = saved.window_height.unwrap_or(720.0);
+
     let mut app = iced::application(
         move || App::new(rom_path.clone(), debugger),
         App::update,
@@ -50,6 +55,7 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
         ..Default::default()
     })
     .window(window::Settings {
+        size: iced::Size::new(window_width, window_height),
         min_size: Some(iced::Size::new(800.0, 500.0)),
         platform_specific: window::settings::PlatformSpecific {
             application_id: "net.andyofniall.missingno".to_string(),
@@ -180,6 +186,7 @@ enum Message {
     EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
 
+    WindowResized(iced::Size),
     ToggleFullscreen,
     ExitFullscreen,
     MouseMoved,
@@ -474,6 +481,12 @@ impl App {
                 self.pending_action = Some(PendingAction::ResetEmulator);
             }
 
+            Message::WindowResized(size) => {
+                if !matches!(self.fullscreen, Fullscreen::Active { .. }) {
+                    self.settings.window_width = Some(size.width);
+                    self.settings.window_height = Some(size.height);
+                }
+            }
             Message::ToggleFullscreen => {
                 let (new_fullscreen, mode) = match self.fullscreen {
                     Fullscreen::Windowed => (
@@ -519,6 +532,7 @@ impl App {
             }
 
             Message::CloseRequested => {
+                self.settings.save(); // persist window size
                 if matches!(self.game, Game::Loaded(_)) {
                     self.pending_action = Some(PendingAction::CloseApp);
                 } else {
@@ -1061,6 +1075,7 @@ impl App {
                 Subscription::none()
             },
             event::listen_with(|event, _, _| match event {
+                iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F11),
