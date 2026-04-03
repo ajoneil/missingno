@@ -438,7 +438,7 @@ impl Rendering {
         // Hblank pipeline: if settle_alet() already ran this dot,
         // returns cached values. Otherwise computes fresh (e.g.
         // Mode 2→3 transition where scanning was active during settle).
-        let (wodu, wodu_old) = self.hblank.fall(self.lcd.xugu());
+        let (wodu, _wodu_old) = self.hblank.fall(self.lcd.xugu());
 
         // lcd.fall() receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).
@@ -448,7 +448,7 @@ impl Rendering {
             // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
             // already cleared XYMU, but mode3_falling still needs to run
             // for the final fetcher/TYFA work.
-            self.mode3_falling(wodu_old, regs, video, oam, vram);
+            self.mode3_falling(regs, video, oam, vram);
         }
 
         pixel
@@ -531,7 +531,6 @@ impl Rendering {
     /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(
         &mut self,
-        wodu_old: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
         _oam: &Oam,
@@ -580,9 +579,13 @@ impl Rendering {
 
         // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
         // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
-        // Both FEPO and WODU are odd-phase signals read as reg_old by the
-        // even-phase VYBO (GateBoy line 948, comment at 946-947).
-        let tyfa = !fepo && !wodu_old && !self.window.rydy() && self.cascade.poky();
+        //
+        // LogicBoy uses `state_old.pix_count != 167` instead of `!WODU_old`.
+        // At this point (falling, after rising incremented), pixel_counter
+        // holds the post-increment value — which will be `state_old` on the
+        // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
+        // the WODU storage path that caused pix_count to overshoot to 168.
+        let tyfa = !fepo && !self.lcd.xugu() && !self.window.rydy() && self.cascade.poky();
         self.phase_bridge = PhaseBridge::FallingToRising { tyfa };
 
         // POHU: combinational comparator, count == SCX & 7.
