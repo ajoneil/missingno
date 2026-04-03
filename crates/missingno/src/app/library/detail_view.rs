@@ -105,13 +105,13 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
 
     // Play stats
     if let Some(log) = &data.play_log {
-        let play_time = log.format_play_time();
         let sessions = log.sessions.len();
-        let saves = data.save_manifest.as_ref().map(|m| m.saves.len()).unwrap_or(0);
-
-        let mut stats = column![].spacing(s());
-        stats = stats.push(text(format!("Play time: {play_time}")).color(MUTED));
         if sessions > 0 {
+            let play_time = log.format_play_time();
+            let saves = data.save_manifest.as_ref().map(|m| m.saves.len()).unwrap_or(0);
+
+            let mut stats = column![].spacing(s());
+            stats = stats.push(text(format!("Play time: {play_time}")).color(MUTED));
             stats = stats.push(
                 text(format!(
                     "{sessions} session{}, {saves} save{}",
@@ -120,14 +120,14 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
                 ))
                 .color(MUTED),
             );
+            if let Some(first) = &log.first_played {
+                stats = stats.push(
+                    app_text::detail(format!("First played: {}", first.strftime("%Y-%m-%d")))
+                        .color(MUTED),
+                );
+            }
+            col = col.push(stats);
         }
-        if let Some(first) = &log.first_played {
-            stats = stats.push(
-                app_text::detail(format!("First played: {}", first.strftime("%Y-%m-%d")))
-                    .color(MUTED),
-            );
-        }
-        col = col.push(stats);
     }
 
     // Save data
