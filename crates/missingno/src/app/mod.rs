@@ -147,7 +147,7 @@ enum Message {
     RefreshMetadata,
     ImportSave,
     ImportSaveSelected(Option<rfd::FileHandle>),
-    SelectBootSave(String),
+    PlayWithSave(String),
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -352,12 +352,21 @@ impl App {
                     }
                 }
             }
-            Message::SelectBootSave(save_id) => {
-                if let Some(sha1) = &self.viewing_sha1 {
-                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        let mut manifest = library::saves::load_manifest(&game_dir);
-                        manifest.restore(&save_id);
-                        library::saves::save_manifest(&game_dir, &manifest);
+            Message::PlayWithSave(save_id) => {
+                // Launch the game with a specific save
+                if let Some(sha1) = self.viewing_sha1.clone() {
+                    let same_game = self.current_game.as_ref()
+                        .map(|c| c.entry.sha1 == sha1)
+                        .unwrap_or(false);
+
+                    if matches!(self.game, Game::Loaded(_)) && !same_game {
+                        // Different game loaded — would need confirmation
+                        // For now, just go to the detail page
+                    } else {
+                        if !same_game || !matches!(self.game, Game::Loaded(_)) {
+                            load::select_game(self, &sha1);
+                        }
+                        return load::play_with_save(self, &save_id);
                     }
                 }
             }

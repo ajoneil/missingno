@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 /// The save manifest for a game. Stored as `saves.ron` in the game directory.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SaveManifest {
-    /// ID of the save to load when starting the game. None = fresh start.
+    /// Legacy field — kept for backward-compatible deserialization.
+    /// Boot save is now always the most recent, or explicitly chosen via PlayWithSave.
     #[serde(default)]
     pub current: Option<String>,
     /// All known saves for this game.
@@ -49,18 +50,16 @@ impl SaveManifest {
     ) -> &SaveEntry {
         let now = Timestamp::now();
         let id = now.strftime("%Y%m%d-%H%M%S").to_string();
-
-        let parent = self.current.clone();
+        let parent = self.saves.last().map(|s| s.id.clone());
 
         self.saves.push(SaveEntry {
-            id: id.clone(),
+            id,
             created: now,
             size_bytes,
             origin: SaveOrigin::Emulation,
             parent,
             session_index,
         });
-        self.current = Some(id);
 
         self.saves.last().unwrap()
     }
@@ -71,14 +70,13 @@ impl SaveManifest {
         let id = format!("{}-import", now.strftime("%Y%m%d-%H%M%S"));
 
         self.saves.push(SaveEntry {
-            id: id.clone(),
+            id,
             created: now,
             size_bytes,
             origin: SaveOrigin::Imported,
             parent: None,
             session_index: None,
         });
-        self.current = Some(id);
 
         self.saves.last().unwrap()
     }
@@ -89,26 +87,15 @@ impl SaveManifest {
         let id = format!("{}-legacy", now.strftime("%Y%m%d-%H%M%S"));
 
         self.saves.push(SaveEntry {
-            id: id.clone(),
+            id,
             created: now,
             size_bytes,
             origin: SaveOrigin::LegacyImport,
             parent: None,
             session_index: None,
         });
-        self.current = Some(id);
 
         self.saves.last().unwrap()
-    }
-
-    /// Set the current save to a historical one (for restore).
-    pub fn restore(&mut self, save_id: &str) -> bool {
-        if self.saves.iter().any(|s| s.id == save_id) {
-            self.current = Some(save_id.to_string());
-            true
-        } else {
-            false
-        }
     }
 }
 
@@ -166,13 +153,15 @@ pub fn load_save_data(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
     std::fs::read(save_file_path(game_dir, id)).ok()
 }
 
-/// Load the boot save's data — selected save, or most recent if none selected.
+/// Load the most recent save's data.
 pub fn load_current_save(game_dir: &Path) -> Option<Vec<u8>> {
     let manifest = load_manifest(game_dir);
-    let id = manifest
-        .current
-        .as_ref()
-        .or_else(|| manifest.saves.last().map(|s| &s.id))?;
+    let id = &manifest.saves.last()?.id;
+    load_save_data(game_dir, id)
+}
+
+/// Load a specific save's data by ID.
+pub fn load_save_by_id(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
     load_save_data(game_dir, id)
 }
 

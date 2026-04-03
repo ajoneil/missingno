@@ -181,10 +181,6 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
 
-    let boot_save = manifest.and_then(|m| {
-        m.current.as_deref().or_else(|| m.saves.last().map(|s| s.id.as_str()))
-    });
-
     for event in &events {
         match event {
             LogEvent::Session { index, start, end } => {
@@ -197,14 +193,14 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                     })
                     .unwrap_or_default();
 
-                log = log.push(session_entry(*start, *end, &session_saves, boot_save));
+                log = log.push(session_entry(*start, *end, &session_saves));
             }
             LogEvent::Import {
                 save_id,
                 timestamp,
                 size_bytes,
             } => {
-                log = log.push(import_entry(save_id, *timestamp, *size_bytes, boot_save));
+                log = log.push(import_entry(save_id, *timestamp, *size_bytes));
             }
         }
     }
@@ -218,7 +214,6 @@ fn session_entry<'a>(
     start: jiff::Timestamp,
     end: Option<jiff::Timestamp>,
     saves: &[&library::saves::SaveEntry],
-    boot_save: Option<&str>,
 ) -> Element<'a, app::Message> {
     let start_str = library::saves::format_local(&start);
     let duration = if let Some(end) = end {
@@ -251,20 +246,24 @@ fn session_entry<'a>(
     .spacing(s());
 
     if !saves.is_empty() {
-        for save in saves {
-            let is_boot = boot_save == Some(save.id.as_str());
-            let time = library::saves::format_local_time(&save.created);
-            let size_kb = save.size_bytes / 1024;
-            let marker = if is_boot { " ●" } else { "" };
+        let n = saves.len();
+        let last_save = saves.last().unwrap();
+        let last_time = library::saves::format_local_time(&last_save.created);
 
-            col = col.push(
-                buttons::subtle(
-                    app_text::detail(format!("Saved at {time} · {size_kb} KB{marker}")),
-                )
-                .on_press(app::Message::SelectBootSave(save.id.clone()))
-                .width(Fill),
-            );
-        }
+        let summary = format!(
+            "{n} save{} · last at {last_time}",
+            if n == 1 { "" } else { "s" }
+        );
+
+        col = col.push(
+            row![
+                app_text::detail(summary).color(MUTED).width(Fill),
+                buttons::subtle("Play from here")
+                    .on_press(app::Message::PlayWithSave(last_save.id.clone())),
+            ]
+            .spacing(s())
+            .align_y(Center),
+        );
     }
 
     container(col)
@@ -285,29 +284,25 @@ fn import_entry<'a>(
     save_id: &str,
     timestamp: jiff::Timestamp,
     size_bytes: u32,
-    boot_save: Option<&str>,
 ) -> Element<'a, app::Message> {
-    let is_boot = boot_save == Some(save_id);
     let time = library::saves::format_local(&timestamp);
     let size_kb = size_bytes / 1024;
-    let marker = if is_boot { " ●" } else { "" };
 
     let content = row![
         icons::m(Icon::Download),
         column![
             text("Save imported").font(fonts::bold()),
-            app_text::detail(format!("{time} · {size_kb} KB{marker}")).color(MUTED),
+            app_text::detail(format!("{time} · {size_kb} KB")).color(MUTED),
         ]
-        .spacing(2),
+        .spacing(2)
+        .width(Fill),
+        buttons::subtle("Play from here")
+            .on_press(app::Message::PlayWithSave(save_id.to_string())),
     ]
     .spacing(s())
     .align_y(Center);
 
-    container(
-        buttons::subtle(content)
-            .on_press(app::Message::SelectBootSave(save_id.to_string()))
-            .width(Fill),
-    )
+    container(content)
     .width(Fill)
     .style(|theme: &iced::Theme| {
         let palette = theme.extended_palette();

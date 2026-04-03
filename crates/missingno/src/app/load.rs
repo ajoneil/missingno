@@ -136,6 +136,52 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     Task::none()
 }
 
+/// Start emulation with a specific save file.
+pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
+    let (rom_path, game_dir) = {
+        let Some(current) = &app.current_game else {
+            return Task::none();
+        };
+        let Some(rom_path) = current.entry.rom_paths.iter().find(|p| p.exists()).cloned() else {
+            return Task::none();
+        };
+        (rom_path, current.game_dir.clone())
+    };
+
+    let Ok(rom) = std::fs::read(&rom_path) else {
+        return Task::none();
+    };
+
+    let save_data = library::saves::load_save_by_id(&game_dir, save_id);
+    let cartridge = Cartridge::new(rom, save_data);
+    let game_boy = GameBoy::new(cartridge, None);
+    let palette = app.settings.palette;
+
+    if app.debugger_enabled {
+        let mut debugger = app::debugger::Debugger::new(game_boy);
+        debugger.set_palette(palette);
+        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+    } else {
+        let mut emu = app::emulator::Emulator::new(game_boy);
+        emu.set_palette(palette);
+        emu.run();
+        app.game = Game::Loaded(LoadedGame::Emulator(emu));
+    }
+
+    if let Some(current) = &mut app.current_game {
+        current.play_log.start_session();
+        library::play_log::save(&current.game_dir, &current.play_log);
+        app.recent_games
+            .add(&current.entry.sha1, &current.entry.display_title(), &rom_path);
+        app.recent_games.save();
+    }
+
+    app.screen = Screen::Emulator;
+    app.library_cache = app::library::view::LibraryCache::load();
+
+    Task::none()
+}
+
 /// Full pipeline for loading a ROM from a file path: create library entry + start emulation.
 pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::Message> {
     let sha1 = library::hasheous::rom_sha1(&rom);
