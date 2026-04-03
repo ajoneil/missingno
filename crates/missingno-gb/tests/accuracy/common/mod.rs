@@ -401,10 +401,10 @@ pub fn load_reference_png(relative: &str) -> Vec<u8> {
     let path = rom_path(relative);
     let file = std::fs::File::open(&path)
         .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
-    let mut decoder = png::Decoder::new(file);
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
 
     let width = info.width as usize;

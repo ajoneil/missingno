@@ -17,7 +17,7 @@ pub struct GameInfo {
 pub fn rom_sha1(rom: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(rom);
-    format!("{:x}", hasher.finalize())
+    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()
 }
 
 pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {

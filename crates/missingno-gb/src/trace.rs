@@ -278,7 +278,7 @@ impl Tracer {
         let rom_sha256 = {
             let mut hasher = Sha256::new();
             hasher.update(gb.cartridge().rom());
-            format!("{:x}", hasher.finalize())
+            hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()
         };
 
         let trigger = profile.trigger.clone();
