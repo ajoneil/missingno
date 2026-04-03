@@ -27,6 +27,24 @@ const MUTED: Color = Color::from_rgb(
 
 use crate::app::core::fonts;
 
+/// Deterministic accent colour from a title string, using Catppuccin Mocha accents
+/// darkened to work as backgrounds with white text.
+fn title_color(title: &str) -> Color {
+    const ACCENTS: &[[f32; 3]] = &[
+        [0.52, 0.24, 0.44], // mauve
+        [0.44, 0.22, 0.50], // lavender-ish
+        [0.20, 0.36, 0.52], // blue
+        [0.16, 0.40, 0.44], // teal
+        [0.24, 0.42, 0.28], // green
+        [0.52, 0.40, 0.16], // yellow
+        [0.52, 0.28, 0.16], // peach
+        [0.52, 0.20, 0.24], // red
+    ];
+    let hash = title.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let [r, g, b] = ACCENTS[(hash as usize) % ACCENTS.len()];
+    Color::from_rgb(r, g, b)
+}
+
 const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
 const CARD_MIN_WIDTH: f32 = 400.0;
@@ -196,30 +214,54 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     let has_rom = game.entry.rom_paths.first().is_some();
 
     // Cover art
-    let cover = if let Some(handle) = &game.cover {
-        container(
-            image(handle.clone())
-                .width(COVER_WIDTH)
-                .height(COVER_HEIGHT)
-                .content_fit(iced::ContentFit::Contain),
-        )
-        .width(COVER_WIDTH)
-        .height(COVER_HEIGHT)
-        .center(iced::Length::Shrink)
+    let cover: Element<'_, app::Message> = if let Some(handle) = &game.cover {
+        image(handle.clone())
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .content_fit(iced::ContentFit::Cover)
+            .border_radius(iced::border::Radius {
+                top_left: 0.0,
+                top_right: 8.0,
+                bottom_right: 8.0,
+                bottom_left: 0.0,
+            })
+            .into()
     } else {
+        let initial = game.entry.display_title()
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .next()
+            .unwrap_or('?');
+        let bg = title_color(&game.entry.display_title());
+
         container(
-            iced::widget::Space::new().width(COVER_WIDTH).height(COVER_HEIGHT),
+            text(initial)
+                .size(COVER_HEIGHT * 0.35)
+                .font(fonts::heading())
+                .color(Color::WHITE),
         )
         .width(COVER_WIDTH)
         .height(COVER_HEIGHT)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
+        .align_x(Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(move |_: &iced::Theme| {
             container::Style {
-                background: Some(palette.background.strong.color.into()),
-                border: iced::Border::default().rounded(4),
+                background: Some(bg.into()),
+                border: iced::Border {
+                    radius: iced::border::Radius {
+                        top_left: 8.0,
+                        top_right: 0.0,
+                        bottom_right: 0.0,
+                        bottom_left: 8.0,
+                    },
+                    ..Default::default()
+                },
                 ..Default::default()
             }
         })
+        .into()
     };
 
     // Title — bold, readable size
@@ -257,21 +299,24 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         );
     }
 
-    // Card layout: cover | info | quick-play
-    let mut card_row = row![cover, info.width(Fill)]
+    // Card layout: cover (flush left) | padded info | quick-play
+    let mut info_row = row![info.width(Fill)]
         .spacing(m())
-        .align_y(Center)
-        .height(COVER_HEIGHT);
+        .align_y(Center);
 
     if has_rom {
-        card_row = card_row.push(
+        info_row = info_row.push(
             buttons::subtle(icons::m(Icon::Front))
                 .on_press(Message::QuickPlay(game.entry.sha1.clone()).into()),
         );
     }
 
-    let card = container(card_row.padding(m()))
+    let card_row = row![cover, container(info_row).padding(m()).width(Fill)]
+        .height(COVER_HEIGHT);
+
+    let card = container(card_row)
         .width(Fill)
+        .clip(true)
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();
             container::Style {
