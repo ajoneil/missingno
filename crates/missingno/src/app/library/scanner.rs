@@ -70,10 +70,17 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
     new_entries
 }
 
+/// Result of enriching a single game.
+#[derive(Debug, Clone)]
+pub struct EnrichResult {
+    /// Whether there may be more games to enrich.
+    pub has_more: bool,
+    /// Whether visible data changed (title, cover, metadata).
+    pub data_changed: bool,
+}
+
 /// Enrich the next unenriched game in the library.
-/// Returns true if a game was enriched (and there may be more to do).
-/// Returns false if there's nothing left to enrich or a network error occurred.
-pub fn enrich_next() -> bool {
+pub fn enrich_next() -> EnrichResult {
     // Rate limit: sleep 1s before each request
     std::thread::sleep(std::time::Duration::from_secs(1));
 
@@ -81,7 +88,7 @@ pub fn enrich_next() -> bool {
         .into_iter()
         .find(|(_, e)| !e.enrichment_attempted)
     else {
-        return false;
+        return EnrichResult { has_more: false, data_changed: false };
     };
 
     let info = match hasheous::lookup(&entry.sha1) {
@@ -89,10 +96,10 @@ pub fn enrich_next() -> bool {
         Ok(None) => {
             entry.enrichment_attempted = true;
             library::save_entry(&game_dir, &entry);
-            return true; // marked as attempted, try next
+            return EnrichResult { has_more: true, data_changed: false };
         }
         Err(_) => {
-            return false; // network error, stop
+            return EnrichResult { has_more: false, data_changed: false };
         }
     };
 
@@ -110,7 +117,7 @@ pub fn enrich_next() -> bool {
         library::save_cover(&game_dir, bytes);
     }
 
-    true
+    EnrichResult { has_more: true, data_changed: true }
 }
 
 fn is_rom_file(path: &std::path::Path) -> bool {

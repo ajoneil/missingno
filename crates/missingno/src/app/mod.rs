@@ -176,8 +176,8 @@ enum Message {
     CompleteSetup { internet_enabled: bool },
     Settings(settings_view::Message),
     Library(library::view::Message),
-    ScanComplete,
-    EnrichComplete(bool),
+    ScanComplete(bool),
+    EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -233,13 +233,13 @@ impl App {
             let dirs = app.settings.rom_directories.clone();
             tasks.push(Task::perform(
                 smol::unblock(move || library::scanner::scan_directories(&dirs)),
-                |_| Message::ScanComplete,
+                |entries| Message::ScanComplete(!entries.is_empty()),
             ));
         } else if app.settings.internet_enabled {
             // No directories to scan, but still enrich any unenriched games
             tasks.push(Task::perform(
                 smol::unblock(|| library::scanner::enrich_next()),
-                |has_more| Message::EnrichComplete(has_more),
+                |result| Message::EnrichComplete(result),
             ));
         }
 
@@ -601,7 +601,7 @@ impl App {
                         let dirs = vec![path];
                         return Task::perform(
                             smol::unblock(move || library::scanner::scan_directories(&dirs)),
-                            |_| Message::ScanComplete,
+                            |entries| Message::ScanComplete(!entries.is_empty()),
                         );
                     }
                 }
@@ -637,17 +637,21 @@ impl App {
                     }
                 }
             },
-            Message::ScanComplete => {
-                self.library_cache = library::view::LibraryCache::load();
+            Message::ScanComplete(changed) => {
+                if changed {
+                    self.library_cache = library::view::LibraryCache::load();
+                }
                 if self.settings.internet_enabled {
                     return Task::perform(
                         smol::unblock(|| library::scanner::enrich_next()),
-                        |has_more| Message::EnrichComplete(has_more),
+                        |result| Message::EnrichComplete(result),
                     );
                 }
             }
-            Message::EnrichComplete(has_more) => {
-                self.library_cache = library::view::LibraryCache::load();
+            Message::EnrichComplete(result) => {
+                if result.data_changed {
+                    self.library_cache = library::view::LibraryCache::load();
+                }
 
                 // Sync recent game titles with enriched library entries
                 for cached in &self.library_cache.entries {
@@ -666,10 +670,10 @@ impl App {
                 }
 
                 // Chain: enrich next game if there are more
-                if has_more {
+                if result.has_more {
                     return Task::perform(
                         smol::unblock(|| library::scanner::enrich_next()),
-                        |has_more| Message::EnrichComplete(has_more),
+                        |result| Message::EnrichComplete(result),
                     );
                 }
             }
