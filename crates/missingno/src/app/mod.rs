@@ -805,29 +805,32 @@ impl App {
     }
 
     fn setup_view(&self) -> Element<'_, Message> {
-        column![
-            icons::xl(Icon::GameBoy)
-                .width(120)
-                .height(120)
-                .style(|_, _| svg::Style { color: None }),
-            text::xl("Welcome to Missingno"),
+        container(
             column![
-                iced_text("Missingno can connect to the internet to look up game metadata, cover art, and manuals for your games."),
-                iced_text("No data about your games or usage is sent — only ROM checksums are used for identification."),
-                iced_text("You can change this anytime in Settings."),
+                icons::xl(Icon::GameBoy)
+                    .width(120)
+                    .height(120)
+                    .style(|_, _| svg::Style { color: None }),
+                text::xl("Welcome to Missingno"),
+                column![
+                    iced_text("Missingno can connect to the internet to look up game metadata, cover art, and manuals for your games."),
+                    iced_text("No data about your games or usage is sent — only ROM checksums are used for identification."),
+                    iced_text("You can change this anytime in Settings."),
+                ]
+                .spacing(s())
+                .max_width(420),
+                row![
+                    buttons::standard("Stay offline")
+                        .on_press(Message::CompleteSetup { internet_enabled: false }),
+                    buttons::primary("Enable internet features")
+                        .on_press(Message::CompleteSetup { internet_enabled: true }),
+                ]
+                .spacing(s()),
             ]
-            .spacing(s())
-            .max_width(420),
-            row![
-                buttons::standard("Stay offline")
-                    .on_press(Message::CompleteSetup { internet_enabled: false }),
-                buttons::primary("Enable internet features")
-                    .on_press(Message::CompleteSetup { internet_enabled: true }),
-            ]
-            .spacing(s()),
-        ]
-        .align_x(Center)
-        .spacing(l())
+            .align_x(Center)
+            .spacing(l()),
+        )
+        .center(Fill)
         .into()
     }
 

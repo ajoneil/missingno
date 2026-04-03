@@ -131,7 +131,11 @@ fn empty_view() -> Element<'static, app::Message> {
             .height(120)
             .style(|_, _| iced::widget::svg::Style { color: None }),
             app_text::xl("Welcome to Missingno"),
-            text("Add some games to get started.").color(MUTED),
+            column![
+                text("Add a ROM file, or point Missingno at a folder").color(MUTED),
+                text("of ROMs in Settings and they'll appear here.").color(MUTED),
+            ]
+            .align_x(Center),
             row![
                 buttons::primary("Add Game...")
                     .on_press(load::Message::Pick.into()),
