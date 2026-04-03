@@ -3,22 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use iced::{
-    Alignment::Center,
-    Element,
-    widget::{Column, column, row, text},
-};
 use serde::{Deserialize, Serialize};
-
-use crate::app::{
-    self,
-    core::{
-        buttons,
-        sizes::{m, s},
-        text as app_text,
-    },
-    load,
-};
 
 const MAX_RECENT: usize = 10;
 
@@ -89,33 +74,6 @@ impl RecentGames {
             .and_then(|g| g.rom_path.parent().map(Path::to_path_buf))
     }
 
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.games.is_empty()
-    }
-
-    #[allow(dead_code)]
-    pub fn view(&self) -> Element<'_, app::Message> {
-        let heading = app_text::label("Recent Games");
-
-        let entries = Column::with_children(self.games.iter().map(|game| {
-            let label = row![
-                text(game.title.clone()),
-                text(game.rom_path.to_string_lossy().to_string())
-                    .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.4))
-                    .size(12.0),
-            ]
-            .spacing(s())
-            .align_y(Center);
-
-            buttons::subtle(label)
-                .on_press(load::Message::LoadPath(game.rom_path.clone()).into())
-                .into()
-        }))
-        .spacing(0);
-
-        column![heading, entries].spacing(m()).into()
-    }
 }
 
 fn recent_path() -> Option<PathBuf> {

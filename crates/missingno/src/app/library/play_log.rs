@@ -11,21 +11,16 @@ pub struct PlayLog {
     pub total_play_time_secs: f64,
     #[serde(default)]
     pub sessions: Vec<Session>,
+    /// Legacy field — save events are now tracked in saves.ron.
+    /// Kept for backward-compatible deserialization of old play_log.ron files.
     #[serde(default)]
-    pub save_events: Vec<SaveEvent>,
+    pub save_events: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Session {
     pub start: Timestamp,
     pub end: Option<Timestamp>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SaveEvent {
-    pub timestamp: Timestamp,
-    /// Size of the SRAM data in bytes at time of save.
-    pub size_bytes: u32,
 }
 
 impl Default for PlayLog {
@@ -65,17 +60,6 @@ impl PlayLog {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn record_save(&mut self, size_bytes: u32) {
-        let now = Timestamp::now();
-        self.last_played = Some(now);
-        self.save_events.push(SaveEvent {
-            timestamp: now,
-            size_bytes,
-        });
-    }
-
-    #[allow(dead_code)]
     pub fn format_play_time(&self) -> String {
         let total_secs = self.total_play_time_secs as u64;
         let hours = total_secs / 3600;

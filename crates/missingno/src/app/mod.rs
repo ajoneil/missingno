@@ -705,14 +705,14 @@ impl App {
                         .size(text::sizes::xl())
                         .font(fonts::heading()),
                 );
-                if let Some(last_save) = current.play_log.save_events.last() {
+                if let Some(last_save) = current.save_manifest.saves.last() {
                     info = info.push(
-                        iced_text(format!("Last saved {}", friendly_ago(last_save.timestamp)))
+                        iced_text(format!("Last saved {}", friendly_ago(last_save.created)))
                             .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
                     );
                 } else {
                     info = info.push(
-                        iced_text("No saves in this session")
+                        iced_text("No saves")
                             .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
                     );
                 }
@@ -767,7 +767,6 @@ impl App {
                     play_log: Some(current.play_log.clone()),
                     save_manifest: Some(current.save_manifest.clone()),
                     is_running: matches!(self.game, Game::Loaded(_)),
-                    game_dir: Some(current.game_dir.clone()),
                 });
             }
         }
@@ -785,7 +784,6 @@ impl App {
                     play_log,
                     save_manifest,
                     is_running: false,
-                    game_dir,
                 });
             }
         }

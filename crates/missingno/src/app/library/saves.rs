@@ -41,12 +41,6 @@ pub enum SaveOrigin {
 }
 
 impl SaveManifest {
-    #[allow(dead_code)]
-    pub fn current_save(&self) -> Option<&SaveEntry> {
-        let id = self.current.as_ref()?;
-        self.saves.iter().find(|s| s.id == *id)
-    }
-
     /// Record a new save created during emulation.
     pub fn record_emulation_save(
         &mut self,

@@ -204,23 +204,21 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     .collect();
 
     if !subtitle_parts.is_empty() {
-        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED).size(14));
+        info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
     }
 
     // Last played / play time
     if let Some(last) = &game.last_played {
         info = info.push(
-            text(format!("Played {} · {}", last, game.play_time))
-                .color(MUTED)
-                .size(14),
+            app_text::detail(format!("Played {} · {}", last, game.play_time))
+                .color(MUTED),
         );
     } else if game.save_count > 0 {
         // Only show save count if we don't already have play info
         let n = game.save_count;
         info = info.push(
-            text(format!("{n} save{}", if n == 1 { "" } else { "s" }))
-                .color(MUTED)
-                .size(14),
+            app_text::detail(format!("{n} save{}", if n == 1 { "" } else { "s" }))
+                .color(MUTED),
         );
     }
 

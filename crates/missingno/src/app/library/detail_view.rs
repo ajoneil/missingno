@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use iced::{
     Alignment::Center,
     Color, Element,
@@ -26,14 +24,12 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-#[allow(dead_code)]
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
     pub cover: Option<&'a image::Handle>,
     pub play_log: Option<PlayLog>,
     pub save_manifest: Option<library::saves::SaveManifest>,
     pub is_running: bool,
-    pub game_dir: Option<PathBuf>,
 }
 
 #[allow(private_interfaces)]
@@ -111,7 +107,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     if let Some(log) = &data.play_log {
         let play_time = log.format_play_time();
         let sessions = log.sessions.len();
-        let saves = log.save_events.len();
+        let saves = data.save_manifest.as_ref().map(|m| m.saves.len()).unwrap_or(0);
 
         let mut stats = column![].spacing(s());
         stats = stats.push(text(format!("Play time: {play_time}")).color(MUTED));
@@ -127,9 +123,8 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         }
         if let Some(first) = &log.first_played {
             stats = stats.push(
-                text(format!("First played: {}", first.strftime("%Y-%m-%d")))
-                    .color(MUTED)
-                    .size(14),
+                app_text::detail(format!("First played: {}", first.strftime("%Y-%m-%d")))
+                    .color(MUTED),
             );
         }
         col = col.push(stats);
@@ -161,12 +156,12 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
                 );
 
                 let size_kb = save.size_bytes / 1024;
-                let detail = format!("{size_kb} KB");
+                let size_text = format!("{size_kb} KB");
 
                 let mut save_row = row![
                     column![
-                        text(label).size(14),
-                        text(detail).color(MUTED).size(14),
+                        app_text::detail(label),
+                        app_text::detail(size_text).color(MUTED),
                     ]
                     .spacing(2)
                     .width(Fill),
