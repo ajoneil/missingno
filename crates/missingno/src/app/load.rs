@@ -132,7 +132,9 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     }
 
     app.screen = Screen::Emulator;
-    app.library_cache = app::library::view::LibraryCache::load();
+    if let Some(current) = &app.current_game {
+        app.library_cache.update_entry(&current.entry.sha1);
+    }
 
     Task::none()
 }
@@ -178,7 +180,9 @@ pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
     }
 
     app.screen = Screen::Emulator;
-    app.library_cache = app::library::view::LibraryCache::load();
+    if let Some(current) = &app.current_game {
+        app.library_cache.update_entry(&current.entry.sha1);
+    }
 
     Task::none()
 }
@@ -265,7 +269,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     app.recent_games
         .add(&entry.sha1, &entry.display_title(), &rom_path);
     app.recent_games.save();
-    app.library_cache = app::library::view::LibraryCache::load();
+    app.library_cache.update_entry(&entry.sha1);
 
     Task::none()
 }

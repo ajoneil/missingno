@@ -73,6 +73,8 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
 /// Result of enriching a single game.
 #[derive(Debug, Clone)]
 pub struct EnrichResult {
+    /// SHA1 of the game that was enriched, if any.
+    pub sha1: Option<String>,
     /// Whether there may be more games to enrich.
     pub has_more: bool,
     /// Whether visible data changed (title, cover, metadata).
@@ -88,18 +90,20 @@ pub fn enrich_next() -> EnrichResult {
         .into_iter()
         .find(|(_, e)| !e.enrichment_attempted)
     else {
-        return EnrichResult { has_more: false, data_changed: false };
+        return EnrichResult { sha1: None, has_more: false, data_changed: false };
     };
+
+    let sha1 = entry.sha1.clone();
 
     let info = match hasheous::lookup(&entry.sha1) {
         Ok(Some(info)) => info,
         Ok(None) => {
             entry.enrichment_attempted = true;
             library::save_entry(&game_dir, &entry);
-            return EnrichResult { has_more: true, data_changed: false };
+            return EnrichResult { sha1: Some(sha1), has_more: true, data_changed: false };
         }
         Err(_) => {
-            return EnrichResult { has_more: false, data_changed: false };
+            return EnrichResult { sha1: None, has_more: false, data_changed: false };
         }
     };
 
@@ -117,7 +121,7 @@ pub fn enrich_next() -> EnrichResult {
         library::save_cover(&game_dir, bytes);
     }
 
-    EnrichResult { has_more: true, data_changed: true }
+    EnrichResult { sha1: Some(sha1), has_more: true, data_changed: true }
 }
 
 fn is_rom_file(path: &std::path::Path) -> bool {

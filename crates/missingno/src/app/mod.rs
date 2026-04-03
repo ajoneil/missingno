@@ -310,10 +310,10 @@ impl App {
                             current.play_log.end_session();
                             library::play_log::save(&current.game_dir, &current.play_log);
                             self.viewing_sha1 = Some(current.entry.sha1.clone());
+                            self.library_cache.update_entry(&current.entry.sha1);
                         }
                         self.game = Game::Unloaded;
                         self.current_game = None;
-                        self.library_cache = library::view::LibraryCache::load();
                         self.screen = Screen::Detail;
                     }
                     Some(PendingAction::RemoveGameFromLibrary) => {
@@ -321,9 +321,11 @@ impl App {
                             if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
                                 library::remove_game(&game_dir);
                             }
+                            self.library_cache
+                                .entries
+                                .retain(|e| e.entry.sha1 != *sha1);
                         }
                         self.viewing_sha1 = None;
-                        self.library_cache = library::view::LibraryCache::load();
                         self.screen = Screen::Library;
                     }
                     Some(PendingAction::CloseApp) => {
@@ -377,7 +379,7 @@ impl App {
                         if let Some(bytes) = &info.cover_art {
                             library::save_cover(&game_dir, bytes);
                         }
-                        self.library_cache = library::view::LibraryCache::load();
+                        self.library_cache.update_entry(sha1);
                     }
                 }
             }
@@ -723,8 +725,10 @@ impl App {
                 }
             }
             Message::EnrichComplete(result) => {
-                if result.data_changed {
-                    self.library_cache = library::view::LibraryCache::load();
+                if let Some(sha1) = &result.sha1 {
+                    if result.data_changed {
+                        self.library_cache.update_entry(sha1);
+                    }
                 }
 
                 // Sync recent game titles with enriched library entries

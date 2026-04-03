@@ -83,6 +83,41 @@ impl LibraryCache {
         Self { entries }
     }
 
+    /// Update a single entry in-place by SHA1, reloading only its data from disk.
+    pub fn update_entry(&mut self, sha1: &str) {
+        let Some((game_dir, entry)) = library::find_by_sha1(sha1) else {
+            return;
+        };
+
+        let cover = library::load_thumbnail(&game_dir)
+            .map(|bytes| image::Handle::from_bytes(bytes));
+        let play_log = library::play_log::load(&game_dir);
+        let play_time = play_log.format_play_time();
+        let last_played = play_log.last_played.map(|ts| friendly_ago(ts));
+        let save_manifest = library::saves::load_manifest(&game_dir);
+        let save_count = save_manifest.saves.len();
+
+        let cached = CachedGame {
+            entry,
+            cover,
+            play_time,
+            last_played,
+            save_count,
+        };
+
+        if let Some(existing) = self.entries.iter_mut().find(|e| e.entry.sha1 == sha1) {
+            *existing = cached;
+        } else {
+            self.entries.push(cached);
+            self.entries.sort_by(|a, b| {
+                a.entry
+                    .display_title()
+                    .to_lowercase()
+                    .cmp(&b.entry.display_title().to_lowercase())
+            });
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
