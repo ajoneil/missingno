@@ -15,6 +15,10 @@ pub struct Cartridge {
 }
 
 fn parse_title(rom: &[u8]) -> String {
+    if rom.len() < 0x144 {
+        return String::new();
+    }
+
     let mut title = String::new();
     for character in rom[0x134..0x144].iter() {
         if *character == 0u8 {
