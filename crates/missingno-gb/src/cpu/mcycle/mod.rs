@@ -1010,12 +1010,16 @@ impl Cpu {
 
         // If a jump target is pending (from CondJump's internal M-cycle),
         // apply it now so bus_counter is correct at the instruction boundary.
-        // This matches how JR, JP HL, CALL, and RET update bus_counter
-        // before reaching enter_fetch.
         if let Some(target) = self.pending_jump_target.take() {
             self.bus_counter = target;
-            self.pc = target;
         }
+
+        // Always sync pc with bus_counter at the instruction boundary.
+        // After JP cc (not taken), pc may be stale (one byte short of
+        // bus_counter) because the JP operand fetch uses bus_pass, not
+        // bus_read. If an ISR fires at the next fetch, it reads self.pc
+        // for the return address — which must be correct.
+        self.pc = self.bus_counter;
 
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
