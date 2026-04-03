@@ -13,6 +13,8 @@ struct SettingsFile {
     palette: String,
     #[serde(default)]
     rom_directories: Vec<PathBuf>,
+    #[serde(default = "default_true")]
+    use_sgb_colors: bool,
     #[serde(default)]
     window_width: Option<f32>,
     #[serde(default)]
@@ -26,17 +28,21 @@ impl Default for SettingsFile {
             internet_enabled: false,
             palette: palette_to_string(PaletteChoice::default()),
             rom_directories: Vec::new(),
+            use_sgb_colors: true,
             window_width: None,
             window_height: None,
         }
     }
 }
 
+fn default_true() -> bool { true }
+
 pub struct Settings {
     pub setup_complete: bool,
     pub internet_enabled: bool,
     pub palette: PaletteChoice,
     pub rom_directories: Vec<PathBuf>,
+    pub use_sgb_colors: bool,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
 }
@@ -48,6 +54,7 @@ impl Default for Settings {
             internet_enabled: false,
             palette: PaletteChoice::default(),
             rom_directories: Vec::new(),
+            use_sgb_colors: true,
             window_width: None,
             window_height: None,
         }
@@ -72,6 +79,7 @@ impl Settings {
                 internet_enabled: file.internet_enabled,
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
+                use_sgb_colors: file.use_sgb_colors,
                 window_width: file.window_width,
                 window_height: file.window_height,
             };
@@ -100,6 +108,7 @@ impl Settings {
             internet_enabled: self.internet_enabled,
             palette: palette_to_string(self.palette),
             rom_directories: self.rom_directories.clone(),
+            use_sgb_colors: self.use_sgb_colors,
             window_width: self.window_width,
             window_height: self.window_height,
         };

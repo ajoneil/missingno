@@ -45,6 +45,7 @@ pub struct ScreenView {
     pub screen: Screen,
     pub palette: PaletteChoice,
     pub sgb_render_data: Option<SgbRenderData>,
+    pub use_sgb_colors: bool,
 }
 
 impl ScreenView {
@@ -53,6 +54,7 @@ impl ScreenView {
             screen: Screen::default(),
             palette: PaletteChoice::default(),
             sgb_render_data: None,
+            use_sgb_colors: true,
         }
     }
 
@@ -93,6 +95,7 @@ impl<Message> shader::Program<Message> for ScreenView {
             &self.screen,
             self.palette.palette(),
             self.sgb_render_data.as_ref(),
+            self.use_sgb_colors,
         );
         let renderer = TextureRenderer::with_pixels(
             screen::PIXELS_PER_LINE as u32,
@@ -108,6 +111,7 @@ pub fn screen_to_pixels(
     screen: &Screen,
     palette: &Palette,
     sgb: Option<&SgbRenderData>,
+    use_sgb_colors: bool,
 ) -> Vec<u8> {
     use missingno_gb::sgb::MaskMode;
 
@@ -123,12 +127,24 @@ pub fn screen_to_pixels(
                 } else {
                     match sgb_data.mask_mode {
                         MaskMode::Black => RGB8::new(0, 0, 0),
-                        MaskMode::BackdropColor => sgb_data.palettes[0].colors[0].to_rgb8(),
+                        MaskMode::BackdropColor => {
+                            if use_sgb_colors {
+                                sgb_data.palettes[0].colors[0].to_rgb8()
+                            } else {
+                                palette.color(palette_index)
+                            }
+                        }
                         MaskMode::Disabled | MaskMode::Freeze => {
-                            let cell_x = x as usize / 8;
-                            let cell_y = y as usize / 8;
-                            let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                            sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
+                            if use_sgb_colors {
+                                let cell_x = x as usize / 8;
+                                let cell_y = y as usize / 8;
+                                let pal_id =
+                                    sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
+                                sgb_data.palettes[pal_id].colors[palette_index.0 as usize]
+                                    .to_rgb8()
+                            } else {
+                                palette.color(palette_index)
+                            }
                         }
                     }
                 }

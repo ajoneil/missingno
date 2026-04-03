@@ -13,17 +13,27 @@ use crate::app::{
     core::{
         buttons, horizontal_rule,
         icons::{self, Icon},
-        sizes::{l, m, s, xl},
+        sizes::{l, m, s},
         text as app_text,
     },
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    General,
+    Display,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
+    SelectSection(Section),
     SetInternetEnabled(bool),
     PickRomDirectory,
     AddRomDirectory(PathBuf),
     RemoveRomDirectory(usize),
+    SelectPalette(missingno_gb::ppu::types::palette::PaletteChoice),
+    SetUseSgbColors(bool),
     Back,
 }
 
@@ -40,10 +50,148 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
+pub fn view(settings: &super::settings::Settings, section: Section) -> Element<'_, app::Message> {
+    let sidebar = sidebar_view(section);
+    let content = match section {
+        Section::Display => display_section(settings),
+        Section::General => general_section(settings),
+    };
+
+    column![
+        row![
+            buttons::subtle(icons::m(Icon::Back))
+                .on_press(Message::Back.into()),
+            app_text::heading("Settings"),
+        ]
+        .spacing(s())
+        .padding(m())
+        .align_y(Center),
+        horizontal_rule(),
+        row![sidebar, content].height(Fill),
+    ]
+    .height(Fill)
+    .into()
+}
+
+fn sidebar_view(current: Section) -> Element<'static, app::Message> {
+    let sections = [
+        (Section::General, Icon::Sliders, "General"),
+        (Section::Display, Icon::Monitor, "Display"),
+    ];
+
+    let mut col = column![].spacing(s());
+
+    for (section, icon, label) in sections {
+        let btn = if section == current {
+            let label_row = row![
+                icons::m(icon).style(|_, _| iced::widget::svg::Style { color: Some(iced::Color::WHITE) }),
+                text(label).color(iced::Color::WHITE),
+            ]
+            .spacing(s())
+            .align_y(Center);
+            buttons::primary(label_row).width(Fill)
+        } else {
+            let label_row = row![icons::m(icon), text(label)]
+                .spacing(s())
+                .align_y(Center);
+            buttons::subtle(label_row)
+                .on_press(Message::SelectSection(section).into())
+                .width(Fill)
+        };
+
+        col = col.push(btn);
+    }
+
+    container(col.padding(m()))
+        .width(220)
+        .height(Fill)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weak.color.into()),
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {
+    use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
+
+    let mut content = column![
+        toggler(settings.use_sgb_colors)
+            .label("Use Super Game Boy colours for supported games")
+            .on_toggle(|enabled| Message::SetUseSgbColors(enabled).into())
+            .size(m()),
+        text("When disabled, the default palette is used for all games.").color(MUTED),
+        horizontal_rule(),
+        app_text::label("Palette"),
+    ]
+    .spacing(m());
+
+    // Palette selector as color tiles
+    let mut palette_row = row![].spacing(m());
+
+    for &choice in PaletteChoice::ALL {
+        let palette = choice.palette();
+        let is_selected = settings.palette == choice;
+
+        let swatches = row![
+            color_swatch(palette.color(PaletteIndex(0))),
+            color_swatch(palette.color(PaletteIndex(1))),
+            color_swatch(palette.color(PaletteIndex(2))),
+            color_swatch(palette.color(PaletteIndex(3))),
+        ]
+        .spacing(0);
+
+        let label = if is_selected {
+            text(format!("{choice}")).color(iced::Color::WHITE)
+        } else {
+            text(format!("{choice}"))
+        };
+
+        let tile_content = column![
+            swatches,
+            label,
+        ]
+        .spacing(s())
+        .align_x(Center);
+
+        let tile = if is_selected {
+            buttons::primary(tile_content)
+        } else {
+            buttons::subtle(tile_content)
+                .on_press(Message::SelectPalette(choice).into())
+        };
+
+        palette_row = palette_row.push(tile);
+    }
+
+    content = content.push(palette_row);
+
+    iced::widget::scrollable(
+        container(content)
+            .padding(l())
+            .width(Fill),
+    )
+    .height(Fill)
+    .into()
+}
+
+fn color_swatch(color: rgb::RGB8) -> Element<'static, app::Message> {
+    let c = iced::Color::from_rgb8(color.r, color.g, color.b);
+    container(iced::widget::Space::new().width(40).height(40))
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(c.into()),
+            ..Default::default()
+        })
+        .into()
+}
+
+fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {
     let version = env!("CARGO_PKG_VERSION").trim_end_matches(".0");
 
-    let header = row![
+    let about = row![
         icons::xl(Icon::GameBoy)
             .width(64)
             .height(64)
@@ -83,7 +231,7 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
     ]
     .spacing(s());
 
-    let mut directories = column![app_text::label("ROM Folders")].spacing(s());
+    let mut directories = column![].spacing(s());
 
     for (i, dir) in settings.rom_directories.iter().enumerate() {
         directories = directories.push(
@@ -102,24 +250,23 @@ pub fn view(settings: &super::settings::Settings) -> Element<'_, app::Message> {
             .on_press(Message::PickRomDirectory.into()),
     );
 
-    column![
-        row![
-            buttons::subtle(icons::m(Icon::Back))
-                .on_press(Message::Back.into()),
-            app_text::heading("Settings"),
-        ]
-        .spacing(s())
-        .padding(m())
-        .align_y(Center),
+    let content = column![
+        about,
         horizontal_rule(),
-        container(
-            column![header, horizontal_rule(), network, horizontal_rule(), directories]
-                .spacing(l())
-                .max_width(500),
-        )
-        .center_x(Fill)
-        .padding([xl(), m()]),
+        app_text::label("Network"),
+        network,
+        horizontal_rule(),
+        app_text::label("ROM Folders"),
+        directories,
     ]
+    .spacing(m())
+    .max_width(500);
+
+    iced::widget::scrollable(
+        container(content)
+            .padding(l())
+            .width(Fill),
+    )
     .height(Fill)
     .into()
 }

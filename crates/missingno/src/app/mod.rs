@@ -18,10 +18,7 @@ use core::{
     sizes::{l, s},
     text,
 };
-use missingno_gb::{
-    joypad::{self, Button},
-    ppu::types::palette::PaletteChoice,
-};
+use missingno_gb::joypad::{self, Button};
 
 mod action_bar;
 mod audio_output;
@@ -91,6 +88,7 @@ struct App {
     pending_action: Option<PendingAction>,
     /// Index of the activity log entry currently hovered on the detail page.
     hovered_log_entry: Option<usize>,
+    settings_section: settings_view::Section,
 }
 
 #[derive(Debug, Clone)]
@@ -178,7 +176,6 @@ enum Message {
     ReleaseButton(joypad::Button),
 
     ToggleDebugger(bool),
-    SelectPalette(PaletteChoice),
     CompleteSetup { internet_enabled: bool },
     Settings(settings_view::Message),
     Library(library::view::Message),
@@ -225,6 +222,7 @@ impl App {
             library_cache,
             pending_action: None,
             hovered_log_entry: None,
+            settings_section: settings_view::Section::default(),
         };
 
         let mut tasks = Vec::new();
@@ -553,7 +551,7 @@ impl App {
                             if debugger_enabled {
                                 LoadedGame::Debugger(debugger)
                             } else {
-                                let mut emu = debugger.disable_debugger();
+                                let mut emu = debugger.disable_debugger(self.settings.use_sgb_colors);
                                 emu.set_palette(palette);
                                 LoadedGame::Emulator(emu)
                             }
@@ -570,25 +568,15 @@ impl App {
                     });
                 }
             }
-            Message::SelectPalette(palette) => {
-                self.settings.palette = palette;
-                self.settings.save();
-                match &mut self.game {
-                    Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                        emulator.set_palette(palette);
-                    }
-                    Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                        debugger.set_palette(palette);
-                    }
-                    _ => {}
-                }
-            }
             Message::CompleteSetup { internet_enabled } => {
                 self.settings.internet_enabled = internet_enabled;
                 self.settings.setup_complete = true;
                 self.settings.save();
             }
             Message::Settings(message) => match message {
+                settings_view::Message::SelectSection(section) => {
+                    self.settings_section = section;
+                }
                 settings_view::Message::Back => {
                     self.screen = Screen::Library;
                 }
@@ -623,6 +611,26 @@ impl App {
                     if index < self.settings.rom_directories.len() {
                         self.settings.rom_directories.remove(index);
                         self.settings.save();
+                    }
+                }
+                settings_view::Message::SelectPalette(palette) => {
+                    self.settings.palette = palette;
+                    self.settings.save();
+                    match &mut self.game {
+                        Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                            emulator.set_palette(palette);
+                        }
+                        Game::Loaded(LoadedGame::Debugger(debugger)) => {
+                            debugger.set_palette(palette);
+                        }
+                        _ => {}
+                    }
+                }
+                settings_view::Message::SetUseSgbColors(enabled) => {
+                    self.settings.use_sgb_colors = enabled;
+                    self.settings.save();
+                    if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut self.game {
+                        emu.set_use_sgb_colors(enabled);
                     }
                 }
             },
@@ -755,7 +763,7 @@ impl App {
 
         // Settings has its own full layout
         if self.screen == Screen::Settings {
-            return settings_view::view(&self.settings);
+            return settings_view::view(&self.settings, self.settings_section);
         }
 
         // First-boot setup
@@ -945,18 +953,6 @@ impl App {
         }
     }
 
-    pub fn sgb_active(&self) -> bool {
-        match &self.game {
-            Game::Loaded(game) => {
-                let gb = match game {
-                    LoadedGame::Debugger(debugger) => debugger.game_boy(),
-                    LoadedGame::Emulator(emulator) => emulator.game_boy(),
-                };
-                gb.sgb().is_some()
-            }
-            _ => false,
-        }
-    }
 
     fn run(&mut self) {
         match &mut self.game {

@@ -9,9 +9,8 @@ use iced::{
 use crate::app::Message;
 
 const PURPLE: Color = Color::from_rgb(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0);
-const PURPLE_DIM: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.15);
-const PURPLE_HOVER: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.25);
-const DARK: Color = Color::from_rgb(0x1e as f32 / 255.0, 0x1e as f32 / 255.0, 0x2e as f32 / 255.0);
+const PURPLE_DIM: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.2);
+const PURPLE_HOVER: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.3);
 const TEXT: Color = Color::from_rgb(0xcd as f32 / 255.0, 0xd6 as f32 / 255.0, 0xf4 as f32 / 255.0);
 const RED: Color = Color::from_rgb(0xf3 as f32 / 255.0, 0x8b as f32 / 255.0, 0xa8 as f32 / 255.0);
 const RED_DIM: Color = Color::from_rgba(0xf3 as f32 / 255.0, 0x8b as f32 / 255.0, 0xa8 as f32 / 255.0, 0.15);
@@ -27,8 +26,8 @@ pub fn primary<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Messa
 
 fn primary_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
-        background: Some(PURPLE.into()),
-        text_color: DARK,
+        background: Some(PURPLE.scale_alpha(0.6).into()),
+        text_color: Color::WHITE,
         border: Border::default().rounded(BORDER_RADIUS),
         ..Style::default()
     };
@@ -36,7 +35,7 @@ fn primary_style(_theme: &Theme, status: Status) -> Style {
     match status {
         Status::Active | Status::Pressed => base,
         Status::Hovered => Style {
-            background: Some(PURPLE.scale_alpha(0.85).into()),
+            background: Some(PURPLE.scale_alpha(0.75).into()),
             ..base
         },
         Status::Disabled => Style {

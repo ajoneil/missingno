@@ -115,6 +115,7 @@ impl DebuggerPanes {
                     screen: view.screen.clone(),
                     palette: view.palette,
                     sgb_render_data: view.sgb_render_data,
+                    use_sgb_colors: view.use_sgb_colors,
                 };
             }
         }

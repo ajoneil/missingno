@@ -20,12 +20,10 @@ use crate::app::{
     },
     load,
 };
-use missingno_gb::ppu::types::palette::PaletteChoice;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowPane(DebuggerPane),
-    SelectPalette(PaletteChoice),
 }
 
 impl Into<app::Message> for Message {
@@ -146,9 +144,6 @@ impl ActionBar {
             Message::ShowPane(pane) => {
                 return Task::done(panes::Message::ShowPane(pane).into());
             }
-            Message::SelectPalette(palette) => {
-                return Task::done(app::Message::SelectPalette(palette));
-            }
         }
     }
 
@@ -160,13 +155,6 @@ impl ActionBar {
         .into()
     }
 
-    fn palette_selector(&self, current: PaletteChoice) -> Element<'_, app::Message> {
-        pick_list(PaletteChoice::ALL, Some(current), |choice| {
-            Message::SelectPalette(choice).into()
-        })
-        .into()
-    }
-
     fn settings(&self, app: &App) -> Element<'_, app::Message> {
         let mut row = row![];
 
@@ -174,9 +162,6 @@ impl ActionBar {
         if app.screen == app::Screen::Emulator {
             if let Game::Loaded(LoadedGame::Debugger(debugger)) = &app.game {
                 row = row.push(self.panes(debugger.panes().unshown_panes()));
-            }
-            if !app.sgb_active() {
-                row = row.push(self.palette_selector(app.settings.palette));
             }
             if matches!(app.game, Game::Loaded(LoadedGame::Emulator(_))) {
                 row = row.push(

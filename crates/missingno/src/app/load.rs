@@ -116,7 +116,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         debugger.set_palette(palette);
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
     } else {
-        let mut emu = app::emulator::Emulator::new(game_boy);
+        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
         emu.set_palette(palette);
         emu.run();
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
@@ -163,7 +163,7 @@ pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
         debugger.set_palette(palette);
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
     } else {
-        let mut emu = app::emulator::Emulator::new(game_boy);
+        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
         emu.set_palette(palette);
         emu.run();
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
@@ -240,7 +240,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         debugger.set_palette(palette);
         app.game = Game::Loaded(LoadedGame::Debugger(debugger));
     } else {
-        let mut emu = app::emulator::Emulator::new(game_boy);
+        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
         emu.set_palette(palette);
         emu.run();
         app.game = Game::Loaded(LoadedGame::Emulator(emu));

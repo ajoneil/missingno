@@ -10,7 +10,7 @@ use iced::{
 use crate::app::{
     self,
     core::icons::{self, Icon},
-    screen::{GameBoyScreen, ScreenView, SgbScreen},
+    screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
 };
 use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};
 
@@ -24,6 +24,7 @@ pub struct Emulator {
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
+    use_sgb_colors: bool,
     /// Countdown: frames since last SRAM write. When this reaches
     /// SRAM_DEBOUNCE_FRAMES, we fire SaveBattery. None = no pending save.
     sram_save_countdown: Option<u32>,
@@ -43,24 +44,30 @@ impl Into<app::Message> for Message {
 }
 
 impl Emulator {
-    pub fn new(game_boy: GameBoy) -> Self {
+    pub fn new(game_boy: GameBoy, use_sgb_colors: bool) -> Self {
         Self {
             game_boy,
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
+            use_sgb_colors,
             sram_save_countdown: None,
         }
     }
 
-    pub fn from_debugger(game_boy: GameBoy, screen_view: ScreenView) -> Self {
+    pub fn from_debugger(game_boy: GameBoy, screen_view: ScreenView, use_sgb_colors: bool) -> Self {
         Self {
             game_boy,
             screen_view,
             running: false,
             screen_hovered: false,
+            use_sgb_colors,
             sram_save_countdown: None,
         }
+    }
+
+    pub fn set_use_sgb_colors(&mut self, use_sgb: bool) {
+        self.use_sgb_colors = use_sgb;
     }
 
     pub fn game_boy(&self) -> &GameBoy {
@@ -95,16 +102,17 @@ impl Emulator {
                 let video_enabled = self.game_boy.ppu().control().video_enabled();
                 let display = if let Some(sgb) = self.game_boy.sgb() {
                     let render_data = sgb.render_data(video_enabled);
-                    if sgb.mask_mode == MaskMode::Freeze {
-                        SgbScreen::Freeze(render_data).into()
+                    if !video_enabled || sgb.mask_mode == MaskMode::Freeze {
+                        ScreenDisplay::Sgb(SgbScreen::Freeze(render_data))
                     } else {
-                        SgbScreen::Display(screen, render_data).into()
+                        ScreenDisplay::Sgb(SgbScreen::Display(screen, render_data))
                     }
                 } else if !video_enabled {
-                    GameBoyScreen::Off.into()
+                    ScreenDisplay::GameBoy(GameBoyScreen::Off)
                 } else {
-                    GameBoyScreen::Display(screen).into()
+                    ScreenDisplay::GameBoy(GameBoyScreen::Display(screen))
                 };
+                self.screen_view.use_sgb_colors = self.use_sgb_colors;
                 self.screen_view.apply(display);
 
                 // Debounce SRAM saves: reset countdown on each dirty frame,

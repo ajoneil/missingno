@@ -98,9 +98,9 @@ impl Debugger {
         self.debugger.game_boy_mut()
     }
 
-    pub fn disable_debugger(self) -> Emulator {
+    pub fn disable_debugger(self, use_sgb_colors: bool) -> Emulator {
         let screen_view = self.panes.take_screen_view();
-        Emulator::from_debugger(self.debugger.game_boy_take(), screen_view)
+        Emulator::from_debugger(self.debugger.game_boy_take(), screen_view, use_sgb_colors)
     }
 
     pub fn panes(&self) -> &DebuggerPanes {
