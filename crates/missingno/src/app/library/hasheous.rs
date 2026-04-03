@@ -17,16 +17,17 @@ pub struct GameInfo {
 pub fn rom_sha1(rom: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(rom);
-    hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
 }
 
 pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     let url = format!("{BASE_URL}/Lookup/ByHash/sha1/{sha1}");
 
-    let response = match ureq::get(&url)
-        .header("Accept", "application/json")
-        .call()
-    {
+    let response = match ureq::get(&url).header("Accept", "application/json").call() {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(404)) => return Ok(None),
         Err(e) => return Err(format!("Hasheous request failed: {e}")),

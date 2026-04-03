@@ -32,7 +32,12 @@ const FLAG_KEYFRAME: u8 = 0x01;
 
 /// Append a save to the archive. Creates the archive if it doesn't exist.
 /// `entry_index` is the 0-based index of this entry (used to decide keyframe placement).
-pub fn append_save(archive_path: &Path, data: &[u8], entry_index: usize, prev_data: Option<&[u8]>) -> io::Result<()> {
+pub fn append_save(
+    archive_path: &Path,
+    data: &[u8],
+    entry_index: usize,
+    prev_data: Option<&[u8]>,
+) -> io::Result<()> {
     let is_keyframe = entry_index % KEYFRAME_INTERVAL == 0 || prev_data.is_none();
     let exists = archive_path.exists();
 
@@ -82,7 +87,10 @@ pub fn read_save(archive_path: &Path, target_index: usize) -> io::Result<Vec<u8>
     if target_index >= entries.len() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("save index {target_index} not found in archive ({} entries)", entries.len()),
+            format!(
+                "save index {target_index} not found in archive ({} entries)",
+                entries.len()
+            ),
         ));
     }
 
@@ -95,7 +103,8 @@ pub fn read_save(archive_path: &Path, target_index: usize) -> io::Result<Vec<u8>
     // Decompress keyframe
     let uncompressed_len = entries[keyframe_idx].uncompressed_len as usize;
     let mut decompressor = zstd::bulk::Decompressor::new()?;
-    let mut current = decompressor.decompress(entries[keyframe_idx].compressed, uncompressed_len)?;
+    let mut current =
+        decompressor.decompress(entries[keyframe_idx].compressed, uncompressed_len)?;
 
     // Apply deltas forward
     for i in (keyframe_idx + 1)..=target_index {
@@ -121,7 +130,6 @@ pub fn entry_count(archive_path: &Path) -> usize {
     parse_entries(&data).map(|e| e.len()).unwrap_or(0)
 }
 
-
 struct ArchiveEntry<'a> {
     is_keyframe: bool,
     #[allow(dead_code)]
@@ -131,7 +139,10 @@ struct ArchiveEntry<'a> {
 
 fn parse_entries(data: &[u8]) -> io::Result<Vec<ArchiveEntry<'_>>> {
     if data.len() < 5 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "archive too small"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "archive too small",
+        ));
     }
     if &data[0..4] != MAGIC {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "bad magic"));
@@ -154,7 +165,8 @@ fn parse_entries(data: &[u8]) -> io::Result<Vec<ArchiveEntry<'_>>> {
 
         let flag = data[pos];
         let uncompressed_len = u32::from_le_bytes(data[pos + 1..pos + 5].try_into().unwrap());
-        let compressed_len = u32::from_le_bytes(data[pos + 5..pos + 9].try_into().unwrap()) as usize;
+        let compressed_len =
+            u32::from_le_bytes(data[pos + 5..pos + 9].try_into().unwrap()) as usize;
         pos += 9;
 
         if pos + compressed_len > data.len() {

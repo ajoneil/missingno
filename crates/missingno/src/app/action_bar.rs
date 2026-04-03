@@ -44,14 +44,21 @@ impl ActionBar {
         let title = match app.screen {
             app::Screen::Detail => {
                 // Show the viewed game's title
-                app.viewing_sha1.as_ref()
-                    .and_then(|sha1| app.library_cache.entries.iter().find(|g| g.entry.sha1 == *sha1))
+                app.viewing_sha1
+                    .as_ref()
+                    .and_then(|sha1| {
+                        app.library_cache
+                            .entries
+                            .iter()
+                            .find(|g| g.entry.sha1 == *sha1)
+                    })
                     .map(|g| g.entry.display_title())
                     .unwrap_or_default()
             }
             _ => {
                 // Show the running game's title
-                app.current_game.as_ref()
+                app.current_game
+                    .as_ref()
                     .map(|g| g.entry.display_title())
                     .unwrap_or_default()
             }
@@ -59,13 +66,12 @@ impl ActionBar {
 
         match app.screen {
             app::Screen::Library => {
-                row![
-                    iced::widget::Space::new().width(Fill),
-                    self.settings(app)
-                ]
+                row![iced::widget::Space::new().width(Fill), self.settings(app)]
             }
             app::Screen::Detail => {
-                let is_this_game_loaded = app.current_game.as_ref()
+                let is_this_game_loaded = app
+                    .current_game
+                    .as_ref()
                     .zip(app.viewing_sha1.as_ref())
                     .map(|(c, v)| c.entry.sha1 == *v && matches!(app.game, Game::Loaded(_)))
                     .unwrap_or(false);
@@ -75,8 +81,7 @@ impl ActionBar {
                         row![
                             buttons::subtle(icons::m(Icon::Back))
                                 .on_press(app::Message::BackToLibrary),
-                            app_text::heading(title)
-                                .wrapping(iced::widget::text::Wrapping::None),
+                            app_text::heading(title).wrapping(iced::widget::text::Wrapping::None),
                         ]
                         .spacing(s())
                         .align_y(Center)
@@ -166,7 +171,9 @@ impl ActionBar {
             if matches!(app.game, Game::Loaded(LoadedGame::Emulator(_))) {
                 row = row.push(
                     buttons::subtle(
-                        row![icons::m(Icon::Debug), "Debug"].spacing(s()).align_y(Center),
+                        row![icons::m(Icon::Debug), "Debug"]
+                            .spacing(s())
+                            .align_y(Center),
                     )
                     .on_press(app::Message::ToggleDebugger(true)),
                 );
@@ -174,15 +181,16 @@ impl ActionBar {
         }
 
         if app.screen == app::Screen::Library {
-            row = row.push(
-                buttons::subtle("Add Game...")
-                    .on_press(load::Message::Pick.into()),
-            );
+            row = row.push(buttons::subtle("Add Game...").on_press(load::Message::Pick.into()));
         }
 
         row.push(
-            buttons::subtle(row![icons::m(Icon::Gear), "Settings"].spacing(s()).align_y(Center))
-                .on_press(app::Message::ShowSettings),
+            buttons::subtle(
+                row![icons::m(Icon::Gear), "Settings"]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::ShowSettings),
         )
         .spacing(m())
         .align_y(Center)

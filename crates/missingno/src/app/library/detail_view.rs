@@ -37,9 +37,7 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     let left = game_info_panel(&data);
     let right = activity_log(&data);
 
-    row![left, right]
-        .height(Fill)
-        .into()
+    row![left, right].height(Fill).into()
 }
 
 /// Left panel: game identity, play button, metadata, actions.
@@ -112,26 +110,30 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     col = col.push(horizontal_rule());
     col = col.push(
         column![
-            buttons::subtle("Import Save...").on_press(app::Message::ImportSave).width(Fill),
-            buttons::subtle("Open Folder").on_press(app::Message::OpenGameFolder).width(Fill),
-            buttons::subtle("Refresh Metadata").on_press(app::Message::RefreshMetadata).width(Fill),
-            buttons::danger("Remove Game").on_press(app::Message::RemoveGame).width(Fill),
+            buttons::subtle("Import Save...")
+                .on_press(app::Message::ImportSave)
+                .width(Fill),
+            buttons::subtle("Open Folder")
+                .on_press(app::Message::OpenGameFolder)
+                .width(Fill),
+            buttons::subtle("Refresh Metadata")
+                .on_press(app::Message::RefreshMetadata)
+                .width(Fill),
+            buttons::danger("Remove Game")
+                .on_press(app::Message::RemoveGame)
+                .width(Fill),
         ]
         .spacing(s()),
     );
 
-    scrollable(col.padding(l()))
-        .height(Fill)
-        .into()
+    scrollable(col.padding(l())).height(Fill).into()
 }
 
 /// Right panel: chronological activity log — sessions, saves, imports.
 fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
-    let mut log = column![
-        app_text::label("Activity"),
-    ]
-    .spacing(m())
-    .width(Fill);
+    let mut log = column![app_text::label("Activity"),]
+        .spacing(m())
+        .width(Fill);
 
     let play_log = data.play_log.as_ref();
     let manifest = data.save_manifest.as_ref();
@@ -205,9 +207,7 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         );
     }
 
-    scrollable(log.padding(l()))
-        .height(Fill)
-        .into()
+    scrollable(log.padding(l())).height(Fill).into()
 }
 
 fn session_entry<'a>(
@@ -253,12 +253,9 @@ fn session_entry<'a>(
         );
     }
 
-    let mut header = row![
-        icons::m(Icon::Play),
-        info_col.width(Fill),
-    ]
-    .spacing(s())
-    .align_y(Center);
+    let mut header = row![icons::m(Icon::Play), info_col.width(Fill),]
+        .spacing(s())
+        .align_y(Center);
 
     if !saves.is_empty() {
         let last_id = saves.last().unwrap().id.clone();
@@ -341,17 +338,17 @@ fn import_entry<'a>(
     }
 
     container(content)
-    .width(Fill)
-    .style(|theme: &iced::Theme| {
-        let palette = theme.extended_palette();
-        container::Style {
-            background: Some(palette.background.weak.color.into()),
-            border: iced::Border::default().rounded(6),
-            ..Default::default()
-        }
-    })
-    .padding(m())
-    .into()
+        .width(Fill)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weak.color.into()),
+                border: iced::Border::default().rounded(6),
+                ..Default::default()
+            }
+        })
+        .padding(m())
+        .into()
 }
 
 enum LogEvent {

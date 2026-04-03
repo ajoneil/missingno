@@ -59,7 +59,14 @@ impl GameBoy {
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
         let trace = self.bus_trace.take().unwrap_or_default();
-        (StepResult { new_screen, sram_dirty, dots }, trace)
+        (
+            StepResult {
+                new_screen,
+                sram_dirty,
+                dots,
+            },
+            trace,
+        )
     }
 
     /// Run one complete instruction from start to finish.
@@ -102,7 +109,11 @@ impl GameBoy {
         // Don't drain sram_dirty here — let the caller (step_traced) do it
         // so the flag accumulates across multiple step_instruction calls.
         let sram_dirty = self.external.cartridge.sram_dirty;
-        StepResult { new_screen, sram_dirty, dots }
+        StepResult {
+            new_screen,
+            sram_dirty,
+            dots,
+        }
     }
 
     /// Advance exactly one half-phase — execute rise() or fall()

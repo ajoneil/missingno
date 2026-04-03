@@ -174,14 +174,14 @@ pub fn save_manifest(game_dir: &Path, manifest: &SaveManifest) {
 }
 
 /// Write save data to the archive. `prev_data` is used for delta compression.
-pub fn write_save_data(game_dir: &Path, data: &[u8], archive_index: usize, prev_data: Option<&[u8]>) {
+pub fn write_save_data(
+    game_dir: &Path,
+    data: &[u8],
+    archive_index: usize,
+    prev_data: Option<&[u8]>,
+) {
     let _ = std::fs::create_dir_all(game_dir);
-    let _ = save_archive::append_save(
-        &archive_path(game_dir),
-        data,
-        archive_index,
-        prev_data,
-    );
+    let _ = save_archive::append_save(&archive_path(game_dir), data, archive_index, prev_data);
 }
 
 /// Load save data by archive index.
@@ -257,16 +257,12 @@ pub fn migrate_individual_saves(game_dir: &Path) {
     }
 
     let save_ids: Vec<String> = unarchived.iter().map(|s| s.id.clone()).collect();
-    let _ = save_archive::migrate_individual_saves(
-        &archive_path(game_dir),
-        &saves_dir,
-        &save_ids,
-    );
+    let _ = save_archive::migrate_individual_saves(&archive_path(game_dir), &saves_dir, &save_ids);
 
     // Update manifest with archive indices
     let mut manifest = load_manifest(game_dir);
-    let base_index = save_archive::entry_count(&archive_path(game_dir))
-        .saturating_sub(save_ids.len());
+    let base_index =
+        save_archive::entry_count(&archive_path(game_dir)).saturating_sub(save_ids.len());
     for save in manifest.saves.iter_mut() {
         if save.archive_index.is_none() {
             if let Some(pos) = save_ids.iter().position(|id| id == &save.id) {

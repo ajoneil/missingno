@@ -9,8 +9,7 @@ use iced::{
 };
 
 use crate::app::{
-    self,
-    controls,
+    self, controls,
     core::{
         buttons, horizontal_rule,
         icons::{self, Icon},
@@ -78,8 +77,7 @@ pub fn view(
 
     column![
         row![
-            buttons::subtle(icons::m(Icon::Back))
-                .on_press(Message::Back.into()),
+            buttons::subtle(icons::m(Icon::Back)).on_press(Message::Back.into()),
             app_text::heading("Settings"),
         ]
         .spacing(s())
@@ -104,7 +102,9 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
     for (section, icon, label) in sections {
         let btn = if section == current {
             let label_row = row![
-                icons::m(icon).style(|_, _| iced::widget::svg::Style { color: Some(iced::Color::WHITE) }),
+                icons::m(icon).style(|_, _| iced::widget::svg::Style {
+                    color: Some(iced::Color::WHITE)
+                }),
                 text(label).color(iced::Color::WHITE),
             ]
             .spacing(s())
@@ -156,22 +156,16 @@ fn controls_section(
     );
 
     let content = column![
-        row![keyboard_col, gamepad_col]
-            .spacing(l()),
+        row![keyboard_col, gamepad_col].spacing(l()),
         horizontal_rule(),
-        buttons::standard("Reset to defaults")
-            .on_press(Message::ResetBindings.into()),
+        buttons::standard("Reset to defaults").on_press(Message::ResetBindings.into()),
     ]
     .spacing(m())
     .max_width(600);
 
-    iced::widget::scrollable(
-        container(content)
-            .padding(l())
-            .width(Fill),
-    )
-    .height(Fill)
-    .into()
+    iced::widget::scrollable(container(content).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
 }
 
 fn binding_column<'a>(
@@ -190,10 +184,7 @@ fn binding_column<'a>(
         let label = text(format!("{gb_button}")).width(80);
 
         let binding_btn = if is_listening {
-            buttons::primary(
-                text("Press a key...").color(iced::Color::WHITE),
-            )
-            .width(150)
+            buttons::primary(text("Press a key...").color(iced::Color::WHITE)).width(150)
         } else {
             let display = display_name(bindings.get(gb_button));
             buttons::standard(text(display))
@@ -201,11 +192,7 @@ fn binding_column<'a>(
                 .width(150)
         };
 
-        col = col.push(
-            row![label, binding_btn]
-                .spacing(s())
-                .align_y(Center),
-        );
+        col = col.push(row![label, binding_btn].spacing(s()).align_y(Center));
     }
 
     col.into()
@@ -246,18 +233,12 @@ fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
             text(format!("{choice}"))
         };
 
-        let tile_content = column![
-            swatches,
-            label,
-        ]
-        .spacing(s())
-        .align_x(Center);
+        let tile_content = column![swatches, label,].spacing(s()).align_x(Center);
 
         let tile = if is_selected {
             buttons::primary(tile_content)
         } else {
-            buttons::subtle(tile_content)
-                .on_press(Message::SelectPalette(choice).into())
+            buttons::subtle(tile_content).on_press(Message::SelectPalette(choice).into())
         };
 
         palette_row = palette_row.push(tile);
@@ -266,13 +247,9 @@ fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
     content = content.push(palette_row);
     let content = content.max_width(600);
 
-    iced::widget::scrollable(
-        container(content)
-            .padding(l())
-            .width(Fill),
-    )
-    .height(Fill)
-    .into()
+    iced::widget::scrollable(container(content).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
 }
 
 fn color_swatch(color: rgb::RGB8) -> Element<'static, app::Message> {
@@ -303,7 +280,9 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
                     .interaction(mouse::Interaction::Pointer),
                 text("·").color(MUTED),
                 mouse_area(text("GitHub").color(MUTED))
-                    .on_press(app::Message::OpenUrl("https://github.com/ajoneil/missingno"))
+                    .on_press(app::Message::OpenUrl(
+                        "https://github.com/ajoneil/missingno"
+                    ))
                     .interaction(mouse::Interaction::Pointer),
             ]
             .spacing(s()),
@@ -342,10 +321,8 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
         );
     }
 
-    directories = directories.push(
-        buttons::standard("Add folder...")
-            .on_press(Message::PickRomDirectory.into()),
-    );
+    directories = directories
+        .push(buttons::standard("Add folder...").on_press(Message::PickRomDirectory.into()));
 
     let content = column![
         about,
@@ -359,11 +336,7 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
     .spacing(m())
     .max_width(600);
 
-    iced::widget::scrollable(
-        container(content)
-            .padding(l())
-            .width(Fill),
-    )
-    .height(Fill)
-    .into()
+    iced::widget::scrollable(container(content).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
 }

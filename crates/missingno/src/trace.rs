@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::process;
 
+use missingno_gb::GameBoy;
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::trace::{Profile, Tracer, Trigger};
-use missingno_gb::GameBoy;
 
 pub fn run(
     rom_path: PathBuf,
@@ -99,7 +99,5 @@ pub fn run(
         eprintln!("error: failed to finalize trace: {e}");
         process::exit(1);
     });
-    eprintln!(
-        "done: {instructions} instructions, {dots} dots, {frames} frames"
-    );
+    eprintln!("done: {instructions} instructions, {dots} dots, {frames} frames");
 }

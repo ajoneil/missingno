@@ -2,7 +2,7 @@ use iced::{
     Alignment::Center,
     Color, Element,
     Length::Fill,
-    widget::{column, container, image, mouse_area, row, scrollable, text, Column},
+    widget::{Column, column, container, image, mouse_area, row, scrollable, text},
 };
 
 use crate::app::{
@@ -107,8 +107,8 @@ impl LibraryCache {
             return;
         };
 
-        let cover = library::load_thumbnail(&game_dir)
-            .map(|bytes| image::Handle::from_bytes(bytes));
+        let cover =
+            library::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
         let play_log = library::play_log::load(&game_dir);
         let play_time = play_log.format_play_time();
         let last_played = play_log.last_played.map(|ts| friendly_ago(ts));
@@ -155,22 +155,17 @@ pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
         let chunks: Vec<&[CachedGame]> = cache.entries.chunks(cols).collect();
 
         for chunk in chunks {
-            let mut cards: Vec<Element<'_, app::Message>> = chunk
-                .iter()
-                .map(|game| game_card(game))
-                .collect();
+            let mut cards: Vec<Element<'_, app::Message>> =
+                chunk.iter().map(|game| game_card(game)).collect();
             // Pad incomplete rows with empty spacers so cards don't stretch
             while cards.len() < cols {
                 cards.push(iced::widget::Space::new().width(Fill).into());
             }
-            rows_vec.push(
-                row(cards).spacing(m()).into(),
-            );
+            rows_vec.push(row(cards).spacing(m()).into());
         }
 
         scrollable(
-            container(Column::with_children(rows_vec).spacing(m()).padding(l()))
-                .center_x(Fill),
+            container(Column::with_children(rows_vec).spacing(m()).padding(l())).center_x(Fill),
         )
         .height(Fill)
         .into()
@@ -181,11 +176,9 @@ pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
 fn empty_view() -> Element<'static, app::Message> {
     container(
         column![
-            iced::widget::svg(
-                iced::advanced::svg::Handle::from_memory(
-                    include_bytes!("../../app/core/icons/missingno.svg"),
-                )
-            )
+            iced::widget::svg(iced::advanced::svg::Handle::from_memory(include_bytes!(
+                "../../app/core/icons/missingno.svg"
+            ),))
             .width(120)
             .height(120)
             .style(|_, _| iced::widget::svg::Style { color: None }),
@@ -196,10 +189,8 @@ fn empty_view() -> Element<'static, app::Message> {
             ]
             .align_x(Center),
             row![
-                buttons::primary("Add Game...")
-                    .on_press(load::Message::Pick.into()),
-                buttons::standard("Settings")
-                    .on_press(app::Message::ShowSettings),
+                buttons::primary("Add Game...").on_press(load::Message::Pick.into()),
+                buttons::standard("Settings").on_press(app::Message::ShowSettings),
             ]
             .spacing(s()),
         ]
@@ -265,20 +256,13 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     };
 
     // Title — bold, readable size
-    let mut info = column![
-        text(game.entry.display_title())
-            .font(fonts::bold()),
-    ]
-    .spacing(4);
+    let mut info = column![text(game.entry.display_title()).font(fonts::bold()),].spacing(4);
 
     // Publisher · Year
-    let subtitle_parts: Vec<&str> = [
-        game.entry.publisher.as_deref(),
-        game.entry.year.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let subtitle_parts: Vec<&str> = [game.entry.publisher.as_deref(), game.entry.year.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
 
     if !subtitle_parts.is_empty() {
         info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
@@ -286,16 +270,13 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
 
     // Last played / play time
     if let Some(last) = &game.last_played {
-        info = info.push(
-            app_text::detail(format!("Played {} · {}", last, game.play_time))
-                .color(MUTED),
-        );
+        info = info
+            .push(app_text::detail(format!("Played {} · {}", last, game.play_time)).color(MUTED));
     } else if game.save_count > 0 {
         // Only show save count if we don't already have play info
         let n = game.save_count;
         info = info.push(
-            app_text::detail(format!("{n} save{}", if n == 1 { "" } else { "s" }))
-                .color(MUTED),
+            app_text::detail(format!("{n} save{}", if n == 1 { "" } else { "s" })).color(MUTED),
         );
     }
 

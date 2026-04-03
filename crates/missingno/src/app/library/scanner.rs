@@ -90,7 +90,11 @@ pub fn enrich_next() -> EnrichResult {
         .into_iter()
         .find(|(_, e)| !e.enrichment_attempted)
     else {
-        return EnrichResult { sha1: None, has_more: false, data_changed: false };
+        return EnrichResult {
+            sha1: None,
+            has_more: false,
+            data_changed: false,
+        };
     };
 
     let sha1 = entry.sha1.clone();
@@ -100,10 +104,18 @@ pub fn enrich_next() -> EnrichResult {
         Ok(None) => {
             entry.enrichment_attempted = true;
             library::save_entry(&game_dir, &entry);
-            return EnrichResult { sha1: Some(sha1), has_more: true, data_changed: false };
+            return EnrichResult {
+                sha1: Some(sha1),
+                has_more: true,
+                data_changed: false,
+            };
         }
         Err(_) => {
-            return EnrichResult { sha1: None, has_more: false, data_changed: false };
+            return EnrichResult {
+                sha1: None,
+                has_more: false,
+                data_changed: false,
+            };
         }
     };
 
@@ -121,7 +133,11 @@ pub fn enrich_next() -> EnrichResult {
         library::save_cover(&game_dir, bytes);
     }
 
-    EnrichResult { sha1: Some(sha1), has_more: true, data_changed: true }
+    EnrichResult {
+        sha1: Some(sha1),
+        has_more: true,
+        data_changed: true,
+    }
 }
 
 fn is_rom_file(path: &std::path::Path) -> bool {

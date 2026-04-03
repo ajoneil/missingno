@@ -142,10 +142,8 @@ pub fn screen_to_pixels(
                             if use_sgb_colors {
                                 let cell_x = x as usize / 8;
                                 let cell_y = y as usize / 8;
-                                let pal_id =
-                                    sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
-                                sgb_data.palettes[pal_id].colors[palette_index.0 as usize]
-                                    .to_rgb8()
+                                let pal_id = sgb_data.attribute_map.cells[cell_y][cell_x] as usize;
+                                sgb_data.palettes[pal_id].colors[palette_index.0 as usize].to_rgb8()
                             } else {
                                 palette.color(palette_index)
                             }

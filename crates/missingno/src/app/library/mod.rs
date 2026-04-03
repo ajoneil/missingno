@@ -66,7 +66,11 @@ impl GameEntry {
 
     pub fn add_rom_path(&mut self, path: PathBuf) {
         let path_str = path.to_string_lossy();
-        if !self.rom_paths.iter().any(|p| p.to_string_lossy() == path_str) {
+        if !self
+            .rom_paths
+            .iter()
+            .any(|p| p.to_string_lossy() == path_str)
+        {
             self.rom_paths.push(path);
         }
     }
@@ -77,7 +81,11 @@ pub fn library_dir() -> Option<PathBuf> {
 }
 
 pub fn game_dir_for(title: &str, sha1: &str) -> Option<PathBuf> {
-    let folder_name = format!("{}_{}", sanitize_folder_name(title), &sha1[..8.min(sha1.len())]);
+    let folder_name = format!(
+        "{}_{}",
+        sanitize_folder_name(title),
+        &sha1[..8.min(sha1.len())]
+    );
     library_dir().map(|dir| dir.join(folder_name))
 }
 

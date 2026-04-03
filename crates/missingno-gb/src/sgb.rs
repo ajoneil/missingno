@@ -50,10 +50,8 @@ pub struct Rgb555(pub u16);
 /// DAC viewed on a period-appropriate CRT, darkening the full range to
 /// produce richer, more saturated colors on a modern LCD.
 const GAMMA_RAMP: [u8; 32] = [
-      0,   2,   5,   9,  15,  20,  27,  34,
-     42,  50,  58,  67,  76,  85,  94, 104,
-    114, 123, 133, 143, 153, 163, 173, 182,
-    192, 202, 211, 220, 229, 238, 247, 255,
+    0, 2, 5, 9, 15, 20, 27, 34, 42, 50, 58, 67, 76, 85, 94, 104, 114, 123, 133, 143, 153, 163, 173,
+    182, 192, 202, 211, 220, 229, 238, 247, 255,
 ];
 
 impl Rgb555 {

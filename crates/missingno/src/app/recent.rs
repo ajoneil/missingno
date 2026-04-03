@@ -35,8 +35,7 @@ impl RecentGames {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        if let Ok(data) =
-            ron::ser::to_string_pretty(&self.games, ron::ser::PrettyConfig::default())
+        if let Ok(data) = ron::ser::to_string_pretty(&self.games, ron::ser::PrettyConfig::default())
         {
             let _ = fs::write(path, data);
         }
@@ -65,7 +64,8 @@ impl RecentGames {
 
     pub fn remove_path(&mut self, path: &Path) {
         let path_str = path.to_string_lossy();
-        self.games.retain(|g| g.rom_path.to_string_lossy() != path_str);
+        self.games
+            .retain(|g| g.rom_path.to_string_lossy() != path_str);
     }
 
     pub fn most_recent_dir(&self) -> Option<PathBuf> {
@@ -73,7 +73,6 @@ impl RecentGames {
             .first()
             .and_then(|g| g.rom_path.parent().map(Path::to_path_buf))
     }
-
 }
 
 fn recent_path() -> Option<PathBuf> {

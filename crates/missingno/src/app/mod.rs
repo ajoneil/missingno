@@ -234,7 +234,10 @@ impl App {
             listening_for: None,
         };
 
-        controls::update_bindings(&app.settings.keyboard_bindings, &app.settings.gamepad_bindings);
+        controls::update_bindings(
+            &app.settings.keyboard_bindings,
+            &app.settings.gamepad_bindings,
+        );
 
         let mut tasks = Vec::new();
 
@@ -321,9 +324,7 @@ impl App {
                             if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
                                 library::remove_game(&game_dir);
                             }
-                            self.library_cache
-                                .entries
-                                .retain(|e| e.entry.sha1 != *sha1);
+                            self.library_cache.entries.retain(|e| e.entry.sha1 != *sha1);
                         }
                         self.viewing_sha1 = None;
                         self.screen = Screen::Library;
@@ -384,8 +385,7 @@ impl App {
                 }
             }
             Message::ImportSave => {
-                let dialog = rfd::AsyncFileDialog::new()
-                    .add_filter("Game Boy Save", &["sav"]);
+                let dialog = rfd::AsyncFileDialog::new().add_filter("Game Boy Save", &["sav"]);
                 return Task::perform(dialog.pick_file(), |handle| {
                     Message::ImportSaveSelected(handle)
                 });
@@ -406,7 +406,9 @@ impl App {
             Message::PlayWithSave(save_id) => {
                 // Launch the game with a specific save
                 if let Some(sha1) = self.viewing_sha1.clone() {
-                    let same_game = self.current_game.as_ref()
+                    let same_game = self
+                        .current_game
+                        .as_ref()
                         .map(|c| c.entry.sha1 == sha1)
                         .unwrap_or(false);
 
@@ -450,9 +452,10 @@ impl App {
 
             Message::PlayFromDetail => {
                 let viewing = self.viewing_sha1.clone();
-                let same_game = viewing.as_ref().and_then(|sha1| {
-                    self.current_game.as_ref().map(|c| c.entry.sha1 == *sha1)
-                }).unwrap_or(false);
+                let same_game = viewing
+                    .as_ref()
+                    .and_then(|sha1| self.current_game.as_ref().map(|c| c.entry.sha1 == *sha1))
+                    .unwrap_or(false);
 
                 if same_game {
                     // Resume the already-loaded game
@@ -567,7 +570,8 @@ impl App {
                             if debugger_enabled {
                                 LoadedGame::Debugger(debugger)
                             } else {
-                                let mut emu = debugger.disable_debugger(self.settings.use_sgb_colors);
+                                let mut emu =
+                                    debugger.disable_debugger(self.settings.use_sgb_colors);
                                 emu.set_palette(palette);
                                 LoadedGame::Emulator(emu)
                             }
@@ -607,14 +611,12 @@ impl App {
                 }
                 settings_view::Message::PickRomDirectory => {
                     let dialog = rfd::AsyncFileDialog::new();
-                    return Task::perform(dialog.pick_folder(), |folder| {
-                        match folder {
-                            Some(handle) => {
-                                let path = handle.path().to_path_buf();
-                                settings_view::Message::AddRomDirectory(path).into()
-                            }
-                            None => Message::None,
+                    return Task::perform(dialog.pick_folder(), |folder| match folder {
+                        Some(handle) => {
+                            let path = handle.path().to_path_buf();
+                            settings_view::Message::AddRomDirectory(path).into()
                         }
+                        None => Message::None,
                     });
                 }
                 settings_view::Message::AddRomDirectory(path) => {
@@ -695,7 +697,9 @@ impl App {
                     self.screen = Screen::Detail;
                 }
                 library::view::Message::QuickPlay(sha1) => {
-                    let same_game = self.current_game.as_ref()
+                    let same_game = self
+                        .current_game
+                        .as_ref()
                         .map(|c| c.entry.sha1 == sha1)
                         .unwrap_or(false);
 
@@ -807,12 +811,13 @@ impl App {
         // Build the main view based on the current screen
         let main: Element<'_, Message> = if self.screen == Screen::Emulator {
             if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
-                let content = container(self.emulator_view(true))
-                    .center(Fill)
-                    .style(|_| container::Style {
-                        background: Some(iced::Color::BLACK.into()),
-                        ..Default::default()
-                    });
+                let content =
+                    container(self.emulator_view(true))
+                        .center(Fill)
+                        .style(|_| container::Style {
+                            background: Some(iced::Color::BLACK.into()),
+                            ..Default::default()
+                        });
 
                 let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
                 if cursor_hidden {
@@ -846,11 +851,18 @@ impl App {
 
         if let Some(action) = &self.pending_action {
             let (prompt, confirm_label) = match action {
-                PendingAction::SwitchGame(_) => ("Close the current game and switch?", "Close Game"),
+                PendingAction::SwitchGame(_) => {
+                    ("Close the current game and switch?", "Close Game")
+                }
                 PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
-                PendingAction::ResetEmulator => ("Reset the emulator? Unsaved progress will be lost.", "Reset"),
+                PendingAction::ResetEmulator => (
+                    "Reset the emulator? Unsaved progress will be lost.",
+                    "Reset",
+                ),
                 PendingAction::StopGame => ("Stop playing and end this session?", "Stop"),
-                PendingAction::RemoveGameFromLibrary => ("Remove this game and all its save data?", "Remove"),
+                PendingAction::RemoveGameFromLibrary => {
+                    ("Remove this game and all its save data?", "Remove")
+                }
             };
 
             let mut info = column![iced_text(prompt)].spacing(s());
@@ -868,8 +880,7 @@ impl App {
                     );
                 } else {
                     info = info.push(
-                        iced_text("No saves")
-                            .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                        iced_text("No saves").color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
                     );
                 }
             }
@@ -897,9 +908,7 @@ impl App {
                             .style(container::bordered_box),
                         )
                         .style(|_| container::Style {
-                            background: Some(
-                                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into(),
-                            ),
+                            background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
                             ..Default::default()
                         }),
                     )
@@ -930,7 +939,12 @@ impl App {
 
         // Otherwise look up from the library cache
         if let Some(sha1) = viewing_sha1 {
-            if let Some(cached) = self.library_cache.entries.iter().find(|g| g.entry.sha1 == sha1) {
+            if let Some(cached) = self
+                .library_cache
+                .entries
+                .iter()
+                .find(|g| g.entry.sha1 == sha1)
+            {
                 // Use find_by_sha1 to get the actual directory path
                 let game_dir = library::find_by_sha1(sha1).map(|(d, _)| d);
                 let play_log = game_dir.as_ref().map(|d| library::play_log::load(d));
@@ -1012,7 +1026,6 @@ impl App {
         }
     }
 
-
     fn run(&mut self) {
         match &mut self.game {
             Game::Loaded(game) => match game {
@@ -1077,17 +1090,23 @@ impl App {
     fn save(&mut self) {
         let ram = match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                if !debugger.game_boy().cartridge().has_battery() { return; }
+                if !debugger.game_boy().cartridge().has_battery() {
+                    return;
+                }
                 debugger.game_boy().cartridge().ram()
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                if !emulator.game_boy().cartridge().has_battery() { return; }
+                if !emulator.game_boy().cartridge().has_battery() {
+                    return;
+                }
                 emulator.game_boy().cartridge().ram()
             }
             _ => return,
         };
         let Some(ram) = ram else { return };
-        let Some(current) = &mut self.current_game else { return };
+        let Some(current) = &mut self.current_game else {
+            return;
+        };
 
         let session_index = if current.play_log.sessions.is_empty() {
             None
@@ -1103,18 +1122,23 @@ impl App {
             None
         };
 
-        let entry = current.save_manifest.record_emulation_save(
-            ram.len() as u32,
-            session_index,
-        );
+        let entry = current
+            .save_manifest
+            .record_emulation_save(ram.len() as u32, session_index);
         let archive_idx = entry.archive_index.unwrap();
         library::saves::write_save_data(&current.game_dir, &ram, archive_idx, prev_data.as_deref());
         library::saves::save_manifest(&current.game_dir, &current.save_manifest);
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let listening_keyboard = matches!(self.listening_for, Some(settings_view::ListeningFor::Keyboard(_)));
-        let listening_gamepad = matches!(self.listening_for, Some(settings_view::ListeningFor::Gamepad(_)));
+        let listening_keyboard = matches!(
+            self.listening_for,
+            Some(settings_view::ListeningFor::Keyboard(_))
+        );
+        let listening_gamepad = matches!(
+            self.listening_for,
+            Some(settings_view::ListeningFor::Gamepad(_))
+        );
 
         Subscription::batch([
             if listening_keyboard {
@@ -1139,7 +1163,9 @@ impl App {
                 Subscription::none()
             },
             event::listen_with(|event, _, _| match event {
-                iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
+                iced::Event::Window(window::Event::Resized(size)) => {
+                    Some(Message::WindowResized(size))
+                }
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F11),
@@ -1168,12 +1194,24 @@ fn friendly_ago(timestamp: jiff::Timestamp) -> String {
         format!("{secs} seconds ago")
     } else if secs < 3600 {
         let mins = secs / 60;
-        if mins == 1 { "1 minute ago".to_string() } else { format!("{mins} minutes ago") }
+        if mins == 1 {
+            "1 minute ago".to_string()
+        } else {
+            format!("{mins} minutes ago")
+        }
     } else if secs < 86400 {
         let hours = secs / 3600;
-        if hours == 1 { "1 hour ago".to_string() } else { format!("{hours} hours ago") }
+        if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{hours} hours ago")
+        }
     } else {
         let days = secs / 86400;
-        if days == 1 { "yesterday".to_string() } else { format!("{days} days ago") }
+        if days == 1 {
+            "yesterday".to_string()
+        } else {
+            format!("{days} days ago")
+        }
     }
 }

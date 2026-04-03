@@ -8,13 +8,45 @@ use iced::{
 
 use crate::app::Message;
 
-const PURPLE: Color = Color::from_rgb(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0);
-const PURPLE_DIM: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.2);
-const PURPLE_HOVER: Color = Color::from_rgba(0xcb as f32 / 255.0, 0xa6 as f32 / 255.0, 0xf7 as f32 / 255.0, 0.3);
-const TEXT: Color = Color::from_rgb(0xcd as f32 / 255.0, 0xd6 as f32 / 255.0, 0xf4 as f32 / 255.0);
-const RED: Color = Color::from_rgb(0xf3 as f32 / 255.0, 0x8b as f32 / 255.0, 0xa8 as f32 / 255.0);
-const RED_DIM: Color = Color::from_rgba(0xf3 as f32 / 255.0, 0x8b as f32 / 255.0, 0xa8 as f32 / 255.0, 0.15);
-const RED_HOVER: Color = Color::from_rgba(0xf3 as f32 / 255.0, 0x8b as f32 / 255.0, 0xa8 as f32 / 255.0, 0.25);
+const PURPLE: Color = Color::from_rgb(
+    0xcb as f32 / 255.0,
+    0xa6 as f32 / 255.0,
+    0xf7 as f32 / 255.0,
+);
+const PURPLE_DIM: Color = Color::from_rgba(
+    0xcb as f32 / 255.0,
+    0xa6 as f32 / 255.0,
+    0xf7 as f32 / 255.0,
+    0.2,
+);
+const PURPLE_HOVER: Color = Color::from_rgba(
+    0xcb as f32 / 255.0,
+    0xa6 as f32 / 255.0,
+    0xf7 as f32 / 255.0,
+    0.3,
+);
+const TEXT: Color = Color::from_rgb(
+    0xcd as f32 / 255.0,
+    0xd6 as f32 / 255.0,
+    0xf4 as f32 / 255.0,
+);
+const RED: Color = Color::from_rgb(
+    0xf3 as f32 / 255.0,
+    0x8b as f32 / 255.0,
+    0xa8 as f32 / 255.0,
+);
+const RED_DIM: Color = Color::from_rgba(
+    0xf3 as f32 / 255.0,
+    0x8b as f32 / 255.0,
+    0xa8 as f32 / 255.0,
+    0.15,
+);
+const RED_HOVER: Color = Color::from_rgba(
+    0xf3 as f32 / 255.0,
+    0x8b as f32 / 255.0,
+    0xa8 as f32 / 255.0,
+    0.25,
+);
 
 const BORDER_RADIUS: f32 = 4.0;
 

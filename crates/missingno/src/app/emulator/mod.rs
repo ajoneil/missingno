@@ -177,9 +177,7 @@ impl Emulator {
                         _ => 0.4,
                     };
                     button::Style {
-                        background: Some(
-                            iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
-                        ),
+                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
                         text_color: iced::Color::WHITE,
                         border: Border::default().rounded(4),
                         ..Default::default()

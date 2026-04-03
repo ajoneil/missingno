@@ -93,13 +93,25 @@ impl Default for KeyBindings {
 
 impl KeyBindings {
     pub const DEFAULT_KEYBOARD: Self = Self {
-        a: String::new(), b: String::new(), start: String::new(), select: String::new(),
-        up: String::new(), down: String::new(), left: String::new(), right: String::new(),
+        a: String::new(),
+        b: String::new(),
+        start: String::new(),
+        select: String::new(),
+        up: String::new(),
+        down: String::new(),
+        left: String::new(),
+        right: String::new(),
     };
 
     pub const DEFAULT_GAMEPAD: Self = Self {
-        a: String::new(), b: String::new(), start: String::new(), select: String::new(),
-        up: String::new(), down: String::new(), left: String::new(), right: String::new(),
+        a: String::new(),
+        b: String::new(),
+        start: String::new(),
+        select: String::new(),
+        up: String::new(),
+        down: String::new(),
+        left: String::new(),
+        right: String::new(),
     };
 
     pub fn default_keyboard() -> Self {
@@ -129,8 +141,12 @@ impl KeyBindings {
     }
 }
 
-fn default_keyboard_bindings() -> KeyBindings { KeyBindings::default_keyboard() }
-fn default_gamepad_bindings() -> KeyBindings { KeyBindings::default_gamepad() }
+fn default_keyboard_bindings() -> KeyBindings {
+    KeyBindings::default_keyboard()
+}
+fn default_gamepad_bindings() -> KeyBindings {
+    KeyBindings::default_gamepad()
+}
 
 #[derive(Serialize, Deserialize)]
 struct SettingsFile {
@@ -170,7 +186,9 @@ impl Default for SettingsFile {
     }
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 pub struct Settings {
     pub setup_complete: bool,

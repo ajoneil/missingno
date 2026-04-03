@@ -72,8 +72,8 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
     library::saves::migrate_legacy_battery(&game_dir);
     library::saves::migrate_individual_saves(&game_dir);
 
-    let cover = library::load_cover(&game_dir)
-        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+    let cover =
+        library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     let play_log = library::play_log::load(&game_dir);
     let save_manifest = library::saves::load_manifest(&game_dir);
@@ -126,8 +126,11 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     if let Some(current) = &mut app.current_game {
         current.play_log.start_session();
         library::play_log::save(&current.game_dir, &current.play_log);
-        app.recent_games
-            .add(&current.entry.sha1, &current.entry.display_title(), &rom_path);
+        app.recent_games.add(
+            &current.entry.sha1,
+            &current.entry.display_title(),
+            &rom_path,
+        );
         app.recent_games.save();
     }
 
@@ -174,8 +177,11 @@ pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
     if let Some(current) = &mut app.current_game {
         current.play_log.start_session();
         library::play_log::save(&current.game_dir, &current.play_log);
-        app.recent_games
-            .add(&current.entry.sha1, &current.entry.display_title(), &rom_path);
+        app.recent_games.add(
+            &current.entry.sha1,
+            &current.entry.display_title(),
+            &rom_path,
+        );
         app.recent_games.save();
     }
 
@@ -231,8 +237,8 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
 
     // Load save data and cover
     let save_data = library::saves::load_current_save(&game_dir);
-    let cover = library::load_cover(&game_dir)
-        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+    let cover =
+        library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     // Create cartridge and start emulation
     let cartridge = Cartridge::new(rom, save_data);
