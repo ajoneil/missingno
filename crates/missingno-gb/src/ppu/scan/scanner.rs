@@ -44,9 +44,6 @@ pub(in crate::ppu) struct SpriteScanner {
     byba: bool,
     /// DOBA_SCAN_DONEp_evn: DFF17 capturing BYBA on falling edge.
     doba: bool,
-    /// AVAP signal from the most recent rise(), consumed by fall()
-    /// to gate scanning termination on the correct (falling) edge.
-    last_avap: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -70,7 +67,6 @@ impl SpriteScanner {
             rutu_old: false,
             byba: false,
             doba: false,
-            last_avap: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -139,13 +135,26 @@ impl SpriteScanner {
     }
 
     /// Rising edge (DELTA_ODD): BYBA captures scan_done(), AVAP evaluated,
-    /// and CATU scan-start fires.
+    /// CATU scan-start fires, and AVAP-triggered scanning termination.
     ///
     /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
     /// BYBA captures scan_done() directly. Because rise() runs before fall()
     /// (which ticks the counter), BYBA sees the counter state from the
     /// previous XUPY cycle — matching GateBoy's `reg_old.FETO.out_old()`.
-    pub(in crate::ppu) fn rise(&mut self, xupy_rising: bool, ly: u8) -> ScanSignals {
+    ///
+    /// On hardware, AVAP fires and BESU clears atomically in the same
+    /// simulation pass. We match this by clearing scanning/besu here in
+    /// rise(), alongside XYMU assertion (handled by the caller). Entry 39's
+    /// OAM comparison runs before the clear, matching hardware where the
+    /// comparison logic (COTA/WUDA) operates on separate clocks not gated
+    /// by BESU.
+    pub(in crate::ppu) fn rise(
+        &mut self,
+        xupy_rising: bool,
+        ly: u8,
+        regs: &PipelineRegisters,
+        oam: &Oam,
+    ) -> ScanSignals {
         // BYBA: DFF capturing scan_done() on rising edge. rise() runs
         // before fall(), so the counter hasn't ticked yet — BYBA naturally
         // sees the previous XUPY cycle's value.
@@ -156,11 +165,18 @@ impl SpriteScanner {
         // AVAP: combinational scan-done trigger.
         let avap = self.byba && !self.doba;
 
-        // Store AVAP for fall() to consume. On hardware, BESU has _evn
-        // suffix and clears via AVAP → EPOR on the falling edge, not
-        // the rising edge. Deferring the clear to fall() ensures entry
-        // 39's comparison still runs (scanning is true through fall()).
-        self.last_avap = avap;
+        // On the AVAP dot, complete entry 39's comparison then clear
+        // scanning/besu atomically. On hardware, the comparison runs on
+        // separate clocks (COTA/WUDA) that complete alongside BESU
+        // clearing — both happen in the same simulation pass.
+        if avap && self.scanning {
+            if xupy_rising {
+                self.counter
+                    .compare_and_store(ly, &mut self.sprites, regs, oam);
+            }
+            self.scanning = false;
+            self.besu = false;
+        }
 
         // CATU_LINE_ENDp DFF17: clocked by XUPY rising edge.
         // D = ABOV = AND(RUTU_old, NOT(XYVO_old)), where XYVO = AND(LY4, LY7).
@@ -194,12 +210,11 @@ impl SpriteScanner {
         ScanSignals { avap }
     }
 
-    /// Falling edge (DELTA_EVEN): scanner tick, DOBA capture, and scanning
-    /// termination on AVAP.
+    /// Falling edge (DELTA_EVEN): scanner tick and DOBA capture.
     ///
     /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
     /// FETO is sampled after tick_clock(), matching hardware's combinational gate.
-    /// BESU clears on the falling edge via AVAP → EPOR.
+    /// BESU clearing (via AVAP) is handled in rise() for atomic transition.
     pub(in crate::ppu) fn fall(
         &mut self,
         xupy_rising: bool,
@@ -209,9 +224,8 @@ impl SpriteScanner {
     ) {
         // OAM comparison and sprite store population only happen during scanning.
         // Must run before tick_clock() — compare uses current entry, then clock advances.
-        // Scanning is still true here even on the AVAP dot, because rise() no
-        // longer clears it — matching hardware where BESU clears on the falling
-        // edge via AVAP → EPOR → BESU.
+        // On the AVAP dot, scanning is already false (cleared in rise() alongside
+        // entry 39's comparison), so this naturally skips — no double-comparison.
         if self.scanning && xupy_rising {
             self.counter
                 .compare_and_store(ly, &mut self.sprites, regs, oam);
@@ -219,13 +233,6 @@ impl SpriteScanner {
 
         if xupy_rising {
             self.counter.tick_clock();
-        }
-
-        // Clear scanning on AVAP (falling edge). On hardware, BESU has
-        // _evn suffix and clears via AVAP → EPOR on the falling edge.
-        if self.last_avap && self.scanning {
-            self.scanning = false;
-            self.besu = false;
         }
 
         // DOBA_SCAN_DONEp_evn: captures BYBA on falling edge.
@@ -245,7 +252,6 @@ impl SpriteScanner {
         // But we reset them for cleanliness.
         self.byba = false;
         self.doba = false;
-        self.last_avap = false;
         self.catu = false;
         self.rutu_old = false;
         // RUTU fires at the scanline boundary. It will shift to rutu_old
