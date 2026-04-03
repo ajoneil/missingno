@@ -166,7 +166,7 @@ enum Message {
     Settings(settings_view::Message),
     Library(library::view::Message),
     ScanComplete,
-    EnrichComplete,
+    EnrichComplete(bool),
     OpenUrl(&'static str),
 
     ToggleFullscreen,
@@ -226,8 +226,8 @@ impl App {
         } else if app.settings.internet_enabled {
             // No directories to scan, but still enrich any unenriched games
             tasks.push(Task::perform(
-                smol::unblock(|| library::scanner::enrich_library()),
-                |_| Message::EnrichComplete,
+                smol::unblock(|| library::scanner::enrich_next()),
+                |has_more| Message::EnrichComplete(has_more),
             ));
         }
 
@@ -580,12 +580,12 @@ impl App {
                 self.library_cache = library::view::LibraryCache::load();
                 if self.settings.internet_enabled {
                     return Task::perform(
-                        smol::unblock(|| library::scanner::enrich_library()),
-                        |_| Message::EnrichComplete,
+                        smol::unblock(|| library::scanner::enrich_next()),
+                        |has_more| Message::EnrichComplete(has_more),
                     );
                 }
             }
-            Message::EnrichComplete => {
+            Message::EnrichComplete(has_more) => {
                 self.library_cache = library::view::LibraryCache::load();
 
                 // Sync recent game titles with enriched library entries
@@ -602,6 +602,14 @@ impl App {
                         current.cover = library::load_thumbnail(&current.game_dir)
                             .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
                     }
+                }
+
+                // Chain: enrich next game if there are more
+                if has_more {
+                    return Task::perform(
+                        smol::unblock(|| library::scanner::enrich_next()),
+                        |has_more| Message::EnrichComplete(has_more),
+                    );
                 }
             }
             Message::OpenUrl(url) => {

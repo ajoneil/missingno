@@ -70,52 +70,47 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
     new_entries
 }
 
-pub fn enrich_library() {
-    let mut request_count = 0u32;
+/// Enrich the next unenriched game in the library.
+/// Returns true if a game was enriched (and there may be more to do).
+/// Returns false if there's nothing left to enrich or a network error occurred.
+pub fn enrich_next() -> bool {
+    // Rate limit: sleep 1s before each request
+    std::thread::sleep(std::time::Duration::from_secs(1));
 
-    for (game_dir, mut entry) in library::list_all() {
-        // Skip already enriched or previously attempted entries
-        if entry.enrichment_attempted {
-            continue;
+    let Some((game_dir, mut entry)) = library::list_all()
+        .into_iter()
+        .find(|(_, e)| !e.enrichment_attempted)
+    else {
+        return false;
+    };
+
+    let info = match hasheous::lookup(&entry.sha1) {
+        Ok(Some(info)) => info,
+        Ok(None) => {
+            entry.enrichment_attempted = true;
+            library::save_entry(&game_dir, &entry);
+            return true; // marked as attempted, try next
         }
-
-        // Rate limit: ~1 request per second to be a good API citizen
-        if request_count > 0 {
-            std::thread::sleep(std::time::Duration::from_secs(1));
+        Err(_) => {
+            return false; // network error, stop
         }
+    };
 
-        let info = match hasheous::lookup(&entry.sha1) {
-            Ok(Some(info)) => {
-                request_count += 1;
-                info
-            }
-            Ok(None) => {
-                // Not found in Hasheous — mark as attempted so we don't retry
-                request_count += 1;
-                entry.enrichment_attempted = true;
-                library::save_entry(&game_dir, &entry);
-                continue;
-            }
-            Err(_) => {
-                // Network error — don't mark as attempted, retry next time
-                break; // Stop enriching on network errors
-            }
-        };
+    entry.title = info.name;
+    entry.platform = info.platform;
+    entry.publisher = info.publisher;
+    entry.year = info.year;
+    entry.description = info.description;
+    entry.wikipedia_url = info.wikipedia_url;
+    entry.igdb_url = info.igdb_url;
+    entry.enrichment_attempted = true;
+    library::save_entry(&game_dir, &entry);
 
-        entry.title = info.name;
-        entry.platform = info.platform;
-        entry.publisher = info.publisher;
-        entry.year = info.year;
-        entry.description = info.description;
-        entry.wikipedia_url = info.wikipedia_url;
-        entry.igdb_url = info.igdb_url;
-        entry.enrichment_attempted = true;
-        library::save_entry(&game_dir, &entry);
-
-        if let Some(bytes) = &info.cover_art {
-            library::save_cover(&game_dir, bytes);
-        }
+    if let Some(bytes) = &info.cover_art {
+        library::save_cover(&game_dir, bytes);
     }
+
+    true
 }
 
 fn is_rom_file(path: &std::path::Path) -> bool {
