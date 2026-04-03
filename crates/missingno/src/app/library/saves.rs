@@ -112,6 +112,18 @@ impl SaveManifest {
     }
 }
 
+/// Format a timestamp in the user's local timezone.
+pub fn format_local(ts: &Timestamp) -> String {
+    let tz = jiff::tz::TimeZone::system();
+    ts.to_zoned(tz).strftime("%d %b %Y, %H:%M").to_string()
+}
+
+/// Format a timestamp as a short local time (just time, for within-session).
+pub fn format_local_time(ts: &Timestamp) -> String {
+    let tz = jiff::tz::TimeZone::system();
+    ts.to_zoned(tz).strftime("%H:%M").to_string()
+}
+
 // ── Filesystem operations ──────────────────────────────────────────────
 
 fn saves_dir(game_dir: &Path) -> PathBuf {
@@ -154,10 +166,13 @@ pub fn load_save_data(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
     std::fs::read(save_file_path(game_dir, id)).ok()
 }
 
-/// Load the current save's data.
+/// Load the boot save's data — selected save, or most recent if none selected.
 pub fn load_current_save(game_dir: &Path) -> Option<Vec<u8>> {
     let manifest = load_manifest(game_dir);
-    let id = manifest.current.as_ref()?;
+    let id = manifest
+        .current
+        .as_ref()
+        .or_else(|| manifest.saves.last().map(|s| &s.id))?;
     load_save_data(game_dir, id)
 }
 

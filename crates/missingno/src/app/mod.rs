@@ -147,7 +147,7 @@ enum Message {
     RefreshMetadata,
     ImportSave,
     ImportSaveSelected(Option<rfd::FileHandle>),
-    RestoreSave(String),
+    SelectBootSave(String),
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -352,7 +352,7 @@ impl App {
                     }
                 }
             }
-            Message::RestoreSave(save_id) => {
+            Message::SelectBootSave(save_id) => {
                 if let Some(sha1) = &self.viewing_sha1 {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
                         let mut manifest = library::saves::load_manifest(&game_dir);

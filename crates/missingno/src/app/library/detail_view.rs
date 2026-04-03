@@ -9,7 +9,7 @@ use iced::{
 use crate::app::{
     self,
     core::{
-        buttons, horizontal_rule,
+        buttons, fonts, horizontal_rule,
         icons::{self, Icon},
         sizes::{l, m, s},
         text as app_text,
@@ -130,53 +130,106 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         }
     }
 
-    // Save data
+    // Save timeline — grouped by session
     if let Some(manifest) = &data.save_manifest {
-        if !manifest.saves.is_empty() {
+        let has_saves = !manifest.saves.is_empty();
+        let has_sessions = data.play_log.as_ref().map(|l| !l.sessions.is_empty()).unwrap_or(false);
+
+        if has_saves || has_sessions {
             col = col.push(horizontal_rule());
 
-            let mut save_section = column![app_text::label("Saves")].spacing(s());
+            let mut save_section = column![app_text::label("Save Timeline")].spacing(m());
 
-            let current_id = manifest.current.as_deref();
+            let boot_save = manifest.current.as_deref()
+                .or_else(|| manifest.saves.last().map(|s| s.id.as_str()));
 
-            // Group saves by session, show newest first
-            for save in manifest.saves.iter().rev().take(15) {
-                let is_current = current_id == Some(save.id.as_str());
-                let origin = match &save.origin {
-                    library::saves::SaveOrigin::Emulation => "",
-                    library::saves::SaveOrigin::Imported => " (imported)",
-                    library::saves::SaveOrigin::LegacyImport => " (imported)",
-                };
+            // Build session groups (newest first)
+            if let Some(log) = &data.play_log {
+                for (idx, session) in log.sessions.iter().enumerate().rev().take(10) {
+                    let session_start = library::saves::format_local(&session.start);
+                    let session_label = if let Some(end) = &session.end {
+                        let duration_secs = end.duration_since(session.start).as_secs();
+                        let mins = duration_secs / 60;
+                        if mins > 0 {
+                            format!("{session_start} · {mins}m")
+                        } else {
+                            session_start
+                        }
+                    } else {
+                        format!("{session_start} · in progress")
+                    };
 
-                let label = format!(
-                    "{}{}{}",
-                    save.created.strftime("%Y-%m-%d %H:%M"),
-                    origin,
-                    if is_current { " ●" } else { "" },
-                );
+                    // Find saves for this session
+                    let session_saves: Vec<&library::saves::SaveEntry> = manifest
+                        .saves
+                        .iter()
+                        .filter(|s| s.session_index == Some(idx))
+                        .collect();
 
-                let size_kb = save.size_bytes / 1024;
-                let size_text = format!("{size_kb} KB");
-
-                let mut save_row = row![
-                    column![
-                        app_text::detail(label),
-                        app_text::detail(size_text).color(MUTED),
+                    let mut session_col = column![
+                        app_text::detail(session_label).font(fonts::bold()),
                     ]
-                    .spacing(2)
-                    .width(Fill),
-                ]
-                .spacing(s())
-                .align_y(Center);
+                    .spacing(s());
 
-                if !is_current {
-                    save_row = save_row.push(
-                        buttons::subtle("Restore")
-                            .on_press(app::Message::RestoreSave(save.id.clone())),
+                    if session_saves.is_empty() {
+                        session_col = session_col.push(
+                            app_text::detail("No saves").color(MUTED),
+                        );
+                    } else {
+                        for save in &session_saves {
+                            let is_boot = boot_save == Some(save.id.as_str());
+                            let time = library::saves::format_local_time(&save.created);
+                            let size_kb = save.size_bytes / 1024;
+
+                            let label = if is_boot {
+                                format!("{time} · {size_kb} KB ●")
+                            } else {
+                                format!("{time} · {size_kb} KB")
+                            };
+
+                            session_col = session_col.push(
+                                buttons::subtle(app_text::detail(label))
+                                    .on_press(app::Message::SelectBootSave(save.id.clone()))
+                                    .width(Fill),
+                            );
+                        }
+                    }
+
+                    save_section = save_section.push(session_col);
+                }
+            }
+
+            // Imported saves (no session)
+            let imported: Vec<&library::saves::SaveEntry> = manifest
+                .saves
+                .iter()
+                .filter(|s| matches!(s.origin, library::saves::SaveOrigin::Imported | library::saves::SaveOrigin::LegacyImport))
+                .collect();
+
+            if !imported.is_empty() {
+                let mut import_col = column![
+                    app_text::detail("Imported").font(fonts::bold()),
+                ]
+                .spacing(s());
+
+                for save in &imported {
+                    let is_boot = boot_save == Some(save.id.as_str());
+                    let time = library::saves::format_local(&save.created);
+                    let size_kb = save.size_bytes / 1024;
+                    let label = if is_boot {
+                        format!("{time} · {size_kb} KB ●")
+                    } else {
+                        format!("{time} · {size_kb} KB")
+                    };
+
+                    import_col = import_col.push(
+                        buttons::subtle(app_text::detail(label))
+                            .on_press(app::Message::SelectBootSave(save.id.clone()))
+                            .width(Fill),
                     );
                 }
 
-                save_section = save_section.push(save_row);
+                save_section = save_section.push(import_col);
             }
 
             save_section = save_section.push(
