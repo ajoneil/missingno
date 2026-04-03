@@ -33,6 +33,8 @@ pub enum Message {
     Step,
     StepOver,
     StepFrame,
+    CaptureFrame,
+    CaptureFrameTo(std::path::PathBuf),
 
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
@@ -149,6 +151,35 @@ impl Debugger {
                     self.running = false;
                 }
                 self.screen_update_task(screen)
+            }
+            Message::CaptureFrame => {
+                let title = self.debugger.game_boy().cartridge().title()
+                    .to_lowercase().replace(' ', "_");
+                let default_name = format!("{title}_frame{}.gbtrace", self.frame);
+
+                let dialog = rfd::AsyncFileDialog::new()
+                    .set_file_name(&default_name)
+                    .add_filter("gbtrace", &["gbtrace"]);
+
+                return Task::perform(dialog.save_file(), |handle| {
+                    match handle {
+                        Some(h) => Message::CaptureFrameTo(h.path().to_path_buf()).into(),
+                        None => app::Message::None,
+                    }
+                });
+            }
+            Message::CaptureFrameTo(path) => {
+                match self.debugger.capture_frame(&path) {
+                    Ok(screen) => {
+                        self.frame += 1;
+                        eprintln!("[trace] Captured frame to {}", path.display());
+                        self.screen_update_task(Some(screen))
+                    }
+                    Err(e) => {
+                        eprintln!("[trace] Capture failed: {e}");
+                        Task::none()
+                    }
+                }
             }
 
             Message::SetBreakpoint(address) => {

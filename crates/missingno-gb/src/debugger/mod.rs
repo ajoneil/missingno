@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use crate::{
     BusAccess, BusAccessKind, GameBoy,
@@ -8,6 +9,21 @@ use crate::{
 use instructions::InstructionsIterator;
 
 pub mod instructions;
+
+/// Embedded profile for full T-cycle frame capture with all PPU details.
+#[cfg(feature = "gbtrace")]
+const FRAME_CAPTURE_PROFILE: &str = r#"
+[profile]
+name = "frame-capture"
+description = "Full T-cycle trace with CPU registers, all PPU internals, timer, and interrupts."
+trigger = "tcycle"
+
+[fields]
+cpu = "registers"
+ppu = "all"
+timer = true
+interrupt = true
+"#;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CpuRegister {
@@ -300,5 +316,45 @@ impl Debugger {
 
     pub fn clear_watchpoints(&mut self) {
         self.watchpoints.clear();
+    }
+
+    /// Capture a full T-cycle trace of one frame to a .gbtrace file.
+    #[cfg(feature = "gbtrace")]
+    pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<Screen, String> {
+        use crate::trace::{BootRom, Profile, Tracer};
+
+        let profile = Profile::parse(FRAME_CAPTURE_PROFILE)
+            .map_err(|e| format!("Failed to parse trace profile: {e}"))?;
+
+        let mut tracer = Tracer::create(path, &profile, &self.game_boy, BootRom::Skip)
+            .map_err(|e| format!("Failed to create tracer: {e}"))?;
+
+        loop {
+            let rise = self.game_boy.step_phase();
+            if let Some(pixel) = rise.pixel {
+                tracer.push_pixel(pixel.shade);
+            }
+
+            let fall = self.game_boy.step_phase();
+            if let Some(pixel) = fall.pixel {
+                tracer.push_pixel(pixel.shade);
+            }
+
+            tracer.capture(&self.game_boy)
+                .map_err(|e| format!("Trace capture error: {e}"))?;
+            tracer.advance_dot();
+            self.dot_count += 1;
+
+            if rise.new_screen || fall.new_screen {
+                tracer.mark_frame()
+                    .map_err(|e| format!("Trace mark_frame error: {e}"))?;
+                break;
+            }
+        }
+
+        tracer.finish()
+            .map_err(|e| format!("Failed to finish trace: {e}"))?;
+
+        Ok(self.game_boy.screen().clone())
     }
 }

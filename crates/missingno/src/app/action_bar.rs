@@ -203,6 +203,7 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
 
     let row = if debugger {
         row.push(step_frame(running))
+            .push(capture_frame(running))
     } else {
         row
     };
@@ -229,6 +230,16 @@ fn step_frame(running: bool) -> Button<'static, app::Message> {
         button
     } else {
         button.on_press(debugger::Message::StepFrame.into())
+    }
+}
+
+fn capture_frame(running: bool) -> Button<'static, app::Message> {
+    let button = buttons::standard("Capture Frame");
+
+    if running {
+        button
+    } else {
+        button.on_press(debugger::Message::CaptureFrame.into())
     }
 }
 
