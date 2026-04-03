@@ -117,7 +117,7 @@ impl TestRun {
             }
         }
 
-        StepResult { new_screen, dots }
+        StepResult { new_screen, dots, sram_dirty: false }
     }
 
     /// Finalize the trace file (if active). Call when the test is done.
