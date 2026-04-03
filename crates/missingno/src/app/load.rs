@@ -68,8 +68,9 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
         return false;
     };
 
-    // Migrate legacy battery.sav if present
+    // Migrate legacy saves if present
     library::saves::migrate_legacy_battery(&game_dir);
+    library::saves::migrate_individual_saves(&game_dir);
 
     let cover = library::load_cover(&game_dir)
         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
@@ -207,7 +208,8 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         if legacy_sav.exists() && save_manifest.saves.is_empty() {
             if let Ok(data) = std::fs::read(&legacy_sav) {
                 let entry_save = save_manifest.record_legacy_import(data.len() as u32);
-                library::saves::write_save_data(&game_dir, &entry_save.id.clone(), &data);
+                let archive_idx = entry_save.archive_index.unwrap();
+                library::saves::write_save_data(&game_dir, &data, archive_idx, None);
                 library::saves::save_manifest(&game_dir, &save_manifest);
             }
         }

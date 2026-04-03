@@ -29,6 +29,9 @@ pub struct SaveEntry {
     /// Index of the play session that created this save, if any.
     #[serde(default)]
     pub session_index: Option<usize>,
+    /// Index of this entry in the save archive file.
+    #[serde(default)]
+    pub archive_index: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -42,6 +45,16 @@ pub enum SaveOrigin {
 }
 
 impl SaveManifest {
+    /// The next archive index for a new entry.
+    fn next_archive_index(&self) -> usize {
+        self.saves
+            .iter()
+            .filter_map(|s| s.archive_index)
+            .max()
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    }
+
     /// Record a new save created during emulation.
     pub fn record_emulation_save(
         &mut self,
@@ -51,6 +64,7 @@ impl SaveManifest {
         let now = Timestamp::now();
         let id = now.strftime("%Y%m%d-%H%M%S").to_string();
         let parent = self.saves.last().map(|s| s.id.clone());
+        let archive_index = Some(self.next_archive_index());
 
         self.saves.push(SaveEntry {
             id,
@@ -59,6 +73,7 @@ impl SaveManifest {
             origin: SaveOrigin::Emulation,
             parent,
             session_index,
+            archive_index,
         });
 
         self.saves.last().unwrap()
@@ -68,6 +83,7 @@ impl SaveManifest {
     pub fn record_import(&mut self, size_bytes: u32) -> &SaveEntry {
         let now = Timestamp::now();
         let id = format!("{}-import", now.strftime("%Y%m%d-%H%M%S"));
+        let archive_index = Some(self.next_archive_index());
 
         self.saves.push(SaveEntry {
             id,
@@ -76,6 +92,7 @@ impl SaveManifest {
             origin: SaveOrigin::Imported,
             parent: None,
             session_index: None,
+            archive_index,
         });
 
         self.saves.last().unwrap()
@@ -85,6 +102,7 @@ impl SaveManifest {
     pub fn record_legacy_import(&mut self, size_bytes: u32) -> &SaveEntry {
         let now = Timestamp::now();
         let id = format!("{}-legacy", now.strftime("%Y%m%d-%H%M%S"));
+        let archive_index = Some(self.next_archive_index());
 
         self.saves.push(SaveEntry {
             id,
@@ -93,6 +111,7 @@ impl SaveManifest {
             origin: SaveOrigin::LegacyImport,
             parent: None,
             session_index: None,
+            archive_index,
         });
 
         self.saves.last().unwrap()
@@ -130,12 +149,10 @@ fn libc_strftime(fmt: &str, unix_secs: i64) -> String {
 
 // ── Filesystem operations ──────────────────────────────────────────────
 
-fn saves_dir(game_dir: &Path) -> PathBuf {
-    game_dir.join("saves")
-}
+use super::save_archive;
 
-fn save_file_path(game_dir: &Path, id: &str) -> PathBuf {
-    saves_dir(game_dir).join(format!("{id}.sav"))
+fn archive_path(game_dir: &Path) -> PathBuf {
+    game_dir.join("saves.bin")
 }
 
 fn manifest_path(game_dir: &Path) -> PathBuf {
@@ -156,34 +173,44 @@ pub fn save_manifest(game_dir: &Path, manifest: &SaveManifest) {
     }
 }
 
-/// Write save data to the saves directory and return the file path.
-pub fn write_save_data(game_dir: &Path, id: &str, data: &[u8]) -> PathBuf {
-    let dir = saves_dir(game_dir);
-    let _ = std::fs::create_dir_all(&dir);
-    let path = save_file_path(game_dir, id);
-    let _ = std::fs::write(&path, data);
-    path
+/// Write save data to the archive. `prev_data` is used for delta compression.
+pub fn write_save_data(game_dir: &Path, data: &[u8], archive_index: usize, prev_data: Option<&[u8]>) {
+    let _ = std::fs::create_dir_all(game_dir);
+    let _ = save_archive::append_save(
+        &archive_path(game_dir),
+        data,
+        archive_index,
+        prev_data,
+    );
 }
 
-/// Load save data for a given save ID.
-pub fn load_save_data(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
-    std::fs::read(save_file_path(game_dir, id)).ok()
+/// Load save data by archive index.
+pub fn load_save_by_index(game_dir: &Path, index: usize) -> Option<Vec<u8>> {
+    save_archive::read_save(&archive_path(game_dir), index).ok()
 }
 
 /// Load the most recent save's data.
 pub fn load_current_save(game_dir: &Path) -> Option<Vec<u8>> {
     let manifest = load_manifest(game_dir);
-    let id = &manifest.saves.last()?.id;
-    load_save_data(game_dir, id)
+    let entry = manifest.saves.last()?;
+    let index = entry.archive_index?;
+    load_save_by_index(game_dir, index)
 }
 
 /// Load a specific save's data by ID.
 pub fn load_save_by_id(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
-    load_save_data(game_dir, id)
+    let manifest = load_manifest(game_dir);
+    let entry = manifest.saves.iter().find(|s| s.id == id)?;
+    let index = entry.archive_index?;
+    load_save_by_index(game_dir, index)
+}
+
+/// Export a save as raw .sav data (for the download button).
+pub fn export_save(game_dir: &Path, id: &str) -> Option<Vec<u8>> {
+    load_save_by_id(game_dir, id)
 }
 
 /// Migrate a legacy `battery.sav` into the new save system.
-/// Returns true if a migration occurred.
 pub fn migrate_legacy_battery(game_dir: &Path) -> bool {
     let legacy_path = game_dir.join("battery.sav");
     if !legacy_path.exists() {
@@ -191,9 +218,7 @@ pub fn migrate_legacy_battery(game_dir: &Path) -> bool {
     }
 
     let mut manifest = load_manifest(game_dir);
-    // Don't migrate if we already have saves
     if !manifest.saves.is_empty() {
-        // Clean up the legacy file
         let _ = std::fs::remove_file(&legacy_path);
         return false;
     }
@@ -203,11 +228,51 @@ pub fn migrate_legacy_battery(game_dir: &Path) -> bool {
     };
 
     let entry = manifest.record_legacy_import(data.len() as u32);
-    let id = entry.id.clone();
-    write_save_data(game_dir, &id, &data);
+    let archive_idx = entry.archive_index.unwrap();
+    write_save_data(game_dir, &data, archive_idx, None);
     save_manifest(game_dir, &manifest);
 
-    // Remove legacy file
     let _ = std::fs::remove_file(&legacy_path);
     true
+}
+
+/// Migrate individual .sav files to the archive (for existing libraries).
+pub fn migrate_individual_saves(game_dir: &Path) {
+    let manifest = load_manifest(game_dir);
+    let saves_dir = game_dir.join("saves");
+
+    if !saves_dir.exists() {
+        return;
+    }
+
+    // Find saves that have no archive_index (old format)
+    let unarchived: Vec<&SaveEntry> = manifest
+        .saves
+        .iter()
+        .filter(|s| s.archive_index.is_none())
+        .collect();
+
+    if unarchived.is_empty() {
+        return;
+    }
+
+    let save_ids: Vec<String> = unarchived.iter().map(|s| s.id.clone()).collect();
+    let _ = save_archive::migrate_individual_saves(
+        &archive_path(game_dir),
+        &saves_dir,
+        &save_ids,
+    );
+
+    // Update manifest with archive indices
+    let mut manifest = load_manifest(game_dir);
+    let base_index = save_archive::entry_count(&archive_path(game_dir))
+        .saturating_sub(save_ids.len());
+    for save in manifest.saves.iter_mut() {
+        if save.archive_index.is_none() {
+            if let Some(pos) = save_ids.iter().position(|id| id == &save.id) {
+                save.archive_index = Some(base_index + pos);
+            }
+        }
+    }
+    save_manifest(game_dir, &manifest);
 }

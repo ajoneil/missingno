@@ -55,8 +55,8 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
                 if manifest.saves.is_empty() {
                     if let Ok(data) = fs::read(&legacy_sav) {
                         let save_entry = manifest.record_legacy_import(data.len() as u32);
-                        let id = save_entry.id.clone();
-                        library::saves::write_save_data(&game_dir, &id, &data);
+                        let archive_idx = save_entry.archive_index.unwrap();
+                        library::saves::write_save_data(&game_dir, &data, archive_idx, None);
                         library::saves::save_manifest(&game_dir, &manifest);
                     }
                 }

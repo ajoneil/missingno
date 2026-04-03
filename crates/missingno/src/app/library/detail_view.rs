@@ -255,15 +255,16 @@ fn session_entry<'a>(
     .spacing(s())
     .align_y(Center);
 
-    if is_hovered {
-        let play_save_id = if !saves.is_empty() {
-            saves.last().unwrap().id.clone()
-        } else {
-            String::new()
-        };
+    if is_hovered && !saves.is_empty() {
+        let last_id = saves.last().unwrap().id.clone();
         header = header.push(
-            buttons::subtle(app_text::detail("Play from here"))
-                .on_press(app::Message::PlayWithSave(play_save_id)),
+            row![
+                buttons::subtle(app_text::detail("Export"))
+                    .on_press(app::Message::ExportSave(last_id.clone())),
+                buttons::subtle(app_text::detail("Play from here"))
+                    .on_press(app::Message::PlayWithSave(last_id)),
+            ]
+            .spacing(s()),
         );
     }
 
@@ -306,8 +307,13 @@ fn import_entry<'a>(
 
     if is_hovered {
         content = content.push(
-            buttons::subtle(app_text::detail("Play from here"))
-                .on_press(app::Message::PlayWithSave(save_id.to_string())),
+            row![
+                buttons::subtle(app_text::detail("Export"))
+                    .on_press(app::Message::ExportSave(save_id.to_string())),
+                buttons::subtle(app_text::detail("Play from here"))
+                    .on_press(app::Message::PlayWithSave(save_id.to_string())),
+            ]
+            .spacing(s()),
         );
     }
 

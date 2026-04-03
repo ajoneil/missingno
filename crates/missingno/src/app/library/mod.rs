@@ -1,6 +1,7 @@
 pub(crate) mod detail_view;
 pub(crate) mod hasheous;
 pub(crate) mod play_log;
+pub(crate) mod save_archive;
 pub(crate) mod saves;
 pub(crate) mod scanner;
 pub(crate) mod view;

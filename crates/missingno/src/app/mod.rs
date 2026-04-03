@@ -155,6 +155,8 @@ enum Message {
     ImportSave,
     ImportSaveSelected(Option<rfd::FileHandle>),
     PlayWithSave(String),
+    ExportSave(String),
+    ExportSaveSelected(String, Option<rfd::FileHandle>),
     HoverLogEntry(usize),
     UnhoverLogEntry,
     RemoveGame,
@@ -376,8 +378,8 @@ impl App {
                         if let Ok(data) = std::fs::read(handle.path()) {
                             let mut manifest = library::saves::load_manifest(&game_dir);
                             let entry = manifest.record_import(data.len() as u32);
-                            let id = entry.id.clone();
-                            library::saves::write_save_data(&game_dir, &id, &data);
+                            let archive_idx = entry.archive_index.unwrap();
+                            library::saves::write_save_data(&game_dir, &data, archive_idx, None);
                             library::saves::save_manifest(&game_dir, &manifest);
                         }
                     }
@@ -398,6 +400,23 @@ impl App {
                             load::select_game(self, &sha1);
                         }
                         return load::play_with_save(self, &save_id);
+                    }
+                }
+            }
+            Message::ExportSave(save_id) => {
+                let dialog = rfd::AsyncFileDialog::new()
+                    .set_file_name("save.sav")
+                    .add_filter("Game Boy Save", &["sav"]);
+                return Task::perform(dialog.save_file(), move |handle| {
+                    Message::ExportSaveSelected(save_id.clone(), handle)
+                });
+            }
+            Message::ExportSaveSelected(save_id, handle) => {
+                if let (Some(handle), Some(sha1)) = (handle, &self.viewing_sha1) {
+                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        if let Some(data) = library::saves::export_save(&game_dir, &save_id) {
+                            let _ = std::fs::write(handle.path(), data);
+                        }
                     }
                 }
             }
@@ -1003,12 +1022,20 @@ impl App {
             Some(current.play_log.sessions.len() - 1)
         };
 
+        // Get previous save data for delta compression
+        let prev_data = if let Some(prev) = current.save_manifest.saves.last() {
+            prev.archive_index
+                .and_then(|idx| library::saves::load_save_by_index(&current.game_dir, idx))
+        } else {
+            None
+        };
+
         let entry = current.save_manifest.record_emulation_save(
             ram.len() as u32,
             session_index,
         );
-        let id = entry.id.clone();
-        library::saves::write_save_data(&current.game_dir, &id, &ram);
+        let archive_idx = entry.archive_index.unwrap();
+        library::saves::write_save_data(&current.game_dir, &ram, archive_idx, prev_data.as_deref());
         library::saves::save_manifest(&current.game_dir, &current.save_manifest);
     }
 
