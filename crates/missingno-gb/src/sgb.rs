@@ -45,17 +45,23 @@ fn screen_to_transfer_data(screen: &Screen) -> Vec<u8> {
 #[derive(Copy, Clone, Debug)]
 pub struct Rgb555(pub u16);
 
+/// Gamma ramp for SNES RGB555 output, derived from SameBoy's SGB-specific
+/// color correction curve. Simulates the gamma characteristics of the SNES
+/// DAC viewed on a period-appropriate CRT, darkening the full range to
+/// produce richer, more saturated colors on a modern LCD.
+const GAMMA_RAMP: [u8; 32] = [
+      0,   2,   5,   9,  15,  20,  27,  34,
+     42,  50,  58,  67,  76,  85,  94, 104,
+    114, 123, 133, 143, 153, 163, 173, 182,
+    192, 202, 211, 220, 229, 238, 247, 255,
+];
+
 impl Rgb555 {
     pub fn to_rgb8(self) -> RGB8 {
-        // 5-bit to 8-bit: multiply by 8 and OR with top bits for proper rounding
-        let r5 = (self.0 & 0x1f) as u8;
-        let g5 = ((self.0 >> 5) & 0x1f) as u8;
-        let b5 = ((self.0 >> 10) & 0x1f) as u8;
-        RGB8::new(
-            (r5 << 3) | (r5 >> 2),
-            (g5 << 3) | (g5 >> 2),
-            (b5 << 3) | (b5 >> 2),
-        )
+        let r5 = (self.0 & 0x1f) as usize;
+        let g5 = ((self.0 >> 5) & 0x1f) as usize;
+        let b5 = ((self.0 >> 10) & 0x1f) as usize;
+        RGB8::new(GAMMA_RAMP[r5], GAMMA_RAMP[g5], GAMMA_RAMP[b5])
     }
 
     pub fn from_bytes(low: u8, high: u8) -> Self {
