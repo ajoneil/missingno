@@ -95,6 +95,8 @@ enum PendingAction {
     CloseApp,
     /// User wants to reset the emulator.
     ResetEmulator,
+    /// User wants to stop and unload the game.
+    StopGame,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -140,6 +142,7 @@ enum Message {
     BackToLibrary,
     PlayFromDetail,
     BackToDetail,
+    StopGame,
     ShowSettings,
     ConfirmAction,
     DismissConfirm,
@@ -282,6 +285,17 @@ impl App {
                             self.screen = Screen::Library;
                         }
                     }
+                    Some(PendingAction::StopGame) => {
+                        if let Some(current) = &mut self.current_game {
+                            current.play_log.end_session();
+                            library::play_log::save(&current.game_dir, &current.play_log);
+                            self.viewing_sha1 = Some(current.entry.sha1.clone());
+                        }
+                        self.game = Game::Unloaded;
+                        self.current_game = None;
+                        self.library_cache = library::view::LibraryCache::load();
+                        self.screen = Screen::Detail;
+                    }
                     Some(PendingAction::CloseApp) => {
                         if let Some(current) = &mut self.current_game {
                             current.play_log.end_session();
@@ -412,6 +426,9 @@ impl App {
                     load::select_game(self, &sha1);
                     return load::play_current_game(self);
                 }
+            }
+            Message::StopGame => {
+                self.pending_action = Some(PendingAction::StopGame);
             }
             Message::BackToDetail => {
                 self.flush_pending_save();
@@ -723,6 +740,7 @@ impl App {
                 PendingAction::SwitchGame(_) => ("Close the current game and switch?", "Close Game"),
                 PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
                 PendingAction::ResetEmulator => ("Reset the emulator? Unsaved progress will be lost.", "Reset"),
+                PendingAction::StopGame => ("Stop playing and end this session?", "Stop"),
             };
 
             let mut info = column![iced_text(prompt)].spacing(s());
@@ -794,7 +812,7 @@ impl App {
                     cover: current.cover.as_ref(),
                     play_log: Some(current.play_log.clone()),
                     save_manifest: Some(current.save_manifest.clone()),
-                    is_running: matches!(self.game, Game::Loaded(_)),
+
                     hovered_log_entry: self.hovered_log_entry,
                 });
             }
@@ -812,7 +830,7 @@ impl App {
                     cover: cached.cover.as_ref(),
                     play_log,
                     save_manifest,
-                    is_running: false,
+
                     hovered_log_entry: self.hovered_log_entry,
                 });
             }

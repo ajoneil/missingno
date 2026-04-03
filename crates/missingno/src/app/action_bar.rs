@@ -67,7 +67,12 @@ impl ActionBar {
                 ]
             }
             app::Screen::Detail => {
-                row![
+                let is_this_game_loaded = app.current_game.as_ref()
+                    .zip(app.viewing_sha1.as_ref())
+                    .map(|(c, v)| c.entry.sha1 == *v && matches!(app.game, Game::Loaded(_)))
+                    .unwrap_or(false);
+
+                let mut r = row![
                     container(
                         row![
                             buttons::subtle(icons::m(Icon::Back))
@@ -80,8 +85,22 @@ impl ActionBar {
                     )
                     .clip(true)
                     .width(Fill),
-                    self.settings(app)
-                ]
+                ];
+
+                if is_this_game_loaded {
+                    r = r.push(
+                        row![
+                            buttons::primary("Resume").on_press(app::Message::PlayFromDetail),
+                            buttons::danger("Stop").on_press(app::Message::StopGame),
+                        ]
+                        .spacing(s()),
+                    );
+                } else {
+                    r = r.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+                }
+
+                r = r.push(self.settings(app));
+                r
             }
             app::Screen::Emulator => {
                 let is_debugger = matches!(app.game, Game::Loaded(LoadedGame::Debugger(_)));
@@ -195,7 +214,11 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         row
     };
 
-    row.push(reset()).spacing(s()).wrap().into()
+    row.push(reset())
+        .push(buttons::danger("Stop").on_press(app::Message::StopGame))
+        .spacing(s())
+        .wrap()
+        .into()
 }
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {

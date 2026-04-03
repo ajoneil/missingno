@@ -29,7 +29,6 @@ pub struct DetailData<'a> {
     pub cover: Option<&'a image::Handle>,
     pub play_log: Option<PlayLog>,
     pub save_manifest: Option<library::saves::SaveManifest>,
-    pub is_running: bool,
     pub hovered_log_entry: Option<usize>,
 }
 
@@ -55,14 +54,6 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                 .content_fit(iced::ContentFit::ScaleDown),
         );
     }
-
-    // Play / Resume button
-    let play_label = if data.is_running { "Resume" } else { "Play" };
-    col = col.push(
-        buttons::primary(play_label)
-            .on_press(app::Message::PlayFromDetail)
-            .width(Fill),
-    );
 
     // Title
     col = col.push(app_text::heading(data.entry.display_title()));
