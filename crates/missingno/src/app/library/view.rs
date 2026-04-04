@@ -49,12 +49,14 @@ fn title_color(title: &str) -> Color {
 
 const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
-const CARD_MIN_WIDTH: f32 = 400.0;
+const CARD_MIN_WIDTH: f32 = 340.0;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     SelectGame(String),
     QuickPlay(String),
+    HoverGame(String),
+    UnhoverGame,
 }
 
 impl From<Message> for app::Message {
@@ -162,12 +164,13 @@ impl LibraryCache {
 }
 
 #[allow(private_interfaces)]
-pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
+pub(crate) fn view<'a>(cache: &'a LibraryCache, hovered_sha1: Option<&'a str>) -> Element<'a, app::Message> {
     if cache.is_empty() {
         return empty_view();
     }
 
-    iced::widget::responsive(|size| {
+    let hovered_sha1 = hovered_sha1.map(|s| s.to_string());
+    iced::widget::responsive(move |size| {
         let usable = size.width - l() * 2.0;
         let cols = (usable / (CARD_MIN_WIDTH + m())).max(1.0) as usize;
 
@@ -176,7 +179,10 @@ pub(crate) fn view(cache: &LibraryCache) -> Element<'_, app::Message> {
 
         for chunk in chunks {
             let mut cards: Vec<Element<'_, app::Message>> =
-                chunk.iter().map(|game| game_card(game)).collect();
+                chunk.iter().map(|game| {
+                    let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
+                    game_card(game, hovered)
+                }).collect();
             // Pad incomplete rows with empty spacers so cards don't stretch
             while cards.len() < cols {
                 cards.push(iced::widget::Space::new().width(Fill).into());
@@ -221,11 +227,14 @@ fn empty_view() -> Element<'static, app::Message> {
     .into()
 }
 
-fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
+fn game_card(game: &CachedGame, hovered: bool) -> Element<'_, app::Message> {
+    use iced::widget::stack;
+
     let has_rom = game.entry.rom_paths.first().is_some();
+    let sha1 = &game.entry.sha1;
 
     // Cover art
-    let cover: Element<'_, app::Message> = if let Some(handle) = &game.cover {
+    let cover_image: Element<'_, app::Message> = if let Some(handle) = &game.cover {
         image(handle.clone())
             .width(COVER_WIDTH)
             .height(COVER_HEIGHT)
@@ -275,6 +284,49 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         .into()
     };
 
+    // Overlay play button on cover when hovered
+    let cover: Element<'_, app::Message> = if hovered && has_rom {
+        use iced::widget::button;
+
+        stack![
+            cover_image,
+            container(iced::widget::Space::new())
+                .width(COVER_WIDTH)
+                .height(COVER_HEIGHT)
+                .style(|_: &iced::Theme| container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4).into()),
+                    ..Default::default()
+                }),
+            container(
+                button(
+                    icons::xl(Icon::Play).style(|_, _| iced::widget::svg::Style {
+                        color: Some(Color::WHITE),
+                    }),
+                )
+                .on_press(Message::QuickPlay(sha1.clone()).into())
+                .style(|_: &iced::Theme, status| {
+                    let bg_alpha = match status {
+                        button::Status::Hovered => 0.8,
+                        _ => 0.5,
+                    };
+                    button::Style {
+                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
+                        text_color: Color::WHITE,
+                        border: iced::Border::default().rounded(24),
+                        ..Default::default()
+                    }
+                }),
+            )
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .align_x(Center)
+            .align_y(iced::alignment::Vertical::Center)
+        ]
+        .into()
+    } else {
+        cover_image
+    };
+
     // Title — bold, readable size
     let mut info = column![text(game.entry.display_title()).font(fonts::bold()),].spacing(4);
 
@@ -293,24 +345,14 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         info = info
             .push(app_text::detail(format!("Played {} · {}", last, game.play_time)).color(MUTED));
     } else if game.save_count > 0 {
-        // Only show save count if we don't already have play info
         let n = game.save_count;
         info = info.push(
             app_text::detail(format!("{n} save{}", if n == 1 { "" } else { "s" })).color(MUTED),
         );
     }
 
-    // Card layout: cover (flush left) | padded info | quick-play
-    let mut info_row = row![info.width(Fill)].spacing(m()).align_y(Center);
-
-    if has_rom {
-        info_row = info_row.push(
-            buttons::subtle(icons::m(Icon::Front))
-                .on_press(Message::QuickPlay(game.entry.sha1.clone()).into()),
-        );
-    }
-
-    let card_row = row![cover, container(info_row).padding(m()).width(Fill)].height(COVER_HEIGHT);
+    let card_row = row![cover, container(info.width(Fill)).padding(m()).width(Fill)]
+        .height(COVER_HEIGHT);
 
     let card = container(card_row)
         .width(Fill)
@@ -325,7 +367,9 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         });
 
     mouse_area(card)
-        .on_press(Message::SelectGame(game.entry.sha1.clone()).into())
+        .on_press(Message::SelectGame(sha1.clone()).into())
+        .on_enter(Message::HoverGame(sha1.clone()).into())
+        .on_exit(Message::UnhoverGame.into())
         .interaction(iced::mouse::Interaction::Pointer)
         .into()
 }

@@ -88,6 +88,8 @@ struct App {
     pending_action: Option<PendingAction>,
     /// Index of the activity log entry currently hovered on the detail page.
     hovered_log_entry: Option<usize>,
+    /// SHA1 of the game card currently hovered in the library.
+    hovered_library_game: Option<String>,
     settings_section: settings_view::Section,
     /// Screen to return to when leaving settings.
     previous_screen: Option<Screen>,
@@ -228,6 +230,7 @@ impl App {
             library_cache,
             pending_action: None,
             hovered_log_entry: None,
+            hovered_library_game: None,
             settings_section: settings_view::Section::default(),
             previous_screen: None,
             was_running_before_settings: false,
@@ -696,6 +699,12 @@ impl App {
                     self.viewing_sha1 = Some(sha1);
                     self.screen = Screen::Detail;
                 }
+                library::view::Message::HoverGame(sha1) => {
+                    self.hovered_library_game = Some(sha1);
+                }
+                library::view::Message::UnhoverGame => {
+                    self.hovered_library_game = None;
+                }
                 library::view::Message::QuickPlay(sha1) => {
                     let same_game = self
                         .current_game
@@ -836,7 +845,7 @@ impl App {
             settings_view::view(&self.settings, self.settings_section, self.listening_for)
         } else {
             let content = match self.screen {
-                Screen::Library => library::view::view(&self.library_cache),
+                Screen::Library => library::view::view(&self.library_cache, self.hovered_library_game.as_deref()),
                 Screen::Detail => self.detail_view(),
                 Screen::Emulator | Screen::Settings => unreachable!(),
             };
@@ -961,7 +970,7 @@ impl App {
         }
 
         // Fallback
-        library::view::view(&self.library_cache)
+        library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
