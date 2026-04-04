@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
+    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -133,11 +133,13 @@ pub struct PipelineSnapshot {
 }
 
 /// Values bridged between half-phases. The pipeline alternates:
-/// fall() consumes RisingToFalling, produces FallingToRising.
-/// rise() consumes FallingToRising, produces RisingToFalling.
+/// fall() produces FallingToRising (tyfa), rise() consumes it.
+/// rise() produces RisingConsumed as a sentinel, fall() ignores it.
 ///
-/// The enum makes it structurally impossible to read a stale bridge
-/// from the wrong phase — the wrong variant won't match.
+/// TEKY is computed directly in mode3_falling (where SOBU captures it
+/// on the TAVA clock edge), so it no longer needs bridging from rising.
+/// This also ensures FEPO/TEKY see the current LCDC sprites_enabled
+/// value (LCDC writes land before ppu.fall() in execute.rs).
 enum PhaseBridge {
     /// Produced by mode3_falling, consumed by mode3_rising.
     FallingToRising {
@@ -145,13 +147,9 @@ enum PhaseBridge {
         /// AND(!FEPO, !WODU, !RYDY, POKY).
         tyfa: bool,
     },
-    /// Produced by mode3_rising, consumed by mode3_falling.
-    RisingToFalling {
-        /// TEKY: combinational sprite fetch request, computed from
-        /// live FEPO/RYDY/LYRY/TAKA. sprite_trigger.fall() captures
-        /// this into SOBU on the next falling phase (TAVA clock).
-        teky: bool,
-    },
+    /// Sentinel written by mode3_rising after consuming FallingToRising.
+    /// Prevents stale tyfa from being re-consumed on the next rising.
+    RisingConsumed,
 }
 
 pub struct Rendering {
@@ -177,7 +175,7 @@ pub struct Rendering {
     /// window line counter, window zero pixel.
     window: WindowControl,
     /// Combinational values crossing the half-phase boundary. Alternates
-    /// between FallingToRising (tyfa) and RisingToFalling (teky).
+    /// between FallingToRising (tyfa) and RisingConsumed.
     phase_bridge: PhaseBridge,
     /// LCD Control block (die page 24): pixel X counter, LCD clock
     /// gating (WUSA), POVA trigger, LCD shift register, data latch.
@@ -200,7 +198,7 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            phase_bridge: PhaseBridge::RisingToFalling { teky: false },
+            phase_bridge: PhaseBridge::RisingConsumed,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
@@ -506,7 +504,7 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
 
-        self.phase_bridge = PhaseBridge::RisingToFalling { teky: false };
+        self.phase_bridge = PhaseBridge::RisingConsumed;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.sprite_trigger.reset();
@@ -561,12 +559,17 @@ impl Rendering {
 
         self.cascade.fall(lyry);
 
-        // Sprite trigger pipeline: SOBU captures TEKY on TAVA falling
-        // edge (depth 7, after ALET at 5). RYCE edge-detects SOBU rising.
-        let teky = match self.phase_bridge {
-            PhaseBridge::RisingToFalling { teky } => teky,
-            PhaseBridge::FallingToRising { .. } => false, // Mode 3 just started
-        };
+        // TEKY: combinational sprite fetch request. On hardware, TEKY's
+        // inputs (FEPO, LYRY, TAKA, RYDY) settle combinationally before the
+        // TAVA clock edge that captures TEKY into SOBU. Computing TEKY here
+        // in the falling phase ensures:
+        //   1. FEPO reads post-increment pixel_counter (lcd.rise() already ran)
+        //   2. FEPO sees current LCDC sprites_enabled (LCDC writes are applied
+        //      before ppu.fall() in execute.rs, so AROR reads reg_new.XYLO)
+        //   3. SOBU captures TEKY in the same phase it's computed (no bridge)
+        // LYRY is captured above before advance_falling(), modeling the NYKA
+        // DFF delay. RYDY and TAKA read their current (post-rising) values.
+        let teky = fepo && !self.window.rydy() && lyry && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.fall(teky);
 
         if ryce {
@@ -611,24 +614,15 @@ impl Rendering {
         // (pixel clock not yet enabled).
         let tyfa = match self.phase_bridge {
             PhaseBridge::FallingToRising { tyfa } => tyfa,
-            PhaseBridge::RisingToFalling { .. } => false,
+            PhaseBridge::RisingConsumed => false,
         };
+        // Mark bridge as consumed. TEKY is computed directly in
+        // mode3_falling (where SOBU captures it), so no data is bridged
+        // from rising to falling.
+        self.phase_bridge = PhaseBridge::RisingConsumed;
 
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
         self.sprite_trigger.rise();
-
-        // TEKY is an `_odd` signal — it only updates during rising (odd)
-        // half-phases. On hardware, TEKY's inputs (FEPO, LYRY, TAKA, RYDY)
-        // are combinational and settle within the same phase. GateBoy uses
-        // `_old` values because its simulation model can't represent
-        // intra-phase settling, but the race pair analysis (13-gate
-        // differential, ~65ns vs ~120ns half-cycle) shows the path settles
-        // within a half T-cycle. Use live values to match hardware's
-        // combinational settling.
-        let fepo_now = self.fepo(regs);
-        let teky =
-            fepo_now && !self.window.rydy() && self.fetcher.lyry() && !self.sprite_trigger.taka();
-        self.phase_bridge = PhaseBridge::RisingToFalling { teky };
 
         // Phase-boundary snapshot: capture pre-edge values of signals
         // that are both read and written within this half-phase. All
@@ -696,6 +690,15 @@ impl Rendering {
             false
         };
 
+        // Track whether sprite fetch just completed this dot. On hardware,
+        // FEPO_old (previous dot's FEPO) gates TYFA — even after sfetch_done
+        // clears TAKA, FEPO_old keeps TYFA suppressed for one more dot because
+        // FEPO was still true on the preceding dot (sprite store X isn't cleared
+        // until sfetch_done). In missingno, we model this by not running the
+        // pixel pipeline on the sfetch_done dot — TAKA clears but the pipeline
+        // waits until the next dot when TYFA is recomputed with FEPO=false.
+        let mut sfetch_done_this_dot = false;
+
         if self.sprite_trigger.taka() {
             // Sprite fetch active: advance sprite data pipeline.
             match self.sprite_state {
@@ -720,11 +723,13 @@ impl Rendering {
                         );
                         self.sprite_state = SpriteState::Idle;
                         // VEKU clears TAKA — sprite fetch complete.
-                        // Fall through to the pixel pipeline below so
-                        // SACU can fire on this same dot. On hardware,
-                        // SACU is combinational — when TAKA clears and
-                        // TYFA is true, the pixel clock fires immediately.
+                        // Do NOT fall through to the pixel pipeline on this
+                        // dot. On hardware, FEPO_old (from the previous dot,
+                        // when FEPO was still true) suppresses TYFA for one
+                        // more dot after sfetch_done. The pixel pipeline will
+                        // resume on the next dot when TYFA is recomputed.
                         self.sprite_trigger.clear_taka();
+                        sfetch_done_this_dot = true;
                     }
                 }
                 SpriteState::Idle => {
@@ -735,7 +740,7 @@ impl Rendering {
             }
         }
 
-        if !self.sprite_trigger.taka() {
+        if !self.sprite_trigger.taka() && !sfetch_done_this_dot {
             // Normal pixel pipeline — no sprite fetch active.
 
             // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
