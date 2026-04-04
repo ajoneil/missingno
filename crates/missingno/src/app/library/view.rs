@@ -72,6 +72,7 @@ pub struct CachedGame {
     pub cover: Option<image::Handle>,
     pub play_time: String,
     pub last_played: Option<String>,
+    pub last_played_ts: Option<jiff::Timestamp>,
     pub save_count: usize,
 }
 
@@ -86,7 +87,8 @@ impl LibraryCache {
 
                 let play_log = library::play_log::load(&game_dir);
                 let play_time = play_log.format_play_time();
-                let last_played = play_log.last_played.map(|ts| friendly_ago(ts));
+                let last_played_ts = play_log.last_played;
+                let last_played = last_played_ts.map(|ts| friendly_ago(ts));
 
                 let save_manifest = library::saves::load_manifest(&game_dir);
                 let save_count = save_manifest.saves.len();
@@ -96,11 +98,30 @@ impl LibraryCache {
                     cover,
                     play_time,
                     last_played,
+                    last_played_ts,
                     save_count,
                 }
             })
             .collect();
-        Self { entries }
+        let mut cache = Self { entries };
+        cache.sort();
+        cache
+    }
+
+    /// Sort: recently played first, then alphabetically for never-played games.
+    fn sort(&mut self) {
+        self.entries.sort_by(|a, b| {
+            match (&a.last_played_ts, &b.last_played_ts) {
+                // Both played — most recent first
+                (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
+                // Played beats never-played
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                // Neither played — alphabetical
+                (None, None) => a.entry.display_title().to_lowercase()
+                    .cmp(&b.entry.display_title().to_lowercase()),
+            }
+        });
     }
 
     /// Update a single entry in-place by SHA1, reloading only its data from disk.
@@ -113,7 +134,8 @@ impl LibraryCache {
             library::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
         let play_log = library::play_log::load(&game_dir);
         let play_time = play_log.format_play_time();
-        let last_played = play_log.last_played.map(|ts| friendly_ago(ts));
+        let last_played_ts = play_log.last_played;
+        let last_played = last_played_ts.map(|ts| friendly_ago(ts));
         let save_manifest = library::saves::load_manifest(&game_dir);
         let save_count = save_manifest.saves.len();
 
@@ -122,6 +144,7 @@ impl LibraryCache {
             cover,
             play_time,
             last_played,
+            last_played_ts,
             save_count,
         };
 
@@ -129,13 +152,8 @@ impl LibraryCache {
             *existing = cached;
         } else {
             self.entries.push(cached);
-            self.entries.sort_by(|a, b| {
-                a.entry
-                    .display_title()
-                    .to_lowercase()
-                    .cmp(&b.entry.display_title().to_lowercase())
-            });
         }
+        self.sort();
     }
 
     pub fn is_empty(&self) -> bool {
