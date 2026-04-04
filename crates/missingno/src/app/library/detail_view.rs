@@ -236,6 +236,19 @@ fn activity_log(
         ));
     }
 
+    // Filter out the live session from the persisted activity list to avoid
+    // showing it twice (once as the live card above, once from disk).
+    let live_start = live_session.map(|s| s.start);
+    let activity: Vec<_> = activity
+        .into_iter()
+        .filter(|e| {
+            if e.kind == ActivityKind::Session && live_start == Some(e.timestamp) {
+                return false;
+            }
+            true
+        })
+        .collect();
+
     if activity.is_empty() && live_session.is_none() {
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
