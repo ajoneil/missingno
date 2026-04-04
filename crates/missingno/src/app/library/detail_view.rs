@@ -53,7 +53,7 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
         // Cover height capped so info/actions always fit.
         // 450px accounts for action bar, title, metadata, buttons, padding.
-        let max_cover_h = (data.window_height - 450.0).max(80.0);
+        let max_cover_h = (data.window_height - 470.0).max(80.0);
 
         let cover_img = container(
             image(handle.clone())
@@ -220,7 +220,7 @@ fn activity_log(
 ) -> Element<'static, app::Message> {
     let mut log = column![app_text::label("Activity")]
         .spacing(m())
-        .width(Fill);
+        .width(750);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {
@@ -253,7 +253,10 @@ fn activity_log(
         );
     }
 
-    scrollable(log.padding(l())).height(Fill).into()
+    scrollable(log.padding(l()))
+        .height(Fill)
+        .width(iced::Length::Shrink)
+        .into()
 }
 
 fn activity_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
