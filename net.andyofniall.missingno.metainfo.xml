@@ -14,9 +14,10 @@
 
   <description>
     <p>
-      Missingno is a Game Boy emulator with an integrated debugger. Play Game Boy
-      games with keyboard or controller support, fullscreen mode, and save RAM
-      persistence.
+      Missingno is a Game Boy emulator with an integrated debugger. Manage your
+      game library with automatic cover art, play history tracking, and save
+      management. Play with keyboard or controller support, fullscreen mode, and
+      multiple display palettes.
     </p>
     <p>
       The built-in debugger provides code disassembly with breakpoints, CPU state
@@ -33,20 +34,20 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.3/screenshots/gameplay.png</image>
-      <caption>Playing a Game Boy game</caption>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/library.png</image>
+      <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.3/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/game details.png</image>
+      <caption>Game details with activity log and save management</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/gameplay.png</image>
+      <caption>Playing a Game Boy game with Super Game Boy colours</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/debugger.png</image>
       <caption>The integrated debugger showing CPU state, disassembly, and VRAM</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.3/screenshots/sgb.png</image>
-      <caption>Playing a game with Super Game Boy colors</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.3/screenshots/welcome.png</image>
-      <caption>The welcome screen</caption>
     </screenshot>
   </screenshots>
 
@@ -62,6 +63,19 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.4" date="2026-04-04">
+      <description>
+        <ul>
+          <li>New game library with cover art from Hasheous, play history, and save management</li>
+          <li>Per-game activity log with session tracking and zstd-compressed save snapshots</li>
+          <li>Settings screen with display options, rebindable keyboard and controller controls</li>
+          <li>Super Game Boy colour toggle with authentic SNES CRT gamma correction</li>
+          <li>Sharp bilinear screen scaling for crisp pixels at any resolution</li>
+          <li>One-click gbtrace frame capture from the debugger</li>
+          <li>Continued PPU accuracy improvements: pixel pipeline, DFF timing, HALT wakeup</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.3" date="2026-03-08">
       <description>
         <ul>
@@ -84,6 +98,6 @@
   </supports>
 
   <requires>
-    <display_length compare="ge">768</display_length>
+    <display_length compare="ge">1000</display_length>
   </requires>
 </component>
