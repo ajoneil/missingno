@@ -3,7 +3,7 @@ use iced::{
     Color, Element,
     Length::Fill,
     mouse,
-    widget::{column, container, image, mouse_area, row, scrollable, text},
+    widget::{button, column, container, image, mouse_area, row, scrollable, stack, text},
 };
 
 use crate::app::{
@@ -30,6 +30,8 @@ pub struct DetailData<'a> {
     pub play_log: Option<PlayLog>,
     pub save_manifest: Option<library::saves::SaveManifest>,
     pub hovered_log_entry: Option<usize>,
+    pub cover_hovered: bool,
+    pub window_height: f32,
 }
 
 #[allow(private_interfaces)]
@@ -42,21 +44,85 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
 
 /// Left panel: game identity, play button, metadata, actions.
 fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
-    let mut col = column![].spacing(m()).width(400);
+    let has_rom = data.entry.rom_paths.iter().any(|p| p.exists());
+    let cover_hovered = data.cover_hovered;
 
-    // Cover art
-    if let Some(handle) = data.cover {
-        col = col.push(
+    let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
+        // Cover height capped so info/actions always fit.
+        // 450px accounts for action bar, title, metadata, buttons, padding.
+        let max_cover_h = (data.window_height - 450.0).max(80.0);
+
+        let cover_img = container(
             image(handle.clone())
-                .width(360)
-                .content_fit(iced::ContentFit::ScaleDown),
-        );
-    }
+                .content_fit(iced::ContentFit::ScaleDown)
+                .border_radius(8),
+        )
+        .max_height(max_cover_h);
 
-    // Title
-    col = col.push(app_text::heading(data.entry.display_title()));
+        if has_rom {
+            let cover_el: Element<'_, app::Message> = if cover_hovered {
+                container(stack![
+                    cover_img,
+                    iced::widget::opaque(
+                        container(iced::widget::Space::new())
+                            .width(Fill)
+                            .height(Fill)
+                            .style(|_: &iced::Theme| container::Style {
+                                background: Some(
+                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4).into(),
+                                ),
+                                border: iced::Border::default().rounded(8),
+                                ..Default::default()
+                            }),
+                    ),
+                    container(
+                        button(
+                            icons::xl(Icon::Play).style(|_, _| iced::widget::svg::Style {
+                                color: Some(Color::WHITE),
+                            }),
+                        )
+                        .on_press(app::Message::PlayFromDetail)
+                        .style(|_: &iced::Theme, status| {
+                            let bg_alpha = match status {
+                                button::Status::Hovered => 0.8,
+                                _ => 0.5,
+                            };
+                            button::Style {
+                                background: Some(
+                                    iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
+                                ),
+                                text_color: Color::WHITE,
+                                border: iced::Border::default().rounded(24),
+                                ..Default::default()
+                            }
+                        }),
+                    )
+                    .width(Fill)
+                    .height(Fill)
+                    .align_x(Center)
+                    .align_y(iced::alignment::Vertical::Center)
+                ])
+                .center_x(Fill)
+                .into()
+            } else {
+                container(cover_img).center_x(Fill).into()
+            };
 
-    // Subtitle
+            mouse_area(cover_el)
+                .on_enter(app::Message::HoverCover)
+                .on_exit(app::Message::UnhoverCover)
+                .interaction(mouse::Interaction::Pointer)
+                .into()
+        } else {
+            cover_img.into()
+        }
+    } else {
+        iced::widget::Space::new().into()
+    };
+
+    // Fixed-height info
+    let mut info = column![app_text::heading(data.entry.display_title())].spacing(4);
+
     let subtitle_parts: Vec<&str> = [
         data.entry.publisher.as_deref(),
         data.entry.year.as_deref(),
@@ -65,20 +131,18 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     .into_iter()
     .flatten()
     .collect();
-
     if !subtitle_parts.is_empty() {
-        col = col.push(text(subtitle_parts.join(" · ")).color(MUTED));
+        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    // Play stats summary
     if let Some(log) = &data.play_log {
         if !log.sessions.is_empty() {
-            let play_time = log.format_play_time();
-            col = col.push(app_text::detail(format!("{play_time} played")).color(MUTED));
+            info = info.push(
+                app_text::detail(format!("{} played", log.format_play_time())).color(MUTED),
+            );
         }
     }
 
-    // Links
     if data.entry.wikipedia_url.is_some() || data.entry.igdb_url.is_some() {
         let mut links = row![].spacing(m());
         if let Some(url) = &data.entry.wikipedia_url {
@@ -103,12 +167,12 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                 .interaction(mouse::Interaction::Pointer),
             );
         }
-        col = col.push(links);
+        info = info.push(links);
     }
 
-    // Management
-    col = col.push(horizontal_rule());
-    col = col.push(
+    // Fixed-height actions
+    let actions = column![
+        horizontal_rule(),
         column![
             buttons::subtle("Import Save...")
                 .on_press(app::Message::ImportSave)
@@ -124,9 +188,14 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                 .width(Fill),
         ]
         .spacing(s()),
-    );
+    ]
+    .spacing(m());
 
-    scrollable(col.padding(l())).height(Fill).into()
+    column![cover, info, actions]
+        .spacing(m())
+        .padding(l())
+        .width(400)
+        .into()
 }
 
 /// Right panel: chronological activity log — sessions, saves, imports.

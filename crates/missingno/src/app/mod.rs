@@ -53,7 +53,7 @@ pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
     })
     .window(window::Settings {
         size: iced::Size::new(window_width, window_height),
-        min_size: Some(iced::Size::new(800.0, 500.0)),
+        min_size: Some(iced::Size::new(800.0, 600.0)),
         platform_specific: window::settings::PlatformSpecific {
             application_id: "net.andyofniall.missingno".to_string(),
             ..Default::default()
@@ -90,6 +90,10 @@ struct App {
     hovered_log_entry: Option<usize>,
     /// SHA1 of the game card currently hovered in the library.
     hovered_library_game: Option<String>,
+    /// Whether the cover image on the detail page is hovered.
+    cover_hovered: bool,
+    /// Full-resolution cover for the detail page (loaded on demand).
+    detail_cover: Option<iced::widget::image::Handle>,
     settings_section: settings_view::Section,
     /// Screen to return to when leaving settings.
     previous_screen: Option<Screen>,
@@ -171,6 +175,8 @@ enum Message {
     ExportSaveSelected(String, Option<rfd::FileHandle>),
     HoverLogEntry(usize),
     UnhoverLogEntry,
+    HoverCover,
+    UnhoverCover,
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -231,6 +237,8 @@ impl App {
             pending_action: None,
             hovered_log_entry: None,
             hovered_library_game: None,
+            cover_hovered: false,
+            detail_cover: None,
             settings_section: settings_view::Section::default(),
             previous_screen: None,
             was_running_before_settings: false,
@@ -448,6 +456,12 @@ impl App {
             }
             Message::UnhoverLogEntry => {
                 self.hovered_log_entry = None;
+            }
+            Message::HoverCover => {
+                self.cover_hovered = true;
+            }
+            Message::UnhoverCover => {
+                self.cover_hovered = false;
             }
             Message::RemoveGame => {
                 self.pending_action = Some(PendingAction::RemoveGameFromLibrary);
@@ -695,7 +709,10 @@ impl App {
             },
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
-                    // Just view the detail page — doesn't touch the running game
+                    // Load full-res cover for detail page
+                    self.detail_cover = library::find_by_sha1(&sha1)
+                        .and_then(|(d, _)| library::load_cover(&d))
+                        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
                     self.viewing_sha1 = Some(sha1);
                     self.screen = Screen::Detail;
                 }
@@ -755,7 +772,7 @@ impl App {
                 if let Some(current) = &mut self.current_game {
                     if let Some((_dir, entry)) = library::find_by_sha1(&current.entry.sha1) {
                         current.entry = entry;
-                        current.cover = library::load_thumbnail(&current.game_dir)
+                        current.cover = library::load_cover(&current.game_dir)
                             .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
                     }
                 }
@@ -942,6 +959,8 @@ impl App {
                     save_manifest: Some(current.save_manifest.clone()),
 
                     hovered_log_entry: self.hovered_log_entry,
+                    cover_hovered: self.cover_hovered,
+                    window_height: self.settings.window_height.unwrap_or(720.0),
                 });
             }
         }
@@ -960,11 +979,12 @@ impl App {
                 let save_manifest = game_dir.as_ref().map(|d| library::saves::load_manifest(d));
                 return library::detail_view::view(library::detail_view::DetailData {
                     entry: &cached.entry,
-                    cover: cached.cover.as_ref(),
+                    cover: self.detail_cover.as_ref().or(cached.cover.as_ref()),
                     play_log,
                     save_manifest,
-
                     hovered_log_entry: self.hovered_log_entry,
+                    cover_hovered: self.cover_hovered,
+                    window_height: self.settings.window_height.unwrap_or(720.0),
                 });
             }
         }
