@@ -329,6 +329,10 @@ impl Debugger {
         let mut tracer = Tracer::create(path, &profile, &self.game_boy, BootRom::Skip)
             .map_err(|e| format!("Failed to create tracer: {e}"))?;
 
+        // Mark frame boundary at entry 0 so all entries belong to this frame.
+        tracer.mark_frame()
+            .map_err(|e| format!("Trace mark_frame error: {e}"))?;
+
         loop {
             let rise = self.game_boy.step_phase();
             if let Some(pixel) = rise.pixel {
@@ -346,8 +350,6 @@ impl Debugger {
             self.dot_count += 1;
 
             if rise.new_screen || fall.new_screen {
-                tracer.mark_frame()
-                    .map_err(|e| format!("Trace mark_frame error: {e}"))?;
                 break;
             }
         }
