@@ -330,7 +330,8 @@ impl Debugger {
             .map_err(|e| format!("Failed to create tracer: {e}"))?;
 
         // Mark frame boundary at entry 0 so all entries belong to this frame.
-        tracer.mark_frame()
+        tracer
+            .mark_frame()
             .map_err(|e| format!("Trace mark_frame error: {e}"))?;
 
         loop {
@@ -344,7 +345,8 @@ impl Debugger {
                 tracer.push_pixel(pixel.shade);
             }
 
-            tracer.capture(&self.game_boy)
+            tracer
+                .capture(&self.game_boy)
                 .map_err(|e| format!("Trace capture error: {e}"))?;
             tracer.advance_dot();
             self.dot_count += 1;
@@ -354,7 +356,8 @@ impl Debugger {
             }
         }
 
-        tracer.finish()
+        tracer
+            .finish()
             .map_err(|e| format!("Failed to finish trace: {e}"))?;
 
         Ok(self.game_boy.screen().clone())

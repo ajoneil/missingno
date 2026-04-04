@@ -40,7 +40,9 @@ fn title_color(title: &str) -> Color {
         [0.52, 0.28, 0.16], // peach
         [0.52, 0.20, 0.24], // red
     ];
-    let hash = title.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hash = title
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     let [r, g, b] = ACCENTS[(hash as usize) % ACCENTS.len()];
     Color::from_rgb(r, g, b)
 }
@@ -218,7 +220,9 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
             })
             .into()
     } else {
-        let initial = game.entry.display_title()
+        let initial = game
+            .entry
+            .display_title()
             .chars()
             .next()
             .unwrap_or('?')
@@ -237,20 +241,18 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         .height(COVER_HEIGHT)
         .align_x(Center)
         .align_y(iced::alignment::Vertical::Center)
-        .style(move |_: &iced::Theme| {
-            container::Style {
-                background: Some(bg.into()),
-                border: iced::Border {
-                    radius: iced::border::Radius {
-                        top_left: 8.0,
-                        top_right: 0.0,
-                        bottom_right: 0.0,
-                        bottom_left: 8.0,
-                    },
-                    ..Default::default()
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(bg.into()),
+            border: iced::Border {
+                radius: iced::border::Radius {
+                    top_left: 8.0,
+                    top_right: 0.0,
+                    bottom_right: 0.0,
+                    bottom_left: 8.0,
                 },
                 ..Default::default()
-            }
+            },
+            ..Default::default()
         })
         .into()
     };
@@ -281,9 +283,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
     }
 
     // Card layout: cover (flush left) | padded info | quick-play
-    let mut info_row = row![info.width(Fill)]
-        .spacing(m())
-        .align_y(Center);
+    let mut info_row = row![info.width(Fill)].spacing(m()).align_y(Center);
 
     if has_rom {
         info_row = info_row.push(
@@ -292,8 +292,7 @@ fn game_card(game: &CachedGame) -> Element<'_, app::Message> {
         );
     }
 
-    let card_row = row![cover, container(info_row).padding(m()).width(Fill)]
-        .height(COVER_HEIGHT);
+    let card_row = row![cover, container(info_row).padding(m()).width(Fill)].height(COVER_HEIGHT);
 
     let card = container(card_row)
         .width(Fill)

@@ -202,8 +202,7 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
     let row = row![play_pause(running)];
 
     let row = if debugger {
-        row.push(step_frame(running))
-            .push(capture_frame(running))
+        row.push(step_frame(running)).push(capture_frame(running))
     } else {
         row
     };
