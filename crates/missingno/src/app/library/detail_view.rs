@@ -14,7 +14,10 @@ use crate::app::{
         sizes::{l, m, s},
         text as app_text,
     },
-    library::{self, GameEntry, play_log::PlayLog},
+    library::{
+        GameEntry,
+        activity::{self, ActivityDisplay, ActivityKind, SessionFile},
+    },
 };
 
 // Catppuccin Mocha subtext0
@@ -27,8 +30,8 @@ const MUTED: Color = Color::from_rgb(
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
     pub cover: Option<&'a image::Handle>,
-    pub play_log: Option<PlayLog>,
-    pub save_manifest: Option<library::saves::SaveManifest>,
+    pub activity: Vec<ActivityDisplay>,
+    pub live_session: Option<&'a SessionFile>,
     pub hovered_log_entry: Option<usize>,
     pub cover_hovered: bool,
     pub window_height: f32,
@@ -37,7 +40,7 @@ pub struct DetailData<'a> {
 #[allow(private_interfaces)]
 pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     let left = game_info_panel(&data);
-    let right = activity_log(&data);
+    let right = activity_log(data.activity, data.live_session, data.hovered_log_entry);
 
     row![left, right].height(Fill).into()
 }
@@ -135,10 +138,21 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    if let Some(log) = &data.play_log {
-        if !log.sessions.is_empty() {
+    // Compute play time from activity entries
+    {
+        let total_secs: f64 = data
+            .activity
+            .iter()
+            .filter(|a| a.kind == ActivityKind::Session)
+            .filter_map(|a| {
+                a.end
+                    .map(|end| end.duration_since(a.timestamp).as_secs_f64())
+            })
+            .sum();
+        if total_secs > 0.0 {
             info = info.push(
-                app_text::detail(format!("{} played", log.format_play_time())).color(MUTED),
+                app_text::detail(format!("{} played", activity::format_play_time(total_secs)))
+                    .color(MUTED),
             );
         }
     }
@@ -198,80 +212,43 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         .into()
 }
 
-/// Right panel: chronological activity log — sessions, saves, imports.
-fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
-    let mut log = column![app_text::label("Activity"),]
+/// Right panel: chronological activity log.
+fn activity_log(
+    activity: Vec<ActivityDisplay>,
+    live_session: Option<&SessionFile>,
+    hovered_log_entry: Option<usize>,
+) -> Element<'static, app::Message> {
+    let mut log = column![app_text::label("Activity")]
         .spacing(m())
         .width(Fill);
 
-    let play_log = data.play_log.as_ref();
-    let manifest = data.save_manifest.as_ref();
-
-    // Build a unified timeline of events, newest first
-    let mut events: Vec<LogEvent> = Vec::new();
-
-    // Add sessions
-    if let Some(pl) = play_log {
-        for (idx, session) in pl.sessions.iter().enumerate() {
-            events.push(LogEvent::Session {
-                index: idx,
-                start: session.start,
-                end: session.end,
-            });
-        }
+    // Show live session at the top if one is in progress
+    if let Some(live) = live_session {
+        log = log.push(session_card(
+            &ActivityDisplay {
+                filename: String::new(),
+                kind: ActivityKind::Session,
+                timestamp: live.start,
+                end: live.end,
+                save_count: live.saves.len(),
+                last_save_time: live.saves.last().map(|s| s.at),
+                size_bytes: None,
+            },
+            false,
+        ));
     }
 
-    // Add imported saves (not tied to sessions)
-    if let Some(m) = manifest {
-        for save in &m.saves {
-            if matches!(
-                save.origin,
-                library::saves::SaveOrigin::Imported | library::saves::SaveOrigin::LegacyImport
-            ) {
-                events.push(LogEvent::Import {
-                    save_id: save.id.clone(),
-                    timestamp: save.created,
-                    size_bytes: save.size_bytes,
-                });
-            }
-        }
-    }
-
-    // Sort by timestamp, newest first
-    events.sort_by(|a, b| b.timestamp().cmp(&a.timestamp()));
-
-    if events.is_empty() {
+    if activity.is_empty() && live_session.is_none() {
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
 
-    let hovered = data.hovered_log_entry;
+    let hovered = hovered_log_entry;
 
-    for (event_idx, event) in events.iter().enumerate() {
-        let is_hovered = hovered == Some(event_idx);
-
-        let card = match event {
-            LogEvent::Session { index, start, end } => {
-                let session_saves: Vec<&library::saves::SaveEntry> = manifest
-                    .map(|m| {
-                        m.saves
-                            .iter()
-                            .filter(|s| s.session_index == Some(*index))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                session_entry(*start, *end, &session_saves, is_hovered)
-            }
-            LogEvent::Import {
-                save_id,
-                timestamp,
-                size_bytes,
-            } => import_entry(save_id, *timestamp, *size_bytes, is_hovered),
-        };
-
+    for (idx, entry) in activity.iter().enumerate() {
+        let is_hovered = hovered == Some(idx);
         log = log.push(
-            mouse_area(card)
-                .on_enter(app::Message::HoverLogEntry(event_idx))
+            mouse_area(activity_card(entry, is_hovered))
+                .on_enter(app::Message::HoverLogEntry(idx))
                 .on_exit(app::Message::UnhoverLogEntry),
         );
     }
@@ -279,13 +256,16 @@ fn activity_log<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     scrollable(log.padding(l())).height(Fill).into()
 }
 
-fn session_entry<'a>(
-    start: jiff::Timestamp,
-    end: Option<jiff::Timestamp>,
-    saves: &[&library::saves::SaveEntry],
-    is_hovered: bool,
-) -> Element<'a, app::Message> {
-    let detail = if let Some(end) = end {
+fn activity_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
+    match entry.kind {
+        ActivityKind::Session => session_card(entry, is_hovered),
+        ActivityKind::Import => import_card(entry, is_hovered),
+    }
+}
+
+fn session_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
+    let start = entry.timestamp;
+    let detail = if let Some(end) = entry.end {
         let secs = end.duration_since(start).as_secs();
         let mins = secs / 60;
         let hours = mins / 60;
@@ -296,11 +276,11 @@ fn session_entry<'a>(
         } else {
             "< 1m".to_string()
         };
-        let start_str = library::saves::format_local(&start);
-        let end_time = library::saves::format_local_time(&end);
+        let start_str = activity::format_local(&start);
+        let end_time = activity::format_local_time(&end);
         format!("{start_str} – {end_time} ({duration})")
     } else {
-        let start_str = library::saves::format_local(&start);
+        let start_str = activity::format_local(&start);
         format!("{start_str} – in progress")
     };
 
@@ -310,9 +290,12 @@ fn session_entry<'a>(
     ]
     .spacing(2);
 
-    if !saves.is_empty() {
-        let n = saves.len();
-        let last_time = library::saves::format_local_time(&saves.last().unwrap().created);
+    if entry.save_count > 0 {
+        let n = entry.save_count;
+        let last_time = entry
+            .last_save_time
+            .map(|t| activity::format_local_time(&t))
+            .unwrap_or_default();
         info_col = info_col.push(
             app_text::detail(format!(
                 "{n} save{} · last at {last_time}",
@@ -322,19 +305,19 @@ fn session_entry<'a>(
         );
     }
 
-    let mut header = row![icons::m(Icon::Play), info_col.width(Fill),]
+    let mut header = row![icons::m(Icon::Play), info_col.width(Fill)]
         .spacing(s())
         .align_y(Center);
 
-    if !saves.is_empty() {
-        let last_id = saves.last().unwrap().id.clone();
+    let has_saves = entry.save_count > 0 && !entry.filename.is_empty();
+    if has_saves {
         if is_hovered {
             header = header.push(
                 row![
                     buttons::subtle(app_text::detail("Export"))
-                        .on_press(app::Message::ExportSave(last_id.clone())),
+                        .on_press(app::Message::ExportSave(entry.filename.clone())),
                     buttons::subtle(app_text::detail("Play from here"))
-                        .on_press(app::Message::PlayWithSave(last_id)),
+                        .on_press(app::Message::PlayWithSave(entry.filename.clone())),
                 ]
                 .spacing(s()),
             );
@@ -349,9 +332,7 @@ fn session_entry<'a>(
         }
     }
 
-    let col = column![header];
-
-    container(col)
+    container(column![header])
         .width(Fill)
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();
@@ -365,14 +346,9 @@ fn session_entry<'a>(
         .into()
 }
 
-fn import_entry<'a>(
-    save_id: &str,
-    timestamp: jiff::Timestamp,
-    size_bytes: u32,
-    is_hovered: bool,
-) -> Element<'a, app::Message> {
-    let time = library::saves::format_local(&timestamp);
-    let size_kb = size_bytes / 1024;
+fn import_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
+    let time = activity::format_local(&entry.timestamp);
+    let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
 
     let mut content = row![
         icons::m(Icon::Download),
@@ -390,9 +366,9 @@ fn import_entry<'a>(
         content = content.push(
             row![
                 buttons::subtle(app_text::detail("Export"))
-                    .on_press(app::Message::ExportSave(save_id.to_string())),
+                    .on_press(app::Message::ExportSave(entry.filename.clone())),
                 buttons::subtle(app_text::detail("Play from here"))
-                    .on_press(app::Message::PlayWithSave(save_id.to_string())),
+                    .on_press(app::Message::PlayWithSave(entry.filename.clone())),
             ]
             .spacing(s()),
         );
@@ -418,28 +394,6 @@ fn import_entry<'a>(
         })
         .padding(m())
         .into()
-}
-
-enum LogEvent {
-    Session {
-        index: usize,
-        start: jiff::Timestamp,
-        end: Option<jiff::Timestamp>,
-    },
-    Import {
-        save_id: String,
-        timestamp: jiff::Timestamp,
-        size_bytes: u32,
-    },
-}
-
-impl LogEvent {
-    fn timestamp(&self) -> jiff::Timestamp {
-        match self {
-            LogEvent::Session { start, .. } => *start,
-            LogEvent::Import { timestamp, .. } => *timestamp,
-        }
-    }
 }
 
 fn leak_str(s: &str) -> &'static str {

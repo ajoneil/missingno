@@ -148,8 +148,10 @@ struct CurrentGame {
     entry: library::GameEntry,
     game_dir: PathBuf,
     cover: Option<iced::widget::image::Handle>,
-    play_log: library::play_log::PlayLog,
-    save_manifest: library::saves::SaveManifest,
+    /// The in-progress session, written incrementally to disk.
+    session: Option<library::activity::SessionFile>,
+    /// Which activity file we started from (for parent tracking).
+    started_from: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,8 +309,10 @@ impl App {
                     Some(PendingAction::SwitchGame(sha1)) => {
                         // Close current game
                         if let Some(current) = &mut self.current_game {
-                            current.play_log.end_session();
-                            library::play_log::save(&current.game_dir, &current.play_log);
+                            if let Some(session) = &mut current.session {
+                                session.end = Some(jiff::Timestamp::now());
+                                library::activity::write_session(&current.game_dir, session);
+                            }
                         }
                         self.game = Game::Unloaded;
                         self.current_game = None;
@@ -321,8 +325,10 @@ impl App {
                     }
                     Some(PendingAction::StopGame) => {
                         if let Some(current) = &mut self.current_game {
-                            current.play_log.end_session();
-                            library::play_log::save(&current.game_dir, &current.play_log);
+                            if let Some(session) = &mut current.session {
+                                session.end = Some(jiff::Timestamp::now());
+                                library::activity::write_session(&current.game_dir, session);
+                            }
                             self.viewing_sha1 = Some(current.entry.sha1.clone());
                             self.library_cache.update_entry(&current.entry.sha1);
                         }
@@ -342,8 +348,10 @@ impl App {
                     }
                     Some(PendingAction::CloseApp) => {
                         if let Some(current) = &mut self.current_game {
-                            current.play_log.end_session();
-                            library::play_log::save(&current.game_dir, &current.play_log);
+                            if let Some(session) = &mut current.session {
+                                session.end = Some(jiff::Timestamp::now());
+                                library::activity::write_session(&current.game_dir, session);
+                            }
                         }
                         return window::latest().and_then(window::close);
                     }
@@ -405,11 +413,7 @@ impl App {
                 if let (Some(handle), Some(sha1)) = (handle, &self.viewing_sha1) {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
                         if let Ok(data) = std::fs::read(handle.path()) {
-                            let mut manifest = library::saves::load_manifest(&game_dir);
-                            let entry = manifest.record_import(data.len() as u32);
-                            let archive_idx = entry.archive_index.unwrap();
-                            library::saves::write_save_data(&game_dir, &data, archive_idx, None);
-                            library::saves::save_manifest(&game_dir, &manifest);
+                            library::activity::write_import(&game_dir, &data);
                         }
                     }
                 }
@@ -445,7 +449,7 @@ impl App {
             Message::ExportSaveSelected(save_id, handle) => {
                 if let (Some(handle), Some(sha1)) = (handle, &self.viewing_sha1) {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        if let Some(data) = library::saves::export_save(&game_dir, &save_id) {
+                        if let Some(data) = library::activity::load_sram_from(&game_dir, &save_id) {
                             let _ = std::fs::write(handle.path(), data);
                         }
                     }
@@ -862,7 +866,9 @@ impl App {
             settings_view::view(&self.settings, self.settings_section, self.listening_for)
         } else {
             let content = match self.screen {
-                Screen::Library => library::view::view(&self.library_cache, self.hovered_library_game.as_deref()),
+                Screen::Library => {
+                    library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
+                }
                 Screen::Detail => self.detail_view(),
                 Screen::Emulator | Screen::Settings => unreachable!(),
             };
@@ -899,9 +905,14 @@ impl App {
                         .size(text::sizes::xl())
                         .font(fonts::heading()),
                 );
-                if let Some(last_save) = current.save_manifest.saves.last() {
+                let last_save_time = current
+                    .session
+                    .as_ref()
+                    .and_then(|s| s.saves.last())
+                    .map(|s| s.at);
+                if let Some(ts) = last_save_time {
                     info = info.push(
-                        iced_text(format!("Last saved {}", friendly_ago(last_save.created)))
+                        iced_text(format!("Last saved {}", friendly_ago(ts)))
                             .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
                     );
                 } else {
@@ -949,47 +960,76 @@ impl App {
     fn detail_view(&self) -> Element<'_, Message> {
         let viewing_sha1 = self.viewing_sha1.as_deref();
 
-        // If viewing the running game, use CurrentGame data (has live play_log)
-        if let Some(current) = &self.current_game {
+        // Determine which game dir to load activity from
+        let (entry, cover, game_dir) = if let Some(current) = &self.current_game {
             if viewing_sha1 == Some(current.entry.sha1.as_str()) {
-                return library::detail_view::view(library::detail_view::DetailData {
-                    entry: &current.entry,
-                    cover: current.cover.as_ref(),
-                    play_log: Some(current.play_log.clone()),
-                    save_manifest: Some(current.save_manifest.clone()),
-
-                    hovered_log_entry: self.hovered_log_entry,
-                    cover_hovered: self.cover_hovered,
-                    window_height: self.settings.window_height.unwrap_or(720.0),
+                (
+                    &current.entry,
+                    current.cover.as_ref(),
+                    Some(current.game_dir.clone()),
+                )
+            } else {
+                // Viewing a different game than the running one
+                let found = viewing_sha1.and_then(|sha1| {
+                    self.library_cache
+                        .entries
+                        .iter()
+                        .find(|g| g.entry.sha1 == sha1)
                 });
+                if let Some(cached) = found {
+                    let gd = library::find_by_sha1(&cached.entry.sha1).map(|(d, _)| d);
+                    (
+                        &cached.entry,
+                        self.detail_cover.as_ref().or(cached.cover.as_ref()),
+                        gd,
+                    )
+                } else {
+                    return self.empty_detail_view();
+                }
             }
-        }
-
-        // Otherwise look up from the library cache
-        if let Some(sha1) = viewing_sha1 {
-            if let Some(cached) = self
+        } else if let Some(sha1) = viewing_sha1 {
+            let found = self
                 .library_cache
                 .entries
                 .iter()
-                .find(|g| g.entry.sha1 == sha1)
-            {
-                // Use find_by_sha1 to get the actual directory path
-                let game_dir = library::find_by_sha1(sha1).map(|(d, _)| d);
-                let play_log = game_dir.as_ref().map(|d| library::play_log::load(d));
-                let save_manifest = game_dir.as_ref().map(|d| library::saves::load_manifest(d));
-                return library::detail_view::view(library::detail_view::DetailData {
-                    entry: &cached.entry,
-                    cover: self.detail_cover.as_ref().or(cached.cover.as_ref()),
-                    play_log,
-                    save_manifest,
-                    hovered_log_entry: self.hovered_log_entry,
-                    cover_hovered: self.cover_hovered,
-                    window_height: self.settings.window_height.unwrap_or(720.0),
-                });
+                .find(|g| g.entry.sha1 == sha1);
+            if let Some(cached) = found {
+                let gd = library::find_by_sha1(sha1).map(|(d, _)| d);
+                (
+                    &cached.entry,
+                    self.detail_cover.as_ref().or(cached.cover.as_ref()),
+                    gd,
+                )
+            } else {
+                return self.empty_detail_view();
             }
-        }
+        } else {
+            return self.empty_detail_view();
+        };
 
-        // Fallback
+        let activity = game_dir
+            .as_ref()
+            .map(|d| library::activity::load_activity_display(d))
+            .unwrap_or_default();
+
+        let live_session = self
+            .current_game
+            .as_ref()
+            .filter(|c| viewing_sha1 == Some(c.entry.sha1.as_str()))
+            .and_then(|c| c.session.as_ref());
+
+        library::detail_view::view(library::detail_view::DetailData {
+            entry,
+            cover,
+            activity,
+            live_session,
+            hovered_log_entry: self.hovered_log_entry,
+            cover_hovered: self.cover_hovered,
+            window_height: self.settings.window_height.unwrap_or(720.0),
+        })
+    }
+
+    fn empty_detail_view(&self) -> Element<'_, Message> {
         library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
     }
 
@@ -1137,26 +1177,14 @@ impl App {
             return;
         };
 
-        let session_index = if current.play_log.sessions.is_empty() {
-            None
-        } else {
-            Some(current.play_log.sessions.len() - 1)
-        };
-
-        // Get previous save data for delta compression
-        let prev_data = if let Some(prev) = current.save_manifest.saves.last() {
-            prev.archive_index
-                .and_then(|idx| library::saves::load_save_by_index(&current.game_dir, idx))
-        } else {
-            None
-        };
-
-        let entry = current
-            .save_manifest
-            .record_emulation_save(ram.len() as u32, session_index);
-        let archive_idx = entry.archive_index.unwrap();
-        library::saves::write_save_data(&current.game_dir, &ram, archive_idx, prev_data.as_deref());
-        library::saves::save_manifest(&current.game_dir, &current.save_manifest);
+        if let Some(session) = &mut current.session {
+            session.saves.push(library::activity::SessionSave {
+                at: jiff::Timestamp::now(),
+                sram: ram.to_vec(),
+            });
+            // Write incrementally for crash safety
+            library::activity::write_session(&current.game_dir, session);
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

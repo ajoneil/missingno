@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use iced::Task;
+use jiff::Timestamp;
 use rfd::{AsyncFileDialog, FileHandle};
 
 use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library};
@@ -62,28 +63,21 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
 }
 
 /// Select a game from the library by SHA1 and populate CurrentGame.
-/// Does NOT start emulation — just loads metadata, cover, and play log.
+/// Does NOT start emulation — just loads metadata and cover.
 pub fn select_game(app: &mut App, sha1: &str) -> bool {
     let Some((game_dir, entry)) = library::find_by_sha1(sha1) else {
         return false;
     };
 
-    // Migrate legacy saves if present
-    library::saves::migrate_legacy_battery(&game_dir);
-    library::saves::migrate_individual_saves(&game_dir);
-
     let cover =
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
-
-    let play_log = library::play_log::load(&game_dir);
-    let save_manifest = library::saves::load_manifest(&game_dir);
 
     app.current_game = Some(CurrentGame {
         entry,
         game_dir,
         cover,
-        play_log,
-        save_manifest,
+        session: None,
+        started_from: None,
     });
     true
 }
@@ -91,7 +85,6 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
 /// Start emulation for the currently selected game.
 /// Requires current_game to be set (via select_game or setup_game).
 pub fn play_current_game(app: &mut App) -> Task<app::Message> {
-    // Extract what we need before borrowing mutably
     let (rom_path, game_dir) = {
         let Some(current) = &app.current_game else {
             return Task::none();
@@ -106,7 +99,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         return Task::none();
     };
 
-    let save_data = library::saves::load_current_save(&game_dir);
+    let save_data = library::activity::load_current_sram(&game_dir);
     let cartridge = Cartridge::new(rom, save_data);
     let game_boy = GameBoy::new(cartridge, None);
     let palette = app.settings.palette;
@@ -124,8 +117,16 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     // Start play session
     if let Some(current) = &mut app.current_game {
-        current.play_log.start_session();
-        library::play_log::save(&current.game_dir, &current.play_log);
+        let session = library::activity::SessionFile {
+            start: Timestamp::now(),
+            end: None,
+            parent: current.started_from.clone(),
+            saves: Vec::new(),
+        };
+        library::activity::write_session(&current.game_dir, &session);
+        current.session = Some(session);
+        current.started_from = None;
+
         app.recent_games.add(
             &current.entry.sha1,
             &current.entry.display_title(),
@@ -142,8 +143,8 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     Task::none()
 }
 
-/// Start emulation with a specific save file.
-pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
+/// Start emulation with a specific save from an activity file.
+pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Message> {
     let (rom_path, game_dir) = {
         let Some(current) = &app.current_game else {
             return Task::none();
@@ -158,7 +159,7 @@ pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
         return Task::none();
     };
 
-    let save_data = library::saves::load_save_by_id(&game_dir, save_id);
+    let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let cartridge = Cartridge::new(rom, save_data);
     let game_boy = GameBoy::new(cartridge, None);
     let palette = app.settings.palette;
@@ -175,8 +176,16 @@ pub fn play_with_save(app: &mut App, save_id: &str) -> Task<app::Message> {
     }
 
     if let Some(current) = &mut app.current_game {
-        current.play_log.start_session();
-        library::play_log::save(&current.game_dir, &current.play_log);
+        let session = library::activity::SessionFile {
+            start: Timestamp::now(),
+            end: None,
+            parent: Some(activity_filename.to_string()),
+            saves: Vec::new(),
+        };
+        library::activity::write_session(&current.game_dir, &session);
+        current.session = Some(session);
+        current.started_from = None;
+
         app.recent_games.add(
             &current.entry.sha1,
             &current.entry.display_title(),
@@ -212,31 +221,22 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
             .expect("Could not determine library directory");
 
-        // Import .sav from next to ROM if the library doesn't have saves yet
+        // Import .sav from next to ROM if no activity exists yet
         let legacy_sav = rom_path.with_extension("sav");
-        let mut save_manifest = library::saves::load_manifest(&game_dir);
-        if legacy_sav.exists() && save_manifest.saves.is_empty() {
-            if let Ok(data) = std::fs::read(&legacy_sav) {
-                let entry_save = save_manifest.record_legacy_import(data.len() as u32);
-                let archive_idx = entry_save.archive_index.unwrap();
-                library::saves::write_save_data(&game_dir, &data, archive_idx, None);
-                library::saves::save_manifest(&game_dir, &save_manifest);
-            }
+        if legacy_sav.exists() {
+            library::activity::import_legacy_sav(&game_dir, &legacy_sav);
         }
 
         library::save_entry(&game_dir, &entry);
         (game_dir, entry)
     };
 
-    // Migrate legacy battery.sav if present
-    library::saves::migrate_legacy_battery(&game_dir);
-
     // Add this ROM path if not already tracked
     entry.add_rom_path(rom_path.clone());
     library::save_entry(&game_dir, &entry);
 
     // Load save data and cover
-    let save_data = library::saves::load_current_save(&game_dir);
+    let save_data = library::activity::load_current_sram(&game_dir);
     let cover =
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
@@ -256,19 +256,20 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
     }
 
-    // Update app state
-    let mut play_log = library::play_log::load(&game_dir);
-    play_log.start_session();
-    library::play_log::save(&game_dir, &play_log);
-
-    let save_manifest = library::saves::load_manifest(&game_dir);
+    let session = library::activity::SessionFile {
+        start: Timestamp::now(),
+        end: None,
+        parent: None,
+        saves: Vec::new(),
+    };
+    library::activity::write_session(&game_dir, &session);
 
     app.current_game = Some(CurrentGame {
         entry: entry.clone(),
         game_dir,
         cover,
-        play_log,
-        save_manifest,
+        session: Some(session),
+        started_from: None,
     });
     app.screen = Screen::Emulator;
 

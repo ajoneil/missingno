@@ -87,13 +87,11 @@ impl LibraryCache {
                 let cover = library::load_thumbnail(&game_dir)
                     .map(|bytes| image::Handle::from_bytes(bytes));
 
-                let play_log = library::play_log::load(&game_dir);
-                let play_time = play_log.format_play_time();
-                let last_played_ts = play_log.last_played;
+                let stats = library::activity::compute_stats(&game_dir);
+                let play_time = library::activity::format_play_time(stats.total_play_time_secs);
+                let last_played_ts = stats.last_played;
                 let last_played = last_played_ts.map(|ts| friendly_ago(ts));
-
-                let save_manifest = library::saves::load_manifest(&game_dir);
-                let save_count = save_manifest.saves.len();
+                let save_count = stats.save_count;
 
                 CachedGame {
                     entry,
@@ -120,7 +118,10 @@ impl LibraryCache {
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 // Neither played — alphabetical
-                (None, None) => a.entry.display_title().to_lowercase()
+                (None, None) => a
+                    .entry
+                    .display_title()
+                    .to_lowercase()
                     .cmp(&b.entry.display_title().to_lowercase()),
             }
         });
@@ -134,12 +135,11 @@ impl LibraryCache {
 
         let cover =
             library::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
-        let play_log = library::play_log::load(&game_dir);
-        let play_time = play_log.format_play_time();
-        let last_played_ts = play_log.last_played;
+        let stats = library::activity::compute_stats(&game_dir);
+        let play_time = library::activity::format_play_time(stats.total_play_time_secs);
+        let last_played_ts = stats.last_played;
         let last_played = last_played_ts.map(|ts| friendly_ago(ts));
-        let save_manifest = library::saves::load_manifest(&game_dir);
-        let save_count = save_manifest.saves.len();
+        let save_count = stats.save_count;
 
         let cached = CachedGame {
             entry,
@@ -164,7 +164,10 @@ impl LibraryCache {
 }
 
 #[allow(private_interfaces)]
-pub(crate) fn view<'a>(cache: &'a LibraryCache, hovered_sha1: Option<&'a str>) -> Element<'a, app::Message> {
+pub(crate) fn view<'a>(
+    cache: &'a LibraryCache,
+    hovered_sha1: Option<&'a str>,
+) -> Element<'a, app::Message> {
     if cache.is_empty() {
         return empty_view();
     }
@@ -178,11 +181,13 @@ pub(crate) fn view<'a>(cache: &'a LibraryCache, hovered_sha1: Option<&'a str>) -
         let chunks: Vec<&[CachedGame]> = cache.entries.chunks(cols).collect();
 
         for chunk in chunks {
-            let mut cards: Vec<Element<'_, app::Message>> =
-                chunk.iter().map(|game| {
+            let mut cards: Vec<Element<'_, app::Message>> = chunk
+                .iter()
+                .map(|game| {
                     let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
                     game_card(game, hovered)
-                }).collect();
+                })
+                .collect();
             // Pad incomplete rows with empty spacers so cards don't stretch
             while cards.len() < cols {
                 cards.push(iced::widget::Space::new().width(Fill).into());
@@ -351,8 +356,8 @@ fn game_card(game: &CachedGame, hovered: bool) -> Element<'_, app::Message> {
         );
     }
 
-    let card_row = row![cover, container(info.width(Fill)).padding(m()).width(Fill)]
-        .height(COVER_HEIGHT);
+    let card_row =
+        row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT);
 
     let card = container(card_row)
         .width(Fill)
