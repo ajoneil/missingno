@@ -152,6 +152,8 @@ struct CurrentGame {
     session: Option<library::activity::SessionFile>,
     /// Which activity file we started from (for parent tracking).
     started_from: Option<String>,
+    /// SRAM snapshot at session start, for detecting meaningful changes.
+    initial_sram: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1157,18 +1159,24 @@ impl App {
     }
 
     fn save(&mut self) {
-        let ram = match &self.game {
+        let (ram, cartridge_title) = match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
                 if !debugger.game_boy().cartridge().has_battery() {
                     return;
                 }
-                debugger.game_boy().cartridge().ram()
+                (
+                    debugger.game_boy().cartridge().ram(),
+                    debugger.game_boy().cartridge().title().to_string(),
+                )
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
                 if !emulator.game_boy().cartridge().has_battery() {
                     return;
                 }
-                emulator.game_boy().cartridge().ram()
+                (
+                    emulator.game_boy().cartridge().ram(),
+                    emulator.game_boy().cartridge().title().to_string(),
+                )
             }
             _ => return,
         };
@@ -1178,12 +1186,25 @@ impl App {
         };
 
         if let Some(session) = &mut current.session {
-            session.saves.push(library::activity::SessionSave {
-                at: jiff::Timestamp::now(),
-                sram: ram.to_vec(),
-            });
-            // Write incrementally for crash safety
-            library::activity::write_session(&current.game_dir, session);
+            // Check if SRAM has meaningfully changed, ignoring scratch regions
+            let previous = session
+                .saves
+                .last()
+                .map(|s| s.sram.as_slice())
+                .or(current.initial_sram.as_deref());
+            let changed = match previous {
+                Some(prev) => library::game_db::sram_changed(&cartridge_title, &ram, prev),
+                None => true, // No previous data at all — always record
+            };
+
+            if changed {
+                session.saves.push(library::activity::SessionSave {
+                    at: jiff::Timestamp::now(),
+                    sram: ram.to_vec(),
+                });
+                // Write incrementally for crash safety
+                library::activity::write_session(&current.game_dir, session);
+            }
         }
     }
 

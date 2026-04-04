@@ -218,9 +218,7 @@ fn activity_log(
     live_session: Option<&SessionFile>,
     hovered_log_entry: Option<usize>,
 ) -> Element<'static, app::Message> {
-    let mut log = column![app_text::label("Activity")]
-        .spacing(m())
-        .width(750);
+    let mut log = column![app_text::label("Activity")].spacing(m()).width(750);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {

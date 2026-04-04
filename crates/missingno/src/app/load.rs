@@ -78,6 +78,7 @@ pub fn select_game(app: &mut App, sha1: &str) -> bool {
         cover,
         session: None,
         started_from: None,
+        initial_sram: None,
     });
     true
 }
@@ -100,6 +101,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     };
 
     let save_data = library::activity::load_current_sram(&game_dir);
+    let initial_sram = save_data.clone();
     let cartridge = Cartridge::new(rom, save_data);
     let game_boy = GameBoy::new(cartridge, None);
     let palette = app.settings.palette;
@@ -126,6 +128,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;
+        current.initial_sram = initial_sram;
 
         app.recent_games.add(
             &current.entry.sha1,
@@ -160,6 +163,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
     };
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
+    let initial_sram = save_data.clone();
     let cartridge = Cartridge::new(rom, save_data);
     let game_boy = GameBoy::new(cartridge, None);
     let palette = app.settings.palette;
@@ -185,6 +189,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;
+        current.initial_sram = initial_sram;
 
         app.recent_games.add(
             &current.entry.sha1,
@@ -237,6 +242,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
 
     // Load save data and cover
     let save_data = library::activity::load_current_sram(&game_dir);
+    let initial_sram = save_data.clone();
     let cover =
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
@@ -270,6 +276,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         cover,
         session: Some(session),
         started_from: None,
+        initial_sram,
     });
     app.screen = Screen::Emulator;
 
