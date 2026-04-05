@@ -610,6 +610,23 @@ impl Ppu {
                 self.registers.clear_latches();
                 result.new_frame = true;
             }
+
+            // VID_RST: async-reset all counters while LCD is off.
+            // Hardware holds these at 0 continuously; we reset on each
+            // M-cycle to match.
+            self.video.ly = 0;
+            self.video.dot_position = 0;
+            self.video.dot_divider = false;
+            self.video.mcycle_divider = false;
+            self.video.vblank = false;
+            self.video.popu_holdover = 0;
+            self.video.delayed_line_end = false;
+            self.video.line_end_pending = false;
+            self.video.line_end_active = false;
+            self.video.line_end_detected = false;
+            self.video.frame_end_reset = false;
+            self.video.myta_comparison_delay = false;
+
             // ly_comparison_latched is intentionally NOT updated — comparison clock
             // stops when the PPU is off, freezing the last result.
             return result;
