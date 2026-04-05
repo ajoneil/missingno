@@ -94,6 +94,12 @@ pub struct VideoControl {
     /// whether LY >= 144 from the previous cycle. When high, the PPU
     /// reports VBlank mode. Async-reset by VID_RST (LCD off).
     pub vblank: bool,
+
+    /// POPU holdover counter. Models the NYPE→POPU DFF propagation delay
+    /// at the 153→0 frame boundary: POPU stays high for 1 extra dot after
+    /// the internal vblank flag clears, extending the STAT-visible mode 1
+    /// window. Does NOT affect memory lock gates or VBlank IF request.
+    pub popu_holdover: u8,
 }
 
 impl VideoControl {
@@ -164,11 +170,22 @@ impl VideoControl {
         self.vblank
     }
 
+    /// Whether POPU is effectively active for STAT mode and interrupt
+    /// purposes. Includes the holdover period after the internal vblank
+    /// flag clears at the 153→0 boundary, modeling the NYPE→POPU DFF
+    /// propagation delay. NOT used for memory lock gates or VBlank IF.
+    pub fn popu_active(&self) -> bool {
+        self.vblank || self.popu_holdover > 0
+    }
+
     // ── Clock divider ticks ──────────────────────────────────
 
     /// XOTA rising edge: toggle the 2-dot divider (WUVU). Called every dot.
     pub fn tick_dot(&mut self) {
         self.dot_divider = !self.dot_divider;
+        if self.popu_holdover > 0 {
+            self.popu_holdover -= 1;
+        }
     }
 
     /// Whether the 2-dot divider (WUVU) just fell. Check after `tick_dot()`
@@ -232,6 +249,7 @@ impl VideoControl {
             if self.ly >= 153 {
                 self.ly = 0;
                 self.frame_end_reset = false;
+                self.popu_holdover = 1;
                 self.vblank = false;
             } else {
                 self.ly += 1;

@@ -117,6 +117,7 @@ impl Ppu {
                 frame_end_reset: true,
                 myta_comparison_delay: false,
                 vblank: true,
+                popu_holdover: 0,
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -160,6 +161,7 @@ impl Ppu {
                 frame_end_reset: false,
                 myta_comparison_delay: false,
                 vblank: false,
+                popu_holdover: 0,
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
@@ -271,6 +273,7 @@ impl Ppu {
         self.video.frame_end_reset = false;
         self.video.myta_comparison_delay = false;
         self.video.vblank = false;
+        self.video.popu_holdover = 0;
         self.video.ly_comparison_latched = false;
         self.video.update_ly_comparison();
 
@@ -440,7 +443,10 @@ impl Ppu {
 
         // Mode 2 interrupt active: during VBlank, never.
         // Otherwise delegate to the rendering pipeline's TAPA signal.
-        let mode2_active = if self.video.vblank {
+        // Use popu_active() to include the NYPE→POPU DFF holdover period
+        // at the 153→0 boundary for STAT interrupt suppression.
+        let popu = self.video.popu_active();
+        let mode2_active = if popu {
             false
         } else {
             rendering.mode2_interrupt_active(&self.video)
@@ -449,8 +455,7 @@ impl Ppu {
         // On real hardware, the mode 2 (OAM) STAT condition also triggers
         // at line 144 when VBlank starts. With POPU, this is only true at
         // LX=0 of line 144 (the first M-cycle where POPU is high).
-        let vblank_line_144 =
-            self.video.vblank && self.video.ly() == 144 && self.video.line_end_active();
+        let vblank_line_144 = popu && self.video.ly() == 144 && self.video.line_end_active();
 
         // TARU = AND(WODU-or-VOGA, NOT(VBlank)). WODU is combinational
         // (true for 1 rising-phase window), VOGA latches on the falling
@@ -460,13 +465,13 @@ impl Ppu {
             .video
             .stat_flags
             .contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !self.video.vblank
+            && !popu
             && (rendering.voga() || rendering.wodu()))
             || (self
                 .video
                 .stat_flags
                 .contains(InterruptFlags::VERTICAL_BLANK)
-                && self.video.vblank)
+                && popu)
             || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
                 && (mode2_active || vblank_line_144))
             || (self
@@ -704,6 +709,7 @@ impl Ppu {
             frame_end_reset: false,
             myta_comparison_delay: false,
             vblank: snap.ly >= 144,
+            popu_holdover: 0,
         };
 
         let registers = PipelineRegisters {
