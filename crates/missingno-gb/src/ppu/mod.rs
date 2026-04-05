@@ -361,29 +361,36 @@ impl Ppu {
 
     pub fn oam_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.vblank => r.oam_locked(),
-            _ => false,
+            // Hardware: OAM locked by ACYL (BESU-driven) or XYMU (rendering).
+            // During VBlank, both BESU and XYMU are low, so this returns false
+            // without needing a POPU guard.
+            Some(r) => r.oam_locked(),
+            None => false,
         }
     }
 
     pub fn vram_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.vblank => r.vram_locked(),
-            _ => false,
+            // Hardware: VRAM locked by XYMU_RENDERINGp only.
+            // During VBlank, XYMU is low, so this returns false.
+            Some(r) => r.vram_locked(),
+            None => false,
         }
     }
 
     pub fn oam_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.vblank => r.oam_write_locked(),
-            _ => false,
+            // Hardware: OAM writes blocked by ACYL (BESU) or XYMU.
+            Some(r) => r.oam_write_locked(),
+            None => false,
         }
     }
 
     pub fn vram_write_locked(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.vblank => r.vram_write_locked(),
-            _ => false,
+            // Hardware: XYMU gates reads and writes identically.
+            Some(r) => r.vram_write_locked(),
+            None => false,
         }
     }
 
@@ -398,7 +405,9 @@ impl Ppu {
 
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
-            Some(r) if !self.video.vblank => r.xymu(),
+            // Hardware: XYMU is the rendering gate (mode 3 active).
+            // During VBlank, XYMU is always low — no POPU guard needed.
+            Some(r) => r.xymu(),
             _ => false,
         }
     }
@@ -520,8 +529,11 @@ impl Ppu {
             rendering.tick_catu(&self.video);
         }
 
-        // Pixel output, SACU, pipe shift — only during active display.
-        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
+        // Pixel output, scanner, SACU, pipe shift. On hardware these
+        // circuits are gated by XYMU (mode 3) and BESU (scanning), not
+        // POPU. During VBlank, XYMU and BESU are both low, so
+        // rendering.rise() is effectively a no-op.
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel = rendering.rise(&self.registers, &self.video, &self.oam, vram);
         }
 
@@ -555,8 +567,9 @@ impl Ppu {
             self.registers.tick_register_latches();
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
-            // Only during active display — pipeline is idle in VBlank.
-            if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
+            // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
+            // XYMU and BESU are low, making this effectively a no-op.
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 result.pixel = rendering.fall(&self.registers, &self.video, &self.oam, vram);
             }
 
@@ -587,7 +600,9 @@ impl Ppu {
         if !self.control().video_enabled() {
             return;
         }
-        if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
+        // During VBlank, XYMU is already low and AVAP never fires,
+        // so settle_alet() is a no-op — no POPU guard needed.
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
             rendering.settle_alet();
         }
     }
@@ -624,7 +639,7 @@ impl Ppu {
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         match &self.pixel_pipeline {
             Some(rendering) if !self.video.vblank => Some(rendering.pipeline_state(&self.video)),
-            _ => None,
+            _ => None, // VBlank or LCD off: no pipeline to snapshot.
         }
     }
 
