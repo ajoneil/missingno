@@ -103,6 +103,8 @@ struct App {
     listening_for: Option<settings_view::ListeningFor>,
     /// When set, shows a brief "Screenshot saved" toast overlay.
     screenshot_toast: Option<Instant>,
+    /// Screenshot gallery state (when viewing screenshots).
+    gallery_state: Option<library::screenshot_gallery::GalleryState>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +126,7 @@ enum Screen {
     Library,
     Settings,
     Detail,
+    ScreenshotGallery,
     Emulator,
 }
 
@@ -179,6 +182,8 @@ enum Message {
     PlayWithSave(String),
     ExportSave(String),
     ExportSaveSelected(String, Option<rfd::FileHandle>),
+    OpenScreenshotGallery(String), // session filename
+    ScreenshotGallery(library::screenshot_gallery::Message),
     HoverLogEntry(usize),
     UnhoverLogEntry,
     HoverCover,
@@ -254,6 +259,7 @@ impl App {
             was_running_before_settings: false,
             listening_for: None,
             screenshot_toast: None,
+            gallery_state: None,
         };
 
         controls::update_bindings(
@@ -461,6 +467,64 @@ impl App {
                         if let Some(data) = library::activity::load_sram_from(&game_dir, &save_id) {
                             let _ = std::fs::write(handle.path(), data);
                         }
+                    }
+                }
+            }
+            Message::OpenScreenshotGallery(session_filename) => {
+                if let Some(sha1) = &self.viewing_sha1 {
+                    if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        if let Some(state) = library::screenshot_gallery::GalleryState::load(
+                            &game_dir,
+                            &session_filename,
+                        ) {
+                            self.gallery_state = Some(state);
+                            self.screen = Screen::ScreenshotGallery;
+                        }
+                    }
+                }
+            }
+            Message::ScreenshotGallery(msg) => {
+                use library::screenshot_gallery::Message as G;
+                match msg {
+                    G::SelectScreenshot(idx) => {
+                        if let Some(state) = &mut self.gallery_state {
+                            state.select(idx);
+                        }
+                    }
+                    G::SetPalette(pal) => {
+                        if let Some(state) = &mut self.gallery_state {
+                            state.palette = pal;
+                        }
+                    }
+                    G::SetScale(scale) => {
+                        if let Some(state) = &mut self.gallery_state {
+                            state.scale = scale;
+                        }
+                    }
+                    G::Export => {
+                        let dialog = rfd::AsyncFileDialog::new()
+                            .set_file_name("screenshot.png")
+                            .add_filter("PNG Image", &["png"]);
+                        return Task::perform(dialog.save_file(), |handle| {
+                            Message::ScreenshotGallery(G::ExportSelected(handle))
+                        });
+                    }
+                    G::ExportSelected(handle) => {
+                        if let (Some(handle), Some(state)) = (handle, &self.gallery_state) {
+                            let rgba = state.selected_rgba();
+                            let width = 160 * state.scale;
+                            let height = 144 * state.scale;
+                            let scaled = library::screenshot_gallery::scale_nearest_neighbour(
+                                &rgba, 160, 144, state.scale,
+                            );
+                            if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
+                                let _ = img.save(handle.path());
+                            }
+                        }
+                    }
+                    G::Back => {
+                        self.gallery_state = None;
+                        self.screen = Screen::Detail;
                     }
                 }
             }
@@ -957,6 +1021,13 @@ impl App {
                     library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
                 }
                 Screen::Detail => self.detail_view(),
+                Screen::ScreenshotGallery => {
+                    if let Some(state) = &self.gallery_state {
+                        library::screenshot_gallery::view(state)
+                    } else {
+                        self.detail_view() // fallback
+                    }
+                }
                 Screen::Emulator | Screen::Settings => unreachable!(),
             };
 

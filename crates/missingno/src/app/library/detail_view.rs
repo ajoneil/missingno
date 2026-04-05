@@ -358,13 +358,19 @@ fn session_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, a
 
     let mut card = column![header].spacing(s());
 
-    if !entry.screenshots.is_empty() {
+    if !entry.screenshots.is_empty() && !entry.filename.is_empty() {
+        let filename = entry.filename.clone();
         let mut thumb_row = row![].spacing(s());
         for handle in &entry.screenshots {
             thumb_row = thumb_row.push(
-                image(handle.clone())
-                    .width(160)
-                    .height(144),
+                button(
+                    image(handle.clone())
+                        .width(160)
+                        .height(144),
+                )
+                .on_press(app::Message::OpenScreenshotGallery(filename.clone()))
+                .padding(0)
+                .style(|_, _| button::Style::default()),
             );
         }
         card = card.push(thumb_row);

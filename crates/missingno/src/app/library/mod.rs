@@ -3,6 +3,7 @@ pub(crate) mod detail_view;
 pub(crate) mod game_db;
 pub(crate) mod hasheous;
 pub(crate) mod scanner;
+pub(crate) mod screenshot_gallery;
 pub(crate) mod view;
 
 use std::{

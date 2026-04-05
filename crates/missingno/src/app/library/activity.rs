@@ -175,21 +175,21 @@ impl FrameCapture {
     /// Render to RGBA using the display mode that was active at capture time.
     pub fn to_rgba(&self) -> Vec<u8> {
         match &self.display_mode {
-            DisplayMode::Palette(name) => self.to_rgba_with_palette(name),
+            DisplayMode::Palette(name) => {
+                let choice = parse_palette_choice(name);
+                self.to_rgba_with_palette_choice(choice)
+            }
             DisplayMode::Sgb => self.to_rgba_sgb(),
         }
     }
 
-    /// Render with a specific DMG palette by name.
-    fn to_rgba_with_palette(&self, palette_name: &str) -> Vec<u8> {
-        use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
+    /// Render with a specific DMG palette.
+    pub fn to_rgba_with_palette_choice(
+        &self,
+        choice: missingno_gb::ppu::types::palette::PaletteChoice,
+    ) -> Vec<u8> {
+        use missingno_gb::ppu::types::palette::PaletteIndex;
 
-        let choice = match palette_name {
-            "Green" => PaletteChoice::Green,
-            "Pocket" => PaletteChoice::Pocket,
-            "Classic" => PaletteChoice::Classic,
-            _ => PaletteChoice::default(),
-        };
         let palette = choice.palette();
 
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
@@ -203,6 +203,15 @@ impl FrameCapture {
         rgba
     }
 
+    /// Render using SGB palette + attribute map data, falling back to DMG green if no SGB data.
+    pub fn to_rgba_sgb_or_fallback(&self) -> Vec<u8> {
+        if self.sgb.is_some() {
+            self.to_rgba_sgb()
+        } else {
+            self.to_rgba_with_palette_choice(missingno_gb::ppu::types::palette::PaletteChoice::Green)
+        }
+    }
+
     /// Render using SGB palette + attribute map data.
     fn to_rgba_sgb(&self) -> Vec<u8> {
         use missingno_gb::ppu::screen::{PIXELS_PER_LINE};
@@ -210,7 +219,7 @@ impl FrameCapture {
 
         let sgb = match &self.sgb {
             Some(s) => s,
-            None => return self.to_rgba_with_palette("Green"), // fallback
+            None => return self.to_rgba_with_palette_choice(missingno_gb::ppu::types::palette::PaletteChoice::Green), // fallback
         };
 
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
@@ -230,6 +239,19 @@ impl FrameCapture {
         rgba
     }
 
+}
+
+fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::PaletteChoice {
+    use missingno_gb::ppu::types::palette::PaletteChoice;
+    match name {
+        "Green" => PaletteChoice::Green,
+        "Pocket" => PaletteChoice::Pocket,
+        "Classic" => PaletteChoice::Classic,
+        _ => PaletteChoice::default(),
+    }
+}
+
+impl FrameCapture {
     /// Create an iced image handle rendered with the capture-time display mode.
     pub fn to_image_handle(&self) -> iced::widget::image::Handle {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
@@ -411,6 +433,12 @@ pub fn load_sram_from(game_dir: &Path, filename: &str) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// Load and deserialize a session file (with legacy migration).
+pub fn read_session_file(game_dir: &Path, filename: &str) -> Option<SessionFile> {
+    let data = read_compressed(&activity_path(game_dir, filename))?;
+    read_session_from_str(&data)
 }
 
 /// Load the most recent SRAM across all activity files.

@@ -105,6 +105,24 @@ impl ActionBar {
                 r = r.push(self.settings(app));
                 r
             }
+            app::Screen::ScreenshotGallery => {
+                row![
+                    container(
+                        row![
+                            buttons::subtle(icons::m(Icon::Back))
+                                .on_press(app::Message::ScreenshotGallery(
+                                    crate::app::library::screenshot_gallery::Message::Back,
+                                )),
+                            app_text::heading(title).wrapping(iced::widget::text::Wrapping::None),
+                        ]
+                        .spacing(s())
+                        .align_y(Center)
+                    )
+                    .clip(true)
+                    .width(Fill),
+                    self.settings(app),
+                ]
+            }
             app::Screen::Emulator => {
                 let is_debugger = matches!(app.game, Game::Loaded(LoadedGame::Debugger(_)));
                 let back_action = if is_debugger {
