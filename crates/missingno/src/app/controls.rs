@@ -8,18 +8,18 @@ use iced::{
 };
 
 use crate::app;
-use crate::app::settings::{GbButton, KeyBindings};
+use crate::app::settings::{Action, Bindings};
 use missingno_gb::joypad;
 
 /// Current keyboard bindings, updated from settings.
-static KEYBOARD_BINDINGS: Mutex<KeyBindings> = Mutex::new(KeyBindings::DEFAULT_KEYBOARD);
+static KEYBOARD_BINDINGS: Mutex<Option<Bindings>> = Mutex::new(None);
 /// Current gamepad bindings, updated from settings.
-static GAMEPAD_BINDINGS: Mutex<KeyBindings> = Mutex::new(KeyBindings::DEFAULT_GAMEPAD);
+static GAMEPAD_BINDINGS: Mutex<Option<Bindings>> = Mutex::new(None);
 
 /// Call when settings change to update the bindings used by event handlers.
-pub fn update_bindings(keyboard: &KeyBindings, gamepad: &KeyBindings) {
-    *KEYBOARD_BINDINGS.lock().unwrap() = keyboard.clone();
-    *GAMEPAD_BINDINGS.lock().unwrap() = gamepad.clone();
+pub fn update_bindings(keyboard: &Bindings, gamepad: &Bindings) {
+    *KEYBOARD_BINDINGS.lock().unwrap() = Some(keyboard.clone());
+    *GAMEPAD_BINDINGS.lock().unwrap() = Some(gamepad.clone());
 }
 
 pub fn event_handler(
@@ -27,26 +27,79 @@ pub fn event_handler(
     _status: event::Status,
     _window: iced::window::Id,
 ) -> Option<app::Message> {
-    let bindings = KEYBOARD_BINDINGS.lock().unwrap();
+    let guard = KEYBOARD_BINDINGS.lock().unwrap();
+    let bindings = guard.as_ref()?;
     match event {
         Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-            map_key(&key, &bindings).map(app::Message::PressButton)
+            let key_str = key_to_string(&key)?;
+            let action = bindings.find_action(&key_str)?;
+            Some(action_to_press_message(action))
         }
         Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
-            map_key(&key, &bindings).map(app::Message::ReleaseButton)
+            let key_str = key_to_string(&key)?;
+            let action = bindings.find_action(&key_str)?;
+            // Only game buttons produce release messages
+            if action.is_game_button() {
+                Some(app::Message::ReleaseButton(action_to_joypad(action)?))
+            } else {
+                None
+            }
         }
         _ => None,
     }
 }
 
-fn map_key(key: &Key, bindings: &KeyBindings) -> Option<joypad::Button> {
-    let key_str = key_to_string(key)?;
-    for gb_button in GbButton::ALL {
-        if bindings.get(gb_button) == key_str {
-            return Some(gb_button_to_joypad(gb_button));
+/// Convert an action press into the appropriate app message.
+fn action_to_press_message(action: Action) -> app::Message {
+    match action {
+        // Game buttons → PressButton
+        action if action.is_game_button() => {
+            // unwrap is safe: we just checked is_game_button
+            app::Message::PressButton(action_to_joypad(action).unwrap())
         }
+        // Emulator actions → dedicated messages
+        Action::Screenshot => app::Message::TakeScreenshot,
+        Action::ToggleFullscreen => app::Message::ToggleFullscreen,
+        Action::Pause => app::Message::TogglePause,
+        _ => unreachable!(),
     }
-    None
+}
+
+/// Map a game button action to a joypad button. Returns None for non-game actions.
+fn action_to_joypad(action: Action) -> Option<joypad::Button> {
+    match action {
+        Action::GbA => Some(joypad::Button::A),
+        Action::GbB => Some(joypad::Button::B),
+        Action::GbStart => Some(joypad::Button::Start),
+        Action::GbSelect => Some(joypad::Button::Select),
+        Action::GbUp => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Up)),
+        Action::GbDown => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Down)),
+        Action::GbLeft => Some(joypad::Button::DirectionalPad(joypad::DirectionalPad::Left)),
+        Action::GbRight => Some(joypad::Button::DirectionalPad(
+            joypad::DirectionalPad::Right,
+        )),
+        _ => None,
+    }
+}
+
+/// During gamepad capture, only listen for Escape on the keyboard to cancel.
+pub fn escape_cancel_handler(
+    event: Event,
+    _status: event::Status,
+    _window: iced::window::Id,
+) -> Option<app::Message> {
+    match event {
+        Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+            if key == Key::Named(key::Named::Escape) {
+                Some(app::Message::Settings(
+                    super::settings_view::Message::CancelCapture,
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 pub fn capture_event_handler(
@@ -59,6 +112,12 @@ pub fn capture_event_handler(
             if key == Key::Named(key::Named::Escape) {
                 Some(app::Message::Settings(
                     super::settings_view::Message::CancelCapture,
+                ))
+            } else if key == Key::Named(key::Named::Backspace)
+                || key == Key::Named(key::Named::Delete)
+            {
+                Some(app::Message::Settings(
+                    super::settings_view::Message::ClearBinding,
                 ))
             } else if let Some(key_str) = key_to_string(&key) {
                 Some(app::Message::Settings(
@@ -86,16 +145,28 @@ pub fn gamepad_subscription() -> Subscription<app::Message> {
 
             loop {
                 while let Some(gilrs::Event { event, .. }) = gilrs.next_event() {
-                    let bindings = GAMEPAD_BINDINGS.lock().unwrap().clone();
+                    let guard = GAMEPAD_BINDINGS.lock().unwrap();
+                    let Some(bindings) = guard.as_ref() else {
+                        continue;
+                    };
                     match event {
                         gilrs::EventType::ButtonPressed(button, ..) => {
-                            if let Some(btn) = map_gamepad_button(button, &bindings) {
-                                let _ = sender.try_send(app::Message::PressButton(btn));
+                            if let Some(button_str) = gamepad_button_to_string(button) {
+                                if let Some(action) = bindings.find_action(&button_str) {
+                                    let _ = sender.try_send(action_to_press_message(action));
+                                }
                             }
                         }
                         gilrs::EventType::ButtonReleased(button, ..) => {
-                            if let Some(btn) = map_gamepad_button(button, &bindings) {
-                                let _ = sender.try_send(app::Message::ReleaseButton(btn));
+                            if let Some(button_str) = gamepad_button_to_string(button) {
+                                if let Some(action) = bindings.find_action(&button_str) {
+                                    if action.is_game_button() {
+                                        if let Some(btn) = action_to_joypad(action) {
+                                            let _ =
+                                                sender.try_send(app::Message::ReleaseButton(btn));
+                                        }
+                                    }
+                                }
                             }
                         }
                         gilrs::EventType::AxisChanged(axis, value, ..) => match axis {
@@ -190,29 +261,6 @@ fn gamepad_capture_stream() -> impl iced::futures::Stream<Item = app::Message> {
     })
 }
 
-fn map_gamepad_button(button: gilrs::Button, bindings: &KeyBindings) -> Option<joypad::Button> {
-    let button_str = gamepad_button_to_string(button)?;
-    for gb_button in GbButton::ALL {
-        if bindings.get(gb_button) == button_str {
-            return Some(gb_button_to_joypad(gb_button));
-        }
-    }
-    None
-}
-
-fn gb_button_to_joypad(gb: GbButton) -> joypad::Button {
-    match gb {
-        GbButton::A => joypad::Button::A,
-        GbButton::B => joypad::Button::B,
-        GbButton::Start => joypad::Button::Start,
-        GbButton::Select => joypad::Button::Select,
-        GbButton::Up => joypad::Button::DirectionalPad(joypad::DirectionalPad::Up),
-        GbButton::Down => joypad::Button::DirectionalPad(joypad::DirectionalPad::Down),
-        GbButton::Left => joypad::Button::DirectionalPad(joypad::DirectionalPad::Left),
-        GbButton::Right => joypad::Button::DirectionalPad(joypad::DirectionalPad::Right),
-    }
-}
-
 /// Convert an iced keyboard Key to a stable string for storage/comparison.
 pub fn key_to_string(key: &Key) -> Option<String> {
     match key.as_ref() {
@@ -236,6 +284,8 @@ pub fn display_key_name(s: &str) -> &str {
         "Backspace" => "Backspace",
         "Control" => "Ctrl",
         "Alt" => "Alt",
+        "F11" => "F11",
+        "F12" => "F12",
         other => other,
     }
 }

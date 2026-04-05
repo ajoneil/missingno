@@ -16,7 +16,7 @@ use crate::app::{
         sizes::{l, m, s},
         text as app_text,
     },
-    settings::{GbButton, KeyBindings},
+    settings::{Action, Bindings, EMULATOR_ACTIONS, GB_ACTIONS},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -30,8 +30,8 @@ pub enum Section {
 /// What binding slot we're waiting for input on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListeningFor {
-    Keyboard(GbButton),
-    Gamepad(GbButton),
+    Keyboard(Action),
+    Gamepad(Action),
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +45,7 @@ pub enum Message {
     SetUseSgbColors(bool),
     StartListening(ListeningFor),
     CaptureBinding(String),
+    ClearBinding,
     CancelCapture,
     ResetBindings,
     Back,
@@ -143,7 +144,7 @@ fn controls_section(
         "Keyboard",
         &settings.keyboard_bindings,
         listening_for,
-        |gb| ListeningFor::Keyboard(gb),
+        |action| ListeningFor::Keyboard(action),
         |s| controls::display_key_name(s).to_string(),
     );
 
@@ -151,7 +152,7 @@ fn controls_section(
         "Controller",
         &settings.gamepad_bindings,
         listening_for,
-        |gb| ListeningFor::Gamepad(gb),
+        |action| ListeningFor::Gamepad(action),
         |s| controls::display_gamepad_name(s).to_string(),
     );
 
@@ -170,32 +171,76 @@ fn controls_section(
 
 fn binding_column<'a>(
     title: &'a str,
-    bindings: &KeyBindings,
+    bindings: &Bindings,
     listening_for: Option<ListeningFor>,
-    make_target: impl Fn(GbButton) -> ListeningFor,
+    make_target: impl Fn(Action) -> ListeningFor,
     display_name: impl Fn(&str) -> String,
 ) -> Element<'a, app::Message> {
     let mut col = column![app_text::label(title)].spacing(s());
 
-    for gb_button in GbButton::ALL {
-        let target = make_target(gb_button);
-        let is_listening = listening_for == Some(target);
+    // Game Boy buttons
+    col = col.push(section_header("Game Boy"));
+    for &action in &GB_ACTIONS {
+        col = col.push(binding_row(
+            action,
+            bindings,
+            listening_for,
+            &make_target,
+            &display_name,
+        ));
+    }
 
-        let label = text(format!("{gb_button}")).width(80);
-
-        let binding_btn = if is_listening {
-            buttons::primary(text("Press a key...").color(iced::Color::WHITE)).width(150)
-        } else {
-            let display = display_name(bindings.get(gb_button));
-            buttons::standard(text(display))
-                .on_press(Message::StartListening(target).into())
-                .width(150)
-        };
-
-        col = col.push(row![label, binding_btn].spacing(s()).align_y(Center));
+    // Emulator actions
+    col = col.push(section_header("Emulator"));
+    for &action in &EMULATOR_ACTIONS {
+        col = col.push(binding_row(
+            action,
+            bindings,
+            listening_for,
+            &make_target,
+            &display_name,
+        ));
     }
 
     col.into()
+}
+
+fn section_header(label: &'static str) -> Element<'static, app::Message> {
+    column![
+        iced::widget::Space::new().height(s()),
+        app_text::label(label),
+    ]
+    .into()
+}
+
+fn binding_row(
+    action: Action,
+    bindings: &Bindings,
+    listening_for: Option<ListeningFor>,
+    make_target: &impl Fn(Action) -> ListeningFor,
+    display_name: &impl Fn(&str) -> String,
+) -> Element<'static, app::Message> {
+    let target = make_target(action);
+    let is_listening = listening_for == Some(target);
+
+    let label = text(format!("{action}")).width(120);
+
+    let binding_btn = if is_listening {
+        buttons::primary(text("Press key…").color(iced::Color::WHITE)).width(150)
+    } else {
+        let display = bindings
+            .get(action)
+            .map(|s| display_name(s))
+            .unwrap_or_else(|| "—".to_string());
+        buttons::standard(text(display))
+            .on_press(Message::StartListening(target).into())
+            .width(150)
+    };
+
+    row![label, binding_btn]
+        .spacing(s())
+        .align_y(Center)
+        .into()
 }
 
 fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {

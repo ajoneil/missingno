@@ -187,8 +187,10 @@ enum Message {
     // Emulation
     Run,
     Pause,
+    TogglePause,
     Reset,
     SaveBattery,
+    TakeScreenshot,
 
     PressButton(joypad::Button),
     ReleaseButton(joypad::Button),
@@ -517,6 +519,16 @@ impl App {
             }
             Message::Run => self.run(),
             Message::Pause => self.pause(),
+            Message::TogglePause => {
+                if self.running() {
+                    self.pause();
+                } else {
+                    self.run();
+                }
+            }
+            Message::TakeScreenshot => {
+                // TODO: implement screenshot capture
+            }
             Message::Reset => {
                 self.pending_action = Some(PendingAction::ResetEmulator);
             }
@@ -685,11 +697,28 @@ impl App {
                 settings_view::Message::CaptureBinding(key_str) => {
                     if let Some(target) = self.listening_for.take() {
                         match target {
-                            settings_view::ListeningFor::Keyboard(gb) => {
-                                self.settings.keyboard_bindings.set(gb, key_str);
+                            settings_view::ListeningFor::Keyboard(action) => {
+                                self.settings.keyboard_bindings.set(action, key_str);
                             }
-                            settings_view::ListeningFor::Gamepad(gb) => {
-                                self.settings.gamepad_bindings.set(gb, key_str);
+                            settings_view::ListeningFor::Gamepad(action) => {
+                                self.settings.gamepad_bindings.set(action, key_str);
+                            }
+                        }
+                        self.settings.save();
+                        controls::update_bindings(
+                            &self.settings.keyboard_bindings,
+                            &self.settings.gamepad_bindings,
+                        );
+                    }
+                }
+                settings_view::Message::ClearBinding => {
+                    if let Some(target) = self.listening_for.take() {
+                        match target {
+                            settings_view::ListeningFor::Keyboard(action) => {
+                                self.settings.keyboard_bindings.0.remove(&action);
+                            }
+                            settings_view::ListeningFor::Gamepad(action) => {
+                                self.settings.gamepad_bindings.0.remove(&action);
                             }
                         }
                         self.settings.save();
@@ -703,8 +732,8 @@ impl App {
                     self.listening_for = None;
                 }
                 settings_view::Message::ResetBindings => {
-                    self.settings.keyboard_bindings = settings::KeyBindings::default_keyboard();
-                    self.settings.gamepad_bindings = settings::KeyBindings::default_gamepad();
+                    self.settings.keyboard_bindings = settings::Bindings::default_keyboard();
+                    self.settings.gamepad_bindings = settings::Bindings::default_gamepad();
                     self.settings.save();
                     self.listening_for = None;
                     controls::update_bindings(
@@ -1222,7 +1251,7 @@ impl App {
             if listening_keyboard {
                 event::listen_with(controls::capture_event_handler)
             } else if listening_gamepad {
-                Subscription::none()
+                event::listen_with(controls::escape_cancel_handler)
             } else if self.running() {
                 event::listen_with(controls::event_handler)
             } else {
@@ -1245,10 +1274,7 @@ impl App {
                     Some(Message::WindowResized(size))
                 }
                 iced::Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested),
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F11),
-                    ..
-                }) => Some(Message::ToggleFullscreen),
+                // Escape always exits fullscreen (not rebindable — it's an escape hatch)
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                     ..
