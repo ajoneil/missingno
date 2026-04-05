@@ -230,7 +230,16 @@ fn activity_log(
                 end: live.end,
                 save_count: live.save_count(),
                 last_save_time: live.last_save_time(),
-                screenshot_count: live.screenshot_count(),
+                screenshots: live
+                    .events
+                    .iter()
+                    .filter_map(|e| match &e.kind {
+                        activity::EventKind::Screenshot { frame } => {
+                            Some(frame.to_image_handle())
+                        }
+                        _ => None,
+                    })
+                    .collect(),
                 size_bytes: None,
             },
             false,
@@ -347,7 +356,21 @@ fn session_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, a
         }
     }
 
-    container(column![header])
+    let mut card = column![header].spacing(s());
+
+    if !entry.screenshots.is_empty() {
+        let mut thumb_row = row![].spacing(s());
+        for handle in &entry.screenshots {
+            thumb_row = thumb_row.push(
+                image(handle.clone())
+                    .width(160)
+                    .height(144),
+            );
+        }
+        card = card.push(thumb_row);
+    }
+
+    container(card)
         .width(Fill)
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();

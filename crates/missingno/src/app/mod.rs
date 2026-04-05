@@ -532,21 +532,26 @@ impl App {
                 }
             }
             Message::TakeScreenshot => {
-                // Grab the current framebuffer from whichever game mode is active
-                let screen = match &self.game {
+                // Grab the current framebuffer and SGB state from whichever game mode is active
+                let capture_data = match &self.game {
                     Game::Loaded(LoadedGame::Emulator(emu)) => {
-                        Some(emu.game_boy().screen().clone())
+                        let gb = emu.game_boy();
+                        let sgb_data = gb.sgb().map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
+                        Some((gb.screen().clone(), sgb_data))
                     }
                     Game::Loaded(LoadedGame::Debugger(dbg)) => {
-                        Some(dbg.game_boy().screen().clone())
+                        let gb = dbg.game_boy();
+                        let sgb_data = gb.sgb().map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
+                        Some((gb.screen().clone(), sgb_data))
                     }
                     _ => None,
                 };
-                if let Some(screen) = screen {
-                    let palette_name = self.settings.palette.to_string();
-                    let capture = library::activity::FrameCapture::from_framebuffer(
+                if let Some((screen, sgb_render_data)) = capture_data {
+                    let capture = library::activity::FrameCapture::capture(
                         screen.front(),
-                        &palette_name,
+                        sgb_render_data.as_ref(),
+                        self.settings.use_sgb_colors,
+                        &self.settings.palette.to_string(),
                     );
                     if let Some(current) = &mut self.current_game {
                         if let Some(session) = &mut current.session {

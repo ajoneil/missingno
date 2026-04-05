@@ -78,13 +78,6 @@ impl SessionFile {
         })
     }
 
-    /// Helper: count of screenshot events.
-    pub fn screenshot_count(&self) -> usize {
-        self.events
-            .iter()
-            .filter(|e| matches!(e.kind, EventKind::Screenshot { .. }))
-            .count()
-    }
 }
 
 /// A timestamped event that occurred during a session.
@@ -108,13 +101,51 @@ pub enum EventKind {
 pub struct FrameCapture {
     /// 160×144 shade values (0-3), flattened row-major from Framebuffer.
     pub pixels: Vec<u8>,
-    /// Which display palette the user had active at capture time.
-    pub user_palette: String,
+    /// SGB palette and attribute map data, if the game has SGB support.
+    /// Always captured regardless of whether SGB colours were active.
+    pub sgb: Option<SgbCapture>,
+    /// What was actually displayed at capture time.
+    pub display_mode: DisplayMode,
+}
+
+/// How the screenshot was displayed at capture time.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum DisplayMode {
+    /// DMG palette (user's chosen palette).
+    Palette(String),
+    /// SGB colours were active.
+    Sgb,
+}
+
+/// Serializable snapshot of SGB palette/attribute state.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SgbCapture {
+    /// 4 palettes × 4 colours, stored as RGB555 u16 values.
+    pub palettes: [[u16; 4]; 4],
+    /// 20×18 attribute map (palette index per 8×8 cell).
+    pub attribute_map: [[u8; 20]; 18],
+}
+
+impl SgbCapture {
+    pub fn from_render_data(data: &missingno_gb::sgb::SgbRenderData) -> Self {
+        let mut palettes = [[0u16; 4]; 4];
+        for (i, pal) in data.palettes.iter().enumerate() {
+            for (j, color) in pal.colors.iter().enumerate() {
+                palettes[i][j] = color.0;
+            }
+        }
+        Self {
+            palettes,
+            attribute_map: data.attribute_map.cells,
+        }
+    }
 }
 
 impl FrameCapture {
-    pub fn from_framebuffer(
+    pub fn capture(
         fb: &missingno_gb::ppu::screen::Framebuffer,
+        sgb_render_data: Option<&missingno_gb::sgb::SgbRenderData>,
+        use_sgb_colors: bool,
         palette_name: &str,
     ) -> Self {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
@@ -126,10 +157,89 @@ impl FrameCapture {
                 pixels.push(fb.pixels[y][x].0);
             }
         }
+
+        let sgb = sgb_render_data.map(SgbCapture::from_render_data);
+        let display_mode = if use_sgb_colors && sgb.is_some() {
+            DisplayMode::Sgb
+        } else {
+            DisplayMode::Palette(palette_name.to_string())
+        };
+
         Self {
             pixels,
-            user_palette: palette_name.to_string(),
+            sgb,
+            display_mode,
         }
+    }
+
+    /// Render to RGBA using the display mode that was active at capture time.
+    pub fn to_rgba(&self) -> Vec<u8> {
+        match &self.display_mode {
+            DisplayMode::Palette(name) => self.to_rgba_with_palette(name),
+            DisplayMode::Sgb => self.to_rgba_sgb(),
+        }
+    }
+
+    /// Render with a specific DMG palette by name.
+    fn to_rgba_with_palette(&self, palette_name: &str) -> Vec<u8> {
+        use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
+
+        let choice = match palette_name {
+            "Green" => PaletteChoice::Green,
+            "Pocket" => PaletteChoice::Pocket,
+            "Classic" => PaletteChoice::Classic,
+            _ => PaletteChoice::default(),
+        };
+        let palette = choice.palette();
+
+        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
+        for &shade in &self.pixels {
+            let color = palette.color(PaletteIndex(shade));
+            rgba.push(color.r);
+            rgba.push(color.g);
+            rgba.push(color.b);
+            rgba.push(255);
+        }
+        rgba
+    }
+
+    /// Render using SGB palette + attribute map data.
+    fn to_rgba_sgb(&self) -> Vec<u8> {
+        use missingno_gb::ppu::screen::{PIXELS_PER_LINE};
+        use missingno_gb::sgb::Rgb555;
+
+        let sgb = match &self.sgb {
+            Some(s) => s,
+            None => return self.to_rgba_with_palette("Green"), // fallback
+        };
+
+        let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
+        for (i, &shade) in self.pixels.iter().enumerate() {
+            let x = i % PIXELS_PER_LINE as usize;
+            let y = i / PIXELS_PER_LINE as usize;
+            let cell_x = x / 8;
+            let cell_y = y / 8;
+            let pal_id = sgb.attribute_map[cell_y][cell_x] as usize;
+            let color_raw = sgb.palettes[pal_id][shade as usize];
+            let color = Rgb555(color_raw).to_rgb8();
+            rgba.push(color.r);
+            rgba.push(color.g);
+            rgba.push(color.b);
+            rgba.push(255);
+        }
+        rgba
+    }
+
+    /// Create an iced image handle rendered with the capture-time display mode.
+    pub fn to_image_handle(&self) -> iced::widget::image::Handle {
+        use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+
+        let rgba = self.to_rgba();
+        iced::widget::image::Handle::from_rgba(
+            PIXELS_PER_LINE as u32,
+            NUM_SCANLINES as u32,
+            rgba,
+        )
     }
 }
 
@@ -171,7 +281,7 @@ pub struct ActivityDisplay {
     pub end: Option<Timestamp>,
     pub save_count: usize,
     pub last_save_time: Option<Timestamp>,
-    pub screenshot_count: usize,
+    pub screenshots: Vec<iced::widget::image::Handle>,
     // Import fields
     pub size_bytes: Option<u32>,
 }
@@ -239,6 +349,14 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
                 ActivityKind::Session => {
                     let session = read_session_from_str(&data)?;
                     let timestamp = session.start;
+                    let screenshots = session
+                        .events
+                        .iter()
+                        .filter_map(|e| match &e.kind {
+                            EventKind::Screenshot { frame } => Some(frame.to_image_handle()),
+                            _ => None,
+                        })
+                        .collect();
                     Some(ActivityDisplay {
                         filename: r.filename,
                         kind: ActivityKind::Session,
@@ -246,7 +364,7 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
                         end: session.end,
                         save_count: session.save_count(),
                         last_save_time: session.last_save_time(),
-                        screenshot_count: session.screenshot_count(),
+                        screenshots,
                         size_bytes: None,
                     })
                 }
@@ -262,7 +380,7 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
                         end: None,
                         save_count: 0,
                         last_save_time: None,
-                        screenshot_count: 0,
+                        screenshots: Vec::new(),
                         size_bytes: Some(import.size_bytes),
                     })
                 }
