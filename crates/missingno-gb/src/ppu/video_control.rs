@@ -41,9 +41,9 @@ pub struct VideoControl {
     pub lyc: u8,
 
     /// Pending LY==LYC comparison result (PALY combinational comparator).
-    /// Computed each M-cycle, promoted to `ly_comparison_latched` on the
-    /// next TALU rising edge by the ROPO DFF. Models the `_old` input
-    /// to ROPO — ROPO always samples the previous cycle's comparison.
+    /// Recomputed at TALU falling (via `update_ly_comparison()`) and
+    /// at TALU rising (inside `latch_ly_comparison()`, after MYTA may
+    /// have changed `ly()`).
     pub ly_comparison_pending: bool,
 
     /// Latched LY==LYC result (ROPO DFF output). This is what STAT
@@ -81,6 +81,14 @@ pub struct VideoControl {
     /// LY==153, causing `ly()` to return 0 (LAMA async-resets all LY
     /// DFFs). Cleared when the internal counter wraps 153→0 at RUTU.
     pub frame_end_reset: bool,
+
+    /// MYTA comparison delay. Set when MYTA fires (frame_end_reset
+    /// transitions 0→1). Models the propagation delay through the
+    /// MYTA → LAMA → LY DFF async-reset → PALY comparator chain:
+    /// ROPO doesn't see MYTA's effect until one TALU cycle later.
+    /// Suppresses the `latch_ly_comparison()` recompute and the
+    /// following `update_ly_comparison()` call, then is consumed.
+    pub myta_comparison_delay: bool,
 
     /// VBlank latch (POPU DFF). Clocked by NYPE rising edge, captures
     /// whether LY >= 144 from the previous cycle. When high, the PPU
@@ -123,16 +131,29 @@ impl VideoControl {
     }
 
     /// ROPO DFF latch: promote the pending comparison to the STAT-visible
-    /// output, then recompute the pending value for next cycle.
+    /// output, then recompute the pending value for next cycle. When
+    /// `myta_comparison_delay` is active, the recompute is suppressed
+    /// so the previous cycle's comparison persists — modeling hardware's
+    /// propagation delay through MYTA → LAMA → PALY.
     pub fn latch_ly_comparison(&mut self) {
         self.ly_comparison_latched = self.ly_comparison_pending;
-        self.ly_comparison_pending = self.ly() == self.lyc;
+        if !self.myta_comparison_delay {
+            self.ly_comparison_pending = self.ly() == self.lyc;
+        }
     }
 
     /// PALY combinational comparator: recompute the pending LY==LYC
     /// result. Call after any LY modification (RUTU increment, MYTA
     /// reset) so the next ROPO latch sees the updated value.
+    ///
+    /// When `myta_comparison_delay` is active, the update is skipped
+    /// and the flag is consumed, deferring the MYTA effect by one
+    /// TALU cycle.
     pub fn update_ly_comparison(&mut self) {
+        if self.myta_comparison_delay {
+            self.myta_comparison_delay = false;
+            return;
+        }
         self.ly_comparison_pending = self.ly() == self.lyc;
     }
 
@@ -191,6 +212,7 @@ impl VideoControl {
             // MYTA DFF: latch frame-end (LY == 153). Makes ly() return 0.
             if self.ly == 153 {
                 self.frame_end_reset = true;
+                self.myta_comparison_delay = true;
             }
         }
 

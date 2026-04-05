@@ -115,6 +115,7 @@ impl Ppu {
                 line_end_detected: false,
                 line_end_active: false,
                 frame_end_reset: true,
+                myta_comparison_delay: false,
                 vblank: true,
             },
             oam: Oam::default(),
@@ -157,6 +158,7 @@ impl Ppu {
                 line_end_detected: false,
                 line_end_active: false,
                 frame_end_reset: false,
+                myta_comparison_delay: false,
                 vblank: false,
             },
             oam: Oam::default(),
@@ -268,6 +270,7 @@ impl Ppu {
         self.video.line_end_active = false;
         self.video.line_end_detected = false;
         self.video.frame_end_reset = false;
+        self.video.myta_comparison_delay = false;
         self.video.vblank = false;
         self.video.ly_comparison_latched = false;
         self.video.update_ly_comparison();
@@ -656,6 +659,7 @@ impl Ppu {
             line_end_detected: false,
             line_end_active: false,
             frame_end_reset: false,
+            myta_comparison_delay: false,
             vblank: snap.ly >= 144,
         };
 
