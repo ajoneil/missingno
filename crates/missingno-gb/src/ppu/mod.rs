@@ -117,7 +117,7 @@ impl Ppu {
                 frame_end_reset: true,
                 myta_comparison_delay: false,
                 vblank: true,
-                popu_holdover: 0,
+                popu_holdover: false,
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -161,7 +161,7 @@ impl Ppu {
                 frame_end_reset: false,
                 myta_comparison_delay: false,
                 vblank: false,
-                popu_holdover: 0,
+                popu_holdover: false,
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
@@ -262,18 +262,7 @@ impl Ppu {
     /// WUVU 1→0 (phase C), triggering the first TALU rise and LX
     /// increment. This gives LX=0 the correct 3-half-phase duration.
     fn initialize_lcd_on(&mut self) {
-        self.video.dot_position = 0;
-        self.video.dot_divider = false;
-        self.video.mcycle_divider = false;
-        self.video.write_ly(0);
-        self.video.delayed_line_end = false;
-        self.video.line_end_pending = false;
-        self.video.line_end_active = false;
-        self.video.line_end_detected = false;
-        self.video.frame_end_reset = false;
-        self.video.myta_comparison_delay = false;
-        self.video.vblank = false;
-        self.video.popu_holdover = 0;
+        self.video.vid_rst();
         // ly_comparison_latched (ROPO) is NOT reset by VID_RST — the DFF
         // retains its last value. Only the comparison clock stops/restarts.
         // The combinational comparator (PALY) settles immediately to the
@@ -617,18 +606,7 @@ impl Ppu {
             // VID_RST: async-reset all counters while LCD is off.
             // Hardware holds these at 0 continuously; we reset on each
             // M-cycle to match.
-            self.video.ly = 0;
-            self.video.dot_position = 0;
-            self.video.dot_divider = false;
-            self.video.mcycle_divider = false;
-            self.video.vblank = false;
-            self.video.popu_holdover = 0;
-            self.video.delayed_line_end = false;
-            self.video.line_end_pending = false;
-            self.video.line_end_active = false;
-            self.video.line_end_detected = false;
-            self.video.frame_end_reset = false;
-            self.video.myta_comparison_delay = false;
+            self.video.vid_rst();
 
             // ly_comparison_latched is intentionally NOT updated — comparison clock
             // stops when the PPU is off, freezing the last result.
@@ -729,7 +707,7 @@ impl Ppu {
             frame_end_reset: false,
             myta_comparison_delay: false,
             vblank: snap.ly >= 144,
-            popu_holdover: 0,
+            popu_holdover: false,
         };
 
         let registers = PipelineRegisters {

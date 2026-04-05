@@ -99,10 +99,28 @@ pub struct VideoControl {
     /// at the 153→0 frame boundary: POPU stays high for 1 extra dot after
     /// the internal vblank flag clears, extending the STAT-visible mode 1
     /// window. Does NOT affect memory lock gates or VBlank IF request.
-    pub popu_holdover: u8,
+    pub popu_holdover: bool,
 }
 
 impl VideoControl {
+    /// VID_RST: reset all video timing and control fields to their
+    /// power-on state. Used when the LCD is turned off (VID_RST asserted)
+    /// and when LCD turns on (VID_RST released after initialization).
+    pub fn vid_rst(&mut self) {
+        self.ly = 0;
+        self.dot_position = 0;
+        self.dot_divider = false;
+        self.mcycle_divider = false;
+        self.vblank = false;
+        self.popu_holdover = false;
+        self.delayed_line_end = false;
+        self.line_end_pending = false;
+        self.line_end_active = false;
+        self.line_end_detected = false;
+        self.frame_end_reset = false;
+        self.myta_comparison_delay = false;
+    }
+
     /// TALU signal: buffered VENA.qp (4-dot M-cycle clock).
     /// Rising edge clocks LX, ROPO, and NYPE.
     pub fn talu(&self) -> bool {
@@ -175,7 +193,7 @@ impl VideoControl {
     /// flag clears at the 153→0 boundary, modeling the NYPE→POPU DFF
     /// propagation delay. NOT used for memory lock gates or VBlank IF.
     pub fn popu_active(&self) -> bool {
-        self.vblank || self.popu_holdover > 0
+        self.vblank || self.popu_holdover
     }
 
     // ── Clock divider ticks ──────────────────────────────────
@@ -183,9 +201,7 @@ impl VideoControl {
     /// XOTA rising edge: toggle the 2-dot divider (WUVU). Called every dot.
     pub fn tick_dot(&mut self) {
         self.dot_divider = !self.dot_divider;
-        if self.popu_holdover > 0 {
-            self.popu_holdover -= 1;
-        }
+        self.popu_holdover = false;
     }
 
     /// Whether the 2-dot divider (WUVU) just fell. Check after `tick_dot()`
@@ -249,7 +265,7 @@ impl VideoControl {
             if self.ly >= 153 {
                 self.ly = 0;
                 self.frame_end_reset = false;
-                self.popu_holdover = 1;
+                self.popu_holdover = true;
                 self.vblank = false;
             } else {
                 self.ly += 1;

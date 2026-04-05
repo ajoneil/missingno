@@ -382,13 +382,13 @@ impl Rendering {
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
-        // Hardware: OAM writes blocked by ACYL (BESU-driven) or XYMU (rendering).
-        self.scan.besu() || self.hblank.xymu()
+        // On DMG, reads and writes are gated identically.
+        self.oam_locked()
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
-        // Hardware: XYMU gates reads and writes identically via XANE/SERE/SOHY.
-        self.hblank.xymu()
+        // On DMG, reads and writes are gated identically.
+        self.vram_locked()
     }
 
     /// Falling edge (DELTA_EVEN): setup phase.
