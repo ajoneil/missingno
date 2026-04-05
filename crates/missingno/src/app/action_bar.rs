@@ -207,23 +207,30 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         row
     };
 
-    row.push(reset())
-        .push(buttons::danger("Stop").on_press(app::Message::StopGame))
+    row.push(screenshot())
+        .push(reset())
+        .push(stop())
         .spacing(s())
         .wrap()
         .into()
 }
 
+fn control_label(label: &str) -> container::Container<'static, app::Message> {
+    container(iced::widget::text(label.to_string()))
+        .align_y(Center)
+        .height(icons::ICON_SIZE)
+}
+
 fn play_pause(running: bool) -> Button<'static, app::Message> {
     if running {
-        buttons::primary("Pause").on_press(app::Message::Pause.into())
+        buttons::primary(control_label("Pause")).on_press(app::Message::Pause.into())
     } else {
-        buttons::primary("Play").on_press(app::Message::Run.into())
+        buttons::primary(control_label("Play")).on_press(app::Message::Run.into())
     }
 }
 
 fn step_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard("Step Frame");
+    let button = buttons::standard(control_label("Step Frame"));
 
     if running {
         button
@@ -233,7 +240,7 @@ fn step_frame(running: bool) -> Button<'static, app::Message> {
 }
 
 fn capture_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard("Capture Frame");
+    let button = buttons::standard(control_label("Capture Frame"));
 
     if running {
         button
@@ -242,6 +249,14 @@ fn capture_frame(running: bool) -> Button<'static, app::Message> {
     }
 }
 
+fn screenshot() -> Button<'static, app::Message> {
+    buttons::standard(icons::m(Icon::Camera)).on_press(app::Message::TakeScreenshot)
+}
+
 fn reset() -> Button<'static, app::Message> {
-    buttons::danger("Reset").on_press(app::Message::Reset.into())
+    buttons::danger(control_label("Reset")).on_press(app::Message::Reset.into())
+}
+
+fn stop() -> Button<'static, app::Message> {
+    buttons::danger(control_label("Stop")).on_press(app::Message::StopGame)
 }
