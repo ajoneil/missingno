@@ -181,8 +181,7 @@ impl Ppu {
             Register::Control => self.registers.control.bits(),
             Register::Status => {
                 let mode = match &self.pixel_pipeline {
-                    Some(rendering) if !self.video.vblank => rendering.stat_mode(&self.video) as u8,
-                    Some(_) => Mode::VerticalBlank as u8,
+                    Some(_) => self.mode() as u8,
                     None => 0,
                 };
                 let line_compare = if self.video.ly_eq_lyc() {
@@ -351,11 +350,32 @@ impl Ppu {
         self.oam.write(address, value);
     }
 
+    /// STAT mode bits, computed as two independent NOR gates matching hardware.
+    ///
+    /// Hardware (GateBoyInterrupts.cpp:53-55):
+    ///   bit 0 = XYMU OR POPU (rendering OR vblank)
+    ///   bit 1 = ACYL OR XYMU (scanning OR rendering)
+    ///
+    /// No priority logic — each bit is an independent OR of its input signals.
+    /// During the POPU+BESU overlap at the 153->0 boundary, this produces
+    /// mode 3 (both bits set) instead of the old priority-based mode 1.
     pub fn mode(&self) -> rendering::Mode {
-        match &self.pixel_pipeline {
-            Some(rendering) if !self.video.vblank => rendering.mode(&self.video),
-            Some(_) => Mode::VerticalBlank,
-            None => Mode::VerticalBlank,
+        let rendering = match &self.pixel_pipeline {
+            Some(r) => r,
+            None => return Mode::VerticalBlank,
+        };
+        // XYMU settles before the CPU reads STAT (ALET falls at F->G
+        // before BUKE opens at G-H). Our settle_alet() models this. The
+        // combination xymu && !wodu represents XYMU's settled state:
+        // when WODU fires, XYMU will clear on the next ALET edge.
+        let xymu = rendering.xymu() && !rendering.wodu();
+        let bit0 = xymu || self.video.vblank;
+        let bit1 = xymu || rendering.is_scanning();
+        match (bit1, bit0) {
+            (false, false) => Mode::HorizontalBlank,
+            (false, true) => Mode::VerticalBlank,
+            (true, false) => Mode::OamScan,
+            (true, true) => Mode::Drawing,
         }
     }
 

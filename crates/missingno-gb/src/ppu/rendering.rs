@@ -216,6 +216,12 @@ impl Rendering {
         self.hblank.xymu()
     }
 
+    /// ACYL signal: OAM scanning active (BESU-driven).
+    /// Used by Ppu::mode() for independent NOR-gate mode bit computation.
+    pub(super) fn is_scanning(&self) -> bool {
+        self.scan.besu()
+    }
+
     /// VOGA latch: true from the dot WODU fires through the rest of HBlank.
     pub(super) fn voga(&self) -> bool {
         self.hblank.voga()
@@ -234,23 +240,6 @@ impl Rendering {
             return; // Mode 2: no hblank logic
         }
         self.hblank.settle_alet();
-    }
-
-    pub(super) fn mode(&self, _video: &VideoControl) -> Mode {
-        if self.scan.besu() {
-            Mode::OamScan
-        } else if self.hblank.xymu() && !self.wodu() {
-            Mode::Drawing
-        } else {
-            Mode::HorizontalBlank
-        }
-    }
-
-    /// Mode as seen by the STAT register. Hardware STAT mode bits are
-    /// combinational — no pipeline or latch between the mode signals
-    /// and the CPU data bus.
-    pub(super) fn stat_mode(&self, video: &VideoControl) -> Mode {
-        self.mode(video)
     }
 
     /// Whether this is the LCD-enable first line (no prior scanline boundary).
