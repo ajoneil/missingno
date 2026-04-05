@@ -1,6 +1,7 @@
 use sha1::{Digest, Sha1};
 
 const BASE_URL: &str = "https://hasheous.org/api/v1";
+const USER_AGENT: &str = concat!("missingno/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Clone)]
 pub struct GameInfo {
@@ -27,7 +28,11 @@ pub fn rom_sha1(rom: &[u8]) -> String {
 pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     let url = format!("{BASE_URL}/Lookup/ByHash/sha1/{sha1}");
 
-    let response = match ureq::get(&url).header("Accept", "application/json").call() {
+    let response = match ureq::get(&url)
+        .header("User-Agent", USER_AGENT)
+        .header("Accept", "application/json")
+        .call()
+    {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(404)) => return Ok(None),
         Err(e) => return Err(format!("Hasheous request failed: {e}")),
@@ -110,6 +115,9 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
 }
 
 fn fetch_image(url: &str) -> Option<Vec<u8>> {
-    let response = ureq::get(url).call().ok()?;
+    let response = ureq::get(url)
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .ok()?;
     response.into_body().read_to_vec().ok()
 }
