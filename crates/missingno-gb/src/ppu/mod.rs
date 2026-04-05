@@ -512,6 +512,14 @@ impl Ppu {
             }
         }
 
+        // CATU DFF pipeline — runs every dot regardless of VBlank.
+        // On hardware, CATU evaluates every XUPY cycle independent of POPU.
+        // This allows CATU to fire at the 153->0 frame boundary while POPU
+        // is still high, setting BESU before vblank clears.
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            rendering.tick_catu(&self.video);
+        }
+
         // Pixel output, SACU, pipe shift — only during active display.
         if let Some(rendering) = self.pixel_pipeline.as_mut().filter(|_| !self.video.vblank) {
             result.pixel = rendering.rise(&self.registers, &self.video, &self.oam, vram);

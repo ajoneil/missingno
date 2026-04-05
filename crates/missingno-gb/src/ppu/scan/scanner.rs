@@ -178,14 +178,28 @@ impl SpriteScanner {
             self.besu = false;
         }
 
-        // CATU_LINE_ENDp DFF17: clocked by XUPY rising edge.
-        // D = ABOV = AND(RUTU_old, NOT(XYVO_old)), where XYVO = AND(LY4, LY7).
-        // XYVO suppresses CATU during VBlank (LY 144-153). On line 153,
-        // MYTA resets LY to 0, clearing XYVO and allowing CATU to fire
-        // 2 dots later than normal lines. On each XUPY rise, shift
-        // rutu → rutu_old, then CATU captures ABOV. This two-stage
-        // pipeline means CATU fires 2 XUPY cycles (4 dots) after the
-        // scanline boundary, matching hardware phase_lx timing.
+        // CATU pipeline was already advanced by tick_catu() (unconditional,
+        // not gated by VBlank). See tick_catu() for the DFF shift and BESU logic.
+
+        ScanSignals { avap }
+    }
+
+    /// Advance the CATU DFF pipeline — runs every dot regardless of VBlank.
+    ///
+    /// CATU_LINE_ENDp DFF17: clocked by XUPY rising edge.
+    /// D = ABOV = AND(RUTU_old, NOT(XYVO_old)), where XYVO = AND(LY4, LY7).
+    /// XYVO suppresses CATU during VBlank (LY 144-153). On line 153,
+    /// MYTA resets LY to 0, clearing XYVO and allowing CATU to fire
+    /// 2 dots later than normal lines. On each XUPY rise, shift
+    /// rutu -> rutu_old, then CATU captures ABOV. This two-stage
+    /// pipeline means CATU fires 2 XUPY cycles (4 dots) after the
+    /// scanline boundary, matching hardware phase_lx timing.
+    ///
+    /// On hardware, CATU has no POPU gate — it evaluates on every XUPY
+    /// cycle. This method must be called unconditionally so the DFF
+    /// pipeline can advance during the 153->0 frame boundary while
+    /// POPU is still high.
+    pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
         if xupy_rising {
             // Shift: current rutu becomes rutu_old for CATU's D input.
             // Clear rutu after shift — it's a one-shot from the boundary.
@@ -206,8 +220,6 @@ impl SpriteScanner {
             self.counter.reset();
             self.catu = false;
         }
-
-        ScanSignals { avap }
     }
 
     /// Falling edge (DELTA_EVEN): scanner tick and DOBA capture.

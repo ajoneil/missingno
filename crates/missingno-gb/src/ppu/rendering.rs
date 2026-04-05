@@ -452,11 +452,23 @@ impl Rendering {
         pixel
     }
 
+    /// Advance the CATU DFF pipeline — runs every dot regardless of VBlank.
+    ///
+    /// On hardware, CATU evaluates every XUPY cycle regardless of POPU.
+    /// This must be called unconditionally so the rutu -> rutu_old -> catu
+    /// chain can advance during the 153->0 frame boundary while POPU is
+    /// still high. When CATU fires, it sets the scanning latch (BESU) and
+    /// resets the counter, priming the scanner for the new line.
+    pub(super) fn tick_catu(&mut self, video: &VideoControl) {
+        self.scan.tick_catu(video.xupy(), video.ly());
+    }
+
     /// Rising edge (DELTA_ODD): output phase.
     ///
     /// On hardware, the rising edge handles BYBA capture, AVAP evaluation,
     /// pixel counter increment, fine counter increment, pipe shift, and
-    /// sprite X matching.
+    /// sprite X matching. CATU pipeline is advanced separately by
+    /// `tick_catu()` (unconditional, not gated by VBlank).
     pub(super) fn rise(
         &mut self,
         regs: &PipelineRegisters,
@@ -464,8 +476,8 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) -> Option<PixelOutput> {
-        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated,
-        // CATU scan-start fires.
+        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated.
+        // CATU was already advanced by tick_catu().
         let xupy_rising = video.xupy();
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
