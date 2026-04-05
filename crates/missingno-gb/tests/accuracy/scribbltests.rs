@@ -5,10 +5,10 @@ fn run_scribbltest(rom_name: &str, timeout_frames: u32) {
     let reference_path = format!("scribbltests/{rom_name}-dmg.png");
 
     let mut run = common::load_rom(&rom_path);
-    let found_loop = common::run_until_infinite_loop(&mut run, timeout_frames);
+    let found_breakpoint = common::run_until_breakpoint(&mut run, timeout_frames);
     assert!(
-        found_loop,
-        "Scribbltest {rom_name} timed out without reaching infinite loop"
+        found_breakpoint,
+        "Scribbltest {rom_name} timed out without reaching LD B,B breakpoint"
     );
 
     let actual = common::screen_to_greyscale(run.gb.screen());
