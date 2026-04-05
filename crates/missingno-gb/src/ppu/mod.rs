@@ -274,7 +274,10 @@ impl Ppu {
         self.video.myta_comparison_delay = false;
         self.video.vblank = false;
         self.video.popu_holdover = 0;
-        self.video.ly_comparison_latched = false;
+        // ly_comparison_latched (ROPO) is NOT reset by VID_RST — the DFF
+        // retains its last value. Only the comparison clock stops/restarts.
+        // The combinational comparator (PALY) settles immediately to the
+        // new LY==LYC state.
         self.video.update_ly_comparison();
 
         // Create the pixel pipeline (VID_RST released).
