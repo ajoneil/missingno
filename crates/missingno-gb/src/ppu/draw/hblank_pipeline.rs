@@ -16,19 +16,13 @@ pub(in crate::ppu) struct HblankPipeline {
     /// XYMU rendering latch (page 21). SET by AVAP (Mode 2→3),
     /// CLEAR by WEGO = OR2(VID_RST, VOGA).
     xymu: bool,
-    /// VOGA DFF17: captures WODU on ALET falling edge. Feeds WEGO.
-    /// Reset by TADY (line reset).
+    /// VOGA DFF17: captures WODU on ALET falling edge (half-cycle
+    /// delay). Feeds WEGO. Reset by TADY (line reset).
     voga: bool,
-    /// WODU value from the previous dot. VOGA's D input is
-    /// reg_old.WODU_HBLANK_GATEp_odd.out_old() -- the WODU that was
-    /// valid during the preceding dot. Also consumed by VYBO (pixel
-    /// clock gate) which reads WODU_old for the same reason.
-    /// Updated by settle_alet() with the current dot's WODU.
-    wodu: bool,
-    /// FEPO captured at start of falling phase. Feeds wodu() for
-    /// VOGA capture and TYFA computation. Persists across one dot
-    /// because wodu() is evaluated at the start of the NEXT falling
-    /// phase, before mode3_falling writes the new value.
+    /// FEPO captured at start of falling phase. Feeds wodu() and
+    /// wodu_pre_settle() for VOGA capture. Also feeds TYFA
+    /// computation. Latched because FEPO changes mid-fall but WODU
+    /// needs the value from the start of the falling phase.
     fepo: bool,
     /// Whether XYMU was true before settle_alet() cleared it.
     /// fall() needs this to gate mode3_falling() — on the dot
@@ -46,7 +40,6 @@ impl HblankPipeline {
         Self {
             xymu: false,
             voga: false,
-            wodu: false,
             fepo: false,
             xymu_before_settle: false,
             settled: false,
@@ -60,7 +53,14 @@ impl HblankPipeline {
         self.xymu && xugu && !self.fepo
     }
 
-    /// ALET falling edge: VOGA captures WODU_old, WEGO clears XYMU.
+    /// Compute WODU using pre-settle XYMU state. On the VOGA dot,
+    /// settle_alet() has already cleared XYMU, but WODU's inputs were
+    /// valid before the clear. This recovers the correct WODU value.
+    fn wodu_pre_settle(&self, xugu: bool) -> bool {
+        self.xymu_before_settle && xugu && !self.fepo
+    }
+
+    /// ALET falling edge: VOGA captures WODU, WEGO clears XYMU.
     ///
     /// On hardware, ALET falls at the boundary between sub-phases (e.g.
     /// F->G), before the CPU's BUKE window opens. This method models
@@ -69,19 +69,19 @@ impl HblankPipeline {
     /// Called from the executor between PPU rise and CPU bus read, so
     /// the CPU sees post-XYMU state. The remaining fall() work
     /// (fetcher, cascade, TYFA) runs later in the falling phase.
-    pub(in crate::ppu) fn settle_alet(&mut self) {
+    pub(in crate::ppu) fn settle_alet(&mut self, xugu: bool) {
         // Capture XYMU state before any clearing — fall() uses this to
         // gate mode3_falling() on the transition dot.
         self.xymu_before_settle = self.xymu;
         self.settled = true;
 
-        // Preview what VOGA/XYMU will do this dot, and apply the XYMU
-        // clear early so the CPU sees post-XYMU state. The full VOGA
-        // capture + wodu update happens later in fall().
-        let wodu_old = self.wodu;
+        // Compute WODU from current state — pixel_counter was already
+        // incremented on the rising phase, so xugu reflects this dot.
+        let wodu_now = self.wodu(xugu);
 
-        // Preview VOGA: will it capture wodu_old this dot?
-        let voga_will_fire = self.voga || wodu_old;
+        // VOGA DFF17 captures WODU on ALET falling. On hardware this is
+        // the same dot WODU fires (half-cycle delay, not full-dot).
+        let voga_will_fire = self.voga || wodu_now;
 
         // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early.
         if voga_will_fire {
@@ -89,28 +89,33 @@ impl HblankPipeline {
         }
     }
 
-    /// Falling edge (ALET clock): VOGA captures WODU_old, WEGO clears XYMU.
+    /// Falling edge (ALET clock): VOGA captures WODU, WEGO clears XYMU.
     ///
     /// settle_alet() may have already cleared XYMU for the CPU's benefit.
     /// This method does the full VOGA/wodu computation — the XYMU clear
     /// is idempotent.
     ///
-    /// Returns (wodu_current, wodu_old).
-    /// - wodu_current: live combinational value for STAT, LCD last_pixel
-    /// - wodu_old: previous dot's value for TYFA/VYBO pixel clock gate
-    pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> (bool, bool) {
+    /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
+    pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> bool {
         // xymu_before_settle was set by settle_alet if it ran. If settle_alet
         // didn't run (scanning was true), capture it now before fall mutates.
         if !self.settled {
             self.xymu_before_settle = self.xymu;
         }
+
+        // WODU is combinational from XYMU. If settle_alet() already ran,
+        // XYMU was cleared by VOGA, so self.wodu(xugu) would return false.
+        // Use pre-settle XYMU to recover the correct WODU value.
+        let wodu_now = if self.settled {
+            self.wodu_pre_settle(xugu)
+        } else {
+            self.wodu(xugu)
+        };
         self.settled = false;
 
-        let wodu_now = self.wodu(xugu);
-        let wodu_old = self.wodu;
-
-        // VOGA DFF17 captures WODU_old (previous dot's value).
-        if wodu_old {
+        // VOGA DFF17 captures CURRENT dot's WODU (half-cycle delay).
+        // On hardware, WODU's inputs are valid before ALET falls.
+        if wodu_now {
             self.voga = true;
         }
 
@@ -120,10 +125,7 @@ impl HblankPipeline {
             self.xymu = false;
         }
 
-        // Store current WODU for next dot's VOGA capture.
-        self.wodu = wodu_now;
-
-        (wodu_now, wodu_old)
+        wodu_now
     }
 
     /// Latch FEPO for the next dot's wodu() evaluation. Called in
@@ -156,7 +158,6 @@ impl HblankPipeline {
     pub(in crate::ppu) fn reset(&mut self) {
         self.xymu = false;
         self.voga = false;
-        self.wodu = false;
         self.fepo = false;
         self.xymu_before_settle = false;
         self.settled = false;

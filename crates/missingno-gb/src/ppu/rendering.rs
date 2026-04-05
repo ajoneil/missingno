@@ -232,14 +232,14 @@ impl Rendering {
         self.hblank.wodu(self.lcd.xugu())
     }
 
-    /// Pre-CPU-read settling: VOGA captures WODU_old, XYMU clears.
+    /// Pre-CPU-read settling: VOGA captures WODU, XYMU clears.
     /// Called after PPU rise, before CPU bus read. On hardware, ALET
     /// falls at F->G before BUKE opens at G-H.
     pub(super) fn settle_alet(&mut self) {
         if self.scan.scanning() {
             return; // Mode 2: no hblank logic
         }
-        self.hblank.settle_alet();
+        self.hblank.settle_alet(self.lcd.xugu());
     }
 
     /// Whether this is the LCD-enable first line (no prior scanline boundary).
@@ -425,7 +425,7 @@ impl Rendering {
         // Hblank pipeline: if settle_alet() already ran this dot,
         // returns cached values. Otherwise computes fresh (e.g.
         // Mode 2→3 transition where scanning was active during settle).
-        let (wodu, _wodu_old) = self.hblank.fall(self.lcd.xugu());
+        let wodu = self.hblank.fall(self.lcd.xugu());
 
         // lcd.fall() receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).

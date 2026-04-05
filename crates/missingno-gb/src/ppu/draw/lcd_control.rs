@@ -95,7 +95,7 @@ impl LcdControl {
         // PX=9 outputs PX=8's pixel, etc.
         //
         // On real hardware, TOBA fires one extra time after WODU
-        // (WUSA isn't cleared until VOGA, one dot later). The 159-stage
+        // (WUSA is cleared by VOGA on the same dot). The 159-stage
         // shift register naturally absorbed this — the extra pixel
         // pushed the first (junk) pixel off the end. With direct
         // output we skip it: only the first 159 TOBA pixels are visible.
@@ -131,7 +131,7 @@ impl LcdControl {
     pub(in crate::ppu) fn fall(&mut self, voga: bool, wodu: bool) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
         // The final pixel push happens on the WODU dot, before VOGA
-        // captures (one dot later).
+        // captures on the same falling phase.
         let pixel_out = if wodu
             && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
@@ -147,8 +147,8 @@ impl LcdControl {
             None
         };
 
-        // WUSA is cleared by WEGO = OR2(VID_RST, VOGA). VOGA fires one
-        // dot after WODU (DFF17 delay). This is the correct hardware timing.
+        // WUSA is cleared by WEGO = OR2(VID_RST, VOGA). VOGA fires on
+        // the same dot as WODU (half-cycle DFF17 delay via ALET falling).
         if voga {
             self.wusa = false;
         }
