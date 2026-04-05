@@ -101,6 +101,8 @@ struct App {
     was_running_before_settings: bool,
     /// Keybinding capture state: which slot we're listening for input on.
     listening_for: Option<settings_view::ListeningFor>,
+    /// When set, shows a brief "Screenshot saved" toast overlay.
+    screenshot_toast: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +216,8 @@ enum Message {
     StopRecording,
     StartPlayback,
 
+    DismissScreenshotToast,
+
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
@@ -249,6 +253,7 @@ impl App {
             previous_screen: None,
             was_running_before_settings: false,
             listening_for: None,
+            screenshot_toast: None,
         };
 
         controls::update_bindings(
@@ -554,6 +559,7 @@ impl App {
                             library::activity::write_session(&current.game_dir, session);
                         }
                     }
+                    self.screenshot_toast = Some(Instant::now());
                 }
             }
             Message::Reset => {
@@ -608,6 +614,10 @@ impl App {
                 {
                     *cursor_hidden = true;
                 }
+            }
+
+            Message::DismissScreenshotToast => {
+                self.screenshot_toast = None;
             }
 
             Message::CloseRequested => {
@@ -898,14 +908,22 @@ impl App {
 
         // Build the main view based on the current screen
         let main: Element<'_, Message> = if self.screen == Screen::Emulator {
+            let show_toast = self.screenshot_toast.is_some();
+
             if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
-                let content =
-                    container(self.emulator_view(true))
-                        .center(Fill)
-                        .style(|_| container::Style {
-                            background: Some(iced::Color::BLACK.into()),
-                            ..Default::default()
-                        });
+                let screen = self.emulator_view(true);
+                let content = if show_toast {
+                    let stk: Element<'_, Message> =
+                        Stack::with_children(vec![screen, screenshot_toast()]).into();
+                    container(stk)
+                } else {
+                    container(screen)
+                }
+                .center(Fill)
+                .style(|_| container::Style {
+                    background: Some(iced::Color::BLACK.into()),
+                    ..Default::default()
+                });
 
                 let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
                 if cursor_hidden {
@@ -913,10 +931,16 @@ impl App {
                 }
                 area.into()
             } else {
+                let screen = container(self.emulator_view(false)).center(Fill);
+                let screen: Element<'_, Message> = if show_toast {
+                    Stack::with_children(vec![screen.into(), screenshot_toast()]).into()
+                } else {
+                    screen.into()
+                };
                 column![
                     self.action_bar.view(self),
                     horizontal_rule(),
-                    container(self.emulator_view(false)).center(Fill)
+                    screen,
                 ]
                 .into()
             }
@@ -1312,8 +1336,39 @@ impl App {
                 Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.subscription(),
                 _ => Subscription::none(),
             },
+            if self.screenshot_toast.is_some() {
+                time::every(std::time::Duration::from_millis(1500))
+                    .map(|_| Message::DismissScreenshotToast)
+            } else {
+                Subscription::none()
+            },
         ])
     }
+}
+
+fn screenshot_toast<'a>() -> Element<'a, Message> {
+    container(
+        container(
+            row![
+                icons::m(Icon::Camera).style(|_, _| svg::Style {
+                    color: Some(iced::Color::WHITE),
+                }),
+                iced_text("Screenshot saved").color(iced::Color::WHITE),
+            ]
+            .spacing(s())
+            .align_y(Center),
+        )
+        .padding(s())
+        .style(|_| container::Style {
+            background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
+            border: iced::Border::default().rounded(6),
+            ..Default::default()
+        }),
+    )
+    .align_bottom(Fill)
+    .align_right(Fill)
+    .padding(l())
+    .into()
 }
 
 fn friendly_ago(timestamp: jiff::Timestamp) -> String {
