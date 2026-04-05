@@ -534,7 +534,7 @@ impl Ppu {
                 } else if self.video.ly == 0 {
                     // Line 0: VBlank → Active Display. Reset for new frame.
                     rendering.reset_frame();
-                } else if !self.video.vblank {
+                } else if self.video.ly() < 144 {
                     // Lines 1-143: per-scanline reset.
                     rendering.reset_scanline(ly);
                 }
