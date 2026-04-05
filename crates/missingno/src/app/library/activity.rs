@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 // ── Data structures ────────────────────────────────────────────────────
 
-/// A play session: start/end times, what save we started from, and any
-/// SRAM snapshots captured during play.
+/// A play session: start/end times, what save we started from, and a
+/// chronological log of events (saves, screenshots, etc.).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionFile {
     pub start: Timestamp,
@@ -17,14 +17,127 @@ pub struct SessionFile {
     /// Filename stem of the activity entry we started from (e.g. "20260403-083646.import").
     pub parent: Option<String>,
     #[serde(default)]
-    pub saves: Vec<SessionSave>,
+    pub events: Vec<SessionEvent>,
+
+    // Legacy field: old session files stored saves here. On deserialization,
+    // these are migrated into `events` by `migrate_legacy_saves()`.
+    #[serde(default, skip_serializing)]
+    saves: Vec<LegacySessionSave>,
 }
 
-/// A single SRAM snapshot taken during a session.
+impl SessionFile {
+    pub fn new(start: Timestamp, parent: Option<String>) -> Self {
+        Self {
+            start,
+            end: None,
+            parent,
+            events: Vec::new(),
+            saves: Vec::new(),
+        }
+    }
+
+    /// Migrate legacy `saves` field into unified `events`. Called after deserialization.
+    fn migrate_legacy_saves(&mut self) {
+        if !self.saves.is_empty() && self.events.is_empty() {
+            self.events = self
+                .saves
+                .drain(..)
+                .map(|s| SessionEvent {
+                    at: s.at,
+                    kind: EventKind::Save { sram: s.sram },
+                })
+                .collect();
+        }
+    }
+
+    /// Helper: iterate only save events.
+    pub fn saves(&self) -> impl Iterator<Item = &SessionEvent> {
+        self.events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::Save { .. }))
+    }
+
+    /// Helper: get the SRAM from the last save event.
+    pub fn last_sram(&self) -> Option<&[u8]> {
+        self.events.iter().rev().find_map(|e| match &e.kind {
+            EventKind::Save { sram } => Some(sram.as_slice()),
+            _ => None,
+        })
+    }
+
+    /// Helper: count of save events.
+    pub fn save_count(&self) -> usize {
+        self.saves().count()
+    }
+
+    /// Helper: timestamp of the last save event.
+    pub fn last_save_time(&self) -> Option<Timestamp> {
+        self.events.iter().rev().find_map(|e| match &e.kind {
+            EventKind::Save { .. } => Some(e.at),
+            _ => None,
+        })
+    }
+
+    /// Helper: count of screenshot events.
+    pub fn screenshot_count(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::Screenshot { .. }))
+            .count()
+    }
+}
+
+/// A timestamped event that occurred during a session.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SessionSave {
+pub struct SessionEvent {
     pub at: Timestamp,
-    pub sram: Vec<u8>,
+    pub kind: EventKind,
+}
+
+/// What kind of event occurred.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum EventKind {
+    /// SRAM changed.
+    Save { sram: Vec<u8> },
+    /// Player captured a screenshot.
+    Screenshot { frame: FrameCapture },
+}
+
+/// A captured frame: the PPU's shade output plus display context for re-rendering.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FrameCapture {
+    /// 160×144 shade values (0-3), flattened row-major from Framebuffer.
+    pub pixels: Vec<u8>,
+    /// Which display palette the user had active at capture time.
+    pub user_palette: String,
+}
+
+impl FrameCapture {
+    pub fn from_framebuffer(
+        fb: &missingno_gb::ppu::screen::Framebuffer,
+        palette_name: &str,
+    ) -> Self {
+        use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
+
+        let mut pixels =
+            Vec::with_capacity(PIXELS_PER_LINE as usize * NUM_SCANLINES as usize);
+        for y in 0..NUM_SCANLINES as usize {
+            for x in 0..PIXELS_PER_LINE as usize {
+                pixels.push(fb.pixels[y][x].0);
+            }
+        }
+        Self {
+            pixels,
+            user_palette: palette_name.to_string(),
+        }
+    }
+}
+
+// Legacy save struct for deserializing old session files.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct LegacySessionSave {
+    at: Timestamp,
+    sram: Vec<u8>,
 }
 
 /// An imported save file.
@@ -58,6 +171,7 @@ pub struct ActivityDisplay {
     pub end: Option<Timestamp>,
     pub save_count: usize,
     pub last_save_time: Option<Timestamp>,
+    pub screenshot_count: usize,
     // Import fields
     pub size_bytes: Option<u32>,
 }
@@ -123,17 +237,16 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
             let data = read_compressed(&activity_path(game_dir, &r.filename))?;
             match r.kind {
                 ActivityKind::Session => {
-                    let session: SessionFile = ron::from_str(&data).ok()?;
+                    let session = read_session_from_str(&data)?;
                     let timestamp = session.start;
-                    let save_count = session.saves.len();
-                    let last_save_time = session.saves.last().map(|s| s.at);
                     Some(ActivityDisplay {
                         filename: r.filename,
                         kind: ActivityKind::Session,
                         timestamp,
                         end: session.end,
-                        save_count,
-                        last_save_time,
+                        save_count: session.save_count(),
+                        last_save_time: session.last_save_time(),
+                        screenshot_count: session.screenshot_count(),
                         size_bytes: None,
                     })
                 }
@@ -149,6 +262,7 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
                         end: None,
                         save_count: 0,
                         last_save_time: None,
+                        screenshot_count: 0,
                         size_bytes: Some(import.size_bytes),
                     })
                 }
@@ -159,13 +273,20 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
 
 // ── Reading ────────────────────────────────────────────────────────────
 
+/// Deserialize a SessionFile from RON, handling legacy format migration.
+fn read_session_from_str(data: &str) -> Option<SessionFile> {
+    let mut session: SessionFile = ron::from_str(data).ok()?;
+    session.migrate_legacy_saves();
+    Some(session)
+}
+
 /// Load the SRAM from a specific activity file.
 /// For sessions, returns the last save's SRAM. For imports, returns the imported SRAM.
 pub fn load_sram_from(game_dir: &Path, filename: &str) -> Option<Vec<u8>> {
     let data = read_compressed(&activity_path(game_dir, filename))?;
     if filename.ends_with(".session") {
-        let session: SessionFile = ron::from_str(&data).ok()?;
-        session.saves.last().map(|s| s.sram.clone())
+        let session = read_session_from_str(&data)?;
+        session.last_sram().map(|s| s.to_vec())
     } else if filename.ends_with(".import") {
         let import: ImportFile = ron::from_str(&data).ok()?;
         Some(import.sram)
@@ -251,7 +372,7 @@ pub fn compute_stats(game_dir: &Path) -> ActivityStats {
 
         match r.kind {
             ActivityKind::Session => {
-                let Ok(session) = ron::from_str::<SessionFile>(&data) else {
+                let Some(session) = read_session_from_str(&data) else {
                     continue;
                 };
 
@@ -265,7 +386,7 @@ pub fn compute_stats(game_dir: &Path) -> ActivityStats {
                     total_secs += end.duration_since(session.start).as_secs_f64();
                 }
 
-                save_count += session.saves.len();
+                save_count += session.save_count();
             }
             ActivityKind::Import => {
                 save_count += 1;

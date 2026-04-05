@@ -119,12 +119,10 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     // Start play session
     if let Some(current) = &mut app.current_game {
-        let session = library::activity::SessionFile {
-            start: Timestamp::now(),
-            end: None,
-            parent: current.started_from.clone(),
-            saves: Vec::new(),
-        };
+        let session = library::activity::SessionFile::new(
+            Timestamp::now(),
+            current.started_from.clone(),
+        );
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;
@@ -180,12 +178,10 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
     }
 
     if let Some(current) = &mut app.current_game {
-        let session = library::activity::SessionFile {
-            start: Timestamp::now(),
-            end: None,
-            parent: Some(activity_filename.to_string()),
-            saves: Vec::new(),
-        };
+        let session = library::activity::SessionFile::new(
+            Timestamp::now(),
+            Some(activity_filename.to_string()),
+        );
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;
@@ -262,12 +258,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         app.game = Game::Loaded(LoadedGame::Emulator(emu));
     }
 
-    let session = library::activity::SessionFile {
-        start: Timestamp::now(),
-        end: None,
-        parent: None,
-        saves: Vec::new(),
-    };
+    let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);
 
     app.current_game = Some(CurrentGame {

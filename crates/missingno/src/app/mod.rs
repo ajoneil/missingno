@@ -527,7 +527,34 @@ impl App {
                 }
             }
             Message::TakeScreenshot => {
-                // TODO: implement screenshot capture
+                // Grab the current framebuffer from whichever game mode is active
+                let screen = match &self.game {
+                    Game::Loaded(LoadedGame::Emulator(emu)) => {
+                        Some(emu.game_boy().screen().clone())
+                    }
+                    Game::Loaded(LoadedGame::Debugger(dbg)) => {
+                        Some(dbg.game_boy().screen().clone())
+                    }
+                    _ => None,
+                };
+                if let Some(screen) = screen {
+                    let palette_name = self.settings.palette.to_string();
+                    let capture = library::activity::FrameCapture::from_framebuffer(
+                        screen.front(),
+                        &palette_name,
+                    );
+                    if let Some(current) = &mut self.current_game {
+                        if let Some(session) = &mut current.session {
+                            session.events.push(library::activity::SessionEvent {
+                                at: jiff::Timestamp::now(),
+                                kind: library::activity::EventKind::Screenshot {
+                                    frame: capture,
+                                },
+                            });
+                            library::activity::write_session(&current.game_dir, session);
+                        }
+                    }
+                }
             }
             Message::Reset => {
                 self.pending_action = Some(PendingAction::ResetEmulator);
@@ -939,8 +966,7 @@ impl App {
                 let last_save_time = current
                     .session
                     .as_ref()
-                    .and_then(|s| s.saves.last())
-                    .map(|s| s.at);
+                    .and_then(|s| s.last_save_time());
                 if let Some(ts) = last_save_time {
                     info = info.push(
                         iced_text(format!("Last saved {}", friendly_ago(ts)))
@@ -1217,9 +1243,7 @@ impl App {
         if let Some(session) = &mut current.session {
             // Check if SRAM has meaningfully changed, ignoring scratch regions
             let previous = session
-                .saves
-                .last()
-                .map(|s| s.sram.as_slice())
+                .last_sram()
                 .or(current.initial_sram.as_deref());
             let changed = match previous {
                 Some(prev) => library::game_db::sram_changed(&cartridge_title, &ram, prev),
@@ -1227,9 +1251,11 @@ impl App {
             };
 
             if changed {
-                session.saves.push(library::activity::SessionSave {
+                session.events.push(library::activity::SessionEvent {
                     at: jiff::Timestamp::now(),
-                    sram: ram.to_vec(),
+                    kind: library::activity::EventKind::Save {
+                        sram: ram.to_vec(),
+                    },
                 });
                 // Write incrementally for crash safety
                 library::activity::write_session(&current.game_dir, session);
