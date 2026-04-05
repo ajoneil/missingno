@@ -105,8 +105,8 @@ impl Ppu {
                 mcycle_divider: false,
                 ly: 153,
                 lyc: 0,
-                ly_comparison_pending: true,
-                ly_comparison_latched: true,
+                ly_comparison_pending: false,
+                ly_comparison_latched: false,
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
