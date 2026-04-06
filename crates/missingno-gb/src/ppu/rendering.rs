@@ -550,19 +550,21 @@ impl Rendering {
         // modeling the 1-HP DFF delay of the ALET-clocked NYKA latch.
         let lyry = self.fetcher.lyry();
 
-        // LEBO = NAND2(ALET, MOCE) — no dependency on TAKA or TEXY.
-        // The BG fetcher counter keeps ticking unconditionally during sprite
-        // fetch. On hardware, VRAM bus ownership switches (TEXY gates sprite
-        // addresses onto the bus), but the counter itself runs freely.
-        self.fetcher.advance_falling(
-            self.lcd.pixel_counter(),
-            self.window.window_line_counter(),
-            regs,
-            video,
-            vram,
-        );
+        // BG fetcher pauses during sprite fetch. On hardware, TAKA gates
+        // the fetcher counter — tfetch stays idle (05) throughout sprite
+        // fetch, as confirmed by GateBoy traces showing tfetch_state=05
+        // for the entire duration of sfetch_state cycling 00-05.
+        if !self.sprite_trigger.taka() {
+            self.fetcher.advance_falling(
+                self.lcd.pixel_counter(),
+                self.window.window_line_counter(),
+                regs,
+                video,
+                vram,
+            );
 
-        self.cascade.fall(lyry);
+            self.cascade.fall(lyry);
+        }
 
         // TEKY: combinational sprite fetch request. On hardware, TEKY's
         // inputs (FEPO, LYRY, TAKA, RYDY) settle combinationally before the
@@ -639,11 +641,11 @@ impl Rendering {
         };
 
         // BG fetcher rising-edge advance: counter increment only.
-        // LEBO has no TAKA dependency — the BG counter runs freely
-        // during sprite fetch, same as the falling advance above.
-        self.fetcher.advance_rising();
-
-        self.cascade.rise();
+        // Paused during sprite fetch (TAKA gates fetcher counter).
+        if !self.sprite_trigger.taka() {
+            self.fetcher.advance_rising();
+            self.cascade.rise();
+        }
 
         // PORY clears RYDY: on hardware, PORY is a reset input to the
         // RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
