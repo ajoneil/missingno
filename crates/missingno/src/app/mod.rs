@@ -544,62 +544,69 @@ impl App {
                 }
             }
             Message::HomebrewDownloaded(title, rom_bytes, hh_entry) => {
-                // Save ROM to a homebrew directory and add to library
-                if let Some(lib_dir) = library::library_dir() {
-                    let sha1 = library::hasheous::rom_sha1(&rom_bytes);
+                let sha1 = library::hasheous::rom_sha1(&rom_bytes);
 
-                    // Check if already in library
-                    if self.store.entry(&sha1).is_some() {
-                        eprintln!("[homebrew] {title} already in library");
-                        return Task::none();
-                    }
+                // Check if already in library
+                if self.store.entry(&sha1).is_some() {
+                    eprintln!("[homebrew] {title} already in library");
+                    return Task::none();
+                }
 
-                    let homebrew_dir = lib_dir.join("homebrew");
-                    let _ = std::fs::create_dir_all(&homebrew_dir);
+                let Some(game_dir) = library::game_dir_for(&title, &sha1) else {
+                    return Task::none();
+                };
+                if let Err(e) = std::fs::create_dir_all(&game_dir) {
+                    eprintln!("[homebrew] Failed to create game dir: {e}");
+                }
 
-                    let filename = hh_entry
-                        .playable_file()
-                        .map(|f| f.filename.clone())
-                        .unwrap_or_else(|| format!("{}.gb", hh_entry.slug));
-                    let rom_path = homebrew_dir.join(&filename);
-                    let _ = std::fs::write(&rom_path, &rom_bytes);
+                // Save ROM into the game directory
+                let filename = hh_entry
+                    .playable_file()
+                    .map(|f| f.filename.clone())
+                    .unwrap_or_else(|| format!("{}.gb", hh_entry.slug));
+                // Strip any subdirectory from the filename — we just want the file
+                let filename = std::path::Path::new(&filename)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or(filename);
+                let rom_path = game_dir.join(&filename);
+                eprintln!(
+                    "[homebrew] Saving {} bytes to {}",
+                    rom_bytes.len(),
+                    rom_path.display()
+                );
+                if let Err(e) = std::fs::write(&rom_path, &rom_bytes) {
+                    eprintln!("[homebrew] Failed to write ROM: {e}");
+                }
 
-                    // Create library entry
-                    let game_dir = library::game_dir_for(&title, &sha1);
-                    if let Some(game_dir) = game_dir {
-                        let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
-                        entry.platform = hh_entry.platform.clone();
-                        entry.description = hh_entry.description.clone();
-                        entry.publisher = hh_entry.developer.clone();
+                // Create library entry
+                let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
+                entry.platform = hh_entry.platform.clone();
+                entry.description = hh_entry.description.clone();
+                entry.publisher = hh_entry.developer.clone();
+                library::save_entry(&game_dir, &entry);
+                self.store.notify_game_added(&sha1, game_dir.clone());
 
-                        library::save_entry(&game_dir, &entry);
-
-                        // Download cover art if available
-                        if let Some(cover_url) = hh_entry.cover_url() {
-                            let client = self.homebrew_client.clone();
-                            let gd = game_dir.clone();
-                            let sha1_clone = sha1.clone();
-                            let task = Task::perform(
-                                smol::unblock(move || {
-                                    if let Ok(bytes) = client.download_image(&cover_url) {
-                                        library::save_cover(&gd, &bytes);
-                                    }
-                                    sha1_clone
-                                }),
-                                |sha1| {
-                                    Message::EnrichComplete(library::scanner::EnrichResult {
-                                        sha1: Some(sha1),
-                                        data_changed: true,
-                                        has_more: false,
-                                    })
-                                },
-                            );
-                            self.store.notify_game_added(&sha1, game_dir);
-                            return task;
-                        }
-
-                        self.store.notify_game_added(&sha1, game_dir);
-                    }
+                // Download cover art in background if available
+                if let Some(cover_url) = hh_entry.cover_url() {
+                    let client = self.homebrew_client.clone();
+                    let gd = game_dir;
+                    let sha1_clone = sha1;
+                    return Task::perform(
+                        smol::unblock(move || {
+                            if let Ok(bytes) = client.download_image(&cover_url) {
+                                library::save_cover(&gd, &bytes);
+                            }
+                            sha1_clone
+                        }),
+                        |sha1| {
+                            Message::EnrichComplete(library::scanner::EnrichResult {
+                                sha1: Some(sha1),
+                                data_changed: true,
+                                has_more: false,
+                            })
+                        },
+                    );
                 }
             }
             Message::OpenHomebrewBrowser => {

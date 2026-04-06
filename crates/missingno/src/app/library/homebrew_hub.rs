@@ -181,6 +181,15 @@ impl HomebrewHubClient {
 
     /// Search the Homebrew Hub. Returns cached results if fresh enough.
     /// Safe to call from a background thread.
+    fn friendly_error(e: &ureq::Error) -> String {
+        match e {
+            ureq::Error::StatusCode(code) => {
+                format!("Homebrew Hub is currently unavailable (HTTP {code}). Try again later.")
+            }
+            _ => format!("Could not reach Homebrew Hub: {e}"),
+        }
+    }
+
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResults, String> {
         // Check cache
         if let Some(cached) = self.get_cached(query) {
@@ -206,7 +215,7 @@ impl HomebrewHubClient {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json")
             .call()
-            .map_err(|e| format!("Homebrew Hub request failed: {e}"))?;
+            .map_err(|e| Self::friendly_error(&e))?;
 
         let body = response
             .into_body()
@@ -230,7 +239,7 @@ impl HomebrewHubClient {
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/json")
             .call()
-            .map_err(|e| format!("Homebrew Hub request failed: {e}"))?;
+            .map_err(|e| Self::friendly_error(&e))?;
 
         let body = response
             .into_body()
