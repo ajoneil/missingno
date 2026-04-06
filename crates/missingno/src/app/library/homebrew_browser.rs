@@ -23,13 +23,14 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-pub const MAX_RESULTS: usize = 50;
+pub const PAGE_SIZE: usize = 20;
 
 // ── State ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 pub struct BrowserState {
     pub search_text: String,
+    pub page: usize,
     /// Index of the selected entry for detail view.
     pub selected_slug: Option<String>,
     /// Cover images keyed by slug.
@@ -40,6 +41,7 @@ impl BrowserState {
     pub fn new() -> Self {
         Self {
             search_text: String::new(),
+            page: 0,
             selected_slug: None,
             covers: std::collections::HashMap::new(),
         }
@@ -54,7 +56,8 @@ pub enum Message {
     SelectEntry(String), // slug
     CoverLoaded(String, Vec<u8>), // (slug, image bytes)
     Download(String), // slug
-    BackToResults,
+    NextPage,
+    PrevPage,
     Back,
 }
 
@@ -80,7 +83,7 @@ pub(crate) fn view<'a>(
 
     let search_bar = text_input("Search homebrew games...", &state.search_text)
         .on_input(|s| Message::SearchTextChanged(s).into())
-        .width(Fill);
+        .size(18.0);
 
     let results = if state.search_text.is_empty() {
         catalogue.homebrew()
@@ -93,14 +96,13 @@ pub(crate) fn view<'a>(
             .center(Fill)
             .into()
     } else {
-        results_view(&results, &state.covers)
+        results_view(&results, &state.covers, state.page)
     };
 
     column![
-        container(search_bar).padding([0.0, l()]),
+        container(search_bar).padding(l()),
         content,
     ]
-    .spacing(m())
     .height(Fill)
     .into()
 }
@@ -108,26 +110,46 @@ pub(crate) fn view<'a>(
 fn results_view<'a>(
     results: &[&'a CatalogueEntry],
     covers: &'a std::collections::HashMap<String, image::Handle>,
+    page: usize,
 ) -> Element<'a, app::Message> {
     let mut entries_col = column![].spacing(m());
 
-    let showing = results.len().min(MAX_RESULTS);
     let total = results.len();
+    let total_pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
+    let start = page * PAGE_SIZE;
+    let end = (start + PAGE_SIZE).min(total);
+    let page_results = &results[start..end];
 
     entries_col = entries_col.push(
-        app_text::detail(if showing < total {
-            format!("Showing {showing} of {total} games")
-        } else {
-            format!("{total} games")
-        })
-        .color(MUTED),
+        app_text::detail(format!("{total} games")).color(MUTED),
     );
 
-    for entry in results.iter().take(MAX_RESULTS) {
+    for entry in page_results {
         entries_col = entries_col.push(entry_card(entry, covers.get(&entry.slug)));
     }
 
-    scrollable(container(entries_col.max_width(900)).padding(l()).center_x(Fill))
+    // Pagination
+    if total_pages > 1 {
+        let mut pagination = row![].spacing(m()).align_y(iced::Alignment::Center);
+
+        if page > 0 {
+            pagination = pagination
+                .push(buttons::standard("Previous").on_press(Message::PrevPage.into()));
+        }
+
+        pagination = pagination.push(
+            app_text::detail(format!("Page {} of {}", page + 1, total_pages)).color(MUTED),
+        );
+
+        if page + 1 < total_pages {
+            pagination = pagination
+                .push(buttons::standard("Next").on_press(Message::NextPage.into()));
+        }
+
+        entries_col = entries_col.push(container(pagination).center_x(Fill));
+    }
+
+    scrollable(container(entries_col.max_width(900)).padding([0.0, l()]).center_x(Fill))
         .height(Fill)
         .into()
 }
@@ -176,8 +198,15 @@ fn entry_card<'a>(
     // Info
     let mut info = column![text(&entry.manifest.title).font(fonts::bold())].spacing(2);
 
+    let mut subtitle_parts = Vec::new();
     if let Some(dev) = &entry.manifest.developer {
-        info = info.push(app_text::detail(dev.clone()).color(MUTED));
+        subtitle_parts.push(dev.clone());
+    }
+    if let Some(date) = &entry.manifest.date {
+        subtitle_parts.push(date.clone());
+    }
+    if !subtitle_parts.is_empty() {
+        info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
     }
 
     if let Some(desc) = &entry.manifest.description {
@@ -239,8 +268,15 @@ fn entry_detail<'a>(
     ]
     .spacing(s());
 
+    let mut subtitle_parts = Vec::new();
     if let Some(dev) = &entry.manifest.developer {
-        info = info.push(text(format!("by {dev}")).color(MUTED));
+        subtitle_parts.push(format!("by {dev}"));
+    }
+    if let Some(date) = &entry.manifest.date {
+        subtitle_parts.push(date.clone());
+    }
+    if !subtitle_parts.is_empty() {
+        info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
     if !entry.manifest.tags.is_empty() {
@@ -279,7 +315,6 @@ fn entry_detail<'a>(
     // Actions
     let slug = entry.slug.clone();
     let mut actions = row![
-        buttons::subtle("← Back to results").on_press(Message::BackToResults.into()),
         iced::widget::Space::new().width(Fill),
     ]
     .spacing(s())

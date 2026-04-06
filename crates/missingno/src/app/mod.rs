@@ -587,11 +587,13 @@ impl App {
                 // Create library entry
                 let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
                 entry.platform = Some("Nintendo Game Boy".to_string());
-                entry.year = manifest.year.clone();
+                entry.year = manifest.date.clone();
                 entry.description = manifest.description.clone();
                 entry.publisher = manifest.developer.clone();
                 library::save_entry(&game_dir, &entry);
                 self.store.notify_game_added(&sha1, game_dir.clone());
+                self.homebrew_browser = None;
+                let detail_task = self.go_to_detail(&sha1);
 
                 // Download cover art in background if available
                 // Use the first screenshot from the Homebrew Hub as cover
@@ -607,7 +609,7 @@ impl App {
                     let client = self.homebrew_client.clone();
                     let gd = game_dir;
                     let sha1_clone = sha1;
-                    return Task::perform(
+                    let cover_task = Task::perform(
                         smol::unblock(move || {
                             if let Ok(bytes) = client.download_image(&cover_url) {
                                 library::save_cover(&gd, &bytes);
@@ -622,7 +624,9 @@ impl App {
                             })
                         },
                     );
+                    return Task::batch([detail_task, cover_task]);
                 }
+                return detail_task;
             }
             Message::OpenHomebrewBrowser => {
                 self.homebrew_browser = Some(library::homebrew_browser::BrowserState::new());
@@ -636,6 +640,18 @@ impl App {
                     H::SearchTextChanged(text) => {
                         if let Some(state) = &mut self.homebrew_browser {
                             state.search_text = text;
+                            state.page = 0;
+                        }
+                    }
+                    H::NextPage => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state.page += 1;
+                            return self.load_homebrew_covers();
+                        }
+                    }
+                    H::PrevPage => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state.page = state.page.saturating_sub(1);
                         }
                     }
                     H::CoverLoaded(slug, bytes) => {
@@ -671,11 +687,6 @@ impl App {
                             }
                         }
                     }
-                    H::BackToResults => {
-                        if let Some(state) = &mut self.homebrew_browser {
-                            state.selected_slug = None;
-                        }
-                    }
                     H::Download(slug) => {
                         if let Some(entry) = self.catalogue.lookup_slug(&slug) {
                             if let Some(url) = entry.download_url() {
@@ -706,8 +717,16 @@ impl App {
                         }
                     }
                     H::Back => {
-                        self.homebrew_browser = None;
-                        self.screen = Screen::Library;
+                        if let Some(state) = &mut self.homebrew_browser {
+                            if state.selected_slug.is_some() {
+                                // Back from detail to results
+                                state.selected_slug = None;
+                            } else {
+                                // Back from results to library
+                                self.homebrew_browser = None;
+                                self.screen = Screen::Library;
+                            }
+                        }
                     }
                 }
             }
@@ -1401,9 +1420,12 @@ impl App {
             self.catalogue.search_homebrew(&state.search_text)
         };
 
-        let tasks: Vec<Task<Message>> = results
+        let page_size = library::homebrew_browser::PAGE_SIZE;
+        let start = state.page * page_size;
+        let end = (start + page_size).min(results.len());
+
+        let tasks: Vec<Task<Message>> = results[start..end]
             .iter()
-            .take(library::homebrew_browser::MAX_RESULTS)
             .filter(|e| !state.covers.contains_key(&e.slug))
             .filter_map(|e| {
                 let url = e.download_cover_url()?;

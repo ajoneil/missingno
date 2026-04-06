@@ -46,7 +46,7 @@ pub fn scan_directories(
                 e.platform = Some("Nintendo Game Boy".to_string());
                 e.publisher = cat_entry.manifest.publisher.clone()
                     .or(cat_entry.manifest.developer.clone());
-                e.year = cat_entry.manifest.year.clone();
+                e.year = cat_entry.manifest.date.clone();
                 e.description = cat_entry.manifest.description.clone();
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e

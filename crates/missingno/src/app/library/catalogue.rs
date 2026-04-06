@@ -16,8 +16,9 @@ static GAMEDB_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/gamedb.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GameManifest {
     pub title: String,
+    /// Release date — "YYYY-MM-DD" for homebrew, or absent for commercial.
     #[serde(default)]
-    pub year: Option<String>,
+    pub date: Option<String>,
     #[serde(default, rename = "region")]
     pub _region: Option<String>,
     #[serde(default)]
@@ -227,20 +228,30 @@ impl Catalogue {
             .map(|&i| &self.entries[i])
     }
 
-    /// Get all homebrew entries.
+    /// Get all homebrew entries, sorted by year (newest first).
     pub fn homebrew(&self) -> Vec<&CatalogueEntry> {
-        self.entries.iter().filter(|e| e.is_homebrew()).collect()
+        let mut results: Vec<_> = self.entries.iter().filter(|e| e.is_homebrew()).collect();
+        results.sort_by(|a, b| {
+            b.manifest.date.as_deref().unwrap_or("")
+                .cmp(a.manifest.date.as_deref().unwrap_or(""))
+        });
+        results
     }
 
-    /// Search homebrew by title substring.
+    /// Search homebrew by title substring. Results sorted by year (newest first).
     pub fn search_homebrew(&self, query: &str) -> Vec<&CatalogueEntry> {
         let query_lower = query.to_lowercase();
-        self.entries
+        let mut results: Vec<_> = self.entries
             .iter()
             .filter(|e| {
                 e.is_homebrew() && e.manifest.title.to_lowercase().contains(&query_lower)
             })
-            .collect()
+            .collect();
+        results.sort_by(|a, b| {
+            b.manifest.date.as_deref().unwrap_or("")
+                .cmp(a.manifest.date.as_deref().unwrap_or(""))
+        });
+        results
     }
 
 }
