@@ -1025,17 +1025,17 @@ impl App {
         } else {
             match self.screen {
                 Screen::Detail => self.detail_view(),
-                Screen::ScreenshotGallery => {
-                    if let Some(state) = &self.gallery_state {
-                        library::screenshot_gallery::view(state)
-                    } else {
-                        self.detail_view()
-                    }
-                }
                 _ => {
                     let content = match self.screen {
                         Screen::Library => {
                             library::view::view(&self.store, self.hovered_library_game.as_deref())
+                        }
+                        Screen::ScreenshotGallery => {
+                            if let Some(state) = &self.gallery_state {
+                                library::screenshot_gallery::view(state)
+                            } else {
+                                self.detail_view()
+                            }
                         }
                         _ => unreachable!(),
                     };
