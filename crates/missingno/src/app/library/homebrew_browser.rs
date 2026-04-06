@@ -87,7 +87,7 @@ pub(crate) fn view<'a>(
     // If an entry is selected, show the detail view
     if let Some(slug) = &state.selected_slug {
         if let Some(entry) = catalogue.lookup_slug(slug) {
-            return entry_detail(entry, state.covers.get(slug));
+            return entry_detail(entry, state.covers.get(slug), state.error.as_deref());
         }
     }
 
@@ -115,29 +115,8 @@ pub(crate) fn view<'a>(
     ]
     .height(Fill);
 
-    // Error toast
-    if let Some(error) = &state.error {
-        page = page.push(
-            iced::widget::mouse_area(
-                container(
-                    row![
-                        text(error.clone()).color(Color::WHITE),
-                        iced::widget::Space::new().width(Fill),
-                        text("Dismiss").color(MUTED),
-                    ]
-                    .spacing(m())
-                    .align_y(Center),
-                )
-                .padding(m())
-                .width(Fill)
-                .style(|_: &iced::Theme| container::Style {
-                    background: Some(Color::from_rgb(0.5, 0.15, 0.15).into()),
-                    border: iced::Border::default().rounded(6),
-                    ..Default::default()
-                }),
-            )
-            .on_press(Message::DismissError.into()),
-        );
+    if let Some(bar) = error_bar(state.error.as_deref()) {
+        page = page.push(bar);
     }
 
     page.into()
@@ -288,9 +267,36 @@ fn entry_card<'a>(
     .into()
 }
 
+fn error_bar(error: Option<&str>) -> Option<Element<'static, app::Message>> {
+    let error = error?;
+    Some(
+        iced::widget::mouse_area(
+            container(
+                row![
+                    text(error.to_string()).color(Color::WHITE),
+                    iced::widget::Space::new().width(Fill),
+                    text("Dismiss").color(MUTED),
+                ]
+                .spacing(m())
+                .align_y(Center),
+            )
+            .padding(m())
+            .width(Fill)
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(Color::from_rgb(0.5, 0.15, 0.15).into()),
+                border: iced::Border::default().rounded(6),
+                ..Default::default()
+            }),
+        )
+        .on_press(Message::DismissError.into())
+        .into(),
+    )
+}
+
 fn entry_detail<'a>(
     entry: &'a CatalogueEntry,
     cover: Option<&'a image::Handle>,
+    error: Option<&str>,
 ) -> Element<'a, app::Message> {
     let mut content = column![].spacing(m());
 
@@ -376,9 +382,17 @@ fn entry_detail<'a>(
 
     content = content.push(actions);
 
-    scrollable(container(content.max_width(900)).padding(l()).center_x(Fill))
-        .height(Fill)
-        .into()
+    let mut page = column![
+        scrollable(container(content.max_width(900)).padding(l()).center_x(Fill))
+            .height(Fill),
+    ]
+    .height(Fill);
+
+    if let Some(bar) = error_bar(error) {
+        page = page.push(bar);
+    }
+
+    page.into()
 }
 
 fn leak_str(s: &str) -> &'static str {
