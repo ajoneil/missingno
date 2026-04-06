@@ -689,6 +689,13 @@ impl Rendering {
         // POKY disables SUVU/TAVE.
         if self.cascade.nyka() && self.cascade.pory() && !self.cascade.pygo() {
             self.fetcher.load_into(&mut self.bg_shifter);
+            // TAVE → TEVO → PASO: reset fine counter. On hardware, TEVO
+            // drives PASO which resets the fine counter on every pipe load
+            // (TAVE, SEKO, SUZU). The SUZU path already has this reset
+            // (line above); SEKO has it in the pixel pipeline section. TAVE
+            // was missing it, causing the first tile after the preload to
+            // be 7 pixels instead of 8.
+            self.fine_scroll.reset_counter();
         }
 
         // PUXA capture: ROXO fires when TYFA is active. TYFA is
