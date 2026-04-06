@@ -21,7 +21,16 @@ pub struct GameSummary {
 }
 
 /// Activity detail for the currently viewed game.
+/// The state of activity data for a game.
+pub enum ActivityState {
+    /// Background load in progress.
+    Loading,
+    /// Loaded and ready.
+    Loaded(ActivityDetail),
+}
+
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ActivityDetail {
     pub sha1: String,
     pub sessions: Vec<SessionSummary>,
@@ -73,10 +82,8 @@ pub struct GameStore {
     /// Cached game summaries, keyed by sha1. Loaded on demand.
     summaries: HashMap<String, GameSummary>,
 
-    /// Activity detail for one game at a time. Cleared when switching games.
-    activity_detail: Option<ActivityDetail>,
-    /// Permanent empty detail for when activity hasn't loaded yet.
-    empty_activity: ActivityDetail,
+    /// Activity state for the currently viewed game.
+    activity_state: Option<(String, ActivityState)>,
 
     /// Cached screenshot handles for the live session (avoids re-rendering
     /// every frame). Only invalidated when a new screenshot is taken.
@@ -90,11 +97,7 @@ impl GameStore {
         let mut store = Self {
             index: HashMap::new(),
             summaries: HashMap::new(),
-            activity_detail: None,
-            empty_activity: ActivityDetail {
-                sha1: String::new(),
-                sessions: Vec::new(),
-            },
+            activity_state: None,
             live_screenshots: Vec::new(),
             live_screenshot_count: 0,
         };
@@ -188,12 +191,17 @@ impl GameStore {
 
     // ── Activity detail (detail page) ──────────────────────────────────
 
-    /// Get cached activity detail. Returns an empty detail if not loaded yet.
-    pub fn activity_for(&self, sha1: &str) -> &ActivityDetail {
-        match self.activity_detail.as_ref().filter(|d| d.sha1 == sha1) {
-            Some(detail) => detail,
-            None => &self.empty_activity,
+    /// Get the activity state for a game.
+    pub fn activity_for(&self, sha1: &str) -> &ActivityState {
+        match &self.activity_state {
+            Some((s, state)) if s == sha1 => state,
+            _ => &ActivityState::Loading,
         }
+    }
+
+    /// Mark activity as loading for a game (call before kicking off background load).
+    pub fn mark_activity_loading(&mut self, sha1: &str) {
+        self.activity_state = Some((sha1.to_string(), ActivityState::Loading));
     }
 
     /// Load raw activity data from disk. Safe to call from a background thread
@@ -275,10 +283,11 @@ impl GameStore {
             })
             .collect();
 
-        self.activity_detail = Some(ActivityDetail {
-            sha1: raw.sha1,
-            sessions,
-        });
+        let sha1 = raw.sha1;
+        self.activity_state = Some((
+            sha1.clone(),
+            ActivityState::Loaded(ActivityDetail { sha1, sessions }),
+        ));
     }
 
     // ── Live session screenshots ───────────────────────────────────────
@@ -327,13 +336,8 @@ impl GameStore {
     /// Invalidates activity detail and updates the game summary stats.
     pub fn notify_activity_changed(&mut self, sha1: &str) {
         // Invalidate activity detail if it's for this game
-        if self
-            .activity_detail
-            .as_ref()
-            .map(|d| d.sha1 == sha1)
-            .unwrap_or(false)
-        {
-            self.activity_detail = None;
+        if matches!(&self.activity_state, Some((s, _)) if s == sha1) {
+            self.activity_state = None;
         }
 
         // Refresh the summary stats for this game
@@ -378,13 +382,8 @@ impl GameStore {
         self.index.remove(sha1);
         self.summaries.remove(sha1);
 
-        if self
-            .activity_detail
-            .as_ref()
-            .map(|d| d.sha1 == sha1)
-            .unwrap_or(false)
-        {
-            self.activity_detail = None;
+        if matches!(&self.activity_state, Some((s, _)) if s == sha1) {
+            self.activity_state = None;
         }
     }
 }

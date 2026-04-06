@@ -858,6 +858,7 @@ impl App {
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
                     self.detail_cover = None;
+                    self.store.mark_activity_loading(&sha1);
                     let activity_task = self.load_activity_async(&sha1);
                     let cover_task = if let Some(game_dir) = self.store.game_dir(&sha1) {
                         let game_dir = game_dir.to_path_buf();
@@ -1166,9 +1167,7 @@ impl App {
             }
         };
 
-        // Activity from the store (loaded in background, may not be ready yet —
-        // returns empty detail if still loading).
-        let activity = self.store.activity_for(sha1);
+        let activity_state = self.store.activity_for(sha1);
 
         let live_session = self
             .current_game
@@ -1179,7 +1178,7 @@ impl App {
         library::detail_view::view(library::detail_view::DetailData {
             entry,
             cover,
-            activity,
+            activity_state,
             live_session,
             live_screenshots: self.store.live_screenshots(),
             hovered_log_entry: self.hovered_log_entry,

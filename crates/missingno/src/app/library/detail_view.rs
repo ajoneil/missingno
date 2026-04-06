@@ -17,7 +17,7 @@ use crate::app::{
     library::{
         GameEntry,
         activity::{self, ActivityKind, SessionFile},
-        store::{ActivityDetail, SessionSummary},
+        store::{ActivityState, SessionSummary},
     },
 };
 
@@ -31,7 +31,7 @@ const MUTED: Color = Color::from_rgb(
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
     pub cover: Option<&'a image::Handle>,
-    pub activity: &'a ActivityDetail,
+    pub activity_state: &'a ActivityState,
     pub live_session: Option<&'a SessionFile>,
     pub live_screenshots: &'a [image::Handle],
     pub hovered_log_entry: Option<usize>,
@@ -42,12 +42,15 @@ pub struct DetailData<'a> {
 #[allow(private_interfaces)]
 pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     let left = game_info_panel(&data);
-    let right = activity_log(
-        &data.activity.sessions,
-        data.live_session,
-        data.live_screenshots,
-        data.hovered_log_entry,
-    );
+    let right = match data.activity_state {
+        ActivityState::Loading => activity_loading(),
+        ActivityState::Loaded(detail) => activity_log(
+            &detail.sessions,
+            data.live_session,
+            data.live_screenshots,
+            data.hovered_log_entry,
+        ),
+    };
 
     row![left, right].height(Fill).into()
 }
@@ -145,10 +148,9 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    // Compute play time from activity entries
-    {
-        let total_secs: f64 = data
-            .activity
+    // Compute play time from activity entries (if loaded)
+    if let ActivityState::Loaded(detail) = data.activity_state {
+        let total_secs: f64 = detail
             .sessions
             .iter()
             .filter(|a| a.kind == ActivityKind::Session)
@@ -218,6 +220,19 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         .padding(l())
         .width(400)
         .into()
+}
+
+fn activity_loading() -> Element<'static, app::Message> {
+    container(
+        column![
+            app_text::label("Activity"),
+            app_text::detail("Loading…").color(MUTED),
+        ]
+        .spacing(m()),
+    )
+    .padding(l())
+    .width(750)
+    .into()
 }
 
 /// Right panel: chronological activity log.
