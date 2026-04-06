@@ -207,7 +207,7 @@ enum Message {
     Settings(settings_view::Message),
     Library(library::view::Message),
     ScanComplete(bool),
-    ActivityLoaded(library::store::ActivityDetail),
+    ActivityLoaded(library::store::RawActivityDetail),
     CoverLoaded(Option<iced::widget::image::Handle>),
     EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
@@ -902,10 +902,10 @@ impl App {
                     }
                 }
             },
-            Message::ActivityLoaded(detail) => {
+            Message::ActivityLoaded(raw) => {
                 // Only apply if we're still viewing the same game
-                if self.viewing_sha1.as_deref() == Some(&detail.sha1) {
-                    self.store.set_activity_detail(detail);
+                if self.viewing_sha1.as_deref() == Some(&raw.sha1) {
+                    self.store.set_raw_activity_detail(raw);
                 }
             }
             Message::CoverLoaded(handle) => {
@@ -1196,7 +1196,7 @@ impl App {
             let game_dir = game_dir.to_path_buf();
             Task::perform(
                 smol::unblock(move || {
-                    library::store::GameStore::load_activity_detail(&sha1, &game_dir)
+                    library::store::GameStore::load_raw_activity(&sha1, &game_dir)
                 }),
                 Message::ActivityLoaded,
             )

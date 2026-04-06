@@ -41,6 +41,26 @@ pub struct SessionSummary {
     pub size_bytes: Option<u32>,
 }
 
+/// Raw session data loaded from disk (no image handles — those are created
+/// on the main thread after the background load completes).
+#[derive(Clone, Debug)]
+pub struct RawActivityDetail {
+    pub sha1: String,
+    pub sessions: Vec<RawSessionSummary>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RawSessionSummary {
+    pub filename: String,
+    pub kind: activity::ActivityKind,
+    pub start: Timestamp,
+    pub end: Option<Timestamp>,
+    pub save_count: usize,
+    pub last_save_time: Option<Timestamp>,
+    pub screenshots: Vec<activity::FrameCapture>,
+    pub size_bytes: Option<u32>,
+}
+
 // ── GameStore ──────────────────────────────────────────────────────────
 
 /// Centralised game data store. Owns the index of known games and
@@ -170,13 +190,10 @@ impl GameStore {
             .filter(|d| d.sha1 == sha1)
     }
 
-    /// Set the activity detail (called when background load completes).
-    pub fn set_activity_detail(&mut self, detail: ActivityDetail) {
-        self.activity_detail = Some(detail);
-    }
-
-    /// Load activity detail from disk. Can be called from a background thread.
-    pub fn load_activity_detail(sha1: &str, game_dir: &Path) -> ActivityDetail {
+    /// Load raw activity data from disk. Safe to call from a background thread
+    /// (no iced image handles created — those happen on the main thread via
+    /// `set_raw_activity_detail`).
+    pub fn load_raw_activity(sha1: &str, game_dir: &Path) -> RawActivityDetail {
         let refs = activity::list_activity(game_dir);
         let sessions = refs
             .into_iter()
@@ -189,14 +206,12 @@ impl GameStore {
                             .events
                             .iter()
                             .filter_map(|e| match &e.kind {
-                                activity::EventKind::Screenshot { frame } => {
-                                    Some(frame.to_image_handle())
-                                }
+                                activity::EventKind::Screenshot { frame } => Some(frame.clone()),
                                 _ => None,
                             })
                             .collect();
 
-                        Some(SessionSummary {
+                        Some(RawSessionSummary {
                             filename: r.filename,
                             kind: activity::ActivityKind::Session,
                             start: session.start,
@@ -211,7 +226,7 @@ impl GameStore {
                         let import: activity::ImportFile = ron::from_str(&data).ok()?;
                         let ts_str = r.filename.strip_suffix(".import")?;
                         let timestamp = activity::parse_filename_timestamp(ts_str)?;
-                        Some(SessionSummary {
+                        Some(RawSessionSummary {
                             filename: r.filename,
                             kind: activity::ActivityKind::Import,
                             start: timestamp,
@@ -226,10 +241,38 @@ impl GameStore {
             })
             .collect();
 
-        ActivityDetail {
+        RawActivityDetail {
             sha1: sha1.to_string(),
             sessions,
         }
+    }
+
+    /// Convert raw activity (from background load) into cached ActivityDetail
+    /// with rendered image handles. Call on the main thread.
+    pub fn set_raw_activity_detail(&mut self, raw: RawActivityDetail) {
+        let sessions = raw
+            .sessions
+            .into_iter()
+            .map(|s| SessionSummary {
+                filename: s.filename,
+                kind: s.kind,
+                start: s.start,
+                end: s.end,
+                save_count: s.save_count,
+                last_save_time: s.last_save_time,
+                screenshots: s
+                    .screenshots
+                    .iter()
+                    .map(|f| f.to_image_handle())
+                    .collect(),
+                size_bytes: s.size_bytes,
+            })
+            .collect();
+
+        self.activity_detail = Some(ActivityDetail {
+            sha1: raw.sha1,
+            sessions,
+        });
     }
 
     // ── Live session screenshots ───────────────────────────────────────
