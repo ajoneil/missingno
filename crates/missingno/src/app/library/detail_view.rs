@@ -143,54 +143,63 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info = info.push(meta_parts);
     }
 
-    // Right side: play/resume + settings + secondary actions on hover
-    let mut right = row![].spacing(s()).align_y(Center);
+    // Top row: back + title + primary actions
+    let mut top_right = row![].spacing(s()).align_y(Center);
+    if has_rom {
+        if data.is_loaded {
+            top_right =
+                top_right.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
+            top_right = top_right.push(buttons::danger("Stop").on_press(app::Message::StopGame));
+        } else {
+            top_right =
+                top_right.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+        }
+    }
+    top_right = top_right.push(
+        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
+    );
+
+    let top_row = row![
+        buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
+        app_text::heading(data.entry.display_title())
+            .wrapping(iced::widget::text::Wrapping::None),
+        iced::widget::Space::new().width(Fill),
+        top_right,
+    ]
+    .spacing(s())
+    .align_y(Center);
+
+    // Detail row: cover + metadata
+    let detail_row = row![cover, info.width(Fill)]
+        .spacing(m())
+        .align_y(Center);
+
+    // Secondary actions: shown on hover below the detail row
+    let mut header_col = column![top_row, detail_row].spacing(m());
 
     if data.header_hovered {
-        right = right.push(
+        header_col = header_col.push(
             row![
                 buttons::subtle(app_text::detail("Import Save..."))
                     .on_press(app::Message::ImportSave),
                 buttons::subtle(app_text::detail("Open Folder"))
                     .on_press(app::Message::OpenGameFolder),
-                buttons::subtle(app_text::detail("Refresh"))
+                buttons::subtle(app_text::detail("Refresh Metadata"))
                     .on_press(app::Message::RefreshMetadata),
-                buttons::danger(app_text::detail("Remove"))
+                buttons::danger(app_text::detail("Remove Game"))
                     .on_press(app::Message::RemoveGame),
             ]
             .spacing(s()),
         );
     }
 
-    if has_rom {
-        if data.is_loaded {
-            right = right.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
-            right = right.push(buttons::danger("Stop").on_press(app::Message::StopGame));
-        } else {
-            right = right.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
-        }
-    }
+    header_col = header_col.push(horizontal_rule());
 
-    right = right.push(
-        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
-    );
-
-    let header = row![
-        buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
-        cover,
-        info.width(Fill),
-        right,
-    ]
-    .spacing(m())
-    .align_y(Center);
-
-    let header = mouse_area(header)
+    let header = mouse_area(header_col)
         .on_enter(app::Message::HoverHeader)
         .on_exit(app::Message::UnhoverHeader);
 
-    container(column![header, horizontal_rule()].spacing(m()))
-        .padding(m())
-        .into()
+    container(header).padding(m()).into()
 }
 
 fn activity_loading() -> Element<'static, app::Message> {
