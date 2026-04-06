@@ -444,13 +444,13 @@ impl Rendering {
         pixel
     }
 
-    /// Advance the CATU DFF pipeline — runs every dot regardless of VBlank.
+    /// Advance the CATU DFF — runs every dot regardless of VBlank.
     ///
     /// On hardware, CATU evaluates every XUPY cycle regardless of POPU.
-    /// This must be called unconditionally so the rutu -> rutu_old -> catu
-    /// chain can advance during the 153->0 frame boundary while POPU is
-    /// still high. When CATU fires, it sets the scanning latch (BESU) and
-    /// resets the counter, priming the scanner for the new line.
+    /// This must be called unconditionally so the DFF can advance during
+    /// the 153->0 frame boundary while POPU is still high. When CATU
+    /// fires, it sets the scanning latch (BESU) and resets the counter,
+    /// priming the scanner for the new line.
     pub(super) fn tick_catu(&mut self, video: &VideoControl) {
         self.scan.tick_catu(video.xupy(), video.ly());
     }

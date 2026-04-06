@@ -255,8 +255,7 @@ impl SpriteScanner {
     }
 
     /// Reset at scanline boundary. Sets rutu = true so the CATU DFF
-    /// pipeline will fire after 2 XUPY cycles (4 dots), matching
-    /// hardware's RUTU → RUTU_old → CATU propagation.
+    /// fires on the next XUPY rising edge (1 XUPY cycle = 2 dots).
     pub(in crate::ppu) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
