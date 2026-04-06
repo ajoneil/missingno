@@ -61,8 +61,36 @@ impl ActionBar {
 
         match app.screen {
             app::Screen::Library => {
+                let mut r = row![app_text::heading("").width(Fill)];
+                if app.settings.internet_enabled && app.settings.homebrew_hub_enabled {
+                    r = r.push(
+                        buttons::subtle(
+                            row![icons::m(Icon::Globe), "Browse Homebrew"]
+                                .spacing(s())
+                                .align_y(Center),
+                        )
+                        .on_press(app::Message::OpenHomebrewBrowser),
+                    );
+                }
+                r = r.push(self.settings(app));
+                r
+            }
+            app::Screen::HomebrewBrowser => {
                 row![
-                    app_text::heading("").width(Fill),
+                    container(
+                        row![
+                            buttons::subtle(icons::m(Icon::Back))
+                                .on_press(app::Message::HomebrewBrowser(
+                                    crate::app::library::homebrew_browser::Message::Back,
+                                )),
+                            app_text::heading("Homebrew Hub")
+                                .wrapping(iced::widget::text::Wrapping::None),
+                        ]
+                        .spacing(s())
+                        .align_y(Center)
+                    )
+                    .clip(true)
+                    .width(Fill),
                     self.settings(app),
                 ]
             }

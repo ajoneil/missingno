@@ -103,6 +103,10 @@ struct App {
     screenshot_toast: Option<Instant>,
     /// Screenshot gallery state (when viewing screenshots).
     gallery_state: Option<library::screenshot_gallery::GalleryState>,
+    /// Homebrew browser state.
+    homebrew_browser: Option<library::homebrew_browser::BrowserState>,
+    /// Homebrew Hub API client (shared, thread-safe).
+    homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +129,7 @@ enum Screen {
     Settings,
     Detail,
     ScreenshotGallery,
+    HomebrewBrowser,
     Emulator,
 }
 
@@ -181,6 +186,9 @@ enum Message {
     ExportSave(String),
     ExportSaveSelected(String, Option<rfd::FileHandle>),
     OpenScreenshotGallery(String, usize), // (session filename, screenshot index)
+    OpenHomebrewBrowser,
+    HomebrewBrowser(library::homebrew_browser::Message),
+    HomebrewDownloaded(String, Vec<u8>, library::homebrew_hub::Entry),
     ScreenshotGallery(library::screenshot_gallery::Message),
     HoverLogEntry(usize),
     UnhoverLogEntry,
@@ -258,6 +266,8 @@ impl App {
             listening_for: None,
             screenshot_toast: None,
             gallery_state: None,
+            homebrew_browser: None,
+            homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
         };
 
         controls::update_bindings(
@@ -530,6 +540,208 @@ impl App {
                         if let Some(sha1) = self.viewing_sha1.clone() {
                             return self.go_to_detail(&sha1);
                         }
+                    }
+                }
+            }
+            Message::HomebrewDownloaded(title, rom_bytes, hh_entry) => {
+                // Save ROM to a homebrew directory and add to library
+                if let Some(lib_dir) = library::library_dir() {
+                    let sha1 = library::hasheous::rom_sha1(&rom_bytes);
+
+                    // Check if already in library
+                    if self.store.entry(&sha1).is_some() {
+                        eprintln!("[homebrew] {title} already in library");
+                        return Task::none();
+                    }
+
+                    let homebrew_dir = lib_dir.join("homebrew");
+                    let _ = std::fs::create_dir_all(&homebrew_dir);
+
+                    let filename = hh_entry
+                        .playable_file()
+                        .map(|f| f.filename.clone())
+                        .unwrap_or_else(|| format!("{}.gb", hh_entry.slug));
+                    let rom_path = homebrew_dir.join(&filename);
+                    let _ = std::fs::write(&rom_path, &rom_bytes);
+
+                    // Create library entry
+                    let game_dir = library::game_dir_for(&title, &sha1);
+                    if let Some(game_dir) = game_dir {
+                        let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
+                        entry.platform = hh_entry.platform.clone();
+                        entry.description = hh_entry.description.clone();
+                        entry.publisher = hh_entry.developer.clone();
+
+                        library::save_entry(&game_dir, &entry);
+
+                        // Download cover art if available
+                        if let Some(cover_url) = hh_entry.cover_url() {
+                            let client = self.homebrew_client.clone();
+                            let gd = game_dir.clone();
+                            let sha1_clone = sha1.clone();
+                            let task = Task::perform(
+                                smol::unblock(move || {
+                                    if let Ok(bytes) = client.download_image(&cover_url) {
+                                        library::save_cover(&gd, &bytes);
+                                    }
+                                    sha1_clone
+                                }),
+                                |sha1| {
+                                    Message::EnrichComplete(library::scanner::EnrichResult {
+                                        sha1: Some(sha1),
+                                        data_changed: true,
+                                        has_more: false,
+                                    })
+                                },
+                            );
+                            self.store.notify_game_added(&sha1, game_dir);
+                            return task;
+                        }
+
+                        self.store.notify_game_added(&sha1, game_dir);
+                    }
+                }
+            }
+            Message::OpenHomebrewBrowser => {
+                let mut state = library::homebrew_browser::BrowserState::new();
+                let query = state.query();
+                state.active_query = Some(query.clone());
+                self.homebrew_browser = Some(state);
+                self.screen = Screen::HomebrewBrowser;
+                let client = self.homebrew_client.clone();
+                return Task::perform(
+                    smol::unblock(move || client.search(&query)),
+                    |result| {
+                        Message::HomebrewBrowser(library::homebrew_browser::Message::SearchCompleted(
+                            result,
+                        ))
+                    },
+                );
+            }
+            Message::HomebrewBrowser(msg) => {
+                use library::homebrew_browser::Message as H;
+                match msg {
+                    H::SearchTextChanged(text) => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state.search_text = text;
+                        }
+                    }
+                    H::SubmitSearch => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            let query = state.query();
+                            state.active_query = Some(query.clone());
+                            state.loading = true;
+                            state.error = None;
+                            let client = self.homebrew_client.clone();
+                            return Task::perform(
+                                smol::unblock(move || client.search(&query)),
+                                |result| Message::HomebrewBrowser(H::SearchCompleted(result)),
+                            );
+                        }
+                    }
+                    H::SearchCompleted(result) => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state.loading = false;
+                            match result {
+                                Ok(results) => {
+                                    // Kick off cover image loads
+                                    let tasks: Vec<Task<Message>> = results
+                                        .entries
+                                        .iter()
+                                        .filter(|e| !state.covers.contains_key(&e.slug))
+                                        .filter_map(|e| {
+                                            let url = e.cover_url()?;
+                                            let slug = e.slug.clone();
+                                            let client = self.homebrew_client.clone();
+                                            Some(Task::perform(
+                                                smol::unblock(move || {
+                                                    client.download_image(&url).ok().map(|bytes| (slug, bytes))
+                                                }),
+                                                |result| match result {
+                                                    Some((slug, bytes)) => {
+                                                        Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
+                                                    }
+                                                    None => Message::None,
+                                                },
+                                            ))
+                                        })
+                                        .collect();
+                                    state.results = Some(results);
+                                    state.error = None;
+                                    if !tasks.is_empty() {
+                                        return Task::batch(tasks);
+                                    }
+                                }
+                                Err(e) => {
+                                    state.error = Some(e);
+                                    state.results = None;
+                                }
+                            }
+                        }
+                    }
+                    H::CoverLoaded(slug, bytes) => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state
+                                .covers
+                                .insert(slug, iced::widget::image::Handle::from_bytes(bytes));
+                        }
+                    }
+                    H::NextPage => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            if let Some(query) = &state.active_query {
+                                let mut next = query.clone();
+                                next.page += 1;
+                                state.active_query = Some(next.clone());
+                                state.loading = true;
+                                let client = self.homebrew_client.clone();
+                                return Task::perform(
+                                    smol::unblock(move || client.search(&next)),
+                                    |result| Message::HomebrewBrowser(H::PageLoaded(result)),
+                                );
+                            }
+                        }
+                    }
+                    H::PrevPage => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            if let Some(query) = &state.active_query {
+                                let mut prev = query.clone();
+                                prev.page = prev.page.saturating_sub(1).max(1);
+                                state.active_query = Some(prev.clone());
+                                state.loading = true;
+                                let client = self.homebrew_client.clone();
+                                return Task::perform(
+                                    smol::unblock(move || client.search(&prev)),
+                                    |result| Message::HomebrewBrowser(H::PageLoaded(result)),
+                                );
+                            }
+                        }
+                    }
+                    H::PageLoaded(result) => {
+                        // Same as SearchCompleted
+                        return self.update(Message::HomebrewBrowser(H::SearchCompleted(result)));
+                    }
+                    H::Download(entry) => {
+                        let client = self.homebrew_client.clone();
+                        let game_title = entry.title.clone();
+                        return Task::perform(
+                            smol::unblock(move || {
+                                let rom_bytes = client.download_rom(&entry)?;
+                                Ok::<_, String>((game_title, rom_bytes, entry))
+                            }),
+                            |result| match result {
+                                Ok((title, rom_bytes, entry)) => {
+                                    Message::HomebrewDownloaded(title, rom_bytes, entry)
+                                }
+                                Err(e) => {
+                                    eprintln!("[homebrew] Download failed: {e}");
+                                    Message::None
+                                }
+                            },
+                        );
+                    }
+                    H::Back => {
+                        self.homebrew_browser = None;
+                        self.screen = Screen::Library;
                     }
                 }
             }
@@ -1041,6 +1253,16 @@ impl App {
                     let content = match self.screen {
                         Screen::Library => {
                             library::view::view(&self.store, self.hovered_library_game.as_deref())
+                        }
+                        Screen::HomebrewBrowser => {
+                            if let Some(state) = &self.homebrew_browser {
+                                library::homebrew_browser::view(state)
+                            } else {
+                                library::view::view(
+                                    &self.store,
+                                    self.hovered_library_game.as_deref(),
+                                )
+                            }
                         }
                         Screen::ScreenshotGallery => {
                             if let Some(state) = &self.gallery_state {
