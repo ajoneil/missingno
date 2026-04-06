@@ -183,8 +183,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info.width(Fill),
         right,
     ]
-    .spacing(m())
-    .align_y(Center);
+    .spacing(m());
 
     let header = mouse_area(header)
         .on_enter(app::Message::HoverHeader)
