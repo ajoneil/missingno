@@ -116,6 +116,7 @@ impl Ppu {
                 line_end_active: false,
                 frame_end_reset: true,
                 myta_comparison_delay: false,
+                ropo_was_high: true,
                 vblank: true,
                 popu_holdover: false,
             },
@@ -160,6 +161,7 @@ impl Ppu {
                 line_end_active: false,
                 frame_end_reset: false,
                 myta_comparison_delay: false,
+                ropo_was_high: false,
                 vblank: false,
                 popu_holdover: false,
             },
@@ -696,6 +698,7 @@ impl Ppu {
             line_end_active: false,
             frame_end_reset: false,
             myta_comparison_delay: false,
+            ropo_was_high: false,
             vblank: snap.ly >= 144,
             popu_holdover: false,
         };
