@@ -74,11 +74,9 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 
         let cover_el: Element<'_, app::Message> = if data.header_hovered {
             let back_btn = container(
-                button(
-                    icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
-                        color: Some(iced::Color::WHITE),
-                    }),
-                )
+                button(icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
+                    color: Some(iced::Color::WHITE),
+                }))
                 .on_press(app::Message::BackToLibrary)
                 .style(|_, status| {
                     let bg_alpha = match status {
@@ -86,9 +84,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                         _ => 0.7,
                     };
                     button::Style {
-                        background: Some(
-                            iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
-                        ),
+                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
                         text_color: iced::Color::WHITE,
                         border: iced::Border::default().rounded(4),
                         ..Default::default()
@@ -111,12 +107,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             cover_el
         }
     } else {
-        container(
-            buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
-        )
-        .width(COVER_WIDTH)
-        .height(COVER_HEIGHT)
-        .into()
+        container(buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary))
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .into()
     };
 
     // Title + metadata column
@@ -124,7 +118,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 
     let subtitle_parts: Vec<String> = [
         data.entry.publisher.clone(),
-        data.entry.year.as_ref().map(|y| activity::format_date_string(y)),
+        data.entry
+            .year
+            .as_ref()
+            .map(|y| activity::format_date_string(y)),
         data.entry.platform.clone(),
     ]
     .into_iter()
@@ -217,8 +214,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         .on_press(app::Message::ShowSettings),
     );
 
-    let mut right = column![primary]
-        .align_x(iced::alignment::Horizontal::Right);
+    let mut right = column![primary].align_x(iced::alignment::Horizontal::Right);
 
     if data.header_hovered {
         right = right.push(iced::widget::Space::new().height(Fill));
@@ -230,8 +226,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                     .on_press(app::Message::OpenGameFolder),
                 buttons::subtle(app_text::detail("Refresh"))
                     .on_press(app::Message::RefreshMetadata),
-                buttons::danger(app_text::detail("Remove"))
-                    .on_press(app::Message::RemoveGame),
+                buttons::danger(app_text::detail("Remove")).on_press(app::Message::RemoveGame),
             ]
             .spacing(s()),
         );
@@ -239,12 +234,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 
     let header = row![
         cover,
-        container(
-            row![info.width(Fill), right].spacing(m()),
-        )
-        .padding([m() + 4.0, m()])
-        .width(Fill)
-        .height(COVER_HEIGHT),
+        container(row![info.width(Fill), right].spacing(m()),)
+            .padding([m() + 4.0, m()])
+            .width(Fill)
+            .height(COVER_HEIGHT),
     ];
 
     let header = mouse_area(header)
@@ -274,7 +267,9 @@ fn activity_log<'a>(
     live_screenshots: &'a [image::Handle],
     hovered_log_entry: Option<usize>,
 ) -> Element<'a, app::Message> {
-    let mut log = column![app_text::label("Activity")].spacing(m()).width(Fill);
+    let mut log = column![app_text::label("Activity")]
+        .spacing(m())
+        .width(Fill);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {
@@ -404,39 +399,34 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         let mut thumb_row = row![].spacing(s());
         for (i, handle) in entry.screenshots.iter().take(max_visible).enumerate() {
             thumb_row = thumb_row.push(
-                button(
-                    image(handle.clone())
-                        .width(160)
-                        .height(144),
-                )
-                .on_press(app::Message::OpenScreenshotGallery(filename.clone(), i))
-                .padding(0)
-                .style(|_, _| button::Style::default()),
+                button(image(handle.clone()).width(160).height(144))
+                    .on_press(app::Message::OpenScreenshotGallery(filename.clone(), i))
+                    .padding(0)
+                    .style(|_, _| button::Style::default()),
             );
         }
         if total > max_visible {
             let remaining = total - max_visible;
             thumb_row = thumb_row.push(
                 button(
-                    container(
-                        text(format!("+{remaining}"))
-                            .size(20.0)
-                            .color(MUTED),
-                    )
-                    .width(80)
-                    .height(144)
-                    .align_x(iced::alignment::Horizontal::Center)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .style(|theme: &iced::Theme| {
-                        let palette = theme.extended_palette();
-                        container::Style {
-                            background: Some(palette.background.strong.color.into()),
-                            border: iced::Border::default().rounded(4),
-                            ..Default::default()
-                        }
-                    }),
+                    container(text(format!("+{remaining}")).size(20.0).color(MUTED))
+                        .width(80)
+                        .height(144)
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .align_y(iced::alignment::Vertical::Center)
+                        .style(|theme: &iced::Theme| {
+                            let palette = theme.extended_palette();
+                            container::Style {
+                                background: Some(palette.background.strong.color.into()),
+                                border: iced::Border::default().rounded(4),
+                                ..Default::default()
+                            }
+                        }),
                 )
-                .on_press(app::Message::OpenScreenshotGallery(filename.clone(), max_visible))
+                .on_press(app::Message::OpenScreenshotGallery(
+                    filename.clone(),
+                    max_visible,
+                ))
                 .padding(0)
                 .style(|_, _| button::Style::default()),
             );

@@ -77,7 +77,6 @@ impl SessionFile {
             _ => None,
         })
     }
-
 }
 
 /// A timestamped event that occurred during a session.
@@ -150,8 +149,7 @@ impl FrameCapture {
     ) -> Self {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 
-        let mut pixels =
-            Vec::with_capacity(PIXELS_PER_LINE as usize * NUM_SCANLINES as usize);
+        let mut pixels = Vec::with_capacity(PIXELS_PER_LINE as usize * NUM_SCANLINES as usize);
         for y in 0..NUM_SCANLINES as usize {
             for x in 0..PIXELS_PER_LINE as usize {
                 pixels.push(fb.pixels[y][x].0);
@@ -208,18 +206,24 @@ impl FrameCapture {
         if self.sgb.is_some() {
             self.to_rgba_sgb()
         } else {
-            self.to_rgba_with_palette_choice(missingno_gb::ppu::types::palette::PaletteChoice::Green)
+            self.to_rgba_with_palette_choice(
+                missingno_gb::ppu::types::palette::PaletteChoice::Green,
+            )
         }
     }
 
     /// Render using SGB palette + attribute map data.
     fn to_rgba_sgb(&self) -> Vec<u8> {
-        use missingno_gb::ppu::screen::{PIXELS_PER_LINE};
+        use missingno_gb::ppu::screen::PIXELS_PER_LINE;
         use missingno_gb::sgb::Rgb555;
 
         let sgb = match &self.sgb {
             Some(s) => s,
-            None => return self.to_rgba_with_palette_choice(missingno_gb::ppu::types::palette::PaletteChoice::Green), // fallback
+            None => {
+                return self.to_rgba_with_palette_choice(
+                    missingno_gb::ppu::types::palette::PaletteChoice::Green,
+                );
+            } // fallback
         };
 
         let mut rgba = Vec::with_capacity(self.pixels.len() * 4);
@@ -238,7 +242,6 @@ impl FrameCapture {
         }
         rgba
     }
-
 }
 
 fn parse_palette_choice(name: &str) -> missingno_gb::ppu::types::palette::PaletteChoice {
@@ -257,11 +260,7 @@ impl FrameCapture {
         use missingno_gb::ppu::screen::{NUM_SCANLINES, PIXELS_PER_LINE};
 
         let rgba = self.to_rgba();
-        iced::widget::image::Handle::from_rgba(
-            PIXELS_PER_LINE as u32,
-            NUM_SCANLINES as u32,
-            rgba,
-        )
+        iced::widget::image::Handle::from_rgba(PIXELS_PER_LINE as u32, NUM_SCANLINES as u32, rgba)
     }
 }
 
@@ -579,7 +578,11 @@ pub fn format_date_string(raw: &str) -> String {
             parts[1].parse::<i8>(),
             parts[2].parse::<i16>(),
         ) {
-            let (year, month, day) = if c > 31 { (c, a as i8, b) } else { (a, b as i8, c as i8) };
+            let (year, month, day) = if c > 31 {
+                (c, a as i8, b)
+            } else {
+                (a, b as i8, c as i8)
+            };
             if let Ok(date) = jiff::civil::Date::new(year, month, day) {
                 if let Ok(ts) = date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC) {
                     return format_date(&ts.timestamp());

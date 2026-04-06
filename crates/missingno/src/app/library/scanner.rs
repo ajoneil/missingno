@@ -4,10 +4,7 @@ use crate::app::library::{self, catalogue::Catalogue, hasheous};
 
 use missingno_gb::cartridge::Cartridge;
 
-pub fn scan_directories(
-    directories: &[PathBuf],
-    catalogue: &Catalogue,
-) -> Vec<library::GameEntry> {
+pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<library::GameEntry> {
     let mut new_entries = Vec::new();
 
     for dir in directories {
@@ -38,13 +35,13 @@ pub fn scan_directories(
 
             // Try catalogue first for a good title, fall back to cartridge header
             let entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
-                let mut e = library::GameEntry::new(
-                    sha1,
-                    cat_entry.manifest.title.clone(),
-                    path.clone(),
-                );
+                let mut e =
+                    library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
                 e.platform = Some("Nintendo Game Boy".to_string());
-                e.publisher = cat_entry.manifest.publisher.clone()
+                e.publisher = cat_entry
+                    .manifest
+                    .publisher
+                    .clone()
                     .or(cat_entry.manifest.developer.clone());
                 e.year = cat_entry.manifest.date.clone();
                 e.description = cat_entry.manifest.description.clone();

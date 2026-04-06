@@ -239,10 +239,7 @@ fn binding_row(
             .width(150)
     };
 
-    row![label, binding_btn]
-        .spacing(s())
-        .align_y(Center)
-        .into()
+    row![label, binding_btn].spacing(s()).align_y(Center).into()
 }
 
 fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {

@@ -119,10 +119,8 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     // Start play session
     if let Some(current) = &mut app.current_game {
-        let session = library::activity::SessionFile::new(
-            Timestamp::now(),
-            current.started_from.clone(),
-        );
+        let session =
+            library::activity::SessionFile::new(Timestamp::now(), current.started_from.clone());
         library::activity::write_session(&current.game_dir, &session);
         current.session = Some(session);
         current.started_from = None;

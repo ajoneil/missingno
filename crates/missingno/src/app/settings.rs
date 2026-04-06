@@ -36,11 +36,8 @@ pub const GB_ACTIONS: [Action; 8] = [
 ];
 
 /// Emulator-level actions, for iteration.
-pub const EMULATOR_ACTIONS: [Action; 3] = [
-    Action::Screenshot,
-    Action::ToggleFullscreen,
-    Action::Pause,
-];
+pub const EMULATOR_ACTIONS: [Action; 3] =
+    [Action::Screenshot, Action::ToggleFullscreen, Action::Pause];
 
 impl Action {
     /// True for Game Boy buttons that produce press/release events.
@@ -181,14 +178,30 @@ impl From<LegacyKeyBindings> for Bindings {
         // Only migrate the game button bindings — emulator action defaults
         // are added by the caller based on whether this is keyboard or gamepad.
         let mut map = HashMap::new();
-        if !old.a.is_empty() { map.insert(Action::GbA, old.a); }
-        if !old.b.is_empty() { map.insert(Action::GbB, old.b); }
-        if !old.start.is_empty() { map.insert(Action::GbStart, old.start); }
-        if !old.select.is_empty() { map.insert(Action::GbSelect, old.select); }
-        if !old.up.is_empty() { map.insert(Action::GbUp, old.up); }
-        if !old.down.is_empty() { map.insert(Action::GbDown, old.down); }
-        if !old.left.is_empty() { map.insert(Action::GbLeft, old.left); }
-        if !old.right.is_empty() { map.insert(Action::GbRight, old.right); }
+        if !old.a.is_empty() {
+            map.insert(Action::GbA, old.a);
+        }
+        if !old.b.is_empty() {
+            map.insert(Action::GbB, old.b);
+        }
+        if !old.start.is_empty() {
+            map.insert(Action::GbStart, old.start);
+        }
+        if !old.select.is_empty() {
+            map.insert(Action::GbSelect, old.select);
+        }
+        if !old.up.is_empty() {
+            map.insert(Action::GbUp, old.up);
+        }
+        if !old.down.is_empty() {
+            map.insert(Action::GbDown, old.down);
+        }
+        if !old.left.is_empty() {
+            map.insert(Action::GbLeft, old.left);
+        }
+        if !old.right.is_empty() {
+            map.insert(Action::GbRight, old.right);
+        }
         Bindings(map)
     }
 }
@@ -468,7 +481,10 @@ mod tests {
         assert!(legacy.setup_complete);
         assert!(legacy.internet_enabled);
         assert_eq!(legacy.palette, "Pocket");
-        assert_eq!(legacy.rom_directories, vec![PathBuf::from("/home/test/roms")]);
+        assert_eq!(
+            legacy.rom_directories,
+            vec![PathBuf::from("/home/test/roms")]
+        );
         assert!(!legacy.use_sgb_colors);
 
         // Bindings migration

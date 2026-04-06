@@ -107,8 +107,7 @@ impl GalleryState {
             return None;
         }
 
-        let palette =
-            PaletteSelection::from_display_mode(&screenshots[0].capture.display_mode);
+        let palette = PaletteSelection::from_display_mode(&screenshots[0].capture.display_mode);
 
         Some(Self {
             session_filename: session_filename.to_string(),
@@ -141,11 +140,7 @@ impl GalleryState {
     fn selected_image_handle_scaled(&self) -> iced::widget::image::Handle {
         let rgba = self.selected_rgba();
         let scaled = scale_nearest_neighbour(&rgba, 160, 144, self.scale);
-        iced::widget::image::Handle::from_rgba(
-            160 * self.scale,
-            144 * self.scale,
-            scaled,
-        )
+        iced::widget::image::Handle::from_rgba(160 * self.scale, 144 * self.scale, scaled)
     }
 
     /// Whether the current screenshot has SGB data.
@@ -191,7 +186,10 @@ pub(crate) fn view(state: &GalleryState) -> Element<'_, app::Message> {
 
     let thumbnail_strip = thumbnail_strip(state);
 
-    column![top, thumbnail_strip].spacing(m()).padding(l()).into()
+    column![top, thumbnail_strip]
+        .spacing(m())
+        .padding(l())
+        .into()
 }
 
 fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
@@ -237,38 +235,32 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
         let btn = if state.scale == scale {
             buttons::primary(text(label).size(13.0))
         } else {
-            buttons::standard(text(label).size(13.0))
-                .on_press(Message::SetScale(scale).into())
+            buttons::standard(text(label).size(13.0)).on_press(Message::SetScale(scale).into())
         };
         scale_row = scale_row.push(btn);
     }
     col = col.push(scale_row);
 
     // Export button
-    col = col
-        .push(iced::widget::Space::new().height(s()))
-        .push(
-            buttons::primary(
-                row![icons::m(Icon::Download), "Export PNG"]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(Message::Export.into()),
-        );
+    col = col.push(iced::widget::Space::new().height(s())).push(
+        buttons::primary(
+            row![icons::m(Icon::Download), "Export PNG"]
+                .spacing(s())
+                .align_y(Center),
+        )
+        .on_press(Message::Export.into()),
+    );
 
-    container(
-        scrollable(col.padding(m()))
-            .height(Fill),
-    )
-    .width(250)
-    .style(|theme: &iced::Theme| {
-        let palette = theme.extended_palette();
-        container::Style {
-            background: Some(palette.background.weak.color.into()),
-            ..Default::default()
-        }
-    })
-    .into()
+    container(scrollable(col.padding(m())).height(Fill))
+        .width(250)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weak.color.into()),
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 fn palette_button<'a>(
@@ -305,8 +297,7 @@ fn thumbnail_strip(state: &GalleryState) -> Element<'_, app::Message> {
                     style.border = style.border.color(palette.primary.strong.color).width(2.0);
                 }
                 if matches!(status, button::Status::Hovered) {
-                    style.background =
-                        Some(palette.background.strong.color.into());
+                    style.background = Some(palette.background.strong.color.into());
                 }
                 style
             })
@@ -315,11 +306,9 @@ fn thumbnail_strip(state: &GalleryState) -> Element<'_, app::Message> {
         strip = strip.push(thumb_btn);
     }
 
-    scrollable(
-        container(strip).padding(m()),
-    )
-    .direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new(),
-    ))
-    .into()
+    scrollable(container(strip).padding(m()))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
+        .into()
 }

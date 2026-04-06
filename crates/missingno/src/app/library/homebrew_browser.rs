@@ -62,10 +62,10 @@ impl BrowserState {
 #[derive(Debug, Clone)]
 pub enum Message {
     SearchTextChanged(String),
-    SelectEntry(String), // slug
+    SelectEntry(String),          // slug
     CoverLoaded(String, Vec<u8>), // (slug, image bytes)
-    Download(String), // slug
-    DownloadFailed(String), // error message
+    Download(String),             // slug
+    DownloadFailed(String),       // error message
     ShowMore,
     DismissError,
     Back,
@@ -109,11 +109,7 @@ pub(crate) fn view<'a>(
         results_view(&results, &state.covers, state.visible_count)
     };
 
-    let mut page = column![
-        container(search_bar).padding(l()),
-        content,
-    ]
-    .height(Fill);
+    let mut page = column![container(search_bar).padding(l()), content,].height(Fill);
 
     if let Some(bar) = error_bar(state.error.as_deref()) {
         page = page.push(bar);
@@ -132,9 +128,7 @@ fn results_view<'a>(
     let total = results.len();
     let showing = visible_count.min(total);
 
-    entries_col = entries_col.push(
-        app_text::detail(format!("{total} games")).color(MUTED),
-    );
+    entries_col = entries_col.push(app_text::detail(format!("{total} games")).color(MUTED));
 
     for entry in results.iter().take(showing) {
         entries_col = entries_col.push(entry_card(entry, covers.get(&entry.slug)));
@@ -154,9 +148,13 @@ fn results_view<'a>(
     // Bottom padding
     entries_col = entries_col.push(iced::widget::Space::new().height(l()));
 
-    scrollable(container(entries_col.max_width(900)).padding([0.0, l()]).center_x(Fill))
-        .height(Fill)
-        .into()
+    scrollable(
+        container(entries_col.max_width(900))
+            .padding([0.0, l()])
+            .center_x(Fill),
+    )
+    .height(Fill)
+    .into()
 }
 
 const CARD_COVER_WIDTH: f32 = 160.0;
@@ -244,24 +242,16 @@ fn entry_card<'a>(
     }
 
     let slug = entry.slug.clone();
-    let card = row![
-        cover_el,
-        container(info.width(Fill)).padding(m()),
-    ]
-    .height(CARD_HEIGHT);
+    let card = row![cover_el, container(info.width(Fill)).padding(m()),].height(CARD_HEIGHT);
 
-    iced::widget::mouse_area(
-        container(card)
-            .width(Fill)
-            .style(|theme: &iced::Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: iced::Border::default().rounded(6),
-                    ..Default::default()
-                }
-            }),
-    )
+    iced::widget::mouse_area(container(card).width(Fill).style(|theme: &iced::Theme| {
+        let palette = theme.extended_palette();
+        container::Style {
+            background: Some(palette.background.weak.color.into()),
+            border: iced::Border::default().rounded(6),
+            ..Default::default()
+        }
+    }))
     .on_press(Message::SelectEntry(slug).into())
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
@@ -312,10 +302,8 @@ fn entry_detail<'a>(
         iced::widget::Space::new().width(160).height(160).into()
     };
 
-    let mut info = column![
-        text(&entry.manifest.title).size(24.0).font(fonts::bold()),
-    ]
-    .spacing(s());
+    let mut info =
+        column![text(&entry.manifest.title).size(24.0).font(fonts::bold()),].spacing(s());
 
     let mut subtitle_parts = Vec::new();
     if let Some(dev) = &entry.manifest.developer {
@@ -363,11 +351,9 @@ fn entry_detail<'a>(
 
     // Actions
     let slug = entry.slug.clone();
-    let mut actions = row![
-        iced::widget::Space::new().width(Fill),
-    ]
-    .spacing(s())
-    .align_y(Center);
+    let mut actions = row![iced::widget::Space::new().width(Fill),]
+        .spacing(s())
+        .align_y(Center);
 
     if entry.download_url().is_some() {
         actions = actions.push(
@@ -383,8 +369,12 @@ fn entry_detail<'a>(
     content = content.push(actions);
 
     let mut page = column![
-        scrollable(container(content.max_width(900)).padding(l()).center_x(Fill))
-            .height(Fill),
+        scrollable(
+            container(content.max_width(900))
+                .padding(l())
+                .center_x(Fill)
+        )
+        .height(Fill),
     ]
     .height(Fill);
 

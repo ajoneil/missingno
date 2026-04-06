@@ -79,10 +79,11 @@ impl ActionBar {
                 row![
                     container(
                         row![
-                            buttons::subtle(icons::m(Icon::Back))
-                                .on_press(app::Message::HomebrewBrowser(
+                            buttons::subtle(icons::m(Icon::Back)).on_press(
+                                app::Message::HomebrewBrowser(
                                     crate::app::library::homebrew_browser::Message::Back,
-                                )),
+                                )
+                            ),
                             app_text::heading("Homebrew Hub")
                                 .wrapping(iced::widget::text::Wrapping::None),
                         ]
@@ -153,10 +154,11 @@ impl ActionBar {
                 row![
                     container(
                         row![
-                            buttons::subtle(icons::m(Icon::Back))
-                                .on_press(app::Message::ScreenshotGallery(
+                            buttons::subtle(icons::m(Icon::Back)).on_press(
+                                app::Message::ScreenshotGallery(
                                     crate::app::library::screenshot_gallery::Message::Back,
-                                )),
+                                )
+                            ),
                             app_text::heading(title).wrapping(iced::widget::text::Wrapping::None),
                         ]
                         .spacing(s())
@@ -276,7 +278,6 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         .wrap()
         .into()
 }
-
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {
     if running {

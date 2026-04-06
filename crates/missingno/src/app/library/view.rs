@@ -241,7 +241,10 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     // Publisher · Date
     let subtitle_parts: Vec<String> = [
         game.entry.publisher.clone(),
-        game.entry.year.as_ref().map(|y| library::activity::format_date_string(y)),
+        game.entry
+            .year
+            .as_ref()
+            .map(|y| library::activity::format_date_string(y)),
     ]
     .into_iter()
     .flatten()
@@ -255,8 +258,7 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     if let Some(last_ts) = game.last_played {
         let last = friendly_ago(last_ts);
         let play_time = library::activity::format_play_time(game.play_time_secs);
-        info = info
-            .push(app_text::detail(format!("Played {last} · {play_time}")).color(MUTED));
+        info = info.push(app_text::detail(format!("Played {last} · {play_time}")).color(MUTED));
     } else if game.save_count > 0 {
         let n = game.save_count;
         info = info.push(

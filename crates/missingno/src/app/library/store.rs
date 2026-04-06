@@ -6,7 +6,7 @@ use std::{
 use iced::widget::image;
 use jiff::Timestamp;
 
-use super::{activity, GameEntry};
+use super::{GameEntry, activity};
 
 // ── Public data types ─────────────────────────────────────────────────
 
@@ -113,7 +113,6 @@ impl GameStore {
         self.index.clear();
         self.summaries.clear();
 
-
         let Some(lib_dir) = super::library_dir() else {
             return;
         };
@@ -127,8 +126,7 @@ impl GameStore {
                 if let Some(entry) = super::load_entry(&path) {
                     let sha1 = entry.sha1.clone();
                     self.index.insert(sha1.clone(), path.clone());
-                    self.summaries
-                        .insert(sha1, Self::load_summary(path, entry));
+                    self.summaries.insert(sha1, Self::load_summary(path, entry));
                 }
             }
         }
@@ -228,11 +226,7 @@ impl GameStore {
                         // If the session was never closed (crash/force quit),
                         // estimate end from the last event or fall back to start.
                         let end = session.end.or_else(|| {
-                            session
-                                .events
-                                .last()
-                                .map(|e| e.at)
-                                .or(Some(session.start))
+                            session.events.last().map(|e| e.at).or(Some(session.start))
                         });
 
                         Some(RawSessionSummary {
@@ -284,11 +278,7 @@ impl GameStore {
                 end: s.end,
                 save_count: s.save_count,
                 last_save_time: s.last_save_time,
-                screenshots: s
-                    .screenshots
-                    .iter()
-                    .map(|f| f.to_image_handle())
-                    .collect(),
+                screenshots: s.screenshots.iter().map(|f| f.to_image_handle()).collect(),
                 size_bytes: s.size_bytes,
             })
             .collect();
@@ -357,7 +347,6 @@ impl GameStore {
                 summary.play_time_secs = stats.total_play_time_secs;
                 summary.last_played = stats.last_played;
                 summary.save_count = stats.save_count;
-        
             }
         }
     }
@@ -371,7 +360,6 @@ impl GameStore {
                 if let Some(summary) = self.summaries.get_mut(sha1) {
                     summary.entry = entry;
                     summary.thumbnail = thumbnail;
-            
                 }
             }
         }
@@ -383,7 +371,6 @@ impl GameStore {
             self.index.insert(sha1.to_string(), game_dir.clone());
             self.summaries
                 .insert(sha1.to_string(), Self::load_summary(game_dir, entry));
-    
         }
     }
 

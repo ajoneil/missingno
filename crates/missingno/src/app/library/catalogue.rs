@@ -156,7 +156,11 @@ impl Catalogue {
             };
 
             // We only care about manifest.ron files
-            if path.file_name().map(|f| f != "manifest.ron").unwrap_or(true) {
+            if path
+                .file_name()
+                .map(|f| f != "manifest.ron")
+                .unwrap_or(true)
+            {
                 continue;
             }
 
@@ -223,16 +227,17 @@ impl Catalogue {
     /// Look up a game by ROM SHA1 hash.
     pub fn lookup_hash(&self, sha1: &str) -> Option<&CatalogueEntry> {
         let sha1_lower = sha1.to_lowercase();
-        self.hash_index
-            .get(&sha1_lower)
-            .map(|&i| &self.entries[i])
+        self.hash_index.get(&sha1_lower).map(|&i| &self.entries[i])
     }
 
     /// Get all homebrew entries, sorted by year (newest first).
     pub fn homebrew(&self) -> Vec<&CatalogueEntry> {
         let mut results: Vec<_> = self.entries.iter().filter(|e| e.is_homebrew()).collect();
         results.sort_by(|a, b| {
-            b.manifest.date.as_deref().unwrap_or("")
+            b.manifest
+                .date
+                .as_deref()
+                .unwrap_or("")
                 .cmp(a.manifest.date.as_deref().unwrap_or(""))
         });
         results
@@ -241,17 +246,18 @@ impl Catalogue {
     /// Search homebrew by title substring. Results sorted by year (newest first).
     pub fn search_homebrew(&self, query: &str) -> Vec<&CatalogueEntry> {
         let query_lower = query.to_lowercase();
-        let mut results: Vec<_> = self.entries
+        let mut results: Vec<_> = self
+            .entries
             .iter()
-            .filter(|e| {
-                e.is_homebrew() && e.manifest.title.to_lowercase().contains(&query_lower)
-            })
+            .filter(|e| e.is_homebrew() && e.manifest.title.to_lowercase().contains(&query_lower))
             .collect();
         results.sort_by(|a, b| {
-            b.manifest.date.as_deref().unwrap_or("")
+            b.manifest
+                .date
+                .as_deref()
+                .unwrap_or("")
                 .cmp(a.manifest.date.as_deref().unwrap_or(""))
         });
         results
     }
-
 }

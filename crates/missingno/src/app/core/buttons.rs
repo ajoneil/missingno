@@ -2,13 +2,14 @@ use iced::{
     Alignment::Center,
     Border, Color, Element, Theme,
     widget::{
-        Button, button, container,
+        Button, button,
         button::{Status, Style},
+        container,
     },
 };
 
-use crate::app::Message;
 use super::icons;
+use crate::app::Message;
 
 const PURPLE: Color = Color::from_rgb(
     0xcb as f32 / 255.0,
@@ -162,9 +163,7 @@ pub fn subtle_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Me
 fn min_height_content<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> container::Container<'a, Message> {
-    container(content)
-        .align_y(Center)
-        .height(icons::ICON_SIZE)
+    container(content).align_y(Center).height(icons::ICON_SIZE)
 }
 
 fn danger_style(_theme: &Theme, status: Status) -> Style {

@@ -10,7 +10,10 @@ fn main() {
     println!("cargo:rerun-if-changed={}", gamedb_dir.display());
 
     if !gamedb_dir.is_dir() {
-        eprintln!("cargo:warning=Game database not found at {}", gamedb_dir.display());
+        eprintln!(
+            "cargo:warning=Game database not found at {}",
+            gamedb_dir.display()
+        );
         eprintln!("cargo:warning=Run: git submodule update --init");
         // Write an empty archive so the build doesn't fail
         let tar_data = Vec::new();
@@ -38,7 +41,8 @@ fn main() {
                 for file in files.flatten() {
                     let path = file.path();
                     if path.extension().map(|e| e == "ron").unwrap_or(false) {
-                        let archive_name = format!("{}/{}", slug_str, file.file_name().to_string_lossy());
+                        let archive_name =
+                            format!("{}/{}", slug_str, file.file_name().to_string_lossy());
                         builder.append_path_with_name(&path, &archive_name).unwrap();
                         file_count += 1;
                     }

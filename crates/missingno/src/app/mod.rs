@@ -532,7 +532,10 @@ impl App {
                             let width = 160 * state.scale;
                             let height = 144 * state.scale;
                             let scaled = library::screenshot_gallery::scale_nearest_neighbour(
-                                &rgba, 160, 144, state.scale,
+                                &rgba,
+                                160,
+                                144,
+                                state.scale,
                             );
                             if let Some(img) = image::RgbaImage::from_raw(width, height, scaled) {
                                 let _ = img.save(handle.path());
@@ -675,9 +678,10 @@ impl App {
                     }
                     H::CoverLoaded(slug, bytes) => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            state
-                                .covers
-                                .insert(slug.clone(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+                            state.covers.insert(
+                                slug.clone(),
+                                iced::widget::image::Handle::from_bytes(bytes.clone()),
+                            );
                             state.cover_bytes.insert(slug, bytes);
                         }
                     }
@@ -693,12 +697,15 @@ impl App {
                                         let s = slug;
                                         return Task::perform(
                                             smol::unblock(move || {
-                                                client.download_image(&url).ok().map(|bytes| (s, bytes))
+                                                client
+                                                    .download_image(&url)
+                                                    .ok()
+                                                    .map(|bytes| (s, bytes))
                                             }),
                                             |result| match result {
-                                                Some((slug, bytes)) => {
-                                                    Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
-                                                }
+                                                Some((slug, bytes)) => Message::HomebrewBrowser(
+                                                    H::CoverLoaded(slug, bytes),
+                                                ),
                                                 None => Message::None,
                                             },
                                         );
@@ -827,12 +834,16 @@ impl App {
                 let capture_data = match &self.game {
                     Game::Loaded(LoadedGame::Emulator(emu)) => {
                         let gb = emu.game_boy();
-                        let sgb_data = gb.sgb().map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
+                        let sgb_data = gb
+                            .sgb()
+                            .map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
                         Some((gb.screen().clone(), sgb_data))
                     }
                     Game::Loaded(LoadedGame::Debugger(dbg)) => {
                         let gb = dbg.game_boy();
-                        let sgb_data = gb.sgb().map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
+                        let sgb_data = gb
+                            .sgb()
+                            .map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
                         Some((gb.screen().clone(), sgb_data))
                     }
                     _ => None,
@@ -848,9 +859,7 @@ impl App {
                         if let Some(session) = &mut current.session {
                             session.events.push(library::activity::SessionEvent {
                                 at: jiff::Timestamp::now(),
-                                kind: library::activity::EventKind::Screenshot {
-                                    frame: capture,
-                                },
+                                kind: library::activity::EventKind::Screenshot { frame: capture },
                             });
                             library::activity::write_session(&current.game_dir, session);
                             self.store.update_live_screenshots(session);
@@ -1247,12 +1256,7 @@ impl App {
                 } else {
                     screen.into()
                 };
-                column![
-                    self.action_bar.view(self),
-                    horizontal_rule(),
-                    screen,
-                ]
-                .into()
+                column![self.action_bar.view(self), horizontal_rule(), screen,].into()
             }
         } else if self.screen == Screen::Settings {
             settings_view::view(&self.settings, self.settings_section, self.listening_for)
@@ -1317,10 +1321,7 @@ impl App {
                         .size(text::sizes::xl())
                         .font(fonts::heading()),
                 );
-                let last_save_time = current
-                    .session
-                    .as_ref()
-                    .and_then(|s| s.last_save_time());
+                let last_save_time = current.session.as_ref().and_then(|s| s.last_save_time());
                 if let Some(ts) = last_save_time {
                     info = info.push(
                         iced_text(format!("Last saved {}", friendly_ago(ts)))
@@ -1430,7 +1431,6 @@ impl App {
         self.load_activity_async(sha1)
     }
 
-
     /// Load cover images for visible homebrew entries (first batch only).
     fn load_homebrew_covers(&self) -> Task<Message> {
         use library::homebrew_browser::Message as H;
@@ -1458,7 +1458,9 @@ impl App {
                         client.download_image(&url).ok().map(|bytes| (slug, bytes))
                     }),
                     |result| match result {
-                        Some((slug, bytes)) => Message::HomebrewBrowser(H::CoverLoaded(slug, bytes)),
+                        Some((slug, bytes)) => {
+                            Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
+                        }
                         None => Message::None,
                     },
                 ))
@@ -1644,9 +1646,7 @@ impl App {
 
         if let Some(session) = &mut current.session {
             // Check if SRAM has meaningfully changed, ignoring scratch regions
-            let previous = session
-                .last_sram()
-                .or(current.initial_sram.as_deref());
+            let previous = session.last_sram().or(current.initial_sram.as_deref());
             let changed = match previous {
                 Some(prev) => library::game_db::sram_changed(&cartridge_title, &ram, prev),
                 None => true, // No previous data at all — always record
@@ -1655,9 +1655,7 @@ impl App {
             if changed {
                 session.events.push(library::activity::SessionEvent {
                     at: jiff::Timestamp::now(),
-                    kind: library::activity::EventKind::Save {
-                        sram: ram.to_vec(),
-                    },
+                    kind: library::activity::EventKind::Save { sram: ram.to_vec() },
                 });
                 // Write incrementally for crash safety
                 library::activity::write_session(&current.game_dir, session);
