@@ -210,28 +210,21 @@ impl GameStore {
             .filter(|d| d.sha1 == sha1)
     }
 
-    /// Ensure activity detail is loaded for this game. Call from message
-    /// handlers (where &mut self is available), not from view().
-    pub fn ensure_activity_loaded(&mut self, sha1: &str) {
-        let needs_load = self
-            .activity_detail
+    /// Check whether activity detail is already cached for this game.
+    pub fn has_activity_loaded(&self, sha1: &str) -> bool {
+        self.activity_detail
             .as_ref()
-            .map(|d| d.sha1 != sha1)
-            .unwrap_or(true);
-
-        if needs_load {
-            self.activity_detail = Some(self.load_activity_detail(sha1));
-        }
+            .map(|d| d.sha1 == sha1)
+            .unwrap_or(false)
     }
 
-    fn load_activity_detail(&self, sha1: &str) -> ActivityDetail {
-        let Some(game_dir) = self.index.get(sha1) else {
-            return ActivityDetail {
-                sha1: sha1.to_string(),
-                sessions: Vec::new(),
-            };
-        };
+    /// Set the activity detail (called when background load completes).
+    pub fn set_activity_detail(&mut self, detail: ActivityDetail) {
+        self.activity_detail = Some(detail);
+    }
 
+    /// Load activity detail from disk. Can be called from a background thread.
+    pub fn load_activity_detail(sha1: &str, game_dir: &Path) -> ActivityDetail {
         let refs = activity::list_activity(game_dir);
         let sessions = refs
             .into_iter()

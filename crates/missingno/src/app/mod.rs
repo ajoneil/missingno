@@ -207,6 +207,7 @@ enum Message {
     Settings(settings_view::Message),
     Library(library::view::Message),
     ScanComplete(bool),
+    ActivityLoaded(library::store::ActivityDetail),
     EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
 
@@ -576,7 +577,8 @@ impl App {
                     let sha1 = current.entry.sha1.clone();
                     self.viewing_sha1 = Some(sha1.clone());
                     self.store.notify_activity_changed(&sha1);
-                    self.store.ensure_activity_loaded(&sha1);
+                    self.screen = Screen::Detail;
+                    return self.load_activity_async(&sha1);
                 }
                 self.screen = Screen::Detail;
             }
@@ -858,9 +860,10 @@ impl App {
                     self.detail_cover = self.store.game_dir(&sha1)
                         .and_then(|d| library::load_cover(d))
                         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
-                    self.store.ensure_activity_loaded(&sha1);
+                    let task = self.load_activity_async(&sha1);
                     self.viewing_sha1 = Some(sha1);
                     self.screen = Screen::Detail;
+                    return task;
                 }
                 library::view::Message::HoverGame(sha1) => {
                     self.hovered_library_game = Some(sha1);
@@ -889,6 +892,12 @@ impl App {
                     }
                 }
             },
+            Message::ActivityLoaded(detail) => {
+                // Only apply if we're still viewing the same game
+                if self.viewing_sha1.as_deref() == Some(&detail.sha1) {
+                    self.store.set_activity_detail(detail);
+                }
+            }
             Message::ScanComplete(changed) => {
                 if changed {
                     self.store.rebuild_index();
@@ -1165,6 +1174,22 @@ impl App {
             cover_hovered: self.cover_hovered,
             window_height: self.settings.window_height.unwrap_or(720.0),
         })
+    }
+
+    /// Kick off a background load of activity detail for a game.
+    fn load_activity_async(&self, sha1: &str) -> Task<Message> {
+        let sha1 = sha1.to_string();
+        if let Some(game_dir) = self.store.game_dir(&sha1) {
+            let game_dir = game_dir.to_path_buf();
+            Task::perform(
+                smol::unblock(move || {
+                    library::store::GameStore::load_activity_detail(&sha1, &game_dir)
+                }),
+                Message::ActivityLoaded,
+            )
+        } else {
+            Task::none()
+        }
     }
 
     fn empty_detail_view(&self) -> Element<'_, Message> {
