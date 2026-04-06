@@ -67,14 +67,9 @@ fn primary_style(_theme: &Theme, status: Status) -> Style {
     };
 
     match status {
-        Status::Active | Status::Pressed => base,
+        Status::Active | Status::Pressed | Status::Disabled => base,
         Status::Hovered => Style {
             background: Some(PURPLE.scale_alpha(0.75).into()),
-            ..base
-        },
-        Status::Disabled => Style {
-            background: base.background.map(|bg| bg.scale_alpha(0.5)),
-            text_color: base.text_color.scale_alpha(0.5),
             ..base
         },
     }
