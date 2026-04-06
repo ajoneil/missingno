@@ -242,7 +242,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         container(
             row![info.width(Fill), right].spacing(m()),
         )
-        .padding(m())
+        .padding([m() + 4.0, m()])
         .width(Fill)
         .height(COVER_HEIGHT),
     ];

@@ -42,7 +42,7 @@ impl ActionBar {
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
         // Title comes from viewing context or running game
         let title = match app.screen {
-            app::Screen::Detail => {
+            app::Screen::Detail | app::Screen::ScreenshotGallery => {
                 // Show the viewed game's title
                 app.viewing_sha1
                     .as_ref()
@@ -61,7 +61,10 @@ impl ActionBar {
 
         match app.screen {
             app::Screen::Library => {
-                row![iced::widget::Space::new().width(Fill), self.settings(app)]
+                row![
+                    app_text::heading("").width(Fill),
+                    self.settings(app),
+                ]
             }
             app::Screen::Detail => {
                 let is_this_game_loaded = app
