@@ -43,6 +43,8 @@ pub enum Message {
     RemoveRomDirectory(usize),
     SelectPalette(missingno_gb::ppu::types::palette::PaletteChoice),
     SetUseSgbColors(bool),
+    SetHasheousEnabled(bool),
+    SetHomebrewHubEnabled(bool),
     StartListening(ListeningFor),
     CaptureBinding(String),
     ClearBinding,
@@ -337,20 +339,49 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
     .spacing(m())
     .align_y(Center);
 
-    let network = column![
+    let mut network = column![
         toggler(settings.internet_enabled)
             .label("Allow internet access")
             .on_toggle(|enabled| Message::SetInternetEnabled(enabled).into())
             .size(m()),
-        row![
-            text("Game metadata provided by").color(MUTED),
-            mouse_area(text("Hasheous").color(MUTED))
-                .on_press(app::Message::OpenUrl("https://hasheous.org"))
-                .interaction(mouse::Interaction::Pointer),
-        ]
-        .spacing(s()),
     ]
-    .spacing(s());
+    .spacing(m());
+
+    if settings.internet_enabled {
+        network = network.push(
+            column![
+                toggler(settings.hasheous_enabled)
+                    .label("Game metadata")
+                    .on_toggle(|enabled| Message::SetHasheousEnabled(enabled).into())
+                    .size(m()),
+                row![
+                    text("Provided by").color(MUTED),
+                    mouse_area(text("Hasheous").color(MUTED))
+                        .on_press(app::Message::OpenUrl("https://hasheous.org"))
+                        .interaction(mouse::Interaction::Pointer),
+                ]
+                .spacing(s()),
+            ]
+            .spacing(s()),
+        );
+
+        network = network.push(
+            column![
+                toggler(settings.homebrew_hub_enabled)
+                    .label("Homebrew catalogue")
+                    .on_toggle(|enabled| Message::SetHomebrewHubEnabled(enabled).into())
+                    .size(m()),
+                row![
+                    text("Browse free games from").color(MUTED),
+                    mouse_area(text("Homebrew Hub").color(MUTED))
+                        .on_press(app::Message::OpenUrl("https://hh.gbdev.io"))
+                        .interaction(mouse::Interaction::Pointer),
+                ]
+                .spacing(s()),
+            ]
+            .spacing(s()),
+        );
+    }
 
     let mut directories = column![].spacing(s());
 

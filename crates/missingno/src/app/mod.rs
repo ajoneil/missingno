@@ -280,7 +280,7 @@ impl App {
                 smol::unblock(move || library::scanner::scan_directories(&dirs)),
                 |entries| Message::ScanComplete(!entries.is_empty()),
             ));
-        } else if app.settings.internet_enabled {
+        } else if app.settings.internet_enabled && app.settings.hasheous_enabled {
             // No directories to scan, but still enrich any unenriched games
             tasks.push(Task::perform(
                 smol::unblock(|| library::scanner::enrich_next()),
@@ -757,6 +757,14 @@ impl App {
                     self.settings.internet_enabled = enabled;
                     self.settings.save();
                 }
+                settings_view::Message::SetHasheousEnabled(enabled) => {
+                    self.settings.hasheous_enabled = enabled;
+                    self.settings.save();
+                }
+                settings_view::Message::SetHomebrewHubEnabled(enabled) => {
+                    self.settings.homebrew_hub_enabled = enabled;
+                    self.settings.save();
+                }
                 settings_view::Message::PickRomDirectory => {
                     let dialog = rfd::AsyncFileDialog::new();
                     return Task::perform(dialog.pick_folder(), |folder| match folder {
@@ -896,7 +904,7 @@ impl App {
                 if changed {
                     self.store.rebuild_index();
                 }
-                if self.settings.internet_enabled {
+                if self.settings.internet_enabled && self.settings.hasheous_enabled {
                     return Task::perform(
                         smol::unblock(|| library::scanner::enrich_next()),
                         |result| Message::EnrichComplete(result),
@@ -927,7 +935,10 @@ impl App {
                 }
 
                 // Chain: enrich next game if there are more
-                if result.has_more {
+                if result.has_more
+                    && self.settings.internet_enabled
+                    && self.settings.hasheous_enabled
+                {
                     return Task::perform(
                         smol::unblock(|| library::scanner::enrich_next()),
                         |result| Message::EnrichComplete(result),

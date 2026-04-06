@@ -206,6 +206,10 @@ struct SettingsFile {
     setup_complete: bool,
     #[serde(default)]
     internet_enabled: bool,
+    #[serde(default = "default_true")]
+    hasheous_enabled: bool,
+    #[serde(default = "default_true")]
+    homebrew_hub_enabled: bool,
     #[serde(default)]
     palette: String,
     #[serde(default)]
@@ -250,6 +254,8 @@ impl Default for SettingsFile {
         Self {
             setup_complete: false,
             internet_enabled: false,
+            hasheous_enabled: true,
+            homebrew_hub_enabled: true,
             palette: palette_to_string(PaletteChoice::default()),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
@@ -268,6 +274,8 @@ fn default_true() -> bool {
 pub struct Settings {
     pub setup_complete: bool,
     pub internet_enabled: bool,
+    pub hasheous_enabled: bool,
+    pub homebrew_hub_enabled: bool,
     pub palette: PaletteChoice,
     pub rom_directories: Vec<PathBuf>,
     pub use_sgb_colors: bool,
@@ -282,6 +290,8 @@ impl Default for Settings {
         Self {
             setup_complete: false,
             internet_enabled: false,
+            hasheous_enabled: true,
+            homebrew_hub_enabled: true,
             palette: PaletteChoice::default(),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
@@ -309,6 +319,8 @@ impl Settings {
             return Self {
                 setup_complete: file.setup_complete,
                 internet_enabled: file.internet_enabled,
+                hasheous_enabled: file.hasheous_enabled,
+                homebrew_hub_enabled: file.homebrew_hub_enabled,
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
@@ -338,6 +350,8 @@ impl Settings {
             let settings = Self {
                 setup_complete: file.setup_complete,
                 internet_enabled: file.internet_enabled,
+                hasheous_enabled: true,
+                homebrew_hub_enabled: true,
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
@@ -372,6 +386,8 @@ impl Settings {
         let file = SettingsFile {
             setup_complete: self.setup_complete,
             internet_enabled: self.internet_enabled,
+            hasheous_enabled: self.hasheous_enabled,
+            homebrew_hub_enabled: self.homebrew_hub_enabled,
             palette: palette_to_string(self.palette),
             rom_directories: self.rom_directories.clone(),
             use_sgb_colors: self.use_sgb_colors,
