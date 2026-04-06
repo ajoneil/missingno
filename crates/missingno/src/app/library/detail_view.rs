@@ -3,7 +3,7 @@ use iced::{
     Color, Element,
     Length::Fill,
     mouse,
-    widget::{button, column, container, image, mouse_area, row, scrollable, stack, text},
+    widget::{button, column, container, image, mouse_area, row, scrollable, text},
 };
 
 use crate::app::{
@@ -35,14 +35,15 @@ pub struct DetailData<'a> {
     pub live_session: Option<&'a SessionFile>,
     pub live_screenshots: &'a [image::Handle],
     pub hovered_log_entry: Option<usize>,
-    pub cover_hovered: bool,
-    pub window_height: f32,
+    pub header_hovered: bool,
+    /// Whether this game is currently loaded and running.
+    pub is_loaded: bool,
 }
 
 #[allow(private_interfaces)]
 pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
-    let left = game_info_panel(&data);
-    let right = match data.activity_state {
+    let header = game_header(&data);
+    let content = match data.activity_state {
         ActivityState::Loading => activity_loading(),
         ActivityState::Loaded(detail) => activity_log(
             &detail.sessions,
@@ -52,88 +53,32 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
         ),
     };
 
-    row![left, right].height(Fill).into()
+    column![header, content].height(Fill).into()
 }
 
-/// Left panel: game identity, play button, metadata, actions.
-fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
+/// Unified header: back + cover + identity + play + settings.
+fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let has_rom = data.entry.rom_paths.iter().any(|p| p.exists());
-    let cover_hovered = data.cover_hovered;
 
+    // Cover thumbnail — clickable to play if ROM exists
     let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
-        // Cover height capped so info/actions always fit.
-        // 450px accounts for action bar, title, metadata, buttons, padding.
-        let max_cover_h = (data.window_height - 470.0).max(80.0);
-
-        let cover_img = container(
-            image(handle.clone())
-                .content_fit(iced::ContentFit::ScaleDown)
-                .border_radius(8),
-        )
-        .max_height(max_cover_h);
-
+        let cover_img = image(handle.clone())
+            .height(100)
+            .content_fit(iced::ContentFit::ScaleDown)
+            .border_radius(6);
         if has_rom {
-            let cover_el: Element<'_, app::Message> = if cover_hovered {
-                container(stack![
-                    cover_img,
-                    iced::widget::opaque(
-                        container(iced::widget::Space::new())
-                            .width(Fill)
-                            .height(Fill)
-                            .style(|_: &iced::Theme| container::Style {
-                                background: Some(
-                                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4).into(),
-                                ),
-                                border: iced::Border::default().rounded(8),
-                                ..Default::default()
-                            }),
-                    ),
-                    container(
-                        button(
-                            icons::xl(Icon::Play).style(|_, _| iced::widget::svg::Style {
-                                color: Some(Color::WHITE),
-                            }),
-                        )
-                        .on_press(app::Message::PlayFromDetail)
-                        .style(|_: &iced::Theme, status| {
-                            let bg_alpha = match status {
-                                button::Status::Hovered => 0.8,
-                                _ => 0.5,
-                            };
-                            button::Style {
-                                background: Some(
-                                    iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
-                                ),
-                                text_color: Color::WHITE,
-                                border: iced::Border::default().rounded(24),
-                                ..Default::default()
-                            }
-                        }),
-                    )
-                    .width(Fill)
-                    .height(Fill)
-                    .align_x(Center)
-                    .align_y(iced::alignment::Vertical::Center)
-                ])
-                .center_x(Fill)
-                .into()
-            } else {
-                container(cover_img).center_x(Fill).into()
-            };
-
-            mouse_area(cover_el)
-                .on_enter(app::Message::HoverCover)
-                .on_exit(app::Message::UnhoverCover)
+            mouse_area(cover_img)
+                .on_press(app::Message::PlayFromDetail)
                 .interaction(mouse::Interaction::Pointer)
                 .into()
         } else {
             cover_img.into()
         }
     } else {
-        iced::widget::Space::new().into()
+        iced::widget::Space::new().width(70).height(100).into()
     };
 
-    // Fixed-height info
+    // Title + metadata column
     let mut info = column![app_text::heading(data.entry.display_title())].spacing(4);
 
     let subtitle_parts: Vec<&str> = [
@@ -148,7 +93,10 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
     }
 
-    // Compute play time from activity entries (if loaded)
+    // Play time + links on one line
+    let mut meta_parts = row![].spacing(m()).align_y(Center);
+    let mut has_meta = false;
+
     if let ActivityState::Loaded(detail) = data.activity_state {
         let total_secs: f64 = detail
             .sessions
@@ -160,65 +108,88 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             })
             .sum();
         if total_secs > 0.0 {
-            info = info.push(
-                app_text::detail(format!("{} played", activity::format_play_time(total_secs)))
-                    .color(MUTED),
-            );
+            meta_parts = meta_parts
+                .push(app_text::detail(activity::format_play_time(total_secs)).color(MUTED));
+            has_meta = true;
         }
     }
 
-    if data.entry.wikipedia_url.is_some() || data.entry.igdb_url.is_some() {
-        let mut links = row![].spacing(m());
-        if let Some(url) = &data.entry.wikipedia_url {
-            links = links.push(
-                mouse_area(
-                    row![icons::m(Icon::Globe), text("Wikipedia").color(MUTED)]
-                        .spacing(s())
-                        .align_y(Center),
-                )
-                .on_press(app::Message::OpenUrl(leak_str(url)))
-                .interaction(mouse::Interaction::Pointer),
-            );
-        }
-        if let Some(url) = &data.entry.igdb_url {
-            links = links.push(
-                mouse_area(
-                    row![icons::m(Icon::Globe), text("IGDB").color(MUTED)]
-                        .spacing(s())
-                        .align_y(Center),
-                )
-                .on_press(app::Message::OpenUrl(leak_str(url)))
-                .interaction(mouse::Interaction::Pointer),
-            );
-        }
-        info = info.push(links);
+    if let Some(url) = &data.entry.wikipedia_url {
+        meta_parts = meta_parts.push(
+            mouse_area(
+                row![icons::m(Icon::Globe), text("Wikipedia").color(MUTED)]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::OpenUrl(leak_str(url)))
+            .interaction(mouse::Interaction::Pointer),
+        );
+        has_meta = true;
+    }
+    if let Some(url) = &data.entry.igdb_url {
+        meta_parts = meta_parts.push(
+            mouse_area(
+                row![icons::m(Icon::Globe), text("IGDB").color(MUTED)]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::OpenUrl(leak_str(url)))
+            .interaction(mouse::Interaction::Pointer),
+        );
+        has_meta = true;
     }
 
-    // Fixed-height actions
-    let actions = column![
-        horizontal_rule(),
-        column![
-            buttons::subtle("Import Save...")
-                .on_press(app::Message::ImportSave)
-                .width(Fill),
-            buttons::subtle("Open Folder")
-                .on_press(app::Message::OpenGameFolder)
-                .width(Fill),
-            buttons::subtle("Refresh Metadata")
-                .on_press(app::Message::RefreshMetadata)
-                .width(Fill),
-            buttons::danger("Remove Game")
-                .on_press(app::Message::RemoveGame)
-                .width(Fill),
-        ]
-        .spacing(s()),
+    if has_meta {
+        info = info.push(meta_parts);
+    }
+
+    // Right side: play/resume + settings + secondary actions on hover
+    let mut right = row![].spacing(s()).align_y(Center);
+
+    if data.header_hovered {
+        right = right.push(
+            row![
+                buttons::subtle(app_text::detail("Import Save..."))
+                    .on_press(app::Message::ImportSave),
+                buttons::subtle(app_text::detail("Open Folder"))
+                    .on_press(app::Message::OpenGameFolder),
+                buttons::subtle(app_text::detail("Refresh"))
+                    .on_press(app::Message::RefreshMetadata),
+                buttons::danger(app_text::detail("Remove"))
+                    .on_press(app::Message::RemoveGame),
+            ]
+            .spacing(s()),
+        );
+    }
+
+    if has_rom {
+        if data.is_loaded {
+            right = right.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
+            right = right.push(buttons::danger("Stop").on_press(app::Message::StopGame));
+        } else {
+            right = right.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+        }
+    }
+
+    right = right.push(
+        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
+    );
+
+    let header = row![
+        buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
+        cover,
+        info.width(Fill),
+        right,
     ]
-    .spacing(m());
+    .spacing(m())
+    .align_y(Center);
 
-    column![cover, info, actions]
-        .spacing(m())
-        .padding(l())
-        .width(400)
+    let header = mouse_area(header)
+        .on_enter(app::Message::HoverHeader)
+        .on_exit(app::Message::UnhoverHeader);
+
+    container(column![header, horizontal_rule()].spacing(m()))
+        .padding(m())
         .into()
 }
 
@@ -231,7 +202,7 @@ fn activity_loading() -> Element<'static, app::Message> {
         .spacing(m()),
     )
     .padding(l())
-    .width(750)
+    .width(Fill)
     .into()
 }
 
@@ -242,7 +213,7 @@ fn activity_log<'a>(
     live_screenshots: &'a [image::Handle],
     hovered_log_entry: Option<usize>,
 ) -> Element<'a, app::Message> {
-    let mut log = column![app_text::label("Activity")].spacing(m()).width(750);
+    let mut log = column![app_text::label("Activity")].spacing(m()).width(Fill);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {
@@ -284,7 +255,6 @@ fn activity_log<'a>(
 
     scrollable(log.padding(l()))
         .height(Fill)
-        .width(iced::Length::Shrink)
         .into()
 }
 
@@ -368,13 +338,42 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
 
     if !entry.screenshots.is_empty() && !entry.filename.is_empty() {
         let filename = entry.filename.clone();
+        let max_visible = 4;
+        let total = entry.screenshots.len();
         let mut thumb_row = row![].spacing(s());
-        for handle in &entry.screenshots {
+        for handle in entry.screenshots.iter().take(max_visible) {
             thumb_row = thumb_row.push(
                 button(
                     image(handle.clone())
                         .width(160)
                         .height(144),
+                )
+                .on_press(app::Message::OpenScreenshotGallery(filename.clone()))
+                .padding(0)
+                .style(|_, _| button::Style::default()),
+            );
+        }
+        if total > max_visible {
+            let remaining = total - max_visible;
+            thumb_row = thumb_row.push(
+                button(
+                    container(
+                        text(format!("+{remaining}"))
+                            .size(20.0)
+                            .color(MUTED),
+                    )
+                    .width(80)
+                    .height(144)
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .style(|theme: &iced::Theme| {
+                        let palette = theme.extended_palette();
+                        container::Style {
+                            background: Some(palette.background.strong.color.into()),
+                            border: iced::Border::default().rounded(4),
+                            ..Default::default()
+                        }
+                    }),
                 )
                 .on_press(app::Message::OpenScreenshotGallery(filename.clone()))
                 .padding(0)

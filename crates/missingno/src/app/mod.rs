@@ -88,10 +88,10 @@ struct App {
     pending_action: Option<PendingAction>,
     /// Index of the activity log entry currently hovered on the detail page.
     hovered_log_entry: Option<usize>,
+    /// Whether the game header is hovered (to show secondary actions).
+    header_hovered: bool,
     /// SHA1 of the game card currently hovered in the library.
     hovered_library_game: Option<String>,
-    /// Whether the cover image on the detail page is hovered.
-    cover_hovered: bool,
     /// Full-resolution cover for the detail page (loaded on demand).
     detail_cover: Option<iced::widget::image::Handle>,
     settings_section: settings_view::Section,
@@ -186,8 +186,8 @@ enum Message {
     ScreenshotGallery(library::screenshot_gallery::Message),
     HoverLogEntry(usize),
     UnhoverLogEntry,
-    HoverCover,
-    UnhoverCover,
+    HoverHeader,
+    UnhoverHeader,
     RemoveGame,
     GameMetadataRefreshed(library::hasheous::GameInfo),
 
@@ -253,8 +253,8 @@ impl App {
             store,
             pending_action: None,
             hovered_log_entry: None,
+            header_hovered: false,
             hovered_library_game: None,
-            cover_hovered: false,
             detail_cover: None,
             settings_section: settings_view::Section::default(),
             previous_screen: None,
@@ -536,11 +536,11 @@ impl App {
             Message::UnhoverLogEntry => {
                 self.hovered_log_entry = None;
             }
-            Message::HoverCover => {
-                self.cover_hovered = true;
+            Message::HoverHeader => {
+                self.header_hovered = true;
             }
-            Message::UnhoverCover => {
-                self.cover_hovered = false;
+            Message::UnhoverHeader => {
+                self.header_hovered = false;
             }
             Message::RemoveGame => {
                 self.pending_action = Some(PendingAction::RemoveGameFromLibrary);
@@ -1044,27 +1044,30 @@ impl App {
         } else if self.screen == Screen::Settings {
             settings_view::view(&self.settings, self.settings_section, self.listening_for)
         } else {
-            let content = match self.screen {
-                Screen::Library => {
-                    library::view::view(&self.store, self.hovered_library_game.as_deref())
-                }
+            match self.screen {
                 Screen::Detail => self.detail_view(),
                 Screen::ScreenshotGallery => {
                     if let Some(state) = &self.gallery_state {
                         library::screenshot_gallery::view(state)
                     } else {
-                        self.detail_view() // fallback
+                        self.detail_view()
                     }
                 }
-                Screen::Emulator | Screen::Settings => unreachable!(),
-            };
-
-            column![
-                self.action_bar.view(self),
-                horizontal_rule(),
-                container(content).center(Fill)
-            ]
-            .into()
+                _ => {
+                    let content = match self.screen {
+                        Screen::Library => {
+                            library::view::view(&self.store, self.hovered_library_game.as_deref())
+                        }
+                        _ => unreachable!(),
+                    };
+                    column![
+                        self.action_bar.view(self),
+                        horizontal_rule(),
+                        container(content).center(Fill)
+                    ]
+                    .into()
+                }
+            }
         };
 
         if let Some(action) = &self.pending_action {
@@ -1175,6 +1178,12 @@ impl App {
             .filter(|c| sha1 == c.entry.sha1.as_str())
             .and_then(|c| c.session.as_ref());
 
+        let is_loaded = self
+            .current_game
+            .as_ref()
+            .map(|c| c.entry.sha1 == sha1 && matches!(self.game, Game::Loaded(_)))
+            .unwrap_or(false);
+
         library::detail_view::view(library::detail_view::DetailData {
             entry,
             cover,
@@ -1182,8 +1191,8 @@ impl App {
             live_session,
             live_screenshots: self.store.live_screenshots(),
             hovered_log_entry: self.hovered_log_entry,
-            cover_hovered: self.cover_hovered,
-            window_height: self.settings.window_height.unwrap_or(720.0),
+            header_hovered: self.header_hovered,
+            is_loaded,
         })
     }
 
