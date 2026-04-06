@@ -1153,22 +1153,25 @@ impl App {
             None => return self.empty_detail_view(),
         };
 
-        // Get entry and cover from current game (if it's the one being viewed) or store
-        let (entry, cover) = if let Some(current) = &self.current_game {
+        // Get entry from current game (if it's the one being viewed) or store
+        let entry = if let Some(current) = &self.current_game {
             if current.entry.sha1 == sha1 {
-                (&current.entry, current.cover.as_ref())
+                &current.entry
             } else {
                 match self.store.summary(sha1) {
-                    Some(s) => (&s.entry, self.detail_cover.as_ref().or(s.thumbnail.as_ref())),
+                    Some(s) => &s.entry,
                     None => return self.empty_detail_view(),
                 }
             }
         } else {
             match self.store.summary(sha1) {
-                Some(s) => (&s.entry, self.detail_cover.as_ref().or(s.thumbnail.as_ref())),
+                Some(s) => &s.entry,
                 None => return self.empty_detail_view(),
             }
         };
+
+        // Use pre-rendered thumbnail from the store
+        let cover = self.store.summary(sha1).and_then(|s| s.thumbnail.as_ref());
 
         let activity_state = self.store.activity_for(sha1);
 

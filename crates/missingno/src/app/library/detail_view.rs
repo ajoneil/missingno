@@ -61,27 +61,62 @@ pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
 
 /// Unified header: back + cover + identity + play + settings.
 fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
+    use iced::widget::stack;
+
     let has_rom = data.entry.rom_paths.iter().any(|p| p.exists());
 
-    // Cover thumbnail — clickable to play if ROM exists
+    // Cover thumbnail with back button overlay — clickable to play if ROM exists
     let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
-        let cover_img = image(handle.clone())
-            .width(COVER_WIDTH)
+        let cover_img: Element<'_, app::Message> = image(handle.clone())
             .height(COVER_HEIGHT)
-            .content_fit(iced::ContentFit::Cover);
+            .content_fit(iced::ContentFit::ScaleDown)
+            .into();
+
+        let cover_el: Element<'_, app::Message> = if data.header_hovered {
+            let back_btn = container(
+                button(
+                    icons::m(Icon::Back).style(|_, _| iced::widget::svg::Style {
+                        color: Some(iced::Color::WHITE),
+                    }),
+                )
+                .on_press(app::Message::BackToLibrary)
+                .style(|_, status| {
+                    let bg_alpha = match status {
+                        button::Status::Hovered => 0.9,
+                        _ => 0.7,
+                    };
+                    button::Style {
+                        background: Some(
+                            iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into(),
+                        ),
+                        text_color: iced::Color::WHITE,
+                        border: iced::Border::default().rounded(4),
+                        ..Default::default()
+                    }
+                }),
+            )
+            .padding([m() + 4.0, m()]);
+
+            stack![cover_img, back_btn].into()
+        } else {
+            cover_img
+        };
+
         if has_rom {
-            mouse_area(cover_img)
+            mouse_area(cover_el)
                 .on_press(app::Message::PlayFromDetail)
                 .interaction(mouse::Interaction::Pointer)
                 .into()
         } else {
-            cover_img.into()
+            cover_el
         }
     } else {
-        iced::widget::Space::new()
-            .width(COVER_WIDTH)
-            .height(COVER_HEIGHT)
-            .into()
+        container(
+            buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
+        )
+        .width(COVER_WIDTH)
+        .height(COVER_HEIGHT)
+        .into()
     };
 
     // Title + metadata column
@@ -165,12 +200,11 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
     );
 
-    let mut right =
-        column![primary, iced::widget::Space::new().height(Fill)]
-            .align_x(iced::alignment::Horizontal::Right)
-            .height(COVER_HEIGHT);
+    let mut right = column![primary]
+        .align_x(iced::alignment::Horizontal::Right);
 
     if data.header_hovered {
+        right = right.push(iced::widget::Space::new().height(Fill));
         right = right.push(
             row![
                 buttons::subtle(app_text::detail("Import Save..."))
@@ -189,15 +223,11 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let header = row![
         cover,
         container(
-            row![
-                buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
-                info.width(Fill),
-                right,
-            ]
-            .spacing(m()),
+            row![info.width(Fill), right].spacing(m()),
         )
         .padding(m())
-        .width(Fill),
+        .width(Fill)
+        .height(COVER_HEIGHT),
     ];
 
     let header = mouse_area(header)
