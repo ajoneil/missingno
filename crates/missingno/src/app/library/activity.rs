@@ -548,10 +548,12 @@ pub fn format_date(ts: &Timestamp) -> String {
 /// Parse a date string in various formats and display in the user's locale.
 /// Handles ISO dates, unix timestamps, MM-DD-YYYY, DD/MM/YYYY, and plain years.
 pub fn format_date_string(raw: &str) -> String {
-    // Try unix timestamp
+    // Try unix timestamp (must be > 1_000_000_000 to avoid matching plain years)
     if let Ok(ts) = raw.parse::<i64>() {
-        if let Ok(timestamp) = Timestamp::from_second(ts) {
-            return format_date(&timestamp);
+        if ts > 1_000_000_000 {
+            if let Ok(timestamp) = Timestamp::from_second(ts) {
+                return format_date(&timestamp);
+            }
         }
     }
 
