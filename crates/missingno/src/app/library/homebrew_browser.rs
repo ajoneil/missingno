@@ -30,20 +30,27 @@ pub const PAGE_SIZE: usize = 20;
 #[derive(Clone, Debug)]
 pub struct BrowserState {
     pub search_text: String,
-    pub page: usize,
+    /// How many entries to show (grows as user scrolls / clicks "Show more").
+    pub visible_count: usize,
     /// Index of the selected entry for detail view.
     pub selected_slug: Option<String>,
     /// Cover images keyed by slug.
     pub covers: std::collections::HashMap<String, image::Handle>,
+    /// Raw cover bytes keyed by slug (for saving to library on download).
+    pub cover_bytes: std::collections::HashMap<String, Vec<u8>>,
+    /// Error message to show (e.g. download failure).
+    pub error: Option<String>,
 }
 
 impl BrowserState {
     pub fn new() -> Self {
         Self {
             search_text: String::new(),
-            page: 0,
+            visible_count: PAGE_SIZE,
             selected_slug: None,
             covers: std::collections::HashMap::new(),
+            cover_bytes: std::collections::HashMap::new(),
+            error: None,
         }
     }
 }
@@ -56,8 +63,9 @@ pub enum Message {
     SelectEntry(String), // slug
     CoverLoaded(String, Vec<u8>), // (slug, image bytes)
     Download(String), // slug
-    NextPage,
-    PrevPage,
+    DownloadFailed(String), // error message
+    ShowMore,
+    DismissError,
     Back,
 }
 
@@ -96,58 +104,74 @@ pub(crate) fn view<'a>(
             .center(Fill)
             .into()
     } else {
-        results_view(&results, &state.covers, state.page)
+        results_view(&results, &state.covers, state.visible_count)
     };
 
-    column![
+    let mut page = column![
         container(search_bar).padding(l()),
         content,
     ]
-    .height(Fill)
-    .into()
+    .height(Fill);
+
+    // Error toast
+    if let Some(error) = &state.error {
+        page = page.push(
+            iced::widget::mouse_area(
+                container(
+                    row![
+                        text(error.clone()).color(Color::WHITE),
+                        iced::widget::Space::new().width(Fill),
+                        text("Dismiss").color(MUTED),
+                    ]
+                    .spacing(m())
+                    .align_y(Center),
+                )
+                .padding(m())
+                .width(Fill)
+                .style(|_: &iced::Theme| container::Style {
+                    background: Some(Color::from_rgb(0.5, 0.15, 0.15).into()),
+                    border: iced::Border::default().rounded(6),
+                    ..Default::default()
+                }),
+            )
+            .on_press(Message::DismissError.into()),
+        );
+    }
+
+    page.into()
 }
 
 fn results_view<'a>(
     results: &[&'a CatalogueEntry],
     covers: &'a std::collections::HashMap<String, image::Handle>,
-    page: usize,
+    visible_count: usize,
 ) -> Element<'a, app::Message> {
     let mut entries_col = column![].spacing(m());
 
     let total = results.len();
-    let total_pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
-    let start = page * PAGE_SIZE;
-    let end = (start + PAGE_SIZE).min(total);
-    let page_results = &results[start..end];
+    let showing = visible_count.min(total);
 
     entries_col = entries_col.push(
         app_text::detail(format!("{total} games")).color(MUTED),
     );
 
-    for entry in page_results {
+    for entry in results.iter().take(showing) {
         entries_col = entries_col.push(entry_card(entry, covers.get(&entry.slug)));
     }
 
-    // Pagination
-    if total_pages > 1 {
-        let mut pagination = row![].spacing(m()).align_y(iced::Alignment::Center);
-
-        if page > 0 {
-            pagination = pagination
-                .push(buttons::standard("Previous").on_press(Message::PrevPage.into()));
-        }
-
-        pagination = pagination.push(
-            app_text::detail(format!("Page {} of {}", page + 1, total_pages)).color(MUTED),
+    // "Show more" button if there are more results
+    if showing < total {
+        entries_col = entries_col.push(
+            container(
+                buttons::standard(text(format!("Show more ({} remaining)", total - showing)))
+                    .on_press(Message::ShowMore.into()),
+            )
+            .center_x(Fill),
         );
-
-        if page + 1 < total_pages {
-            pagination = pagination
-                .push(buttons::standard("Next").on_press(Message::NextPage.into()));
-        }
-
-        entries_col = entries_col.push(container(pagination).center_x(Fill));
     }
+
+    // Bottom padding
+    entries_col = entries_col.push(iced::widget::Space::new().height(l()));
 
     scrollable(container(entries_col.max_width(900)).padding([0.0, l()]).center_x(Fill))
         .height(Fill)

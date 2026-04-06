@@ -591,40 +591,53 @@ impl App {
                 entry.description = manifest.description.clone();
                 entry.publisher = manifest.developer.clone();
                 library::save_entry(&game_dir, &entry);
+                // Use cached cover bytes from the browser if available
+                let slug = match &manifest.source {
+                    Some(library::catalogue::GameSource::HomebrewHub { slug, .. }) => {
+                        Some(slug.clone())
+                    }
+                    _ => None,
+                };
+                let cached_cover = slug.as_ref().and_then(|s| {
+                    self.homebrew_browser
+                        .as_ref()
+                        .and_then(|b| b.cover_bytes.get(s).cloned())
+                });
+
+                if let Some(bytes) = &cached_cover {
+                    library::save_cover(&game_dir, bytes);
+                }
+
                 self.store.notify_game_added(&sha1, game_dir.clone());
                 self.homebrew_browser = None;
                 let detail_task = self.go_to_detail(&sha1);
 
-                // Download cover art in background if available
-                // Use the first screenshot from the Homebrew Hub as cover
-                let cover_url = match &manifest.source {
-                    Some(library::catalogue::GameSource::HomebrewHub { slug, .. }) => {
-                        Some(format!(
+                // If no cached cover, download in background
+                if cached_cover.is_none() {
+                    if let Some(slug) = slug {
+                        let cover_url = format!(
                             "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/cover.png"
-                        ))
+                        );
+                        let client = self.homebrew_client.clone();
+                        let gd = game_dir;
+                        let sha1_clone = sha1;
+                        let cover_task = Task::perform(
+                            smol::unblock(move || {
+                                if let Ok(bytes) = client.download_image(&cover_url) {
+                                    library::save_cover(&gd, &bytes);
+                                }
+                                sha1_clone
+                            }),
+                            |sha1| {
+                                Message::EnrichComplete(library::scanner::EnrichResult {
+                                    sha1: Some(sha1),
+                                    data_changed: true,
+                                    has_more: false,
+                                })
+                            },
+                        );
+                        return Task::batch([detail_task, cover_task]);
                     }
-                    _ => None,
-                };
-                if let Some(cover_url) = cover_url {
-                    let client = self.homebrew_client.clone();
-                    let gd = game_dir;
-                    let sha1_clone = sha1;
-                    let cover_task = Task::perform(
-                        smol::unblock(move || {
-                            if let Ok(bytes) = client.download_image(&cover_url) {
-                                library::save_cover(&gd, &bytes);
-                            }
-                            sha1_clone
-                        }),
-                        |sha1| {
-                            Message::EnrichComplete(library::scanner::EnrichResult {
-                                sha1: Some(sha1),
-                                data_changed: true,
-                                has_more: false,
-                            })
-                        },
-                    );
-                    return Task::batch([detail_task, cover_task]);
                 }
                 return detail_task;
             }
@@ -640,25 +653,32 @@ impl App {
                     H::SearchTextChanged(text) => {
                         if let Some(state) = &mut self.homebrew_browser {
                             state.search_text = text;
-                            state.page = 0;
+                            state.visible_count = library::homebrew_browser::PAGE_SIZE;
+                            state.error = None;
                         }
                     }
-                    H::NextPage => {
+                    H::ShowMore => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            state.page += 1;
+                            state.visible_count += library::homebrew_browser::PAGE_SIZE;
                             return self.load_homebrew_covers();
                         }
                     }
-                    H::PrevPage => {
+                    H::DownloadFailed(error) => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            state.page = state.page.saturating_sub(1);
+                            state.error = Some(error);
+                        }
+                    }
+                    H::DismissError => {
+                        if let Some(state) = &mut self.homebrew_browser {
+                            state.error = None;
                         }
                     }
                     H::CoverLoaded(slug, bytes) => {
                         if let Some(state) = &mut self.homebrew_browser {
                             state
                                 .covers
-                                .insert(slug, iced::widget::image::Handle::from_bytes(bytes));
+                                .insert(slug.clone(), iced::widget::image::Handle::from_bytes(bytes.clone()));
+                            state.cover_bytes.insert(slug, bytes);
                         }
                     }
                     H::SelectEntry(slug) => {
@@ -709,7 +729,11 @@ impl App {
                                         }
                                         Err(e) => {
                                             eprintln!("[homebrew] Download failed: {e}");
-                                            Message::None
+                                            Message::HomebrewBrowser(
+                                                library::homebrew_browser::Message::DownloadFailed(
+                                                    format!("Download failed: {e}"),
+                                                ),
+                                            )
                                         }
                                     },
                                 );
@@ -1420,11 +1444,9 @@ impl App {
             self.catalogue.search_homebrew(&state.search_text)
         };
 
-        let page_size = library::homebrew_browser::PAGE_SIZE;
-        let start = state.page * page_size;
-        let end = (start + page_size).min(results.len());
+        let visible = state.visible_count.min(results.len());
 
-        let tasks: Vec<Task<Message>> = results[start..end]
+        let tasks: Vec<Task<Message>> = results[..visible]
             .iter()
             .filter(|e| !state.covers.contains_key(&e.slug))
             .filter_map(|e| {
