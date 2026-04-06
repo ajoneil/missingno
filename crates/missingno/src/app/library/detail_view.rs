@@ -314,7 +314,7 @@ fn activity_log<'a>(
         );
     }
 
-    scrollable(log.padding(l()))
+    scrollable(container(log.max_width(1200)).padding(l()).center_x(Fill))
         .height(Fill)
         .into()
 }
