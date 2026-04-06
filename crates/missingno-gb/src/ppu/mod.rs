@@ -305,21 +305,11 @@ impl Ppu {
                 }
                 false
             }
-            Register::BackgroundViewportY => {
-                if is_drawing {
-                    self.registers.background_viewport.y.write(value);
-                    false
-                } else {
-                    self.write_register_immediate(&register, value)
-                }
-            }
-            Register::BackgroundViewportX => {
-                if is_drawing {
-                    self.registers.background_viewport.x.write(value);
-                    false
-                } else {
-                    self.write_register_immediate(&register, value)
-                }
+            Register::BackgroundViewportY | Register::BackgroundViewportX => {
+                // SCY, SCX use DFF9 cells identical to LCDC on hardware.
+                // The fetcher reads them combinationally — no propagation delay
+                // needed. Always write immediately, matching LCDC behavior.
+                self.write_register_immediate(&register, value)
             }
             Register::WindowX => {
                 if is_drawing {

@@ -389,13 +389,15 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // LCDC writes land before ppu.fall() so that XYLO (sprites_enabled)
-        // is current when FEPO/TEKY are evaluated. On hardware, AROR reads
-        // XYLO combinationally — the write settles before DFF9 advances.
-        let lcdc_handled = if let DotAction::Write { address, value } = &self.current_dot_action
-            && *address == 0xFF40
+        // DFF9 register writes (LCDC, SCY, SCX, WX) land before ppu.fall()
+        // so that the fetcher's VRAM address logic sees the new values
+        // immediately. On hardware, all DFF9 registers use identical cells
+        // and are read combinationally — the write settles before the
+        // fetcher computes its next address.
+        let early_ppu_write = if let DotAction::Write { address, value } = &self.current_dot_action
+            && matches!(*address, 0xFF40 | 0xFF42 | 0xFF43)
         {
-            if self.drive_ppu_bus(0xFF40, *value) {
+            if self.drive_ppu_bus(*address, *value) {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
             true
@@ -423,8 +425,8 @@ impl GameBoy {
                 if (0xFE00..=0xFEFF).contains(&address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
-                // Skip drive_ppu_bus for LCDC — already handled before ppu.fall().
-                if !lcdc_handled {
+                // Skip drive_ppu_bus for DFF9 regs — already handled before ppu.fall().
+                if !early_ppu_write {
                     if self.drive_ppu_bus(address, value) {
                         self.interrupts.request(Interrupt::VideoStatus);
                     }
