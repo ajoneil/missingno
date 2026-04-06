@@ -343,8 +343,8 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         let end_time = activity::format_local_time(&end);
         format!("{start_str} – {end_time} ({duration})")
     } else {
-        let start_str = activity::format_local(&start);
-        format!("{start_str} – in progress")
+        // No end time — either live (shown separately) or interrupted
+        activity::format_local(&start)
     };
 
     let mut info_col = column![

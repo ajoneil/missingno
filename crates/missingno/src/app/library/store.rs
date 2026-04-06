@@ -225,11 +225,21 @@ impl GameStore {
                             })
                             .collect();
 
+                        // If the session was never closed (crash/force quit),
+                        // estimate end from the last event or fall back to start.
+                        let end = session.end.or_else(|| {
+                            session
+                                .events
+                                .last()
+                                .map(|e| e.at)
+                                .or(Some(session.start))
+                        });
+
                         Some(RawSessionSummary {
                             filename: r.filename,
                             kind: activity::ActivityKind::Session,
                             start: session.start,
-                            end: session.end,
+                            end,
                             save_count: session.save_count(),
                             last_save_time: session.last_save_time(),
                             screenshots,
