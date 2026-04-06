@@ -91,6 +91,12 @@ impl ActionBar {
                     )
                     .clip(true)
                     .width(Fill),
+                    buttons::subtle(
+                        row![icons::m(Icon::Globe), "hh.gbdev.io"]
+                            .spacing(s())
+                            .align_y(Center),
+                    )
+                    .on_press(app::Message::OpenUrl("https://hh.gbdev.io")),
                     self.settings(app),
                 ]
             }
