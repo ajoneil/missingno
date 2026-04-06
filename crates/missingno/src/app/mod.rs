@@ -586,10 +586,8 @@ impl App {
 
                 // Create library entry
                 let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
-                entry.platform = manifest
-                    .developer
-                    .as_ref()
-                    .map(|_| "Nintendo Game Boy".to_string());
+                entry.platform = Some("Nintendo Game Boy".to_string());
+                entry.year = manifest.year.clone();
                 entry.description = manifest.description.clone();
                 entry.publisher = manifest.developer.clone();
                 library::save_entry(&game_dir, &entry);

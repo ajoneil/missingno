@@ -16,17 +16,16 @@ static GAMEDB_ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/gamedb.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GameManifest {
     pub title: String,
-    pub platform: Platform,
     #[serde(default)]
-    pub region: Option<String>,
+    pub year: Option<String>,
+    #[serde(default, rename = "region")]
+    pub _region: Option<String>,
     #[serde(default)]
     pub developer: Option<String>,
     #[serde(default)]
     pub publisher: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub year: Option<String>,
     #[serde(default)]
     pub hashes: Vec<String>,
     #[serde(default)]
@@ -41,12 +40,6 @@ pub struct GameManifest {
     pub links: Vec<GameLink>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-pub enum Platform {
-    GB,
-    GBC,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub enum GameSource {
     HomebrewHub { slug: String, filename: String },
@@ -57,7 +50,8 @@ pub enum GameSource {
 pub struct GameLink {
     pub name: String,
     pub url: String,
-    pub link_type: LinkType,
+    #[serde(default, rename = "link_type")]
+    pub _link_type: Option<LinkType>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -233,15 +227,6 @@ impl Catalogue {
             .map(|&i| &self.entries[i])
     }
 
-    /// Search entries by title substring (case-insensitive).
-    pub fn search_title(&self, query: &str) -> Vec<&CatalogueEntry> {
-        let query_lower = query.to_lowercase();
-        self.entries
-            .iter()
-            .filter(|e| e.manifest.title.to_lowercase().contains(&query_lower))
-            .collect()
-    }
-
     /// Get all homebrew entries.
     pub fn homebrew(&self) -> Vec<&CatalogueEntry> {
         self.entries.iter().filter(|e| e.is_homebrew()).collect()
@@ -258,13 +243,4 @@ impl Catalogue {
             .collect()
     }
 
-    /// Total number of entries.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Total number of homebrew entries.
-    pub fn homebrew_count(&self) -> usize {
-        self.entries.iter().filter(|e| e.is_homebrew()).count()
-    }
 }
