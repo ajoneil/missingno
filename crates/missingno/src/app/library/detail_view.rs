@@ -159,7 +159,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
     );
 
-    let mut right = column![primary].spacing(s()).align_x(iced::alignment::Horizontal::Right);
+    let mut right =
+        column![primary, iced::widget::Space::new().height(Fill)]
+            .align_x(iced::alignment::Horizontal::Right)
+            .height(100);
 
     if data.header_hovered {
         right = right.push(
