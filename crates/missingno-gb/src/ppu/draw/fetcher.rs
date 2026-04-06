@@ -67,6 +67,18 @@ impl TileFetcher {
         }
     }
 
+    /// Reset fetcher state for a new scanline. Only resets the counter
+    /// and window tracking -- tile_data_low/tile_data_high (tile_temp)
+    /// are NOT reset, matching hardware where these latches persist
+    /// across scanlines.
+    pub(in crate::ppu) fn reset_scanline(&mut self) {
+        self.fetch_counter = 0;
+        self.window_tile_x = 0;
+        self.tile_index = 0;
+        self.fetching_window = false;
+        self.vram_address = 0;
+    }
+
     // --- Address generation (pages 26-27) ---
     //
     // On the die, BG and window have separate address generators:

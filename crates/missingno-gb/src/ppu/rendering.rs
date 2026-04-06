@@ -476,6 +476,10 @@ impl Rendering {
         if scan.avap {
             self.hblank.set_xymu();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
+            // NYXU fires: load stale tile_temp into BG pipe (LOZE -> DFF22 SET/RST).
+            // On hardware, tile_temp retains data from the previous line's last
+            // BG fetch. TileFetcher's tile_data_low/tile_data_high model tile_temp.
+            self.fetcher.load_into(&mut self.bg_shifter);
         }
 
         // SARY/REJO: sample the WY==LY latch every dot in all modes.
@@ -500,7 +504,7 @@ impl Rendering {
         self.scan.enable_catu();
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
-        self.fetcher = TileFetcher::new();
+        self.fetcher.reset_scanline();
         self.cascade.reset();
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
