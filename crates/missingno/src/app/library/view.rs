@@ -238,11 +238,14 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     // Title — bold, readable size
     let mut info = column![text(game.entry.display_title()).font(fonts::bold()),].spacing(4);
 
-    // Publisher · Year
-    let subtitle_parts: Vec<&str> = [game.entry.publisher.as_deref(), game.entry.year.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect();
+    // Publisher · Date
+    let subtitle_parts: Vec<String> = [
+        game.entry.publisher.clone(),
+        game.entry.year.as_ref().map(|y| library::activity::format_date_string(y)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
     if !subtitle_parts.is_empty() {
         info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));

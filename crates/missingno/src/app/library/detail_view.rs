@@ -122,10 +122,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     // Title + metadata column
     let mut info = column![app_text::heading(data.entry.display_title())].spacing(4);
 
-    let subtitle_parts: Vec<&str> = [
-        data.entry.publisher.as_deref(),
-        data.entry.year.as_deref(),
-        data.entry.platform.as_deref(),
+    let subtitle_parts: Vec<String> = [
+        data.entry.publisher.clone(),
+        data.entry.year.as_ref().map(|y| activity::format_date_string(y)),
+        data.entry.platform.clone(),
     ]
     .into_iter()
     .flatten()

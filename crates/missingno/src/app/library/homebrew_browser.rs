@@ -17,6 +17,8 @@ use crate::app::{
 };
 
 // Catppuccin Mocha subtext0
+use crate::app::library::activity;
+
 const MUTED: Color = Color::from_rgb(
     0xa6 as f32 / 255.0,
     0xad as f32 / 255.0,
@@ -243,7 +245,7 @@ fn entry_card<'a>(
         subtitle_parts.push(dev.clone());
     }
     if let Some(date) = &entry.manifest.date {
-        subtitle_parts.push(date.clone());
+        subtitle_parts.push(activity::format_date_string(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(app_text::detail(subtitle_parts.join(" · ")).color(MUTED));
@@ -314,7 +316,7 @@ fn entry_detail<'a>(
         subtitle_parts.push(format!("by {dev}"));
     }
     if let Some(date) = &entry.manifest.date {
-        subtitle_parts.push(date.clone());
+        subtitle_parts.push(activity::format_date_string(date));
     }
     if !subtitle_parts.is_empty() {
         info = info.push(text(subtitle_parts.join(" · ")).color(MUTED));
