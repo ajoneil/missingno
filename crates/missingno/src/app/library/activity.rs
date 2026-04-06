@@ -414,7 +414,7 @@ pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
 // ── Reading ────────────────────────────────────────────────────────────
 
 /// Deserialize a SessionFile from RON, handling legacy format migration.
-fn read_session_from_str(data: &str) -> Option<SessionFile> {
+pub(crate) fn read_session_from_str(data: &str) -> Option<SessionFile> {
     let mut session: SessionFile = ron::from_str(data).ok()?;
     session.migrate_legacy_saves();
     Some(session)
@@ -569,6 +569,11 @@ fn write_compressed(path: &Path, ron_data: &str) {
     }
 }
 
+/// Read and decompress a compressed activity file by game_dir + filename.
+pub(crate) fn read_compressed_file(game_dir: &Path, filename: &str) -> Option<String> {
+    read_compressed(&activity_path(game_dir, filename))
+}
+
 fn read_compressed(path: &Path) -> Option<String> {
     let compressed = fs::read(path).ok()?;
     let decompressed = zstd::decode_all(compressed.as_slice()).ok()?;
@@ -577,7 +582,7 @@ fn read_compressed(path: &Path) -> Option<String> {
 
 // ── Timestamp parsing ──────────────────────────────────────────────────
 
-fn parse_filename_timestamp(s: &str) -> Option<Timestamp> {
+pub(crate) fn parse_filename_timestamp(s: &str) -> Option<Timestamp> {
     // Format: "20260403-083646"
     if s.len() < 15 {
         return None;
