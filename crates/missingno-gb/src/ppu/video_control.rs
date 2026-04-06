@@ -82,13 +82,14 @@ pub struct VideoControl {
     /// DFFs). Cleared when the internal counter wraps 153→0 at RUTU.
     pub frame_end_reset: bool,
 
-    /// MYTA comparison delay. When MYTA fires, the PALY comparator
-    /// doesn't see the reset `ly()=0` until 2 TALU cycles later.
-    /// The ROPO latch at the same TALU rising as MYTA naturally
-    /// promotes the pre-MYTA pending value (phase separation handles
-    /// the first cycle). This flag suppresses the next TALU falling's
-    /// `update_ly_comparison()` to defer the second cycle.
-    pub myta_comparison_delay: bool,
+    /// MYTA new-match suppression. When MYTA fires, the PALY comparator
+    /// runs normally at the next TALU falling but any false-to-true
+    /// transition (new match onset) is suppressed. This models the
+    /// hardware's reg_old lag: PALY reads the registered LY value which
+    /// doesn't reflect the MYTA async reset until one TALU cycle later.
+    /// True-to-false transitions (match clearing) are NOT suppressed,
+    /// so LYC=153 clears in 1 M-cycle while LYC=0 onset is delayed.
+    pub myta_suppress_new_match: bool,
 
     /// Previous ROPO value for edge detection. RUPO (the STAT-visible
     /// LYC flag) only sets on a ROPO 0→1 transition, not when ROPO
@@ -125,7 +126,7 @@ impl VideoControl {
         self.line_end_active = false;
         self.line_end_detected = false;
         self.frame_end_reset = false;
-        self.myta_comparison_delay = false;
+        self.myta_suppress_new_match = false;
         self.ropo_was_high = false;
     }
 
@@ -192,16 +193,25 @@ impl VideoControl {
     /// PALY combinational comparator: recompute the pending LY==LYC
     /// result. Called at TALU falling and on CPU writes to LYC.
     ///
-    /// When `myta_comparison_delay` is active, the update is skipped
-    /// and the flag is consumed, deferring the MYTA effect by one
-    /// additional TALU cycle (the first cycle of delay comes from
-    /// the pending/latched phase separation).
+    /// When `myta_suppress_new_match` is active, the comparison runs
+    /// normally but only false-to-true transitions (new match onset)
+    /// are suppressed. True-to-false transitions (match clearing) pass
+    /// through, modeling the reg_old lag after MYTA async reset.
     pub fn update_ly_comparison(&mut self) {
-        if self.myta_comparison_delay {
-            self.myta_comparison_delay = false;
+        let result = self.ly() == self.lyc;
+
+        if self.myta_suppress_new_match {
+            self.myta_suppress_new_match = false;
+            // Only apply clearing (true→false); suppress new match onset
+            // (false→true). The old LY value is gone from reg_old so PALY
+            // sees the mismatch, but the new LY=0 hasn't propagated yet.
+            if !result {
+                self.ly_comparison_pending = false;
+            }
             return;
         }
-        self.ly_comparison_pending = self.ly() == self.lyc;
+
+        self.ly_comparison_pending = result;
     }
 
     /// Whether the line-end pulse is active (RUTU, 2-dot window at
@@ -268,7 +278,7 @@ impl VideoControl {
             // MYTA DFF: latch frame-end (LY == 153). Makes ly() return 0.
             if self.ly == 153 {
                 self.frame_end_reset = true;
-                self.myta_comparison_delay = true;
+                self.myta_suppress_new_match = true;
             }
         }
 
