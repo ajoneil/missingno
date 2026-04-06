@@ -1,8 +1,15 @@
-use iced::widget::{column, container, pane_grid, text};
+use iced::{
+    Alignment::Center,
+    widget::{column, container, pane_grid, row, text},
+};
 
 use crate::app::{
     self,
-    core::{buttons, sizes::m},
+    core::{
+        buttons,
+        icons::{self, Icon},
+        sizes::{m, s},
+    },
     debugger::panes::{DebuggerPane, pane, title_bar},
 };
 
@@ -30,10 +37,13 @@ impl PlaybackPane {
 
         let can_play =
             debugger.has_recording() && !debugger.is_recording() && !debugger.is_playing();
+        let play_label = row![icons::m(Icon::Play), "Play"]
+            .spacing(s())
+            .align_y(Center);
         let play_button = if can_play {
-            buttons::primary("Play").on_press(app::Message::StartPlayback)
+            buttons::primary(play_label).on_press(app::Message::StartPlayback)
         } else {
-            buttons::primary("Play")
+            buttons::primary(play_label)
         };
 
         let record_button = if debugger.is_recording() {

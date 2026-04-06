@@ -281,9 +281,9 @@ fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
         let tile_content = column![swatches, label,].spacing(s()).align_x(Center);
 
         let tile = if is_selected {
-            buttons::primary(tile_content)
+            buttons::primary_raw(tile_content)
         } else {
-            buttons::subtle(tile_content).on_press(Message::SelectPalette(choice).into())
+            buttons::subtle_raw(tile_content).on_press(Message::SelectPalette(choice).into())
         };
 
         palette_row = palette_row.push(tile);

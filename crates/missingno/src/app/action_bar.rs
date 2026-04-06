@@ -88,13 +88,25 @@ impl ActionBar {
                 if is_this_game_loaded {
                     r = r.push(
                         row![
-                            buttons::primary("Resume").on_press(app::Message::PlayFromDetail),
+                            buttons::primary(
+                                row![icons::m(Icon::Play), "Resume"]
+                                    .spacing(s())
+                                    .align_y(Center),
+                            )
+                            .on_press(app::Message::PlayFromDetail),
                             buttons::danger("Stop").on_press(app::Message::StopGame),
                         ]
                         .spacing(s()),
                     );
                 } else {
-                    r = r.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+                    r = r.push(
+                        buttons::primary(
+                            row![icons::m(Icon::Play), "Play"]
+                                .spacing(s())
+                                .align_y(Center),
+                        )
+                        .on_press(app::Message::PlayFromDetail),
+                    );
                 }
 
                 r = r.push(self.settings(app));
@@ -228,22 +240,22 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         .into()
 }
 
-fn control_label(label: &str) -> container::Container<'static, app::Message> {
-    container(iced::widget::text(label.to_string()))
-        .align_y(Center)
-        .height(icons::ICON_SIZE)
-}
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {
     if running {
-        buttons::primary(control_label("Pause")).on_press(app::Message::Pause.into())
+        buttons::primary("Pause").on_press(app::Message::Pause.into())
     } else {
-        buttons::primary(control_label("Play")).on_press(app::Message::Run.into())
+        buttons::primary(
+            row![icons::m(Icon::Play), "Play"]
+                .spacing(s())
+                .align_y(Center),
+        )
+        .on_press(app::Message::Run.into())
     }
 }
 
 fn step_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard(control_label("Step Frame"));
+    let button = buttons::standard("Step Frame");
 
     if running {
         button
@@ -253,7 +265,7 @@ fn step_frame(running: bool) -> Button<'static, app::Message> {
 }
 
 fn capture_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard(control_label("Capture Frame"));
+    let button = buttons::standard("Capture Frame");
 
     if running {
         button
@@ -267,9 +279,9 @@ fn screenshot() -> Button<'static, app::Message> {
 }
 
 fn reset() -> Button<'static, app::Message> {
-    buttons::danger(control_label("Reset")).on_press(app::Message::Reset.into())
+    buttons::danger("Reset").on_press(app::Message::Reset.into())
 }
 
 fn stop() -> Button<'static, app::Message> {
-    buttons::danger(control_label("Stop")).on_press(app::Message::StopGame)
+    buttons::danger("Stop").on_press(app::Message::StopGame)
 }

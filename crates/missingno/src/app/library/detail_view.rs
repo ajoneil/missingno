@@ -188,16 +188,33 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let mut primary = row![].spacing(s()).align_y(Center);
     if has_rom {
         if data.is_loaded {
-            primary =
-                primary.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
+            primary = primary.push(
+                buttons::primary(
+                    row![icons::m(Icon::Play), "Resume"]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::PlayFromDetail),
+            );
             primary = primary.push(buttons::danger("Stop").on_press(app::Message::StopGame));
         } else {
-            primary =
-                primary.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+            primary = primary.push(
+                buttons::primary(
+                    row![icons::m(Icon::Play), "Play"]
+                        .spacing(s())
+                        .align_y(Center),
+                )
+                .on_press(app::Message::PlayFromDetail),
+            );
         }
     }
     primary = primary.push(
-        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
+        buttons::subtle(
+            row![icons::m(Icon::Gear), "Settings"]
+                .spacing(s())
+                .align_y(Center),
+        )
+        .on_press(app::Message::ShowSettings),
     );
 
     let mut right = column![primary]

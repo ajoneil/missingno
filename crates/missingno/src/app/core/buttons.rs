@@ -1,12 +1,14 @@
 use iced::{
+    Alignment::Center,
     Border, Color, Element, Theme,
     widget::{
-        Button, button,
+        Button, button, container,
         button::{Status, Style},
     },
 };
 
 use crate::app::Message;
+use super::icons;
 
 const PURPLE: Color = Color::from_rgb(
     0xcb as f32 / 255.0,
@@ -53,7 +55,7 @@ const BORDER_RADIUS: f32 = 4.0;
 /// Main action. Solid purple background, dark text.
 /// One per context at most.
 pub fn primary<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(primary_style)
+    button(min_height_content(content)).style(primary_style)
 }
 
 fn primary_style(_theme: &Theme, status: Status) -> Style {
@@ -81,7 +83,7 @@ fn primary_style(_theme: &Theme, status: Status) -> Style {
 /// Normal button. Tinted purple background.
 /// The default for most buttons.
 pub fn standard<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(standard_style)
+    button(min_height_content(content)).style(standard_style)
 }
 
 fn standard_style(_theme: &Theme, status: Status) -> Style {
@@ -109,7 +111,7 @@ fn standard_style(_theme: &Theme, status: Status) -> Style {
 /// Text-only button. No background until hovered.
 /// For links, toolbar items, inline actions.
 pub fn subtle<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(subtle_style)
+    button(min_height_content(content)).style(subtle_style)
 }
 
 fn subtle_style(_theme: &Theme, status: Status) -> Style {
@@ -135,7 +137,7 @@ fn subtle_style(_theme: &Theme, status: Status) -> Style {
 
 /// Same size as subtle but invisible. Use for layout reservation.
 pub fn invisible<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(invisible_style)
+    button(min_height_content(content)).style(invisible_style)
 }
 
 fn invisible_style(_theme: &Theme, _status: Status) -> Style {
@@ -149,7 +151,25 @@ fn invisible_style(_theme: &Theme, _status: Status) -> Style {
 
 /// Destructive action. Red-tinted background, same weight as standard.
 pub fn danger<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(danger_style)
+    button(min_height_content(content)).style(danger_style)
+}
+
+/// Primary button without min-height enforcement (for custom content like palette tiles).
+pub fn primary_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
+    button(content).style(primary_style)
+}
+
+/// Subtle button without min-height enforcement.
+pub fn subtle_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
+    button(content).style(subtle_style)
+}
+
+fn min_height_content<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    container(content)
+        .align_y(Center)
+        .height(icons::ICON_SIZE)
 }
 
 fn danger_style(_theme: &Theme, status: Status) -> Style {
