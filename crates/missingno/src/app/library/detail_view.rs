@@ -143,8 +143,23 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
         info = info.push(meta_parts);
     }
 
-    // Right side: play/resume + settings + secondary actions on hover
-    let mut right = row![].spacing(s()).align_y(Center);
+    // Right side: primary row on top, secondary row below on hover
+    let mut primary = row![].spacing(s()).align_y(Center);
+    if has_rom {
+        if data.is_loaded {
+            primary =
+                primary.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
+            primary = primary.push(buttons::danger("Stop").on_press(app::Message::StopGame));
+        } else {
+            primary =
+                primary.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
+        }
+    }
+    primary = primary.push(
+        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
+    );
+
+    let mut right = column![primary].spacing(s()).align_x(iced::alignment::Horizontal::Right);
 
     if data.header_hovered {
         right = right.push(
@@ -161,19 +176,6 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             .spacing(s()),
         );
     }
-
-    if has_rom {
-        if data.is_loaded {
-            right = right.push(buttons::primary("Resume").on_press(app::Message::PlayFromDetail));
-            right = right.push(buttons::danger("Stop").on_press(app::Message::StopGame));
-        } else {
-            right = right.push(buttons::primary("Play").on_press(app::Message::PlayFromDetail));
-        }
-    }
-
-    right = right.push(
-        buttons::subtle(icons::m(Icon::Gear)).on_press(app::Message::ShowSettings),
-    );
 
     let header = row![
         buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
