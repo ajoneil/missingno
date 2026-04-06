@@ -1,10 +1,13 @@
 use std::{fs, path::PathBuf};
 
-use crate::app::library::{self, hasheous};
+use crate::app::library::{self, catalogue::Catalogue, hasheous};
 
 use missingno_gb::cartridge::Cartridge;
 
-pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
+pub fn scan_directories(
+    directories: &[PathBuf],
+    catalogue: &Catalogue,
+) -> Vec<library::GameEntry> {
     let mut new_entries = Vec::new();
 
     for dir in directories {
@@ -33,15 +36,32 @@ pub fn scan_directories(directories: &[PathBuf]) -> Vec<library::GameEntry> {
                 continue;
             }
 
-            // New game
-            let title = Cartridge::peek_title(&rom);
-            let title = if title.is_empty() {
-                "Unknown".to_string()
+            // Try catalogue first for a good title, fall back to cartridge header
+            let entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
+                let mut e = library::GameEntry::new(
+                    sha1,
+                    cat_entry.manifest.title.clone(),
+                    path.clone(),
+                );
+                e.platform = cat_entry
+                    .manifest
+                    .region
+                    .as_ref()
+                    .map(|_| "Nintendo Game Boy".to_string());
+                e.publisher = cat_entry.manifest.publisher.clone()
+                    .or(cat_entry.manifest.developer.clone());
+                e.description = cat_entry.manifest.description.clone();
+                e.enrichment_attempted = false; // still want Hasheous for covers
+                e
             } else {
-                title
+                let title = Cartridge::peek_title(&rom);
+                let title = if title.is_empty() {
+                    "Unknown".to_string()
+                } else {
+                    title
+                };
+                library::GameEntry::new(sha1, title, path.clone())
             };
-
-            let entry = library::GameEntry::new(sha1, title, path.clone());
 
             let game_dir = match library::game_dir_for(&entry.title, &entry.sha1) {
                 Some(dir) => dir,

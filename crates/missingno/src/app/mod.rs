@@ -107,6 +107,8 @@ struct App {
     homebrew_browser: Option<library::homebrew_browser::BrowserState>,
     /// Homebrew Hub API client (shared, thread-safe).
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
+    /// Bundled game catalogue (commercial + homebrew).
+    catalogue: std::sync::Arc<library::catalogue::Catalogue>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,7 +190,7 @@ enum Message {
     OpenScreenshotGallery(String, usize), // (session filename, screenshot index)
     OpenHomebrewBrowser,
     HomebrewBrowser(library::homebrew_browser::Message),
-    HomebrewDownloaded(String, Vec<u8>, library::homebrew_hub::Entry),
+    HomebrewDownloaded(String, Vec<u8>, library::catalogue::GameManifest),
     ScreenshotGallery(library::screenshot_gallery::Message),
     HoverLogEntry(usize),
     UnhoverLogEntry,
@@ -268,6 +270,7 @@ impl App {
             gallery_state: None,
             homebrew_browser: None,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
+            catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
         };
 
         controls::update_bindings(
@@ -286,8 +289,9 @@ impl App {
         // Scan configured ROM directories on startup
         if !app.settings.rom_directories.is_empty() {
             let dirs = app.settings.rom_directories.clone();
+            let cat = app.catalogue.clone();
             tasks.push(Task::perform(
-                smol::unblock(move || library::scanner::scan_directories(&dirs)),
+                smol::unblock(move || library::scanner::scan_directories(&dirs, &cat)),
                 |entries| Message::ScanComplete(!entries.is_empty()),
             ));
         } else if app.settings.internet_enabled && app.settings.hasheous_enabled {
@@ -543,7 +547,7 @@ impl App {
                     }
                 }
             }
-            Message::HomebrewDownloaded(title, rom_bytes, hh_entry) => {
+            Message::HomebrewDownloaded(title, rom_bytes, manifest) => {
                 let sha1 = library::hasheous::rom_sha1(&rom_bytes);
 
                 // Check if already in library
@@ -559,12 +563,13 @@ impl App {
                     eprintln!("[homebrew] Failed to create game dir: {e}");
                 }
 
-                // Save ROM into the game directory
-                let filename = hh_entry
-                    .playable_file()
-                    .map(|f| f.filename.clone())
-                    .unwrap_or_else(|| format!("{}.gb", hh_entry.slug));
-                // Strip any subdirectory from the filename — we just want the file
+                // Get filename from source
+                let filename = match &manifest.source {
+                    Some(library::catalogue::GameSource::HomebrewHub { filename, .. }) => {
+                        filename.clone()
+                    }
+                    _ => format!("{}.gb", title.to_lowercase().replace(' ', "-")),
+                };
                 let filename = std::path::Path::new(&filename)
                     .file_name()
                     .map(|f| f.to_string_lossy().to_string())
@@ -581,14 +586,26 @@ impl App {
 
                 // Create library entry
                 let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
-                entry.platform = hh_entry.platform.clone();
-                entry.description = hh_entry.description.clone();
-                entry.publisher = hh_entry.developer.clone();
+                entry.platform = manifest
+                    .developer
+                    .as_ref()
+                    .map(|_| "Nintendo Game Boy".to_string());
+                entry.description = manifest.description.clone();
+                entry.publisher = manifest.developer.clone();
                 library::save_entry(&game_dir, &entry);
                 self.store.notify_game_added(&sha1, game_dir.clone());
 
                 // Download cover art in background if available
-                if let Some(cover_url) = hh_entry.cover_url() {
+                // Use the first screenshot from the Homebrew Hub as cover
+                let cover_url = match &manifest.source {
+                    Some(library::catalogue::GameSource::HomebrewHub { slug, .. }) => {
+                        Some(format!(
+                            "https://raw.githubusercontent.com/gbdev/database/master/entries/{slug}/cover.png"
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some(cover_url) = cover_url {
                     let client = self.homebrew_client.clone();
                     let gd = game_dir;
                     let sha1_clone = sha1;
@@ -610,20 +627,10 @@ impl App {
                 }
             }
             Message::OpenHomebrewBrowser => {
-                let mut state = library::homebrew_browser::BrowserState::new();
-                let query = state.query();
-                state.active_query = Some(query.clone());
-                self.homebrew_browser = Some(state);
+                self.homebrew_browser = Some(library::homebrew_browser::BrowserState::new());
                 self.screen = Screen::HomebrewBrowser;
-                let client = self.homebrew_client.clone();
-                return Task::perform(
-                    smol::unblock(move || client.search(&query)),
-                    |result| {
-                        Message::HomebrewBrowser(library::homebrew_browser::Message::SearchCompleted(
-                            result,
-                        ))
-                    },
-                );
+                // Load covers for the initial results
+                return self.load_homebrew_covers();
             }
             Message::HomebrewBrowser(msg) => {
                 use library::homebrew_browser::Message as H;
@@ -633,59 +640,6 @@ impl App {
                             state.search_text = text;
                         }
                     }
-                    H::SubmitSearch => {
-                        if let Some(state) = &mut self.homebrew_browser {
-                            let query = state.query();
-                            state.active_query = Some(query.clone());
-                            state.loading = true;
-                            state.error = None;
-                            let client = self.homebrew_client.clone();
-                            return Task::perform(
-                                smol::unblock(move || client.search(&query)),
-                                |result| Message::HomebrewBrowser(H::SearchCompleted(result)),
-                            );
-                        }
-                    }
-                    H::SearchCompleted(result) => {
-                        if let Some(state) = &mut self.homebrew_browser {
-                            state.loading = false;
-                            match result {
-                                Ok(results) => {
-                                    // Kick off cover image loads
-                                    let tasks: Vec<Task<Message>> = results
-                                        .entries
-                                        .iter()
-                                        .filter(|e| !state.covers.contains_key(&e.slug))
-                                        .filter_map(|e| {
-                                            let url = e.cover_url()?;
-                                            let slug = e.slug.clone();
-                                            let client = self.homebrew_client.clone();
-                                            Some(Task::perform(
-                                                smol::unblock(move || {
-                                                    client.download_image(&url).ok().map(|bytes| (slug, bytes))
-                                                }),
-                                                |result| match result {
-                                                    Some((slug, bytes)) => {
-                                                        Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
-                                                    }
-                                                    None => Message::None,
-                                                },
-                                            ))
-                                        })
-                                        .collect();
-                                    state.results = Some(results);
-                                    state.error = None;
-                                    if !tasks.is_empty() {
-                                        return Task::batch(tasks);
-                                    }
-                                }
-                                Err(e) => {
-                                    state.error = Some(e);
-                                    state.results = None;
-                                }
-                            }
-                        }
-                    }
                     H::CoverLoaded(slug, bytes) => {
                         if let Some(state) = &mut self.homebrew_browser {
                             state
@@ -693,34 +647,65 @@ impl App {
                                 .insert(slug, iced::widget::image::Handle::from_bytes(bytes));
                         }
                     }
-                    H::SelectEntry(entry) => {
+                    H::SelectEntry(slug) => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            state.selected_entry = Some(entry);
+                            state.selected_slug = Some(slug.clone());
+
+                            // Load cover image if not cached
+                            if !state.covers.contains_key(&slug) {
+                                if let Some(entry) = self.catalogue.lookup_slug(&slug) {
+                                    if let Some(url) = entry.download_cover_url() {
+                                        let client = self.homebrew_client.clone();
+                                        let s = slug;
+                                        return Task::perform(
+                                            smol::unblock(move || {
+                                                client.download_image(&url).ok().map(|bytes| (s, bytes))
+                                            }),
+                                            |result| match result {
+                                                Some((slug, bytes)) => {
+                                                    Message::HomebrewBrowser(H::CoverLoaded(slug, bytes))
+                                                }
+                                                None => Message::None,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     H::BackToResults => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            state.selected_entry = None;
+                            state.selected_slug = None;
                         }
                     }
-                    H::Download(entry) => {
-                        let client = self.homebrew_client.clone();
-                        let game_title = entry.title.clone();
-                        return Task::perform(
-                            smol::unblock(move || {
-                                let rom_bytes = client.download_rom(&entry)?;
-                                Ok::<_, String>((game_title, rom_bytes, entry))
-                            }),
-                            |result| match result {
-                                Ok((title, rom_bytes, entry)) => {
-                                    Message::HomebrewDownloaded(title, rom_bytes, entry)
-                                }
-                                Err(e) => {
-                                    eprintln!("[homebrew] Download failed: {e}");
-                                    Message::None
-                                }
-                            },
-                        );
+                    H::Download(slug) => {
+                        if let Some(entry) = self.catalogue.lookup_slug(&slug) {
+                            if let Some(url) = entry.download_url() {
+                                let title = entry.manifest.title.clone();
+                                let manifest = entry.manifest.clone();
+                                return Task::perform(
+                                    smol::unblock(move || {
+                                        let response = ureq::get(&url)
+                                            .call()
+                                            .map_err(|e| format!("Download failed: {e}"))?;
+                                        response
+                                            .into_body()
+                                            .read_to_vec()
+                                            .map_err(|e| format!("Failed to read: {e}"))
+                                            .map(|bytes| (title, bytes, manifest))
+                                    }),
+                                    |result| match result {
+                                        Ok((title, rom_bytes, manifest)) => {
+                                            Message::HomebrewDownloaded(title, rom_bytes, manifest)
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[homebrew] Download failed: {e}");
+                                            Message::None
+                                        }
+                                    },
+                                );
+                            }
+                        }
                     }
                     H::Back => {
                         self.homebrew_browser = None;
@@ -975,8 +960,9 @@ impl App {
                         self.settings.rom_directories.push(path.clone());
                         self.settings.save();
                         let dirs = vec![path];
+                        let cat = self.catalogue.clone();
                         return Task::perform(
-                            smol::unblock(move || library::scanner::scan_directories(&dirs)),
+                            smol::unblock(move || library::scanner::scan_directories(&dirs, &cat)),
                             |entries| Message::ScanComplete(!entries.is_empty()),
                         );
                     }
@@ -1239,7 +1225,7 @@ impl App {
                         }
                         Screen::HomebrewBrowser => {
                             if let Some(state) = &self.homebrew_browser {
-                                library::homebrew_browser::view(state)
+                                library::homebrew_browser::view(state, &self.catalogue)
                             } else {
                                 library::view::view(
                                     &self.store,
@@ -1403,6 +1389,46 @@ impl App {
         self.load_activity_async(sha1)
     }
 
+
+    /// Load cover images for visible homebrew entries (first batch only).
+    fn load_homebrew_covers(&self) -> Task<Message> {
+        use library::homebrew_browser::Message as H;
+        let Some(state) = &self.homebrew_browser else {
+            return Task::none();
+        };
+
+        let results = if state.search_text.is_empty() {
+            self.catalogue.homebrew()
+        } else {
+            self.catalogue.search_homebrew(&state.search_text)
+        };
+
+        let tasks: Vec<Task<Message>> = results
+            .iter()
+            .take(library::homebrew_browser::MAX_RESULTS)
+            .filter(|e| !state.covers.contains_key(&e.slug))
+            .filter_map(|e| {
+                let url = e.download_cover_url()?;
+                let slug = e.slug.clone();
+                let client = self.homebrew_client.clone();
+                Some(Task::perform(
+                    smol::unblock(move || {
+                        client.download_image(&url).ok().map(|bytes| (slug, bytes))
+                    }),
+                    |result| match result {
+                        Some((slug, bytes)) => Message::HomebrewBrowser(H::CoverLoaded(slug, bytes)),
+                        None => Message::None,
+                    },
+                ))
+            })
+            .collect();
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
+    }
 
     /// Kick off a background load of activity detail for a game.
     fn load_activity_async(&self, sha1: &str) -> Task<Message> {

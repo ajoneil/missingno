@@ -13,7 +13,7 @@ use crate::app::{
         sizes::{l, m, s},
         text as app_text,
     },
-    library::homebrew_hub,
+    library::catalogue::{Catalogue, CatalogueEntry},
 };
 
 // Catppuccin Mocha subtext0
@@ -23,49 +23,25 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
+pub const MAX_RESULTS: usize = 50;
+
 // ── State ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
 pub struct BrowserState {
-    /// Current search text.
     pub search_text: String,
-    /// The query that produced the current results.
-    pub active_query: Option<homebrew_hub::SearchQuery>,
-    /// Current search results (None = not yet loaded).
-    pub results: Option<homebrew_hub::SearchResults>,
+    /// Index of the selected entry for detail view.
+    pub selected_slug: Option<String>,
     /// Cover images keyed by slug.
     pub covers: std::collections::HashMap<String, image::Handle>,
-    /// Whether a search is in progress.
-    pub loading: bool,
-    /// Error message from the last failed request.
-    pub error: Option<String>,
-    /// Currently selected entry for detail view.
-    pub selected_entry: Option<homebrew_hub::Entry>,
 }
 
 impl BrowserState {
     pub fn new() -> Self {
         Self {
             search_text: String::new(),
-            active_query: None,
-            results: None,
+            selected_slug: None,
             covers: std::collections::HashMap::new(),
-            loading: true,
-            error: None,
-            selected_entry: None,
-        }
-    }
-
-    /// Build a search query from the current state. Always filters to GB platform.
-    pub fn query(&self) -> homebrew_hub::SearchQuery {
-        homebrew_hub::SearchQuery {
-            platform: Some("GB".to_string()),
-            title: if self.search_text.is_empty() {
-                None
-            } else {
-                Some(self.search_text.clone())
-            },
-            ..Default::default()
         }
     }
 }
@@ -75,11 +51,9 @@ impl BrowserState {
 #[derive(Debug, Clone)]
 pub enum Message {
     SearchTextChanged(String),
-    SubmitSearch,
-    SearchCompleted(Result<homebrew_hub::SearchResults, String>),
+    SelectEntry(String), // slug
     CoverLoaded(String, Vec<u8>), // (slug, image bytes)
-    SelectEntry(homebrew_hub::Entry),
-    Download(homebrew_hub::Entry),
+    Download(String), // slug
     BackToResults,
     Back,
 }
@@ -93,37 +67,33 @@ impl From<Message> for app::Message {
 // ── View ──────────────────────────────────────────────────────────────
 
 #[allow(private_interfaces)]
-pub(crate) fn view(state: &BrowserState) -> Element<'_, app::Message> {
+pub(crate) fn view<'a>(
+    state: &'a BrowserState,
+    catalogue: &'a Catalogue,
+) -> Element<'a, app::Message> {
     // If an entry is selected, show the detail view
-    if let Some(entry) = &state.selected_entry {
-        return entry_detail(entry, state.covers.get(&entry.slug));
+    if let Some(slug) = &state.selected_slug {
+        if let Some(entry) = catalogue.lookup_slug(slug) {
+            return entry_detail(entry, state.covers.get(slug));
+        }
     }
 
     let search_bar = text_input("Search homebrew games...", &state.search_text)
         .on_input(|s| Message::SearchTextChanged(s).into())
-        .on_submit(Message::SubmitSearch.into())
         .width(Fill);
 
-    let content: Element<'_, app::Message> = if state.loading {
-        container(app_text::detail("Loading…").color(MUTED))
-            .center(Fill)
-            .into()
-    } else if let Some(error) = &state.error {
-        container(app_text::detail(format!("Error: {error}")).color(MUTED))
-            .center(Fill)
-            .into()
-    } else if let Some(results) = &state.results {
-        if results.entries.is_empty() {
-            container(app_text::detail("No games found").color(MUTED))
-                .center(Fill)
-                .into()
-        } else {
-            results_view(results, &state.covers)
-        }
+    let results = if state.search_text.is_empty() {
+        catalogue.homebrew()
     } else {
-        container(app_text::detail("Search for homebrew games above").color(MUTED))
+        catalogue.search_homebrew(&state.search_text)
+    };
+
+    let content = if results.is_empty() {
+        container(app_text::detail("No games found").color(MUTED))
             .center(Fill)
             .into()
+    } else {
+        results_view(&results, &state.covers)
     };
 
     column![
@@ -136,16 +106,24 @@ pub(crate) fn view(state: &BrowserState) -> Element<'_, app::Message> {
 }
 
 fn results_view<'a>(
-    results: &'a homebrew_hub::SearchResults,
+    results: &[&'a CatalogueEntry],
     covers: &'a std::collections::HashMap<String, image::Handle>,
 ) -> Element<'a, app::Message> {
     let mut entries_col = column![].spacing(m());
 
+    let showing = results.len().min(MAX_RESULTS);
+    let total = results.len();
+
     entries_col = entries_col.push(
-        app_text::detail(format!("{} games available", results.results)).color(MUTED),
+        app_text::detail(if showing < total {
+            format!("Showing {showing} of {total} games")
+        } else {
+            format!("{total} games")
+        })
+        .color(MUTED),
     );
 
-    for entry in &results.entries {
+    for entry in results.iter().take(MAX_RESULTS) {
         entries_col = entries_col.push(entry_card(entry, covers.get(&entry.slug)));
     }
 
@@ -155,7 +133,7 @@ fn results_view<'a>(
 }
 
 fn entry_card<'a>(
-    entry: &'a homebrew_hub::Entry,
+    entry: &'a CatalogueEntry,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
     // Cover image or placeholder
@@ -170,6 +148,7 @@ fn entry_card<'a>(
         container(
             text(
                 entry
+                    .manifest
                     .title
                     .chars()
                     .next()
@@ -195,13 +174,13 @@ fn entry_card<'a>(
     };
 
     // Info
-    let mut info = column![text(&entry.title).font(fonts::bold())].spacing(2);
+    let mut info = column![text(&entry.manifest.title).font(fonts::bold())].spacing(2);
 
-    if let Some(dev) = &entry.developer {
+    if let Some(dev) = &entry.manifest.developer {
         info = info.push(app_text::detail(dev.clone()).color(MUTED));
     }
 
-    if let Some(desc) = &entry.description {
+    if let Some(desc) = &entry.manifest.description {
         let short = if desc.len() > 120 {
             format!("{}…", &desc[..120])
         } else {
@@ -210,17 +189,11 @@ fn entry_card<'a>(
         info = info.push(app_text::detail(short).color(MUTED));
     }
 
-    let mut meta_parts = Vec::new();
-    if let Some(platform) = &entry.platform {
-        meta_parts.push(platform.clone());
-    }
-    if !entry.tags.is_empty() {
-        meta_parts.push(entry.tags.join(", "));
-    }
-    if !meta_parts.is_empty() {
-        info = info.push(app_text::detail(meta_parts.join(" · ")).color(MUTED));
+    if !entry.manifest.tags.is_empty() {
+        info = info.push(app_text::detail(entry.manifest.tags.join(", ")).color(MUTED));
     }
 
+    let slug = entry.slug.clone();
     let card = row![cover_el, info.width(Fill)]
         .spacing(m())
         .align_y(Center);
@@ -238,13 +211,13 @@ fn entry_card<'a>(
             })
             .padding(m()),
     )
-    .on_press(Message::SelectEntry(entry.clone()).into())
+    .on_press(Message::SelectEntry(slug).into())
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
 }
 
 fn entry_detail<'a>(
-    entry: &'a homebrew_hub::Entry,
+    entry: &'a CatalogueEntry,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
     let mut content = column![].spacing(m());
@@ -262,57 +235,49 @@ fn entry_detail<'a>(
     };
 
     let mut info = column![
-        text(&entry.title).size(24.0).font(fonts::bold()),
+        text(&entry.manifest.title).size(24.0).font(fonts::bold()),
     ]
     .spacing(s());
 
-    if let Some(dev) = &entry.developer {
+    if let Some(dev) = &entry.manifest.developer {
         info = info.push(text(format!("by {dev}")).color(MUTED));
     }
 
-    if !entry.tags.is_empty() {
-        info = info.push(app_text::detail(entry.tags.join(", ")).color(MUTED));
+    if !entry.manifest.tags.is_empty() {
+        info = info.push(app_text::detail(entry.manifest.tags.join(", ")).color(MUTED));
     }
 
-    if let Some(license) = &entry.license {
+    if let Some(license) = &entry.manifest.license {
         info = info.push(app_text::detail(format!("License: {license}")).color(MUTED));
     }
 
     // Links
     let mut links = row![].spacing(m());
-    if let Some(url) = entry.url() {
+    for link in &entry.manifest.links {
         links = links.push(
             iced::widget::mouse_area(
-                row![icons::m(Icon::Globe), text("Website").color(MUTED)]
+                row![icons::m(Icon::Globe), text(&link.name).color(MUTED)]
                     .spacing(s())
                     .align_y(Center),
             )
-            .on_press(app::Message::OpenUrl(leak_str(url)))
+            .on_press(app::Message::OpenUrl(leak_str(&link.url)))
             .interaction(iced::mouse::Interaction::Pointer),
         );
     }
-    if let Some(repo) = &entry.repository {
-        links = links.push(
-            iced::widget::mouse_area(
-                row![icons::m(Icon::Globe), text("Source Code").color(MUTED)]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(app::Message::OpenUrl(leak_str(repo)))
-            .interaction(iced::mouse::Interaction::Pointer),
-        );
+    if !entry.manifest.links.is_empty() {
+        info = info.push(links);
     }
-    info = info.push(links);
 
     let header = row![cover_el, info.width(Fill)].spacing(m());
     content = content.push(header);
 
     // Description
-    if let Some(desc) = &entry.description {
+    if let Some(desc) = &entry.manifest.description {
         content = content.push(text(desc.clone()));
     }
 
     // Actions
+    let slug = entry.slug.clone();
     let mut actions = row![
         buttons::subtle("← Back to results").on_press(Message::BackToResults.into()),
         iced::widget::Space::new().width(Fill),
@@ -320,14 +285,14 @@ fn entry_detail<'a>(
     .spacing(s())
     .align_y(Center);
 
-    if entry.playable_file().is_some() {
+    if entry.download_url().is_some() {
         actions = actions.push(
             buttons::primary(
                 row![icons::m(Icon::Download), "Add to Library"]
                     .spacing(s())
                     .align_y(Center),
             )
-            .on_press(Message::Download(entry.clone()).into()),
+            .on_press(Message::Download(slug).into()),
         );
     }
 

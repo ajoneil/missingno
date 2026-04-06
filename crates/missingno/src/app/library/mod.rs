@@ -1,4 +1,5 @@
 pub(crate) mod activity;
+pub(crate) mod catalogue;
 pub(crate) mod detail_view;
 pub(crate) mod game_db;
 pub(crate) mod hasheous;
