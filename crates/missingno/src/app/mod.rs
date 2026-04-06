@@ -686,39 +686,15 @@ impl App {
                                 .insert(slug, iced::widget::image::Handle::from_bytes(bytes));
                         }
                     }
-                    H::NextPage => {
+                    H::SelectEntry(entry) => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            if let Some(query) = &state.active_query {
-                                let mut next = query.clone();
-                                next.page += 1;
-                                state.active_query = Some(next.clone());
-                                state.loading = true;
-                                let client = self.homebrew_client.clone();
-                                return Task::perform(
-                                    smol::unblock(move || client.search(&next)),
-                                    |result| Message::HomebrewBrowser(H::PageLoaded(result)),
-                                );
-                            }
+                            state.selected_entry = Some(entry);
                         }
                     }
-                    H::PrevPage => {
+                    H::BackToResults => {
                         if let Some(state) = &mut self.homebrew_browser {
-                            if let Some(query) = &state.active_query {
-                                let mut prev = query.clone();
-                                prev.page = prev.page.saturating_sub(1).max(1);
-                                state.active_query = Some(prev.clone());
-                                state.loading = true;
-                                let client = self.homebrew_client.clone();
-                                return Task::perform(
-                                    smol::unblock(move || client.search(&prev)),
-                                    |result| Message::HomebrewBrowser(H::PageLoaded(result)),
-                                );
-                            }
+                            state.selected_entry = None;
                         }
-                    }
-                    H::PageLoaded(result) => {
-                        // Same as SearchCompleted
-                        return self.update(Message::HomebrewBrowser(H::SearchCompleted(result)));
                     }
                     H::Download(entry) => {
                         let client = self.homebrew_client.clone();

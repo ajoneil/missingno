@@ -201,7 +201,6 @@ impl HomebrewHubClient {
         if let Some(tags) = &query.tags {
             url.push_str(&format!("&tags={}", urlencoding(tags)));
         }
-        url.push_str("&order_by=title&sort=asc");
 
         let response = ureq::get(&url)
             .header("User-Agent", USER_AGENT)
