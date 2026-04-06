@@ -125,14 +125,37 @@ impl GameStore {
     // ── Summaries (library grid) ───────────────────────────────────────
 
     /// Get all game summaries, sorted for the library grid.
-    pub fn all_summaries(&mut self) -> Vec<&GameSummary> {
+    pub fn all_summaries(&self) -> Vec<&GameSummary> {
         if self.sorted_dirty {
-            self.rebuild_sorted_keys();
+            // Sorted keys are stale — sort on the fly
+            let mut entries: Vec<&GameSummary> = self.summaries.values().collect();
+            entries.sort_by(|a, b| Self::sort_cmp(a, b));
+            return entries;
         }
         self.sorted_keys
             .iter()
             .filter_map(|sha1| self.summaries.get(sha1))
             .collect()
+    }
+
+    /// Flush the sorted key cache (call when you have &mut self available).
+    pub fn ensure_sorted(&mut self) {
+        if self.sorted_dirty {
+            self.rebuild_sorted_keys();
+        }
+    }
+
+    fn sort_cmp(a: &GameSummary, b: &GameSummary) -> std::cmp::Ordering {
+        match (&a.last_played, &b.last_played) {
+            (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a
+                .entry
+                .display_title()
+                .to_lowercase()
+                .cmp(&b.entry.display_title().to_lowercase()),
+        }
     }
 
     /// Get a specific game summary.
@@ -179,9 +202,17 @@ impl GameStore {
 
     // ── Activity detail (detail page) ──────────────────────────────────
 
-    /// Get activity detail for a game. Loads from disk if not cached
-    /// or if a different game was previously loaded.
-    pub fn activity_for(&mut self, sha1: &str) -> &ActivityDetail {
+    /// Get cached activity detail. Returns None if not loaded for this game.
+    /// Call `ensure_activity_loaded(sha1)` when you have &mut self.
+    pub fn activity_for(&self, sha1: &str) -> Option<&ActivityDetail> {
+        self.activity_detail
+            .as_ref()
+            .filter(|d| d.sha1 == sha1)
+    }
+
+    /// Ensure activity detail is loaded for this game. Call from message
+    /// handlers (where &mut self is available), not from view().
+    pub fn ensure_activity_loaded(&mut self, sha1: &str) {
         let needs_load = self
             .activity_detail
             .as_ref()
@@ -191,8 +222,6 @@ impl GameStore {
         if needs_load {
             self.activity_detail = Some(self.load_activity_detail(sha1));
         }
-
-        self.activity_detail.as_ref().unwrap()
     }
 
     fn load_activity_detail(&self, sha1: &str) -> ActivityDetail {

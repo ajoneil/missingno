@@ -65,122 +65,26 @@ impl From<Message> for app::Message {
     }
 }
 
-pub struct LibraryCache {
-    pub entries: Vec<CachedGame>,
-}
-
-pub struct CachedGame {
-    pub entry: library::GameEntry,
-    pub cover: Option<image::Handle>,
-    pub play_time: String,
-    pub last_played: Option<String>,
-    pub last_played_ts: Option<jiff::Timestamp>,
-    pub save_count: usize,
-}
-
-impl LibraryCache {
-    pub fn load() -> Self {
-        let games = library::list_all();
-        let entries = games
-            .into_iter()
-            .map(|(game_dir, entry)| {
-                let cover = library::load_thumbnail(&game_dir)
-                    .map(|bytes| image::Handle::from_bytes(bytes));
-
-                let stats = library::activity::compute_stats(&game_dir);
-                let play_time = library::activity::format_play_time(stats.total_play_time_secs);
-                let last_played_ts = stats.last_played;
-                let last_played = last_played_ts.map(|ts| friendly_ago(ts));
-                let save_count = stats.save_count;
-
-                CachedGame {
-                    entry,
-                    cover,
-                    play_time,
-                    last_played,
-                    last_played_ts,
-                    save_count,
-                }
-            })
-            .collect();
-        let mut cache = Self { entries };
-        cache.sort();
-        cache
-    }
-
-    /// Sort: recently played first, then alphabetically for never-played games.
-    fn sort(&mut self) {
-        self.entries.sort_by(|a, b| {
-            match (&a.last_played_ts, &b.last_played_ts) {
-                // Both played — most recent first
-                (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
-                // Played beats never-played
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                // Neither played — alphabetical
-                (None, None) => a
-                    .entry
-                    .display_title()
-                    .to_lowercase()
-                    .cmp(&b.entry.display_title().to_lowercase()),
-            }
-        });
-    }
-
-    /// Update a single entry in-place by SHA1, reloading only its data from disk.
-    pub fn update_entry(&mut self, sha1: &str) {
-        let Some((game_dir, entry)) = library::find_by_sha1(sha1) else {
-            return;
-        };
-
-        let cover =
-            library::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
-        let stats = library::activity::compute_stats(&game_dir);
-        let play_time = library::activity::format_play_time(stats.total_play_time_secs);
-        let last_played_ts = stats.last_played;
-        let last_played = last_played_ts.map(|ts| friendly_ago(ts));
-        let save_count = stats.save_count;
-
-        let cached = CachedGame {
-            entry,
-            cover,
-            play_time,
-            last_played,
-            last_played_ts,
-            save_count,
-        };
-
-        if let Some(existing) = self.entries.iter_mut().find(|e| e.entry.sha1 == sha1) {
-            *existing = cached;
-        } else {
-            self.entries.push(cached);
-        }
-        self.sort();
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
+use super::store::{GameStore, GameSummary};
 
 #[allow(private_interfaces)]
 pub(crate) fn view<'a>(
-    cache: &'a LibraryCache,
+    store: &'a GameStore,
     hovered_sha1: Option<&'a str>,
 ) -> Element<'a, app::Message> {
-    if cache.is_empty() {
+    if store.is_empty() {
         return empty_view();
     }
 
+    let games = store.all_summaries();
     let hovered_sha1 = hovered_sha1.map(|s| s.to_string());
     iced::widget::responsive(move |size| {
         let usable = size.width - l() * 2.0;
         let cols = (usable / (CARD_MIN_WIDTH + m())).max(1.0) as usize;
 
         let mut rows_vec: Vec<Element<'_, app::Message>> = Vec::new();
-        let chunks: Vec<&[CachedGame]> = cache.entries.chunks(cols).collect();
 
-        for chunk in chunks {
+        for chunk in games.chunks(cols) {
             let mut cards: Vec<Element<'_, app::Message>> = chunk
                 .iter()
                 .map(|game| {
@@ -188,7 +92,6 @@ pub(crate) fn view<'a>(
                     game_card(game, hovered)
                 })
                 .collect();
-            // Pad incomplete rows with empty spacers so cards don't stretch
             while cards.len() < cols {
                 cards.push(iced::widget::Space::new().width(Fill).into());
             }
@@ -232,14 +135,14 @@ fn empty_view() -> Element<'static, app::Message> {
     .into()
 }
 
-fn game_card(game: &CachedGame, hovered: bool) -> Element<'_, app::Message> {
+fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     use iced::widget::stack;
 
     let has_rom = game.entry.rom_paths.first().is_some();
     let sha1 = &game.entry.sha1;
 
     // Cover art
-    let cover_image: Element<'_, app::Message> = if let Some(handle) = &game.cover {
+    let cover_image: Element<'_, app::Message> = if let Some(handle) = &game.thumbnail {
         image(handle.clone())
             .width(COVER_WIDTH)
             .height(COVER_HEIGHT)
@@ -346,9 +249,11 @@ fn game_card(game: &CachedGame, hovered: bool) -> Element<'_, app::Message> {
     }
 
     // Last played / play time
-    if let Some(last) = &game.last_played {
+    if let Some(last_ts) = game.last_played {
+        let last = friendly_ago(last_ts);
+        let play_time = library::activity::format_play_time(game.play_time_secs);
         info = info
-            .push(app_text::detail(format!("Played {} · {}", last, game.play_time)).color(MUTED));
+            .push(app_text::detail(format!("Played {last} · {play_time}")).color(MUTED));
     } else if game.save_count > 0 {
         let n = game.save_count;
         info = info.push(

@@ -292,22 +292,6 @@ pub enum ActivityKind {
     Import,
 }
 
-/// Summary data for an activity entry, suitable for UI display
-/// without loading full SRAM data.
-#[derive(Clone, Debug)]
-pub struct ActivityDisplay {
-    pub filename: String,
-    pub kind: ActivityKind,
-    pub timestamp: Timestamp,
-    // Session fields
-    pub end: Option<Timestamp>,
-    pub save_count: usize,
-    pub last_save_time: Option<Timestamp>,
-    pub screenshots: Vec<iced::widget::image::Handle>,
-    // Import fields
-    pub size_bytes: Option<u32>,
-}
-
 /// Aggregate stats derived from all activity files.
 pub struct ActivityStats {
     pub total_play_time_secs: f64,
@@ -359,56 +343,6 @@ pub fn list_activity(game_dir: &Path) -> Vec<ActivityRef> {
     // Sort by filename (chronological since timestamps are fixed-width), newest first
     refs.sort_by(|a, b| b.filename.cmp(&a.filename));
     refs
-}
-
-/// Load display data for all activity entries.
-pub fn load_activity_display(game_dir: &Path) -> Vec<ActivityDisplay> {
-    list_activity(game_dir)
-        .into_iter()
-        .filter_map(|r| {
-            let data = read_compressed(&activity_path(game_dir, &r.filename))?;
-            match r.kind {
-                ActivityKind::Session => {
-                    let session = read_session_from_str(&data)?;
-                    let timestamp = session.start;
-                    let screenshots = session
-                        .events
-                        .iter()
-                        .filter_map(|e| match &e.kind {
-                            EventKind::Screenshot { frame } => Some(frame.to_image_handle()),
-                            _ => None,
-                        })
-                        .collect();
-                    Some(ActivityDisplay {
-                        filename: r.filename,
-                        kind: ActivityKind::Session,
-                        timestamp,
-                        end: session.end,
-                        save_count: session.save_count(),
-                        last_save_time: session.last_save_time(),
-                        screenshots,
-                        size_bytes: None,
-                    })
-                }
-                ActivityKind::Import => {
-                    let import: ImportFile = ron::from_str(&data).ok()?;
-                    // Parse timestamp from filename: "20260403-083646.import"
-                    let ts_str = r.filename.strip_suffix(".import")?;
-                    let timestamp = parse_filename_timestamp(ts_str)?;
-                    Some(ActivityDisplay {
-                        filename: r.filename,
-                        kind: ActivityKind::Import,
-                        timestamp,
-                        end: None,
-                        save_count: 0,
-                        last_save_time: None,
-                        screenshots: Vec::new(),
-                        size_bytes: Some(import.size_bytes),
-                    })
-                }
-            }
-        })
-        .collect()
 }
 
 // ── Reading ────────────────────────────────────────────────────────────

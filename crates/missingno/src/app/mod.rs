@@ -83,7 +83,7 @@ struct App {
     current_game: Option<CurrentGame>,
     /// SHA1 of the game being viewed in the detail page (may differ from current_game).
     viewing_sha1: Option<String>,
-    library_cache: library::view::LibraryCache,
+    store: library::store::GameStore,
     /// Action waiting for user confirmation (e.g. close game before launching another).
     pending_action: Option<PendingAction>,
     /// Index of the activity log entry currently hovered on the detail page.
@@ -235,7 +235,7 @@ impl App {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
 
-        let library_cache = library::view::LibraryCache::load();
+        let store = library::store::GameStore::new();
 
         let mut app = Self {
             screen: Screen::Library,
@@ -248,7 +248,7 @@ impl App {
             settings,
             current_game: None,
             viewing_sha1: None,
-            library_cache,
+            store,
             pending_action: None,
             hovered_log_entry: None,
             hovered_library_game: None,
@@ -345,7 +345,7 @@ impl App {
                                 library::activity::write_session(&current.game_dir, session);
                             }
                             self.viewing_sha1 = Some(current.entry.sha1.clone());
-                            self.library_cache.update_entry(&current.entry.sha1);
+                            self.store.notify_activity_changed(&current.entry.sha1);
                         }
                         self.game = Game::Unloaded;
                         self.current_game = None;
@@ -356,7 +356,7 @@ impl App {
                             if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
                                 library::remove_game(&game_dir);
                             }
-                            self.library_cache.entries.retain(|e| e.entry.sha1 != *sha1);
+                            self.store.notify_game_removed(sha1);
                         }
                         self.viewing_sha1 = None;
                         self.screen = Screen::Library;
@@ -414,7 +414,7 @@ impl App {
                         if let Some(bytes) = &info.cover_art {
                             library::save_cover(&game_dir, bytes);
                         }
-                        self.library_cache.update_entry(sha1);
+                        self.store.notify_metadata_changed(sha1);
                     }
                 }
             }
@@ -573,7 +573,10 @@ impl App {
                 self.flush_pending_save();
                 self.pause();
                 if let Some(current) = &self.current_game {
-                    self.viewing_sha1 = Some(current.entry.sha1.clone());
+                    let sha1 = current.entry.sha1.clone();
+                    self.viewing_sha1 = Some(sha1.clone());
+                    self.store.notify_activity_changed(&sha1);
+                    self.store.ensure_activity_loaded(&sha1);
                 }
                 self.screen = Screen::Detail;
             }
@@ -626,6 +629,7 @@ impl App {
                                 },
                             });
                             library::activity::write_session(&current.game_dir, session);
+                            self.store.update_live_screenshots(session);
                         }
                     }
                     self.screenshot_toast = Some(Instant::now());
@@ -851,9 +855,10 @@ impl App {
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
                     // Load full-res cover for detail page
-                    self.detail_cover = library::find_by_sha1(&sha1)
-                        .and_then(|(d, _)| library::load_cover(&d))
+                    self.detail_cover = self.store.game_dir(&sha1)
+                        .and_then(|d| library::load_cover(d))
                         .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
+                    self.store.ensure_activity_loaded(&sha1);
                     self.viewing_sha1 = Some(sha1);
                     self.screen = Screen::Detail;
                 }
@@ -886,7 +891,7 @@ impl App {
             },
             Message::ScanComplete(changed) => {
                 if changed {
-                    self.library_cache = library::view::LibraryCache::load();
+                    self.store.rebuild_index();
                 }
                 if self.settings.internet_enabled {
                     return Task::perform(
@@ -898,14 +903,14 @@ impl App {
             Message::EnrichComplete(result) => {
                 if let Some(sha1) = &result.sha1 {
                     if result.data_changed {
-                        self.library_cache.update_entry(sha1);
+                        self.store.notify_metadata_changed(sha1);
                     }
                 }
 
                 // Sync recent game titles with enriched library entries
-                for cached in &self.library_cache.entries {
+                for summary in self.store.all_summaries() {
                     self.recent_games
-                        .update_title(&cached.entry.sha1, &cached.entry.display_title());
+                        .update_title(&summary.entry.sha1, &summary.entry.display_title());
                 }
                 self.recent_games.save();
 
@@ -1018,7 +1023,7 @@ impl App {
         } else {
             let content = match self.screen {
                 Screen::Library => {
-                    library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
+                    library::view::view(&self.store, self.hovered_library_game.as_deref())
                 }
                 Screen::Detail => self.detail_view(),
                 Screen::ScreenshotGallery => {
@@ -1117,62 +1122,37 @@ impl App {
     fn detail_view(&self) -> Element<'_, Message> {
         let viewing_sha1 = self.viewing_sha1.as_deref();
 
-        // Determine which game dir to load activity from
-        let (entry, cover, game_dir) = if let Some(current) = &self.current_game {
-            if viewing_sha1 == Some(current.entry.sha1.as_str()) {
-                (
-                    &current.entry,
-                    current.cover.as_ref(),
-                    Some(current.game_dir.clone()),
-                )
-            } else {
-                // Viewing a different game than the running one
-                let found = viewing_sha1.and_then(|sha1| {
-                    self.library_cache
-                        .entries
-                        .iter()
-                        .find(|g| g.entry.sha1 == sha1)
-                });
-                if let Some(cached) = found {
-                    let gd = library::find_by_sha1(&cached.entry.sha1).map(|(d, _)| d);
-                    (
-                        &cached.entry,
-                        self.detail_cover.as_ref().or(cached.cover.as_ref()),
-                        gd,
-                    )
-                } else {
-                    return self.empty_detail_view();
-                }
-            }
-        } else if let Some(sha1) = viewing_sha1 {
-            let found = self
-                .library_cache
-                .entries
-                .iter()
-                .find(|g| g.entry.sha1 == sha1);
-            if let Some(cached) = found {
-                let gd = library::find_by_sha1(sha1).map(|(d, _)| d);
-                (
-                    &cached.entry,
-                    self.detail_cover.as_ref().or(cached.cover.as_ref()),
-                    gd,
-                )
-            } else {
-                return self.empty_detail_view();
-            }
-        } else {
-            return self.empty_detail_view();
+        let sha1 = match viewing_sha1 {
+            Some(s) => s,
+            None => return self.empty_detail_view(),
         };
 
-        let activity = game_dir
-            .as_ref()
-            .map(|d| library::activity::load_activity_display(d))
-            .unwrap_or_default();
+        // Get entry and cover from current game (if it's the one being viewed) or store
+        let (entry, cover) = if let Some(current) = &self.current_game {
+            if current.entry.sha1 == sha1 {
+                (&current.entry, current.cover.as_ref())
+            } else {
+                match self.store.summary(sha1) {
+                    Some(s) => (&s.entry, self.detail_cover.as_ref().or(s.thumbnail.as_ref())),
+                    None => return self.empty_detail_view(),
+                }
+            }
+        } else {
+            match self.store.summary(sha1) {
+                Some(s) => (&s.entry, self.detail_cover.as_ref().or(s.thumbnail.as_ref())),
+                None => return self.empty_detail_view(),
+            }
+        };
+
+        // Activity from the store (pre-loaded by ensure_activity_loaded at navigation time).
+        let Some(activity) = self.store.activity_for(sha1) else {
+            return self.empty_detail_view();
+        };
 
         let live_session = self
             .current_game
             .as_ref()
-            .filter(|c| viewing_sha1 == Some(c.entry.sha1.as_str()))
+            .filter(|c| sha1 == c.entry.sha1.as_str())
             .and_then(|c| c.session.as_ref());
 
         library::detail_view::view(library::detail_view::DetailData {
@@ -1180,6 +1160,7 @@ impl App {
             cover,
             activity,
             live_session,
+            live_screenshots: self.store.live_screenshots(),
             hovered_log_entry: self.hovered_log_entry,
             cover_hovered: self.cover_hovered,
             window_height: self.settings.window_height.unwrap_or(720.0),
@@ -1187,7 +1168,7 @@ impl App {
     }
 
     fn empty_detail_view(&self) -> Element<'_, Message> {
-        library::view::view(&self.library_cache, self.hovered_library_game.as_deref())
+        library::view::view(&self.store, self.hovered_library_game.as_deref())
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {

@@ -46,13 +46,8 @@ impl ActionBar {
                 // Show the viewed game's title
                 app.viewing_sha1
                     .as_ref()
-                    .and_then(|sha1| {
-                        app.library_cache
-                            .entries
-                            .iter()
-                            .find(|g| g.entry.sha1 == *sha1)
-                    })
-                    .map(|g| g.entry.display_title())
+                    .and_then(|sha1| app.store.entry(sha1))
+                    .map(|e| e.display_title())
                     .unwrap_or_default()
             }
             _ => {

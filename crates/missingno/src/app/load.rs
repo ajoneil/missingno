@@ -127,6 +127,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
         current.session = Some(session);
         current.started_from = None;
         current.initial_sram = initial_sram;
+        app.store.reset_live_screenshots();
 
         app.recent_games.add(
             &current.entry.sha1,
@@ -138,7 +139,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     app.screen = Screen::Emulator;
     if let Some(current) = &app.current_game {
-        app.library_cache.update_entry(&current.entry.sha1);
+        app.store.notify_activity_changed(&current.entry.sha1);
     }
 
     Task::none()
@@ -197,7 +198,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     app.screen = Screen::Emulator;
     if let Some(current) = &app.current_game {
-        app.library_cache.update_entry(&current.entry.sha1);
+        app.store.notify_activity_changed(&current.entry.sha1);
     }
 
     Task::none()
@@ -261,6 +262,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);
 
+    let game_dir_clone = game_dir.clone();
     app.current_game = Some(CurrentGame {
         entry: entry.clone(),
         game_dir,
@@ -274,7 +276,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
     app.recent_games
         .add(&entry.sha1, &entry.display_title(), &rom_path);
     app.recent_games.save();
-    app.library_cache.update_entry(&entry.sha1);
+    app.store.notify_game_added(&entry.sha1, game_dir_clone);
 
     Task::none()
 }

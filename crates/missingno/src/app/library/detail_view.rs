@@ -16,7 +16,8 @@ use crate::app::{
     },
     library::{
         GameEntry,
-        activity::{self, ActivityDisplay, ActivityKind, SessionFile},
+        activity::{self, ActivityKind, SessionFile},
+        store::{ActivityDetail, SessionSummary},
     },
 };
 
@@ -30,8 +31,9 @@ const MUTED: Color = Color::from_rgb(
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
     pub cover: Option<&'a image::Handle>,
-    pub activity: Vec<ActivityDisplay>,
+    pub activity: &'a ActivityDetail,
     pub live_session: Option<&'a SessionFile>,
+    pub live_screenshots: &'a [image::Handle],
     pub hovered_log_entry: Option<usize>,
     pub cover_hovered: bool,
     pub window_height: f32,
@@ -40,7 +42,12 @@ pub struct DetailData<'a> {
 #[allow(private_interfaces)]
 pub(crate) fn view(data: DetailData<'_>) -> Element<'_, app::Message> {
     let left = game_info_panel(&data);
-    let right = activity_log(data.activity, data.live_session, data.hovered_log_entry);
+    let right = activity_log(
+        &data.activity.sessions,
+        data.live_session,
+        data.live_screenshots,
+        data.hovered_log_entry,
+    );
 
     row![left, right].height(Fill).into()
 }
@@ -142,11 +149,12 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     {
         let total_secs: f64 = data
             .activity
+            .sessions
             .iter()
             .filter(|a| a.kind == ActivityKind::Session)
             .filter_map(|a| {
                 a.end
-                    .map(|end| end.duration_since(a.timestamp).as_secs_f64())
+                    .map(|end: jiff::Timestamp| end.duration_since(a.start).as_secs_f64())
             })
             .sum();
         if total_secs > 0.0 {
@@ -213,59 +221,44 @@ fn game_info_panel<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 }
 
 /// Right panel: chronological activity log.
-fn activity_log(
-    activity: Vec<ActivityDisplay>,
+fn activity_log<'a>(
+    sessions: &'a [SessionSummary],
     live_session: Option<&SessionFile>,
+    live_screenshots: &'a [image::Handle],
     hovered_log_entry: Option<usize>,
-) -> Element<'static, app::Message> {
+) -> Element<'a, app::Message> {
     let mut log = column![app_text::label("Activity")].spacing(m()).width(750);
 
     // Show live session at the top if one is in progress
     if let Some(live) = live_session {
-        log = log.push(session_card(
-            &ActivityDisplay {
-                filename: String::new(),
-                kind: ActivityKind::Session,
-                timestamp: live.start,
-                end: live.end,
-                save_count: live.save_count(),
-                last_save_time: live.last_save_time(),
-                screenshots: live
-                    .events
-                    .iter()
-                    .filter_map(|e| match &e.kind {
-                        activity::EventKind::Screenshot { frame } => {
-                            Some(frame.to_image_handle())
-                        }
-                        _ => None,
-                    })
-                    .collect(),
-                size_bytes: None,
-            },
-            false,
-        ));
+        let live_summary = SessionSummary {
+            filename: String::new(),
+            kind: ActivityKind::Session,
+            start: live.start,
+            end: live.end,
+            save_count: live.save_count(),
+            last_save_time: live.last_save_time(),
+            screenshots: live_screenshots.to_vec(),
+            size_bytes: None,
+        };
+        log = log.push(session_card(&live_summary, false));
     }
 
-    // Filter out the live session from the persisted activity list to avoid
-    // showing it twice (once as the live card above, once from disk).
+    // Filter out the live session from the persisted list to avoid showing it twice.
     let live_start = live_session.map(|s| s.start);
-    let activity: Vec<_> = activity
-        .into_iter()
-        .filter(|e| {
-            if e.kind == ActivityKind::Session && live_start == Some(e.timestamp) {
-                return false;
-            }
-            true
-        })
+
+    let filtered: Vec<_> = sessions
+        .iter()
+        .filter(|s| !(s.kind == ActivityKind::Session && live_start == Some(s.start)))
         .collect();
 
-    if activity.is_empty() && live_session.is_none() {
+    if filtered.is_empty() && live_session.is_none() {
         log = log.push(app_text::detail("No activity yet").color(MUTED));
     }
 
     let hovered = hovered_log_entry;
 
-    for (idx, entry) in activity.iter().enumerate() {
+    for (idx, entry) in filtered.iter().enumerate() {
         let is_hovered = hovered == Some(idx);
         log = log.push(
             mouse_area(activity_card(entry, is_hovered))
@@ -280,15 +273,15 @@ fn activity_log(
         .into()
 }
 
-fn activity_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
+fn activity_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app::Message> {
     match entry.kind {
         ActivityKind::Session => session_card(entry, is_hovered),
         ActivityKind::Import => import_card(entry, is_hovered),
     }
 }
 
-fn session_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
-    let start = entry.timestamp;
+fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app::Message> {
+    let start = entry.start;
     let detail = if let Some(end) = entry.end {
         let secs = end.duration_since(start).as_secs();
         let mins = secs / 60;
@@ -390,8 +383,8 @@ fn session_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, a
         .into()
 }
 
-fn import_card(entry: &ActivityDisplay, is_hovered: bool) -> Element<'static, app::Message> {
-    let time = activity::format_local(&entry.timestamp);
+fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app::Message> {
+    let time = activity::format_local(&entry.start);
     let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
 
     let mut content = row![
