@@ -86,6 +86,14 @@ impl SpriteScanner {
         self.besu
     }
 
+    /// Whether CATU is pending — RUTU has been set at the scanline boundary
+    /// but CATU hasn't fired yet. On hardware, the OAM bus is gated by the
+    /// scan machinery even before BESU formally asserts. We use this to lock
+    /// OAM during the pre-BESU dots at scanline boundaries.
+    pub(in crate::ppu) fn catu_pending(&self) -> bool {
+        self.rutu
+    }
+
     /// Whether CATU is enabled (NOT first line after LCD-on).
     pub(in crate::ppu) fn catu_enabled(&self) -> bool {
         self.catu_enabled

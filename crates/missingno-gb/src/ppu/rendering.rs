@@ -373,7 +373,10 @@ impl Rendering {
 
     pub(super) fn oam_locked(&self) -> bool {
         // Hardware: OAM blocked by ACYL (BESU-driven) or XYMU (rendering).
-        self.scan.besu() || self.hblank.xymu()
+        // Also blocked when CATU is pending (RUTU set but not yet consumed) —
+        // on hardware, the scan machinery gates the OAM bus as soon as the
+        // scanline boundary fires, before BESU formally asserts.
+        self.scan.besu() || self.hblank.xymu() || self.scan.catu_pending()
     }
 
     pub(super) fn vram_locked(&self) -> bool {
