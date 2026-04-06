@@ -92,8 +92,6 @@ struct App {
     header_hovered: bool,
     /// SHA1 of the game card currently hovered in the library.
     hovered_library_game: Option<String>,
-    /// Full-resolution cover for the detail page (loaded on demand).
-    detail_cover: Option<iced::widget::image::Handle>,
     settings_section: settings_view::Section,
     /// Screen to return to when leaving settings.
     previous_screen: Option<Screen>,
@@ -208,7 +206,6 @@ enum Message {
     Library(library::view::Message),
     ScanComplete(bool),
     ActivityLoaded(library::store::RawActivityDetail),
-    CoverLoaded(Option<iced::widget::image::Handle>),
     EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
 
@@ -255,7 +252,6 @@ impl App {
             hovered_log_entry: None,
             header_hovered: false,
             hovered_library_game: None,
-            detail_cover: None,
             settings_section: settings_view::Section::default(),
             previous_screen: None,
             was_running_before_settings: false,
@@ -341,17 +337,21 @@ impl App {
                         }
                     }
                     Some(PendingAction::StopGame) => {
-                        if let Some(current) = &mut self.current_game {
+                        let sha1 = if let Some(current) = &mut self.current_game {
                             if let Some(session) = &mut current.session {
                                 session.end = Some(jiff::Timestamp::now());
                                 library::activity::write_session(&current.game_dir, session);
                             }
-                            self.viewing_sha1 = Some(current.entry.sha1.clone());
                             self.store.notify_activity_changed(&current.entry.sha1);
-                        }
+                            Some(current.entry.sha1.clone())
+                        } else {
+                            None
+                        };
                         self.game = Game::Unloaded;
                         self.current_game = None;
-                        self.screen = Screen::Detail;
+                        if let Some(sha1) = sha1 {
+                            return self.go_to_detail(&sha1);
+                        }
                     }
                     Some(PendingAction::RemoveGameFromLibrary) => {
                         if let Some(sha1) = &self.viewing_sha1 {
@@ -526,7 +526,9 @@ impl App {
                     }
                     G::Back => {
                         self.gallery_state = None;
-                        self.screen = Screen::Detail;
+                        if let Some(sha1) = self.viewing_sha1.clone() {
+                            return self.go_to_detail(&sha1);
+                        }
                     }
                 }
             }
@@ -576,12 +578,9 @@ impl App {
                 self.pause();
                 if let Some(current) = &self.current_game {
                     let sha1 = current.entry.sha1.clone();
-                    self.viewing_sha1 = Some(sha1.clone());
                     self.store.notify_activity_changed(&sha1);
-                    self.screen = Screen::Detail;
-                    return self.load_activity_async(&sha1);
+                    return self.go_to_detail(&sha1);
                 }
-                self.screen = Screen::Detail;
             }
             Message::ShowSettings => {
                 self.previous_screen = Some(self.screen);
@@ -857,24 +856,7 @@ impl App {
             },
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
-                    self.detail_cover = None;
-                    self.store.mark_activity_loading(&sha1);
-                    let activity_task = self.load_activity_async(&sha1);
-                    let cover_task = if let Some(game_dir) = self.store.game_dir(&sha1) {
-                        let game_dir = game_dir.to_path_buf();
-                        Task::perform(
-                            smol::unblock(move || {
-                                library::load_cover(&game_dir)
-                                    .map(|bytes| iced::widget::image::Handle::from_bytes(bytes))
-                            }),
-                            Message::CoverLoaded,
-                        )
-                    } else {
-                        Task::none()
-                    };
-                    self.viewing_sha1 = Some(sha1);
-                    self.screen = Screen::Detail;
-                    return Task::batch([activity_task, cover_task]);
+                    return self.go_to_detail(&sha1);
                 }
                 library::view::Message::HoverGame(sha1) => {
                     self.hovered_library_game = Some(sha1);
@@ -908,9 +890,6 @@ impl App {
                 if self.viewing_sha1.as_deref() == Some(&raw.sha1) {
                     self.store.set_raw_activity_detail(raw);
                 }
-            }
-            Message::CoverLoaded(handle) => {
-                self.detail_cover = handle;
             }
             Message::ScanComplete(changed) => {
                 if changed {
@@ -1198,6 +1177,15 @@ impl App {
             is_loaded,
         })
     }
+
+    /// Navigate to the detail screen for a game, loading activity in background.
+    fn go_to_detail(&mut self, sha1: &str) -> Task<Message> {
+        self.store.mark_activity_loading(sha1);
+        self.viewing_sha1 = Some(sha1.to_string());
+        self.screen = Screen::Detail;
+        self.load_activity_async(sha1)
+    }
+
 
     /// Kick off a background load of activity detail for a game.
     fn load_activity_async(&self, sha1: &str) -> Task<Message> {

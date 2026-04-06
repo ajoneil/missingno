@@ -143,7 +143,9 @@ pub fn load_entry(game_dir: &Path) -> Option<GameEntry> {
     ron::from_str(&data).ok()
 }
 
-const THUMBNAIL_HEIGHT: u32 = 240;
+// Thumbnails are 2× the display size (160×120) for crisp rendering on HiDPI.
+const THUMBNAIL_WIDTH: u32 = 240;
+const THUMBNAIL_HEIGHT: u32 = 320;
 
 pub fn save_cover(game_dir: &Path, bytes: &[u8]) {
     let _ = fs::create_dir_all(game_dir);
@@ -173,7 +175,7 @@ fn generate_thumbnail(game_dir: &Path, cover_bytes: &[u8]) {
         return;
     };
     let thumbnail = img.resize(
-        u32::MAX,
+        THUMBNAIL_WIDTH,
         THUMBNAIL_HEIGHT,
         image::imageops::FilterType::Lanczos3,
     );
