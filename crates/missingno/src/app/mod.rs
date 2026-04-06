@@ -1166,10 +1166,9 @@ impl App {
             }
         };
 
-        // Activity from the store (pre-loaded by ensure_activity_loaded at navigation time).
-        let Some(activity) = self.store.activity_for(sha1) else {
-            return self.empty_detail_view();
-        };
+        // Activity from the store (loaded in background, may not be ready yet —
+        // returns empty detail if still loading).
+        let activity = self.store.activity_for(sha1);
 
         let live_session = self
             .current_game

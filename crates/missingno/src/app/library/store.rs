@@ -75,6 +75,8 @@ pub struct GameStore {
 
     /// Activity detail for one game at a time. Cleared when switching games.
     activity_detail: Option<ActivityDetail>,
+    /// Permanent empty detail for when activity hasn't loaded yet.
+    empty_activity: ActivityDetail,
 
     /// Cached screenshot handles for the live session (avoids re-rendering
     /// every frame). Only invalidated when a new screenshot is taken.
@@ -89,6 +91,10 @@ impl GameStore {
             index: HashMap::new(),
             summaries: HashMap::new(),
             activity_detail: None,
+            empty_activity: ActivityDetail {
+                sha1: String::new(),
+                sessions: Vec::new(),
+            },
             live_screenshots: Vec::new(),
             live_screenshot_count: 0,
         };
@@ -182,12 +188,12 @@ impl GameStore {
 
     // ── Activity detail (detail page) ──────────────────────────────────
 
-    /// Get cached activity detail. Returns None if not loaded for this game.
-    /// Call `ensure_activity_loaded(sha1)` when you have &mut self.
-    pub fn activity_for(&self, sha1: &str) -> Option<&ActivityDetail> {
-        self.activity_detail
-            .as_ref()
-            .filter(|d| d.sha1 == sha1)
+    /// Get cached activity detail. Returns an empty detail if not loaded yet.
+    pub fn activity_for(&self, sha1: &str) -> &ActivityDetail {
+        match self.activity_detail.as_ref().filter(|d| d.sha1 == sha1) {
+            Some(detail) => detail,
+            None => &self.empty_activity,
+        }
     }
 
     /// Load raw activity data from disk. Safe to call from a background thread
