@@ -21,6 +21,9 @@ use crate::app::{
     },
 };
 
+const COVER_HEIGHT: f32 = 160.0;
+const COVER_WIDTH: f32 = 120.0;
+
 // Catppuccin Mocha subtext0
 const MUTED: Color = Color::from_rgb(
     0xa6 as f32 / 255.0,
@@ -63,9 +66,9 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     // Cover thumbnail — clickable to play if ROM exists
     let cover: Element<'_, app::Message> = if let Some(handle) = data.cover {
         let cover_img = image(handle.clone())
-            .height(100)
-            .content_fit(iced::ContentFit::ScaleDown)
-            .border_radius(6);
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .content_fit(iced::ContentFit::Cover);
         if has_rom {
             mouse_area(cover_img)
                 .on_press(app::Message::PlayFromDetail)
@@ -75,7 +78,10 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             cover_img.into()
         }
     } else {
-        iced::widget::Space::new().width(70).height(100).into()
+        iced::widget::Space::new()
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .into()
     };
 
     // Title + metadata column
@@ -162,7 +168,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     let mut right =
         column![primary, iced::widget::Space::new().height(Fill)]
             .align_x(iced::alignment::Horizontal::Right)
-            .height(100);
+            .height(COVER_HEIGHT);
 
     if data.header_hovered {
         right = right.push(
@@ -181,20 +187,24 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     }
 
     let header = row![
-        buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
         cover,
-        info.width(Fill),
-        right,
-    ]
-    .spacing(m());
+        container(
+            row![
+                buttons::subtle(icons::m(Icon::Back)).on_press(app::Message::BackToLibrary),
+                info.width(Fill),
+                right,
+            ]
+            .spacing(m()),
+        )
+        .padding(m())
+        .width(Fill),
+    ];
 
     let header = mouse_area(header)
         .on_enter(app::Message::HoverHeader)
         .on_exit(app::Message::UnhoverHeader);
 
-    container(column![header, horizontal_rule()].spacing(m()))
-        .padding(m())
-        .into()
+    column![header, horizontal_rule()].into()
 }
 
 fn activity_loading() -> Element<'static, app::Message> {
