@@ -566,17 +566,23 @@ impl Rendering {
             self.cascade.fall(lyry);
         }
 
-        // TEKY: combinational sprite fetch request. On hardware, TEKY's
-        // inputs (FEPO, LYRY, TAKA, RYDY) settle combinationally before the
-        // TAVA clock edge that captures TEKY into SOBU. Computing TEKY here
-        // in the falling phase ensures:
-        //   1. FEPO reads post-increment pixel_counter (lcd.rise() already ran)
-        //   2. FEPO sees current LCDC sprites_enabled (LCDC writes are applied
-        //      before ppu.fall() in execute.rs, so AROR reads reg_new.XYLO)
-        //   3. SOBU captures TEKY in the same phase it's computed (no bridge)
-        // LYRY is captured above before advance_falling(), modeling the NYKA
-        // DFF delay. RYDY and TAKA read their current (post-rising) values.
-        let teky = fepo && !self.window.rydy() && lyry && !self.sprite_trigger.taka();
+        // TEKY: combinational sprite fetch request.
+        //
+        // Before POKY fires (during the initial tile fetch pipeline startup),
+        // TEKY is suppressed. On hardware, the TAVE→NYXU→MOCE combinational
+        // path kills LYRY before TEKY can fire during the initial BG fetch
+        // cascade. The cascade propagation (LYRY → NYKA → PORY → TAVE →
+        // NYXU → LYRY=false) completes within 2 dots, but TEKY would fire
+        // on the falling phase where LYRY first goes true — before TAVE
+        // has fired on the next rising. By suppressing TEKY until POKY fires
+        // (the end of the cascade), we ensure the second BG fetch completes
+        // before sprite triggers can fire.
+        //
+        // After POKY fires (TAVE permanently disabled, normal rendering),
+        // TEKY uses current LYRY directly — sprite triggers fire immediately
+        // when a BG fetch completes.
+        let lyry_for_teky = lyry && self.cascade.poky();
+        let teky = fepo && !self.window.rydy() && lyry_for_teky && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.fall(teky);
 
         if ryce {
