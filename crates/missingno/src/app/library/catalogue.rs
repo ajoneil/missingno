@@ -50,8 +50,8 @@ pub enum GameSource {
 pub struct GameLink {
     pub name: String,
     pub url: String,
-    #[serde(default, rename = "link_type")]
-    pub _link_type: Option<LinkType>,
+    #[serde(rename = "link_type")]
+    pub _link_type: LinkType,
 }
 
 #[derive(Debug, Clone, Deserialize)]
