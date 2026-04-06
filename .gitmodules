@@ -1,0 +1,3 @@
+[submodule "missingno-gamedb"]
+	path = missingno-gamedb
+	url = git@github.com:ajoneil/missingno-gamedb.git
