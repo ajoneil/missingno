@@ -180,7 +180,7 @@ enum Message {
     PlayWithSave(String),
     ExportSave(String),
     ExportSaveSelected(String, Option<rfd::FileHandle>),
-    OpenScreenshotGallery(String), // session filename
+    OpenScreenshotGallery(String, usize), // (session filename, screenshot index)
     ScreenshotGallery(library::screenshot_gallery::Message),
     HoverLogEntry(usize),
     UnhoverLogEntry,
@@ -472,13 +472,14 @@ impl App {
                     }
                 }
             }
-            Message::OpenScreenshotGallery(session_filename) => {
+            Message::OpenScreenshotGallery(session_filename, screenshot_idx) => {
                 if let Some(sha1) = &self.viewing_sha1 {
                     if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
-                        if let Some(state) = library::screenshot_gallery::GalleryState::load(
+                        if let Some(mut state) = library::screenshot_gallery::GalleryState::load(
                             &game_dir,
                             &session_filename,
                         ) {
+                            state.select(screenshot_idx);
                             self.gallery_state = Some(state);
                             self.screen = Screen::ScreenshotGallery;
                         }

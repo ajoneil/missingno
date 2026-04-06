@@ -402,14 +402,14 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         let max_visible = 4;
         let total = entry.screenshots.len();
         let mut thumb_row = row![].spacing(s());
-        for handle in entry.screenshots.iter().take(max_visible) {
+        for (i, handle) in entry.screenshots.iter().take(max_visible).enumerate() {
             thumb_row = thumb_row.push(
                 button(
                     image(handle.clone())
                         .width(160)
                         .height(144),
                 )
-                .on_press(app::Message::OpenScreenshotGallery(filename.clone()))
+                .on_press(app::Message::OpenScreenshotGallery(filename.clone(), i))
                 .padding(0)
                 .style(|_, _| button::Style::default()),
             );
@@ -436,7 +436,7 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
                         }
                     }),
                 )
-                .on_press(app::Message::OpenScreenshotGallery(filename.clone()))
+                .on_press(app::Message::OpenScreenshotGallery(filename.clone(), max_visible))
                 .padding(0)
                 .style(|_, _| button::Style::default()),
             );
