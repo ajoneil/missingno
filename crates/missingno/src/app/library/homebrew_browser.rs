@@ -178,17 +178,25 @@ fn results_view<'a>(
         .into()
 }
 
+const CARD_COVER_WIDTH: f32 = 160.0;
+const CARD_HEIGHT: f32 = 160.0;
+
 fn entry_card<'a>(
     entry: &'a CatalogueEntry,
     cover: Option<&'a image::Handle>,
 ) -> Element<'a, app::Message> {
-    // Cover image or placeholder
+    // Cover image or placeholder — flush left, full card height, GB aspect ratio
     let cover_el: Element<'_, app::Message> = if let Some(handle) = cover {
         image(handle.clone())
-            .width(80)
-            .height(80)
+            .width(CARD_COVER_WIDTH)
+            .height(CARD_HEIGHT)
             .content_fit(iced::ContentFit::Cover)
-            .border_radius(4)
+            .border_radius(iced::border::Radius {
+                top_left: 0.0,
+                top_right: 6.0,
+                bottom_right: 6.0,
+                bottom_left: 0.0,
+            })
             .into()
     } else {
         container(
@@ -207,19 +215,27 @@ fn entry_card<'a>(
             .font(fonts::heading())
             .color(Color::WHITE),
         )
-        .width(80)
-        .height(80)
+        .width(CARD_COVER_WIDTH)
+        .height(CARD_HEIGHT)
         .align_x(Center)
         .align_y(iced::alignment::Vertical::Center)
         .style(|_: &iced::Theme| container::Style {
             background: Some(Color::from_rgb(0.3, 0.2, 0.4).into()),
-            border: iced::Border::default().rounded(4),
+            border: iced::Border {
+                radius: iced::border::Radius {
+                    top_left: 0.0,
+                    top_right: 6.0,
+                    bottom_right: 6.0,
+                    bottom_left: 0.0,
+                },
+                ..Default::default()
+            },
             ..Default::default()
         })
         .into()
     };
 
-    // Info
+    // Info — padded separately
     let mut info = column![text(&entry.manifest.title).font(fonts::bold())].spacing(2);
 
     let mut subtitle_parts = Vec::new();
@@ -247,9 +263,11 @@ fn entry_card<'a>(
     }
 
     let slug = entry.slug.clone();
-    let card = row![cover_el, info.width(Fill)]
-        .spacing(m())
-        .align_y(Center);
+    let card = row![
+        cover_el,
+        container(info.width(Fill)).padding(m()),
+    ]
+    .height(CARD_HEIGHT);
 
     iced::widget::mouse_area(
         container(card)
@@ -261,8 +279,7 @@ fn entry_card<'a>(
                     border: iced::Border::default().rounded(6),
                     ..Default::default()
                 }
-            })
-            .padding(m()),
+            }),
     )
     .on_press(Message::SelectEntry(slug).into())
     .interaction(iced::mouse::Interaction::Pointer)
