@@ -14,7 +14,6 @@ use super::{activity, GameEntry};
 #[derive(Clone, Debug)]
 pub struct GameSummary {
     pub entry: GameEntry,
-    pub game_dir: PathBuf,
     pub thumbnail: Option<image::Handle>,
     pub play_time_secs: f64,
     pub last_played: Option<Timestamp>,
@@ -54,10 +53,6 @@ pub struct GameStore {
     /// Cached game summaries, keyed by sha1. Loaded on demand.
     summaries: HashMap<String, GameSummary>,
 
-    /// Sorted sha1 list for the library grid. Rebuilt when summaries change.
-    sorted_keys: Vec<String>,
-    sorted_dirty: bool,
-
     /// Activity detail for one game at a time. Cleared when switching games.
     activity_detail: Option<ActivityDetail>,
 
@@ -73,8 +68,6 @@ impl GameStore {
         let mut store = Self {
             index: HashMap::new(),
             summaries: HashMap::new(),
-            sorted_keys: Vec::new(),
-            sorted_dirty: true,
             activity_detail: None,
             live_screenshots: Vec::new(),
             live_screenshot_count: 0,
@@ -90,7 +83,7 @@ impl GameStore {
     pub fn rebuild_index(&mut self) {
         self.index.clear();
         self.summaries.clear();
-        self.sorted_dirty = true;
+
 
         let Some(lib_dir) = super::library_dir() else {
             return;
@@ -126,23 +119,9 @@ impl GameStore {
 
     /// Get all game summaries, sorted for the library grid.
     pub fn all_summaries(&self) -> Vec<&GameSummary> {
-        if self.sorted_dirty {
-            // Sorted keys are stale — sort on the fly
-            let mut entries: Vec<&GameSummary> = self.summaries.values().collect();
-            entries.sort_by(|a, b| Self::sort_cmp(a, b));
-            return entries;
-        }
-        self.sorted_keys
-            .iter()
-            .filter_map(|sha1| self.summaries.get(sha1))
-            .collect()
-    }
-
-    /// Flush the sorted key cache (call when you have &mut self available).
-    pub fn ensure_sorted(&mut self) {
-        if self.sorted_dirty {
-            self.rebuild_sorted_keys();
-        }
+        let mut entries: Vec<&GameSummary> = self.summaries.values().collect();
+        entries.sort_by(|a, b| Self::sort_cmp(a, b));
+        entries
     }
 
     fn sort_cmp(a: &GameSummary, b: &GameSummary) -> std::cmp::Ordering {
@@ -167,24 +146,6 @@ impl GameStore {
         self.index.is_empty()
     }
 
-    fn rebuild_sorted_keys(&mut self) {
-        let mut entries: Vec<_> = self.summaries.values().collect();
-        entries.sort_by(|a, b| {
-            match (&a.last_played, &b.last_played) {
-                (Some(a_ts), Some(b_ts)) => b_ts.cmp(a_ts),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a
-                    .entry
-                    .display_title()
-                    .to_lowercase()
-                    .cmp(&b.entry.display_title().to_lowercase()),
-            }
-        });
-        self.sorted_keys = entries.iter().map(|e| e.entry.sha1.clone()).collect();
-        self.sorted_dirty = false;
-    }
-
     fn load_summary(game_dir: PathBuf, entry: GameEntry) -> GameSummary {
         let thumbnail =
             super::load_thumbnail(&game_dir).map(|bytes| image::Handle::from_bytes(bytes));
@@ -192,7 +153,6 @@ impl GameStore {
 
         GameSummary {
             entry,
-            game_dir,
             thumbnail,
             play_time_secs: stats.total_play_time_secs,
             last_played: stats.last_played,
@@ -208,14 +168,6 @@ impl GameStore {
         self.activity_detail
             .as_ref()
             .filter(|d| d.sha1 == sha1)
-    }
-
-    /// Check whether activity detail is already cached for this game.
-    pub fn has_activity_loaded(&self, sha1: &str) -> bool {
-        self.activity_detail
-            .as_ref()
-            .map(|d| d.sha1 == sha1)
-            .unwrap_or(false)
     }
 
     /// Set the activity detail (called when background load completes).
@@ -342,7 +294,7 @@ impl GameStore {
                 summary.play_time_secs = stats.total_play_time_secs;
                 summary.last_played = stats.last_played;
                 summary.save_count = stats.save_count;
-                self.sorted_dirty = true;
+        
             }
         }
     }
@@ -356,7 +308,7 @@ impl GameStore {
                 if let Some(summary) = self.summaries.get_mut(sha1) {
                     summary.entry = entry;
                     summary.thumbnail = thumbnail;
-                    self.sorted_dirty = true;
+            
                 }
             }
         }
@@ -368,7 +320,7 @@ impl GameStore {
             self.index.insert(sha1.to_string(), game_dir.clone());
             self.summaries
                 .insert(sha1.to_string(), Self::load_summary(game_dir, entry));
-            self.sorted_dirty = true;
+    
         }
     }
 
@@ -376,7 +328,7 @@ impl GameStore {
     pub fn notify_game_removed(&mut self, sha1: &str) {
         self.index.remove(sha1);
         self.summaries.remove(sha1);
-        self.sorted_dirty = true;
+
         if self
             .activity_detail
             .as_ref()

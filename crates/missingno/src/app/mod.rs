@@ -208,6 +208,7 @@ enum Message {
     Library(library::view::Message),
     ScanComplete(bool),
     ActivityLoaded(library::store::ActivityDetail),
+    CoverLoaded(Option<iced::widget::image::Handle>),
     EnrichComplete(library::scanner::EnrichResult),
     OpenUrl(&'static str),
 
@@ -856,14 +857,23 @@ impl App {
             },
             Message::Library(message) => match message {
                 library::view::Message::SelectGame(sha1) => {
-                    // Load full-res cover for detail page
-                    self.detail_cover = self.store.game_dir(&sha1)
-                        .and_then(|d| library::load_cover(d))
-                        .map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
-                    let task = self.load_activity_async(&sha1);
+                    self.detail_cover = None;
+                    let activity_task = self.load_activity_async(&sha1);
+                    let cover_task = if let Some(game_dir) = self.store.game_dir(&sha1) {
+                        let game_dir = game_dir.to_path_buf();
+                        Task::perform(
+                            smol::unblock(move || {
+                                library::load_cover(&game_dir)
+                                    .map(|bytes| iced::widget::image::Handle::from_bytes(bytes))
+                            }),
+                            Message::CoverLoaded,
+                        )
+                    } else {
+                        Task::none()
+                    };
                     self.viewing_sha1 = Some(sha1);
                     self.screen = Screen::Detail;
-                    return task;
+                    return Task::batch([activity_task, cover_task]);
                 }
                 library::view::Message::HoverGame(sha1) => {
                     self.hovered_library_game = Some(sha1);
@@ -897,6 +907,9 @@ impl App {
                 if self.viewing_sha1.as_deref() == Some(&detail.sha1) {
                     self.store.set_activity_detail(detail);
                 }
+            }
+            Message::CoverLoaded(handle) => {
+                self.detail_cover = handle;
             }
             Message::ScanComplete(changed) => {
                 if changed {
