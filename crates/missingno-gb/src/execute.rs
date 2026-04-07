@@ -438,7 +438,7 @@ impl GameBoy {
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();
-            if let Some(interrupt) = self.serial.mcycle(counter) {
+            if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
                 self.interrupts.request(interrupt);
             }
 

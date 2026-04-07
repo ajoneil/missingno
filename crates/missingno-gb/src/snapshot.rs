@@ -356,6 +356,7 @@ impl GameBoy {
             timers: crate::timers::Timers::from_snapshot(&snap.timer),
             dma: crate::dma::Dma::from_snapshot(&snap.dma),
             serial: crate::serial_transfer::Registers::from_snapshot(&snap.serial),
+            link: Box::new(crate::serial_transfer::Disconnected::new()),
             joypad: crate::joypad::Joypad::new(),
             interrupts: crate::interrupts::Registers {
                 requested: InterruptFlags::from_bits_retain(snap.cpu.if_),

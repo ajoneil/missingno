@@ -70,6 +70,7 @@ pub struct GameBoy {
     joypad: Joypad,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Registers,
+    link: Box<dyn serial_transfer::SerialLink>,
     timers: timers::Timers,
     dma: Dma,
     sgb: Option<sgb::Sgb>,
@@ -120,6 +121,7 @@ impl GameBoy {
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
             serial: serial_transfer::Registers::new(),
+            link: Box::new(serial_transfer::Disconnected::new()),
             timers: if has_boot_rom {
                 timers::Timers::power_on()
             } else {
@@ -318,9 +320,16 @@ impl GameBoy {
         self.sgb.as_ref()
     }
 
-    #[allow(dead_code)]
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.serial.output)
+        self.link.drain_output()
+    }
+
+    pub fn link_mut(&mut self) -> &mut dyn serial_transfer::SerialLink {
+        &mut *self.link
+    }
+
+    pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
+        self.link = link;
     }
 
     /// Populate VRAM with the data the DMG boot ROM would have left:
