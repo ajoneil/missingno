@@ -116,7 +116,6 @@ impl Ppu {
                 line_end_active: false,
                 frame_end_reset: true,
                 myta_suppress_new_match: false,
-                ropo_was_high: true,
                 vblank: true,
                 popu_holdover: false,
             },
@@ -161,7 +160,6 @@ impl Ppu {
                 line_end_active: false,
                 frame_end_reset: false,
                 myta_suppress_new_match: false,
-                ropo_was_high: false,
                 vblank: false,
                 popu_holdover: false,
             },
@@ -265,10 +263,10 @@ impl Ppu {
     /// increment. This gives LX=0 the correct 3-half-phase duration.
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
-        // ly_comparison_latched (ROPO) is NOT reset by VID_RST — the DFF
-        // retains its last value. Only the comparison clock stops/restarts.
-        // The combinational comparator (PALY) settles immediately to the
-        // new LY==LYC state.
+        // ROPO is NOT reset by VID_RST — the DFF retains its last value.
+        // PALY is combinational and settles immediately when LY resets to 0,
+        // so recompute the pending comparison here. The ROPO DFF will latch
+        // this value at the first TALU rising edge after dividers start.
         self.video.update_ly_comparison();
 
         // Create the pixel pipeline (VID_RST released).
@@ -698,7 +696,6 @@ impl Ppu {
             line_end_active: false,
             frame_end_reset: false,
             myta_suppress_new_match: false,
-            ropo_was_high: false,
             vblank: snap.ly >= 144,
             popu_holdover: false,
         };

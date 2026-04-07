@@ -46,8 +46,10 @@ pub struct VideoControl {
     /// rising by `latch_ly_comparison()`.
     pub ly_comparison_pending: bool,
 
-    /// Latched LY==LYC result (ROPO DFF output). This is what STAT
-    /// bit 2 reads and what drives the LYC STAT interrupt source.
+    /// Latched LY==LYC result (ROPO DFF output). Unconditionally latched
+    /// from `ly_comparison_pending` at each TALU rising edge. This is what
+    /// STAT bit 2 reads and what drives the LYC STAT interrupt source.
+    /// Reset only by SYS_RST, NOT by VID_RST (LCD off/on).
     pub ly_comparison_latched: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
@@ -91,13 +93,6 @@ pub struct VideoControl {
     /// so LYC=153 clears in 1 M-cycle while LYC=0 onset is delayed.
     pub myta_suppress_new_match: bool,
 
-    /// Previous ROPO value for edge detection. RUPO (the STAT-visible
-    /// LYC flag) only sets on a ROPO 0→1 transition, not when ROPO
-    /// is continuously high. At skip-boot, ROPO is already high
-    /// (comparison match captured from boot ROM), so RUPO stays low
-    /// until the next ROPO rising edge.
-    pub ropo_was_high: bool,
-
     /// VBlank latch (POPU DFF). Clocked by NYPE rising edge, captures
     /// whether LY >= 144 from the previous cycle. When high, the PPU
     /// reports VBlank mode. Async-reset by VID_RST (LCD off).
@@ -127,7 +122,6 @@ impl VideoControl {
         self.line_end_detected = false;
         self.frame_end_reset = false;
         self.myta_suppress_new_match = false;
-        self.ropo_was_high = false;
     }
 
     /// TALU signal: buffered VENA.qp (4-dot M-cycle clock).
@@ -163,31 +157,12 @@ impl VideoControl {
         self.ly = value;
     }
 
-    /// RUPO NOR latch update: models ROPO → RUPO edge-sensitive set.
-    ///
-    /// On hardware, RUPO is a NOR latch: SET by ROPO rising, RESET by
-    /// PAGO (system reset / STAT write). It only transitions high on a
-    /// ROPO 0→1 edge, not when ROPO is continuously high.
-    ///
-    /// At skip-boot, ROPO=1 (match captured) but RUPO=0 (no edge yet).
-    /// RUPO stays 0 until LY changes (ROPO→0) and then matches again
-    /// (ROPO→1), producing the rising edge that sets RUPO.
+    /// ROPO DFF latch: unconditionally capture the pending PALY comparison
+    /// result at TALU rising edge. On hardware, RUPO (the NOR latch downstream
+    /// of ROPO) is transparent because PAGO is permanently held high during
+    /// normal operation. STAT bit 2 and the STAT interrupt both read this value.
     pub fn latch_ly_comparison(&mut self) {
-        let ropo_new = self.ly_comparison_pending;
-        // RUPO sets on ROPO rising edge (0→1 transition only)
-        if ropo_new && !self.ropo_was_high {
-            self.ly_comparison_latched = true;
-        }
-        // RUPO clears when ROPO goes low (NOR latch: SET=0, RESET=0
-        // holds, but the next cycle with ROPO=0 allows PAGO to clear)
-        // Actually, on hardware RUPO clears via PAGO (STAT write or
-        // system reset), not via ROPO going low. For now, clear when
-        // ROPO goes low to prevent the flag from persisting across
-        // scanlines where LY!=LYC.
-        if !ropo_new {
-            self.ly_comparison_latched = false;
-        }
-        self.ropo_was_high = ropo_new;
+        self.ly_comparison_latched = self.ly_comparison_pending;
     }
 
     /// PALY combinational comparator: recompute the pending LY==LYC
