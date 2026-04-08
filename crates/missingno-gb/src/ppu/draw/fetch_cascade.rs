@@ -9,7 +9,7 @@
 /// - PYGO (DFF17, falling/ALET): captures PORY
 /// - POKY (NOR latch, falling): fires from PYGO
 ///
-/// LYRY fires on the rising edge (the fetcher counter reaches 10 during
+/// LYRY fires on the rising edge (the fetcher counter reaches 5 during
 /// advance_rising). NYKA captures on the next falling edge — the natural
 /// 1 half-phase DFF delay. No extra storage is needed because LYRY is
 /// combinational on fetch_counter, which persists between half-phases.
@@ -44,7 +44,7 @@ impl FetchCascade {
     /// fire POKY NOR from PYGO.
     ///
     /// LYRY fires on the preceding rising edge (fetcher counter reaches
-    /// 10 in advance_rising). NYKA captures live LYRY here — the
+    /// 5 in advance_rising). NYKA captures live LYRY here — the
     /// rise-to-fall separation provides the 1 half-phase DFF delay.
     pub(in crate::ppu) fn fall(&mut self, lyry: bool) {
         // NYKA DFF17: captures live LYRY on falling edge (ALET clock).

@@ -322,7 +322,7 @@ impl Rendering {
             spr_fifo_a: obj_low,
             spr_fifo_b: obj_high,
             pal_pipe: obj_palette,
-            tfetch_state: self.fetcher.fetch_counter / 2,
+            tfetch_state: self.fetcher.fetch_counter,
             sfetch_state,
             tile_temp_a: self.fetcher.tile_data_low(),
             tile_temp_b: self.fetcher.tile_data_high(),
@@ -531,9 +531,10 @@ impl Rendering {
 
     /// Falling edge Mode 3 processing.
     ///
-    /// Fetcher advances (fetch_counter falling half), cascade DFFs (NYKA,
-    /// PYGO), NOR latches (POKY), combinational signals (TYFA bridge),
-    /// and fine scroll match (PUXA) fire on the falling edge.
+    /// Fetcher VRAM reads (counter doesn't increment on fall — LEBO fires
+    /// on ODD/rise only), cascade DFFs (NYKA, PYGO), NOR latches (POKY),
+    /// combinational signals (TYFA bridge), and fine scroll match (PUXA)
+    /// fire on the falling edge.
     fn mode3_falling(
         &mut self,
         regs: &PipelineRegisters,
@@ -546,17 +547,16 @@ impl Rendering {
         // (TYFA suppression) and is latched into hblank for next dot's wodu().
         let fepo = self.fepo(regs);
 
-        // BG fetcher falling-edge advance: VRAM reads + counter increment.
-        // LYRY: combinational gate, high when the fetcher has completed
-        // its current tile fetch (fetch_counter >= 10). Evaluate BEFORE
-        // advance_falling() so NYKA captures the rise-phase value —
-        // modeling the 1-HP DFF delay of the ALET-clocked NYKA latch.
+        // LYRY: combinational on fetch_counter (>= 5). The counter only
+        // increments on rising (LEBO clock), so the value here reflects
+        // the preceding rise — matching hardware's NYKA capturing
+        // reg_old.LYRY on ALET (falling edge).
         let lyry = self.fetcher.lyry();
 
         // BG fetcher pauses during sprite fetch. On hardware, TAKA gates
-        // the fetcher counter — tfetch stays idle (05) throughout sprite
-        // fetch, as confirmed by GateBoy traces showing tfetch_state=05
-        // for the entire duration of sfetch_state cycling 00-05.
+        // the fetcher counter via LEBO — tfetch stays idle (5) throughout
+        // sprite fetch, as confirmed by GateBoy traces showing
+        // tfetch_state=05 for the entire duration of sfetch_state cycling.
         if !self.sprite_trigger.taka() {
             self.fetcher.advance_falling(
                 self.lcd.pixel_counter(),

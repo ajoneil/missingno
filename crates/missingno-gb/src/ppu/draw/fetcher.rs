@@ -6,10 +6,12 @@ use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
 pub(in crate::ppu) struct TileFetcher {
-    /// Hardware's fetch_counter counter: 0-11 (6 dots x 2 half-phases).
-    /// Incremented by 2 each dot (since advance() is called once per dot,
-    /// but the hardware counter ticks twice per dot on both half-phases).
-    /// Reset to 0 on TAVE (pipe load) or window trigger.
+    /// Hardware fetcher counter (LAXU/MESU/NYVA): 3-bit ripple counter,
+    /// values 0-5. Clocked by LEBO = NAND(ALET, MOCE), which fires on
+    /// ODD phases only (rise in emulator convention). VRAM reads occur on
+    /// EVEN phases (fall) at counter values 0, 2, 4. Terminal value 5:
+    /// MOCE = NAND(LAXU, NYVA) goes low, freezing the counter and firing
+    /// LYRY. Reset to 0 on TAVE (pipe load) or window trigger.
     pub(in crate::ppu) fetch_counter: u8,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
@@ -42,9 +44,11 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 }
 
 impl TileFetcher {
-    /// LYRY: combinational decode. Fetch done when counter >= 10.
+    /// LYRY: combinational decode of MOCE. MOCE = NAND(LAXU, NYVA),
+    /// fires when bits 0 and 2 are set = counter value 5.
+    /// LYRY = NOT(MOCE), true when counter >= 5.
     pub(in crate::ppu) fn lyry(&self) -> bool {
-        self.fetch_counter >= 10
+        self.fetch_counter >= 5
     }
 
     pub(in crate::ppu) fn tile_data_low(&self) -> u8 {
@@ -160,12 +164,12 @@ impl TileFetcher {
         tile_data_offset(block_id, mapped_idx, fine_y, high)
     }
 
-    /// Falling-edge advance: VRAM reads and counter increment.
+    /// Falling-edge advance: VRAM reads only (no counter increment).
     ///
-    /// The hardware fetcher counter (LAXU/MESU/NYVA) increments on both
-    /// half-phases. VRAM reads happen at counter values 0, 4, 8 (falling
-    /// edge, driven by LEBO = NAND(ALET, MOCE)). The counter saturates
-    /// at 10 (Idle) until reset.
+    /// The hardware fetcher counter is clocked by LEBO = NAND(ALET, MOCE),
+    /// which fires on ODD phases (rise) only. VRAM reads are driven by the
+    /// counter value that settled after the preceding rise. Reads happen at
+    /// counter values 0, 2, 4 on EVEN phases (fall).
     pub(in crate::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,
@@ -176,35 +180,33 @@ impl TileFetcher {
     ) {
         match self.fetch_counter {
             0 => {
-                // Tilemap VRAM read (dot 0, falling).
+                // Tilemap VRAM read (dot 0, falling). Counter=0 from reset.
                 self.vram_address =
                     self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                 self.tile_index = vram.read_byte(self.vram_address);
             }
-            4 => {
+            2 => {
                 // Tile data low VRAM read (dot 2, falling).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
                 self.tile_data_low = vram.read_byte(self.vram_address);
             }
-            8 => {
+            4 => {
                 // Tile data high VRAM read (dot 4, falling).
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
                 self.tile_data_high = vram.read_byte(self.vram_address);
             }
             _ => {}
         }
-        if self.fetch_counter < 10 {
-            self.fetch_counter += 1;
-        }
+        // No counter increment on falling — LEBO only fires on ODD (rise).
     }
 
-    /// Rising-edge advance: counter increment only.
+    /// Rising-edge advance: counter increment (LEBO clock).
     ///
-    /// No VRAM reads on rising. When fetch_counter reaches 10, LYRY
-    /// fires combinationally on the rising edge — the hardware-correct
-    /// phase for the fetch-done signal.
+    /// LEBO = NAND(ALET, MOCE) fires on ODD phases (rise). The counter
+    /// increments 0→1→2→3→4→5 then saturates (MOCE goes low at 5,
+    /// freezing LEBO). LYRY fires combinationally when counter reaches 5.
     pub(in crate::ppu) fn advance_rising(&mut self) {
-        if self.fetch_counter < 10 {
+        if self.fetch_counter < 5 {
             self.fetch_counter += 1;
         }
     }

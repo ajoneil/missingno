@@ -189,9 +189,9 @@ impl WindowControl {
 
         // Window already active -- check for reactivation zero pixel (DMG only).
         // The hardware condition is GetTile T1 (first tick). Our WX check
-        // runs in mode3_rising after SACU but before the rising fetcher advance,
-        // so the fetcher has been ticked once (in mode3_falling): what was
-        // dot=0 (T1) is now dot=1. So we check dot=1.
+        // runs in mode3_rising after advance_rising, so the fetcher has been
+        // ticked once since reset: counter=1 on the first dot. We check
+        // counter < 2 to catch this first-dot state.
         // Reactivation requires the initial window fetch to have completed
         // (RYDY=0), modeling hardware's !window_is_being_fetched.
         if fetcher.fetching_window {
