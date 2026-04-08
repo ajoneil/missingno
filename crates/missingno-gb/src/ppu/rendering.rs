@@ -482,6 +482,10 @@ impl Rendering {
             // On hardware, tile_temp retains data from the previous line's last
             // BG fetch. TileFetcher's tile_data_low/tile_data_high model tile_temp.
             self.fetcher.load_into(&mut self.bg_shifter);
+            // NYXU reset overrides LEBO on this ODD phase — the counter stays
+            // at 0 until the next rise. Suppress the advance_rising that will
+            // run later this same dot in mode3_rising.
+            self.fetcher.nyxu_reset_active = true;
         }
 
         // SARY/REJO: sample the WY==LY latch every dot in all modes.
@@ -662,7 +666,7 @@ impl Rendering {
             pixel_counter: self.lcd.pixel_counter(),
         };
 
-        // BG fetcher rising-edge advance: counter increment only.
+        // BG fetcher rising-edge advance: counter increment (LEBO clock).
         // Paused during sprite fetch (TAKA gates fetcher counter).
         if !self.sprite_trigger.taka() {
             self.fetcher.advance_rising();

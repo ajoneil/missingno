@@ -13,6 +13,11 @@ pub(in crate::ppu) struct TileFetcher {
     /// MOCE = NAND(LAXU, NYVA) goes low, freezing the counter and firing
     /// LYRY. Reset to 0 on TAVE (pipe load) or window trigger.
     pub(in crate::ppu) fetch_counter: u8,
+    /// Models NYXU_BFETCH_RSTn holding the counter at 0. Set by AVAP
+    /// (load_into called before advance_rising on the same dot) to suppress
+    /// the first LEBO edge — on hardware, the async reset overrides the
+    /// clock on the same ODD phase. Cleared by advance_rising().
+    pub(in crate::ppu) nyxu_reset_active: bool,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     pub(in crate::ppu) window_tile_x: u8,
@@ -62,6 +67,7 @@ impl TileFetcher {
     pub(in crate::ppu) fn new() -> Self {
         Self {
             fetch_counter: 0,
+            nyxu_reset_active: false,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -77,6 +83,7 @@ impl TileFetcher {
     /// across scanlines.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.fetch_counter = 0;
+        self.nyxu_reset_active = false;
         self.window_tile_x = 0;
         self.tile_index = 0;
         self.fetching_window = false;
@@ -205,14 +212,22 @@ impl TileFetcher {
     /// LEBO = NAND(ALET, MOCE) fires on ODD phases (rise). The counter
     /// increments 0→1→2→3→4→5 then saturates (MOCE goes low at 5,
     /// freezing LEBO). LYRY fires combinationally when counter reaches 5.
+    ///
+    /// On the AVAP/window-trigger dot, NYXU reset overrides the LEBO
+    /// clock — the counter stays at 0 for this ODD phase. The first
+    /// real increment happens on the next rise.
     pub(in crate::ppu) fn advance_rising(&mut self) {
+        if self.nyxu_reset_active {
+            self.nyxu_reset_active = false;
+            return;
+        }
         if self.fetch_counter < 5 {
             self.fetch_counter += 1;
         }
     }
 
     /// Load fetched tile data into the BG shifter and reset the fetcher to
-    /// GetTile for the next tile.
+    /// GetTile for the next tile. NYXU fires: counter resets to 0.
     pub(in crate::ppu) fn load_into(&mut self, bg_shifter: &mut BgShifter) {
         bg_shifter.load(self.tile_data_low, self.tile_data_high);
         if self.fetching_window {
@@ -221,7 +236,9 @@ impl TileFetcher {
         self.fetch_counter = 0;
     }
 
-    /// Reset the fetcher for a window trigger.
+    /// Reset the fetcher for a window trigger. NYXU fires: counter resets
+    /// to 0. Unlike AVAP, this runs AFTER advance_rising on the same dot,
+    /// so the next dot's advance_rising proceeds normally (0→1).
     pub(in crate::ppu) fn reset_for_window(&mut self) {
         self.fetch_counter = 0;
         self.window_tile_x = 0;
