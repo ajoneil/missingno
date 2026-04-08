@@ -243,11 +243,9 @@ impl Ppu {
                 self.video.lyc = value;
                 self.video.update_ly_comparison();
             }
-            Register::BackgroundPalette => {
-                self.registers.palettes.background.write_immediate(value)
-            }
-            Register::Sprite0Palette => self.registers.palettes.sprite0.write_immediate(value),
-            Register::Sprite1Palette => self.registers.palettes.sprite1.write_immediate(value),
+            Register::BackgroundPalette => self.registers.palettes.background.write(value),
+            Register::Sprite0Palette => self.registers.palettes.sprite0.write(value),
+            Register::Sprite1Palette => self.registers.palettes.sprite1.write(value),
             Register::CurrentScanline => {} // writes to LY are ignored on DMG
         }
         false
