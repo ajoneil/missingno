@@ -192,6 +192,10 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 
 **Common pitfall — rise/fall ordering reasoning**: When investigating timing bugs, do NOT frame hypotheses as "the write needs to happen before/after the read within the same dot." Instead, identify which edge captures the DFF and which edge the consumer reads from, then check whether the DFF output holds the correct value at the consumer's read point. The implementation detail of which method (`rise()` or `fall()`) runs first in the emulator is irrelevant to correctness — what matters is whether the DFF capture and the combinational read are on the correct edges relative to each other.
 
+**Early write path pattern**: For a CPU bus write to be visible to a `ppu.fall()` operation (via `tick()`), the write must fire BEFORE `ppu.fall()` — this is the "early write path" in `execute.rs::fall()`. DFF9 registers (LCDC, SCY, SCX) use this for the fetcher; DFF8 palette registers (BGP, OBP0, OBP1) use it for the pixel pipeline. The pattern is: early `drive_ppu_bus()` sets `pending` → `tick_palette_latches()` inside `ppu.fall()` resolves it → combinational consumers see the new output. Without the early write, the pending value sits until the NEXT dot's tick, adding 1 dot of latency. When adding new registers to the early write path, add their addresses to the match at `execute.rs` line ~398.
+
+**Common pitfall — multi-component pipeline fixes**: When a pipeline has multiple stages that each add latency (e.g., DFF pending→tick AND data_latch buffering), fixing one stage alone may show ZERO effect because the other stage still delays the value by the same amount. Both stages need fixing for the change to be observable. If a fix has zero test impact, check whether it's part of a multi-stage pipeline where another stage compensates. Test the combined fix before concluding that either individual fix is wrong.
+
 ### Key Patterns
 
 - **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently.
