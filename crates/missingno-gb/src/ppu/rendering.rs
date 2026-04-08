@@ -83,7 +83,6 @@ pub struct PpuTraceSnapshot {
     pub bgw_fifo_b: u8,
     pub spr_fifo_a: u8,
     pub spr_fifo_b: u8,
-    pub mask_pipe: u8,
     pub pal_pipe: u8,
     /// Background tile fetcher counter (0-11 internal, mapped to 3-bit
     /// hardware counter by dividing by 2).
@@ -307,7 +306,7 @@ impl Rendering {
         }
 
         let (bg_low, bg_high) = self.bg_shifter.registers();
-        let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
+        let (obj_low, obj_high, obj_palette, _obj_priority) = self.obj_shifter.registers();
 
         let sfetch_state = match &self.sprite_state {
             SpriteState::Fetching(sf) => sf.fetch_counter(),
@@ -322,7 +321,6 @@ impl Rendering {
             bgw_fifo_b: bg_high,
             spr_fifo_a: obj_low,
             spr_fifo_b: obj_high,
-            mask_pipe: obj_priority,
             pal_pipe: obj_palette,
             tfetch_state: self.fetcher.fetch_counter / 2,
             sfetch_state,
