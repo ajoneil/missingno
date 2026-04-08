@@ -395,7 +395,7 @@ impl GameBoy {
         // and are read combinationally — the write settles before the
         // fetcher computes its next address.
         let early_ppu_write = if let DotAction::Write { address, value } = &self.current_dot_action
-            && matches!(*address, 0xFF40 | 0xFF42 | 0xFF43)
+            && matches!(*address, 0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49)
         {
             if self.drive_ppu_bus(*address, *value) {
                 self.interrupts.request(Interrupt::VideoStatus);
