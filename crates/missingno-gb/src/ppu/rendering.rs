@@ -409,6 +409,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
+        palette_changed: bool,
     ) -> Option<PixelOutput> {
         // XUPY rising edge detection: the XOTA divider toggle (in
         // Ppu::rise()) ran before this, so xupy()==true means WUVU
@@ -436,7 +437,7 @@ impl Rendering {
             // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
             // already cleared XYMU, but mode3_falling still needs to run
             // for the final fetcher/TYFA work.
-            self.mode3_falling(regs, video, oam, vram);
+            self.mode3_falling(regs, video, oam, vram, palette_changed);
         }
 
         pixel
@@ -539,6 +540,7 @@ impl Rendering {
         video: &VideoControl,
         _oam: &Oam,
         vram: &Vram,
+        palette_changed: bool,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
         // (TYFA suppression) and is latched into hblank for next dot's wodu().
@@ -611,6 +613,19 @@ impl Rendering {
         // (reg_old), matching hardware.
         self.fine_scroll
             .compare_falling(regs.background_viewport.x.output());
+
+        // REMY/RAVO combinational refresh: if a palette write resolved
+        // this dot, re-resolve the current pixel with the new palette
+        // values. On hardware, REMY/RAVO is combinational and immediately
+        // reflects palette changes — no pipeline delay.
+        if palette_changed {
+            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
+                &self.bg_shifter,
+                &self.obj_shifter,
+                self.window.window_zero_pixel_mut(),
+                regs,
+            ));
+        }
     }
 
     /// Rising edge Mode 3 pixel pipeline processing.

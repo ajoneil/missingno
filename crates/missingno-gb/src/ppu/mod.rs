@@ -568,14 +568,20 @@ impl Ppu {
             // transfers to output here, so the pipeline sees a 1-dot
             // delay — matching hardware's reg_new → reg_old copy at the
             // tick boundary followed by combinational read of reg_old.
-            self.registers.tick_palette_latches();
+            let palette_changed = self.registers.tick_palette_latches();
             self.registers.tick_register_latches();
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel = rendering.fall(&self.registers, &self.video, &self.oam, vram);
+                result.pixel = rendering.fall(
+                    &self.registers,
+                    &self.video,
+                    &self.oam,
+                    vram,
+                    palette_changed,
+                );
             }
 
             // STAT edge detection moved to check_stat_edge() — called
