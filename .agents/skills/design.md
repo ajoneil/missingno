@@ -63,6 +63,7 @@ Before finalizing, check each element of your design against these questions:
 3. **Are there magic numbers?** Every numeric literal should either be a named constant with hardware meaning (e.g. `SCANLINE_DOTS = 456`) or derived from the state machine's natural progression. If you're writing `5 - position`, ask what hardware mechanism produces that value.
 4. **Can a reader understand the hardware from the code?** Read your proposed enum variants and match arms as if you didn't know the hardware. Do they tell a story? `SpriteWait { advancing BG fetcher } → SpriteDataFetch { reading tile data }` tells a story. `bg_wait_dots: u8` does not.
 5. **Does the design handle edge cases through the model?** The strongest test of a good hardware model is that edge cases (sprites at X=0, window reactivation, SCX scroll) are handled by the same state machine as the normal case — no special-case branches needed. If your design has special cases, ask whether a more faithful model would eliminate them.
+6. **Is the design framed in terms of DFF edges, not rise/fall ordering?** If the design says "move X from fall() to rise() so it runs before Y," it's reasoning about the emulator's procedural call order, not about hardware. On hardware, rise and fall are alternating clock edges — a DFF captures on one edge and its output is available until the next capture. The design should specify which DFF edge captures a value and where the consumer reads it, not which emulator method the code should live in. See "Clock Model and Phase Architecture" in CLAUDE.md.
 
 ## Output
 

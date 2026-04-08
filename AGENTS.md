@@ -172,6 +172,26 @@ The `Processor` is split across three files in `crates/missingno-gb/src/cpu/mcyc
 - `build.rs` — Constructs the `Phase` for each instruction type
 - `apply.rs` — Pure CPU mutations (ALU, flags, DAA, etc.)
 
+### Clock Model and Phase Architecture
+
+The Game Boy's master clock produces alternating edges. On hardware, each edge triggers specific circuits — there is no inherent "first" or "second" edge within a dot. The CPU and PPU are clocked by the same master clock and tick in lockstep.
+
+**Emulator model**: `execute.rs` alternates `rise()` and `fall()` calls. One dot = one `rise()` + one `fall()`. The CPU and PPU both do work on each edge:
+- `rise()`: PPU pixel output (`ppu.rise()`), CPU state advance (`next_dot()`), CPU reads
+- `fall()`: PPU fetcher/control (`ppu.fall()`), CPU bus writes
+
+**There is no ordering between rise and fall.** They are alternating edges in a continuous clock. The emulator calls `rise()` then `fall()` as an implementation choice, not because hardware has that ordering. Do not reason about "rise happens before fall" — instead, think about which edge a DFF captures on and which edge reads it. A value captured on one edge is available to anything that reads the DFF output until the next capture.
+
+**DFF visibility rule**: When a DFF captures a value on edge E, that value is available to all combinational reads of the DFF output from edge E onward, until the DFF captures again. There is no "same edge" vs "next edge" distinction — the output simply holds its value between captures. This applies whether the reading circuit fires on the same edge type or a different one.
+
+**The `pending`/`tick` mechanism in `DffLatch`**: Models the DFF capture edge. `write()` sets a pending value (data on the input). `tick()` resolves pending to output (the capture edge fires). Code that reads `output()` between ticks sees the last captured value. The tick placement determines which edge the capture models — `tick_palette_latches()` at the start of `ppu.fall()` models DFF8 capture at DELTA_EVEN.
+
+**CPU bus writes**: The CPU determines its bus action via `next_dot()` (called in `rise()`). The write is executed in `fall()` via `drive_ppu_bus()`. For registers that need to be visible to `ppu.fall()` operations (DFF9: LCDC, SCY, SCX), writes fire in the "early write path" before `ppu.fall()`. For palette registers (DFF8: BGP, OBP0, OBP1), the early write path combined with `tick_palette_latches()` inside `ppu.fall()` resolves the pending value, making it available on the next edge.
+
+**GateBoy conventions**: GateBoy uses 8 sub-phases (A through H) per M-cycle, with 2 sub-phases per dot. The `mcycle_phase` trace field packs 4 ring counter DFFs: `(AFUR<<3)|(ALEF<<2)|(APUK<<1)|(ADYK<<0)`. Trace entries are emitted after EVEN edges, producing values 0x0C (phase B), 0x0F (phase D), 0x03 (phase F), 0x00 (phase H). GateBoy's `_evn` suffix DFFs latch on EVEN edges (A→B, C→D, E→F, G→H); `_odd` suffix DFFs latch on ODD edges (B→C, D→E, F→G, H→A). The DFF latch point for CPU register writes is DELTA_GH — the first trace entry showing the new value is `mcycle_phase=0x00` (phase H). See `receipts/research/` for detailed phase mapping documents.
+
+**Common pitfall — rise/fall ordering reasoning**: When investigating timing bugs, do NOT frame hypotheses as "the write needs to happen before/after the read within the same dot." Instead, identify which edge captures the DFF and which edge the consumer reads from, then check whether the DFF output holds the correct value at the consumer's read point. The implementation detail of which method (`rise()` or `fall()`) runs first in the emulator is irrelevant to correctness — what matters is whether the DFF capture and the combinational read are on the correct edges relative to each other.
+
 ### Key Patterns
 
 - **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently.

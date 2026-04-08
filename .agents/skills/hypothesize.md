@@ -34,6 +34,7 @@ The caller provides:
 4. **Validate each hypothesis.** Before including it, check:
    - Does the hardware behavior field describe the silicon, or does it describe a code change? If it says "add", "remove", "change", "set" — it's a fix, not a hypothesis. Reframe it.
    - Does the model divergence field name a specific struct/enum/field? If it says "the code" or "the emulator" generically, it's too vague. Find the specific data model element.
+   - **Is it framed in terms of DFF edges, not rise/fall ordering?** A hypothesis like "the write needs to move from fall() to rise()" reasons about the emulator's procedural call order, not about hardware. On hardware, rise and fall are alternating clock edges — there is no "before" or "after" within a dot. Reframe: which DFF edge captures the value, and does the output hold the correct value when the consumer reads it?
    - Could the prediction be wrong? If not, it's not falsifiable.
    - Has this already been ruled out? Check the RCA tree.
 5. **Rank by leverage.** Order hypotheses by how much confirming or refuting them would advance the investigation. The best hypothesis is one where either outcome (confirmed or refuted) narrows the problem significantly. Avoid hypotheses where confirmation would tell you nothing new.
