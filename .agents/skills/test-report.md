@@ -20,6 +20,11 @@ Extract failing test details (name + got/expected for gbmicrotest register tests
 grep -E "FAILED|assertion.*failed" /tmp/test_output.txt
 ```
 
+**Test output line format**: Test lines are `test module::test_name ... FAILED` (no `accuracy::` prefix). Parse with:
+```bash
+grep "^test .* FAILED$" /tmp/test_output.txt | sed 's/^test //' | sed 's/ \.\.\. FAILED$//'
+```
+
 The got/expected values are critical for clustering — tests that fail with the same offset (e.g. all off by +1) likely share a root cause.
 
 ### 2. Fetch gbtrace manifests
@@ -38,6 +43,12 @@ Tracked emulators: `gambatte`, `gateboy`, `mgba`, `missingno`, `sameboy`.
 ### 3. Cross-reference each failing test
 
 For every test that missingno fails, look up its status in the manifest for the matching suite. Record which other emulators pass and which fail.
+
+**Manifest JSON format**: Each manifest is an array of test objects:
+```json
+[{"name": "test_name", "rom": "test_name.gb", "emulators": {"gambatte": "pass", "gateboy": "fail", ...}}]
+```
+The `emulators` field maps emulator names directly to status strings (`"pass"` or `"fail"`), NOT to objects. Access as `test['emulators'].get('gateboy', 'N/A')`.
 
 **Use python3 for cross-referencing.** Load all manifests into a dict keyed by suite, then for each failing test: extract the module name, map to the manifest suite, and look up the test name. Example:
 
@@ -83,14 +94,29 @@ MODULE_TO_SUITE = {
 
 **Test name matching strategy:**
 
-The manifest uses ROM filename stems. The Rust test name strips the module prefix. To match:
+The manifest uses ROM filename stems with path separators encoded as `__`. The Rust test name uses `_` for everything. Matching requires suite-specific transformations.
 
-1. Strip the Rust module prefix (e.g. `gbmicrotest::ppu_sprite0_scx3_b` → `ppu_sprite0_scx3_b`).
-2. Try exact match in the manifest.
-3. If no match, try replacing underscores with hyphens and vice versa.
-4. For mooneye/mooneye-wilbertpol, manifest names use `__` for path separators and may have `-GS`/`-dmgABCmgb` suffixes (e.g. `ppu__hblank_ly_scx_timing-GS`). Try matching with the `_gs` suffix stripped, or with `gpu_` mapped to `ppu__`.
-5. For gambatte-tests, manifest names may use path separators (e.g. `dmgpalette_during_m3/scx3/1`). Try matching with `/` replaced by `_`.
-6. If still no match after fuzzy attempts, mark as "no manifest match" in the report (but still try to categorise based on the suite's other tests).
+**General approach**: Strip the Rust module prefix, then try suite-specific patterns:
+
+1. **Exact match** in the manifest.
+2. **Underscore/hyphen swap**: Replace `_` with `-` and try again.
+
+**Suite-specific patterns** (these are the actual manifest naming conventions):
+
+- **age**: Manifest names include hardware variant suffixes: `halt-m0-interrupt-dmgC-cgbBCE`, `stat-mode-dmgC-cgbBC`, `m3-bg-scx-nocgb`. Match by converting test name underscores to hyphens and checking if any manifest key STARTS WITH that prefix (the suffix varies).
+
+- **gambatte-tests**: Manifest names use `__` for directory separators: `dmgpalette_during_m3__dmgpalette_during_m3_2`, `halt__ime_noie_nolcdirq_readstat_dmg08_cgb_blank`, `sprites__sprite_late_disable_spx1A_1_dmg08_out0`. The test name is usually the LAST `__`-separated segment (without `_dmg08_outN` suffix). For `scx3` variants: `dmgpalette_during_m3__scx3__dmgpalette_during_m3_1`. Match by checking if the manifest key's last `__` segment contains the test name (case-insensitive for hex characters like `spx1A`).
+
+- **mooneye-wilbertpol**: Manifest names have `acceptance__gpu__` prefix and `-GS`/`-dmgABCmgb` suffixes: `acceptance__gpu__ly_lyc-GS`, `acceptance__gpu__intr_2_mode0_scx3_timing_nops`. Strip `gpu_` from the Rust test name, replace `_gs` suffix with `-GS`, and prepend `acceptance__gpu__`.
+
+- **mooneye**: Similar to wilbertpol but with `acceptance__ppu__` or `acceptance__serial__` prefixes: `acceptance__ppu__lcdon_timing-GS`, `serial__boot_sclk_align-dmgABCmgb`. Strip `ppu_`/`serial_` from Rust name, replace `_gs`→`-GS`, `_dmg`→`-dmgABCmgb`.
+
+- **blargg**: Not tracked in manifests. Mark as Category D.
+
+- **gbmicrotest, mealybug-tearoom, scribbltests, strikethrough, bully, little-things, mbc3-tester**: Usually exact match or simple underscore-to-hyphen conversion.
+
+3. **Fallback normalization**: Lowercase both sides, strip all `_`, `-`, `/`, and compare. This catches remaining edge cases.
+4. If still no match, mark as "no manifest match" (Category D).
 
 ### 4. Categorise by reference emulator status
 
