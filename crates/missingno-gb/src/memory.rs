@@ -562,7 +562,7 @@ impl GameBoy {
                 serial_transfer::Register::Data => self.serial.data = value,
                 serial_transfer::Register::Control => {
                     self.serial.control = serial_transfer::Control::from_bits_retain(value);
-                    self.serial.start_transfer();
+                    self.serial.start_transfer(&mut *self.link);
                 }
             },
             MappedAddress::TimerRegister(register) => {

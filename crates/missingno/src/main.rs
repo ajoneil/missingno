@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod app;
+mod link_cable;
 mod headless;
 mod trace;
 
@@ -22,6 +23,14 @@ struct Args {
     /// Path to the DMG boot ROM (256 bytes).
     #[arg(long)]
     boot_rom: Option<PathBuf>,
+
+    /// Link cable: listen for connections on this port (BGB link protocol).
+    #[arg(long, value_name = "PORT", conflicts_with = "link_connect")]
+    link_listen: Option<u16>,
+
+    /// Link cable: connect to a server at host:port (BGB link protocol).
+    #[arg(long, value_name = "HOST:PORT", conflicts_with = "link_listen")]
+    link_connect: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -84,10 +93,38 @@ fn main() -> iced::Result {
 
     let boot_rom = load_boot_rom(args.boot_rom);
 
+    let link = create_link(args.link_listen, args.link_connect);
+
     if args.headless {
-        headless::run(args.rom_file, boot_rom);
+        headless::run(args.rom_file, boot_rom, link);
         return Ok(());
     }
 
-    app::run(args.rom_file, args.debugger)
+    app::run(args.rom_file, args.debugger, link)
+}
+
+fn create_link(
+    listen: Option<u16>,
+    connect: Option<String>,
+) -> Option<Box<dyn missingno_gb::serial_transfer::SerialLink>> {
+    if let Some(port) = listen {
+        match link_cable::BgbLink::listen(port) {
+            Ok(link) => return Some(Box::new(link)),
+            Err(e) => {
+                eprintln!("error: failed to start link cable listener: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if let Some(addr) = connect {
+        match link_cable::BgbLink::connect(&addr) {
+            Ok(link) => return Some(Box::new(link)),
+            Err(e) => {
+                eprintln!("warning: link cable connection failed: {e}");
+            }
+        }
+    }
+
+    None
 }

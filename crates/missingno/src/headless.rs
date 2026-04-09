@@ -14,7 +14,11 @@ use missingno_gb::{ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
-pub fn run(rom_path: Option<PathBuf>, boot_rom: Option<Box<[u8; 256]>>) {
+pub fn run(
+    rom_path: Option<PathBuf>,
+    boot_rom: Option<Box<[u8; 256]>>,
+    link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+) {
     let rom_path = rom_path.unwrap_or_else(|| {
         eprintln!("error: --headless requires a ROM file");
         process::exit(1);
@@ -30,7 +34,10 @@ pub fn run(rom_path: Option<PathBuf>, boot_rom: Option<Box<[u8; 256]>>) {
 
     let cartridge = Cartridge::new(rom_data, save_data);
     let title = cartridge.title().to_string();
-    let game_boy = GameBoy::new(cartridge, boot_rom);
+    let mut game_boy = GameBoy::new(cartridge, boot_rom);
+    if let Some(link) = link {
+        game_boy.set_link(link);
+    }
     let mut debugger = Debugger::new(game_boy);
 
     let server = tiny_http::Server::http("127.0.0.1:3333").unwrap_or_else(|e| {

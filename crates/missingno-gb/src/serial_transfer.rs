@@ -33,6 +33,17 @@ pub trait SerialLink {
     fn drain_output(&mut self) -> Vec<u8> {
         Vec::new()
     }
+
+    /// Called every M-cycle, regardless of transfer state.
+    fn tick(&mut self) {}
+
+    /// Called when a transfer is armed (SC written with ENABLE).
+    ///
+    /// `data` is the current SB value (the byte that will be shifted out).
+    /// `internal_clock` is true when the Game Boy is driving the clock (master).
+    /// Link implementations can use this to initiate a protocol-level byte
+    /// exchange before the bit-by-bit shifting begins.
+    fn notify_transfer_start(&mut self, _data: u8, _internal_clock: bool) {}
 }
 
 /// No device connected. Incoming bits are high (floating line) and no
@@ -109,12 +120,16 @@ impl Registers {
 
     /// Called when the SC register is written. Arms the shift register for
     /// a new transfer if ENABLE is set.
-    pub fn start_transfer(&mut self) {
+    pub fn start_transfer(&mut self, link: &mut dyn SerialLink) {
         self.bits_remaining = 0;
         self.serial_clock = false;
 
         if self.control.contains(Control::ENABLE) {
             self.bits_remaining = 8;
+            link.notify_transfer_start(
+                self.data,
+                self.control.contains(Control::INTERNAL_CLOCK),
+            );
         }
     }
 
@@ -137,6 +152,8 @@ impl Registers {
     /// counter value (sampled after the 4th T-cycle tick of this M-cycle).
     pub fn mcycle(&mut self, counter: u16, link: &mut dyn SerialLink) -> Option<Interrupt> {
         let mut result = None;
+
+        link.tick();
 
         // External clock: let the link device drive the transfer.
         if self.bits_remaining > 0

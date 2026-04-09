@@ -103,7 +103,10 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
     let cartridge = Cartridge::new(rom, save_data);
-    let game_boy = GameBoy::new(cartridge, None);
+    let mut game_boy = GameBoy::new(cartridge, None);
+    if let Some(link) = app.serial_link.take() {
+        game_boy.set_link(link);
+    }
     let palette = app.settings.palette;
 
     if app.debugger_enabled {
@@ -162,7 +165,10 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
     let cartridge = Cartridge::new(rom, save_data);
-    let game_boy = GameBoy::new(cartridge, None);
+    let mut game_boy = GameBoy::new(cartridge, None);
+    if let Some(link) = app.serial_link.take() {
+        game_boy.set_link(link);
+    }
     let palette = app.settings.palette;
 
     if app.debugger_enabled {
@@ -243,7 +249,10 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
 
     // Create cartridge and start emulation
     let cartridge = Cartridge::new(rom, save_data);
-    let game_boy = GameBoy::new(cartridge, None);
+    let mut game_boy = GameBoy::new(cartridge, None);
+    if let Some(link) = app.serial_link.take() {
+        game_boy.set_link(link);
+    }
     let palette = app.settings.palette;
 
     if app.debugger_enabled {

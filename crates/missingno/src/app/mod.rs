@@ -34,14 +34,20 @@ pub mod settings;
 mod settings_view;
 mod texture_renderer;
 
-pub fn run(rom_path: Option<PathBuf>, debugger: bool) -> iced::Result {
+pub fn run(
+    rom_path: Option<PathBuf>,
+    debugger: bool,
+    link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+) -> iced::Result {
     // Load settings early to get saved window size
     let saved = settings::Settings::load();
     let window_width = saved.window_width.unwrap_or(1280.0);
     let window_height = saved.window_height.unwrap_or(720.0);
 
+    // Wrap in a Cell so the non-Clone link can be taken from the FnMut closure.
+    let link_cell = std::cell::Cell::new(link);
     let mut app = iced::application(
-        move || App::new(rom_path.clone(), debugger),
+        move || App::new(rom_path.clone(), debugger, link_cell.take()),
         App::update,
         App::view,
     )
@@ -101,6 +107,8 @@ struct App {
     listening_for: Option<settings_view::ListeningFor>,
     /// When set, shows a brief "Screenshot saved" toast overlay.
     screenshot_toast: Option<Instant>,
+    /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
+    serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
     /// Screenshot gallery state (when viewing screenshots).
     gallery_state: Option<library::screenshot_gallery::GalleryState>,
     /// Homebrew browser state.
@@ -240,7 +248,11 @@ enum Message {
 }
 
 impl App {
-    fn new(rom_path: Option<PathBuf>, debugger: bool) -> (Self, Task<Message>) {
+    fn new(
+        rom_path: Option<PathBuf>,
+        debugger: bool,
+        serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
+    ) -> (Self, Task<Message>) {
         let settings = settings::Settings::load();
         let recent_games = recent::RecentGames::load();
 
@@ -267,6 +279,7 @@ impl App {
             was_running_before_settings: false,
             listening_for: None,
             screenshot_toast: None,
+            serial_link,
             gallery_state: None,
             homebrew_browser: None,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
