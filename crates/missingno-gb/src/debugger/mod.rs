@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+#[cfg(feature = "gbtrace")]
 use std::path::Path;
 
 use crate::{
