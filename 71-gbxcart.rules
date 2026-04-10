@@ -1,0 +1,6 @@
+# GBxCart RW (insideGadgets) — CH340 USB-serial cartridge reader/writer
+# Install to /etc/udev/rules.d/ and reload:
+#   sudo cp 71-gbxcart.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="1a86", ATTR{idProduct}=="7523", MODE="0666"

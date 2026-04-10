@@ -436,7 +436,19 @@ fn hardware_section<'a>(
         content = content.push(app_text::label("Detected Devices"));
 
         if detected_devices.is_empty() {
-            content = content.push(text("No devices found.").color(MUTED));
+            content = content.push(text("No devices found. Devices will appear here automatically when connected.").color(MUTED));
+            if cfg!(target_os = "linux") {
+                content = content.push(
+                    app_text::link_text([
+                        TextPart::plain("You may need to install "),
+                        TextPart::link(
+                            "udev rules",
+                            "https://github.com/ajoneil/missingno#cartridge-readerwriter",
+                        ),
+                        TextPart::plain(" for the device to be accessible."),
+                    ], MUTED),
+                );
+            }
         } else {
             for device in detected_devices {
                 content = content.push(

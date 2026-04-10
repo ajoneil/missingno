@@ -1,5 +1,6 @@
 # Missingno
-Missingno is a Game Boy emulator and debugger written in Rust.
+
+A Game Boy emulator and debugger written in Rust, focused on hardware accuracy and helping you manage, preserve, and discover games.
 
 ![Debugger screenshot](screenshots/debugger.png)
 
@@ -11,19 +12,20 @@ Missingno is a Game Boy emulator and debugger written in Rust.
 
 Linux builds are available on [Flathub](https://flathub.org/apps/net.andyofniall.missingno). Official builds for other platforms are not currently available.
 
-## Features
-  - Keyboard and controller support
-  - Save RAM support for battery-backed cartridges
-  - Fullscreen mode (F11)
-
-## Debugger
-  - Code disassembly and breakpoints
-  - View emulated hardware state
-  - View video memory - tiles, tilemaps, and sprites
-
 ## Building from Source
 
-To build from source, first [install Rust](https://www.rust-lang.org/tools/install) and then run:
+[Install Rust](https://www.rust-lang.org/tools/install), then:
+
 ```
 cargo run --release
+```
+
+## Cartridge Reader/Writer
+
+Missingno can read ROMs and save data from physical cartridges using a [GBxCart RW](https://www.gbxcart.com/) device. On Linux, you may need to install a [udev rule](71-gbxcart.rules) for the device to be accessible:
+
+```
+sudo cp 71-gbxcart.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
 ```
