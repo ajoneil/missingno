@@ -18,6 +18,8 @@ use crate::app::{
     settings::{Action, Bindings, EMULATOR_ACTIONS, GB_ACTIONS},
 };
 
+use app_text::TextPart;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
@@ -324,18 +326,12 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
             .style(|_, _| svg::Style { color: None }),
         column![
             app_text::heading("Missingno"),
-            row![
-                text(format!("Version {version}")).color(MUTED),
-                text("·").color(MUTED),
-                app_text::web_link_colored("Website", "https://andyofniall.net/", Some(MUTED)),
-                text("·").color(MUTED),
-                app_text::web_link_colored(
-                    "GitHub",
-                    "https://github.com/ajoneil/missingno",
-                    Some(MUTED),
-                ),
-            ]
-            .spacing(s()),
+            app_text::link_text([
+                TextPart::plain(format!("Version {version} · ")),
+                TextPart::link("Website", "https://andyofniall.net/"),
+                TextPart::plain(" · "),
+                TextPart::link("GitHub", "https://github.com/ajoneil/missingno"),
+            ], MUTED),
         ]
         .spacing(s()),
     ]
@@ -357,11 +353,10 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
                     .label("Game metadata")
                     .on_toggle(|enabled| Message::SetHasheousEnabled(enabled).into())
                     .size(m()),
-                row![
-                    text("Provided by").color(MUTED),
-                    app_text::web_link_colored("Hasheous", "https://hasheous.org", Some(MUTED)),
-                ]
-                .spacing(s()),
+                app_text::link_text([
+                    TextPart::plain("Provided by "),
+                    TextPart::link("Hasheous", "https://hasheous.org"),
+                ], MUTED),
             ]
             .spacing(s()),
         );
@@ -372,11 +367,10 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
                     .label("Homebrew catalogue")
                     .on_toggle(|enabled| Message::SetHomebrewHubEnabled(enabled).into())
                     .size(m()),
-                row![
-                    text("Browse free games from").color(MUTED),
-                    app_text::web_link_colored("Homebrew Hub", "https://hh.gbdev.io", Some(MUTED)),
-                ]
-                .spacing(s()),
+                app_text::link_text([
+                    TextPart::plain("Browse free games from "),
+                    TextPart::link("Homebrew Hub", "https://hh.gbdev.io"),
+                ], MUTED),
             ]
             .spacing(s()),
         );
@@ -426,21 +420,16 @@ fn hardware_section<'a>(
             .label("Enable cartridge reader/writer support")
             .on_toggle(|enabled| Message::SetCartridgeRwEnabled(enabled).into())
             .size(m()),
-        row![
-            text("Read ROMs and save data from physical Game Boy cartridges using a").color(MUTED),
-            app_text::web_link_colored("GBxCart RW", "https://www.gbxcart.com/", Some(MUTED)),
-            text("device.").color(MUTED),
-        ]
-        .spacing(4),
-        row![
-            text("For advanced features and broader hardware support, see").color(MUTED),
-            app_text::web_link_colored(
-                "FlashGBX",
-                "https://github.com/lesserkuma/FlashGBX",
-                Some(MUTED),
-            ),
-        ]
-        .spacing(4),
+        app_text::link_text([
+            TextPart::plain("Read ROMs and save data from physical Game Boy cartridges using a "),
+            TextPart::link("GBxCart RW", "https://www.gbxcart.com/"),
+            TextPart::plain(" device."),
+        ], MUTED),
+        app_text::link_text([
+            TextPart::plain("For advanced features and broader hardware support, see "),
+            TextPart::link("FlashGBX", "https://github.com/lesserkuma/FlashGBX"),
+            TextPart::plain("."),
+        ], MUTED),
     ]
     .spacing(m());
 

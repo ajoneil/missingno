@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use iced::{
     Color, Element,
-    widget::{Text, rich_text, span, text, text::IntoFragment},
+    widget::{Text, rich_text, text, text::IntoFragment, text::Span},
 };
 
 use crate::app;
@@ -24,25 +26,57 @@ pub fn detail<'a>(content: impl IntoFragment<'a>) -> Text<'a> {
     text(content).size(MIN_SIZE)
 }
 
-/// Inline text with a clickable link that opens a URL.
-///
-/// Renders as underlined text that shows a pointer cursor on hover.
-/// Flows inline with surrounding `rich_text` spans.
-pub fn web_link<'a>(label: &'a str, url: &'static str) -> Element<'a, app::Message> {
-    web_link_colored(label, url, None)
+/// A fragment of inline text, either plain or a clickable link.
+pub enum TextPart<'a> {
+    Plain(Cow<'a, str>),
+    Link(Cow<'a, str>, &'static str),
 }
 
-/// Inline text link with a specific color.
-pub fn web_link_colored<'a>(
-    label: &'a str,
-    url: &'static str,
-    color: Option<Color>,
-) -> Element<'a, app::Message> {
-    let mut s = span(label).underline(true).link(url);
-    if let Some(c) = color {
-        s = s.color(c);
+impl<'a> TextPart<'a> {
+    pub fn plain(text: impl Into<Cow<'a, str>>) -> Self {
+        TextPart::Plain(text.into())
     }
-    rich_text![s]
+
+    pub fn link(label: impl Into<Cow<'a, str>>, url: &'static str) -> Self {
+        TextPart::Link(label.into(), url)
+    }
+}
+
+/// Inline text with embedded clickable links that flow as a single paragraph.
+///
+/// Link spans show a pointer cursor and underline on hover (no permanent underline).
+/// All text is rendered in the given color.
+///
+/// ```ignore
+/// use app_text::TextPart;
+/// app_text::link_text([
+///     TextPart::plain("Read ROMs using a "),
+///     TextPart::link("GBxCart RW", "https://www.gbxcart.com/"),
+///     TextPart::plain(" device."),
+/// ], MUTED)
+/// ```
+pub fn link_text<'a>(
+    parts: impl IntoIterator<Item = TextPart<'a>>,
+    color: Color,
+) -> Element<'a, app::Message> {
+    let spans: Vec<Span<'a, &'static str>> = parts
+        .into_iter()
+        .map(|part| match part {
+            TextPart::Plain(t) => Span {
+                text: t,
+                color: Some(color),
+                ..Default::default()
+            },
+            TextPart::Link(label, url) => Span {
+                text: label,
+                color: Some(color),
+                link: Some(url),
+                ..Default::default()
+            },
+        })
+        .collect();
+
+    rich_text(spans)
         .on_link_click(|url| app::Message::OpenUrl(url))
         .into()
 }
