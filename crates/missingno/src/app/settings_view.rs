@@ -4,8 +4,7 @@ use iced::{
     Alignment::Center,
     Color, Element,
     Length::Fill,
-    mouse,
-    widget::{column, container, mouse_area, row, svg, text, toggler},
+    widget::{column, container, row, svg, text, toggler},
 };
 
 use crate::app::{
@@ -328,15 +327,13 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
             row![
                 text(format!("Version {version}")).color(MUTED),
                 text("·").color(MUTED),
-                mouse_area(text("Website").color(MUTED))
-                    .on_press(app::Message::OpenUrl("https://andyofniall.net/"))
-                    .interaction(mouse::Interaction::Pointer),
+                app_text::web_link_colored("Website", "https://andyofniall.net/", Some(MUTED)),
                 text("·").color(MUTED),
-                mouse_area(text("GitHub").color(MUTED))
-                    .on_press(app::Message::OpenUrl(
-                        "https://github.com/ajoneil/missingno"
-                    ))
-                    .interaction(mouse::Interaction::Pointer),
+                app_text::web_link_colored(
+                    "GitHub",
+                    "https://github.com/ajoneil/missingno",
+                    Some(MUTED),
+                ),
             ]
             .spacing(s()),
         ]
@@ -362,9 +359,7 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
                     .size(m()),
                 row![
                     text("Provided by").color(MUTED),
-                    mouse_area(text("Hasheous").color(MUTED))
-                        .on_press(app::Message::OpenUrl("https://hasheous.org"))
-                        .interaction(mouse::Interaction::Pointer),
+                    app_text::web_link_colored("Hasheous", "https://hasheous.org", Some(MUTED)),
                 ]
                 .spacing(s()),
             ]
@@ -379,9 +374,7 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
                     .size(m()),
                 row![
                     text("Browse free games from").color(MUTED),
-                    mouse_area(text("Homebrew Hub").color(MUTED))
-                        .on_press(app::Message::OpenUrl("https://hh.gbdev.io"))
-                        .interaction(mouse::Interaction::Pointer),
+                    app_text::web_link_colored("Homebrew Hub", "https://hh.gbdev.io", Some(MUTED)),
                 ]
                 .spacing(s()),
             ]
@@ -435,21 +428,17 @@ fn hardware_section<'a>(
             .size(m()),
         row![
             text("Read ROMs and save data from physical Game Boy cartridges using a").color(MUTED),
-            mouse_area(text("GBxCart RW").color(MUTED))
-                .on_press(app::Message::OpenUrl(
-                    "https://www.gbxcart.com/",
-                ))
-                .interaction(mouse::Interaction::Pointer),
+            app_text::web_link_colored("GBxCart RW", "https://www.gbxcart.com/", Some(MUTED)),
             text("device.").color(MUTED),
         ]
         .spacing(4),
         row![
             text("For advanced features and broader hardware support, see").color(MUTED),
-            mouse_area(text("FlashGBX").color(MUTED))
-                .on_press(app::Message::OpenUrl(
-                    "https://github.com/lesserkuma/FlashGBX",
-                ))
-                .interaction(mouse::Interaction::Pointer),
+            app_text::web_link_colored(
+                "FlashGBX",
+                "https://github.com/lesserkuma/FlashGBX",
+                Some(MUTED),
+            ),
         ]
         .spacing(4),
     ]
