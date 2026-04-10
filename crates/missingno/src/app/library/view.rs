@@ -432,17 +432,19 @@ fn unmatched_cartridge_card<'a>(
 
     if let Some(progress) = dump_progress {
         let pct = if progress.bytes_total > 0 {
-            (progress.bytes_done as f32 / progress.bytes_total as f32) * 100.0
+            progress.bytes_done as f32 / progress.bytes_total as f32
         } else {
             0.0
         };
+        info = info.push(app_text::progress_text(
+            "Reading…",
+            progress.bytes_done as u32,
+            progress.bytes_total as u32,
+            MUTED,
+        ));
         info = info.push(
-            app_text::detail(format!(
-                "Reading… {} / {} ({pct:.0}%)",
-                cartridge_rw::format_size(progress.bytes_done as u32),
-                cartridge_rw::format_size(progress.bytes_total as u32),
-            ))
-            .color(MUTED),
+            iced::widget::progress_bar(0.0..=1.0, pct)
+                .girth(6),
         );
     } else if cart.rom_size > 0 {
         info = info.push(

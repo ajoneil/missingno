@@ -331,36 +331,50 @@ impl App {
                 .into()
             }
             Some(FlashState::InProgress(progress)) => {
-                let phase_text = match progress.phase {
-                    cartridge_rw::FlashPhase::Erasing => "Erasing cartridge...".to_string(),
-                    cartridge_rw::FlashPhase::Writing => {
-                        let pct = if progress.bytes_total > 0 {
-                            (progress.bytes_done as f32 / progress.bytes_total as f32) * 100.0
+                let pct = match progress.phase {
+                    cartridge_rw::FlashPhase::Erasing => None,
+                    cartridge_rw::FlashPhase::Writing => Some(
+                        if progress.bytes_total > 0 {
+                            progress.bytes_done as f32 / progress.bytes_total as f32
                         } else {
                             0.0
-                        };
-                        format!(
-                            "Writing… {} / {} ({pct:.0}%)",
-                            cartridge_rw::format_size(progress.bytes_done as u32),
-                            cartridge_rw::format_size(progress.bytes_total as u32),
-                        )
-                    }
+                        },
+                    ),
                 };
+
+                let mut progress_col = column![].spacing(s());
+
+                match progress.phase {
+                    cartridge_rw::FlashPhase::Erasing => {
+                        progress_col = progress_col.push(iced_text("Erasing cartridge..."));
+                    }
+                    cartridge_rw::FlashPhase::Writing => {
+                        progress_col = progress_col.push(text::progress_text(
+                            "Writing…",
+                            progress.bytes_done as u32,
+                            progress.bytes_total as u32,
+                            MUTED,
+                        ));
+                    }
+                }
+
+                if let Some(pct) = pct {
+                    progress_col = progress_col.push(
+                        iced::widget::progress_bar(0.0..=1.0, pct).girth(8),
+                    );
+                }
+
+                progress_col = progress_col.push(
+                    iced_text("Do not disconnect the cartridge or device.").color(MUTED),
+                );
+
                 column![
                     row![text::heading("Writing to Cartridge"),]
                         .spacing(s())
                         .padding(m())
                         .align_y(Center),
                     horizontal_rule(),
-                    container(
-                        column![
-                            iced_text(phase_text),
-                            iced_text("Do not disconnect the cartridge or device.").color(MUTED),
-                        ]
-                        .spacing(s())
-                        .max_width(600),
-                    )
-                    .padding(l()),
+                    container(progress_col.max_width(600)).padding(l()),
                 ]
                 .into()
             }

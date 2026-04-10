@@ -81,6 +81,59 @@ pub fn link_text<'a>(
         .into()
 }
 
+/// Progress text with monospace numbers: "Label… 128 KB / 512 KB (25%)"
+///
+/// The label uses the default font, the numbers use monospace to prevent
+/// text shifting as values change.
+pub fn progress_text(
+    label: &str,
+    bytes_done: u32,
+    bytes_total: u32,
+    color: Color,
+) -> Element<'_, app::Message> {
+    use crate::cartridge_rw;
+
+    let pct = if bytes_total > 0 {
+        (bytes_done as f32 / bytes_total as f32) * 100.0
+    } else {
+        0.0
+    };
+
+    let mono = fonts::monospace();
+    let spans: Vec<Span<'_, ()>> = vec![
+        Span {
+            text: format!("{label} ").into(),
+            color: Some(color),
+            ..Default::default()
+        },
+        Span {
+            text: cartridge_rw::format_size(bytes_done).into(),
+            color: Some(color),
+            font: Some(mono),
+            ..Default::default()
+        },
+        Span {
+            text: " / ".into(),
+            color: Some(color),
+            ..Default::default()
+        },
+        Span {
+            text: cartridge_rw::format_size(bytes_total).into(),
+            color: Some(color),
+            font: Some(mono),
+            ..Default::default()
+        },
+        Span {
+            text: format!(" ({pct:.0}%)").into(),
+            color: Some(color),
+            font: Some(mono),
+            ..Default::default()
+        },
+    ];
+
+    rich_text(spans).into()
+}
+
 /// Size constants for layout spacing (not text).
 pub mod sizes {
     use crate::app::ui::sizes;
