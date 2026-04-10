@@ -1216,15 +1216,39 @@ impl App {
             Message::CartridgeRwPoll => {
                 let ports = cartridge_rw::list_ports();
                 if ports != self.cartridge_rw_known_ports {
+                    // Find which ports are new (need querying)
+                    let new_ports: Vec<String> = ports
+                        .iter()
+                        .filter(|p| !self.cartridge_rw_known_ports.contains(p))
+                        .cloned()
+                        .collect();
+
+                    // Remove devices on ports that disappeared
+                    self.detected_cartridge_devices
+                        .retain(|d| ports.contains(&d.port_name));
+
                     self.cartridge_rw_known_ports = ports;
-                    return Task::perform(
-                        smol::unblock(cartridge_rw::detect_devices),
-                        Message::CartridgeRwPortsChanged,
-                    );
+
+                    // Only query newly appeared ports
+                    if !new_ports.is_empty() {
+                        return Task::perform(
+                            smol::unblock(move || cartridge_rw::detect_ports(&new_ports)),
+                            Message::CartridgeRwPortsChanged,
+                        );
+                    }
                 }
             }
-            Message::CartridgeRwPortsChanged(devices) => {
-                self.detected_cartridge_devices = devices;
+            Message::CartridgeRwPortsChanged(new_devices) => {
+                // Merge newly detected devices into the list
+                for device in new_devices {
+                    if !self
+                        .detected_cartridge_devices
+                        .iter()
+                        .any(|d| d.port_name == device.port_name)
+                    {
+                        self.detected_cartridge_devices.push(device);
+                    }
+                }
             }
 
             Message::StartRecording => {

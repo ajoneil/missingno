@@ -456,9 +456,11 @@ fn hardware_section<'a>(
                         icons::m(Icon::CircuitBoard),
                         column![
                             text(device.display_name()),
-                            text(format!("{} (PCB v{}, FW v{})",
+                            text(format!(
+                                "{} (PCB v{}, FW v{})",
                                 device.port_name, device.pcb_version, device.firmware_version
-                            )).color(MUTED),
+                            ))
+                            .color(MUTED),
                         ]
                         .spacing(2),
                     ]

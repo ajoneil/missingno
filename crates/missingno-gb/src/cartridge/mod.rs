@@ -14,7 +14,7 @@ pub struct Cartridge {
     pub(crate) sram_dirty: bool,
 }
 
-fn parse_title(rom: &[u8]) -> String {
+pub fn parse_title(rom: &[u8]) -> String {
     if rom.len() < 0x144 {
         return String::new();
     }
@@ -29,7 +29,7 @@ fn parse_title(rom: &[u8]) -> String {
     title
 }
 
-fn parse_header(rom: &[u8]) -> (String, bool, bool) {
+pub fn parse_header(rom: &[u8]) -> (String, bool, bool) {
     let title = parse_title(rom);
     let sgb_flag = rom[0x146] == 0x03;
     let cartridge_type = rom[0x147];
