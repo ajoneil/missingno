@@ -10,12 +10,12 @@ use iced::{
 use super::ui::{
     buttons, fonts, horizontal_rule,
     icons::{self, Icon},
-    sizes::{l, s},
+    sizes::{l, m, s},
     text,
 };
 use super::{
     controls, library, settings,
-    App, Fullscreen, Game, LoadedGame, Message, PendingAction, Screen,
+    App, FlashState, Fullscreen, Game, LoadedGame, Message, PendingAction, Screen,
 };
 use crate::cartridge_rw;
 
@@ -69,6 +69,7 @@ impl App {
         } else {
             match self.screen {
                 Screen::Detail => self.detail_view(),
+                Screen::FlashCartridge => self.flash_cartridge_view(),
                 _ => {
                     let inserted_cartridge = self.inserted_cartridge();
                     let dump_progress = self.cartridge_dump_progress.as_ref();
@@ -235,6 +236,7 @@ impl App {
             hovered_log_entry: self.hovered_log_entry,
             header_hovered: self.header_hovered,
             is_loaded,
+            inserted_cartridge: self.inserted_cartridge(),
         })
     }
 
@@ -263,10 +265,151 @@ impl App {
     }
 
     /// Get the cartridge header from the first connected device with a cartridge inserted.
-    fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
+    pub(super) fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
         self.detected_cartridge_devices
             .iter()
             .find_map(|d| d.cartridge.as_ref())
+    }
+
+    fn flash_cartridge_view(&self) -> Element<'_, Message> {
+        use crate::cartridge_rw;
+
+        // Catppuccin Mocha subtext0
+        const MUTED: iced::Color = iced::Color::from_rgb(
+            0xa6 as f32 / 255.0,
+            0xad as f32 / 255.0,
+            0xc8 as f32 / 255.0,
+        );
+
+        let content: Element<'_, Message> = match &self.flash_state {
+            Some(FlashState::Confirming {
+                game_title,
+                rom_size,
+                cart_title,
+                flash_size,
+                ..
+            }) => {
+                column![
+                    row![
+                        buttons::subtle(icons::m(Icon::Back))
+                            .on_press(Message::FlashCartridgeCancel),
+                        text::heading("Write to Cartridge"),
+                    ]
+                    .spacing(s())
+                    .padding(m())
+                    .align_y(Center),
+                    horizontal_rule(),
+                    container(
+                        column![
+                            text::label("ROM to write"),
+                            iced_text(format!(
+                                "{game_title} ({})",
+                                cartridge_rw::format_size(*rom_size)
+                            )),
+                            iced::widget::Space::new().height(s()),
+                            text::label("Currently on cartridge"),
+                            iced_text(format!(
+                                "{cart_title} (flash chip: {})",
+                                cartridge_rw::format_size(*flash_size)
+                            )),
+                            iced::widget::Space::new().height(s()),
+                            iced_text("This will erase all data on the cartridge.").color(MUTED),
+                            iced::widget::Space::new().height(s()),
+                            row![
+                                buttons::standard("Cancel")
+                                    .on_press(Message::FlashCartridgeCancel),
+                                buttons::danger("Erase and Write")
+                                    .on_press(Message::FlashCartridgeConfirm),
+                            ]
+                            .spacing(s()),
+                        ]
+                        .spacing(s())
+                        .max_width(600),
+                    )
+                    .padding(l()),
+                ]
+                .into()
+            }
+            Some(FlashState::InProgress(progress)) => {
+                let phase_text = match progress.phase {
+                    cartridge_rw::FlashPhase::Erasing => "Erasing cartridge...".to_string(),
+                    cartridge_rw::FlashPhase::Writing => {
+                        let pct = if progress.bytes_total > 0 {
+                            (progress.bytes_done as f32 / progress.bytes_total as f32) * 100.0
+                        } else {
+                            0.0
+                        };
+                        format!(
+                            "Writing… {} / {} ({pct:.0}%)",
+                            cartridge_rw::format_size(progress.bytes_done as u32),
+                            cartridge_rw::format_size(progress.bytes_total as u32),
+                        )
+                    }
+                };
+                column![
+                    row![text::heading("Writing to Cartridge"),]
+                        .spacing(s())
+                        .padding(m())
+                        .align_y(Center),
+                    horizontal_rule(),
+                    container(
+                        column![
+                            iced_text(phase_text),
+                            iced_text("Do not disconnect the cartridge or device.").color(MUTED),
+                        ]
+                        .spacing(s())
+                        .max_width(600),
+                    )
+                    .padding(l()),
+                ]
+                .into()
+            }
+            Some(FlashState::Complete) => {
+                column![
+                    row![text::heading("Write Complete"),]
+                        .spacing(s())
+                        .padding(m())
+                        .align_y(Center),
+                    horizontal_rule(),
+                    container(
+                        column![
+                            iced_text("ROM written successfully."),
+                            buttons::primary("Done")
+                                .on_press(Message::FlashCartridgeCancel),
+                        ]
+                        .spacing(s())
+                        .max_width(600),
+                    )
+                    .padding(l()),
+                ]
+                .into()
+            }
+            Some(FlashState::Failed(error)) => {
+                column![
+                    row![text::heading("Write Failed"),]
+                        .spacing(s())
+                        .padding(m())
+                        .align_y(Center),
+                    horizontal_rule(),
+                    container(
+                        column![
+                            iced_text(format!("Error: {error}")),
+                            buttons::primary("Back").on_press(Message::FlashCartridgeCancel),
+                        ]
+                        .spacing(s())
+                        .max_width(600),
+                    )
+                    .padding(l()),
+                ]
+                .into()
+            }
+            None => {
+                // Shouldn't happen — redirect to library
+                self.empty_detail_view()
+            }
+        };
+
+        container(content).height(Fill).width(Fill).into()
     }
 
     fn empty_detail_view(&self) -> Element<'_, Message> {

@@ -319,13 +319,15 @@ fn read_cartridge_header(
 
     let mut result = parse_cartridge_header(&header);
 
-    // Probe for flash chip while the cart is still powered and in DMG mode
+    // Always probe for flash — an erased cart has no valid header but is still flashable
+    let flash = detect_flash(port, fw_ver);
+
     if let Some(cart) = &mut result {
-        cart.flash = detect_flash(port, fw_ver);
-        if let Some(flash) = &cart.flash {
+        cart.flash = flash;
+        if let Some(f) = &cart.flash {
             eprintln!(
                 "[cartridge_rw] parsed: \"{}\" ({}) flash={} buffer={}",
-                cart.title, cart.mapper_name, flash.size_display(), flash.buffer_size
+                cart.title, cart.mapper_name, f.size_display(), f.buffer_size
             );
         } else {
             eprintln!(
@@ -333,8 +335,25 @@ fn read_cartridge_header(
                 cart.title, cart.mapper_name
             );
         }
+    } else if let Some(flash) = flash {
+        // No valid header but flash chip detected — erased or empty flash cart
+        eprintln!(
+            "[cartridge_rw] no valid header, but flash detected: {}",
+            flash.size_display()
+        );
+        result = Some(CartridgeHeader {
+            title: String::new(),
+            mapper_byte: 0,
+            mapper_name: "Unknown",
+            rom_size: 0,
+            ram_size: 0,
+            has_battery: false,
+            sgb_flag: false,
+            header_checksum_valid: false,
+            flash: Some(flash),
+        });
     } else {
-        eprintln!("[cartridge_rw] header parse failed (logo mismatch or invalid)");
+        eprintln!("[cartridge_rw] no valid header and no flash chip");
     }
     result
 }
@@ -858,6 +877,14 @@ pub fn flash_rom(
     // Configure auto bank switching (MBC5-style: bank number written to 0x2100)
     configure_bank_switching(&mut port)?;
 
+    // Flash commands go to bank 0 (fixed region), not bank 1
+    set_variable(&mut port, fw_ver, 1, 0x06, 0) // FLASH_COMMANDS_BANK_1 = 0
+        .ok_or("Set FLASH_COMMANDS_BANK_1 failed")?;
+    set_variable(&mut port, fw_ver, 1, 0x05, 0) // FLASH_PULSE_RESET = 0
+        .ok_or("Set FLASH_PULSE_RESET failed")?;
+    set_variable(&mut port, fw_ver, 1, 0x0A, 0) // FLASH_DOUBLE_DIE = 0
+        .ok_or("Set FLASH_DOUBLE_DIE failed")?;
+
     // Set status register polling for AMD: wait for bit 7 (DQ7) = 1
     set_variable(&mut port, fw_ver, 2, 0x05, 0x0080) // STATUS_REGISTER_MASK
         .ok_or("Set STATUS_REGISTER_MASK failed")?;
@@ -887,55 +914,72 @@ pub fn flash_rom(
 
     let chunk_size = 0x100usize; // MAX_BUFFER_WRITE = 256 bytes
     let buffer_size = flash.buffer_size;
+    let bank_size = 0x4000usize;
+    let total = padded.len();
+    let num_banks = total / bank_size;
 
     set_variable(&mut port, fw_ver, 2, 0x00, chunk_size as u32) // TRANSFER_SIZE
         .ok_or("Set TRANSFER_SIZE failed")?;
     set_variable(&mut port, fw_ver, 2, 0x01, buffer_size) // BUFFER_SIZE
         .ok_or("Set BUFFER_SIZE failed")?;
-    set_variable(&mut port, fw_ver, 4, 0x00, 0) // ADDRESS = 0
-        .ok_or("Set ADDRESS failed")?;
-    set_variable(&mut port, fw_ver, 2, 0x02, 1) // DMG_ROM_BANK = 1
-        .ok_or("Set DMG_ROM_BANK failed")?;
 
-    let mut last_ack: u8 = 0;
-    let total = padded.len();
+    // Write bank by bank. The firmware auto-increments within the bank window
+    // (0x4000-0x7FFF) and uses DMG_ROM_BANK + DMG_SET_BANK_CHANGE_CMD for switching.
+    for bank in 0..num_banks {
+        let bank_offset = bank * bank_size;
+        let bank_data = &padded[bank_offset..bank_offset + bank_size];
 
-    for (i, chunk) in padded.chunks(chunk_size).enumerate() {
-        let addr = i * chunk_size;
-
-        // Skip chunks that are all 0xFF (already erased)
-        if chunk.iter().all(|&b| b == 0xFF) {
-            last_ack = 0; // Break streaming — next write needs fresh setup
+        // Skip entirely erased banks
+        if bank_data.iter().all(|&b| b == 0xFF) {
             continue;
         }
 
-        // Re-set address if we skipped chunks (breaks streaming)
-        if last_ack != 0x03 {
-            set_variable(&mut port, fw_ver, 4, 0x00, addr as u32)
-                .ok_or("Set ADDRESS failed during write")?;
+        // Select bank via MBC register and set address to bank window
+        cart_write(&mut port, fw_ver, 0x2100, bank as u8)
+            .ok_or_else(|| format!("Bank select failed for bank {bank}"))?;
+        set_variable(&mut port, fw_ver, 2, 0x02, bank as u32) // DMG_ROM_BANK
+            .ok_or("Set DMG_ROM_BANK failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, 0x4000) // ADDRESS = bank window start
+            .ok_or("Set ADDRESS failed")?;
+
+        let mut last_ack: u8 = 0;
+
+        for (ci, chunk) in bank_data.chunks(chunk_size).enumerate() {
+            // Skip erased chunks
+            if chunk.iter().all(|&b| b == 0xFF) {
+                last_ack = 0;
+                continue;
+            }
+
+            // Re-set address if streaming was broken
+            if last_ack != 0x03 {
+                let window_addr = 0x4000 + ci * chunk_size;
+                set_variable(&mut port, fw_ver, 4, 0x00, window_addr as u32)
+                    .ok_or("Set ADDRESS failed during write")?;
+            }
+
+            if last_ack != 0x03 {
+                write_cmd(&mut port, &[FLASH_PROGRAM])
+                    .ok_or("FLASH_PROGRAM send failed")?;
+            }
+
+            port.write_all(chunk).map_err(|e| format!("Write failed: {e}"))?;
+            port.flush().map_err(|e| format!("Flush failed: {e}"))?;
+
+            last_ack = read_byte(&mut port).ok_or("No ACK after flash program")?;
+            if last_ack != 0x01 && last_ack != 0x03 {
+                let abs_addr = bank_offset + ci * chunk_size;
+                return Err(format!(
+                    "Flash program failed at 0x{abs_addr:06X} (bank {bank}): ACK=0x{last_ack:02x}"
+                ));
+            }
+
+            progress(FlashProgress {
+                phase: FlashPhase::Writing,
+                bytes_done: bank_offset + (ci + 1) * chunk_size,
+                bytes_total: total,
+            });
         }
-
-        // Send FLASH_PROGRAM opcode (unless streaming from previous chunk)
-        if last_ack != 0x03 {
-            write_cmd(&mut port, &[FLASH_PROGRAM])
-                .ok_or("FLASH_PROGRAM send failed")?;
-        }
-
-        // Send chunk data
-        port.write_all(chunk).map_err(|e| format!("Write failed: {e}"))?;
-        port.flush().map_err(|e| format!("Flush failed: {e}"))?;
-
-        // Wait for ACK
-        last_ack = read_byte(&mut port).ok_or("No ACK after flash program")?;
-        if last_ack != 0x01 && last_ack != 0x03 {
-            return Err(format!("Flash program failed at 0x{addr:06X}: ACK=0x{last_ack:02x}"));
-        }
-
-        progress(FlashProgress {
-            phase: FlashPhase::Writing,
-            bytes_done: addr + chunk.len(),
-            bytes_total: total,
-        });
     }
 
     // Reset flash to read mode

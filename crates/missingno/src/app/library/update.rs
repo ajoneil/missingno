@@ -2,7 +2,7 @@ use iced::Task;
 
 use missingno_gb::cartridge::Cartridge;
 
-use crate::app::{self, load, Game, Screen};
+use crate::app::{self, load, FlashState, Game, Screen};
 use crate::cartridge_rw;
 
 use super::{homebrew_browser, screenshot_gallery};
@@ -584,6 +584,108 @@ pub(in crate::app) fn handle(
                 }
             }
         }
+        // Flash cartridge
+        app::Message::FlashCartridge(sha1) => {
+            // Look up game and cartridge info for confirmation
+            let entry = app.store.entry(&sha1);
+            let cart = app.inserted_cartridge();
+
+            if let (Some(entry), Some(cart)) = (entry, cart) {
+                if let Some(flash) = &cart.flash {
+                    app.flash_state = Some(FlashState::Confirming {
+                        sha1: sha1.clone(),
+                        game_title: entry.display_title(),
+                        rom_size: entry.rom_paths.first()
+                            .and_then(|p| std::fs::metadata(p).ok())
+                            .map(|m| m.len() as u32)
+                            .unwrap_or(0),
+                        cart_title: cart.title.clone(),
+                        flash_size: flash.size,
+                    });
+                    app.screen = Screen::FlashCartridge;
+                }
+            }
+        }
+        app::Message::FlashCartridgeCancel => {
+            app.flash_state = None;
+            // Go back to the detail page if we have a viewing SHA1
+            if let Some(sha1) = app.viewing_sha1.clone() {
+                return app.go_to_detail(&sha1);
+            }
+            app.screen = Screen::Library;
+        }
+        app::Message::FlashCartridgeConfirm => {
+            if let Some(FlashState::Confirming { sha1, .. }) = &app.flash_state {
+                // Find the ROM file and cartridge
+                let entry = app.store.entry(sha1).cloned();
+                let device = app.detected_cartridge_devices.iter()
+                    .find(|d| d.cartridge.as_ref().and_then(|c| c.flash.as_ref()).is_some());
+
+                if let (Some(entry), Some(device)) = (entry, device) {
+                    let flash = device.cartridge.as_ref().unwrap().flash.clone().unwrap();
+                    let port_name = device.port_name.clone();
+
+                    // Read the ROM file
+                    let rom_path = match entry.rom_paths.first() {
+                        Some(p) => p.clone(),
+                        None => return Task::none(),
+                    };
+                    let rom_data = match std::fs::read(&rom_path) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            app.flash_state = Some(FlashState::Failed(
+                                format!("Failed to read ROM: {e}"),
+                            ));
+                            return Task::none();
+                        }
+                    };
+
+                    app.flash_state = Some(FlashState::InProgress(
+                        cartridge_rw::FlashProgress {
+                            phase: cartridge_rw::FlashPhase::Erasing,
+                            bytes_done: 0,
+                            bytes_total: rom_data.len(),
+                        },
+                    ));
+
+                    let (tx, rx) = smol::channel::bounded(32);
+                    let progress_task = Task::run(
+                        smol::stream::unfold(rx, |rx| async {
+                            rx.recv().await.ok().map(|p| (p, rx))
+                        }),
+                        app::Message::CartridgeRwFlashProgress,
+                    );
+
+                    let flash_task = Task::perform(
+                        smol::unblock(move || {
+                            cartridge_rw::flash_rom(&port_name, &flash, &rom_data, &mut |p| {
+                                let _ = tx.send_blocking(p);
+                            })
+                        }),
+                        app::Message::CartridgeRwFlashComplete,
+                    );
+
+                    return Task::batch([flash_task, progress_task]);
+                }
+            }
+        }
+        app::Message::CartridgeRwFlashProgress(progress) => {
+            app.flash_state = Some(FlashState::InProgress(progress));
+        }
+        app::Message::CartridgeRwFlashComplete(result) => {
+            match result {
+                Ok(()) => {
+                    app.flash_state = Some(FlashState::Complete);
+                    // Force full re-detection to read the new cartridge header
+                    app.detected_cartridge_devices.clear();
+                    app.cartridge_rw_known_ports.clear();
+                }
+                Err(e) => {
+                    app.flash_state = Some(FlashState::Failed(e));
+                }
+            }
+        }
+
         _ => {}
     }
 

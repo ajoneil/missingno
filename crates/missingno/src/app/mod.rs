@@ -116,6 +116,26 @@ struct App {
     cartridge_rw_known_ports: Vec<String>,
     /// Progress of an active ROM dump, if any.
     cartridge_dump_progress: Option<cartridge_rw::DumpProgress>,
+    /// Flash cartridge state.
+    flash_state: Option<FlashState>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum FlashState {
+    /// Confirming with the user before flashing.
+    Confirming {
+        sha1: String,
+        game_title: String,
+        rom_size: u32,
+        cart_title: String,
+        flash_size: u32,
+    },
+    /// Flash in progress.
+    InProgress(cartridge_rw::FlashProgress),
+    /// Flash completed successfully.
+    Complete,
+    /// Flash failed.
+    Failed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +160,7 @@ enum Screen {
     ScreenshotGallery,
     HomebrewBrowser,
     Emulator,
+    FlashCartridge,
 }
 
 enum Fullscreen {
@@ -244,6 +265,11 @@ enum Message {
     CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
     CartridgeRwDumpProgress(cartridge_rw::DumpProgress),
     CartridgeRwDumpComplete(Result<Vec<u8>, String>),
+    FlashCartridge(String), // SHA1 of game to flash
+    FlashCartridgeConfirm,
+    FlashCartridgeCancel,
+    CartridgeRwFlashProgress(cartridge_rw::FlashProgress),
+    CartridgeRwFlashComplete(Result<(), String>),
 
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
@@ -292,6 +318,7 @@ impl App {
             detected_cartridge_devices: Vec::new(),
             cartridge_rw_known_ports: Vec::new(),
             cartridge_dump_progress: None,
+            flash_state: None,
         };
 
         controls::update_bindings(
@@ -369,6 +396,9 @@ impl App {
             | Message::HomebrewBrowser(_) | Message::ActivityLoaded(_)
             | Message::ScanComplete(_) | Message::EnrichComplete(_) | Message::OpenUrl(_)
             | Message::CartridgeRwDumpProgress(_) | Message::CartridgeRwDumpComplete(_)
+            | Message::FlashCartridge(_) | Message::FlashCartridgeConfirm
+            | Message::FlashCartridgeCancel | Message::CartridgeRwFlashProgress(_)
+            | Message::CartridgeRwFlashComplete(_)
                 => return library::update::handle(self, message),
 
             // Navigation

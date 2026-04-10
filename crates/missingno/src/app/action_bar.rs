@@ -169,6 +169,10 @@ impl ActionBar {
                     self.settings(app),
                 ]
             }
+            app::Screen::FlashCartridge => {
+                // Flash screen manages its own header
+                row![app_text::heading("").width(Fill)]
+            }
             app::Screen::Emulator => {
                 let is_debugger = matches!(app.game, Game::Loaded(LoadedGame::Debugger(_)));
                 let back_action = if is_debugger {

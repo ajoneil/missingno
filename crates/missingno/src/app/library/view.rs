@@ -379,9 +379,13 @@ fn unmatched_cartridge_card<'a>(
     cart: &'a cartridge_rw::CartridgeHeader,
     dump_progress: Option<&'a cartridge_rw::DumpProgress>,
 ) -> Element<'a, app::Message> {
-    let title = &cart.title;
-    let bg = title_color(title);
-    let initial = title
+    let display_title = if cart.title.is_empty() {
+        if cart.flashable() { "Empty Flash Cart" } else { "Unknown Cartridge" }
+    } else {
+        &cart.title
+    };
+    let bg = title_color(display_title);
+    let initial = display_title
         .chars()
         .next()
         .unwrap_or('?')
@@ -414,7 +418,7 @@ fn unmatched_cartridge_card<'a>(
     })
     .into();
 
-    let mut info = column![text(title).font(fonts::bold()),].spacing(4);
+    let mut info = column![text(display_title).font(fonts::bold()),].spacing(4);
 
     info = info.push(
         app_text::detail(format!(
@@ -440,7 +444,7 @@ fn unmatched_cartridge_card<'a>(
             ))
             .color(MUTED),
         );
-    } else {
+    } else if cart.rom_size > 0 {
         info = info.push(
             buttons::primary("Add to Library").on_press(Message::DumpCartridge.into()),
         );

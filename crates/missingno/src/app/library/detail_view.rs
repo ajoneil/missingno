@@ -20,6 +20,7 @@ use crate::app::{
         store::{ActivityState, SessionSummary},
     },
 };
+use crate::cartridge_rw;
 
 const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
@@ -41,6 +42,8 @@ pub struct DetailData<'a> {
     pub header_hovered: bool,
     /// Whether this game is currently loaded and running.
     pub is_loaded: bool,
+    /// The inserted cartridge, if any, for flash writing.
+    pub inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
 }
 
 #[allow(private_interfaces)]
@@ -205,6 +208,22 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             );
         }
     }
+    // Write to Cartridge button (only when a flashable cart is inserted and ROM exists)
+    if has_rom {
+        if let Some(cart) = data.inserted_cartridge {
+            if cart.flashable() {
+                primary = primary.push(
+                    buttons::standard(
+                        row![icons::m(Icon::CircuitBoard), "Write to Cartridge"]
+                            .spacing(s())
+                            .align_y(Center),
+                    )
+                    .on_press(app::Message::FlashCartridge(data.entry.sha1.clone())),
+                );
+            }
+        }
+    }
+
     primary = primary.push(
         buttons::subtle(
             row![icons::m(Icon::Gear), "Settings"]
