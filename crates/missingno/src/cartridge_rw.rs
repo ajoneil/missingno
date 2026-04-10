@@ -103,9 +103,8 @@ pub struct CartridgeHeader {
     pub has_battery: bool,
     pub sgb_flag: bool,
     pub header_checksum_valid: bool,
-    /// Flash chip ID bytes, if a flash chip was detected.
-    /// Manufacturer ID at index 0, device ID at index 2.
-    pub flash_id: Option<Vec<u8>>,
+    /// Flash chip info, if a flash chip was detected.
+    pub flash: Option<FlashInfo>,
 }
 
 /// Cheap check: list port names of connected GBxCart RW devices without opening them.
@@ -319,11 +318,18 @@ fn read_cartridge_header(
 
     // Probe for flash chip while the cart is still powered and in DMG mode
     if let Some(cart) = &mut result {
-        cart.flash_id = detect_flash(port, fw_ver);
-        eprintln!(
-            "[cartridge_rw] parsed: \"{}\" ({}) flashable={}",
-            cart.title, cart.mapper_name, cart.flashable()
-        );
+        cart.flash = detect_flash(port, fw_ver);
+        if let Some(flash) = &cart.flash {
+            eprintln!(
+                "[cartridge_rw] parsed: \"{}\" ({}) flash={} buffer={}",
+                cart.title, cart.mapper_name, flash.size_display(), flash.buffer_size
+            );
+        } else {
+            eprintln!(
+                "[cartridge_rw] parsed: \"{}\" ({}) no flash",
+                cart.title, cart.mapper_name
+            );
+        }
     } else {
         eprintln!("[cartridge_rw] header parse failed (logo mismatch or invalid)");
     }
@@ -435,7 +441,7 @@ fn parse_cartridge_header(header: &[u8]) -> Option<CartridgeHeader> {
         has_battery,
         sgb_flag,
         header_checksum_valid,
-        flash_id: None, // Set by detect_flash() after header read
+        flash: None, // Set by detect_flash() after header read
     })
 }
 
@@ -456,48 +462,135 @@ fn mapper_name(byte: u8) -> &'static str {
 
 // ── Flash detection ──────────────────────────────────────────────────
 
-/// Probe for a flash chip using the standard AMD/JEDEC ID command sequence.
+/// Probe for a flash chip and query its parameters via CFI.
 ///
-/// Reads 8 bytes from address 0, sends the flash ID command via the flash write
-/// pin (WR), reads again. If the data changed, a flash chip responded — the
-/// cartridge is flashable. Resets the flash chip back to read mode afterward.
+/// First probes with the AMD/JEDEC ID command to detect a flash chip, then
+/// queries the CFI (Common Flash Interface) table for size, buffer, and sector
+/// layout. Returns None for standard ROM cartridges.
 ///
-/// This is safe on commercial cartridges: the writes target addresses (0x0AAA,
-/// 0x0555) that MBC chips don't decode, and use the flash write pin which has
-/// no effect on standard ROM chips.
-/// Returns the flash ID bytes if a flash chip is detected, or None for a standard ROM cart.
-fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<Vec<u8>> {
+/// Safe on commercial cartridges: writes use the flash write pin (WR) which
+/// has no effect on standard ROM chips.
+fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<FlashInfo> {
     // Set the flash write-enable pin to WR (pin mode 1)
     set_variable(port, fw_ver, 1, 0x04, 1)?;
 
     // Read original ROM data at address 0
     let original = read_rom_bytes(port, fw_ver, 0, 8)?;
 
-    // Send AMD flash ID command sequence via CART_WRITE_FLASH_CMD
-    let id_cmd: &[(u32, u16)] = &[
+    // Send AMD flash ID command sequence
+    cart_write_flash(port, &[
         (0x0AAA, 0x00AA),
         (0x0555, 0x0055),
         (0x0AAA, 0x0090),
-    ];
-    cart_write_flash(port, id_cmd)?;
+    ])?;
 
-    // Read back — if flash chip present, this returns the chip ID instead of ROM data
-    let probe = read_rom_bytes(port, fw_ver, 0, 8)?;
+    // Read back — if data changed, a flash chip responded
+    let chip_id = read_rom_bytes(port, fw_ver, 0, 8)?;
 
     // Reset flash back to read mode
-    let reset_cmd: &[(u32, u16)] = &[(0x0000, 0x00F0)];
-    let _ = cart_write_flash(port, reset_cmd);
+    let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
 
-    if original != probe {
-        eprintln!(
-            "[cartridge_rw] flash detected: ROM={:02x?} ID={:02x?}",
-            &original[..4],
-            &probe[..4]
-        );
-        Some(probe)
-    } else {
-        None
+    if original == chip_id {
+        return None;
     }
+
+    eprintln!(
+        "[cartridge_rw] flash chip detected: ID={:02x?}",
+        &chip_id[..4]
+    );
+
+    // Query CFI table
+    let cfi = query_cfi(port, fw_ver);
+
+    // Reset again after CFI query
+    let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
+
+    match cfi {
+        Some(info) => {
+            eprintln!(
+                "[cartridge_rw] CFI: size={} buffer={} sectors={:?}",
+                format_size(info.size), info.buffer_size, info.sectors
+            );
+            Some(FlashInfo { chip_id, ..info })
+        }
+        None => {
+            eprintln!("[cartridge_rw] CFI query failed, flash chip not fully supported");
+            None
+        }
+    }
+}
+
+/// Query the CFI (Common Flash Interface) table from a flash chip.
+///
+/// Sends the CFI enter command (0x98), reads 0x400 bytes, parses the
+/// standardised CFI structure for device size, write buffer, and sector layout.
+fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<FlashInfo> {
+    // Enter CFI mode: write 0x98 to address 0x00AA
+    cart_write_flash(port, &[(0x00AA, 0x0098)])?;
+
+    // Read CFI table
+    let cfi = read_rom_bytes(port, fw_ver, 0, 0x400)?;
+
+    // Reset back to read mode
+    let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
+
+    // Check for "QRY" magic at 16-bit offsets (0x20/0x22/0x24) or 8-bit (0x10/0x11/0x12)
+    let is_16bit = cfi.len() > 0x24
+        && cfi[0x20] == b'Q' && cfi[0x22] == b'R' && cfi[0x24] == b'Y';
+    let is_8bit = cfi.len() > 0x12
+        && cfi[0x10] == b'Q' && cfi[0x11] == b'R' && cfi[0x12] == b'Y';
+
+    if !is_16bit && !is_8bit {
+        eprintln!("[cartridge_rw] CFI magic not found");
+        return None;
+    }
+
+    let is_8bit = is_8bit && !is_16bit;
+
+    // For 8-bit mode, expand to 16-bit layout (double each byte)
+    let cfi = if is_8bit {
+        cfi.iter().flat_map(|&b| [b, b]).collect::<Vec<u8>>()
+    } else {
+        cfi
+    };
+
+    // Parse CFI fields (all at 16-bit offsets, so multiply by 2)
+    if cfi.len() < 0x60 {
+        return None;
+    }
+
+    // Device size: 2^N bytes
+    let device_size = 1u32 << cfi[0x4E];
+
+    // Write buffer size
+    let buffer_raw = (cfi[0x56] as u32) << 8 | cfi[0x54] as u32;
+    let buffer_size = if buffer_raw > 1 { 1u32 << buffer_raw } else { 0 };
+
+    // Erase capabilities
+    let sector_erase = cfi[0x42] > 0 && cfi[0x42] < 0xFF;
+    let chip_erase = cfi[0x44] > 0 && cfi[0x44] < 0xFF;
+
+    // Sector regions
+    let num_regions = cfi[0x58] as usize;
+    let mut sectors = Vec::new();
+    for i in 0..num_regions.min(4) {
+        let offset = 0x5A + i * 8;
+        if offset + 7 >= cfi.len() {
+            break;
+        }
+        let count = ((cfi[offset + 2] as u32) << 8 | cfi[offset] as u32) + 1;
+        let size = ((cfi[offset + 6] as u32) << 8 | cfi[offset + 4] as u32) * 256;
+        sectors.push((size, count));
+    }
+
+    Some(FlashInfo {
+        chip_id: Vec::new(), // Filled in by caller
+        size: device_size,
+        buffer_size,
+        chip_erase,
+        sector_erase,
+        sectors,
+    })
 }
 
 /// Read a small number of bytes from ROM at a given address.
@@ -777,9 +870,39 @@ pub fn format_size(bytes: u32) -> String {
     }
 }
 
+/// Flash chip parameters, queried via CFI (Common Flash Interface).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct FlashInfo {
+    /// Raw flash ID bytes (manufacturer at [0], device at [2]).
+    pub chip_id: Vec<u8>,
+    /// Total flash size in bytes.
+    pub size: u32,
+    /// Write buffer size in bytes (0 = unbuffered writes only).
+    pub buffer_size: u32,
+    /// Whether chip erase is supported.
+    pub chip_erase: bool,
+    /// Whether sector erase is supported.
+    pub sector_erase: bool,
+    /// Erase sector regions: (sector_size, sector_count) pairs.
+    pub sectors: Vec<(u32, u32)>,
+}
+
+#[allow(dead_code)]
+impl FlashInfo {
+    pub fn size_display(&self) -> String {
+        format_size(self.size)
+    }
+
+    pub fn write_method(&self) -> u8 {
+        if self.buffer_size > 0 { 0x02 } else { 0x01 } // buffered vs unbuffered
+    }
+}
+
 impl CartridgeHeader {
+    #[allow(dead_code)]
     pub fn flashable(&self) -> bool {
-        self.flash_id.is_some()
+        self.flash.is_some()
     }
 
     pub fn rom_size_display(&self) -> String {
