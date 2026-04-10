@@ -9,6 +9,7 @@ use crate::app::core::text;
 pub enum Icon {
     Back,
     Camera,
+    CircuitBoard,
     Close,
     Debug,
     Download,
@@ -31,6 +32,9 @@ fn icon_data(icon: Icon) -> Handle {
     match icon {
         Icon::Back => Handle::from_memory(include_bytes!("pixelarticons/chevron-left.svg")),
         Icon::Camera => Handle::from_memory(include_bytes!("pixelarticons/camera.svg")),
+        Icon::CircuitBoard => {
+            Handle::from_memory(include_bytes!("pixelarticons/circuit-board.svg"))
+        }
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
         Icon::Debug => Handle::from_memory(include_bytes!("pixelarticons/debug.svg")),
         Icon::Download => Handle::from_memory(include_bytes!("pixelarticons/download.svg")),

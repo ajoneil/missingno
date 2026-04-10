@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod app;
+mod cartridge_rw;
 mod link_cable;
 mod headless;
 mod trace;

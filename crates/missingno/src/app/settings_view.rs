@@ -25,6 +25,7 @@ pub enum Section {
     General,
     Display,
     Controls,
+    Hardware,
 }
 
 /// What binding slot we're waiting for input on.
@@ -45,6 +46,9 @@ pub enum Message {
     SetUseSgbColors(bool),
     SetHasheousEnabled(bool),
     SetHomebrewHubEnabled(bool),
+    SetCartridgeRwEnabled(bool),
+    ScanCartridgeDevices,
+    CartridgeDevicesFound(Vec<crate::cartridge_rw::DetectedDevice>),
     StartListening(ListeningFor),
     CaptureBinding(String),
     ClearBinding,
@@ -66,16 +70,20 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-pub fn view(
-    settings: &super::settings::Settings,
+pub fn view<'a>(
+    settings: &'a super::settings::Settings,
     section: Section,
     listening_for: Option<ListeningFor>,
-) -> Element<'_, app::Message> {
+    detected_cartridge_devices: &'a [crate::cartridge_rw::DetectedDevice],
+) -> Element<'a, app::Message> {
     let sidebar = sidebar_view(section);
     let content = match section {
         Section::Display => display_section(settings),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, listening_for),
+        Section::Hardware => {
+            hardware_section(settings, detected_cartridge_devices)
+        }
     };
 
     column![
@@ -98,6 +106,7 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
         (Section::General, Icon::Sliders, "General"),
         (Section::Display, Icon::Monitor, "Display"),
         (Section::Controls, Icon::Gamepad, "Controls"),
+        (Section::Hardware, Icon::CircuitBoard, "Hardware"),
     ];
 
     let mut col = column![].spacing(s());
@@ -408,6 +417,59 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
     ]
     .spacing(m())
     .max_width(600);
+
+    iced::widget::scrollable(container(content).padding(l()).width(Fill))
+        .height(Fill)
+        .into()
+}
+
+fn hardware_section<'a>(
+    settings: &'a super::settings::Settings,
+    detected_devices: &'a [crate::cartridge_rw::DetectedDevice],
+) -> Element<'a, app::Message> {
+    let mut content = column![
+        app_text::label("Cartridge Reader/Writer"),
+        toggler(settings.cartridge_rw_enabled)
+            .label("Enable cartridge reader/writer support")
+            .on_toggle(|enabled| Message::SetCartridgeRwEnabled(enabled).into())
+            .size(m()),
+        text("Read ROMs and save data from physical Game Boy cartridges using a GBxCart RW device.")
+            .color(MUTED),
+    ]
+    .spacing(m());
+
+    if settings.cartridge_rw_enabled {
+        content = content.push(horizontal_rule());
+        content = content.push(app_text::label("Detected Devices"));
+
+        if detected_devices.is_empty() {
+            content = content.push(text("No devices found.").color(MUTED));
+        } else {
+            for device in detected_devices {
+                content = content.push(
+                    row![
+                        icons::m(Icon::CircuitBoard),
+                        column![
+                            text(device.display_name()),
+                            text(format!("{} (PCB v{}, FW v{})",
+                                device.port_name, device.pcb_version, device.firmware_version
+                            )).color(MUTED),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(s())
+                    .align_y(Center),
+                );
+            }
+        }
+
+        content = content.push(
+            buttons::standard("Scan for devices")
+                .on_press(Message::ScanCartridgeDevices.into()),
+        );
+    }
+
+    let content = content.max_width(600);
 
     iced::widget::scrollable(container(content).padding(l()).width(Fill))
         .height(Fill)

@@ -34,6 +34,9 @@ pub mod settings;
 mod settings_view;
 mod texture_renderer;
 
+// Cartridge reader/writer hardware support
+use crate::cartridge_rw;
+
 pub fn run(
     rom_path: Option<PathBuf>,
     debugger: bool,
@@ -117,6 +120,8 @@ struct App {
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
     /// Bundled game catalogue (commercial + homebrew).
     catalogue: std::sync::Arc<library::catalogue::Catalogue>,
+    /// Cartridge reader/writer devices detected on the system.
+    detected_cartridge_devices: Vec<cartridge_rw::DetectedDevice>,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +289,7 @@ impl App {
             homebrew_browser: None,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
+            detected_cartridge_devices: Vec::new(),
         };
 
         controls::update_bindings(
@@ -987,6 +993,16 @@ impl App {
             Message::Settings(message) => match message {
                 settings_view::Message::SelectSection(section) => {
                     self.settings_section = section;
+                    if section == settings_view::Section::Hardware
+                        && self.settings.cartridge_rw_enabled
+                    {
+                        return Task::perform(
+                            smol::unblock(cartridge_rw::detect_devices),
+                            |devices| {
+                                settings_view::Message::CartridgeDevicesFound(devices).into()
+                            },
+                        );
+                    }
                 }
                 settings_view::Message::Back => {
                     self.screen = self.previous_screen.take().unwrap_or(Screen::Library);
@@ -1055,6 +1071,32 @@ impl App {
                     if let Game::Loaded(LoadedGame::Emulator(emu)) = &mut self.game {
                         emu.set_use_sgb_colors(enabled);
                     }
+                }
+                settings_view::Message::SetCartridgeRwEnabled(enabled) => {
+                    self.settings.cartridge_rw_enabled = enabled;
+                    self.settings.save();
+                    if enabled {
+                        // Auto-scan when enabling
+                        return Task::perform(
+                            smol::unblock(cartridge_rw::detect_devices),
+                            |devices| {
+                                settings_view::Message::CartridgeDevicesFound(devices).into()
+                            },
+                        );
+                    } else {
+                        self.detected_cartridge_devices.clear();
+                    }
+                }
+                settings_view::Message::ScanCartridgeDevices => {
+                    return Task::perform(
+                        smol::unblock(cartridge_rw::detect_devices),
+                        |devices| {
+                            settings_view::Message::CartridgeDevicesFound(devices).into()
+                        },
+                    );
+                }
+                settings_view::Message::CartridgeDevicesFound(devices) => {
+                    self.detected_cartridge_devices = devices;
                 }
                 settings_view::Message::StartListening(target) => {
                     self.listening_for = Some(target);
@@ -1272,7 +1314,12 @@ impl App {
                 column![self.action_bar.view(self), horizontal_rule(), screen,].into()
             }
         } else if self.screen == Screen::Settings {
-            settings_view::view(&self.settings, self.settings_section, self.listening_for)
+            settings_view::view(
+                &self.settings,
+                self.settings_section,
+                self.listening_for,
+                &self.detected_cartridge_devices,
+            )
         } else {
             match self.screen {
                 Screen::Detail => self.detail_view(),

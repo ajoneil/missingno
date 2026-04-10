@@ -229,6 +229,8 @@ struct SettingsFile {
     rom_directories: Vec<PathBuf>,
     #[serde(default = "default_true")]
     use_sgb_colors: bool,
+    #[serde(default = "default_true")]
+    cartridge_rw_enabled: bool,
     #[serde(default)]
     window_width: Option<f32>,
     #[serde(default)]
@@ -272,6 +274,7 @@ impl Default for SettingsFile {
             palette: palette_to_string(PaletteChoice::default()),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
+            cartridge_rw_enabled: true,
             window_width: None,
             window_height: None,
             keyboard_bindings: Bindings::default_keyboard(),
@@ -292,6 +295,7 @@ pub struct Settings {
     pub palette: PaletteChoice,
     pub rom_directories: Vec<PathBuf>,
     pub use_sgb_colors: bool,
+    pub cartridge_rw_enabled: bool,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
     pub keyboard_bindings: Bindings,
@@ -308,6 +312,7 @@ impl Default for Settings {
             palette: PaletteChoice::default(),
             rom_directories: Vec::new(),
             use_sgb_colors: true,
+            cartridge_rw_enabled: true,
             window_width: None,
             window_height: None,
             keyboard_bindings: Bindings::default_keyboard(),
@@ -337,6 +342,7 @@ impl Settings {
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
+                cartridge_rw_enabled: file.cartridge_rw_enabled,
                 window_width: file.window_width,
                 window_height: file.window_height,
                 keyboard_bindings: file.keyboard_bindings,
@@ -368,6 +374,7 @@ impl Settings {
                 palette: parse_palette(&file.palette),
                 rom_directories: file.rom_directories,
                 use_sgb_colors: file.use_sgb_colors,
+                cartridge_rw_enabled: true,
                 window_width: file.window_width,
                 window_height: file.window_height,
                 keyboard_bindings: keyboard,
@@ -404,6 +411,7 @@ impl Settings {
             palette: palette_to_string(self.palette),
             rom_directories: self.rom_directories.clone(),
             use_sgb_colors: self.use_sgb_colors,
+            cartridge_rw_enabled: self.cartridge_rw_enabled,
             window_width: self.window_width,
             window_height: self.window_height,
             keyboard_bindings: self.keyboard_bindings.clone(),
