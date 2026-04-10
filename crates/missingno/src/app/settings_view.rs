@@ -433,8 +433,25 @@ fn hardware_section<'a>(
             .label("Enable cartridge reader/writer support")
             .on_toggle(|enabled| Message::SetCartridgeRwEnabled(enabled).into())
             .size(m()),
-        text("Read ROMs and save data from physical Game Boy cartridges using a GBxCart RW device.")
-            .color(MUTED),
+        row![
+            text("Read ROMs and save data from physical Game Boy cartridges using a").color(MUTED),
+            mouse_area(text("GBxCart RW").color(MUTED))
+                .on_press(app::Message::OpenUrl(
+                    "https://www.gbxcart.com/",
+                ))
+                .interaction(mouse::Interaction::Pointer),
+            text("device.").color(MUTED),
+        ]
+        .spacing(4),
+        row![
+            text("For advanced features and broader hardware support, see").color(MUTED),
+            mouse_area(text("FlashGBX").color(MUTED))
+                .on_press(app::Message::OpenUrl(
+                    "https://github.com/lesserkuma/FlashGBX",
+                ))
+                .interaction(mouse::Interaction::Pointer),
+        ]
+        .spacing(4),
     ]
     .spacing(m());
 
