@@ -33,8 +33,16 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 continue;
             }
 
+            // Always capture the raw header title for cartridge matching
+            let header_title = Cartridge::peek_title(&rom);
+            let header_title = if header_title.is_empty() {
+                None
+            } else {
+                Some(header_title)
+            };
+
             // Try catalogue first for a good title, fall back to cartridge header
-            let entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
+            let mut entry = if let Some(cat_entry) = catalogue.lookup_hash(&sha1) {
                 let mut e =
                     library::GameEntry::new(sha1, cat_entry.manifest.title.clone(), path.clone());
                 e.platform = Some("Nintendo Game Boy".to_string());
@@ -48,14 +56,12 @@ pub fn scan_directories(directories: &[PathBuf], catalogue: &Catalogue) -> Vec<l
                 e.enrichment_attempted = false; // still want Hasheous for covers
                 e
             } else {
-                let title = Cartridge::peek_title(&rom);
-                let title = if title.is_empty() {
-                    "Unknown".to_string()
-                } else {
-                    title
-                };
+                let title = header_title
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string());
                 library::GameEntry::new(sha1, title, path.clone())
             };
+            entry.header_title = header_title;
 
             let game_dir = match library::game_dir_for(&entry.title, &entry.sha1) {
                 Some(dir) => dir,
@@ -145,6 +151,7 @@ pub fn enrich_next() -> EnrichResult {
         data_changed: true,
     }
 }
+
 
 fn is_rom_file(path: &std::path::Path) -> bool {
     path.is_file()

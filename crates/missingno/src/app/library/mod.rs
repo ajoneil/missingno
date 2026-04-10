@@ -17,10 +17,20 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// Current version of the GameEntry format. Increment when adding migrations.
+const CURRENT_VERSION: u32 = 1;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameEntry {
+    /// Schema version. Migrations run on load when this is less than CURRENT_VERSION.
+    #[serde(default)]
+    pub version: u32,
     pub sha1: String,
     pub title: String,
+    /// The raw title from the ROM header (bytes 0x134-0x143). Preserved across enrichment
+    /// so we can match against physical cartridge headers.
+    #[serde(default)]
+    pub header_title: Option<String>,
     pub platform: Option<String>,
     pub publisher: Option<String>,
     pub year: Option<String>,
@@ -37,8 +47,10 @@ pub struct GameEntry {
 impl GameEntry {
     pub fn new(sha1: String, title: String, rom_path: PathBuf) -> Self {
         Self {
+            version: CURRENT_VERSION,
             sha1,
             title,
+            header_title: None,
             platform: None,
             publisher: None,
             year: None,
@@ -143,7 +155,34 @@ pub fn save_entry(game_dir: &Path, entry: &GameEntry) {
 pub fn load_entry(game_dir: &Path) -> Option<GameEntry> {
     let path = game_dir.join("game.ron");
     let data = fs::read_to_string(path).ok()?;
-    ron::from_str(&data).ok()
+    let mut entry: GameEntry = ron::from_str(&data).ok()?;
+
+    if entry.version < CURRENT_VERSION {
+        migrate(&mut entry);
+        save_entry(game_dir, &entry);
+    }
+
+    Some(entry)
+}
+
+/// Run all pending migrations on a GameEntry.
+fn migrate(entry: &mut GameEntry) {
+    use missingno_gb::cartridge::Cartridge;
+
+    // v0 → v1: backfill header_title from ROM file
+    if entry.version < 1 {
+        if entry.header_title.is_none() {
+            entry.header_title = entry.rom_paths.iter().find_map(|path| {
+                let mut file = fs::File::open(path).ok()?;
+                let mut buf = vec![0u8; 0x144];
+                std::io::Read::read_exact(&mut file, &mut buf).ok()?;
+                let title = Cartridge::peek_title(&buf);
+                if title.is_empty() { None } else { Some(title) }
+            });
+        }
+    }
+
+    entry.version = CURRENT_VERSION;
 }
 
 // Thumbnails are 2× the display size (160×120) for crisp rendering on HiDPI.

@@ -66,40 +66,94 @@ impl From<Message> for app::Message {
 }
 
 use super::store::{GameStore, GameSummary};
+use crate::cartridge_rw;
 
 #[allow(private_interfaces)]
 pub(crate) fn view<'a>(
     store: &'a GameStore,
     hovered_sha1: Option<&'a str>,
+    inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
 ) -> Element<'a, app::Message> {
-    if store.is_empty() {
+    if store.is_empty() && inserted_cartridge.is_none() {
         return empty_view();
     }
 
     let games = store.all_summaries();
+
+    // Match inserted cartridge against library by raw header title
+    let matched_sha1 = inserted_cartridge.and_then(|cart| {
+        games
+            .iter()
+            .find(|g| {
+                g.entry
+                    .header_title
+                    .as_ref()
+                    .is_some_and(|ht| ht == &cart.title)
+            })
+            .map(|g| g.entry.sha1.clone())
+    });
+
     let hovered_sha1 = hovered_sha1.map(|s| s.to_string());
     iced::widget::responsive(move |size| {
         let usable = size.width - l() * 2.0;
         let cols = (usable / (CARD_MIN_WIDTH + m())).max(1.0) as usize;
 
-        let mut rows_vec: Vec<Element<'_, app::Message>> = Vec::new();
+        let mut content: Vec<Element<'_, app::Message>> = Vec::new();
 
-        for chunk in games.chunks(cols) {
-            let mut cards: Vec<Element<'_, app::Message>> = chunk
-                .iter()
-                .map(|game| {
-                    let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
-                    game_card(game, hovered)
-                })
-                .collect();
-            while cards.len() < cols {
-                cards.push(iced::widget::Space::new().width(Fill).into());
+        // Inserted cartridge section
+        if let Some(cart) = inserted_cartridge {
+            content.push(app_text::label("Inserted Cartridge").into());
+
+            let matched_game = matched_sha1
+                .as_deref()
+                .and_then(|sha1| games.iter().find(|g| g.entry.sha1 == sha1));
+
+            let card: Element<'_, app::Message> = if let Some(game) = matched_game {
+                let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
+                cartridge_game_card(game, hovered)
+            } else {
+                unmatched_cartridge_card(cart)
+            };
+
+            // Pad with spacers to match grid column width
+            let mut card_row = vec![card];
+            while card_row.len() < cols {
+                card_row.push(iced::widget::Space::new().width(Fill).into());
             }
-            rows_vec.push(row(cards).spacing(m()).into());
+            content.push(row(card_row).spacing(m()).into());
+
+            content.push(iced::widget::Space::new().height(s()).into());
+        }
+
+        // Library grid — exclude the matched cartridge game to avoid duplication
+        let grid_games: Vec<&&GameSummary> = games
+            .iter()
+            .filter(|g| matched_sha1.as_deref() != Some(g.entry.sha1.as_str()))
+            .collect();
+
+        if !grid_games.is_empty() {
+            if inserted_cartridge.is_some() {
+                content.push(app_text::label("Library").into());
+            }
+
+            for chunk in grid_games.chunks(cols) {
+                let mut cards: Vec<Element<'_, app::Message>> = chunk
+                    .iter()
+                    .map(|game| {
+                        let hovered =
+                            hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
+                        game_card(game, hovered)
+                    })
+                    .collect();
+                while cards.len() < cols {
+                    cards.push(iced::widget::Space::new().width(Fill).into());
+                }
+                content.push(row(cards).spacing(m()).into());
+            }
         }
 
         scrollable(
-            container(Column::with_children(rows_vec).spacing(m()).padding(l())).center_x(Fill),
+            container(Column::with_children(content).spacing(m()).padding(l())).center_x(Fill),
         )
         .height(Fill)
         .into()
@@ -286,6 +340,103 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
         .on_enter(Message::HoverGame(sha1.clone()).into())
         .on_exit(Message::UnhoverGame.into())
         .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
+
+/// A library game card with a cartridge indicator overlay.
+fn cartridge_game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
+    use iced::widget::stack;
+
+    stack![
+        game_card(game, hovered),
+        container(
+            container(
+                row![
+                    icons::m(Icon::CircuitBoard).style(|_, _| iced::widget::svg::Style {
+                        color: Some(Color::WHITE),
+                    }),
+                ]
+                .spacing(s()),
+            )
+            .padding(s())
+            .style(|_: &iced::Theme| container::Style {
+                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
+                border: iced::Border::default().rounded(8),
+                ..Default::default()
+            }),
+        )
+        .padding(s())
+        .align_right(Fill)
+        .align_bottom(Fill),
+    ]
+    .into()
+}
+
+/// A card for an inserted cartridge that doesn't match any library game.
+fn unmatched_cartridge_card(cart: &cartridge_rw::CartridgeHeader) -> Element<'_, app::Message> {
+    let title = &cart.title;
+    let bg = title_color(title);
+    let initial = title
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .next()
+        .unwrap_or('?');
+
+    let cover: Element<'_, app::Message> = container(
+        text(initial)
+            .size(COVER_HEIGHT * 0.35)
+            .font(fonts::heading())
+            .color(Color::WHITE),
+    )
+    .width(COVER_WIDTH)
+    .height(COVER_HEIGHT)
+    .align_x(Center)
+    .align_y(iced::alignment::Vertical::Center)
+    .style(move |_: &iced::Theme| container::Style {
+        background: Some(bg.into()),
+        border: iced::Border {
+            radius: iced::border::Radius {
+                top_left: 8.0,
+                top_right: 0.0,
+                bottom_right: 0.0,
+                bottom_left: 8.0,
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into();
+
+    let mut info = column![text(title).font(fonts::bold()),].spacing(4);
+
+    info = info.push(
+        app_text::detail(format!(
+            "{} · ROM {} · RAM {}",
+            cart.mapper_name,
+            cart.rom_size_display(),
+            cart.ram_size_display(),
+        ))
+        .color(MUTED),
+    );
+
+    info = info.push(app_text::detail("Not in library").color(MUTED));
+
+    let card_row =
+        row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT);
+
+    container(card_row)
+        .width(Fill)
+        .clip(true)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weak.color.into()),
+                border: iced::Border::default().rounded(8),
+                ..Default::default()
+            }
+        })
         .into()
 }
 

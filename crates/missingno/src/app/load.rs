@@ -217,13 +217,18 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         (dir, existing)
     } else {
         // New game — create entry with ROM header title
-        let cartridge_title = Cartridge::peek_title(&rom);
-        let title = if cartridge_title.is_empty() {
+        let header_title = Cartridge::peek_title(&rom);
+        let title = if header_title.is_empty() {
             "Unknown".to_string()
         } else {
-            cartridge_title
+            header_title.clone()
         };
-        let entry = library::GameEntry::new(sha1.clone(), title, rom_path.clone());
+        let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path.clone());
+        entry.header_title = if header_title.is_empty() {
+            None
+        } else {
+            Some(header_title)
+        };
         let game_dir = library::game_dir_for(&entry.title, &entry.sha1)
             .expect("Could not determine library directory");
 

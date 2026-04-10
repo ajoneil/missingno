@@ -18,6 +18,7 @@ use core::{
     sizes::{l, s},
     text,
 };
+use missingno_gb::cartridge::Cartridge;
 use missingno_gb::joypad::{self, Button};
 
 mod action_bar;
@@ -614,7 +615,13 @@ impl App {
                 }
 
                 // Create library entry
+                let header_title = Cartridge::peek_title(&rom_bytes);
                 let mut entry = library::GameEntry::new(sha1.clone(), title, rom_path);
+                entry.header_title = if header_title.is_empty() {
+                    None
+                } else {
+                    Some(header_title)
+                };
                 entry.platform = Some("Nintendo Game Boy".to_string());
                 entry.year = manifest.date.clone();
                 entry.description = manifest.description.clone();
@@ -1340,9 +1347,14 @@ impl App {
             match self.screen {
                 Screen::Detail => self.detail_view(),
                 _ => {
+                    let inserted_cartridge = self.inserted_cartridge();
                     let content = match self.screen {
                         Screen::Library => {
-                            library::view::view(&self.store, self.hovered_library_game.as_deref())
+                            library::view::view(
+                                &self.store,
+                                self.hovered_library_game.as_deref(),
+                                inserted_cartridge,
+                            )
                         }
                         Screen::HomebrewBrowser => {
                             if let Some(state) = &self.homebrew_browser {
@@ -1351,6 +1363,7 @@ impl App {
                                 library::view::view(
                                     &self.store,
                                     self.hovered_library_game.as_deref(),
+                                    inserted_cartridge,
                                 )
                             }
                         }
@@ -1566,8 +1579,19 @@ impl App {
         }
     }
 
+    /// Get the cartridge header from the first connected device with a cartridge inserted.
+    fn inserted_cartridge(&self) -> Option<&cartridge_rw::CartridgeHeader> {
+        self.detected_cartridge_devices
+            .iter()
+            .find_map(|d| d.cartridge.as_ref())
+    }
+
     fn empty_detail_view(&self) -> Element<'_, Message> {
-        library::view::view(&self.store, self.hovered_library_game.as_deref())
+        library::view::view(
+            &self.store,
+            self.hovered_library_game.as_deref(),
+            self.inserted_cartridge(),
+        )
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
