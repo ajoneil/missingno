@@ -48,8 +48,6 @@ pub enum Message {
     SetHasheousEnabled(bool),
     SetHomebrewHubEnabled(bool),
     SetCartridgeRwEnabled(bool),
-    ScanCartridgeDevices,
-    CartridgeDevicesFound(Vec<crate::cartridge_rw::DetectedDevice>),
     StartListening(ListeningFor),
     CaptureBinding(String),
     ClearBinding,
@@ -458,10 +456,6 @@ fn hardware_section<'a>(
             }
         }
 
-        content = content.push(
-            buttons::standard("Scan for devices")
-                .on_press(Message::ScanCartridgeDevices.into()),
-        );
     }
 
     let content = content.max_width(600);

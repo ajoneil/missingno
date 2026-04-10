@@ -33,6 +33,31 @@ impl DetectedDevice {
     }
 }
 
+/// Cheap check: list port names of connected GBxCart RW devices without opening them.
+///
+/// Returns a sorted list of port names (e.g. `["/dev/ttyUSB0"]`).
+/// Used for polling to detect connect/disconnect — only triggers a full
+/// `detect_devices()` query when this list changes.
+pub fn list_ports() -> Vec<String> {
+    let Ok(ports) = serialport::available_ports() else {
+        return Vec::new();
+    };
+
+    let mut names: Vec<String> = ports
+        .into_iter()
+        .filter_map(|port| {
+            if let SerialPortType::UsbPort(usb) = &port.port_type {
+                if usb.vid == GBXCART_VID && usb.pid == GBXCART_PID {
+                    return Some(port.port_name);
+                }
+            }
+            None
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// Scan serial ports for GBxCart RW devices and query their firmware for identification.
 ///
 /// This opens each matching port briefly to read the device name from the firmware.

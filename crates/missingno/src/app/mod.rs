@@ -122,6 +122,8 @@ struct App {
     catalogue: std::sync::Arc<library::catalogue::Catalogue>,
     /// Cartridge reader/writer devices detected on the system.
     detected_cartridge_devices: Vec<cartridge_rw::DetectedDevice>,
+    /// Last-seen port names for cartridge RW polling (to detect changes cheaply).
+    cartridge_rw_known_ports: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +247,10 @@ enum Message {
 
     DismissScreenshotToast,
 
+    // Cartridge reader/writer
+    CartridgeRwPoll,
+    CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
+
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
@@ -290,6 +296,7 @@ impl App {
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             detected_cartridge_devices: Vec::new(),
+            cartridge_rw_known_ports: Vec::new(),
         };
 
         controls::update_bindings(
@@ -993,16 +1000,6 @@ impl App {
             Message::Settings(message) => match message {
                 settings_view::Message::SelectSection(section) => {
                     self.settings_section = section;
-                    if section == settings_view::Section::Hardware
-                        && self.settings.cartridge_rw_enabled
-                    {
-                        return Task::perform(
-                            smol::unblock(cartridge_rw::detect_devices),
-                            |devices| {
-                                settings_view::Message::CartridgeDevicesFound(devices).into()
-                            },
-                        );
-                    }
                 }
                 settings_view::Message::Back => {
                     self.screen = self.previous_screen.take().unwrap_or(Screen::Library);
@@ -1075,28 +1072,10 @@ impl App {
                 settings_view::Message::SetCartridgeRwEnabled(enabled) => {
                     self.settings.cartridge_rw_enabled = enabled;
                     self.settings.save();
-                    if enabled {
-                        // Auto-scan when enabling
-                        return Task::perform(
-                            smol::unblock(cartridge_rw::detect_devices),
-                            |devices| {
-                                settings_view::Message::CartridgeDevicesFound(devices).into()
-                            },
-                        );
-                    } else {
+                    if !enabled {
                         self.detected_cartridge_devices.clear();
+                        self.cartridge_rw_known_ports.clear();
                     }
-                }
-                settings_view::Message::ScanCartridgeDevices => {
-                    return Task::perform(
-                        smol::unblock(cartridge_rw::detect_devices),
-                        |devices| {
-                            settings_view::Message::CartridgeDevicesFound(devices).into()
-                        },
-                    );
-                }
-                settings_view::Message::CartridgeDevicesFound(devices) => {
-                    self.detected_cartridge_devices = devices;
                 }
                 settings_view::Message::StartListening(target) => {
                     self.listening_for = Some(target);
@@ -1233,6 +1212,19 @@ impl App {
             }
             Message::OpenUrl(url) => {
                 let _ = open::that(url);
+            }
+            Message::CartridgeRwPoll => {
+                let ports = cartridge_rw::list_ports();
+                if ports != self.cartridge_rw_known_ports {
+                    self.cartridge_rw_known_ports = ports;
+                    return Task::perform(
+                        smol::unblock(cartridge_rw::detect_devices),
+                        Message::CartridgeRwPortsChanged,
+                    );
+                }
+            }
+            Message::CartridgeRwPortsChanged(devices) => {
+                self.detected_cartridge_devices = devices;
             }
 
             Message::StartRecording => {
@@ -1775,6 +1767,12 @@ impl App {
             if self.screenshot_toast.is_some() {
                 time::every(std::time::Duration::from_millis(1500))
                     .map(|_| Message::DismissScreenshotToast)
+            } else {
+                Subscription::none()
+            },
+            if self.settings.cartridge_rw_enabled {
+                time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Message::CartridgeRwPoll)
             } else {
                 Subscription::none()
             },
