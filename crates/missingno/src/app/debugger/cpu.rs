@@ -9,7 +9,7 @@ use iced::{
 
 use crate::app::{
     self,
-    core::{
+    ui::{
         fonts,
         sizes::{m, s},
     },

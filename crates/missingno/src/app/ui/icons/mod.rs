@@ -3,7 +3,7 @@ use iced::widget::Svg;
 use iced::widget::svg::Style;
 use iced::{Theme, widget::svg};
 
-use crate::app::core::text;
+use crate::app::ui::text;
 
 #[allow(dead_code)]
 pub enum Icon {

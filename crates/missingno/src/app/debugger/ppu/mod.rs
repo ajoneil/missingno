@@ -5,7 +5,7 @@ use iced::{
 
 use crate::app::{
     Message,
-    core::sizes::m,
+    ui::sizes::m,
     debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
 use missingno_gb::ppu::{Ppu, rendering::Mode, types::palette::Palette};

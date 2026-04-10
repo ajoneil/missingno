@@ -1,4 +1,5 @@
 pub(crate) mod activity;
+pub(in crate::app) mod update;
 pub(crate) mod catalogue;
 pub(crate) mod detail_view;
 pub(crate) mod game_db;

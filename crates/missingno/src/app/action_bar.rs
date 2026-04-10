@@ -8,7 +8,7 @@ use iced::{
 
 use crate::app::{
     self, App, Game, LoadedGame,
-    core::{
+    ui::{
         buttons,
         icons::{self, Icon},
         sizes::{m, s, xl},

@@ -90,6 +90,7 @@ impl DetectedDevice {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CartridgeHeader {
     pub title: String,
     pub mapper_byte: u8,

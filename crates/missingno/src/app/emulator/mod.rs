@@ -9,7 +9,7 @@ use iced::{
 
 use crate::app::{
     self,
-    core::icons::{self, Icon},
+    ui::icons::{self, Icon},
     screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
 };
 use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};

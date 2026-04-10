@@ -7,7 +7,7 @@ use iced::{
 
 use crate::app::{
     self,
-    core::{
+    ui::{
         buttons,
         icons::{self, Icon},
         sizes::{l, m, s},
@@ -25,7 +25,7 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-use crate::app::core::fonts;
+use crate::app::ui::fonts;
 
 /// Deterministic accent colour from a title string, using Catppuccin Mocha accents
 /// darkened to work as backgrounds with white text.
@@ -167,7 +167,7 @@ fn empty_view() -> Element<'static, app::Message> {
     container(
         column![
             iced::widget::svg(iced::advanced::svg::Handle::from_memory(include_bytes!(
-                "../../app/core/icons/missingno.svg"
+                "../../app/ui/icons/missingno.svg"
             ),))
             .width(120)
             .height(120)

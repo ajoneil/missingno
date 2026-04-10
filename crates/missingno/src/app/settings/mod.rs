@@ -1,3 +1,6 @@
+pub(crate) mod update;
+pub(crate) mod view;
+
 use std::{collections::HashMap, fmt, fs, path::PathBuf};
 
 use missingno_gb::ppu::types::palette::PaletteChoice;

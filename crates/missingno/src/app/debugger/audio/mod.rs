@@ -2,7 +2,7 @@ use iced::widget::{column, pane_grid, row, rule, slider, text};
 
 use crate::app::{
     Message,
-    core::sizes::{l, s},
+    ui::sizes::{l, s},
     debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
 };
 use missingno_gb::audio::Audio;

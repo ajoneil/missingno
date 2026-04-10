@@ -5,7 +5,7 @@ use iced::{
 
 use crate::app::{
     Message,
-    core::sizes::{m, s, xs},
+    ui::sizes::{m, s, xs},
 };
 use missingno_gb::GameBoy;
 

@@ -6,7 +6,7 @@ use iced::{
 
 use crate::app::{
     Message,
-    core::sizes::m,
+    ui::sizes::m,
     debugger::{
         panes::{DebuggerPane, pane, title_bar},
         ppu::tile_atlas::tile_block_atlas,

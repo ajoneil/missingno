@@ -8,7 +8,7 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 
 use crate::app::{
     self,
-    core::{
+    ui::{
         buttons,
         icons::{self, Icon},
         sizes::{l, m, s},

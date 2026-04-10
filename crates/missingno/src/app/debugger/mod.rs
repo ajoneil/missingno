@@ -4,7 +4,7 @@ use iced::{Element, Subscription, Task, time, widget::container};
 
 use crate::app::{
     self,
-    core::sizes::m,
+    ui::sizes::m,
     emulator::Emulator,
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };

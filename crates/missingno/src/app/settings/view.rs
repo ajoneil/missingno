@@ -9,7 +9,7 @@ use iced::{
 
 use crate::app::{
     self, controls,
-    core::{
+    ui::{
         buttons, horizontal_rule,
         icons::{self, Icon},
         sizes::{l, m, s},
@@ -69,8 +69,8 @@ const MUTED: Color = Color::from_rgb(
     0xc8 as f32 / 255.0,
 );
 
-pub fn view<'a>(
-    settings: &'a super::settings::Settings,
+pub(in crate::app) fn view<'a>(
+    settings: &'a super::Settings,
     section: Section,
     listening_for: Option<ListeningFor>,
     detected_cartridge_devices: &'a [crate::cartridge_rw::DetectedDevice],
@@ -147,7 +147,7 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
 }
 
 fn controls_section(
-    settings: &super::settings::Settings,
+    settings: &super::Settings,
     listening_for: Option<ListeningFor>,
 ) -> Element<'_, app::Message> {
     let keyboard_col = binding_column(
@@ -250,7 +250,7 @@ fn binding_row(
     row![label, binding_btn].spacing(s()).align_y(Center).into()
 }
 
-fn display_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {
+fn display_section(settings: &super::Settings) -> Element<'_, app::Message> {
     use missingno_gb::ppu::types::palette::{PaletteChoice, PaletteIndex};
 
     let mut content = column![
@@ -314,7 +314,7 @@ fn color_swatch(color: rgb::RGB8) -> Element<'static, app::Message> {
         .into()
 }
 
-fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Message> {
+fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
     let version = env!("CARGO_PKG_VERSION").trim_end_matches(".0");
 
     let about = row![
@@ -409,7 +409,7 @@ fn general_section(settings: &super::settings::Settings) -> Element<'_, app::Mes
 }
 
 fn hardware_section<'a>(
-    settings: &'a super::settings::Settings,
+    settings: &'a super::Settings,
     detected_devices: &'a [crate::cartridge_rw::DetectedDevice],
 ) -> Element<'a, app::Message> {
     let mut content = column![

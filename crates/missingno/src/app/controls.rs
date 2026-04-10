@@ -92,7 +92,7 @@ pub fn escape_cancel_handler(
         Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
             if key == Key::Named(key::Named::Escape) {
                 Some(app::Message::Settings(
-                    super::settings_view::Message::CancelCapture,
+                    super::settings::view::Message::CancelCapture,
                 ))
             } else {
                 None
@@ -111,17 +111,17 @@ pub fn capture_event_handler(
         Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
             if key == Key::Named(key::Named::Escape) {
                 Some(app::Message::Settings(
-                    super::settings_view::Message::CancelCapture,
+                    super::settings::view::Message::CancelCapture,
                 ))
             } else if key == Key::Named(key::Named::Backspace)
                 || key == Key::Named(key::Named::Delete)
             {
                 Some(app::Message::Settings(
-                    super::settings_view::Message::ClearBinding,
+                    super::settings::view::Message::ClearBinding,
                 ))
             } else if let Some(key_str) = key_to_string(&key) {
                 Some(app::Message::Settings(
-                    super::settings_view::Message::CaptureBinding(key_str),
+                    super::settings::view::Message::CaptureBinding(key_str),
                 ))
             } else {
                 None
@@ -251,7 +251,7 @@ fn gamepad_capture_stream() -> impl iced::futures::Stream<Item = app::Message> {
                 if let gilrs::EventType::ButtonPressed(button, ..) = event {
                     if let Some(s) = gamepad_button_to_string(button) {
                         let _ = sender.try_send(app::Message::Settings(
-                            super::settings_view::Message::CaptureBinding(s),
+                            super::settings::view::Message::CaptureBinding(s),
                         ));
                     }
                 }

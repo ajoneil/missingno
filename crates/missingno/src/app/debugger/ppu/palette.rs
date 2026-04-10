@@ -6,7 +6,7 @@ use iced::{
 
 use crate::app::{
     Message,
-    core::sizes::{m, s, xs},
+    ui::sizes::{m, s, xs},
     screen::iced_color,
 };
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};

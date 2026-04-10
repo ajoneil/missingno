@@ -8,7 +8,7 @@ use iced::{
 
 use crate::app::{
     self,
-    core::{
+    ui::{
         buttons, fonts, horizontal_rule,
         icons::{self, Icon},
         sizes::{l, m, s},

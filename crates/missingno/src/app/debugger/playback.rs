@@ -5,7 +5,7 @@ use iced::{
 
 use crate::app::{
     self,
-    core::{
+    ui::{
         buttons,
         icons::{self, Icon},
         sizes::{m, s},

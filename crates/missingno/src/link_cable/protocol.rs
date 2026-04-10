@@ -19,6 +19,7 @@ const SYNC2: u8 = 105;
 const SYNC3: u8 = 106;
 const STATUS: u8 = 108;
 
+#[allow(dead_code)]
 impl Packet {
     pub const SIZE: usize = 8;
 

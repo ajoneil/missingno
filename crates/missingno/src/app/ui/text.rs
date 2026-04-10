@@ -6,7 +6,7 @@ use iced::{
 };
 
 use crate::app;
-use crate::app::core::fonts;
+use crate::app::ui::fonts;
 
 /// Minimum text size — nothing in the app should go below this.
 const MIN_SIZE: f32 = 14.0;
@@ -83,7 +83,7 @@ pub fn link_text<'a>(
 
 /// Size constants for layout spacing (not text).
 pub mod sizes {
-    use crate::app::core::sizes;
+    use crate::app::ui::sizes;
 
     pub fn m() -> f32 {
         sizes::m()
