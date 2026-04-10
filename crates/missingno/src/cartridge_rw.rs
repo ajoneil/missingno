@@ -23,6 +23,9 @@ const DMG_CART_READ: u8 = 0xB1;
 const DMG_CART_WRITE: u8 = 0xB2;
 const DMG_MBC_RESET: u8 = 0xB4;
 
+// Flash commands
+const CART_WRITE_FLASH_CMD: u8 = 0xD4;
+
 // Power commands
 const CART_PWR_ON: u8 = 0xF2;
 const CART_PWR_OFF: u8 = 0xF3;
@@ -100,6 +103,9 @@ pub struct CartridgeHeader {
     pub has_battery: bool,
     pub sgb_flag: bool,
     pub header_checksum_valid: bool,
+    /// Flash chip ID bytes, if a flash chip was detected.
+    /// Manufacturer ID at index 0, device ID at index 2.
+    pub flash_id: Option<Vec<u8>>,
 }
 
 /// Cheap check: list port names of connected GBxCart RW devices without opening them.
@@ -309,10 +315,17 @@ fn read_cartridge_header(
         header[0x147], header[0x148], header[0x149]
     );
 
-    let result = parse_cartridge_header(&header);
-    match &result {
-        Some(cart) => eprintln!("[cartridge_rw] parsed: \"{}\" ({})", cart.title, cart.mapper_name),
-        None => eprintln!("[cartridge_rw] header parse failed (logo mismatch or invalid)"),
+    let mut result = parse_cartridge_header(&header);
+
+    // Probe for flash chip while the cart is still powered and in DMG mode
+    if let Some(cart) = &mut result {
+        cart.flash_id = detect_flash(port, fw_ver);
+        eprintln!(
+            "[cartridge_rw] parsed: \"{}\" ({}) flashable={}",
+            cart.title, cart.mapper_name, cart.flashable()
+        );
+    } else {
+        eprintln!("[cartridge_rw] header parse failed (logo mismatch or invalid)");
     }
     result
 }
@@ -422,6 +435,7 @@ fn parse_cartridge_header(header: &[u8]) -> Option<CartridgeHeader> {
         has_battery,
         sgb_flag,
         header_checksum_valid,
+        flash_id: None, // Set by detect_flash() after header read
     })
 }
 
@@ -438,6 +452,94 @@ fn mapper_name(byte: u8) -> &'static str {
         0xff => "HuC-1",
         _ => "Unknown",
     }
+}
+
+// ── Flash detection ──────────────────────────────────────────────────
+
+/// Probe for a flash chip using the standard AMD/JEDEC ID command sequence.
+///
+/// Reads 8 bytes from address 0, sends the flash ID command via the flash write
+/// pin (WR), reads again. If the data changed, a flash chip responded — the
+/// cartridge is flashable. Resets the flash chip back to read mode afterward.
+///
+/// This is safe on commercial cartridges: the writes target addresses (0x0AAA,
+/// 0x0555) that MBC chips don't decode, and use the flash write pin which has
+/// no effect on standard ROM chips.
+/// Returns the flash ID bytes if a flash chip is detected, or None for a standard ROM cart.
+fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<Vec<u8>> {
+    // Set the flash write-enable pin to WR (pin mode 1)
+    set_variable(port, fw_ver, 1, 0x04, 1)?;
+
+    // Read original ROM data at address 0
+    let original = read_rom_bytes(port, fw_ver, 0, 8)?;
+
+    // Send AMD flash ID command sequence via CART_WRITE_FLASH_CMD
+    let id_cmd: &[(u32, u16)] = &[
+        (0x0AAA, 0x00AA),
+        (0x0555, 0x0055),
+        (0x0AAA, 0x0090),
+    ];
+    cart_write_flash(port, id_cmd)?;
+
+    // Read back — if flash chip present, this returns the chip ID instead of ROM data
+    let probe = read_rom_bytes(port, fw_ver, 0, 8)?;
+
+    // Reset flash back to read mode
+    let reset_cmd: &[(u32, u16)] = &[(0x0000, 0x00F0)];
+    let _ = cart_write_flash(port, reset_cmd);
+
+    if original != probe {
+        eprintln!(
+            "[cartridge_rw] flash detected: ROM={:02x?} ID={:02x?}",
+            &original[..4],
+            &probe[..4]
+        );
+        Some(probe)
+    } else {
+        None
+    }
+}
+
+/// Read a small number of bytes from ROM at a given address.
+fn read_rom_bytes(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+    address: u32,
+    count: u16,
+) -> Option<Vec<u8>> {
+    set_variable(port, fw_ver, 2, 0x00, count as u32)?; // TRANSFER_SIZE
+    set_variable(port, fw_ver, 4, 0x00, address)?; // ADDRESS
+    set_variable(port, fw_ver, 1, 0x01, 1)?; // DMG_ACCESS_MODE = ROM_READ
+    write_cmd(port, &[DMG_CART_READ])?;
+    let mut buf = vec![0u8; count as usize];
+    port.read_exact(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// Send flash command sequence via CART_WRITE_FLASH_CMD (0xD4).
+///
+/// Each command is (address, value) where value is u16 (big-endian).
+/// This uses the flash write pin rather than the normal cart bus.
+fn cart_write_flash(
+    port: &mut Box<dyn serialport::SerialPort>,
+    commands: &[(u32, u16)],
+) -> Option<()> {
+    let num = commands.len() as u8;
+    let mut buf = Vec::with_capacity(3 + num as usize * 6);
+    buf.push(CART_WRITE_FLASH_CMD);
+    buf.push(0x00); // not a flashcart write (just probing)
+    buf.push(num);
+    for &(addr, val) in commands {
+        buf.extend_from_slice(&addr.to_be_bytes());
+        buf.extend_from_slice(&val.to_be_bytes());
+    }
+    write_cmd(port, &buf)?;
+    // Read ACK
+    let ack = read_byte(port)?;
+    if ack != 0x01 {
+        return None;
+    }
+    Some(())
 }
 
 // ── Bank switching ───────────────────────────────────────────────────
@@ -676,6 +778,10 @@ pub fn format_size(bytes: u32) -> String {
 }
 
 impl CartridgeHeader {
+    pub fn flashable(&self) -> bool {
+        self.flash_id.is_some()
+    }
+
     pub fn rom_size_display(&self) -> String {
         format_size(self.rom_size)
     }
