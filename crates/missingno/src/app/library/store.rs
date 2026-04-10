@@ -241,7 +241,7 @@ impl GameStore {
                         })
                     }
                     activity::ActivityKind::Import => {
-                        let import: activity::ImportFile = ron::from_str(&data).ok()?;
+                        let import: activity::ImportSave = ron::from_str(&data).ok()?;
                         let ts_str = r.filename.strip_suffix(".import")?;
                         let timestamp = activity::parse_filename_timestamp(ts_str)?;
                         Some(RawSessionSummary {
@@ -253,6 +253,21 @@ impl GameStore {
                             last_save_time: None,
                             screenshots: Vec::new(),
                             size_bytes: Some(import.size_bytes),
+                        })
+                    }
+                    activity::ActivityKind::CartridgeWrite => {
+                        let write: activity::CartridgeWrite = ron::from_str(&data).ok()?;
+                        let ts_str = r.filename.strip_suffix(".cart_write")?;
+                        let timestamp = activity::parse_filename_timestamp(ts_str)?;
+                        Some(RawSessionSummary {
+                            filename: r.filename,
+                            kind: activity::ActivityKind::CartridgeWrite,
+                            start: timestamp,
+                            end: None,
+                            save_count: 0,
+                            last_save_time: None,
+                            screenshots: Vec::new(),
+                            size_bytes: Some(write.size_bytes),
                         })
                     }
                 }

@@ -129,6 +129,8 @@ pub(crate) enum FlashState {
         rom_size: u32,
         cart_title: String,
         flash_size: u32,
+        has_save: bool,
+        write_save: bool,
     },
     /// Flash in progress.
     InProgress(cartridge_rw::FlashProgress),
@@ -264,12 +266,14 @@ enum Message {
     CartridgeRwPoll,
     CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
     CartridgeRwDumpProgress(cartridge_rw::DumpProgress),
-    CartridgeRwDumpComplete(Result<Vec<u8>, String>),
+    CartridgeRwDumpComplete(Result<(Vec<u8>, Option<Vec<u8>>), String>),
     FlashCartridge(String), // SHA1 of game to flash
     FlashCartridgeConfirm,
     FlashCartridgeCancel,
+    FlashCartridgeToggleSave(bool),
     CartridgeRwFlashProgress(cartridge_rw::FlashProgress),
-    CartridgeRwFlashComplete(Result<(), String>),
+    /// Result contains the SRAM data that was written, if any.
+    CartridgeRwFlashComplete(Result<Option<Vec<u8>>, String>),
 
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
@@ -397,7 +401,8 @@ impl App {
             | Message::ScanComplete(_) | Message::EnrichComplete(_) | Message::OpenUrl(_)
             | Message::CartridgeRwDumpProgress(_) | Message::CartridgeRwDumpComplete(_)
             | Message::FlashCartridge(_) | Message::FlashCartridgeConfirm
-            | Message::FlashCartridgeCancel | Message::CartridgeRwFlashProgress(_)
+            | Message::FlashCartridgeCancel | Message::FlashCartridgeToggleSave(_)
+            | Message::CartridgeRwFlashProgress(_)
             | Message::CartridgeRwFlashComplete(_)
                 => return library::update::handle(self, message),
 

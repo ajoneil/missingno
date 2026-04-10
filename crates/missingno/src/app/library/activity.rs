@@ -271,11 +271,39 @@ struct LegacySessionSave {
     sram: Vec<u8>,
 }
 
-/// An imported save file.
+/// An imported save.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ImportFile {
+pub struct ImportSave {
     pub size_bytes: u32,
     pub sram: Vec<u8>,
+    /// Where the save data came from.
+    #[serde(default)]
+    pub source: ImportSource,
+}
+
+/// Where an imported save originated.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub enum ImportSource {
+    /// Imported from a .sav file on disk.
+    #[default]
+    File,
+    /// Read from a physical cartridge.
+    Cartridge {
+        /// SHA1 hash of the SRAM for sync comparison.
+        sram_hash: String,
+    },
+}
+
+/// Records that save data was written to a physical cartridge.
+///
+/// The SRAM data itself is not stored here — it already exists in the
+/// library as a save event or import. Only the hash is stored for
+/// sync comparison.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CartridgeWrite {
+    pub size_bytes: u32,
+    /// SHA1 hash of the SRAM that was written, for sync comparison.
+    pub sram_hash: String,
 }
 
 /// Lightweight reference to an activity file, parsed from the filename.
@@ -289,6 +317,7 @@ pub struct ActivityRef {
 pub enum ActivityKind {
     Session,
     Import,
+    CartridgeWrite,
 }
 
 /// Aggregate stats derived from all activity files.
@@ -329,6 +358,8 @@ pub fn list_activity(game_dir: &Path) -> Vec<ActivityRef> {
                 ActivityKind::Session
             } else if name.ends_with(".import") {
                 ActivityKind::Import
+            } else if name.ends_with(".cart_write") {
+                ActivityKind::CartridgeWrite
             } else {
                 return None;
             };
@@ -361,8 +392,11 @@ pub fn load_sram_from(game_dir: &Path, filename: &str) -> Option<Vec<u8>> {
         let session = read_session_from_str(&data)?;
         session.last_sram().map(|s| s.to_vec())
     } else if filename.ends_with(".import") {
-        let import: ImportFile = ron::from_str(&data).ok()?;
+        let import: ImportSave = ron::from_str(&data).ok()?;
         Some(import.sram)
+    } else if filename.ends_with(".cart_write") {
+        // Cart write files don't store SRAM data — only the hash
+        None
     } else {
         None
     }
@@ -409,9 +443,10 @@ pub fn write_import(game_dir: &Path, sram: &[u8]) -> String {
     let filename = format!("{}.import", timestamp_prefix(&now));
     let path = dir.join(&filename);
 
-    let import = ImportFile {
+    let import = ImportSave {
         size_bytes: sram.len() as u32,
         sram: sram.to_vec(),
+        source: ImportSource::File,
     };
 
     if let Ok(ron_data) = ron::ser::to_string_pretty(&import, ron::ser::PrettyConfig::default()) {
@@ -419,6 +454,97 @@ pub fn write_import(game_dir: &Path, sram: &[u8]) -> String {
     }
 
     filename
+}
+
+/// Import save data read from a physical cartridge.
+///
+/// Like `write_import` but records the source as `Cartridge` with a hash
+/// for sync comparison.
+pub fn write_cartridge_import(game_dir: &Path, sram: &[u8]) -> String {
+    let dir = activity_dir(game_dir);
+    let _ = fs::create_dir_all(&dir);
+
+    let now = Timestamp::now();
+    let filename = format!("{}.import", timestamp_prefix(&now));
+    let path = dir.join(&filename);
+
+    let import = ImportSave {
+        size_bytes: sram.len() as u32,
+        sram: sram.to_vec(),
+        source: ImportSource::Cartridge {
+            sram_hash: hash_sram(sram),
+        },
+    };
+
+    if let Ok(ron_data) = ron::ser::to_string_pretty(&import, ron::ser::PrettyConfig::default()) {
+        write_compressed(&path, &ron_data);
+    }
+
+    filename
+}
+
+/// Record that save data was written to a physical cartridge.
+///
+/// Only stores the hash — the SRAM data itself is already in the library.
+pub fn write_cart_write(game_dir: &Path, sram: &[u8]) -> String {
+    let dir = activity_dir(game_dir);
+    let _ = fs::create_dir_all(&dir);
+
+    let now = Timestamp::now();
+    let filename = format!("{}.cart_write", timestamp_prefix(&now));
+    let path = dir.join(&filename);
+
+    let write = CartridgeWrite {
+        size_bytes: sram.len() as u32,
+        sram_hash: hash_sram(sram),
+    };
+
+    if let Ok(ron_data) = ron::ser::to_string_pretty(&write, ron::ser::PrettyConfig::default()) {
+        write_compressed(&path, &ron_data);
+    }
+
+    filename
+}
+
+/// Compute a SHA1 hash of SRAM data.
+fn hash_sram(sram: &[u8]) -> String {
+    use sha1::Digest;
+    sha1::Sha1::new()
+        .chain_update(sram)
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
+}
+
+/// Find the SRAM hash from the most recent cartridge-related activity.
+///
+/// Looks for the latest `.cart_write` or `.import` with `Cartridge` source.
+/// Returns the hash and timestamp for sync comparison.
+pub fn last_cartridge_sram_hash(game_dir: &Path) -> Option<(String, Timestamp)> {
+    let refs = list_activity(game_dir);
+    for r in &refs {
+        match r.kind {
+            ActivityKind::CartridgeWrite => {
+                let data = read_compressed(&activity_path(game_dir, &r.filename))?;
+                let write: CartridgeWrite = ron::from_str(&data).ok()?;
+                let ts_str = r.filename.strip_suffix(".cart_write")?;
+                let timestamp = parse_filename_timestamp(ts_str)?;
+                return Some((write.sram_hash, timestamp));
+            }
+            ActivityKind::Import => {
+                let data = read_compressed(&activity_path(game_dir, &r.filename))?;
+                let import: ImportSave = ron::from_str(&data).ok()?;
+                if let ImportSource::Cartridge { sram_hash } = import.source {
+                    let ts_str = r.filename.strip_suffix(".import")?;
+                    let timestamp = parse_filename_timestamp(ts_str)?;
+                    return Some((sram_hash, timestamp));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Import a legacy .sav file found next to a ROM.
@@ -469,6 +595,9 @@ pub fn compute_stats(game_dir: &Path) -> ActivityStats {
             }
             ActivityKind::Import => {
                 save_count += 1;
+            }
+            ActivityKind::CartridgeWrite => {
+                // Not a new save — just records that an existing save was written to a cartridge
             }
         }
     }

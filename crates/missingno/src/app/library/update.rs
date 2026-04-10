@@ -46,9 +46,22 @@ pub(in crate::app) fn handle_library_message(
 
                 let dump_task = Task::perform(
                     smol::unblock(move || {
-                        cartridge_rw::dump_rom(&port_name, &header, &mut |p| {
+                        let rom = cartridge_rw::dump_rom(&port_name, &header, &mut |p| {
                             let _ = tx.send_blocking(p);
-                        })
+                        })?;
+                        // Also read SRAM if the cartridge has battery-backed save
+                        let sram = if header.has_battery && header.ram_size > 0 {
+                            match cartridge_rw::read_sram(&port_name, &header) {
+                                Ok(data) => Some(data),
+                                Err(e) => {
+                                    eprintln!("[cartridge_rw] SRAM read failed (non-fatal): {e}");
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        Ok((rom, sram))
                     }),
                     app::Message::CartridgeRwDumpComplete,
                 );
@@ -535,7 +548,7 @@ pub(in crate::app) fn handle(
         app::Message::CartridgeRwDumpComplete(result) => {
             app.cartridge_dump_progress = None;
             match result {
-                Ok(rom) => {
+                Ok((rom, sram)) => {
                     let header_title = Cartridge::peek_title(&rom);
                     let title = if header_title.is_empty() {
                         "Unknown".to_string()
@@ -566,6 +579,11 @@ pub(in crate::app) fn handle(
                     };
                     super::save_entry(&game_dir, &entry);
 
+                    // Import SRAM if we read it from the cartridge
+                    if let Some(sram) = &sram {
+                        super::activity::write_cartridge_import(&game_dir, sram);
+                    }
+
                     // Refresh the library view
                     app.store.rebuild_index();
 
@@ -592,6 +610,12 @@ pub(in crate::app) fn handle(
 
             if let (Some(entry), Some(cart)) = (entry, cart) {
                 if let Some(flash) = &cart.flash {
+                    // Check if the game has save data in the library
+                    let has_save = entry.rom_paths.first()
+                        .and_then(|_| super::find_by_sha1(&sha1))
+                        .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
+                        .is_some();
+
                     app.flash_state = Some(FlashState::Confirming {
                         sha1: sha1.clone(),
                         game_title: entry.display_title(),
@@ -601,6 +625,8 @@ pub(in crate::app) fn handle(
                             .unwrap_or(0),
                         cart_title: cart.title.clone(),
                         flash_size: flash.size,
+                        has_save,
+                        write_save: has_save, // Default on if save exists
                     });
                     app.screen = Screen::FlashCartridge;
                 }
@@ -614,8 +640,14 @@ pub(in crate::app) fn handle(
             }
             app.screen = Screen::Library;
         }
+        app::Message::FlashCartridgeToggleSave(enabled) => {
+            if let Some(FlashState::Confirming { write_save, .. }) = &mut app.flash_state {
+                *write_save = enabled;
+            }
+        }
         app::Message::FlashCartridgeConfirm => {
-            if let Some(FlashState::Confirming { sha1, .. }) = &app.flash_state {
+            if let Some(FlashState::Confirming { sha1, write_save, .. }) = &app.flash_state {
+                let write_save = *write_save;
                 // Find the ROM file and cartridge
                 let entry = app.store.entry(sha1).cloned();
                 let device = app.detected_cartridge_devices.iter()
@@ -640,6 +672,15 @@ pub(in crate::app) fn handle(
                         }
                     };
 
+                    // Load save data if we need to write it after flashing
+                    let sram_data = if write_save {
+                        super::find_by_sha1(sha1)
+                            .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
+                    } else {
+                        None
+                    };
+                    let cart_header = device.cartridge.clone().unwrap();
+
                     app.flash_state = Some(FlashState::InProgress(
                         cartridge_rw::FlashProgress {
                             phase: cartridge_rw::FlashPhase::Erasing,
@@ -656,11 +697,20 @@ pub(in crate::app) fn handle(
                         app::Message::CartridgeRwFlashProgress,
                     );
 
+                    let port_name_for_sram = port_name.clone();
                     let flash_task = Task::perform(
                         smol::unblock(move || {
                             cartridge_rw::flash_rom(&port_name, &flash, &rom_data, &mut |p| {
                                 let _ = tx.send_blocking(p);
-                            })
+                            })?;
+                            // Write save data after successful flash
+                            if let Some(sram) = sram_data {
+                                eprintln!("[cartridge_rw] writing save data to cartridge...");
+                                cartridge_rw::write_sram(&port_name_for_sram, &cart_header, &sram)?;
+                                Ok(Some(sram))
+                            } else {
+                                Ok(None)
+                            }
                         }),
                         app::Message::CartridgeRwFlashComplete,
                     );
@@ -674,7 +724,15 @@ pub(in crate::app) fn handle(
         }
         app::Message::CartridgeRwFlashComplete(result) => {
             match result {
-                Ok(()) => {
+                Ok(written_sram) => {
+                    // Record cartridge sync if save was written
+                    if let Some(sram) = &written_sram {
+                        if let Some(sha1) = &app.viewing_sha1 {
+                            if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
+                                super::activity::write_cart_write(&game_dir, sram);
+                            }
+                        }
+                    }
                     app.flash_state = Some(FlashState::Complete);
                     // Force full re-detection to read the new cartridge header
                     app.detected_cartridge_devices.clear();

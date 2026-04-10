@@ -337,6 +337,7 @@ fn activity_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, a
     match entry.kind {
         ActivityKind::Session => session_card(entry, is_hovered),
         ActivityKind::Import => import_card(entry, is_hovered),
+        ActivityKind::CartridgeWrite => cart_write_card(entry),
     }
 }
 
@@ -502,6 +503,36 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
             .spacing(s()),
         );
     }
+
+    container(content)
+        .width(Fill)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weak.color.into()),
+                border: iced::Border::default().rounded(6),
+                ..Default::default()
+            }
+        })
+        .padding(m())
+        .into()
+}
+
+fn cart_write_card(entry: &SessionSummary) -> Element<'static, app::Message> {
+    let time = activity::format_local(&entry.start);
+    let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
+
+    let content = row![
+        icons::m(Icon::CircuitBoard),
+        column![
+            text("Save written to cartridge").font(fonts::bold()),
+            app_text::detail(format!("{time} · {size_kb} KB")).color(MUTED),
+        ]
+        .spacing(2)
+        .width(Fill),
+    ]
+    .spacing(s())
+    .align_y(Center);
 
     container(content)
         .width(Fill)

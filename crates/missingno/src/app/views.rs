@@ -287,8 +287,56 @@ impl App {
                 rom_size,
                 cart_title,
                 flash_size,
+                has_save,
+                write_save,
                 ..
             }) => {
+                let cart_display = if cart_title.is_empty() {
+                    "Empty".to_string()
+                } else {
+                    cart_title.clone()
+                };
+
+                let mut details = column![
+                    text::label("ROM to write"),
+                    iced_text(format!(
+                        "{game_title} ({})",
+                        cartridge_rw::format_size(*rom_size)
+                    )),
+                    iced::widget::Space::new().height(s()),
+                    text::label("Currently on cartridge"),
+                    iced_text(format!(
+                        "{cart_display} (flash chip: {})",
+                        cartridge_rw::format_size(*flash_size)
+                    )),
+                ]
+                .spacing(s());
+
+                if *has_save {
+                    details = details.push(iced::widget::Space::new().height(s()));
+                    details = details.push(
+                        iced::widget::toggler(*write_save)
+                            .label("Also write latest save to cartridge")
+                            .on_toggle(Message::FlashCartridgeToggleSave)
+                            .size(m()),
+                    );
+                }
+
+                details = details.push(iced::widget::Space::new().height(s()));
+                details = details.push(
+                    iced_text("This will erase all data on the cartridge.").color(MUTED),
+                );
+                details = details.push(iced::widget::Space::new().height(s()));
+                details = details.push(
+                    row![
+                        buttons::standard("Cancel")
+                            .on_press(Message::FlashCartridgeCancel),
+                        buttons::danger("Erase and Write")
+                            .on_press(Message::FlashCartridgeConfirm),
+                    ]
+                    .spacing(s()),
+                );
+
                 column![
                     row![
                         buttons::subtle(icons::m(Icon::Back))
@@ -299,34 +347,7 @@ impl App {
                     .padding(m())
                     .align_y(Center),
                     horizontal_rule(),
-                    container(
-                        column![
-                            text::label("ROM to write"),
-                            iced_text(format!(
-                                "{game_title} ({})",
-                                cartridge_rw::format_size(*rom_size)
-                            )),
-                            iced::widget::Space::new().height(s()),
-                            text::label("Currently on cartridge"),
-                            iced_text(format!(
-                                "{cart_title} (flash chip: {})",
-                                cartridge_rw::format_size(*flash_size)
-                            )),
-                            iced::widget::Space::new().height(s()),
-                            iced_text("This will erase all data on the cartridge.").color(MUTED),
-                            iced::widget::Space::new().height(s()),
-                            row![
-                                buttons::standard("Cancel")
-                                    .on_press(Message::FlashCartridgeCancel),
-                                buttons::danger("Erase and Write")
-                                    .on_press(Message::FlashCartridgeConfirm),
-                            ]
-                            .spacing(s()),
-                        ]
-                        .spacing(s())
-                        .max_width(600),
-                    )
-                    .padding(l()),
+                    container(details.max_width(600)).padding(l()),
                 ]
                 .into()
             }
