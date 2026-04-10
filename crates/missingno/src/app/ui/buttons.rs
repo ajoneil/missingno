@@ -9,49 +9,14 @@ use iced::{
 };
 
 use super::icons;
+use super::palette::{PURPLE, RED, TEXT};
+use super::sizes::border_s;
 use crate::app::Message;
 
-const PURPLE: Color = Color::from_rgb(
-    0xcb as f32 / 255.0,
-    0xa6 as f32 / 255.0,
-    0xf7 as f32 / 255.0,
-);
-const PURPLE_DIM: Color = Color::from_rgba(
-    0xcb as f32 / 255.0,
-    0xa6 as f32 / 255.0,
-    0xf7 as f32 / 255.0,
-    0.2,
-);
-const PURPLE_HOVER: Color = Color::from_rgba(
-    0xcb as f32 / 255.0,
-    0xa6 as f32 / 255.0,
-    0xf7 as f32 / 255.0,
-    0.3,
-);
-const TEXT: Color = Color::from_rgb(
-    0xcd as f32 / 255.0,
-    0xd6 as f32 / 255.0,
-    0xf4 as f32 / 255.0,
-);
-const RED: Color = Color::from_rgb(
-    0xf3 as f32 / 255.0,
-    0x8b as f32 / 255.0,
-    0xa8 as f32 / 255.0,
-);
-const RED_DIM: Color = Color::from_rgba(
-    0xf3 as f32 / 255.0,
-    0x8b as f32 / 255.0,
-    0xa8 as f32 / 255.0,
-    0.15,
-);
-const RED_HOVER: Color = Color::from_rgba(
-    0xf3 as f32 / 255.0,
-    0x8b as f32 / 255.0,
-    0xa8 as f32 / 255.0,
-    0.25,
-);
-
-const BORDER_RADIUS: f32 = 4.0;
+const PURPLE_DIM: Color = Color::from_rgba(PURPLE.r, PURPLE.g, PURPLE.b, 0.2);
+const PURPLE_HOVER: Color = Color::from_rgba(PURPLE.r, PURPLE.g, PURPLE.b, 0.3);
+const RED_DIM: Color = Color::from_rgba(RED.r, RED.g, RED.b, 0.15);
+const RED_HOVER: Color = Color::from_rgba(RED.r, RED.g, RED.b, 0.25);
 
 /// Main action. Solid purple background, dark text.
 /// One per context at most.
@@ -63,7 +28,7 @@ fn primary_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
         background: Some(PURPLE.scale_alpha(0.6).into()),
         text_color: Color::WHITE,
-        border: Border::default().rounded(BORDER_RADIUS),
+        border: Border::default().rounded(border_s()),
         ..Style::default()
     };
 
@@ -86,7 +51,7 @@ fn standard_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
         background: Some(PURPLE_DIM.into()),
         text_color: TEXT,
-        border: Border::default().rounded(BORDER_RADIUS),
+        border: Border::default().rounded(border_s()),
         ..Style::default()
     };
 
@@ -114,7 +79,7 @@ fn subtle_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
         background: None,
         text_color: TEXT,
-        border: Border::default().rounded(BORDER_RADIUS),
+        border: Border::default().rounded(border_s()),
         ..Style::default()
     };
 
@@ -140,7 +105,7 @@ fn invisible_style(_theme: &Theme, _status: Status) -> Style {
     Style {
         background: None,
         text_color: Color::TRANSPARENT,
-        border: Border::default().rounded(BORDER_RADIUS),
+        border: Border::default().rounded(border_s()),
         ..Style::default()
     }
 }
@@ -170,7 +135,7 @@ fn danger_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
         background: Some(RED_DIM.into()),
         text_color: RED,
-        border: Border::default().rounded(BORDER_RADIUS),
+        border: Border::default().rounded(border_s()),
         ..Style::default()
     };
 

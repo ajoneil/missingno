@@ -1,6 +1,6 @@
 use iced::{
     Alignment::Center,
-    Color, Element,
+    Element,
     Length::Fill,
     widget::{button, column, container, image, row, scrollable, text},
 };
@@ -9,20 +9,14 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 use crate::app::{
     self,
     ui::{
-        buttons,
+        buttons, containers,
         icons::{self, Icon},
-        sizes::{l, m, s},
+        palette::MUTED,
+        sizes::{border_s, l, m, s},
         text as app_text,
     },
     library::activity::{self, DisplayMode, FrameCapture},
 };
-
-// Catppuccin Mocha subtext0
-const MUTED: Color = Color::from_rgb(
-    0xa6 as f32 / 255.0,
-    0xad as f32 / 255.0,
-    0xc8 as f32 / 255.0,
-);
 
 /// State for the screenshot gallery view.
 #[derive(Clone, Debug)]
@@ -253,13 +247,7 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
 
     container(scrollable(col.padding(m())).height(Fill))
         .width(250)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                ..Default::default()
-            }
-        })
+        .style(containers::sidebar)
         .into()
 }
 
@@ -290,7 +278,7 @@ fn thumbnail_strip(state: &GalleryState) -> Element<'_, app::Message> {
                 let palette = theme.extended_palette();
                 let mut style = button::Style {
                     background: Some(palette.background.weak.color.into()),
-                    border: iced::Border::default().rounded(4),
+                    border: iced::Border::default().rounded(border_s()),
                     ..Default::default()
                 };
                 if is_selected {

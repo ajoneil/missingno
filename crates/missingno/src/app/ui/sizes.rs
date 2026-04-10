@@ -17,3 +17,20 @@ pub fn l() -> f32 {
 pub fn xl() -> f32 {
     m() * 3.0
 }
+
+// Border radii — use these instead of magic numbers.
+
+/// Small elements: buttons, inline badges, overlays.
+pub fn border_s() -> f32 {
+    4.0
+}
+
+/// Cards, containers, activity entries.
+pub fn border_m() -> f32 {
+    8.0
+}
+
+/// Large panels, modals, pill-shaped elements.
+pub fn border_l() -> f32 {
+    24.0
+}

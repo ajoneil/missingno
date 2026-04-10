@@ -8,24 +8,16 @@ use iced::{
 use crate::app::{
     self,
     ui::{
-        buttons,
+        buttons, containers, fonts,
         icons::{self, Icon},
-        sizes::{l, m, s},
+        palette::MUTED,
+        sizes::{border_l, border_m, l, m, s},
         text as app_text,
     },
     load,
 };
 
 use crate::app::library;
-
-// Catppuccin Mocha subtext0
-const MUTED: Color = Color::from_rgb(
-    0xa6 as f32 / 255.0,
-    0xad as f32 / 255.0,
-    0xc8 as f32 / 255.0,
-);
-
-use crate::app::ui::fonts;
 
 /// Deterministic accent colour from a title string, using Catppuccin Mocha accents
 /// darkened to work as backgrounds with white text.
@@ -276,7 +268,7 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
                     button::Style {
                         background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
                         text_color: Color::WHITE,
-                        border: iced::Border::default().rounded(24),
+                        border: iced::Border::default().rounded(border_l()),
                         ..Default::default()
                     }
                 }),
@@ -328,14 +320,7 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
     let card = container(card_row)
         .width(Fill)
         .clip(true)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(8),
-                ..Default::default()
-            }
-        });
+        .style(containers::card);
 
     mouse_area(card)
         .on_press(Message::SelectGame(sha1.clone()).into())
@@ -363,7 +348,7 @@ fn cartridge_game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Me
             .padding(s())
             .style(|_: &iced::Theme| container::Style {
                 background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
-                border: iced::Border::default().rounded(8),
+                border: iced::Border::default().rounded(border_m()),
                 ..Default::default()
             }),
         )
@@ -458,14 +443,7 @@ fn unmatched_cartridge_card<'a>(
     container(card_row)
         .width(Fill)
         .clip(true)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(8),
-                ..Default::default()
-            }
-        })
+        .style(containers::card)
         .into()
 }
 

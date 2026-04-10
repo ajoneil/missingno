@@ -10,7 +10,8 @@ use iced::{
 use super::ui::{
     buttons, fonts, horizontal_rule,
     icons::{self, Icon},
-    sizes::{l, m, s},
+    palette::MUTED,
+    sizes::{border_m, l, m, s},
     text,
 };
 use super::{
@@ -273,11 +274,6 @@ impl App {
     }
 
     fn cartridge_actions_view(&self) -> Element<'_, Message> {
-        const MUTED: iced::Color = iced::Color::from_rgb(
-            0xa6 as f32 / 255.0,
-            0xad as f32 / 255.0,
-            0xc8 as f32 / 255.0,
-        );
 
         let cart = self.inserted_cartridge();
         let sha1 = self.viewing_sha1.as_deref();
@@ -380,11 +376,6 @@ impl App {
         use crate::cartridge_rw;
 
         // Catppuccin Mocha subtext0
-        const MUTED: iced::Color = iced::Color::from_rgb(
-            0xa6 as f32 / 255.0,
-            0xad as f32 / 255.0,
-            0xc8 as f32 / 255.0,
-        );
 
         let content: Element<'_, Message> = match &self.flash_state {
             Some(FlashState::Confirming {
@@ -681,7 +672,7 @@ fn screenshot_toast<'a>() -> Element<'a, Message> {
         .padding(s())
         .style(|_| container::Style {
             background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
-            border: iced::Border::default().rounded(6),
+            border: iced::Border::default().rounded(border_m()),
             ..Default::default()
         }),
     )

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use iced::{
     Alignment::Center,
-    Color, Element,
+    Element,
     Length::Fill,
     widget::{column, container, row, svg, text, toggler},
 };
@@ -10,8 +10,9 @@ use iced::{
 use crate::app::{
     self, controls,
     ui::{
-        buttons, horizontal_rule,
+        buttons, containers, horizontal_rule,
         icons::{self, Icon},
+        palette::MUTED,
         sizes::{l, m, s},
         text as app_text,
     },
@@ -62,12 +63,6 @@ impl From<Message> for app::Message {
     }
 }
 
-// Catppuccin Mocha "subtext0" — readable but clearly secondary
-const MUTED: Color = Color::from_rgb(
-    0xa6 as f32 / 255.0,
-    0xad as f32 / 255.0,
-    0xc8 as f32 / 255.0,
-);
 
 pub(in crate::app) fn view<'a>(
     settings: &'a super::Settings,
@@ -136,13 +131,7 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
     container(col.padding(m()))
         .width(220)
         .height(Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                ..Default::default()
-            }
-        })
+        .style(containers::sidebar)
         .into()
 }
 

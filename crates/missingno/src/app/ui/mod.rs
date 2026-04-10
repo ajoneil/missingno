@@ -3,8 +3,10 @@ use iced::Element;
 use crate::app::Message;
 
 pub mod buttons;
+pub mod containers;
 pub mod fonts;
 pub mod icons;
+pub mod palette;
 pub mod sizes;
 pub mod text;
 

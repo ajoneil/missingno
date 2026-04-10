@@ -8,22 +8,16 @@ use iced::{
 use crate::app::{
     self,
     ui::{
-        buttons, fonts,
+        buttons, containers, fonts,
         icons::{self, Icon},
-        sizes::{l, m, s},
+        palette::MUTED,
+        sizes::{border_m, l, m, s},
         text as app_text,
     },
     library::catalogue::{Catalogue, CatalogueEntry},
 };
 
-// Catppuccin Mocha subtext0
 use crate::app::library::activity;
-
-const MUTED: Color = Color::from_rgb(
-    0xa6 as f32 / 255.0,
-    0xad as f32 / 255.0,
-    0xc8 as f32 / 255.0,
-);
 
 pub const PAGE_SIZE: usize = 20;
 
@@ -244,14 +238,7 @@ fn entry_card<'a>(
     let slug = entry.slug.clone();
     let card = row![cover_el, container(info.width(Fill)).padding(m()),].height(CARD_HEIGHT);
 
-    iced::widget::mouse_area(container(card).width(Fill).style(|theme: &iced::Theme| {
-        let palette = theme.extended_palette();
-        container::Style {
-            background: Some(palette.background.weak.color.into()),
-            border: iced::Border::default().rounded(6),
-            ..Default::default()
-        }
-    }))
+    iced::widget::mouse_area(container(card).width(Fill).style(containers::card))
     .on_press(Message::SelectEntry(slug).into())
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
@@ -274,7 +261,7 @@ fn error_bar(error: Option<&str>) -> Option<Element<'static, app::Message>> {
             .width(Fill)
             .style(|_: &iced::Theme| container::Style {
                 background: Some(Color::from_rgb(0.5, 0.15, 0.15).into()),
-                border: iced::Border::default().rounded(6),
+                border: iced::Border::default().rounded(border_m()),
                 ..Default::default()
             }),
         )

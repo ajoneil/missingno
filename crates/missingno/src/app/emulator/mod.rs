@@ -9,7 +9,10 @@ use iced::{
 
 use crate::app::{
     self,
-    ui::icons::{self, Icon},
+    ui::{
+        icons::{self, Icon},
+        sizes::border_s,
+    },
     screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
 };
 use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};
@@ -179,7 +182,7 @@ impl Emulator {
                     button::Style {
                         background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
                         text_color: iced::Color::WHITE,
-                        border: Border::default().rounded(4),
+                        border: Border::default().rounded(border_s()),
                         ..Default::default()
                     }
                 }

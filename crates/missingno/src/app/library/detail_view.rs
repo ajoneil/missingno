@@ -1,6 +1,6 @@
 use iced::{
     Alignment::Center,
-    Color, Element,
+    Element,
     Length::Fill,
     mouse,
     widget::{button, column, container, image, mouse_area, row, scrollable, text},
@@ -9,9 +9,10 @@ use iced::{
 use crate::app::{
     self,
     ui::{
-        buttons, fonts, horizontal_rule,
+        buttons, containers, fonts, horizontal_rule,
         icons::{self, Icon},
-        sizes::{l, m, s},
+        palette::MUTED,
+        sizes::{border_s, l, m, s},
         text as app_text,
     },
     library::{
@@ -24,13 +25,6 @@ use crate::cartridge_rw;
 
 const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
-
-// Catppuccin Mocha subtext0
-const MUTED: Color = Color::from_rgb(
-    0xa6 as f32 / 255.0,
-    0xad as f32 / 255.0,
-    0xc8 as f32 / 255.0,
-);
 
 pub struct DetailData<'a> {
     pub entry: &'a GameEntry,
@@ -89,7 +83,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                     button::Style {
                         background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, bg_alpha).into()),
                         text_color: iced::Color::WHITE,
-                        border: iced::Border::default().rounded(4),
+                        border: iced::Border::default().rounded(border_s()),
                         ..Default::default()
                     }
                 }),
@@ -435,7 +429,7 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
                             let palette = theme.extended_palette();
                             container::Style {
                                 background: Some(palette.background.strong.color.into()),
-                                border: iced::Border::default().rounded(4),
+                                border: iced::Border::default().rounded(border_s()),
                                 ..Default::default()
                             }
                         }),
@@ -453,14 +447,7 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
 
     container(card)
         .width(Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(6),
-                ..Default::default()
-            }
-        })
+        .style(containers::card)
         .padding(m())
         .into()
 }
@@ -513,14 +500,7 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
 
     container(content)
         .width(Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(6),
-                ..Default::default()
-            }
-        })
+        .style(containers::card)
         .padding(m())
         .into()
 }
@@ -543,14 +523,7 @@ fn cart_write_card(entry: &SessionSummary) -> Element<'static, app::Message> {
 
     container(content)
         .width(Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border::default().rounded(6),
-                ..Default::default()
-            }
-        })
+        .style(containers::card)
         .padding(m())
         .into()
 }
