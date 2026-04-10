@@ -162,6 +162,7 @@ enum Screen {
     ScreenshotGallery,
     HomebrewBrowser,
     Emulator,
+    CartridgeActions,
     FlashCartridge,
 }
 
@@ -267,6 +268,12 @@ enum Message {
     CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
     CartridgeRwDumpProgress(cartridge_rw::DumpProgress),
     CartridgeRwDumpComplete(Result<(Vec<u8>, Option<Vec<u8>>), String>),
+    ShowCartridgeActions(String), // SHA1 of the game
+    CartridgeActionsBack,
+    CartridgeImportSave,
+    CartridgeImportSaveComplete(Result<Vec<u8>, String>),
+    CartridgeWriteSave,
+    CartridgeWriteSaveComplete(Result<Vec<u8>, String>),
     FlashCartridge(String), // SHA1 of game to flash
     FlashCartridgeConfirm,
     FlashCartridgeCancel,
@@ -400,6 +407,9 @@ impl App {
             | Message::HomebrewBrowser(_) | Message::ActivityLoaded(_)
             | Message::ScanComplete(_) | Message::EnrichComplete(_) | Message::OpenUrl(_)
             | Message::CartridgeRwDumpProgress(_) | Message::CartridgeRwDumpComplete(_)
+            | Message::ShowCartridgeActions(_) | Message::CartridgeActionsBack
+            | Message::CartridgeImportSave | Message::CartridgeImportSaveComplete(_)
+            | Message::CartridgeWriteSave | Message::CartridgeWriteSaveComplete(_)
             | Message::FlashCartridge(_) | Message::FlashCartridgeConfirm
             | Message::FlashCartridgeCancel | Message::FlashCartridgeToggleSave(_)
             | Message::CartridgeRwFlashProgress(_)

@@ -117,7 +117,11 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     };
 
     // Title + metadata column
-    let mut info = column![app_text::heading(data.entry.display_title())].spacing(4);
+    let mut info = column![
+        app_text::heading(data.entry.display_title())
+            .wrapping(iced::widget::text::Wrapping::None),
+    ]
+    .spacing(4);
 
     let subtitle_parts: Vec<String> = [
         data.entry.publisher.clone(),
@@ -208,20 +212,12 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
             );
         }
     }
-    // Write to Cartridge button (only when a flashable cart is inserted and ROM exists)
-    if has_rom {
-        if let Some(cart) = data.inserted_cartridge {
-            if cart.flashable() {
-                primary = primary.push(
-                    buttons::standard(
-                        row![icons::m(Icon::CircuitBoard), "Write to Cartridge"]
-                            .spacing(s())
-                            .align_y(Center),
-                    )
-                    .on_press(app::Message::FlashCartridge(data.entry.sha1.clone())),
-                );
-            }
-        }
+    // Cartridge actions button — shows when the matching cartridge is inserted
+    if data.inserted_cartridge.is_some() {
+        primary = primary.push(
+            buttons::standard(icons::m(Icon::CircuitBoard))
+                .on_press(app::Message::ShowCartridgeActions(data.entry.sha1.clone())),
+        );
     }
 
     primary = primary.push(

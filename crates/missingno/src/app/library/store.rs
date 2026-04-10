@@ -34,6 +34,8 @@ pub enum ActivityState {
 pub struct ActivityDetail {
     pub sha1: String,
     pub sessions: Vec<SessionSummary>,
+    /// Last cartridge sync hash and timestamp, if any.
+    pub last_cart_sync: Option<(String, Timestamp)>,
 }
 
 /// One session in the activity detail.
@@ -56,6 +58,7 @@ pub struct SessionSummary {
 pub struct RawActivityDetail {
     pub sha1: String,
     pub sessions: Vec<RawSessionSummary>,
+    pub last_cart_sync: Option<(String, Timestamp)>,
 }
 
 #[derive(Clone, Debug)]
@@ -274,9 +277,12 @@ impl GameStore {
             })
             .collect();
 
+        let last_cart_sync = activity::last_cartridge_sram_hash(game_dir);
+
         RawActivityDetail {
             sha1: sha1.to_string(),
             sessions,
+            last_cart_sync,
         }
     }
 
@@ -301,7 +307,7 @@ impl GameStore {
         let sha1 = raw.sha1;
         self.activity_state = Some((
             sha1.clone(),
-            ActivityState::Loaded(ActivityDetail { sha1, sessions }),
+            ActivityState::Loaded(ActivityDetail { sha1, sessions, last_cart_sync: raw.last_cart_sync }),
         ));
     }
 

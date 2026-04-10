@@ -602,6 +602,81 @@ pub(in crate::app) fn handle(
                 }
             }
         }
+        // Cartridge actions
+        app::Message::ShowCartridgeActions(sha1) => {
+            app.viewing_sha1 = Some(sha1);
+            app.screen = Screen::CartridgeActions;
+        }
+        app::Message::CartridgeActionsBack => {
+            if let Some(sha1) = app.viewing_sha1.clone() {
+                return app.go_to_detail(&sha1);
+            }
+            app.screen = Screen::Library;
+        }
+        app::Message::CartridgeImportSave => {
+            if let Some(device) = app.detected_cartridge_devices.iter()
+                .find(|d| d.cartridge.as_ref().is_some_and(|c| c.has_battery && c.ram_size > 0))
+            {
+                let port_name = device.port_name.clone();
+                let header = device.cartridge.clone().unwrap();
+                return Task::perform(
+                    smol::unblock(move || cartridge_rw::read_sram(&port_name, &header)),
+                    app::Message::CartridgeImportSaveComplete,
+                );
+            }
+        }
+        app::Message::CartridgeImportSaveComplete(result) => {
+            match result {
+                Ok(sram) => {
+                    if let Some(sha1) = &app.viewing_sha1 {
+                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
+                            super::activity::write_cartridge_import(&game_dir, &sram);
+                            app.store.notify_activity_changed(sha1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[cartridge_rw] save import failed: {e}");
+                }
+            }
+        }
+        app::Message::CartridgeWriteSave => {
+            if let Some(sha1) = &app.viewing_sha1 {
+                if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
+                    if let Some(sram) = super::activity::load_current_sram(&game_dir) {
+                        if let Some(device) = app.detected_cartridge_devices.iter()
+                            .find(|d| d.cartridge.as_ref().is_some_and(|c| c.has_battery && c.ram_size > 0))
+                        {
+                            let port_name = device.port_name.clone();
+                            let header = device.cartridge.clone().unwrap();
+                            return Task::perform(
+                                smol::unblock(move || {
+                                    cartridge_rw::write_sram(&port_name, &header, &sram)?;
+                                    Ok(sram)
+                                }),
+                                app::Message::CartridgeWriteSaveComplete,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        app::Message::CartridgeWriteSaveComplete(result) => {
+            match result {
+                Ok(sram) => {
+                    if let Some(sha1) = &app.viewing_sha1 {
+                        if let Some((game_dir, _)) = super::find_by_sha1(sha1) {
+                            super::activity::write_cart_write(&game_dir, &sram);
+                            app.store.notify_activity_changed(sha1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[cartridge_rw] save write failed: {e}");
+                }
+            }
+        }
+
         // Flash cartridge
         app::Message::FlashCartridge(sha1) => {
             // Look up game and cartridge info for confirmation

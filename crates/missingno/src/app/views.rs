@@ -69,6 +69,7 @@ impl App {
         } else {
             match self.screen {
                 Screen::Detail => self.detail_view(),
+                Screen::CartridgeActions => self.cartridge_actions_view(),
                 Screen::FlashCartridge => self.flash_cartridge_view(),
                 _ => {
                     let inserted_cartridge = self.inserted_cartridge();
@@ -269,6 +270,110 @@ impl App {
         self.detected_cartridge_devices
             .iter()
             .find_map(|d| d.cartridge.as_ref())
+    }
+
+    fn cartridge_actions_view(&self) -> Element<'_, Message> {
+        const MUTED: iced::Color = iced::Color::from_rgb(
+            0xa6 as f32 / 255.0,
+            0xad as f32 / 255.0,
+            0xc8 as f32 / 255.0,
+        );
+
+        let cart = self.inserted_cartridge();
+        let sha1 = self.viewing_sha1.as_deref();
+        let game_title = sha1
+            .and_then(|s| self.store.entry(s))
+            .map(|e| e.display_title())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let mut content = column![
+            row![
+                buttons::subtle(icons::m(Icon::Back))
+                    .on_press(Message::CartridgeActionsBack),
+                text::heading("Cartridge"),
+            ]
+            .spacing(s())
+            .padding(m())
+            .align_y(Center),
+            horizontal_rule(),
+        ];
+
+        let mut actions = column![
+            text::label(game_title),
+        ]
+        .spacing(m())
+        .max_width(600);
+
+        if let Some(cart) = cart {
+            actions = actions.push(
+                iced_text(format!(
+                    "Cartridge: {} · {}",
+                    if cart.title.is_empty() { "Empty" } else { &cart.title },
+                    cart.mapper_name,
+                )).color(MUTED),
+            );
+        }
+
+        // Sync saves section
+        if let Some(cart) = cart {
+            if cart.has_battery && cart.ram_size > 0 {
+                actions = actions.push(iced::widget::Space::new().height(s()));
+                actions = actions.push(text::label("Saves"));
+
+                // Check sync state from cached activity data
+                let sync_info = sha1.and_then(|s| {
+                    if let library::store::ActivityState::Loaded(detail) = self.store.activity_for(s) {
+                        detail.last_cart_sync.clone()
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some((_, last_sync)) = &sync_info {
+                    actions = actions.push(
+                        iced_text(format!("Last synced {}", friendly_ago(*last_sync)))
+                            .color(MUTED),
+                    );
+                } else {
+                    actions = actions.push(
+                        iced_text("Never synced with this cartridge.").color(MUTED),
+                    );
+                }
+
+                actions = actions.push(
+                    row![
+                        buttons::standard("Import from Cartridge")
+                            .on_press(Message::CartridgeImportSave),
+                        buttons::standard("Write to Cartridge")
+                            .on_press(Message::CartridgeWriteSave),
+                    ]
+                    .spacing(s()),
+                );
+            }
+        }
+
+        // Flash section
+        if let Some(cart) = cart {
+            if cart.flashable() {
+                if let Some(sha1) = sha1 {
+                    actions = actions.push(iced::widget::Space::new().height(s()));
+                    actions = actions.push(text::label("Flash ROM"));
+                    actions = actions.push(
+                        iced_text("Erase the cartridge and write this game's ROM.").color(MUTED),
+                    );
+                    actions = actions.push(
+                        buttons::standard("Write ROM to Cartridge")
+                            .on_press(Message::FlashCartridge(sha1.to_string())),
+                    );
+                }
+            }
+        }
+
+        content = content.push(
+            container(actions).padding(l()),
+        );
+
+        container(content).height(Fill).width(Fill).into()
     }
 
     fn flash_cartridge_view(&self) -> Element<'_, Message> {

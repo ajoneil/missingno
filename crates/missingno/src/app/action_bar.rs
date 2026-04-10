@@ -169,8 +169,8 @@ impl ActionBar {
                     self.settings(app),
                 ]
             }
-            app::Screen::FlashCartridge => {
-                // Flash screen manages its own header
+            app::Screen::CartridgeActions | app::Screen::FlashCartridge => {
+                // These screens manage their own headers
                 row![app_text::heading("").width(Fill)]
             }
             app::Screen::Emulator => {
