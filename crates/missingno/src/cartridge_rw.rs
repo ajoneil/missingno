@@ -24,6 +24,9 @@ const DMG_CART_WRITE: u8 = 0xB2;
 const DMG_MBC_RESET: u8 = 0xB4;
 
 // Flash commands
+const SET_FLASH_CMD: u8 = 0xA7;
+const DMG_SET_BANK_CHANGE_CMD: u8 = 0xB8;
+const FLASH_PROGRAM: u8 = 0xD3;
 const CART_WRITE_FLASH_CMD: u8 = 0xD4;
 
 // Power commands
@@ -785,6 +788,281 @@ pub fn dump_rom(
 
     eprintln!("[cartridge_rw] dump complete: {} bytes", rom.len());
     Ok(rom)
+}
+
+// ── ROM flashing ─────────────────────────────────────────────────────
+
+/// Progress update during a flash operation.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct FlashProgress {
+    pub phase: FlashPhase,
+    pub bytes_done: usize,
+    pub bytes_total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum FlashPhase {
+    Erasing,
+    Writing,
+}
+
+/// Flash a ROM to an inserted flash cartridge.
+///
+/// Erases the chip, then writes the ROM data. The cartridge must have been
+/// previously detected with a valid `FlashInfo` (CFI query succeeded).
+///
+/// Designed to be called from a background thread via `smol::unblock`.
+pub fn flash_rom(
+    port_name: &str,
+    flash: &FlashInfo,
+    rom_data: &[u8],
+    progress: &mut dyn FnMut(FlashProgress),
+) -> Result<(), String> {
+    if rom_data.is_empty() {
+        return Err("ROM data is empty".to_string());
+    }
+    if rom_data.len() as u32 > flash.size {
+        return Err(format!(
+            "ROM ({}) is larger than flash chip ({})",
+            format_size(rom_data.len() as u32),
+            format_size(flash.size),
+        ));
+    }
+
+    let mut port = serialport::new(port_name, DEFAULT_BAUD)
+        .timeout(Duration::from_millis(2000))
+        .open()
+        .map_err(|e| format!("Failed to open port: {e}"))?;
+
+    port.clear(serialport::ClearBuffer::All).ok();
+
+    // Query firmware
+    write_cmd(&mut port, &[OFW_PCB_VER]).ok_or("Failed to query PCB version")?;
+    let _pcb = read_byte(&mut port).ok_or("No PCB version response")?;
+    let (fw_ver, _) = query_firmware_info(&mut port)
+        .ok_or("Failed to query firmware")?;
+    if fw_ver < 12 {
+        return Err(format!("Firmware v{fw_ver} too old, need v12+"));
+    }
+
+    enter_dmg_mode(&mut port, fw_ver).ok_or("DMG mode setup failed")?;
+
+    let write_method = flash.write_method();
+    let we_pin: u8 = 0x01; // WR
+
+    // Configure flash engine via SET_FLASH_CMD (0xA7)
+    eprintln!("[cartridge_rw] configuring flash: method={write_method} we_pin={we_pin}");
+    configure_flash_engine(&mut port, fw_ver, write_method, we_pin)?;
+
+    // Configure auto bank switching (MBC5-style: bank number written to 0x2100)
+    configure_bank_switching(&mut port)?;
+
+    // Set status register polling for AMD: wait for bit 7 (DQ7) = 1
+    set_variable(&mut port, fw_ver, 2, 0x05, 0x0080) // STATUS_REGISTER_MASK
+        .ok_or("Set STATUS_REGISTER_MASK failed")?;
+    set_variable(&mut port, fw_ver, 2, 0x06, 0x0080) // STATUS_REGISTER_VALUE
+        .ok_or("Set STATUS_REGISTER_VALUE failed")?;
+    set_variable(&mut port, fw_ver, 1, 0x04, we_pin as u32) // FLASH_WE_PIN
+        .ok_or("Set FLASH_WE_PIN failed")?;
+
+    // ── Phase 1: Chip Erase ──
+    eprintln!("[cartridge_rw] erasing flash chip...");
+    progress(FlashProgress {
+        phase: FlashPhase::Erasing,
+        bytes_done: 0,
+        bytes_total: rom_data.len(),
+    });
+
+    chip_erase_amd(&mut port, fw_ver)?;
+
+    // ── Phase 2: Write ROM ──
+    eprintln!("[cartridge_rw] writing {} bytes...", rom_data.len());
+
+    // Pad to 16K bank boundary
+    let mut padded = rom_data.to_vec();
+    if padded.len() % 0x4000 != 0 {
+        padded.resize(padded.len() + (0x4000 - padded.len() % 0x4000), 0xFF);
+    }
+
+    let chunk_size = 0x100usize; // MAX_BUFFER_WRITE = 256 bytes
+    let buffer_size = flash.buffer_size;
+
+    set_variable(&mut port, fw_ver, 2, 0x00, chunk_size as u32) // TRANSFER_SIZE
+        .ok_or("Set TRANSFER_SIZE failed")?;
+    set_variable(&mut port, fw_ver, 2, 0x01, buffer_size) // BUFFER_SIZE
+        .ok_or("Set BUFFER_SIZE failed")?;
+    set_variable(&mut port, fw_ver, 4, 0x00, 0) // ADDRESS = 0
+        .ok_or("Set ADDRESS failed")?;
+    set_variable(&mut port, fw_ver, 2, 0x02, 1) // DMG_ROM_BANK = 1
+        .ok_or("Set DMG_ROM_BANK failed")?;
+
+    let mut last_ack: u8 = 0;
+    let total = padded.len();
+
+    for (i, chunk) in padded.chunks(chunk_size).enumerate() {
+        let addr = i * chunk_size;
+
+        // Skip chunks that are all 0xFF (already erased)
+        if chunk.iter().all(|&b| b == 0xFF) {
+            last_ack = 0; // Break streaming — next write needs fresh setup
+            continue;
+        }
+
+        // Re-set address if we skipped chunks (breaks streaming)
+        if last_ack != 0x03 {
+            set_variable(&mut port, fw_ver, 4, 0x00, addr as u32)
+                .ok_or("Set ADDRESS failed during write")?;
+        }
+
+        // Send FLASH_PROGRAM opcode (unless streaming from previous chunk)
+        if last_ack != 0x03 {
+            write_cmd(&mut port, &[FLASH_PROGRAM])
+                .ok_or("FLASH_PROGRAM send failed")?;
+        }
+
+        // Send chunk data
+        port.write_all(chunk).map_err(|e| format!("Write failed: {e}"))?;
+        port.flush().map_err(|e| format!("Flush failed: {e}"))?;
+
+        // Wait for ACK
+        last_ack = read_byte(&mut port).ok_or("No ACK after flash program")?;
+        if last_ack != 0x01 && last_ack != 0x03 {
+            return Err(format!("Flash program failed at 0x{addr:06X}: ACK=0x{last_ack:02x}"));
+        }
+
+        progress(FlashProgress {
+            phase: FlashPhase::Writing,
+            bytes_done: addr + chunk.len(),
+            bytes_total: total,
+        });
+    }
+
+    // Reset flash to read mode
+    let _ = cart_write_flash(&mut port, &[(0x0000, 0x00F0)]);
+
+    // Disable auto bank switching
+    let _ = write_cmd_ack(&mut port, &[DMG_SET_BANK_CHANGE_CMD, 0x00], fw_ver);
+
+    cleanup(&mut port, fw_ver);
+
+    eprintln!("[cartridge_rw] flash complete");
+    Ok(())
+}
+
+/// Configure the flash engine via SET_FLASH_CMD (0xA7).
+///
+/// Sends: command_set (AMD=0x01), write method, WE pin, then 6 command slots.
+/// For AMD single write: unlock1, unlock2, program command.
+/// For AMD buffered write: unlock1, unlock2, buffer write setup.
+fn configure_flash_engine(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+    write_method: u8,
+    we_pin: u8,
+) -> Result<(), String> {
+    let mut buf = Vec::with_capacity(39);
+    buf.push(SET_FLASH_CMD);
+    buf.push(0x01); // AMD command set
+    buf.push(write_method);
+    buf.push(we_pin);
+
+    // Command slots for AMD write
+    let commands: &[(u32, u16)] = if write_method == 0x02 {
+        // Buffered write
+        &[
+            (0x0AAA, 0x00AA), // unlock 1
+            (0x0555, 0x0055), // unlock 2
+            (0x0000, 0x0025), // SA + buffer write setup (SA filled by firmware)
+            (0x0000, 0x0000), // SA + buffer size (BS filled by firmware)
+            (0x0000, 0x0000), // PA + PD (filled by firmware)
+            (0x0000, 0x0029), // SA + buffer write confirm
+        ]
+    } else {
+        // Single/unbuffered write
+        &[
+            (0x0AAA, 0x00AA), // unlock 1
+            (0x0555, 0x0055), // unlock 2
+            (0x0AAA, 0x00A0), // program command
+            (0x0000, 0x0000), // unused
+            (0x0000, 0x0000), // unused
+            (0x0000, 0x0000), // unused
+        ]
+    };
+
+    for &(addr, val) in commands {
+        buf.extend_from_slice(&addr.to_be_bytes());
+        buf.extend_from_slice(&val.to_be_bytes());
+    }
+
+    write_cmd(port, &buf).ok_or("SET_FLASH_CMD send failed")?;
+    if fw_ver >= 12 {
+        let ack = read_byte(port).ok_or("SET_FLASH_CMD ACK timeout")?;
+        if ack != 0x01 {
+            return Err(format!("SET_FLASH_CMD ACK failed: 0x{ack:02x}"));
+        }
+    }
+    Ok(())
+}
+
+/// Configure auto bank switching via DMG_SET_BANK_CHANGE_CMD (0xB8).
+///
+/// Sets up MBC5-style bank switching: write bank number to address 0x2100.
+fn configure_bank_switching(
+    port: &mut Box<dyn serialport::SerialPort>,
+) -> Result<(), String> {
+    let mut buf = [0u8; 7];
+    buf[0] = DMG_SET_BANK_CHANGE_CMD;
+    buf[1] = 1; // 1 command
+    buf[2..6].copy_from_slice(&0x2100u32.to_be_bytes()); // address
+    buf[6] = 0; // type = address mode (bank number goes in value)
+
+    write_cmd(port, &buf).ok_or("DMG_SET_BANK_CHANGE_CMD send failed")?;
+    let ack = read_byte(port).ok_or("DMG_SET_BANK_CHANGE_CMD ACK timeout")?;
+    if ack != 0x01 {
+        return Err(format!("DMG_SET_BANK_CHANGE_CMD ACK failed: 0x{ack:02x}"));
+    }
+    Ok(())
+}
+
+/// Erase the entire flash chip using the AMD chip erase command sequence.
+///
+/// Sends the 6-byte erase sequence, then polls DQ7 until the chip reports
+/// erase complete (address 0 reads 0xFF).
+fn chip_erase_amd(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+) -> Result<(), String> {
+    // AMD chip erase: 6-command sequence
+    cart_write_flash(port, &[
+        (0x0AAA, 0x00AA), // unlock 1
+        (0x0555, 0x0055), // unlock 2
+        (0x0AAA, 0x0080), // erase setup
+        (0x0AAA, 0x00AA), // unlock 1
+        (0x0555, 0x0055), // unlock 2
+        (0x0AAA, 0x0010), // chip erase
+    ]).ok_or("Chip erase command failed")?;
+
+    // Poll for erase completion: read address 0, wait for 0xFF
+    // Chip erase can take up to 60 seconds
+    let timeout = Duration::from_secs(60);
+    let start = std::time::Instant::now();
+
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+
+        if let Some(data) = read_rom_bytes(port, fw_ver, 0, 2) {
+            if data[0] == 0xFF {
+                eprintln!("[cartridge_rw] chip erase complete ({:.1}s)", start.elapsed().as_secs_f32());
+                return Ok(());
+            }
+            eprintln!("[cartridge_rw] erase polling: 0x{:02x} ({:.0}s)", data[0], start.elapsed().as_secs_f32());
+        }
+
+        if start.elapsed() > timeout {
+            return Err("Chip erase timed out after 60 seconds".to_string());
+        }
+    }
 }
 
 // ── Protocol helpers ─────────────────────────────────────────────────
