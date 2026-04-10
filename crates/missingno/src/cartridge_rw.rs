@@ -20,6 +20,7 @@ const DISABLE_PULLUPS: u8 = 0xAC;
 
 // DMG commands
 const DMG_CART_READ: u8 = 0xB1;
+const DMG_CART_WRITE: u8 = 0xB2;
 const DMG_MBC_RESET: u8 = 0xB4;
 
 // Power commands
@@ -223,70 +224,53 @@ fn query_firmware_info(port: &mut Box<dyn serialport::SerialPort>) -> Option<(u1
 
 // ── Cartridge header reading ─────────────────────────────────────────
 
-/// Enter DMG mode, power on the cartridge slot, and read the first 0x180 bytes.
+/// Set up the device for DMG cartridge access: enter mode, power on, disable pullups, reset MBC.
+fn enter_dmg_mode(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<()> {
+    port.clear(serialport::ClearBuffer::Input).ok();
+
+    // SetMode("DMG")
+    write_cmd_ack(port, &[SET_MODE_DMG], fw_ver)?;
+    write_cmd_ack(port, &[SET_VOLTAGE_5V], fw_ver)?;
+    set_variable(port, fw_ver, 1, 0x0B, 1)?; // DMG_READ_METHOD = A15
+    set_variable(port, fw_ver, 1, 0x00, 1)?; // CART_MODE = DMG
+    set_variable(port, fw_ver, 4, 0x00, 0)?; // ADDRESS = 0
+
+    // Power on cartridge
+    cart_power_on(port, fw_ver)?;
+
+    // ReadInfo setup
+    if fw_ver >= 8 {
+        write_cmd_ack(port, &[DISABLE_PULLUPS], fw_ver)?;
+    }
+    write_cmd_ack(port, &[SET_VOLTAGE_5V], fw_ver)?;
+    write_cmd_ack(port, &[DMG_MBC_RESET], fw_ver)?;
+
+    // Clear CS pulse flags
+    set_variable(port, fw_ver, 1, 0x08, 0)?; // DMG_READ_CS_PULSE = 0
+    set_variable(port, fw_ver, 1, 0x09, 0)?; // DMG_WRITE_CS_PULSE = 0
+
+    Some(())
+}
+
+/// Enter DMG mode and read the first 0x180 bytes from the cartridge.
 fn read_cartridge_header(
     port: &mut Box<dyn serialport::SerialPort>,
     fw_ver: u16,
 ) -> Option<CartridgeHeader> {
     eprintln!("[cartridge_rw] reading header (fw_ver={fw_ver})");
 
-    // Increase timeout for cartridge operations
-    if port.set_timeout(Duration::from_millis(500)).is_err() {
-        eprintln!("[cartridge_rw] failed to set timeout");
+    port.set_timeout(Duration::from_millis(500)).ok()?;
+
+    if enter_dmg_mode(port, fw_ver).is_none() {
+        eprintln!("[cartridge_rw] DMG mode setup failed");
         return None;
     }
+    eprintln!("[cartridge_rw] DMG mode ready");
 
-    // Flush any leftover bytes from firmware query
-    port.clear(serialport::ClearBuffer::Input).ok();
-
-    // 1. SetMode("DMG") — matches FlashGBX SetMode sequence exactly
-    if write_cmd_ack(port, &[SET_MODE_DMG], fw_ver).is_none() {
-        eprintln!("[cartridge_rw] SET_MODE_DMG failed");
-        return None;
-    }
-    if write_cmd_ack(port, &[SET_VOLTAGE_5V], fw_ver).is_none() {
-        eprintln!("[cartridge_rw] SET_VOLTAGE_5V failed");
-        return None;
-    }
-    set_variable(port, fw_ver, 1, 0x0B, 1)?; // DMG_READ_METHOD = A15
-    set_variable(port, fw_ver, 1, 0x00, 1)?; // CART_MODE = DMG
-    set_variable(port, fw_ver, 4, 0x00, 0)?; // ADDRESS = 0
-    eprintln!("[cartridge_rw] DMG mode set");
-
-    // 2. Power on cartridge (fw >= 12)
-    if fw_ver >= 12 {
-        if cart_power_on(port, fw_ver).is_none() {
-            eprintln!("[cartridge_rw] cart power on failed");
-            return None;
-        }
-        eprintln!("[cartridge_rw] cart powered on");
-    }
-
-    // 3. ReadInfo sequence — matches FlashGBX ReadInfo for DMG
-    if fw_ver >= 8 {
-        if write_cmd_ack(port, &[DISABLE_PULLUPS], fw_ver).is_none() {
-            eprintln!("[cartridge_rw] DISABLE_PULLUPS failed");
-            return None;
-        }
-        eprintln!("[cartridge_rw] pullups disabled");
-    }
-    if write_cmd_ack(port, &[SET_VOLTAGE_5V], fw_ver).is_none() {
-        eprintln!("[cartridge_rw] SET_VOLTAGE_5V (2nd) failed");
-        return None;
-    }
-    if write_cmd_ack(port, &[DMG_MBC_RESET], fw_ver).is_none() {
-        eprintln!("[cartridge_rw] DMG_MBC_RESET failed");
-        return None;
-    }
-    eprintln!("[cartridge_rw] MBC reset");
-
-    // 4. Configure for ROM read
-    set_variable(port, fw_ver, 1, 0x08, 0)?; // DMG_READ_CS_PULSE = 0
-    set_variable(port, fw_ver, 1, 0x09, 0)?; // DMG_WRITE_CS_PULSE = 0
+    // Configure for header read
     set_variable(port, fw_ver, 2, 0x00, CHUNK_SIZE as u32)?; // TRANSFER_SIZE
     set_variable(port, fw_ver, 4, 0x00, 0)?; // ADDRESS = 0
     set_variable(port, fw_ver, 1, 0x01, 1)?; // DMG_ACCESS_MODE = ROM_READ
-    eprintln!("[cartridge_rw] ROM read configured");
 
     // 7. Read 0x180 bytes in chunks
     let mut header = vec![0u8; HEADER_SIZE];
@@ -455,6 +439,158 @@ fn mapper_name(byte: u8) -> &'static str {
     }
 }
 
+// ── Bank switching ───────────────────────────────────────────────────
+
+const ROM_BANK_SIZE: u32 = 0x4000;
+
+/// Return the register writes needed to select a ROM bank, and the read start address.
+fn select_rom_bank(mapper_byte: u8, bank: u32) -> (Vec<(u32, u8)>, u32) {
+    match mapper_byte {
+        // No MBC — single 32K, no bank switching
+        0x00 | 0x08 | 0x09 => (vec![], 0x0000),
+
+        // MBC1
+        0x01..=0x03 => {
+            let writes = vec![
+                (0x6000, 0x01u8),                       // Mode 1 (advanced banking)
+                (0x2000, (bank & 0x1F) as u8),           // Lower 5 bits
+                (0x4000, ((bank >> 5) & 0x03) as u8),    // Upper 2 bits
+            ];
+            let addr = if bank & 0x1F == 0 { 0x0000 } else { 0x4000 };
+            (writes, addr)
+        }
+
+        // MBC2
+        0x05 | 0x06 => {
+            let writes = vec![(0x2100, (bank & 0xFF) as u8)];
+            let addr = if bank == 0 { 0x0000 } else { 0x4000 };
+            (writes, addr)
+        }
+
+        // MBC3
+        0x0f..=0x13 => {
+            let writes = vec![(0x2100, (bank & 0xFF) as u8)];
+            let addr = if bank == 0 { 0x0000 } else { 0x4000 };
+            (writes, addr)
+        }
+
+        // MBC5 — 9-bit bank number, high byte first
+        0x19..=0x1e => {
+            let writes = vec![
+                (0x3000, ((bank >> 8) & 0x01) as u8),    // High bit first
+                (0x2100, (bank & 0xFF) as u8),            // Low 8 bits
+            ];
+            let addr = if bank == 0 { 0x0000 } else { 0x4000 };
+            (writes, addr)
+        }
+
+        // Unsupported MBC — try basic bank switching
+        _ => {
+            let writes = vec![(0x2100, (bank & 0xFF) as u8)];
+            let addr = if bank == 0 { 0x0000 } else { 0x4000 };
+            (writes, addr)
+        }
+    }
+}
+
+// ── ROM dumping ──────────────────────────────────────────────────────
+
+/// Progress update during a ROM dump.
+#[derive(Debug, Clone)]
+pub struct DumpProgress {
+    pub bytes_done: usize,
+    pub bytes_total: usize,
+}
+
+/// Dump the full ROM from a cartridge. Opens the serial port, reads all banks,
+/// and returns the complete ROM data.
+///
+/// Designed to be called from a background thread via `smol::unblock`.
+pub fn dump_rom(
+    port_name: &str,
+    header: &CartridgeHeader,
+    progress: &mut dyn FnMut(DumpProgress),
+) -> Result<Vec<u8>, String> {
+    let mut port = serialport::new(port_name, DEFAULT_BAUD)
+        .timeout(Duration::from_millis(2000))
+        .open()
+        .map_err(|e| format!("Failed to open port: {e}"))?;
+
+    port.clear(serialport::ClearBuffer::All).ok();
+
+    // We require Lesserkuma firmware v12+
+    write_cmd(&mut port, &[OFW_PCB_VER])
+        .ok_or("Failed to query PCB version")?;
+    let _pcb = read_byte(&mut port).ok_or("No PCB version response")?;
+    let (fw_ver, _) = query_firmware_info(&mut port)
+        .ok_or("Failed to query firmware — is this a GBxCart RW with Lesserkuma firmware?")?;
+    if fw_ver < 12 {
+        return Err(format!("Firmware v{fw_ver} too old, need v12+"));
+    }
+
+    enter_dmg_mode(&mut port, fw_ver).ok_or("DMG mode setup failed")?;
+
+    let bulk_chunk: u32 = 0x1000; // 4096 bytes per transfer
+
+    let rom_size = header.rom_size as usize;
+    let no_mbc = matches!(header.mapper_byte, 0x00 | 0x08 | 0x09);
+    // No MBC: one flat 32K read. MBC: 16K banks.
+    let num_banks = if no_mbc { 1 } else { rom_size / ROM_BANK_SIZE as usize };
+    let mut rom = Vec::with_capacity(rom_size);
+
+    eprintln!(
+        "[cartridge_rw] dumping ROM: {} bytes, {} banks, mapper 0x{:02x}",
+        rom_size, num_banks, header.mapper_byte
+    );
+
+    for bank in 0..num_banks as u32 {
+        // Bank switch
+        let (writes, start_addr) = select_rom_bank(header.mapper_byte, bank);
+        for (addr, val) in writes {
+            cart_write(&mut port, fw_ver, addr, val)
+                .ok_or_else(|| format!("Bank switch failed at bank {bank}"))?;
+        }
+
+        // Set up read for this bank
+        set_variable(&mut port, fw_ver, 2, 0x00, bulk_chunk)
+            .ok_or("Set TRANSFER_SIZE failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, start_addr)
+            .ok_or("Set ADDRESS failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x01, 1)
+            .ok_or("Set DMG_ACCESS_MODE failed")?;
+
+        let mut remaining = if no_mbc { rom_size } else { ROM_BANK_SIZE as usize };
+        while remaining > 0 {
+            let chunk = remaining.min(bulk_chunk as usize);
+            // Update transfer size if last chunk is smaller
+            if chunk != bulk_chunk as usize {
+                set_variable(&mut port, fw_ver, 2, 0x00, chunk as u32)
+                    .ok_or("Set TRANSFER_SIZE for final chunk failed")?;
+            }
+
+            write_cmd(&mut port, &[DMG_CART_READ])
+                .ok_or("DMG_CART_READ send failed")?;
+
+            let mut buf = vec![0u8; chunk];
+            port.read_exact(&mut buf)
+                .map_err(|e| format!("Read failed at bank {bank}: {e}"))?;
+            rom.extend_from_slice(&buf);
+            remaining -= chunk;
+
+            progress(DumpProgress {
+                bytes_done: rom.len(),
+                bytes_total: rom_size,
+            });
+        }
+    }
+
+    // Cleanup
+    cleanup(&mut port, fw_ver);
+
+    eprintln!("[cartridge_rw] dump complete: {} bytes", rom.len());
+    Ok(rom)
+}
+
 // ── Protocol helpers ─────────────────────────────────────────────────
 
 fn write_cmd(port: &mut Box<dyn serialport::SerialPort>, data: &[u8]) -> Option<()> {
@@ -490,6 +626,20 @@ fn write_cmd_ack(
     Some(())
 }
 
+/// DMG_CART_WRITE: [0xB2, addr(4B BE), value(1B)]
+fn cart_write(
+    port: &mut Box<dyn serialport::SerialPort>,
+    fw_ver: u16,
+    address: u32,
+    value: u8,
+) -> Option<()> {
+    let mut buf = [0u8; 6];
+    buf[0] = DMG_CART_WRITE;
+    buf[1..5].copy_from_slice(&address.to_be_bytes());
+    buf[5] = value;
+    write_cmd_ack(port, &buf, fw_ver)
+}
+
 /// SET_VARIABLE: [0xA6, size, key(4B BE), value(4B BE)]
 fn set_variable(
     port: &mut Box<dyn serialport::SerialPort>,
@@ -512,7 +662,7 @@ fn read_byte(port: &mut Box<dyn serialport::SerialPort>) -> Option<u8> {
     Some(buf[0])
 }
 
-fn format_size(bytes: u32) -> String {
+pub fn format_size(bytes: u32) -> String {
     if bytes >= 1024 * 1024 {
         format!("{} MB", bytes / (1024 * 1024))
     } else if bytes >= 1024 {

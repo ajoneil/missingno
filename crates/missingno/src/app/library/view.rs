@@ -57,6 +57,7 @@ pub enum Message {
     QuickPlay(String),
     HoverGame(String),
     UnhoverGame,
+    DumpCartridge,
 }
 
 impl From<Message> for app::Message {
@@ -73,6 +74,7 @@ pub(crate) fn view<'a>(
     store: &'a GameStore,
     hovered_sha1: Option<&'a str>,
     inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
+    dump_progress: Option<&'a cartridge_rw::DumpProgress>,
 ) -> Element<'a, app::Message> {
     if store.is_empty() && inserted_cartridge.is_none() {
         return empty_view();
@@ -112,7 +114,7 @@ pub(crate) fn view<'a>(
                 let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
                 cartridge_game_card(game, hovered)
             } else {
-                unmatched_cartridge_card(cart)
+                unmatched_cartridge_card(cart, dump_progress)
             };
 
             // Pad with spacers to match grid column width
@@ -373,7 +375,10 @@ fn cartridge_game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Me
 }
 
 /// A card for an inserted cartridge that doesn't match any library game.
-fn unmatched_cartridge_card(cart: &cartridge_rw::CartridgeHeader) -> Element<'_, app::Message> {
+fn unmatched_cartridge_card<'a>(
+    cart: &'a cartridge_rw::CartridgeHeader,
+    dump_progress: Option<&'a cartridge_rw::DumpProgress>,
+) -> Element<'a, app::Message> {
     let title = &cart.title;
     let bg = title_color(title);
     let initial = title
@@ -421,7 +426,25 @@ fn unmatched_cartridge_card(cart: &cartridge_rw::CartridgeHeader) -> Element<'_,
         .color(MUTED),
     );
 
-    info = info.push(app_text::detail("Not in library").color(MUTED));
+    if let Some(progress) = dump_progress {
+        let pct = if progress.bytes_total > 0 {
+            (progress.bytes_done as f32 / progress.bytes_total as f32) * 100.0
+        } else {
+            0.0
+        };
+        info = info.push(
+            app_text::detail(format!(
+                "Reading… {} / {} ({pct:.0}%)",
+                cartridge_rw::format_size(progress.bytes_done as u32),
+                cartridge_rw::format_size(progress.bytes_total as u32),
+            ))
+            .color(MUTED),
+        );
+    } else {
+        info = info.push(
+            buttons::primary("Add to Library").on_press(Message::DumpCartridge.into()),
+        );
+    }
 
     let card_row =
         row![cover, container(info.width(Fill)).padding(m()).width(Fill)].height(COVER_HEIGHT);

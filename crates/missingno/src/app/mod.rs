@@ -125,6 +125,8 @@ struct App {
     detected_cartridge_devices: Vec<cartridge_rw::DetectedDevice>,
     /// Last-seen port names for cartridge RW polling (to detect changes cheaply).
     cartridge_rw_known_ports: Vec<String>,
+    /// Progress of an active ROM dump, if any.
+    cartridge_dump_progress: Option<cartridge_rw::DumpProgress>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +253,8 @@ enum Message {
     // Cartridge reader/writer
     CartridgeRwPoll,
     CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
+    CartridgeRwDumpProgress(cartridge_rw::DumpProgress),
+    CartridgeRwDumpComplete(Result<Vec<u8>, String>),
 
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
@@ -298,6 +302,7 @@ impl App {
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             detected_cartridge_devices: Vec::new(),
             cartridge_rw_known_ports: Vec::new(),
+            cartridge_dump_progress: None,
         };
 
         controls::update_bindings(
@@ -1145,6 +1150,41 @@ impl App {
                 library::view::Message::UnhoverGame => {
                     self.hovered_library_game = None;
                 }
+                library::view::Message::DumpCartridge => {
+                    // Find the first device with a cartridge
+                    if let Some(device) = self
+                        .detected_cartridge_devices
+                        .iter()
+                        .find(|d| d.cartridge.is_some())
+                    {
+                        let port_name = device.port_name.clone();
+                        let header = device.cartridge.clone().unwrap();
+                        self.cartridge_dump_progress = Some(cartridge_rw::DumpProgress {
+                            bytes_done: 0,
+                            bytes_total: header.rom_size as usize,
+                        });
+
+                        let (tx, rx) = smol::channel::bounded(32);
+                        // Progress subscription
+                        let progress_task = Task::run(
+                            smol::stream::unfold(rx, |rx| async {
+                                rx.recv().await.ok().map(|p| (p, rx))
+                            }),
+                            Message::CartridgeRwDumpProgress,
+                        );
+
+                        let dump_task = Task::perform(
+                            smol::unblock(move || {
+                                cartridge_rw::dump_rom(&port_name, &header, &mut |p| {
+                                    let _ = tx.send_blocking(p);
+                                })
+                            }),
+                            Message::CartridgeRwDumpComplete,
+                        );
+
+                        return Task::batch([dump_task, progress_task]);
+                    }
+                }
                 library::view::Message::QuickPlay(sha1) => {
                     let same_game = self
                         .current_game
@@ -1257,6 +1297,61 @@ impl App {
                     }
                 }
             }
+            Message::CartridgeRwDumpProgress(progress) => {
+                self.cartridge_dump_progress = Some(progress);
+            }
+            Message::CartridgeRwDumpComplete(result) => {
+                self.cartridge_dump_progress = None;
+                match result {
+                    Ok(rom) => {
+                        let header_title = Cartridge::peek_title(&rom);
+                        let title = if header_title.is_empty() {
+                            "Unknown".to_string()
+                        } else {
+                            header_title.clone()
+                        };
+                        let sha1 = library::hasheous::rom_sha1(&rom);
+
+                        // Save ROM file to library
+                        let game_dir = match library::game_dir_for(&title, &sha1) {
+                            Some(dir) => dir,
+                            None => return Task::none(),
+                        };
+                        let _ = std::fs::create_dir_all(&game_dir);
+                        let rom_path = game_dir.join(format!("{title}.gb"));
+                        if let Err(e) = std::fs::write(&rom_path, &rom) {
+                            eprintln!("[cartridge_rw] failed to save ROM: {e}");
+                            return Task::none();
+                        }
+
+                        // Create library entry
+                        let mut entry =
+                            library::GameEntry::new(sha1, title, rom_path);
+                        entry.header_title = if header_title.is_empty() {
+                            None
+                        } else {
+                            Some(header_title)
+                        };
+                        library::save_entry(&game_dir, &entry);
+
+                        // Refresh the library view
+                        self.store.rebuild_index();
+
+                        // Trigger enrichment for cover art etc.
+                        if self.settings.internet_enabled
+                            && self.settings.hasheous_enabled
+                        {
+                            return Task::perform(
+                                smol::unblock(|| library::scanner::enrich_next()),
+                                |result| Message::EnrichComplete(result),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[cartridge_rw] dump failed: {e}");
+                    }
+                }
+            }
 
             Message::StartRecording => {
                 if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
@@ -1348,12 +1443,14 @@ impl App {
                 Screen::Detail => self.detail_view(),
                 _ => {
                     let inserted_cartridge = self.inserted_cartridge();
+                    let dump_progress = self.cartridge_dump_progress.as_ref();
                     let content = match self.screen {
                         Screen::Library => {
                             library::view::view(
                                 &self.store,
                                 self.hovered_library_game.as_deref(),
                                 inserted_cartridge,
+                                dump_progress,
                             )
                         }
                         Screen::HomebrewBrowser => {
@@ -1364,6 +1461,7 @@ impl App {
                                     &self.store,
                                     self.hovered_library_game.as_deref(),
                                     inserted_cartridge,
+                                    dump_progress,
                                 )
                             }
                         }
@@ -1591,6 +1689,7 @@ impl App {
             &self.store,
             self.hovered_library_game.as_deref(),
             self.inserted_cartridge(),
+            self.cartridge_dump_progress.as_ref(),
         )
     }
 
