@@ -50,6 +50,8 @@ pub struct SessionSummary {
     pub screenshots: Vec<image::Handle>,
     /// For imports: the size in bytes.
     pub size_bytes: Option<u32>,
+    /// For imports: where the save came from.
+    pub import_source: Option<activity::ImportSource>,
 }
 
 /// Raw session data loaded from disk (no image handles — those are created
@@ -71,6 +73,7 @@ pub struct RawSessionSummary {
     pub last_save_time: Option<Timestamp>,
     pub screenshots: Vec<activity::FrameCapture>,
     pub size_bytes: Option<u32>,
+    pub import_source: Option<activity::ImportSource>,
 }
 
 // ── GameStore ──────────────────────────────────────────────────────────
@@ -241,6 +244,7 @@ impl GameStore {
                             last_save_time: session.last_save_time(),
                             screenshots,
                             size_bytes: None,
+                            import_source: None,
                         })
                     }
                     activity::ActivityKind::Import => {
@@ -256,6 +260,7 @@ impl GameStore {
                             last_save_time: None,
                             screenshots: Vec::new(),
                             size_bytes: Some(import.size_bytes),
+                            import_source: Some(import.source),
                         })
                     }
                     activity::ActivityKind::CartridgeWrite => {
@@ -271,6 +276,7 @@ impl GameStore {
                             last_save_time: None,
                             screenshots: Vec::new(),
                             size_bytes: Some(write.size_bytes),
+                            import_source: None,
                         })
                     }
                 }
@@ -301,6 +307,7 @@ impl GameStore {
                 last_save_time: s.last_save_time,
                 screenshots: s.screenshots.iter().map(|f| f.to_image_handle()).collect(),
                 size_bytes: s.size_bytes,
+                import_source: s.import_source,
             })
             .collect();
 

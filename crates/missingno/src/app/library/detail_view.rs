@@ -297,6 +297,7 @@ fn activity_log<'a>(
             last_save_time: live.last_save_time(),
             screenshots: live_screenshots.to_vec(),
             size_bytes: None,
+            import_source: None,
         };
         log = log.push(session_card(&live_summary, false));
     }
@@ -468,10 +469,20 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
     let time = activity::format_local(&entry.start);
     let size_kb = entry.size_bytes.unwrap_or(0) / 1024;
 
+    let from_cartridge = matches!(
+        entry.import_source,
+        Some(activity::ImportSource::Cartridge { .. })
+    );
+    let (icon, label) = if from_cartridge {
+        (Icon::CircuitBoard, "Save imported from cartridge")
+    } else {
+        (Icon::Download, "Save imported")
+    };
+
     let mut content = row![
-        icons::m(Icon::Download),
+        icons::m(icon),
         column![
-            text("Save imported").font(fonts::bold()),
+            text(label).font(fonts::bold()),
             app_text::detail(format!("{time} · {size_kb} KB")).color(MUTED),
         ]
         .spacing(2)
