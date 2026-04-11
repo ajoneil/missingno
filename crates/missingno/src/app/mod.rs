@@ -118,6 +118,8 @@ struct App {
     cartridge_dump_progress: Option<cartridge_rw::DumpProgress>,
     /// Flash cartridge state.
     flash_state: Option<FlashState>,
+    /// Whether the hamburger menu overlay is open.
+    menu_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -282,6 +284,11 @@ enum Message {
     /// Result contains the SRAM data that was written, if any.
     CartridgeRwFlashComplete(Result<Option<Vec<u8>>, String>),
 
+    ToggleMenu,
+    DismissMenu,
+    /// A menu item was clicked — dismiss the menu and execute the inner message.
+    MenuAction(Box<Message>),
+
     ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
@@ -330,6 +337,7 @@ impl App {
             cartridge_rw_known_ports: Vec::new(),
             cartridge_dump_progress: None,
             flash_state: None,
+            menu_open: false,
         };
 
         controls::update_bindings(
@@ -418,6 +426,7 @@ impl App {
 
             // Navigation
             Message::BackToLibrary => {
+                self.menu_open = false;
                 self.flush_pending_save();
                 self.pause();
                 self.screen = Screen::Library;
@@ -489,6 +498,7 @@ impl App {
                 self.pending_action = None;
             }
             Message::PlayFromDetail => {
+                self.menu_open = false;
                 let viewing = self.viewing_sha1.clone();
                 let same_game = viewing
                     .as_ref()
@@ -523,10 +533,21 @@ impl App {
                 }
             }
             Message::ShowSettings => {
+                self.menu_open = false;
                 self.previous_screen = Some(self.screen);
                 self.was_running_before_settings = self.running();
                 self.pause();
                 self.screen = Screen::Settings;
+            }
+            Message::ToggleMenu => {
+                self.menu_open = !self.menu_open;
+            }
+            Message::DismissMenu => {
+                self.menu_open = false;
+            }
+            Message::MenuAction(inner) => {
+                self.menu_open = false;
+                return self.update(*inner);
             }
 
             // Window management

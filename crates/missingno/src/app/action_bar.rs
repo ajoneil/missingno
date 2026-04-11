@@ -18,7 +18,6 @@ use crate::app::{
         self,
         panes::{self, DebuggerPane},
     },
-    load,
 };
 
 #[derive(Debug, Clone)]
@@ -72,7 +71,7 @@ impl ActionBar {
                         .on_press(app::Message::OpenHomebrewBrowser),
                     );
                 }
-                r = r.push(self.settings(app));
+                r = r.push(self.trailing(app));
                 r
             }
             app::Screen::HomebrewBrowser => {
@@ -98,7 +97,7 @@ impl ActionBar {
                             .align_y(Center),
                     )
                     .on_press(app::Message::OpenUrl("https://hh.gbdev.io")),
-                    self.settings(app),
+                    self.trailing(app),
                 ]
             }
             app::Screen::ScreenshotGallery => {
@@ -117,7 +116,7 @@ impl ActionBar {
                     )
                     .clip(true)
                     .width(Fill),
-                    self.settings(app),
+                    self.trailing(app),
                 ]
             }
             app::Screen::Emulator => {
@@ -145,7 +144,7 @@ impl ActionBar {
                     .clip(true)
                     .width(Fill),
                     controls(app.running(), app.debugger_enabled),
-                    self.settings(app)
+                    self.trailing(app)
                 ]
             }
             // Detail, Settings, CartridgeActions, FlashCartridge manage their
@@ -174,37 +173,19 @@ impl ActionBar {
         .into()
     }
 
-    fn settings(&self, app: &App) -> Element<'_, app::Message> {
+    fn trailing(&self, app: &App) -> Element<'_, app::Message> {
         let mut row = row![];
 
-        // Emulator-specific controls
+        // Debugger pane picker
         if app.screen == app::Screen::Emulator {
             if let Game::Loaded(LoadedGame::Debugger(debugger)) = &app.game {
                 row = row.push(self.panes(debugger.panes().unshown_panes()));
             }
-            if matches!(app.game, Game::Loaded(LoadedGame::Emulator(_))) {
-                row = row.push(
-                    buttons::subtle(
-                        row![icons::m(Icon::Debug), "Debug"]
-                            .spacing(s())
-                            .align_y(Center),
-                    )
-                    .on_press(app::Message::ToggleDebugger(true)),
-                );
-            }
-        }
-
-        if app.screen == app::Screen::Library {
-            row = row.push(buttons::subtle("Add Game...").on_press(load::Message::Pick.into()));
         }
 
         row.push(
-            buttons::subtle(
-                row![icons::m(Icon::Gear), "Settings"]
-                    .spacing(s())
-                    .align_y(Center),
-            )
-            .on_press(app::Message::ShowSettings),
+            buttons::subtle(icons::m(Icon::Menu))
+                .on_press(app::Message::ToggleMenu),
         )
         .spacing(m())
         .align_y(Center)
@@ -221,8 +202,7 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         row
     };
 
-    row.push(screenshot())
-        .push(reset())
+    row.push(reset())
         .push(stop())
         .spacing(s())
         .wrap()
@@ -260,10 +240,6 @@ fn capture_frame(running: bool) -> Button<'static, app::Message> {
     } else {
         button.on_press(debugger::Message::CaptureFrame.into())
     }
-}
-
-fn screenshot() -> Button<'static, app::Message> {
-    buttons::standard(icons::m(Icon::Camera)).on_press(app::Message::TakeScreenshot)
 }
 
 fn reset() -> Button<'static, app::Message> {

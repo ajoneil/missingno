@@ -209,37 +209,21 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
     // Cartridge actions button — shows when the matching cartridge is inserted
     if data.inserted_cartridge.is_some() {
         primary = primary.push(
-            buttons::standard(icons::m(Icon::CircuitBoard))
-                .on_press(app::Message::ShowCartridgeActions(data.entry.sha1.clone())),
+            buttons::standard(
+                row![icons::m(Icon::CircuitBoard), "Cartridge"]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::ShowCartridgeActions(data.entry.sha1.clone())),
         );
     }
 
     primary = primary.push(
-        buttons::subtle(
-            row![icons::m(Icon::Gear), "Settings"]
-                .spacing(s())
-                .align_y(Center),
-        )
-        .on_press(app::Message::ShowSettings),
+        buttons::subtle(icons::m(Icon::Menu))
+            .on_press(app::Message::ToggleMenu),
     );
 
-    let mut right = column![primary].align_x(iced::alignment::Horizontal::Right);
-
-    if data.header_hovered {
-        right = right.push(iced::widget::Space::new().height(Fill));
-        right = right.push(
-            row![
-                buttons::subtle(app_text::detail("Import Save..."))
-                    .on_press(app::Message::ImportSave),
-                buttons::subtle(app_text::detail("Open Folder"))
-                    .on_press(app::Message::OpenGameFolder),
-                buttons::subtle(app_text::detail("Refresh"))
-                    .on_press(app::Message::RefreshMetadata),
-                buttons::danger(app_text::detail("Remove")).on_press(app::Message::RemoveGame),
-            ]
-            .spacing(s()),
-        );
-    }
+    let right = column![primary].align_x(iced::alignment::Horizontal::Right);
 
     let header = row![
         cover,

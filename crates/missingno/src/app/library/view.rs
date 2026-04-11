@@ -7,6 +7,7 @@ use iced::{
 
 use crate::app::{
     self,
+    settings::view as settings_view,
     ui::{
         buttons, containers, fonts,
         icons::{self, Icon},
@@ -67,9 +68,10 @@ pub(crate) fn view<'a>(
     hovered_sha1: Option<&'a str>,
     inserted_cartridge: Option<&'a cartridge_rw::CartridgeHeader>,
     dump_progress: Option<&'a cartridge_rw::DumpProgress>,
+    homebrew_enabled: bool,
 ) -> Element<'a, app::Message> {
     if store.is_empty() && inserted_cartridge.is_none() {
-        return empty_view();
+        return empty_view(homebrew_enabled);
     }
 
     let games = store.all_summaries();
@@ -155,7 +157,33 @@ pub(crate) fn view<'a>(
     .into()
 }
 
-fn empty_view() -> Element<'static, app::Message> {
+fn empty_view(homebrew_enabled: bool) -> Element<'static, app::Message> {
+    let mut actions = column![
+        buttons::primary(
+            row![icons::m(Icon::FolderOpen), "Add ROM folder..."]
+                .spacing(s())
+                .align_y(Center),
+        )
+        .on_press(settings_view::Message::PickRomDirectory.into()),
+    ]
+    .spacing(s())
+    .align_x(Center);
+
+    if homebrew_enabled {
+        actions = actions.push(
+            buttons::standard(
+                row![icons::m(Icon::Globe), "Browse Homebrew"]
+                    .spacing(s())
+                    .align_y(Center),
+            )
+            .on_press(app::Message::OpenHomebrewBrowser),
+        );
+    }
+
+    actions = actions.push(
+        buttons::subtle("Open a ROM file...").on_press(load::Message::Pick.into()),
+    );
+
     container(
         column![
             iced::widget::svg(iced::advanced::svg::Handle::from_memory(include_bytes!(
@@ -165,19 +193,12 @@ fn empty_view() -> Element<'static, app::Message> {
             .height(120)
             .style(|_, _| iced::widget::svg::Style { color: None }),
             app_text::heading("Welcome to Missingno"),
-            column![
-                text("Add a ROM file, or point Missingno at a folder").color(MUTED),
-                text("of ROMs in Settings and they'll appear here.").color(MUTED),
-            ]
-            .align_x(Center),
-            row![
-                buttons::primary("Add Game...").on_press(load::Message::Pick.into()),
-                buttons::standard("Settings").on_press(app::Message::ShowSettings),
-            ]
-            .spacing(s()),
+            text("Add a folder of ROMs and Missingno will keep your library in sync.").color(MUTED),
+            actions,
         ]
         .spacing(l())
-        .align_x(Center),
+        .align_x(Center)
+        .max_width(420),
     )
     .center(Fill)
     .into()

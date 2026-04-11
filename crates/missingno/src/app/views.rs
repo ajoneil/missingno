@@ -2,20 +2,20 @@ use iced::{
     Alignment::Center,
     Element,
     Length::Fill,
-    Subscription, Task, event, mouse, time,
+    Padding, Subscription, Task, event, mouse, time,
     widget::{Stack, center, column, container, mouse_area, opaque, row, svg, text as iced_text},
     window,
 };
 
 use super::ui::{
-    buttons, fonts, horizontal_rule,
+    buttons, containers, fonts, horizontal_rule, menu_divider,
     icons::{self, Icon},
     palette::MUTED,
     sizes::{border_m, l, m, s},
     text,
 };
 use super::{
-    controls, library, settings,
+    controls, library, load, settings,
     App, FlashState, Fullscreen, Game, LoadedGame, Message, PendingAction, Screen,
 };
 use crate::cartridge_rw;
@@ -58,28 +58,23 @@ impl App {
 
         // 2. Shell overlays — applied once regardless of screen
         let content = self.apply_toast(content);
+        let content = self.apply_menu(content);
         self.apply_confirmation_dialog(content)
+    }
+
+    fn homebrew_enabled(&self) -> bool {
+        self.settings.internet_enabled && self.settings.homebrew_hub_enabled
     }
 
     /// Library/Homebrew/ScreenshotGallery page content (no chrome).
     fn page_content(&self) -> Element<'_, Message> {
         match self.screen {
-            Screen::Library => library::view::view(
-                &self.store,
-                self.hovered_library_game.as_deref(),
-                self.inserted_cartridge(),
-                self.cartridge_dump_progress.as_ref(),
-            ),
+            Screen::Library => self.library_view(),
             Screen::HomebrewBrowser => {
                 if let Some(state) = &self.homebrew_browser {
                     library::homebrew_browser::view(state, &self.catalogue)
                 } else {
-                    library::view::view(
-                        &self.store,
-                        self.hovered_library_game.as_deref(),
-                        self.inserted_cartridge(),
-                        self.cartridge_dump_progress.as_ref(),
-                    )
+                    self.library_view()
                 }
             }
             Screen::ScreenshotGallery => {
@@ -114,6 +109,63 @@ impl App {
         } else {
             content
         }
+    }
+
+    fn apply_menu<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
+        if !self.menu_open {
+            return content;
+        }
+
+        let mut items = column![].spacing(2).width(220);
+        let mut has_items = false;
+
+        // Per-screen menu items
+        match self.screen {
+            Screen::Library | Screen::HomebrewBrowser => {
+                items = items.push(menu_item(Icon::FolderOpen, "Open ROM file...", load::Message::Pick.into()));
+                has_items = true;
+            }
+            Screen::Detail => {
+                items = items.push(menu_item(Icon::FolderOpen, "Open ROM file...", load::Message::Pick.into()));
+                items = items.push(menu_divider());
+                items = items.push(menu_item(Icon::Download, "Import Save...", Message::ImportSave));
+                items = items.push(menu_item(Icon::FolderOpen, "Open Folder", Message::OpenGameFolder));
+                items = items.push(menu_item(Icon::Globe, "Refresh Metadata", Message::RefreshMetadata));
+                items = items.push(menu_divider());
+                items = items.push(menu_item_danger(Icon::Close, "Remove Game", Message::RemoveGame));
+                has_items = true;
+            }
+            Screen::Emulator => {
+                items = items.push(menu_item(Icon::Camera, "Screenshot", Message::TakeScreenshot));
+                if !self.debugger_enabled {
+                    items = items.push(menu_item(Icon::Debug, "Debugger", Message::ToggleDebugger(true)));
+                }
+                has_items = true;
+            }
+            _ => {}
+        }
+
+        // Settings always last
+        if has_items {
+            items = items.push(menu_divider());
+        }
+        items = items.push(menu_item(Icon::Gear, "Settings", Message::ShowSettings));
+
+        let menu_panel = container(items.padding(s()))
+            .style(containers::menu);
+
+        // Anchor top-right: scrim covers everything, menu sits in corner
+        Stack::new()
+            .push(content)
+            .push(opaque(
+                mouse_area(
+                    container(menu_panel)
+                        .align_right(Fill)
+                        .padding(Padding { top: m() + 40.0, right: m(), bottom: 0.0, left: 0.0 }),
+                )
+                .on_press(Message::DismissMenu),
+            ))
+            .into()
     }
 
     fn apply_confirmation_dialog<'a>(
@@ -247,6 +299,7 @@ impl App {
 
     /// Navigate to the detail screen for a game, loading activity in background.
     pub(super) fn go_to_detail(&mut self, sha1: &str) -> Task<Message> {
+        self.menu_open = false;
         self.store.mark_activity_loading(sha1);
         self.viewing_sha1 = Some(sha1.to_string());
         self.screen = Screen::Detail;
@@ -517,13 +570,18 @@ impl App {
         container(content).height(Fill).width(Fill).into()
     }
 
-    fn empty_detail_view(&self) -> Element<'_, Message> {
+    fn library_view(&self) -> Element<'_, Message> {
         library::view::view(
             &self.store,
             self.hovered_library_game.as_deref(),
             self.inserted_cartridge(),
             self.cartridge_dump_progress.as_ref(),
+            self.homebrew_enabled(),
         )
+    }
+
+    fn empty_detail_view(&self) -> Element<'_, Message> {
+        self.library_view()
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
@@ -629,6 +687,28 @@ impl App {
             },
         ])
     }
+}
+
+fn menu_item<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
+    buttons::subtle(
+        row![icons::m(icon), label]
+            .spacing(s())
+            .align_y(Center),
+    )
+    .on_press(Message::MenuAction(Box::new(message)))
+    .width(Fill)
+    .into()
+}
+
+fn menu_item_danger<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
+    buttons::danger(
+        row![icons::m(icon), label]
+            .spacing(s())
+            .align_y(Center),
+    )
+    .on_press(Message::MenuAction(Box::new(message)))
+    .width(Fill)
+    .into()
 }
 
 /// Standard screen header: back button + title + horizontal rule.
