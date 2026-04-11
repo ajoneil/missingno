@@ -347,7 +347,7 @@ pub fn pane_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
 
     container::Style {
-        background: Some(palette.background.weak.color.into()),
+        background: Some(palette.background.base.color.into()),
         border: Border::default()
             .rounded(sizes::border_s())
             .width(1.0)
@@ -359,6 +359,7 @@ pub fn pane_style(theme: &Theme) -> container::Style {
 fn title_style(_theme: &Theme) -> container::Style {
     container::Style {
         text_color: Some(palette::MUTED),
+        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.03).into()),
         ..Default::default()
     }
 }
