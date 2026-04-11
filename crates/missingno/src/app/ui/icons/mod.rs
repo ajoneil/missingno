@@ -8,10 +8,12 @@ use crate::app::ui::text;
 #[allow(dead_code)]
 pub enum Icon {
     Back,
+    Brush,
     Camera,
     CircuitBoard,
     Clock,
     Close,
+    ColorsSwatch,
     Debug,
     Download,
     Expand,
@@ -22,6 +24,9 @@ pub enum Icon {
     GameBoy,
     Gear,
     GitHub,
+    Grid,
+    Human,
+    Image,
     Info,
     Globe,
     Menu,
@@ -35,12 +40,16 @@ pub enum Icon {
 fn icon_data(icon: Icon) -> Handle {
     match icon {
         Icon::Back => Handle::from_memory(include_bytes!("pixelarticons/chevron-left.svg")),
+        Icon::Brush => Handle::from_memory(include_bytes!("pixelarticons/brush.svg")),
         Icon::Camera => Handle::from_memory(include_bytes!("pixelarticons/camera.svg")),
         Icon::CircuitBoard => {
             Handle::from_memory(include_bytes!("pixelarticons/circuit-board.svg"))
         }
         Icon::Clock => Handle::from_memory(include_bytes!("pixelarticons/clock.svg")),
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
+        Icon::ColorsSwatch => {
+            Handle::from_memory(include_bytes!("pixelarticons/colors-swatch.svg"))
+        }
         Icon::Debug => Handle::from_memory(include_bytes!("pixelarticons/debug.svg")),
         Icon::Download => Handle::from_memory(include_bytes!("pixelarticons/download.svg")),
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
@@ -51,6 +60,9 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::GameBoy => Handle::from_memory(include_bytes!("missingno.svg")),
         Icon::Gear => Handle::from_memory(include_bytes!("pixelarticons/settings-cog.svg")),
         Icon::GitHub => Handle::from_memory(include_bytes!("bootstrap/github.svg")),
+        Icon::Grid => Handle::from_memory(include_bytes!("pixelarticons/grid.svg")),
+        Icon::Human => Handle::from_memory(include_bytes!("pixelarticons/human.svg")),
+        Icon::Image => Handle::from_memory(include_bytes!("pixelarticons/image.svg")),
         Icon::Globe => Handle::from_memory(include_bytes!("pixelarticons/globe.svg")),
         Icon::Menu => Handle::from_memory(include_bytes!("pixelarticons/menu.svg")),
         Icon::Info => Handle::from_memory(include_bytes!("pixelarticons/info-box.svg")),
@@ -70,6 +82,15 @@ pub fn m<'a>(icon: Icon) -> Svg<'a, Theme> {
         .height(ICON_SIZE)
         .style(|theme: &Theme, _state| Style {
             color: Some(theme.palette().text),
+        })
+}
+
+pub fn m_colored<'a>(icon: Icon, color: iced::Color) -> Svg<'a, Theme> {
+    svg(icon_data(icon))
+        .width(ICON_SIZE)
+        .height(ICON_SIZE)
+        .style(move |_: &Theme, _state| Style {
+            color: Some(color),
         })
 }
 

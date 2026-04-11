@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use iced::{
     Border, Color, Element, Theme,
     widget::{
-        container, pane_grid,
+        button, column, container, pane_grid, tooltip,
         pane_grid::Axis::{Horizontal, Vertical},
         toggler,
     },
@@ -14,13 +14,13 @@ use crate::app::{
     self,
     ui::{
         fonts, palette,
+        icons::{self, Icon},
         sizes::{self as sizes, s, xs},
     },
     debugger::{
         self,
         audio::AudioPane,
         instructions::InstructionsPane,
-        playback::PlaybackPane,
         ppu::{
             PpuPane,
             sprites::{self, SpritesPane},
@@ -76,7 +76,6 @@ pub enum DebuggerPane {
     TileMap(TileMapId),
     Sprites,
     Audio,
-    Playback,
 }
 
 enum PaneInstance {
@@ -87,7 +86,6 @@ enum PaneInstance {
     TileMap(TileMapPane),
     Sprites(SpritesPane),
     Audio(AudioPane),
-    Playback(PlaybackPane),
 }
 
 impl DebuggerPanes {
@@ -153,7 +151,6 @@ impl DebuggerPanes {
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
             DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
             DebuggerPane::Audio => PaneInstance::Audio(AudioPane::new()),
-            DebuggerPane::Playback => PaneInstance::Playback(PlaybackPane::new()),
         }
     }
 
@@ -220,7 +217,6 @@ impl DebuggerPanes {
     pub fn view<'a>(
         &'a self,
         debugger: &'a Debugger,
-        app_debugger: &'a super::Debugger,
     ) -> Element<'a, app::Message> {
         let pal = if debugger.game_boy().sgb().is_some() {
             &Palette::CLASSIC
@@ -245,7 +241,6 @@ impl DebuggerPanes {
                     sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
                 }
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
-                PaneInstance::Playback(playback) => playback.content(app_debugger),
             },
         )
         .on_resize(10.0, |resize| Message::ResizePane(resize).into())
@@ -268,7 +263,6 @@ impl DebuggerPanes {
             DebuggerPane::TileMap(TileMapId(1)),
             DebuggerPane::Sprites,
             DebuggerPane::Audio,
-            DebuggerPane::Playback,
         ]
     }
 
@@ -278,6 +272,51 @@ impl DebuggerPanes {
             .filter(|&pane| !self.plane_shown(*pane))
             .cloned()
             .collect()
+    }
+
+    pub fn icon_rail(&self) -> Element<'_, app::Message> {
+        use crate::app::debugger::sidebar::tooltip_style;
+
+        let buttons = self.available_panes().iter().map(|&pane| {
+            let shown = self.plane_shown(pane);
+            let color = if shown { palette::PURPLE } else { palette::SURFACE2 };
+            let message = if shown {
+                Message::ClosePane(pane)
+            } else {
+                Message::ShowPane(pane)
+            };
+
+            let btn: Element<'_, app::Message> = button(
+                icons::m_colored(pane.icon(), color),
+            )
+            .on_press(message.into())
+            .style(button::text)
+            .into();
+
+            tooltip(btn, container(iced::widget::text(pane.to_string()).font(fonts::monospace()).size(13.0)).padding([2.0, s()]), tooltip::Position::Left)
+                .style(tooltip_style)
+                .into()
+        });
+
+        container(
+            column(buttons).spacing(xs()),
+        )
+        .padding([s(), xs()])
+        .into()
+    }
+}
+
+impl DebuggerPane {
+    fn icon(&self) -> Icon {
+        match self {
+            DebuggerPane::Screen => Icon::Monitor,
+            DebuggerPane::Instructions => Icon::Debug,
+            DebuggerPane::Ppu => Icon::Brush,
+            DebuggerPane::Tiles => Icon::Grid,
+            DebuggerPane::TileMap(_) => Icon::Image,
+            DebuggerPane::Sprites => Icon::Human,
+            DebuggerPane::Audio => Icon::Sliders,
+        }
     }
 }
 
@@ -291,7 +330,6 @@ impl fmt::Display for DebuggerPane {
             DebuggerPane::TileMap(map) => write!(f, "{}", map),
             DebuggerPane::Sprites => write!(f, "Sprites"),
             DebuggerPane::Audio => write!(f, "Audio"),
-            DebuggerPane::Playback => write!(f, "Playback"),
         }
     }
 }

@@ -212,7 +212,8 @@ impl Debugger {
         row![
             self.sidebar.view(&self.debugger),
             container(rule::vertical(1)).padding([s(), s()]),
-            self.panes.view(&self.debugger, self),
+            self.panes.view(&self.debugger),
+            self.panes.icon_rail(),
         ]
         .padding(s())
         .into()
