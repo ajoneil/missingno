@@ -186,9 +186,6 @@ impl DebuggerPanes {
             Message::ResizePane(resize) => self.panes.resize(resize.split, resize.ratio),
             Message::DragPane(drag) => match drag {
                 pane_grid::DragEvent::Dropped { pane, target } => self.panes.drop(pane, target),
-                pane_grid::DragEvent::Canceled { pane } => {
-                    self.panes.close(pane);
-                }
                 _ => {}
             },
 
