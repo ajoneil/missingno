@@ -7,7 +7,7 @@ use crate::app::{
     self,
     debugger::{
         self,
-        panes::{self, DebuggerPane, pane, title_bar},
+        panes::{self, pane, title_bar},
     },
     screen::{ScreenDisplay, ScreenView},
 };
@@ -59,7 +59,7 @@ impl ScreenPane {
 
     pub fn content(&self) -> pane_grid::Content<'_, app::Message> {
         pane(
-            title_bar("Screen", DebuggerPane::Screen),
+            title_bar("Screen"),
             responsive(|size| {
                 let shortest = size.width.min(size.height);
 

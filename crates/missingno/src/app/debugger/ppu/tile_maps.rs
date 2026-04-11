@@ -7,7 +7,7 @@ use iced::{
 use crate::app::{
     Message,
     ui::sizes::m,
-    debugger::panes::{DebuggerPane, pane, title_bar},
+    debugger::panes::{pane, title_bar},
 };
 use missingno_gb::ppu::{
     Ppu, memory::Vram, types::control::Control, types::palette::Palette,
@@ -76,7 +76,7 @@ impl TileMapPane {
         palette: &Palette,
     ) -> pane_grid::Content<'_, Message> {
         pane(
-            title_bar(&self.title, DebuggerPane::TileMap(self.tile_map)),
+            title_bar(&self.title),
             scrollable(
                 container(tile_map_atlas(
                     vram.tile_map(self.tile_map),

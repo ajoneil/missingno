@@ -13,7 +13,7 @@ use crate::app::{
         text,
     },
     debugger::{
-        panes::{self, DebuggerPane, checkbox_title_bar, pane},
+        panes::{self, checkbox_title_bar, pane},
         ppu::{palette::palette3, tile_widget::tile_flip},
     },
 };
@@ -63,7 +63,6 @@ impl SpritesPane {
             checkbox_title_bar(
                 "Sprites",
                 ppu.control().sprites_enabled(),
-                DebuggerPane::Sprites,
             ),
             scrollable(
                 column![

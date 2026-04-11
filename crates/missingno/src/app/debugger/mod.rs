@@ -211,7 +211,7 @@ impl Debugger {
     pub fn view(&self) -> Element<'_, app::Message> {
         row![
             self.sidebar.view(&self.debugger),
-            container(rule::vertical(1)).padding([s(), 0.0]),
+            container(rule::vertical(1)).padding([s(), s()]),
             self.panes.view(&self.debugger, self),
         ]
         .padding(s())

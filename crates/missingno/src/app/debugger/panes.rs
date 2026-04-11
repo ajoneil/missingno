@@ -2,21 +2,19 @@ use core::fmt;
 use std::collections::HashMap;
 
 use iced::{
-    Border, Color, Element, Length, Theme,
+    Border, Color, Element, Theme,
     widget::{
         container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
-        svg, toggler,
+        toggler,
     },
 };
 
 use crate::app::{
     self,
     ui::{
-        buttons, fonts,
-        icons::{self, Icon},
-        sizes::{m, s},
-        text,
+        fonts, palette,
+        sizes::{self as sizes, s, xs},
     },
     debugger::{
         self,
@@ -42,6 +40,7 @@ use missingno_gb::ppu::types::{
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowPane(DebuggerPane),
+    #[allow(dead_code)]
     ClosePane(DebuggerPane),
 
     ResizePane(pane_grid::ResizeEvent),
@@ -56,9 +55,9 @@ pub enum PaneMessage {
     Sprites(sprites::Message),
 }
 
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
-        app::Message::Debugger(debugger::Message::Pane(self))
+impl From<Message> for app::Message {
+    fn from(message: Message) -> Self {
+        app::Message::Debugger(debugger::Message::Pane(message))
     }
 }
 
@@ -187,6 +186,9 @@ impl DebuggerPanes {
             Message::ResizePane(resize) => self.panes.resize(resize.split, resize.ratio),
             Message::DragPane(drag) => match drag {
                 pane_grid::DragEvent::Dropped { pane, target } => self.panes.drop(pane, target),
+                pane_grid::DragEvent::Canceled { pane } => {
+                    self.panes.close(pane);
+                }
                 _ => {}
             },
 
@@ -251,7 +253,7 @@ impl DebuggerPanes {
         )
         .on_resize(10.0, |resize| Message::ResizePane(resize).into())
         .on_drag(|drag| Message::DragPane(drag).into())
-        .spacing(m())
+        .spacing(s())
         .into()
     }
 
@@ -310,54 +312,37 @@ pub fn pane_style(theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
 
     container::Style {
-        border: Border {
-            width: 2.0,
-            color: palette.primary.strong.color,
-            ..Border::default()
-        },
-        background: Some(palette.background.base.color.into()),
+        background: Some(palette.background.weak.color.into()),
+        border: Border::default()
+            .rounded(sizes::border_s())
+            .width(1.0)
+            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.06)),
         ..Default::default()
     }
 }
 
-pub fn title_style(theme: &Theme) -> container::Style {
-    let palette = theme.extended_palette();
-
+fn title_style(_theme: &Theme) -> container::Style {
     container::Style {
-        text_color: Some(palette.primary.strong.text),
-        background: Some(palette.primary.strong.color.into()),
+        text_color: Some(palette::MUTED),
         ..Default::default()
     }
 }
 
-pub fn title_bar(label: &str, pane: DebuggerPane) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(text::label(label).font(fonts::title()).into(), pane)
+pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, app::Message> {
+    pane_grid::TitleBar::new(
+        container(iced::widget::text(label).font(fonts::title()).size(13.0))
+            .padding([xs(), s()]),
+    )
+    .style(title_style)
 }
 
 pub fn checkbox_title_bar(
     label: &str,
     checked: bool,
-    pane: DebuggerPane,
 ) -> pane_grid::TitleBar<'_, app::Message> {
-    tbar(
-        toggler(checked).label(label).font(fonts::title()).into(),
-        pane,
+    pane_grid::TitleBar::new(
+        container(toggler(checked).label(label).font(fonts::title()).size(13.0))
+            .padding([xs(), s()]),
     )
-}
-
-fn tbar(
-    content: Element<'_, app::Message>,
-    pane: DebuggerPane,
-) -> pane_grid::TitleBar<'_, app::Message> {
-    pane_grid::TitleBar::new(container(content).padding(s()))
-        .style(title_style)
-        .controls(pane_grid::Controls::new(
-            container(
-                buttons::standard(icons::m(Icon::Close).style(|_, _| svg::Style {
-                    color: Some(Color::BLACK),
-                }))
-                .on_press(Message::ClosePane(pane).into()),
-            )
-            .center_y(Length::Fixed(m() + 2.0 * s())),
-        ))
+    .style(title_style)
 }

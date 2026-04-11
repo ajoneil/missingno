@@ -10,7 +10,7 @@ use crate::app::{
         icons::{self, Icon},
         sizes::{m, s},
     },
-    debugger::panes::{DebuggerPane, pane, title_bar},
+    debugger::panes::{pane, title_bar},
 };
 
 use super::Debugger;
@@ -55,7 +55,7 @@ impl PlaybackPane {
         };
 
         pane(
-            title_bar("Playback", DebuggerPane::Playback),
+            title_bar("Playback"),
             container(column![text(status), play_button, record_button].spacing(m()))
                 .padding(m())
                 .into(),

@@ -3,7 +3,7 @@ use iced::widget::{column, pane_grid, row, rule, slider, text};
 use crate::app::{
     Message,
     ui::sizes::{l, s},
-    debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
+    debugger::panes::{checkbox_title_bar, pane},
 };
 use missingno_gb::audio::Audio;
 
@@ -18,7 +18,7 @@ impl AudioPane {
 
     pub fn content(&self, audio: &Audio) -> pane_grid::Content<'_, Message> {
         pane(
-            checkbox_title_bar("Audio", audio.enabled(), DebuggerPane::Audio),
+            checkbox_title_bar("Audio", audio.enabled()),
             column![
                 row![
                     column![

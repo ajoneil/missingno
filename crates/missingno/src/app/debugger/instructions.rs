@@ -14,7 +14,7 @@ use crate::app::{
     },
     debugger::{
         self,
-        panes::{DebuggerPane, pane, title_bar},
+        panes::{pane, title_bar},
     },
 };
 use missingno_gb::debugger::instructions::InstructionsIterator;
@@ -52,7 +52,7 @@ impl InstructionsPane {
         }
 
         pane(
-            title_bar("Instructions", DebuggerPane::Instructions),
+            title_bar("Instructions"),
             Column::from_vec(instructions).into(),
         )
     }

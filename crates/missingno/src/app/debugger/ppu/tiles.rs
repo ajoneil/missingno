@@ -8,7 +8,7 @@ use crate::app::{
     Message,
     ui::sizes::m,
     debugger::{
-        panes::{DebuggerPane, pane, title_bar},
+        panes::{pane, title_bar},
         ppu::tile_atlas::tile_block_atlas,
     },
 };
@@ -23,7 +23,7 @@ impl TilesPane {
 
     pub fn content(&self, vram: &Vram, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
-            title_bar("Tiles", DebuggerPane::Tiles),
+            title_bar("Tiles"),
             scrollable(
                 row![
                     tile_block(vram, TileBlockId(0), palette),

@@ -6,7 +6,7 @@ use iced::{
 use crate::app::{
     Message,
     ui::sizes::m,
-    debugger::panes::{DebuggerPane, checkbox_title_bar, pane},
+    debugger::panes::{checkbox_title_bar, pane},
 };
 use missingno_gb::ppu::{Ppu, rendering::Mode, types::palette::Palette};
 
@@ -30,7 +30,7 @@ impl PpuPane {
 
     pub fn content(&self, ppu: &Ppu, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
-            checkbox_title_bar("PPU", ppu.control().video_enabled(), DebuggerPane::Ppu),
+            checkbox_title_bar("PPU", ppu.control().video_enabled()),
             scrollable(
                 column![
                     row![
