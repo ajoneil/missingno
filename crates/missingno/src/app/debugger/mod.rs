@@ -12,7 +12,6 @@ use missingno_gb::{
     GameBoy,
     joypad::Button,
     ppu::types::palette::PaletteChoice,
-    recording::{Input, Recording},
     sgb::MaskMode,
 };
 
@@ -23,7 +22,6 @@ mod audio;
 mod instructions;
 mod interrupts;
 pub mod panes;
-pub mod playback;
 mod ppu;
 mod screen;
 mod sidebar;
@@ -49,24 +47,12 @@ impl Into<super::Message> for Message {
     }
 }
 
-struct ActiveRecording {
-    recording: Recording,
-}
-
-struct ActivePlayback {
-    recording: Recording,
-    cursor: usize,
-}
-
 pub struct Debugger {
     debugger: missingno_gb::debugger::Debugger,
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
     frame: u64,
-    active_recording: Option<ActiveRecording>,
-    active_playback: Option<ActivePlayback>,
-    last_recording: Option<Recording>,
 }
 
 impl Debugger {
@@ -77,9 +63,6 @@ impl Debugger {
             panes: DebuggerPanes::new(),
             running: false,
             frame: 0,
-            active_recording: None,
-            active_playback: None,
-            last_recording: None,
         }
     }
 
@@ -90,9 +73,6 @@ impl Debugger {
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
             frame: 0,
-            active_recording: None,
-            active_playback: None,
-            last_recording: None,
         }
     }
 
@@ -149,7 +129,6 @@ impl Debugger {
             }
             Message::StepFrame => {
                 self.frame += 1;
-                self.apply_playback_events();
                 let screen = self.debugger.step_frame();
                 if screen.is_none() {
                     self.running = false;
@@ -244,99 +223,13 @@ impl Debugger {
     pub fn reset(&mut self) {
         self.debugger.reset();
         self.frame = 0;
-        self.active_recording = None;
-        self.active_playback = None;
-        self.last_recording = None;
     }
 
     pub fn press_button(&mut self, button: Button) {
-        if self.active_playback.is_some() {
-            return;
-        }
-        if let Some(active) = &mut self.active_recording {
-            active.recording.record(self.frame, Input::Press(button));
-        }
         self.debugger.game_boy_mut().press_button(button);
     }
 
     pub fn release_button(&mut self, button: Button) {
-        if self.active_playback.is_some() {
-            return;
-        }
-        if let Some(active) = &mut self.active_recording {
-            active.recording.record(self.frame, Input::Release(button));
-        }
         self.debugger.game_boy_mut().release_button(button);
-    }
-
-    pub fn start_recording(&mut self) {
-        self.debugger.reset();
-        self.frame = 0;
-        self.active_recording = Some(ActiveRecording {
-            recording: Recording::new(),
-        });
-        self.running = true;
-    }
-
-    pub fn stop_recording(&mut self) {
-        if let Some(active) = self.active_recording.take() {
-            self.last_recording = Some(active.recording);
-        }
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.active_recording.is_some()
-    }
-
-    pub fn has_recording(&self) -> bool {
-        self.last_recording.is_some()
-    }
-
-    pub fn start_playback(&mut self) {
-        let Some(recording) = self.last_recording.take() else {
-            return;
-        };
-        self.debugger.reset();
-        self.frame = 0;
-        self.active_recording = None;
-        self.active_playback = Some(ActivePlayback {
-            recording,
-            cursor: 0,
-        });
-        self.running = true;
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.active_playback.is_some()
-    }
-
-    pub fn playback_total_frames(&self) -> Option<u64> {
-        self.active_playback
-            .as_ref()
-            .and_then(|p| p.recording.events().last().map(|e| e.frame()))
-    }
-
-    fn apply_playback_events(&mut self) {
-        let Some(playback) = &mut self.active_playback else {
-            return;
-        };
-
-        let events = playback.recording.events();
-        while playback.cursor < events.len() && events[playback.cursor].frame() == self.frame {
-            match events[playback.cursor].input() {
-                Input::Press(button) => self.debugger.game_boy_mut().press_button(*button),
-                Input::Release(button) => self.debugger.game_boy_mut().release_button(*button),
-            }
-            playback.cursor += 1;
-        }
-
-        if playback.cursor >= events.len() {
-            self.active_playback = None;
-            self.running = false;
-        }
-    }
-
-    pub fn frame(&self) -> u64 {
-        self.frame
     }
 }

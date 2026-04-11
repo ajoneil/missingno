@@ -100,21 +100,6 @@ impl App {
                     });
                 }
             }
-            Message::StartRecording => {
-                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    debugger.start_recording();
-                }
-            }
-            Message::StopRecording => {
-                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    debugger.stop_recording();
-                }
-            }
-            Message::StartPlayback => {
-                if let Game::Loaded(LoadedGame::Debugger(debugger)) = &mut self.game {
-                    debugger.start_playback();
-                }
-            }
             _ => {}
         }
 

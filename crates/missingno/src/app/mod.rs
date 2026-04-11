@@ -297,10 +297,6 @@ enum Message {
     HideCursorTick,
     CloseRequested,
 
-    StartRecording,
-    StopRecording,
-    StartPlayback,
-
     DismissScreenshotToast,
 
     // Cartridge reader/writer (device-level, not screen-specific)
@@ -406,7 +402,6 @@ impl App {
             Message::Run | Message::Pause | Message::TogglePause | Message::Reset
             | Message::SaveBattery | Message::TakeScreenshot | Message::DismissScreenshotToast
             | Message::PressButton(_) | Message::ReleaseButton(_) | Message::ToggleDebugger(_)
-            | Message::StartRecording | Message::StopRecording | Message::StartPlayback
                 => return self.handle_emulation_message(message),
 
             // Settings messages
