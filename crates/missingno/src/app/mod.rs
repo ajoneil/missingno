@@ -310,7 +310,6 @@ enum Message {
     /// A menu item was clicked — dismiss the menu and execute the inner message.
     MenuAction(Box<Message>),
 
-    ActionBar(action_bar::Message),
     Debugger(debugger::Message),
     Emulator(emulator::Message),
 
@@ -653,7 +652,6 @@ impl App {
             }
 
             // Delegated subsystems
-            Message::ActionBar(message) => return self.action_bar.update(message),
             Message::Emulator(message) => {
                 if let Game::Loaded(LoadedGame::Emulator(emulator)) = &mut self.game {
                     let task = emulator.update(message);

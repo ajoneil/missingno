@@ -2,8 +2,7 @@ use iced::{
     Alignment::Center,
     Element,
     Length::Fill,
-    Task,
-    widget::{Button, container, mouse_area, pick_list, row},
+    widget::{Button, container, mouse_area, row},
 };
 
 use crate::app::{
@@ -14,22 +13,8 @@ use crate::app::{
         sizes::{m, s, xl},
         text as app_text,
     },
-    debugger::{
-        self,
-        panes::{self, DebuggerPane},
-    },
+    debugger,
 };
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    ShowPane(DebuggerPane),
-}
-
-impl Into<app::Message> for Message {
-    fn into(self) -> app::Message {
-        app::Message::ActionBar(self)
-    }
-}
 
 pub struct ActionBar;
 
@@ -69,7 +54,7 @@ impl ActionBar {
                         .on_press(app::Message::OpenHomebrewBrowser),
                     );
                 }
-                r = r.push(self.trailing(app));
+                r = r.push(self.trailing());
                 r
             }
             app::Screen::HomebrewBrowser { .. } => {
@@ -95,7 +80,7 @@ impl ActionBar {
                             .align_y(Center),
                     )
                     .on_press(app::Message::OpenUrl("https://hh.gbdev.io")),
-                    self.trailing(app),
+                    self.trailing(),
                 ]
             }
             app::Screen::ViewingGame { sub_screen: app::DetailSubScreen::ScreenshotGallery { .. }, .. } => {
@@ -114,7 +99,7 @@ impl ActionBar {
                     )
                     .clip(true)
                     .width(Fill),
-                    self.trailing(app),
+                    self.trailing(),
                 ]
             }
             app::Screen::Emulator => {
@@ -142,7 +127,7 @@ impl ActionBar {
                     .clip(true)
                     .width(Fill),
                     controls(app.running(), app.debugger_enabled),
-                    self.trailing(app)
+                    self.trailing()
                 ]
             }
             // Detail, Settings, CartridgeActions, FlashCartridge manage their
@@ -155,31 +140,8 @@ impl ActionBar {
         .into()
     }
 
-    pub fn update(&mut self, message: Message) -> Task<app::Message> {
-        match message {
-            Message::ShowPane(pane) => {
-                return Task::done(panes::Message::ShowPane(pane).into());
-            }
-        }
-    }
-
-    fn panes(&self, unshown_panes: Vec<DebuggerPane>) -> Element<'_, app::Message> {
-        pick_list(unshown_panes, None::<DebuggerPane>, |pane| {
-            Message::ShowPane(pane).into()
-        })
-        .placeholder("Add pane...")
-        .into()
-    }
-
-    fn trailing(&self, app: &App) -> Element<'_, app::Message> {
-        let mut row = row![];
-
-        // Debugger pane picker
-        if matches!(app.screen, app::Screen::Emulator) {
-            if let Game::Loaded(LoadedGame::Debugger(debugger)) = &app.game {
-                row = row.push(self.panes(debugger.panes().unshown_panes()));
-            }
-        }
+    fn trailing(&self) -> Element<'_, app::Message> {
+        let row = row![];
 
         row.push(
             buttons::subtle(icons::m(Icon::Menu))

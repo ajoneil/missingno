@@ -268,13 +268,6 @@ impl DebuggerPanes {
         ]
     }
 
-    pub fn unshown_panes(&self) -> Vec<DebuggerPane> {
-        self.available_panes()
-            .into_iter()
-            .filter(|&pane| !self.plane_shown(*pane))
-            .cloned()
-            .collect()
-    }
 
     pub fn icon_rail(&self) -> Element<'_, app::Message> {
         use crate::app::debugger::sidebar::tooltip_style;

@@ -89,10 +89,6 @@ impl Debugger {
         Emulator::from_debugger(self.debugger.game_boy_take(), screen_view, use_sgb_colors)
     }
 
-    pub fn panes(&self) -> &DebuggerPanes {
-        &self.panes
-    }
-
     fn screen_update_task(
         &self,
         screen: Option<missingno_gb::ppu::screen::Screen>,
