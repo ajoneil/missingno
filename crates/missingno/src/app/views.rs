@@ -353,13 +353,13 @@ impl App {
         let viewing_entry = sha1.and_then(|s| self.store.entry(s));
         let viewing_summary = sha1.and_then(|s| self.store.summary(s));
 
-        let flash_write_save = matches!(
-            &self.screen,
+        let (flash_write_save, has_save) = match &self.screen {
             Screen::ViewingGame {
-                sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: true },
+                sub_screen: DetailSubScreen::CartridgeActions { flash_write_save, has_save },
                 ..
-            }
-        );
+            } => (*flash_write_save, *has_save),
+            _ => (true, false),
+        };
 
         // Does the cart match the game we're viewing?
         let cart_matches = viewing_entry
@@ -385,9 +385,18 @@ impl App {
             // ── Scenario 2: Cart matches the current game ──
             let title = viewing_entry.map(|e| e.display_title()).unwrap_or_default();
             let cover = viewing_summary.and_then(|s| s.thumbnail.as_ref());
+            let hardware = if let Some(flash) = &cart.flash {
+                let mut hw = format!("Flash {}", cartridge_rw::format_size(flash.size));
+                if cart.ram_size > 0 {
+                    hw.push_str(&format!(" · RAM {}", cartridge_rw::format_size(cart.ram_size)));
+                }
+                hw
+            } else {
+                format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size))
+            };
             body = body.push(library::view::cartridge_tile(
                 &title,
-                &format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size)),
+                &cart_subtitle(viewing_entry, &hardware),
                 cover,
             ));
 
@@ -405,7 +414,7 @@ impl App {
                     ]
                     .spacing(s());
 
-                    if cart.has_battery && cart.ram_size > 0 {
+                    if has_save && cart.ram_size > 0 {
                         reflash_col = reflash_col.push(
                             iced::widget::toggler(flash_write_save)
                                 .label("Also write save to cartridge")
@@ -448,9 +457,9 @@ impl App {
                     &rom_size,
                     flash_cover,
                 );
-                // Cart subtitle: show flash chip info and RAM
+                // Cart hardware info
                 let flash_size = cart.flash.as_ref().map(|f| f.size).unwrap_or(0);
-                let cart_subtitle = if cart.ram_size > 0 {
+                let cart_hw = if cart.ram_size > 0 {
                     format!(
                         "Flash {} · RAM {}",
                         cartridge_rw::format_size(flash_size),
@@ -460,9 +469,10 @@ impl App {
                     format!("Flash {}", cartridge_rw::format_size(flash_size))
                 };
 
+                let cart_entry = cart_game.map(|g| &g.entry);
                 let cart_tile = library::view::cartridge_tile(
                     &cart_title,
-                    &cart_subtitle,
+                    &cart_subtitle(cart_entry, &cart_hw),
                     cart_cover,
                 );
                 let arrow = container(
@@ -479,8 +489,8 @@ impl App {
                         .align_y(Center),
                 );
 
-                // Save toggle — show when the cart supports RAM
-                if cart.ram_size > 0 {
+                // Save toggle — show when the game has saves and the cart supports them
+                if has_save && cart.ram_size > 0 {
                     body = body.push(
                         iced::widget::toggler(flash_write_save)
                             .label("Also write save to cartridge")
@@ -550,8 +560,8 @@ impl App {
 
         // Look up the game being flashed for the tile
         let sha1 = self.viewing_sha1();
-        let game_title = sha1
-            .and_then(|s| self.store.entry(s))
+        let game_entry = sha1.and_then(|s| self.store.entry(s));
+        let game_title = game_entry
             .map(|e| e.display_title())
             .unwrap_or_default();
         let game_cover = sha1
@@ -572,7 +582,11 @@ impl App {
                 };
 
                 let mut body = column![
-                    library::view::cartridge_tile(&game_title, "Writing to cartridge…", game_cover),
+                    library::view::cartridge_tile(
+                        &game_title,
+                        &cart_subtitle(game_entry, "Writing to cartridge…"),
+                        game_cover,
+                    ),
                 ]
                 .spacing(s());
 
@@ -611,7 +625,11 @@ impl App {
                     screen_header_no_back("Write Complete"),
                     container(
                         column![
-                            library::view::cartridge_tile(&game_title, "Written successfully", game_cover),
+                            library::view::cartridge_tile(
+                                &game_title,
+                                &cart_subtitle(game_entry, "Written successfully"),
+                                game_cover,
+                            ),
                             buttons::primary("Done")
                                 .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
                         ]
@@ -764,6 +782,28 @@ impl App {
             },
         ])
     }
+}
+
+/// Build a cartridge tile subtitle combining library metadata with hardware info.
+fn cart_subtitle(
+    entry: Option<&library::GameEntry>,
+    hardware: &str,
+) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    let publisher;
+    let year;
+    if let Some(e) = entry {
+        if let Some(p) = &e.publisher {
+            publisher = p.clone();
+            parts.push(&publisher);
+        }
+        if let Some(y) = &e.year {
+            year = library::activity::format_date_string(y);
+            parts.push(&year);
+        }
+    }
+    parts.push(hardware);
+    parts.join(" · ")
 }
 
 fn menu_item<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {

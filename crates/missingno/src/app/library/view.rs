@@ -103,7 +103,7 @@ pub(crate) fn view<'a>(
                 .and_then(|sha1| games.iter().find(|g| g.entry.sha1 == sha1));
 
             if let Some(game) = matched_game {
-                all_cards.push(cartridge_game_card(game));
+                all_cards.push(cartridge_game_card(game, cart));
             } else {
                 all_cards.push(unmatched_cartridge_card(cart, dump_progress));
             }
@@ -336,18 +336,46 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
 }
 
 /// A library game card styled as a cartridge tile.
-fn cartridge_game_card(game: &GameSummary) -> Element<'_, app::Message> {
-    let subtitle = if let Some(last_ts) = game.last_played {
+fn cartridge_game_card<'a>(
+    game: &'a GameSummary,
+    cart: &'a cartridge_rw::CartridgeHeader,
+) -> Element<'a, app::Message> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Publisher · Year (same as game_card)
+    let meta: Vec<String> = [
+        game.entry.publisher.clone(),
+        game.entry
+            .year
+            .as_ref()
+            .map(|y| library::activity::format_date_string(y)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !meta.is_empty() {
+        parts.push(meta.join(" · "));
+    }
+
+    // Play time
+    if let Some(last_ts) = game.last_played {
         let last = friendly_ago(last_ts);
         let play_time = library::activity::format_play_time(game.play_time_secs);
-        format!("Played {last} · {play_time}")
-    } else {
-        game.entry
-            .publisher
-            .clone()
-            .unwrap_or_default()
-    };
+        parts.push(format!("Played {last} · {play_time}"));
+    }
 
+    // Hardware info — flash cart shows chip info, regular cart shows mapper/ROM
+    if let Some(flash) = &cart.flash {
+        let mut hw = format!("Flash {}", cartridge_rw::format_size(flash.size));
+        if cart.ram_size > 0 {
+            hw.push_str(&format!(" · RAM {}", cartridge_rw::format_size(cart.ram_size)));
+        }
+        parts.push(hw);
+    } else {
+        parts.push(format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size)));
+    }
+
+    let subtitle = parts.join("\n");
     let cover = game.thumbnail.as_ref();
 
     let tile = cartridge_tile(&game.entry.display_title(), &subtitle, cover);

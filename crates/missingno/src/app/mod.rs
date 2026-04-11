@@ -170,7 +170,10 @@ enum DetailSubScreen {
         header_hovered: bool,
     },
     CartridgeActions {
+        /// Whether to write saves alongside a flash operation.
         flash_write_save: bool,
+        /// Whether the game has save data in the library.
+        has_save: bool,
     },
     FlashCartridge {
         flash_state: FlashState,

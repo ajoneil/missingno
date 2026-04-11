@@ -251,7 +251,10 @@ pub(in crate::app) fn handle(
                         .is_some();
                     app.screen = Screen::ViewingGame {
                         sha1,
-                        sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: has_save },
+                        sub_screen: DetailSubScreen::CartridgeActions {
+                            flash_write_save: has_save,
+                            has_save,
+                        },
                     };
                 }
                 Back => {
