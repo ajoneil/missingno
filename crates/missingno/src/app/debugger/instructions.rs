@@ -15,7 +15,7 @@ use crate::app::{
     },
     debugger::{
         self,
-        panes::{pane, title_bar},
+        panes::{pane, title_bar, title_bar_with_detail},
     },
 };
 use missingno_gb::debugger::instructions::{InstructionsIterator, addresses_before};
@@ -75,8 +75,24 @@ impl InstructionsPane {
             }
         }
 
+        let header = if breakpoints.is_empty() {
+            title_bar("Instructions")
+        } else {
+            let detail = format!(
+                "{} bp",
+                breakpoints.len(),
+            );
+            title_bar_with_detail(
+                "Instructions",
+                text(detail)
+                    .font(fonts::monospace())
+                    .size(11.0)
+                    .color(palette::MUTED),
+            )
+        };
+
         pane(
-            title_bar("Instructions"),
+            header,
             iced::widget::scrollable(
                 Column::from_vec(instructions).width(Length::Fill),
             )

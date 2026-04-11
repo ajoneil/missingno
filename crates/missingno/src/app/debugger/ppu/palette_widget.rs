@@ -11,20 +11,6 @@ use crate::app::{
 };
 use missingno_gb::ppu::types::palette::{Palette, PaletteIndex, PaletteMap};
 
-pub fn palette4(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
-    container(
-        row![
-            color_block(map, PaletteIndex(0), palette),
-            color_block(map, PaletteIndex(1), palette),
-            color_block(map, PaletteIndex(2), palette),
-            color_block(map, PaletteIndex(3), palette),
-        ]
-        .spacing(xs()),
-    )
-    .height(20)
-    .into()
-}
-
 // Sprites always treat color #0 as transparent
 pub fn palette3(map: &PaletteMap, palette: &Palette) -> Element<'static, Message> {
     container(

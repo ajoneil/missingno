@@ -8,13 +8,14 @@ use iced::{
 use crate::app::{
     self,
     ui::{
+        fonts, palette,
         icons::{self, Icon},
         sizes::{l, m, s, xs},
         text,
     },
     debugger::{
-        panes::{self, checkbox_title_bar, pane},
-        ppu::{palette::palette3, tile_widget::tile_flip},
+        panes::{self, pane, title_bar_with_detail},
+        ppu::{palette_widget::palette3, tile_widget::tile_flip},
     },
 };
 use missingno_gb::ppu::{
@@ -59,10 +60,23 @@ impl SpritesPane {
         vram: &'a Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
+        let size = ppu.control().sprite_size();
+        let visible_count = (0..40)
+            .map(|i| ppu.sprite(SpriteId(i)))
+            .filter(|s| s.position.on_screen_x() && s.position.on_screen_y(size))
+            .count();
+        let detail = format!(
+            "{} · {} visible",
+            size, visible_count,
+        );
+
         pane(
-            checkbox_title_bar(
+            title_bar_with_detail(
                 "Sprites",
-                ppu.control().sprites_enabled(),
+                iced::widget::text(detail)
+                    .font(fonts::monospace())
+                    .size(11.0)
+                    .color(palette::MUTED),
             ),
             scrollable(
                 column![

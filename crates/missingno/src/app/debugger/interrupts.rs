@@ -96,7 +96,7 @@ fn pip_cell(active: bool, active_color: Color) -> Element<'static, Message> {
         .into()
 }
 
-fn pip(active: bool, active_color: Color) -> Element<'static, Message> {
+pub fn pip(active: bool, active_color: Color) -> Element<'static, Message> {
     let (bg, border_color) = if active {
         (Some(Background::Color(active_color)), active_color)
     } else {

@@ -367,6 +367,50 @@ pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, app::Message> {
     .style(title_style)
 }
 
+pub fn title_bar_with_detail<'a>(
+    label: &'a str,
+    detail: impl Into<Element<'a, app::Message>>,
+) -> pane_grid::TitleBar<'a, app::Message> {
+    build_title_bar(
+        iced::widget::text(label).font(fonts::title()).size(13.0).into(),
+        detail,
+    )
+}
+
+pub fn pip_title_bar_with_detail<'a>(
+    label: &'a str,
+    active: bool,
+    detail: impl Into<Element<'a, app::Message>>,
+) -> pane_grid::TitleBar<'a, app::Message> {
+    use crate::app::debugger::interrupts::pip;
+
+    build_title_bar(
+        iced::widget::row![
+            pip(active, palette::GREEN),
+            iced::widget::text(label).font(fonts::title()).size(13.0),
+        ]
+        .spacing(xs())
+        .align_y(iced::alignment::Vertical::Center)
+        .into(),
+        detail,
+    )
+}
+
+fn build_title_bar<'a>(
+    title: Element<'a, app::Message>,
+    detail: impl Into<Element<'a, app::Message>>,
+) -> pane_grid::TitleBar<'a, app::Message> {
+    pane_grid::TitleBar::new(container(title).padding([xs(), s()]))
+        // +1px top padding nudge: the detail font (monospace 11px) is shorter
+        // than the title font (Chakra Petch 13px), so it needs a small offset
+        // to visually center within the title bar height.
+        .controls(Element::from(
+            container(detail).padding([xs() + 1.0, s()]),
+        ))
+        .always_show_controls()
+        .style(title_style)
+}
+
 pub fn checkbox_title_bar(
     label: &str,
     checked: bool,
