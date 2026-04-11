@@ -648,6 +648,7 @@ pub(in crate::app) fn handle(
                         state.visible_count = homebrew_browser::PAGE_SIZE;
                         state.error = None;
                     }
+                    return load_homebrew_covers(app);
                 }
                 H::ShowMore => {
                     if let Screen::HomebrewBrowser { state } = &mut app.screen {
