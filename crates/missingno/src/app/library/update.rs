@@ -249,9 +249,12 @@ pub(in crate::app) fn handle(
             use app::CartridgeMessage::*;
             match cart_msg {
                 ShowActions(sha1) => {
+                    let has_save = super::find_by_sha1(&sha1)
+                        .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
+                        .is_some();
                     app.screen = Screen::ViewingGame {
                         sha1,
-                        sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: false },
+                        sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: has_save },
                     };
                 }
                 Back => {
@@ -325,35 +328,89 @@ pub(in crate::app) fn handle(
                     }
                 }
                 Flash(sha1) => {
-                    // Look up game and cartridge info for confirmation
-                    let entry = app.store.entry(&sha1);
-                    let cart = app.inserted_cartridge();
-
-                    if let (Some(entry), Some(cart)) = (entry, cart) {
-                        if let Some(flash) = &cart.flash {
-                            // Check if the game has save data in the library
-                            let has_save = entry.rom_paths.first()
-                                .and_then(|_| super::find_by_sha1(&sha1))
-                                .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
-                                .is_some();
-
-                            let flash_state = FlashState::Confirming {
-                                sha1: sha1.clone(),
-                                game_title: entry.display_title(),
-                                rom_size: entry.rom_paths.first()
-                                    .and_then(|p| std::fs::metadata(p).ok())
-                                    .map(|m| m.len() as u32)
-                                    .unwrap_or(0),
-                                cart_title: cart.title.clone(),
-                                flash_size: flash.size,
-                                has_save,
-                                write_save: has_save, // Default on if save exists
-                            };
-                            app.screen = Screen::ViewingGame {
-                                sha1,
-                                sub_screen: DetailSubScreen::FlashCartridge { flash_state },
-                            };
+                    // Read write_save preference from the CartridgeActions screen
+                    let write_save = matches!(
+                        &app.screen,
+                        Screen::ViewingGame {
+                            sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: true, .. },
+                            ..
                         }
+                    );
+
+                    let entry = app.store.entry(&sha1).cloned();
+                    let device = app.detected_cartridge_devices.iter()
+                        .find(|d| d.cartridge.as_ref().and_then(|c| c.flash.as_ref()).is_some());
+
+                    if let (Some(entry), Some(device)) = (entry, device) {
+                        let flash = device.cartridge.as_ref().unwrap().flash.clone().unwrap();
+                        let port_name = device.port_name.clone();
+
+                        let rom_path = match entry.rom_paths.first() {
+                            Some(p) => p.clone(),
+                            None => return Task::none(),
+                        };
+                        let rom_data = match std::fs::read(&rom_path) {
+                            Ok(data) => data,
+                            Err(e) => {
+                                app.screen = Screen::ViewingGame {
+                                    sha1,
+                                    sub_screen: DetailSubScreen::FlashCartridge {
+                                        flash_state: FlashState::Failed(
+                                            format!("Failed to read ROM: {e}"),
+                                        ),
+                                    },
+                                };
+                                return Task::none();
+                            }
+                        };
+
+                        let sram_data = if write_save {
+                            super::find_by_sha1(&sha1)
+                                .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
+                        } else {
+                            None
+                        };
+                        let cart_header = device.cartridge.clone().unwrap();
+
+                        app.screen = Screen::ViewingGame {
+                            sha1,
+                            sub_screen: DetailSubScreen::FlashCartridge {
+                                flash_state: FlashState::InProgress(
+                                    cartridge_rw::FlashProgress {
+                                        phase: cartridge_rw::FlashPhase::Erasing,
+                                        bytes_done: 0,
+                                        bytes_total: rom_data.len(),
+                                    },
+                                ),
+                            },
+                        };
+
+                        let (tx, rx) = smol::channel::bounded(32);
+                        let progress_task = Task::run(
+                            smol::stream::unfold(rx, |rx| async {
+                                rx.recv().await.ok().map(|p| (p, rx))
+                            }),
+                            |progress| app::Message::Cartridge(FlashProgress(progress)),
+                        );
+
+                        let port_name_for_sram = port_name.clone();
+                        let flash_task = Task::perform(
+                            smol::unblock(move || {
+                                cartridge_rw::flash_rom(&port_name, &flash, &rom_data, &mut |p| {
+                                    let _ = tx.send_blocking(p);
+                                })?;
+                                if let Some(sram) = sram_data {
+                                    eprintln!("[cartridge_rw] writing save data to cartridge...");
+                                    cartridge_rw::write_sram(&port_name_for_sram, &cart_header, &sram)?;
+                                    Ok(Some(sram))
+                                } else {
+                                    Ok(None)
+                                }
+                            }),
+                            |result| app::Message::Cartridge(FlashComplete(result)),
+                        );
+
+                        return Task::batch([flash_task, progress_task]);
                     }
                 }
                 FlashCancel => {
@@ -366,104 +423,11 @@ pub(in crate::app) fn handle(
                 }
                 FlashToggleSave(enabled) => {
                     if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::FlashCartridge {
-                            flash_state: FlashState::Confirming { write_save, .. },
-                        },
+                        sub_screen: DetailSubScreen::CartridgeActions { flash_write_save, .. },
                         ..
                     } = &mut app.screen
                     {
-                        *write_save = enabled;
-                    }
-                }
-                FlashConfirm => {
-                    if let Screen::ViewingGame {
-                        sub_screen: DetailSubScreen::FlashCartridge {
-                            flash_state: FlashState::Confirming { sha1, write_save, .. },
-                        },
-                        ..
-                    } = &app.screen
-                    {
-                        let write_save = *write_save;
-                        let sha1 = sha1.clone();
-                        // Find the ROM file and cartridge
-                        let entry = app.store.entry(&sha1).cloned();
-                        let device = app.detected_cartridge_devices.iter()
-                            .find(|d| d.cartridge.as_ref().and_then(|c| c.flash.as_ref()).is_some());
-
-                        if let (Some(entry), Some(device)) = (entry, device) {
-                            let flash = device.cartridge.as_ref().unwrap().flash.clone().unwrap();
-                            let port_name = device.port_name.clone();
-
-                            // Read the ROM file
-                            let rom_path = match entry.rom_paths.first() {
-                                Some(p) => p.clone(),
-                                None => return Task::none(),
-                            };
-                            let rom_data = match std::fs::read(&rom_path) {
-                                Ok(data) => data,
-                                Err(e) => {
-                                    app.screen = Screen::ViewingGame {
-                                        sha1,
-                                        sub_screen: DetailSubScreen::FlashCartridge {
-                                            flash_state: FlashState::Failed(
-                                                format!("Failed to read ROM: {e}"),
-                                            ),
-                                        },
-                                    };
-                                    return Task::none();
-                                }
-                            };
-
-                            // Load save data if we need to write it after flashing
-                            let sram_data = if write_save {
-                                super::find_by_sha1(&sha1)
-                                    .and_then(|(game_dir, _)| super::activity::load_current_sram(&game_dir))
-                            } else {
-                                None
-                            };
-                            let cart_header = device.cartridge.clone().unwrap();
-
-                            app.screen = Screen::ViewingGame {
-                                sha1,
-                                sub_screen: DetailSubScreen::FlashCartridge {
-                                    flash_state: FlashState::InProgress(
-                                        cartridge_rw::FlashProgress {
-                                            phase: cartridge_rw::FlashPhase::Erasing,
-                                            bytes_done: 0,
-                                            bytes_total: rom_data.len(),
-                                        },
-                                    ),
-                                },
-                            };
-
-                            let (tx, rx) = smol::channel::bounded(32);
-                            let progress_task = Task::run(
-                                smol::stream::unfold(rx, |rx| async {
-                                    rx.recv().await.ok().map(|p| (p, rx))
-                                }),
-                                |progress| app::Message::Cartridge(FlashProgress(progress)),
-                            );
-
-                            let port_name_for_sram = port_name.clone();
-                            let flash_task = Task::perform(
-                                smol::unblock(move || {
-                                    cartridge_rw::flash_rom(&port_name, &flash, &rom_data, &mut |p| {
-                                        let _ = tx.send_blocking(p);
-                                    })?;
-                                    // Write save data after successful flash
-                                    if let Some(sram) = sram_data {
-                                        eprintln!("[cartridge_rw] writing save data to cartridge...");
-                                        cartridge_rw::write_sram(&port_name_for_sram, &cart_header, &sram)?;
-                                        Ok(Some(sram))
-                                    } else {
-                                        Ok(None)
-                                    }
-                                }),
-                                |result| app::Message::Cartridge(FlashComplete(result)),
-                            );
-
-                            return Task::batch([flash_task, progress_task]);
-                        }
+                        *flash_write_save = enabled;
                     }
                 }
                 FlashProgress(progress) => {

@@ -122,16 +122,6 @@ impl App {
 
 #[derive(Debug, Clone)]
 pub(crate) enum FlashState {
-    /// Confirming with the user before flashing.
-    Confirming {
-        sha1: String,
-        game_title: String,
-        rom_size: u32,
-        cart_title: String,
-        flash_size: u32,
-        has_save: bool,
-        write_save: bool,
-    },
     /// Flash in progress.
     InProgress(cartridge_rw::FlashProgress),
     /// Flash completed successfully.
@@ -180,7 +170,6 @@ enum DetailSubScreen {
         header_hovered: bool,
     },
     CartridgeActions {
-        #[allow(dead_code)] // Used by the upcoming flash flow
         flash_write_save: bool,
     },
     FlashCartridge {
@@ -220,7 +209,6 @@ enum CartridgeMessage {
     WriteSave,
     WriteSaveComplete(Result<Vec<u8>, String>),
     Flash(String),
-    FlashConfirm,
     FlashCancel,
     FlashToggleSave(bool),
     FlashProgress(cartridge_rw::FlashProgress),

@@ -353,6 +353,14 @@ impl App {
         let viewing_entry = sha1.and_then(|s| self.store.entry(s));
         let viewing_summary = sha1.and_then(|s| self.store.summary(s));
 
+        let flash_write_save = matches!(
+            &self.screen,
+            Screen::ViewingGame {
+                sub_screen: DetailSubScreen::CartridgeActions { flash_write_save: true },
+                ..
+            }
+        );
+
         // Does the cart match the game we're viewing?
         let cart_matches = viewing_entry
             .and_then(|e| e.header_title.as_ref())
@@ -370,7 +378,8 @@ impl App {
             })
         };
 
-        let mut body = column![].spacing(l()).max_width(600);
+        let max_width = if cart_matches { 600.0 } else { 900.0 };
+        let mut body = column![].spacing(l()).max_width(max_width);
 
         if cart_matches {
             // ── Scenario 2: Cart matches the current game ──
@@ -390,60 +399,98 @@ impl App {
             // Reflash (troubleshooting)
             if cart.flashable() {
                 if let Some(sha1) = sha1 {
-                    body = body.push(
-                        column![
-                            text::label("Troubleshooting"),
-                            iced_text("Reflash the ROM if the cartridge is not working correctly. Make sure your saves are synced first.").color(MUTED),
-                            buttons::subtle("Reflash ROM to Cartridge")
-                                .on_press(Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))),
-                        ]
-                        .spacing(s()),
+                    let mut reflash_col = column![
+                        text::label("Troubleshooting"),
+                        iced_text("Reflash the ROM if the cartridge is not working correctly. Make sure your saves are synced first.").color(MUTED),
+                    ]
+                    .spacing(s());
+
+                    if cart.has_battery && cart.ram_size > 0 {
+                        reflash_col = reflash_col.push(
+                            iced::widget::toggler(flash_write_save)
+                                .label("Also write save to cartridge")
+                                .on_toggle(|v| Message::Cartridge(CartridgeMessage::FlashToggleSave(v)))
+                                .size(m()),
+                        );
+                    }
+
+                    reflash_col = reflash_col.push(
+                        buttons::subtle("Reflash ROM to Cartridge")
+                            .on_press(Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))),
                     );
+
+                    body = body.push(reflash_col);
                 }
             }
         } else if cart.flashable() {
             // ── Scenario 3: Different game, flashable cart ──
-
-            // Show what's currently on the cart
-            let cart_title = if cart.title.is_empty() {
-                "Empty Flash Cart".to_string()
-            } else {
-                cart.title.clone()
-            };
-            let cart_cover = cart_game.and_then(|g| g.thumbnail.as_ref());
-
-            body = body.push(
-                column![
-                    text::label("Currently on cartridge"),
-                    library::view::cartridge_tile(
-                        &cart_title,
-                        &format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size)),
-                        cart_cover,
-                    ),
-                ]
-                .spacing(s()),
-            );
-
-            // Save sync for the cart game (if it's in the library and has battery)
-            if let Some(cart_game) = cart_game {
-                if cart.has_battery && cart.ram_size > 0 {
-                    body = body.push(self.save_sync_section(Some(cart_game.entry.sha1.as_str())));
-                }
-            }
-
-            // Show what we're about to flash
             if let Some(sha1) = sha1 {
                 let flash_title = viewing_entry.map(|e| e.display_title()).unwrap_or_default();
                 let flash_cover = viewing_summary.and_then(|s| s.thumbnail.as_ref());
 
+                let cart_title = if cart.title.is_empty() {
+                    "Empty Flash Cart".to_string()
+                } else {
+                    cart.title.clone()
+                };
+                let cart_cover = cart_game.and_then(|g| g.thumbnail.as_ref());
+
+                // Game file size from disk
+                let rom_size = viewing_entry
+                    .and_then(|e| e.rom_paths.first())
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map(|m| cartridge_rw::format_size(m.len() as u32))
+                    .unwrap_or_default();
+
+                // Side-by-side: game → cartridge
+                let game_tile = library::view::game_tile(
+                    &flash_title,
+                    &rom_size,
+                    flash_cover,
+                );
+                // Cart subtitle: show flash chip info and RAM
+                let flash_size = cart.flash.as_ref().map(|f| f.size).unwrap_or(0);
+                let cart_subtitle = if cart.ram_size > 0 {
+                    format!(
+                        "Flash {} · RAM {}",
+                        cartridge_rw::format_size(flash_size),
+                        cartridge_rw::format_size(cart.ram_size),
+                    )
+                } else {
+                    format!("Flash {}", cartridge_rw::format_size(flash_size))
+                };
+
+                let cart_tile = library::view::cartridge_tile(
+                    &cart_title,
+                    &cart_subtitle,
+                    cart_cover,
+                );
+                let arrow = container(
+                    icons::xl(Icon::Front)
+                        .width(32)
+                        .height(32)
+                        .style(|_, _| svg::Style { color: Some(MUTED) }),
+                )
+                .center_y(library::view::COVER_HEIGHT);
+
+                body = body.push(
+                    row![game_tile, arrow, cart_tile]
+                        .spacing(m())
+                        .align_y(Center),
+                );
+
+                // Save toggle — show when the cart supports RAM
+                if cart.ram_size > 0 {
+                    body = body.push(
+                        iced::widget::toggler(flash_write_save)
+                            .label("Also write save to cartridge")
+                            .on_toggle(|v| Message::Cartridge(CartridgeMessage::FlashToggleSave(v)))
+                            .size(m()),
+                    );
+                }
+
                 body = body.push(
                     column![
-                        text::label("Flash new game"),
-                        library::view::cartridge_tile(
-                            &flash_title,
-                            "Will be written to the cartridge",
-                            flash_cover,
-                        ),
                         iced_text("This will erase the cartridge and replace it with this game's ROM.").color(MUTED),
                         buttons::danger("Erase and Write to Cartridge")
                             .on_press(Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))),
@@ -501,110 +548,17 @@ impl App {
     fn flash_cartridge_view(&self, flash_state: &FlashState) -> Element<'_, Message> {
         use crate::cartridge_rw;
 
-        // If cart disconnected during confirmation, show message
-        if matches!(flash_state, FlashState::Confirming { .. }) && self.inserted_cartridge().is_none() {
-            return container(
-                column![
-                    screen_header("Write to Cartridge", Message::Cartridge(CartridgeMessage::FlashCancel)),
-                    container(
-                        iced_text("Cartridge was disconnected.").color(MUTED),
-                    ).padding(l()),
-                ],
-            )
-            .height(Fill)
-            .width(Fill)
-            .into();
-        }
+        // Look up the game being flashed for the tile
+        let sha1 = self.viewing_sha1();
+        let game_title = sha1
+            .and_then(|s| self.store.entry(s))
+            .map(|e| e.display_title())
+            .unwrap_or_default();
+        let game_cover = sha1
+            .and_then(|s| self.store.summary(s))
+            .and_then(|s| s.thumbnail.as_ref());
 
         let content: Element<'_, Message> = match flash_state {
-            FlashState::Confirming {
-                sha1,
-                game_title,
-                rom_size,
-                cart_title,
-                flash_size,
-                has_save,
-                write_save,
-            } => {
-                let cart_display = if cart_title.is_empty() {
-                    "Empty Flash Cart"
-                } else {
-                    cart_title.as_str()
-                };
-
-                let is_same_game = self.store.entry(sha1)
-                    .and_then(|e| e.header_title.as_ref())
-                    .is_some_and(|ht| ht == cart_title);
-
-                // Look up thumbnails
-                let game_cover = self.store.summary(sha1).and_then(|s| s.thumbnail.as_ref());
-                let cart_cover = if is_same_game {
-                    game_cover
-                } else {
-                    self.store.all_summaries().iter()
-                        .find(|g| g.entry.header_title.as_ref().is_some_and(|ht| ht == cart_title))
-                        .and_then(|g| g.thumbnail.as_ref())
-                };
-
-                let mut details = column![].spacing(l());
-
-                // Side-by-side: game → cartridge
-                let game_tile = library::view::game_tile(
-                    game_title,
-                    &cartridge_rw::format_size(*rom_size),
-                    game_cover,
-                );
-
-                let cart_tile = library::view::cartridge_tile(
-                    cart_display,
-                    &format!("Flash · {}", cartridge_rw::format_size(*flash_size)),
-                    cart_cover,
-                );
-
-                let arrow = container(
-                    icons::xl(Icon::Front)
-                        .width(32)
-                        .height(32)
-                        .style(|_, _| svg::Style { color: Some(MUTED) }),
-                )
-                .align_y(iced::alignment::Vertical::Center)
-                .height(Fill);
-
-                details = details.push(
-                    row![game_tile, arrow, cart_tile]
-                        .spacing(m())
-                        .align_y(Center),
-                );
-
-                if *has_save {
-                    details = details.push(
-                        iced::widget::toggler(*write_save)
-                            .label("Also write latest save to cartridge")
-                            .on_toggle(|v| Message::Cartridge(CartridgeMessage::FlashToggleSave(v)))
-                            .size(m()),
-                    );
-                }
-
-                details = details.push(
-                    column![
-                        iced_text("This will erase all data on the cartridge.").color(MUTED),
-                        row![
-                            buttons::standard("Cancel")
-                                .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
-                            buttons::danger("Erase and Write")
-                                .on_press(Message::Cartridge(CartridgeMessage::FlashConfirm)),
-                        ]
-                        .spacing(s()),
-                    ]
-                    .spacing(s()),
-                );
-
-                column![
-                    screen_header("Write to Cartridge", Message::Cartridge(CartridgeMessage::FlashCancel)),
-                    container(details.max_width(900)).padding(l()),
-                ]
-                .into()
-            }
             FlashState::InProgress(progress) => {
                 let pct = match progress.phase {
                     cartridge_rw::FlashPhase::Erasing => None,
@@ -617,14 +571,17 @@ impl App {
                     ),
                 };
 
-                let mut progress_col = column![].spacing(s());
+                let mut body = column![
+                    library::view::cartridge_tile(&game_title, "Writing to cartridge…", game_cover),
+                ]
+                .spacing(s());
 
                 match progress.phase {
                     cartridge_rw::FlashPhase::Erasing => {
-                        progress_col = progress_col.push(iced_text("Erasing cartridge..."));
+                        body = body.push(iced_text("Erasing cartridge..."));
                     }
                     cartridge_rw::FlashPhase::Writing => {
-                        progress_col = progress_col.push(text::progress_text(
+                        body = body.push(text::progress_text(
                             "Writing…",
                             progress.bytes_done as u32,
                             progress.bytes_total as u32,
@@ -634,18 +591,18 @@ impl App {
                 }
 
                 if let Some(pct) = pct {
-                    progress_col = progress_col.push(
+                    body = body.push(
                         iced::widget::progress_bar(0.0..=1.0, pct).girth(8),
                     );
                 }
 
-                progress_col = progress_col.push(
+                body = body.push(
                     iced_text("Do not disconnect the cartridge or device.").color(MUTED),
                 );
 
                 column![
                     screen_header_no_back("Writing to Cartridge"),
-                    container(progress_col.max_width(600)).padding(l()),
+                    container(body.max_width(600)).padding(l()),
                 ]
                 .into()
             }
@@ -654,7 +611,7 @@ impl App {
                     screen_header_no_back("Write Complete"),
                     container(
                         column![
-                            iced_text("ROM written successfully."),
+                            library::view::cartridge_tile(&game_title, "Written successfully", game_cover),
                             buttons::primary("Done")
                                 .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
                         ]

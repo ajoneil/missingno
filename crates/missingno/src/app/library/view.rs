@@ -40,7 +40,7 @@ fn title_color(title: &str) -> Color {
     Color::from_rgb(r, g, b)
 }
 
-const COVER_HEIGHT: f32 = 160.0;
+pub(crate) const COVER_HEIGHT: f32 = 160.0;
 const COVER_WIDTH: f32 = 120.0;
 const CARD_MIN_WIDTH: f32 = 340.0;
 
