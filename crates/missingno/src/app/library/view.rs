@@ -12,7 +12,7 @@ use crate::app::{
         buttons, containers, fonts,
         icons::{self, Icon},
         palette::MUTED,
-        sizes::{border_l, border_m, l, m, s},
+        sizes::{border_l, l, m, s},
         text as app_text,
     },
     load,
@@ -94,58 +94,42 @@ pub(crate) fn view<'a>(
         let usable = size.width - l() * 2.0;
         let cols = (usable / (CARD_MIN_WIDTH + m())).max(1.0) as usize;
 
-        let mut content: Vec<Element<'_, app::Message>> = Vec::new();
+        // Build a flat list of cards — cartridge first, then library games
+        let mut all_cards: Vec<Element<'_, app::Message>> = Vec::new();
 
-        // Inserted cartridge section
         if let Some(cart) = inserted_cartridge {
-            content.push(app_text::label("Inserted Cartridge").into());
-
             let matched_game = matched_sha1
                 .as_deref()
                 .and_then(|sha1| games.iter().find(|g| g.entry.sha1 == sha1));
 
-            let card: Element<'_, app::Message> = if let Some(game) = matched_game {
-                let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
-                cartridge_game_card(game, hovered)
+            if let Some(game) = matched_game {
+                all_cards.push(cartridge_game_card(game));
             } else {
-                unmatched_cartridge_card(cart, dump_progress)
-            };
-
-            // Pad with spacers to match grid column width
-            let mut card_row = vec![card];
-            while card_row.len() < cols {
-                card_row.push(iced::widget::Space::new().width(Fill).into());
+                all_cards.push(unmatched_cartridge_card(cart, dump_progress));
             }
-            content.push(row(card_row).spacing(m()).into());
-
-            content.push(iced::widget::Space::new().height(s()).into());
         }
 
-        // Library grid — exclude the matched cartridge game to avoid duplication
-        let grid_games: Vec<&&GameSummary> = games
-            .iter()
-            .filter(|g| matched_sha1.as_deref() != Some(g.entry.sha1.as_str()))
-            .collect();
-
-        if !grid_games.is_empty() {
-            if inserted_cartridge.is_some() {
-                content.push(app_text::label("Library").into());
+        for game in &games {
+            // Skip the matched cartridge game — it's already first
+            if matched_sha1.as_deref() == Some(game.entry.sha1.as_str()) {
+                continue;
             }
+            let hovered = hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
+            all_cards.push(game_card(game, hovered));
+        }
 
-            for chunk in grid_games.chunks(cols) {
-                let mut cards: Vec<Element<'_, app::Message>> = chunk
-                    .iter()
-                    .map(|game| {
-                        let hovered =
-                            hovered_sha1.as_deref() == Some(game.entry.sha1.as_str());
-                        game_card(game, hovered)
-                    })
-                    .collect();
-                while cards.len() < cols {
-                    cards.push(iced::widget::Space::new().width(Fill).into());
-                }
-                content.push(row(cards).spacing(m()).into());
+        let mut content: Vec<Element<'_, app::Message>> = Vec::new();
+        let mut cards_iter = all_cards.into_iter();
+        loop {
+            let mut row_cards: Vec<Element<'_, app::Message>> =
+                (&mut cards_iter).take(cols).collect();
+            if row_cards.is_empty() {
+                break;
             }
+            while row_cards.len() < cols {
+                row_cards.push(iced::widget::Space::new().width(Fill).into());
+            }
+            content.push(row(row_cards).spacing(m()).into());
         }
 
         scrollable(
@@ -351,33 +335,29 @@ fn game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
         .into()
 }
 
-/// A library game card with a cartridge indicator overlay.
-fn cartridge_game_card(game: &GameSummary, hovered: bool) -> Element<'_, app::Message> {
-    use iced::widget::stack;
+/// A library game card styled as a cartridge tile.
+fn cartridge_game_card(game: &GameSummary) -> Element<'_, app::Message> {
+    let subtitle = if let Some(last_ts) = game.last_played {
+        let last = friendly_ago(last_ts);
+        let play_time = library::activity::format_play_time(game.play_time_secs);
+        format!("Played {last} · {play_time}")
+    } else {
+        game.entry
+            .publisher
+            .clone()
+            .unwrap_or_default()
+    };
 
-    stack![
-        game_card(game, hovered),
-        container(
-            container(
-                row![
-                    icons::m(Icon::CircuitBoard).style(|_, _| iced::widget::svg::Style {
-                        color: Some(Color::WHITE),
-                    }),
-                ]
-                .spacing(s()),
-            )
-            .padding(s())
-            .style(|_: &iced::Theme| container::Style {
-                background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6).into()),
-                border: iced::Border::default().rounded(border_m()),
-                ..Default::default()
-            }),
-        )
-        .padding(s())
-        .align_right(Fill)
-        .align_bottom(Fill),
-    ]
-    .into()
+    let cover = game.thumbnail.as_ref();
+
+    let tile = cartridge_tile(&game.entry.display_title(), &subtitle, cover);
+
+    mouse_area(tile)
+        .on_press(Message::SelectGame(game.entry.sha1.clone()).into())
+        .on_enter(Message::HoverGame(game.entry.sha1.clone()).into())
+        .on_exit(Message::UnhoverGame.into())
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
 }
 
 /// A card for an inserted cartridge that doesn't match any library game.
@@ -465,6 +445,105 @@ fn unmatched_cartridge_card<'a>(
         .width(Fill)
         .clip(true)
         .style(containers::card)
+        .into()
+}
+
+/// Cover art or initial-letter placeholder for tile cards.
+fn cover_element<'a>(title: &str, cover: Option<&'a image::Handle>) -> Element<'a, app::Message> {
+    if let Some(handle) = cover {
+        image(handle.clone())
+            .width(COVER_WIDTH)
+            .height(COVER_HEIGHT)
+            .content_fit(iced::ContentFit::Cover)
+            .into()
+    } else {
+        let initial = title
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .next()
+            .unwrap_or('?');
+        let bg = title_color(title);
+
+        container(
+            text(initial)
+                .size(COVER_HEIGHT * 0.35)
+                .font(fonts::heading())
+                .color(Color::WHITE),
+        )
+        .width(COVER_WIDTH)
+        .height(COVER_HEIGHT)
+        .align_x(Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(bg.into()),
+            ..Default::default()
+        })
+        .into()
+    }
+}
+
+/// Non-interactive game tile for display purposes (e.g. flash confirmation).
+#[allow(private_interfaces)]
+pub(crate) fn game_tile<'a>(
+    title: &str,
+    subtitle: &str,
+    cover: Option<&'a image::Handle>,
+) -> Element<'a, app::Message> {
+    let info = column![
+        text(title.to_string()).font(fonts::bold()),
+        app_text::detail(subtitle.to_string()).color(MUTED),
+    ]
+    .spacing(4);
+
+    let card_row = row![
+        cover_element(title, cover),
+        container(info.width(Fill)).padding(m()).width(Fill),
+    ]
+    .height(COVER_HEIGHT);
+
+    container(card_row)
+        .width(Fill)
+        .clip(true)
+        .style(containers::card)
+        .into()
+}
+
+/// Reusable cartridge identification tile.
+/// Shows a game card with a teal-accented border and circuit board icon.
+/// Used in the library view and the cartridge actions screen.
+#[allow(private_interfaces)]
+pub(crate) fn cartridge_tile<'a>(
+    title: &str,
+    subtitle: &str,
+    cover: Option<&'a image::Handle>,
+) -> Element<'a, app::Message> {
+    use crate::app::ui::palette::TEAL;
+
+    let info = column![
+        row![
+            icons::m(Icon::CircuitBoard).style(move |_, _| iced::widget::svg::Style {
+                color: Some(TEAL),
+            }),
+            text(title.to_string()).font(fonts::bold()),
+        ]
+        .spacing(s())
+        .align_y(Center),
+        app_text::detail(subtitle.to_string()).color(MUTED),
+    ]
+    .spacing(4);
+
+    let card_row = row![
+        cover_element(title, cover),
+        container(info.width(Fill)).padding(m()).width(Fill),
+    ]
+    .height(COVER_HEIGHT);
+
+    container(card_row)
+        .width(Fill)
+        .clip(true)
+        .style(containers::cartridge)
         .into()
 }
 

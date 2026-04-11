@@ -40,12 +40,10 @@ impl ActionBar {
 
     pub fn view(&self, app: &App) -> Element<'_, app::Message> {
         // Title comes from viewing context or running game
-        let title = match app.screen {
-            app::Screen::Detail | app::Screen::ScreenshotGallery => {
+        let title = match &app.screen {
+            app::Screen::ViewingGame { sha1, .. } => {
                 // Show the viewed game's title
-                app.viewing_sha1
-                    .as_ref()
-                    .and_then(|sha1| app.store.entry(sha1))
+                app.store.entry(sha1)
                     .map(|e| e.display_title())
                     .unwrap_or_default()
             }
@@ -58,8 +56,8 @@ impl ActionBar {
             }
         };
 
-        match app.screen {
-            app::Screen::Library => {
+        match &app.screen {
+            app::Screen::Library { .. } => {
                 let mut r = row![app_text::heading("").width(Fill)];
                 if app.settings.internet_enabled && app.settings.homebrew_hub_enabled {
                     r = r.push(
@@ -74,7 +72,7 @@ impl ActionBar {
                 r = r.push(self.trailing(app));
                 r
             }
-            app::Screen::HomebrewBrowser => {
+            app::Screen::HomebrewBrowser { .. } => {
                 row![
                     container(
                         row![
@@ -100,7 +98,7 @@ impl ActionBar {
                     self.trailing(app),
                 ]
             }
-            app::Screen::ScreenshotGallery => {
+            app::Screen::ViewingGame { sub_screen: app::DetailSubScreen::ScreenshotGallery { .. }, .. } => {
                 row![
                     container(
                         row![
@@ -177,7 +175,7 @@ impl ActionBar {
         let mut row = row![];
 
         // Debugger pane picker
-        if app.screen == app::Screen::Emulator {
+        if matches!(app.screen, app::Screen::Emulator) {
             if let Game::Loaded(LoadedGame::Debugger(debugger)) = &app.game {
                 row = row.push(self.panes(debugger.panes().unshown_panes()));
             }

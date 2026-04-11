@@ -29,3 +29,10 @@ pub const RED: Color = Color::from_rgb(
     0x8b as f32 / 255.0,
     0xa8 as f32 / 255.0,
 );
+
+/// Hardware accent (Catppuccin Mocha "teal") — #94E2D5
+pub const TEAL: Color = Color::from_rgb(
+    0x94 as f32 / 255.0,
+    0xe2 as f32 / 255.0,
+    0xd5 as f32 / 255.0,
+);

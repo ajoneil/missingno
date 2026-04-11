@@ -8,14 +8,16 @@ pub(in crate::app) fn handle(
 ) -> Task<app::Message> {
     match message {
         super::view::Message::SelectSection(section) => {
-            app.settings_section = section;
+            if let app::Screen::Settings { section: ref mut s, .. } = app.screen {
+                *s = section;
+            }
         }
         super::view::Message::Back => {
-            app.screen = app.previous_screen.take().unwrap_or(app::Screen::Library);
-            app.listening_for = None;
-            if app.was_running_before_settings {
-                app.run();
-                app.was_running_before_settings = false;
+            if let app::Screen::Settings { previous_screen, was_running, .. } = std::mem::replace(&mut app.screen, app::Screen::Library { hovered_game: None }) {
+                app.screen = *previous_screen;
+                if was_running {
+                    app.run();
+                }
             }
         }
         super::view::Message::SetInternetEnabled(enabled) => {
@@ -87,10 +89,17 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::StartListening(target) => {
-            app.listening_for = Some(target);
+            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+                *listening_for = Some(target);
+            }
         }
         super::view::Message::CaptureBinding(key_str) => {
-            if let Some(target) = app.listening_for.take() {
+            let target = if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+                listening_for.take()
+            } else {
+                None
+            };
+            if let Some(target) = target {
                 match target {
                     super::view::ListeningFor::Keyboard(action) => {
                         app.settings.keyboard_bindings.set(action, key_str);
@@ -107,7 +116,12 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::ClearBinding => {
-            if let Some(target) = app.listening_for.take() {
+            let target = if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+                listening_for.take()
+            } else {
+                None
+            };
+            if let Some(target) = target {
                 match target {
                     super::view::ListeningFor::Keyboard(action) => {
                         app.settings.keyboard_bindings.0.remove(&action);
@@ -124,13 +138,17 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::CancelCapture => {
-            app.listening_for = None;
+            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+                *listening_for = None;
+            }
         }
         super::view::Message::ResetBindings => {
             app.settings.keyboard_bindings = super::Bindings::default_keyboard();
             app.settings.gamepad_bindings = super::Bindings::default_gamepad();
             app.settings.save();
-            app.listening_for = None;
+            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+                *listening_for = None;
+            }
             controls::update_bindings(
                 &app.settings.keyboard_bindings,
                 &app.settings.gamepad_bindings,

@@ -80,32 +80,13 @@ struct App {
     settings: settings::Settings,
     /// The running emulation session. Only set when a game is actually loaded.
     current_game: Option<CurrentGame>,
-    /// SHA1 of the game being viewed in the detail page (may differ from current_game).
-    viewing_sha1: Option<String>,
     store: library::store::GameStore,
     /// Action waiting for user confirmation (e.g. close game before launching another).
     pending_action: Option<PendingAction>,
-    /// Index of the activity log entry currently hovered on the detail page.
-    hovered_log_entry: Option<usize>,
-    /// Whether the game header is hovered (to show secondary actions).
-    header_hovered: bool,
-    /// SHA1 of the game card currently hovered in the library.
-    hovered_library_game: Option<String>,
-    settings_section: settings::view::Section,
-    /// Screen to return to when leaving settings.
-    previous_screen: Option<Screen>,
-    /// Whether the game was running before entering settings.
-    was_running_before_settings: bool,
-    /// Keybinding capture state: which slot we're listening for input on.
-    listening_for: Option<settings::view::ListeningFor>,
     /// When set, shows a brief "Screenshot saved" toast overlay.
     screenshot_toast: Option<Instant>,
     /// Serial link cable connection (BGB link protocol), injected into GameBoy on load.
     serial_link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
-    /// Screenshot gallery state (when viewing screenshots).
-    gallery_state: Option<library::screenshot_gallery::GalleryState>,
-    /// Homebrew browser state.
-    homebrew_browser: Option<library::homebrew_browser::BrowserState>,
     /// Homebrew Hub API client (shared, thread-safe).
     homebrew_client: std::sync::Arc<library::homebrew_hub::HomebrewHubClient>,
     /// Bundled game catalogue (commercial + homebrew).
@@ -116,10 +97,27 @@ struct App {
     cartridge_rw_known_ports: Vec<String>,
     /// Progress of an active ROM dump, if any.
     cartridge_dump_progress: Option<cartridge_rw::DumpProgress>,
-    /// Flash cartridge state.
-    flash_state: Option<FlashState>,
     /// Whether the hamburger menu overlay is open.
     menu_open: bool,
+}
+
+impl App {
+    /// Get the SHA1 of the game being viewed, if on a detail/sub-screen.
+    fn viewing_sha1(&self) -> Option<&str> {
+        match &self.screen {
+            Screen::ViewingGame { sha1, .. } => Some(sha1),
+            _ => None,
+        }
+    }
+
+    /// Get the keybinding capture state, if on the settings screen.
+    fn listening_for(&self) -> Option<settings::view::ListeningFor> {
+        match &self.screen {
+            Screen::Settings { listening_for, .. } => *listening_for,
+            _ => None,
+        }
+    }
+
 }
 
 #[derive(Debug, Clone)]
@@ -156,16 +154,77 @@ enum PendingAction {
     RemoveGameFromLibrary,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
 enum Screen {
-    Library,
-    Settings,
-    Detail,
-    ScreenshotGallery,
-    HomebrewBrowser,
+    Library {
+        hovered_game: Option<String>,
+    },
+    ViewingGame {
+        sha1: String,
+        sub_screen: DetailSubScreen,
+    },
+    HomebrewBrowser {
+        state: library::homebrew_browser::BrowserState,
+    },
+    Settings {
+        section: settings::view::Section,
+        listening_for: Option<settings::view::ListeningFor>,
+        previous_screen: Box<Screen>,
+        was_running: bool,
+    },
     Emulator,
-    CartridgeActions,
-    FlashCartridge,
+}
+
+enum DetailSubScreen {
+    Detail {
+        hovered_log_entry: Option<usize>,
+        header_hovered: bool,
+    },
+    CartridgeActions {
+        #[allow(dead_code)] // Used by the upcoming flash flow
+        flash_write_save: bool,
+    },
+    FlashCartridge {
+        flash_state: FlashState,
+    },
+    ScreenshotGallery {
+        gallery_state: library::screenshot_gallery::GalleryState,
+    },
+}
+
+/// Messages specific to the game detail screen.
+#[derive(Debug, Clone)]
+enum DetailMessage {
+    HoverLogEntry(usize),
+    UnhoverLogEntry,
+    HoverHeader,
+    UnhoverHeader,
+    OpenGameFolder,
+    RefreshMetadata,
+    ImportSave,
+    ImportSaveSelected(Option<rfd::FileHandle>),
+    PlayWithSave(String),
+    ExportSave(String),
+    ExportSaveSelected(String, Option<rfd::FileHandle>),
+    OpenScreenshotGallery(String, usize),
+    RemoveGame,
+    GameMetadataRefreshed(library::hasheous::GameInfo),
+}
+
+/// Messages specific to cartridge operations.
+#[derive(Debug, Clone)]
+enum CartridgeMessage {
+    ShowActions(String),
+    Back,
+    ImportSave,
+    ImportSaveComplete(Result<Vec<u8>, String>),
+    WriteSave,
+    WriteSaveComplete(Result<Vec<u8>, String>),
+    Flash(String),
+    FlashConfirm,
+    FlashCancel,
+    FlashToggleSave(bool),
+    FlashProgress(cartridge_rw::FlashProgress),
+    FlashComplete(Result<Option<Vec<u8>>, String>),
 }
 
 enum Fullscreen {
@@ -212,25 +271,13 @@ enum Message {
     ConfirmAction,
     DismissConfirm,
 
-    // Game management (detail page actions)
-    OpenGameFolder,
-    RefreshMetadata,
-    ImportSave,
-    ImportSaveSelected(Option<rfd::FileHandle>),
-    PlayWithSave(String),
-    ExportSave(String),
-    ExportSaveSelected(String, Option<rfd::FileHandle>),
-    OpenScreenshotGallery(String, usize), // (session filename, screenshot index)
+    // Screen-specific messages
+    Detail(DetailMessage),
+    Cartridge(CartridgeMessage),
     OpenHomebrewBrowser,
     HomebrewBrowser(library::homebrew_browser::Message),
     HomebrewDownloaded(String, Vec<u8>, library::catalogue::GameManifest),
     ScreenshotGallery(library::screenshot_gallery::Message),
-    HoverLogEntry(usize),
-    UnhoverLogEntry,
-    HoverHeader,
-    UnhoverHeader,
-    RemoveGame,
-    GameMetadataRefreshed(library::hasheous::GameInfo),
 
     // Emulation
     Run,
@@ -265,24 +312,11 @@ enum Message {
 
     DismissScreenshotToast,
 
-    // Cartridge reader/writer
+    // Cartridge reader/writer (device-level, not screen-specific)
     CartridgeRwPoll,
     CartridgeRwPortsChanged(Vec<cartridge_rw::DetectedDevice>),
     CartridgeRwDumpProgress(cartridge_rw::DumpProgress),
     CartridgeRwDumpComplete(Result<(Vec<u8>, Option<Vec<u8>>), String>),
-    ShowCartridgeActions(String), // SHA1 of the game
-    CartridgeActionsBack,
-    CartridgeImportSave,
-    CartridgeImportSaveComplete(Result<Vec<u8>, String>),
-    CartridgeWriteSave,
-    CartridgeWriteSaveComplete(Result<Vec<u8>, String>),
-    FlashCartridge(String), // SHA1 of game to flash
-    FlashCartridgeConfirm,
-    FlashCartridgeCancel,
-    FlashCartridgeToggleSave(bool),
-    CartridgeRwFlashProgress(cartridge_rw::FlashProgress),
-    /// Result contains the SRAM data that was written, if any.
-    CartridgeRwFlashComplete(Result<Option<Vec<u8>>, String>),
 
     ToggleMenu,
     DismissMenu,
@@ -308,7 +342,7 @@ impl App {
         let store = library::store::GameStore::new();
 
         let mut app = Self {
-            screen: Screen::Library,
+            screen: Screen::Library { hovered_game: None },
             game: Game::Unloaded,
             debugger_enabled: debugger,
             fullscreen: Fullscreen::Windowed,
@@ -317,26 +351,15 @@ impl App {
             recent_games,
             settings,
             current_game: None,
-            viewing_sha1: None,
             store,
             pending_action: None,
-            hovered_log_entry: None,
-            header_hovered: false,
-            hovered_library_game: None,
-            settings_section: settings::view::Section::default(),
-            previous_screen: None,
-            was_running_before_settings: false,
-            listening_for: None,
             screenshot_toast: None,
             serial_link,
-            gallery_state: None,
-            homebrew_browser: None,
             homebrew_client: std::sync::Arc::new(library::homebrew_hub::HomebrewHubClient::new()),
             catalogue: std::sync::Arc::new(library::catalogue::Catalogue::load()),
             detected_cartridge_devices: Vec::new(),
             cartridge_rw_known_ports: Vec::new(),
             cartridge_dump_progress: None,
-            flash_state: None,
             menu_open: false,
         };
 
@@ -405,23 +428,13 @@ impl App {
 
             // Library messages
             Message::Library(message) => return library::update::handle_library_message(self, message),
-            Message::OpenGameFolder | Message::RefreshMetadata | Message::GameMetadataRefreshed(_)
-            | Message::ImportSave | Message::ImportSaveSelected(_) | Message::PlayWithSave(_)
-            | Message::ExportSave(_) | Message::ExportSaveSelected(..)
-            | Message::OpenScreenshotGallery(..) | Message::ScreenshotGallery(_)
-            | Message::HoverLogEntry(_) | Message::UnhoverLogEntry
-            | Message::HoverHeader | Message::UnhoverHeader | Message::RemoveGame
-            | Message::HomebrewDownloaded(..) | Message::OpenHomebrewBrowser
-            | Message::HomebrewBrowser(_) | Message::ActivityLoaded(_)
+            Message::Detail(msg) => return library::update::handle(self, Message::Detail(msg)),
+            Message::Cartridge(msg) => return library::update::handle(self, Message::Cartridge(msg)),
+            Message::HomebrewDownloaded(..) | Message::OpenHomebrewBrowser
+            | Message::HomebrewBrowser(_) | Message::ScreenshotGallery(_)
+            | Message::ActivityLoaded(_)
             | Message::ScanComplete(_) | Message::EnrichComplete(_) | Message::OpenUrl(_)
             | Message::CartridgeRwDumpProgress(_) | Message::CartridgeRwDumpComplete(_)
-            | Message::ShowCartridgeActions(_) | Message::CartridgeActionsBack
-            | Message::CartridgeImportSave | Message::CartridgeImportSaveComplete(_)
-            | Message::CartridgeWriteSave | Message::CartridgeWriteSaveComplete(_)
-            | Message::FlashCartridge(_) | Message::FlashCartridgeConfirm
-            | Message::FlashCartridgeCancel | Message::FlashCartridgeToggleSave(_)
-            | Message::CartridgeRwFlashProgress(_)
-            | Message::CartridgeRwFlashComplete(_)
                 => return library::update::handle(self, message),
 
             // Navigation
@@ -429,7 +442,7 @@ impl App {
                 self.menu_open = false;
                 self.flush_pending_save();
                 self.pause();
-                self.screen = Screen::Library;
+                self.screen = Screen::Library { hovered_game: None };
             }
             Message::ConfirmAction => {
                 let action = self.pending_action.take();
@@ -452,7 +465,7 @@ impl App {
                         if load::select_game(self, &sha1) {
                             return load::play_current_game(self);
                         } else {
-                            self.screen = Screen::Library;
+                            self.screen = Screen::Library { hovered_game: None };
                         }
                     }
                     Some(PendingAction::StopGame) => {
@@ -473,14 +486,13 @@ impl App {
                         }
                     }
                     Some(PendingAction::RemoveGameFromLibrary) => {
-                        if let Some(sha1) = &self.viewing_sha1 {
-                            if let Some((game_dir, _)) = library::find_by_sha1(sha1) {
+                        if let Some(sha1) = self.viewing_sha1().map(|s| s.to_string()) {
+                            if let Some((game_dir, _)) = library::find_by_sha1(&sha1) {
                                 library::remove_game(&game_dir);
                             }
-                            self.store.notify_game_removed(sha1);
+                            self.store.notify_game_removed(&sha1);
                         }
-                        self.viewing_sha1 = None;
-                        self.screen = Screen::Library;
+                        self.screen = Screen::Library { hovered_game: None };
                     }
                     Some(PendingAction::CloseApp) => {
                         if let Some(current) = &mut self.current_game {
@@ -499,7 +511,7 @@ impl App {
             }
             Message::PlayFromDetail => {
                 self.menu_open = false;
-                let viewing = self.viewing_sha1.clone();
+                let viewing = self.viewing_sha1().map(|s| s.to_string());
                 let same_game = viewing
                     .as_ref()
                     .and_then(|sha1| self.current_game.as_ref().map(|c| c.entry.sha1 == *sha1))
@@ -534,10 +546,15 @@ impl App {
             }
             Message::ShowSettings => {
                 self.menu_open = false;
-                self.previous_screen = Some(self.screen);
-                self.was_running_before_settings = self.running();
+                let was_running = self.running();
                 self.pause();
-                self.screen = Screen::Settings;
+                let previous = std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
+                self.screen = Screen::Settings {
+                    section: settings::view::Section::default(),
+                    listening_for: None,
+                    previous_screen: Box::new(previous),
+                    was_running,
+                };
             }
             Message::ToggleMenu => {
                 self.menu_open = !self.menu_open;
