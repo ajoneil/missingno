@@ -101,55 +101,6 @@ impl ActionBar {
                     self.settings(app),
                 ]
             }
-            app::Screen::Detail => {
-                let is_this_game_loaded = app
-                    .current_game
-                    .as_ref()
-                    .zip(app.viewing_sha1.as_ref())
-                    .map(|(c, v)| c.entry.sha1 == *v && matches!(app.game, Game::Loaded(_)))
-                    .unwrap_or(false);
-
-                let mut r = row![
-                    container(
-                        row![
-                            buttons::subtle(icons::m(Icon::Back))
-                                .on_press(app::Message::BackToLibrary),
-                            app_text::heading(title).wrapping(iced::widget::text::Wrapping::None),
-                        ]
-                        .spacing(s())
-                        .align_y(Center)
-                    )
-                    .clip(true)
-                    .width(Fill),
-                ];
-
-                if is_this_game_loaded {
-                    r = r.push(
-                        row![
-                            buttons::primary(
-                                row![icons::m(Icon::Play), "Resume"]
-                                    .spacing(s())
-                                    .align_y(Center),
-                            )
-                            .on_press(app::Message::PlayFromDetail),
-                            buttons::danger("Stop").on_press(app::Message::StopGame),
-                        ]
-                        .spacing(s()),
-                    );
-                } else {
-                    r = r.push(
-                        buttons::primary(
-                            row![icons::m(Icon::Play), "Play"]
-                                .spacing(s())
-                                .align_y(Center),
-                        )
-                        .on_press(app::Message::PlayFromDetail),
-                    );
-                }
-
-                r = r.push(self.settings(app));
-                r
-            }
             app::Screen::ScreenshotGallery => {
                 row![
                     container(
@@ -168,10 +119,6 @@ impl ActionBar {
                     .width(Fill),
                     self.settings(app),
                 ]
-            }
-            app::Screen::CartridgeActions | app::Screen::FlashCartridge => {
-                // These screens manage their own headers
-                row![app_text::heading("").width(Fill)]
             }
             app::Screen::Emulator => {
                 let is_debugger = matches!(app.game, Game::Loaded(LoadedGame::Debugger(_)));
@@ -201,10 +148,9 @@ impl ActionBar {
                     self.settings(app)
                 ]
             }
-            app::Screen::Settings => {
-                // Settings has its own header, shouldn't reach here
-                row![]
-            }
+            // Detail, Settings, CartridgeActions, FlashCartridge manage their
+            // own headers and never render through the ActionBar.
+            _ => unreachable!(),
         }
         .spacing(xl())
         .padding(m())

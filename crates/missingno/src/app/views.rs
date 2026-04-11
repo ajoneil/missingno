@@ -27,164 +27,167 @@ impl App {
             return self.setup_view();
         }
 
-        // Build the main view based on the current screen
-        let main: Element<'_, Message> = if self.screen == Screen::Emulator {
-            let show_toast = self.screenshot_toast.is_some();
-
-            if let Fullscreen::Active { cursor_hidden, .. } = self.fullscreen {
-                let screen = self.emulator_view(true);
-                let content = if show_toast {
-                    let stk: Element<'_, Message> =
-                        Stack::with_children(vec![screen, screenshot_toast()]).into();
-                    container(stk)
-                } else {
-                    container(screen)
-                }
-                .center(Fill)
-                .style(|_| container::Style {
-                    background: Some(iced::Color::BLACK.into()),
-                    ..Default::default()
-                });
-
-                let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
-                if cursor_hidden {
-                    area = area.interaction(mouse::Interaction::Hidden);
-                }
-                area.into()
-            } else {
-                let screen = container(self.emulator_view(false)).center(Fill);
-                let screen: Element<'_, Message> = if show_toast {
-                    Stack::with_children(vec![screen.into(), screenshot_toast()]).into()
-                } else {
-                    screen.into()
-                };
-                column![self.action_bar.view(self), horizontal_rule(), screen,].into()
+        // 1. Screen content — each screen owns its own chrome
+        let content: Element<'_, Message> = match (&self.screen, &self.fullscreen) {
+            (Screen::Emulator, Fullscreen::Active { cursor_hidden, .. }) => {
+                self.fullscreen_emulator_view(*cursor_hidden)
             }
-        } else if self.screen == Screen::Settings {
-            settings::view::view(
+            (Screen::Emulator, _) => {
+                let screen = container(self.emulator_view(false)).center(Fill);
+                column![self.action_bar.view(self), horizontal_rule(), screen].into()
+            }
+            (Screen::Settings, _) => settings::view::view(
                 &self.settings,
                 self.settings_section,
                 self.listening_for,
                 &self.detected_cartridge_devices,
-            )
-        } else {
-            match self.screen {
-                Screen::Detail => self.detail_view(),
-                Screen::CartridgeActions => self.cartridge_actions_view(),
-                Screen::FlashCartridge => self.flash_cartridge_view(),
-                _ => {
-                    let inserted_cartridge = self.inserted_cartridge();
-                    let dump_progress = self.cartridge_dump_progress.as_ref();
-                    let content = match self.screen {
-                        Screen::Library => {
-                            library::view::view(
-                                &self.store,
-                                self.hovered_library_game.as_deref(),
-                                inserted_cartridge,
-                                dump_progress,
-                            )
-                        }
-                        Screen::HomebrewBrowser => {
-                            if let Some(state) = &self.homebrew_browser {
-                                library::homebrew_browser::view(state, &self.catalogue)
-                            } else {
-                                library::view::view(
-                                    &self.store,
-                                    self.hovered_library_game.as_deref(),
-                                    inserted_cartridge,
-                                    dump_progress,
-                                )
-                            }
-                        }
-                        Screen::ScreenshotGallery => {
-                            if let Some(state) = &self.gallery_state {
-                                library::screenshot_gallery::view(state)
-                            } else {
-                                self.detail_view()
-                            }
-                        }
-                        _ => unreachable!(),
-                    };
-                    column![
-                        self.action_bar.view(self),
-                        horizontal_rule(),
-                        container(content).center(Fill)
-                    ]
-                    .into()
-                }
+            ),
+            (Screen::Detail, _) => self.detail_view(),
+            (Screen::CartridgeActions, _) => self.cartridge_actions_view(),
+            (Screen::FlashCartridge, _) => self.flash_cartridge_view(),
+            _ => {
+                let page_content = self.page_content();
+                column![
+                    self.action_bar.view(self),
+                    horizontal_rule(),
+                    container(page_content).center(Fill)
+                ]
+                .into()
             }
         };
 
-        if let Some(action) = &self.pending_action {
-            let (prompt, confirm_label) = match action {
-                PendingAction::SwitchGame(_) => {
-                    ("Close the current game and switch?", "Close Game")
-                }
-                PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
-                PendingAction::ResetEmulator => (
-                    "Reset the emulator? Unsaved progress will be lost.",
-                    "Reset",
-                ),
-                PendingAction::StopGame => ("Stop playing and end this session?", "Stop"),
-                PendingAction::RemoveGameFromLibrary => {
-                    ("Remove this game and all its save data?", "Remove")
-                }
-            };
+        // 2. Shell overlays — applied once regardless of screen
+        let content = self.apply_toast(content);
+        self.apply_confirmation_dialog(content)
+    }
 
-            let mut info = column![iced_text(prompt)].spacing(s());
-
-            if let Some(current) = &self.current_game {
-                info = info.push(
-                    iced_text(current.entry.display_title())
-                        .size(text::sizes::xl())
-                        .font(fonts::heading()),
-                );
-                let last_save_time = current.session.as_ref().and_then(|s| s.last_save_time());
-                if let Some(ts) = last_save_time {
-                    info = info.push(
-                        iced_text(format!("Last saved {}", friendly_ago(ts)))
-                            .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
-                    );
+    /// Library/Homebrew/ScreenshotGallery page content (no chrome).
+    fn page_content(&self) -> Element<'_, Message> {
+        match self.screen {
+            Screen::Library => library::view::view(
+                &self.store,
+                self.hovered_library_game.as_deref(),
+                self.inserted_cartridge(),
+                self.cartridge_dump_progress.as_ref(),
+            ),
+            Screen::HomebrewBrowser => {
+                if let Some(state) = &self.homebrew_browser {
+                    library::homebrew_browser::view(state, &self.catalogue)
                 } else {
-                    info = info.push(
-                        iced_text("No saves").color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
-                    );
+                    library::view::view(
+                        &self.store,
+                        self.hovered_library_game.as_deref(),
+                        self.inserted_cartridge(),
+                        self.cartridge_dump_progress.as_ref(),
+                    )
                 }
             }
-
-            Stack::new()
-                .push(main)
-                .push(opaque(
-                    mouse_area(
-                        center(
-                            container(
-                                column![
-                                    info,
-                                    row![
-                                        buttons::standard("Cancel")
-                                            .on_press(Message::DismissConfirm),
-                                        buttons::danger(confirm_label)
-                                            .on_press(Message::ConfirmAction),
-                                    ]
-                                    .spacing(s()),
-                                ]
-                                .spacing(l())
-                                .align_x(Center),
-                            )
-                            .padding(l())
-                            .style(container::bordered_box),
-                        )
-                        .style(|_| container::Style {
-                            background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
-                            ..Default::default()
-                        }),
-                    )
-                    .on_press(Message::DismissConfirm),
-                ))
-                .into()
-        } else {
-            main.into()
+            Screen::ScreenshotGallery => {
+                if let Some(state) = &self.gallery_state {
+                    library::screenshot_gallery::view(state)
+                } else {
+                    self.detail_view()
+                }
+            }
+            _ => unreachable!(),
         }
+    }
+
+    fn fullscreen_emulator_view(&self, cursor_hidden: bool) -> Element<'_, Message> {
+        let screen = self.emulator_view(true);
+        let content = container(screen)
+            .center(Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Color::BLACK.into()),
+                ..Default::default()
+            });
+        let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
+        if cursor_hidden {
+            area = area.interaction(mouse::Interaction::Hidden);
+        }
+        area.into()
+    }
+
+    fn apply_toast<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
+        if self.screenshot_toast.is_some() {
+            Stack::with_children(vec![content, screenshot_toast()]).into()
+        } else {
+            content
+        }
+    }
+
+    fn apply_confirmation_dialog<'a>(
+        &self,
+        content: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let Some(action) = &self.pending_action else {
+            return content;
+        };
+
+        let (prompt, confirm_label) = match action {
+            PendingAction::SwitchGame(_) => ("Close the current game and switch?", "Close Game"),
+            PendingAction::CloseApp => ("Close the current game and quit?", "Quit"),
+            PendingAction::ResetEmulator => (
+                "Reset the emulator? Unsaved progress will be lost.",
+                "Reset",
+            ),
+            PendingAction::StopGame => ("Stop playing and end this session?", "Stop"),
+            PendingAction::RemoveGameFromLibrary => {
+                ("Remove this game and all its save data?", "Remove")
+            }
+        };
+
+        let mut info = column![iced_text(prompt)].spacing(s());
+
+        if let Some(current) = &self.current_game {
+            info = info.push(
+                iced_text(current.entry.display_title())
+                    .size(text::sizes::xl())
+                    .font(fonts::heading()),
+            );
+            let last_save_time = current.session.as_ref().and_then(|s| s.last_save_time());
+            if let Some(ts) = last_save_time {
+                info = info.push(
+                    iced_text(format!("Last saved {}", friendly_ago(ts)))
+                        .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                );
+            } else {
+                info = info.push(
+                    iced_text("No saves").color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
+                );
+            }
+        }
+
+        Stack::new()
+            .push(content)
+            .push(opaque(
+                mouse_area(
+                    center(
+                        container(
+                            column![
+                                info,
+                                row![
+                                    buttons::standard("Cancel")
+                                        .on_press(Message::DismissConfirm),
+                                    buttons::danger(confirm_label)
+                                        .on_press(Message::ConfirmAction),
+                                ]
+                                .spacing(s()),
+                            ]
+                            .spacing(l())
+                            .align_x(Center),
+                        )
+                        .padding(l())
+                        .style(container::bordered_box),
+                    )
+                    .style(|_| container::Style {
+                        background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                        ..Default::default()
+                    }),
+                )
+                .on_press(Message::DismissConfirm),
+            ))
+            .into()
     }
 
     fn detail_view(&self) -> Element<'_, Message> {
@@ -274,7 +277,6 @@ impl App {
     }
 
     fn cartridge_actions_view(&self) -> Element<'_, Message> {
-
         let cart = self.inserted_cartridge();
         let sha1 = self.viewing_sha1.as_deref();
         let game_title = sha1
@@ -283,15 +285,7 @@ impl App {
             .unwrap_or_else(|| "Unknown".to_string());
 
         let mut content = column![
-            row![
-                buttons::subtle(icons::m(Icon::Back))
-                    .on_press(Message::CartridgeActionsBack),
-                text::heading("Cartridge"),
-            ]
-            .spacing(s())
-            .padding(m())
-            .align_y(Center),
-            horizontal_rule(),
+            screen_header("Cartridge", Message::CartridgeActionsBack),
         ];
 
         let mut actions = column![
@@ -434,15 +428,7 @@ impl App {
                 );
 
                 column![
-                    row![
-                        buttons::subtle(icons::m(Icon::Back))
-                            .on_press(Message::FlashCartridgeCancel),
-                        text::heading("Write to Cartridge"),
-                    ]
-                    .spacing(s())
-                    .padding(m())
-                    .align_y(Center),
-                    horizontal_rule(),
+                    screen_header("Write to Cartridge", Message::FlashCartridgeCancel),
                     container(details.max_width(600)).padding(l()),
                 ]
                 .into()
@@ -486,22 +472,14 @@ impl App {
                 );
 
                 column![
-                    row![text::heading("Writing to Cartridge"),]
-                        .spacing(s())
-                        .padding(m())
-                        .align_y(Center),
-                    horizontal_rule(),
+                    screen_header_no_back("Writing to Cartridge"),
                     container(progress_col.max_width(600)).padding(l()),
                 ]
                 .into()
             }
             Some(FlashState::Complete) => {
                 column![
-                    row![text::heading("Write Complete"),]
-                        .spacing(s())
-                        .padding(m())
-                        .align_y(Center),
-                    horizontal_rule(),
+                    screen_header_no_back("Write Complete"),
                     container(
                         column![
                             iced_text("ROM written successfully."),
@@ -517,11 +495,7 @@ impl App {
             }
             Some(FlashState::Failed(error)) => {
                 column![
-                    row![text::heading("Write Failed"),]
-                        .spacing(s())
-                        .padding(m())
-                        .align_y(Center),
-                    horizontal_rule(),
+                    screen_header_no_back("Write Failed"),
                     container(
                         column![
                             iced_text(format!("Error: {error}")),
@@ -655,6 +629,33 @@ impl App {
             },
         ])
     }
+}
+
+/// Standard screen header: back button + title + horizontal rule.
+fn screen_header<'a>(title: &'a str, back_message: Message) -> Element<'a, Message> {
+    column![
+        row![
+            buttons::subtle(icons::m(Icon::Back)).on_press(back_message),
+            text::heading(title),
+        ]
+        .spacing(s())
+        .padding(m())
+        .align_y(Center),
+        horizontal_rule(),
+    ]
+    .into()
+}
+
+/// Screen header without a back button (for non-cancellable states like progress).
+fn screen_header_no_back<'a>(title: &'a str) -> Element<'a, Message> {
+    column![
+        row![text::heading(title)]
+            .spacing(s())
+            .padding(m())
+            .align_y(Center),
+        horizontal_rule(),
+    ]
+    .into()
 }
 
 fn screenshot_toast<'a>() -> Element<'a, Message> {
