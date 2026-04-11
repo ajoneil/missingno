@@ -175,8 +175,10 @@ impl DebuggerPanes {
                 }
             }
             Message::ClosePane(pane) => {
-                if let Some(handle) = self.handles.remove(&pane) {
-                    self.panes.close(handle);
+                if let Some(&handle) = self.handles.get(&pane) {
+                    if self.panes.close(handle).is_some() {
+                        self.handles.remove(&pane);
+                    }
                 }
             }
 
