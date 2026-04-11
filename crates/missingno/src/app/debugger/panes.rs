@@ -340,7 +340,7 @@ pub fn pane<'a>(
     title: pane_grid::TitleBar<'a, app::Message>,
     content: Element<'a, app::Message>,
 ) -> pane_grid::Content<'a, app::Message> {
-    pane_grid::Content::new(container(content).padding([2.0, 2.0]))
+    pane_grid::Content::new(container(content).padding([2.0, 2.0]).clip(true))
         .title_bar(title)
         .style(pane_style)
 }

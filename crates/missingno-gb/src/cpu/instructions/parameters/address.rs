@@ -50,14 +50,14 @@ impl Address {
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Fixed(address) => write!(f, "${:04x}", address),
+            Self::Fixed(address) => write!(f, "${:04X}", address),
             Self::Relative(offset) => write!(
                 f,
                 "($pc {} {})",
                 if *offset >= 0 { "+" } else { "-" },
                 offset.abs()
             ),
-            Self::High(offset) => write!(f, "($ff00 + {:02x})", offset),
+            Self::High(offset) => write!(f, "($FF00 + {:02X})", offset),
             Self::HighPlusC => write!(f, "($ff00 + c)"),
             Self::Dereference(register) => write!(f, "[${}]", register),
             Self::DereferenceHlAndIncrement => write!(f, "[$hl+]"),

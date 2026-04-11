@@ -64,3 +64,19 @@ pub const YELLOW: Color = Color::from_rgb(
     0xe2 as f32 / 255.0,
     0xaf as f32 / 255.0,
 );
+
+// Syntax highlighting — Catppuccin Mocha colors for instruction disassembly.
+
+/// Opcodes (Catppuccin Mocha "blue") — #89B4FA
+pub const BLUE: Color = Color::from_rgb(
+    0x89 as f32 / 255.0,
+    0xb4 as f32 / 255.0,
+    0xfa as f32 / 255.0,
+);
+
+/// Immediate values (Catppuccin Mocha "peach") — #FAB387
+pub const PEACH: Color = Color::from_rgb(
+    0xfa as f32 / 255.0,
+    0xb3 as f32 / 255.0,
+    0x87 as f32 / 255.0,
+);

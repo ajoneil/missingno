@@ -97,6 +97,28 @@ impl Instruction {
     }
 }
 
+/// Returns the total byte length of the instruction at the given opcode byte.
+/// This includes the opcode itself (1 byte) plus any operand bytes.
+pub fn instruction_length(opcode: u8) -> u16 {
+    let operands = match opcode {
+        // 1 operand byte
+        0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x36 | 0x3e => 1,
+        0xc6 | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => 1,
+        0x18 | 0x20 | 0x28 | 0x30 | 0x38 => 1,
+        0xe0 | 0xf0 => 1,
+        0xe8 | 0xf8 => 1,
+        0xcb => 1,
+        0x10 => 1,
+        // 2 operand bytes
+        0x01 | 0x11 | 0x21 | 0x31 => 2,
+        0x08 | 0xea | 0xfa => 2,
+        0xc3 | 0xc2 | 0xca | 0xd2 | 0xda => 2,
+        0xcd | 0xc4 | 0xcc | 0xd4 | 0xdc => 2,
+        _ => 0,
+    };
+    1 + operands
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -112,7 +134,7 @@ impl fmt::Display for Instruction {
             Self::DecimalAdjustAccumulator => write!(f, "daa"),
             Self::NoOperation => write!(f, "nop"),
             Self::Stop => write!(f, "stop"),
-            Self::Invalid(op) => write!(f, "Invalid op {:02x}", op),
+            Self::Invalid(op) => write!(f, "Invalid op {:02X}", op),
         }
     }
 }

@@ -145,7 +145,7 @@ impl fmt::Display for Jump {
 
             Self::ReturnAndEnableInterrupts => write!(f, "reti"),
 
-            Self::Restart(address) => write!(f, "rst ${:2x}", address),
+            Self::Restart(address) => write!(f, "rst ${:02X}", address),
         }
     }
 }
