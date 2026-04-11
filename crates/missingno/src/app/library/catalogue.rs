@@ -127,8 +127,7 @@ impl Catalogue {
         // Decompress
         let tar_data = match zstd::decode_all(GAMEDB_ARCHIVE) {
             Ok(data) => data,
-            Err(e) => {
-                eprintln!("[catalogue] Failed to decompress gamedb: {e}");
+            Err(_) => {
                 return Self {
                     entries: Vec::new(),
                     hash_index: HashMap::new(),
@@ -140,8 +139,7 @@ impl Catalogue {
         let mut archive = tar::Archive::new(tar_data.as_slice());
         let tar_entries = match archive.entries() {
             Ok(e) => e,
-            Err(e) => {
-                eprintln!("[catalogue] Failed to read tar entries: {e}");
+            Err(_) => {
                 return Self {
                     entries: Vec::new(),
                     hash_index: HashMap::new(),
@@ -185,9 +183,7 @@ impl Catalogue {
                 Ok(manifest) => {
                     entries.push(CatalogueEntry { slug, manifest });
                 }
-                Err(e) => {
-                    eprintln!("[catalogue] Failed to parse {}: {e}", path.display());
-                }
+                Err(_) => {}
             }
         }
 
@@ -206,12 +202,6 @@ impl Catalogue {
                 hash_index.insert(hash.clone(), i);
             }
         }
-
-        eprintln!(
-            "[catalogue] Loaded {} games ({} hashes)",
-            entries.len(),
-            hash_index.len(),
-        );
 
         Self {
             entries,

@@ -9,6 +9,7 @@ use iced::{
 
 use crate::app::{
     self, controls,
+    settings::{Action, Bindings, EMULATOR_ACTIONS, GB_ACTIONS},
     ui::{
         buttons, containers, horizontal_rule,
         icons::{self, Icon},
@@ -16,7 +17,6 @@ use crate::app::{
         sizes::{l, m, s},
         text as app_text,
     },
-    settings::{Action, Bindings, EMULATOR_ACTIONS, GB_ACTIONS},
 };
 
 use app_text::TextPart;
@@ -63,7 +63,6 @@ impl From<Message> for app::Message {
     }
 }
 
-
 pub(in crate::app) fn view<'a>(
     settings: &'a super::Settings,
     section: Section,
@@ -75,9 +74,7 @@ pub(in crate::app) fn view<'a>(
         Section::Display => display_section(settings),
         Section::General => general_section(settings),
         Section::Controls => controls_section(settings, listening_for),
-        Section::Hardware => {
-            hardware_section(settings, detected_cartridge_devices)
-        }
+        Section::Hardware => hardware_section(settings, detected_cartridge_devices),
     };
 
     column![
@@ -313,12 +310,15 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
             .style(|_, _| svg::Style { color: None }),
         column![
             app_text::heading("Missingno"),
-            app_text::link_text([
-                TextPart::plain(format!("Version {version} · ")),
-                TextPart::link("Website", "https://andyofniall.net/"),
-                TextPart::plain(" · "),
-                TextPart::link("GitHub", "https://github.com/ajoneil/missingno"),
-            ], MUTED),
+            app_text::link_text(
+                [
+                    TextPart::plain(format!("Version {version} · ")),
+                    TextPart::link("Website", "https://andyofniall.net/"),
+                    TextPart::plain(" · "),
+                    TextPart::link("GitHub", "https://github.com/ajoneil/missingno"),
+                ],
+                MUTED
+            ),
         ]
         .spacing(s()),
     ]
@@ -340,10 +340,13 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
                     .label("Game metadata")
                     .on_toggle(|enabled| Message::SetHasheousEnabled(enabled).into())
                     .size(m()),
-                app_text::link_text([
-                    TextPart::plain("Provided by "),
-                    TextPart::link("Hasheous", "https://hasheous.org"),
-                ], MUTED),
+                app_text::link_text(
+                    [
+                        TextPart::plain("Provided by "),
+                        TextPart::link("Hasheous", "https://hasheous.org"),
+                    ],
+                    MUTED
+                ),
             ]
             .spacing(s()),
         );
@@ -354,10 +357,13 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
                     .label("Homebrew catalogue")
                     .on_toggle(|enabled| Message::SetHomebrewHubEnabled(enabled).into())
                     .size(m()),
-                app_text::link_text([
-                    TextPart::plain("Browse free games from "),
-                    TextPart::link("Homebrew Hub", "https://hh.gbdev.io"),
-                ], MUTED),
+                app_text::link_text(
+                    [
+                        TextPart::plain("Browse free games from "),
+                        TextPart::link("Homebrew Hub", "https://hh.gbdev.io"),
+                    ],
+                    MUTED
+                ),
             ]
             .spacing(s()),
         );
@@ -407,16 +413,24 @@ fn hardware_section<'a>(
             .label("Enable cartridge reader/writer support")
             .on_toggle(|enabled| Message::SetCartridgeRwEnabled(enabled).into())
             .size(m()),
-        app_text::link_text([
-            TextPart::plain("Read ROMs and save data from physical Game Boy cartridges using a "),
-            TextPart::link("GBxCart RW", "https://www.gbxcart.com/"),
-            TextPart::plain(" device."),
-        ], MUTED),
-        app_text::link_text([
-            TextPart::plain("For advanced features and broader hardware support, see "),
-            TextPart::link("FlashGBX", "https://github.com/lesserkuma/FlashGBX"),
-            TextPart::plain("."),
-        ], MUTED),
+        app_text::link_text(
+            [
+                TextPart::plain(
+                    "Read and write ROMs and save data from physical Game Boy cartridges using a "
+                ),
+                TextPart::link("GBxCart RW", "https://www.gbxcart.com/"),
+                TextPart::plain(" device."),
+            ],
+            MUTED
+        ),
+        app_text::link_text(
+            [
+                TextPart::plain("For advanced features and broader hardware support, see "),
+                TextPart::link("FlashGBX", "https://github.com/lesserkuma/FlashGBX"),
+                TextPart::plain("."),
+            ],
+            MUTED
+        ),
     ]
     .spacing(m());
 
@@ -425,18 +439,22 @@ fn hardware_section<'a>(
         content = content.push(app_text::label("Detected Devices"));
 
         if detected_devices.is_empty() {
-            content = content.push(text("No devices found. Devices will appear here automatically when connected.").color(MUTED));
+            content = content.push(
+                text("No devices found. Devices will appear here automatically when connected.")
+                    .color(MUTED),
+            );
             if cfg!(target_os = "linux") {
-                content = content.push(
-                    app_text::link_text([
+                content = content.push(app_text::link_text(
+                    [
                         TextPart::plain("You may need to install "),
                         TextPart::link(
                             "udev rules",
                             "https://github.com/ajoneil/missingno#cartridge-readerwriter",
                         ),
                         TextPart::plain(" for the device to be accessible."),
-                    ], MUTED),
-                );
+                    ],
+                    MUTED,
+                ));
             }
         } else {
             for device in detected_devices {
@@ -458,7 +476,6 @@ fn hardware_section<'a>(
                 );
             }
         }
-
     }
 
     let content = content.max_width(600);

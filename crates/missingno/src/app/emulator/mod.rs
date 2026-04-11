@@ -121,14 +121,10 @@ impl Emulator {
                 // Debounce SRAM saves: reset countdown on each dirty frame,
                 // fire SaveBattery after SRAM_DEBOUNCE_FRAMES of quiet.
                 if sram_dirty {
-                    if self.sram_save_countdown.is_none() {
-                        eprintln!("[save] SRAM write detected, starting debounce");
-                    }
                     self.sram_save_countdown = Some(0);
                 } else if let Some(count) = &mut self.sram_save_countdown {
                     *count += 1;
                     if *count >= SRAM_DEBOUNCE_FRAMES {
-                        eprintln!("[save] Debounce complete, flushing save");
                         self.sram_save_countdown = None;
                         return Task::done(app::Message::SaveBattery);
                     }

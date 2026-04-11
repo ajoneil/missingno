@@ -57,10 +57,7 @@ pub(in crate::app) fn handle_library_message(
                         let sram = if header.has_battery && header.ram_size > 0 {
                             match cartridge_rw::read_sram(&port_name, &header) {
                                 Ok(data) => Some(data),
-                                Err(e) => {
-                                    eprintln!("[cartridge_rw] SRAM read failed (non-fatal): {e}");
-                                    None
-                                }
+                                Err(_) => None,
                             }
                         } else {
                             None
@@ -286,9 +283,7 @@ pub(in crate::app) fn handle(
                                 }
                             }
                         }
-                        Err(e) => {
-                            eprintln!("[cartridge_rw] save import failed: {e}");
-                        }
+                        Err(_) => {}
                     }
                 }
                 WriteSave => {
@@ -322,9 +317,7 @@ pub(in crate::app) fn handle(
                                 }
                             }
                         }
-                        Err(e) => {
-                            eprintln!("[cartridge_rw] save write failed: {e}");
-                        }
+                        Err(_) => {}
                     }
                 }
                 Flash(sha1) => {
@@ -400,7 +393,6 @@ pub(in crate::app) fn handle(
                                     let _ = tx.send_blocking(p);
                                 })?;
                                 if let Some(sram) = sram_data {
-                                    eprintln!("[cartridge_rw] writing save data to cartridge...");
                                     cartridge_rw::write_sram(&port_name_for_sram, &cart_header, &sram)?;
                                     Ok(Some(sram))
                                 } else {
@@ -551,16 +543,13 @@ pub(in crate::app) fn handle(
 
             // Check if already in library
             if app.store.entry(&sha1).is_some() {
-                eprintln!("[homebrew] {title} already in library");
                 return Task::none();
             }
 
             let Some(game_dir) = super::game_dir_for(&title, &sha1) else {
                 return Task::none();
             };
-            if let Err(e) = std::fs::create_dir_all(&game_dir) {
-                eprintln!("[homebrew] Failed to create game dir: {e}");
-            }
+            let _ = std::fs::create_dir_all(&game_dir);
 
             // Get filename from source
             let filename = match &manifest.source {
@@ -574,14 +563,7 @@ pub(in crate::app) fn handle(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or(filename);
             let rom_path = game_dir.join(&filename);
-            eprintln!(
-                "[homebrew] Saving {} bytes to {}",
-                rom_bytes.len(),
-                rom_path.display()
-            );
-            if let Err(e) = std::fs::write(&rom_path, &rom_bytes) {
-                eprintln!("[homebrew] Failed to write ROM: {e}");
-            }
+            let _ = std::fs::write(&rom_path, &rom_bytes);
 
             // Create library entry
             let header_title = Cartridge::peek_title(&rom_bytes);
@@ -739,7 +721,6 @@ pub(in crate::app) fn handle(
                                         app::Message::HomebrewDownloaded(title, rom_bytes, manifest)
                                     }
                                     Err(e) => {
-                                        eprintln!("[homebrew] Download failed: {e}");
                                         app::Message::HomebrewBrowser(
                                             homebrew_browser::Message::DownloadFailed(
                                                 format!("Download failed: {e}"),
@@ -840,8 +821,7 @@ pub(in crate::app) fn handle(
                     };
                     let _ = std::fs::create_dir_all(&game_dir);
                     let rom_path = game_dir.join(format!("{title}.gb"));
-                    if let Err(e) = std::fs::write(&rom_path, &rom) {
-                        eprintln!("[cartridge_rw] failed to save ROM: {e}");
+                    if std::fs::write(&rom_path, &rom).is_err() {
                         return Task::none();
                     }
 
@@ -873,9 +853,7 @@ pub(in crate::app) fn handle(
                         );
                     }
                 }
-                Err(e) => {
-                    eprintln!("[cartridge_rw] dump failed: {e}");
-                }
+                Err(_) => {}
             }
         }
 

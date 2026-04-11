@@ -174,13 +174,9 @@ impl Debugger {
             Message::CaptureFrameTo(path) => match self.debugger.capture_frame(&path) {
                 Ok(screen) => {
                     self.frame += 1;
-                    eprintln!("[trace] Captured frame to {}", path.display());
                     self.screen_update_task(Some(screen))
                 }
-                Err(e) => {
-                    eprintln!("[trace] Capture failed: {e}");
-                    Task::none()
-                }
+                Err(_) => Task::none(),
             },
 
             Message::SetBreakpoint(address) => {

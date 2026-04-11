@@ -267,15 +267,11 @@ fn read_cartridge_header(
     port: &mut Box<dyn serialport::SerialPort>,
     fw_ver: u16,
 ) -> Option<CartridgeHeader> {
-    eprintln!("[cartridge_rw] reading header (fw_ver={fw_ver})");
-
     port.set_timeout(Duration::from_millis(500)).ok()?;
 
     if enter_dmg_mode(port, fw_ver).is_none() {
-        eprintln!("[cartridge_rw] DMG mode setup failed");
         return None;
     }
-    eprintln!("[cartridge_rw] DMG mode ready");
 
     // Configure for header read
     set_variable(port, fw_ver, 2, 0x00, CHUNK_SIZE as u32)?; // TRANSFER_SIZE
@@ -287,7 +283,6 @@ fn read_cartridge_header(
     let chunks = HEADER_SIZE / CHUNK_SIZE as usize;
     for i in 0..chunks {
         if write_cmd(port, &[DMG_CART_READ]).is_none() {
-            eprintln!("[cartridge_rw] DMG_CART_READ send failed at chunk {i}");
             return None;
         }
         let offset = i * CHUNK_SIZE as usize;
@@ -295,28 +290,9 @@ fn read_cartridge_header(
             .read_exact(&mut header[offset..offset + CHUNK_SIZE as usize])
             .is_err()
         {
-            eprintln!("[cartridge_rw] read failed at chunk {i}");
             return None;
         }
     }
-
-    // Log the first bytes for debugging
-    eprintln!(
-        "[cartridge_rw] header read complete, first 16 bytes: {:02x?}",
-        &header[..16]
-    );
-    eprintln!(
-        "[cartridge_rw] logo bytes (0x104-0x134): {:02x?}",
-        &header[0x104..0x134]
-    );
-    eprintln!(
-        "[cartridge_rw] title bytes (0x134-0x144): {:02x?}",
-        &header[0x134..0x144]
-    );
-    eprintln!(
-        "[cartridge_rw] mapper=0x{:02x} rom_size=0x{:02x} ram_size=0x{:02x}",
-        header[0x147], header[0x148], header[0x149]
-    );
 
     let mut result = parse_cartridge_header(&header);
 
@@ -325,23 +301,8 @@ fn read_cartridge_header(
 
     if let Some(cart) = &mut result {
         cart.flash = flash;
-        if let Some(f) = &cart.flash {
-            eprintln!(
-                "[cartridge_rw] parsed: \"{}\" ({}) flash={} buffer={}",
-                cart.title, cart.mapper_name, f.size_display(), f.buffer_size
-            );
-        } else {
-            eprintln!(
-                "[cartridge_rw] parsed: \"{}\" ({}) no flash",
-                cart.title, cart.mapper_name
-            );
-        }
     } else if let Some(flash) = flash {
         // No valid header but flash chip detected — erased or empty flash cart
-        eprintln!(
-            "[cartridge_rw] no valid header, but flash detected: {}",
-            flash.size_display()
-        );
         result = Some(CartridgeHeader {
             title: String::new(),
             mapper_byte: 0,
@@ -353,8 +314,6 @@ fn read_cartridge_header(
             header_checksum_valid: false,
             flash: Some(flash),
         });
-    } else {
-        eprintln!("[cartridge_rw] no valid header and no flash chip");
     }
     result
 }
@@ -366,7 +325,6 @@ fn cart_power_on(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opt
     // Check if already powered
     write_cmd(port, &[QUERY_CART_PWR])?;
     let pwr = read_byte(port)?;
-    eprintln!("[cartridge_rw] cart power state: {pwr}");
     if pwr == 1 {
         return Some(());
     }
@@ -380,32 +338,27 @@ fn cart_power_on(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opt
 
     // Poll for ACK: wait up to 1000ms
     let mut got_ack = false;
-    for attempt in 0..10 {
+    for _attempt in 0..10 {
         std::thread::sleep(Duration::from_millis(100));
         let mut buf = [0u8; 64];
         match port.read(&mut buf) {
             Ok(n) => {
-                eprintln!("[cartridge_rw] power ACK poll {attempt}: got {n} bytes: {:02x?}", &buf[..n]);
                 if n > 0 && buf[n - 1] == 0x01 {
                     got_ack = true;
                     break;
                 }
             }
-            Err(e) => {
-                eprintln!("[cartridge_rw] power ACK poll {attempt}: {e}");
-            }
+            Err(_) => {}
         }
     }
 
     if !got_ack {
-        eprintln!("[cartridge_rw] cart power on: no ACK received");
         return None;
     }
 
     // Verify power is on
     write_cmd(port, &[QUERY_CART_PWR])?;
     let pwr = read_byte(port)?;
-    eprintln!("[cartridge_rw] cart power verify: {pwr}");
     if pwr != 1 {
         return None;
     }
@@ -517,11 +470,6 @@ fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opti
         return None;
     }
 
-    eprintln!(
-        "[cartridge_rw] flash chip detected: ID={:02x?}",
-        &chip_id[..4]
-    );
-
     // Query CFI table
     let cfi = query_cfi(port, fw_ver);
 
@@ -529,17 +477,8 @@ fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opti
     let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
 
     match cfi {
-        Some(info) => {
-            eprintln!(
-                "[cartridge_rw] CFI: size={} buffer={} sectors={:?}",
-                format_size(info.size), info.buffer_size, info.sectors
-            );
-            Some(FlashInfo { chip_id, ..info })
-        }
-        None => {
-            eprintln!("[cartridge_rw] CFI query failed, flash chip not fully supported");
-            None
-        }
+        Some(info) => Some(FlashInfo { chip_id, ..info }),
+        None => None,
     }
 }
 
@@ -564,7 +503,6 @@ fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<
         && cfi[0x10] == b'Q' && cfi[0x11] == b'R' && cfi[0x12] == b'Y';
 
     if !is_16bit && !is_8bit {
-        eprintln!("[cartridge_rw] CFI magic not found");
         return None;
     }
 
@@ -757,11 +695,6 @@ pub fn dump_rom(
     let num_banks = if no_mbc { 1 } else { rom_size / ROM_BANK_SIZE as usize };
     let mut rom = Vec::with_capacity(rom_size);
 
-    eprintln!(
-        "[cartridge_rw] dumping ROM: {} bytes, {} banks, mapper 0x{:02x}",
-        rom_size, num_banks, header.mapper_byte
-    );
-
     for bank in 0..num_banks as u32 {
         // Bank switch
         let (writes, start_addr) = select_rom_bank(header.mapper_byte, bank);
@@ -806,7 +739,6 @@ pub fn dump_rom(
     // Cleanup
     cleanup(&mut port, fw_ver);
 
-    eprintln!("[cartridge_rw] dump complete: {} bytes", rom.len());
     Ok(rom)
 }
 
@@ -861,8 +793,6 @@ pub fn read_sram(
 
     let mut sram = Vec::with_capacity(ram_size);
 
-    eprintln!("[cartridge_rw] reading SRAM: {} bytes, {} banks", ram_size, num_banks);
-
     for bank in 0..num_banks {
         // Select RAM bank
         cart_write(&mut port, fw_ver, 0x4000, bank as u8)
@@ -910,7 +840,6 @@ pub fn read_sram(
 
     cleanup(&mut port, fw_ver);
 
-    eprintln!("[cartridge_rw] SRAM read complete: {} bytes", sram.len());
     Ok(sram)
 }
 
@@ -962,8 +891,6 @@ pub fn write_sram(
     let mut padded = data.to_vec();
     padded.resize(ram_size, 0xFF);
 
-    eprintln!("[cartridge_rw] writing SRAM: {} bytes, {} banks", ram_size, num_banks);
-
     for bank in 0..num_banks {
         let bank_offset = bank * bank_size;
         let bank_data = &padded[bank_offset..bank_offset + bank_size];
@@ -1007,7 +934,6 @@ pub fn write_sram(
 
     cleanup(&mut port, fw_ver);
 
-    eprintln!("[cartridge_rw] SRAM write complete");
     Ok(())
 }
 
@@ -1073,7 +999,6 @@ pub fn flash_rom(
     let we_pin: u8 = 0x01; // WR
 
     // Configure flash engine via SET_FLASH_CMD (0xA7)
-    eprintln!("[cartridge_rw] configuring flash: method={write_method} we_pin={we_pin}");
     configure_flash_engine(&mut port, fw_ver, write_method, we_pin)?;
 
     // Configure auto bank switching (MBC5-style: bank number written to 0x2100)
@@ -1096,7 +1021,6 @@ pub fn flash_rom(
         .ok_or("Set FLASH_WE_PIN failed")?;
 
     // ── Phase 1: Chip Erase ──
-    eprintln!("[cartridge_rw] erasing flash chip...");
     progress(FlashProgress {
         phase: FlashPhase::Erasing,
         bytes_done: 0,
@@ -1106,7 +1030,6 @@ pub fn flash_rom(
     chip_erase_amd(&mut port, fw_ver)?;
 
     // ── Phase 2: Write ROM ──
-    eprintln!("[cartridge_rw] writing {} bytes...", rom_data.len());
 
     // Pad to 16K bank boundary
     let mut padded = rom_data.to_vec();
@@ -1192,7 +1115,6 @@ pub fn flash_rom(
 
     cleanup(&mut port, fw_ver);
 
-    eprintln!("[cartridge_rw] flash complete");
     Ok(())
 }
 
@@ -1299,10 +1221,8 @@ fn chip_erase_amd(
 
         if let Some(data) = read_rom_bytes(port, fw_ver, 0, 2) {
             if data[0] == 0xFF {
-                eprintln!("[cartridge_rw] chip erase complete ({:.1}s)", start.elapsed().as_secs_f32());
                 return Ok(());
             }
-            eprintln!("[cartridge_rw] erase polling: 0x{:02x} ({:.0}s)", data[0], start.elapsed().as_secs_f32());
         }
 
         if start.elapsed() > timeout {
@@ -1327,18 +1247,10 @@ fn write_cmd_ack(
     if fw_ver >= 12 {
         match read_byte(port) {
             Some(0x01) | Some(0x03) => {}
-            Some(other) => {
-                eprintln!(
-                    "[cartridge_rw] ACK failed for cmd 0x{:02x}: got 0x{:02x}",
-                    data[0], other
-                );
+            Some(_) => {
                 return None;
             }
             None => {
-                eprintln!(
-                    "[cartridge_rw] ACK failed for cmd 0x{:02x}: read timeout",
-                    data[0]
-                );
                 return None;
             }
         }

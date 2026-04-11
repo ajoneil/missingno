@@ -93,13 +93,7 @@ pub fn lookup(sha1: &str) -> Result<Option<GameInfo>, String> {
     // Fetch cover art if available
     let cover_art = logo_hash.and_then(|hash| {
         let url = format!("{BASE_URL}/images/{hash}");
-        eprintln!("[hasheous] Fetching image: {url}");
-        let result = fetch_image(&url);
-        eprintln!(
-            "[hasheous] Image: {} bytes",
-            result.as_ref().map(|b| b.len()).unwrap_or(0)
-        );
-        result
+        fetch_image(&url)
     });
 
     Ok(Some(GameInfo {
