@@ -2,7 +2,7 @@ use iced::{
     Alignment::Center,
     Element,
     Length::Fill,
-    widget::{button, column, container, image, row, scrollable, text},
+    widget::{button, column, container, image, row, scrollable},
 };
 use missingno_gb::ppu::types::palette::PaletteChoice;
 
@@ -199,25 +199,24 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
     // Palette selection
     col = col.push(app_text::label("Palette"));
 
-    // DMG palette options
+    let mut palette_col = column![].spacing(2);
     for &choice in PaletteChoice::ALL {
         let is_selected = state.palette == PaletteSelection::Dmg(choice);
-        col = col.push(palette_button(
+        palette_col = palette_col.push(palette_button(
             &format!("{choice}"),
             is_selected,
             Message::SetPalette(PaletteSelection::Dmg(choice)).into(),
         ));
     }
-
-    // SGB option (only if the capture has SGB data)
     if state.has_sgb() {
         let is_selected = state.palette == PaletteSelection::Sgb;
-        col = col.push(palette_button(
+        palette_col = palette_col.push(palette_button(
             "Super Game Boy",
             is_selected,
             Message::SetPalette(PaletteSelection::Sgb).into(),
         ));
     }
+    col = col.push(palette_col);
 
     // Scale selection
     col = col
@@ -227,9 +226,9 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
     for &scale in &[1u32, 2, 3, 4] {
         let label = format!("{scale}x");
         let btn = if state.scale == scale {
-            buttons::primary(text(label).size(13.0))
+            buttons::selected(app_text::detail(label))
         } else {
-            buttons::standard(text(label).size(13.0)).on_press(Message::SetScale(scale).into())
+            buttons::subtle(app_text::detail(label)).on_press(Message::SetScale(scale).into())
         };
         scale_row = scale_row.push(btn);
     }
@@ -258,7 +257,7 @@ fn palette_button<'a>(
 ) -> Element<'a, app::Message> {
     let t = app_text::detail(label.to_string());
     if is_selected {
-        buttons::primary(t).width(Fill).into()
+        buttons::selected(t).width(Fill).into()
     } else {
         buttons::subtle(t).on_press(message).width(Fill).into()
     }

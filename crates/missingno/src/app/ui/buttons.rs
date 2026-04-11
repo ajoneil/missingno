@@ -26,7 +26,7 @@ pub fn primary<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Messa
 
 fn primary_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
-        background: Some(PURPLE.scale_alpha(0.6).into()),
+        background: Some(PURPLE.scale_alpha(0.7).into()),
         text_color: Color::WHITE,
         border: Border::default().rounded(border_s()),
         ..Style::default()
@@ -35,7 +35,7 @@ fn primary_style(_theme: &Theme, status: Status) -> Style {
     match status {
         Status::Active | Status::Pressed | Status::Disabled => base,
         Status::Hovered => Style {
-            background: Some(PURPLE.scale_alpha(0.75).into()),
+            background: Some(PURPLE.scale_alpha(0.85).into()),
             ..base
         },
     }
@@ -66,6 +66,26 @@ fn standard_style(_theme: &Theme, status: Status) -> Style {
             text_color: base.text_color.scale_alpha(0.5),
             ..base
         },
+    }
+}
+
+/// Selected/active state. Same visual weight as standard but no dimming
+/// when disabled. Use for active sidebar items, selected palette tiles, etc.
+pub fn selected<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
+    button(min_height_content(content)).style(selected_style)
+}
+
+/// Selected style without min-height enforcement.
+pub fn selected_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
+    button(content).style(selected_style)
+}
+
+fn selected_style(_theme: &Theme, _status: Status) -> Style {
+    Style {
+        background: Some(PURPLE_DIM.into()),
+        text_color: TEXT,
+        border: Border::default().rounded(border_s()),
+        ..Style::default()
     }
 }
 
@@ -115,11 +135,6 @@ pub fn danger<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Messag
     button(min_height_content(content)).style(danger_style)
 }
 
-/// Primary button without min-height enforcement (for custom content like palette tiles).
-pub fn primary_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
-    button(content).style(primary_style)
-}
-
 /// Subtle button without min-height enforcement.
 pub fn subtle_raw<'a>(content: impl Into<Element<'a, Message>>) -> Button<'a, Message> {
     button(content).style(subtle_style)
@@ -131,11 +146,16 @@ fn min_height_content<'a>(
     container(content).align_y(Center).height(icons::ICON_SIZE)
 }
 
+const DANGER_BORDER: Color = Color::from_rgba(RED.r, RED.g, RED.b, 0.2);
+
 fn danger_style(_theme: &Theme, status: Status) -> Style {
     let base = Style {
         background: Some(RED_DIM.into()),
         text_color: RED,
-        border: Border::default().rounded(border_s()),
+        border: Border::default()
+            .rounded(border_s())
+            .width(1.0)
+            .color(DANGER_BORDER),
         ..Style::default()
     };
 

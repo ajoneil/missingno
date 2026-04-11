@@ -103,20 +103,12 @@ fn sidebar_view(current: Section) -> Element<'static, app::Message> {
     let mut col = column![].spacing(s());
 
     for (section, icon, label) in sections {
-        let btn = if section == current {
-            let label_row = row![
-                icons::m(icon).style(|_, _| iced::widget::svg::Style {
-                    color: Some(iced::Color::WHITE)
-                }),
-                text(label).color(iced::Color::WHITE),
-            ]
+        let label_row = row![icons::m(icon), text(label)]
             .spacing(s())
             .align_y(Center);
-            buttons::primary(label_row).width(Fill)
+        let btn = if section == current {
+            buttons::selected(label_row).width(Fill)
         } else {
-            let label_row = row![icons::m(icon), text(label)]
-                .spacing(s())
-                .align_y(Center);
             buttons::subtle(label_row)
                 .on_press(Message::SelectSection(section).into())
                 .width(Fill)
@@ -265,16 +257,11 @@ fn display_section(settings: &super::Settings) -> Element<'_, app::Message> {
         ]
         .spacing(0);
 
-        let label = if is_selected {
-            text(format!("{choice}")).color(iced::Color::WHITE)
-        } else {
-            text(format!("{choice}"))
-        };
-
+        let label = text(format!("{choice}"));
         let tile_content = column![swatches, label,].spacing(s()).align_x(Center);
 
         let tile = if is_selected {
-            buttons::primary_raw(tile_content)
+            buttons::selected_raw(tile_content)
         } else {
             buttons::subtle_raw(tile_content).on_press(Message::SelectPalette(choice).into())
         };

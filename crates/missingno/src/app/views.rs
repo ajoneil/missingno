@@ -222,7 +222,7 @@ impl App {
                             .align_x(Center),
                         )
                         .padding(l())
-                        .style(container::bordered_box),
+                        .style(containers::menu),
                     )
                     .style(|_| container::Style {
                         background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
