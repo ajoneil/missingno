@@ -21,8 +21,6 @@ use crate::app::{
     debugger::{
         self,
         audio::AudioPane,
-        breakpoints::{self, BreakpointsPane},
-        cpu::CpuPane,
         instructions::InstructionsPane,
         playback::PlaybackPane,
         ppu::{
@@ -54,7 +52,6 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum PaneMessage {
-    Breakpoints(breakpoints::Message),
     Screen(screen::Message),
     Sprites(sprites::Message),
 }
@@ -75,8 +72,6 @@ pub struct DebuggerPanes {
 pub enum DebuggerPane {
     Screen,
     Instructions,
-    Breakpoints,
-    Cpu,
     Ppu,
     Tiles,
     TileMap(TileMapId),
@@ -88,8 +83,6 @@ pub enum DebuggerPane {
 enum PaneInstance {
     Screen(ScreenPane),
     Instructions(InstructionsPane),
-    Breakpoints(BreakpointsPane),
-    Cpu(CpuPane),
     Ppu(PpuPane),
     Tiles(TilesPane),
     TileMap(TileMapPane),
@@ -125,15 +118,15 @@ impl DebuggerPanes {
     fn build(screen_pane: ScreenPane) -> Self {
         let mut handles = HashMap::new();
 
-        let (mut panes, cpu_handle) =
-            pane_grid::State::new(Self::construct_pane(DebuggerPane::Cpu));
-        handles.insert(DebuggerPane::Cpu, cpu_handle);
+        let (mut panes, instructions_handle) =
+            pane_grid::State::new(Self::construct_pane(DebuggerPane::Instructions));
+        handles.insert(DebuggerPane::Instructions, instructions_handle);
 
         let (screen_handle, split) = panes
-            .split(Vertical, cpu_handle, PaneInstance::Screen(screen_pane))
+            .split(Vertical, instructions_handle, PaneInstance::Screen(screen_pane))
             .unwrap();
         handles.insert(DebuggerPane::Screen, screen_handle);
-        panes.resize(split, 1.0 / 4.0);
+        panes.resize(split, 1.0 / 3.0);
 
         let (ppu_handle, split) = panes
             .split(
@@ -143,26 +136,6 @@ impl DebuggerPanes {
             )
             .unwrap();
         handles.insert(DebuggerPane::Ppu, ppu_handle);
-        panes.resize(split, 3.0 / 4.0);
-
-        let (instructions_handle, split) = panes
-            .split(
-                Horizontal,
-                cpu_handle,
-                Self::construct_pane(DebuggerPane::Instructions),
-            )
-            .unwrap();
-        panes.resize(split, 1.0 / 4.0);
-        handles.insert(DebuggerPane::Instructions, instructions_handle);
-
-        let (breakpoints_handle, split) = panes
-            .split(
-                Horizontal,
-                instructions_handle,
-                Self::construct_pane(DebuggerPane::Breakpoints),
-            )
-            .unwrap();
-        handles.insert(DebuggerPane::Breakpoints, breakpoints_handle);
         panes.resize(split, 3.0 / 4.0);
 
         Self {
@@ -176,8 +149,6 @@ impl DebuggerPanes {
         match pane {
             DebuggerPane::Screen => PaneInstance::Screen(ScreenPane::new()),
             DebuggerPane::Instructions => PaneInstance::Instructions(InstructionsPane::new()),
-            DebuggerPane::Breakpoints => PaneInstance::Breakpoints(BreakpointsPane::new()),
-            DebuggerPane::Cpu => PaneInstance::Cpu(CpuPane::new()),
             DebuggerPane::Ppu => PaneInstance::Ppu(PpuPane::new()),
             DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
@@ -187,7 +158,7 @@ impl DebuggerPanes {
         }
     }
 
-    pub fn update(&mut self, message: Message, debugger: &mut Debugger) {
+    pub fn update(&mut self, message: Message) {
         match message {
             Message::ShowPane(pane) => {
                 if self.handles.get(&pane).is_none() {
@@ -220,13 +191,6 @@ impl DebuggerPanes {
             },
 
             Message::Pane(pane_message) => match &pane_message {
-                PaneMessage::Breakpoints(message) => {
-                    self.panes.iter_mut().for_each(|(_, pane)| {
-                        if let PaneInstance::Breakpoints(breakpoints_pane) = pane {
-                            breakpoints_pane.update(message, debugger);
-                        }
-                    });
-                }
                 PaneMessage::Screen(message) => {
                     self.panes.iter_mut().for_each(|(_, pane)| {
                         if let PaneInstance::Screen(screen_pane) = pane {
@@ -273,8 +237,6 @@ impl DebuggerPanes {
                     debugger.game_boy().cpu().bus_counter,
                     debugger.breakpoints(),
                 ),
-                PaneInstance::Breakpoints(breakpoints) => breakpoints.content(debugger),
-                PaneInstance::Cpu(cpu) => cpu.content(debugger),
                 PaneInstance::Ppu(ppu_pane) => ppu_pane.content(debugger.game_boy().ppu(), pal),
                 PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
                 PaneInstance::TileMap(tile_map) => {
@@ -301,8 +263,6 @@ impl DebuggerPanes {
         &[
             DebuggerPane::Screen,
             DebuggerPane::Instructions,
-            DebuggerPane::Breakpoints,
-            DebuggerPane::Cpu,
             DebuggerPane::Ppu,
             DebuggerPane::Tiles,
             DebuggerPane::TileMap(TileMapId(0)),
@@ -327,8 +287,6 @@ impl fmt::Display for DebuggerPane {
         match self {
             DebuggerPane::Screen => write!(f, "Screen"),
             DebuggerPane::Instructions => write!(f, "Instructions"),
-            DebuggerPane::Breakpoints => write!(f, "Breakpoints"),
-            DebuggerPane::Cpu => write!(f, "CPU"),
             DebuggerPane::Ppu => write!(f, "PPU"),
             DebuggerPane::Tiles => write!(f, "Tiles"),
             DebuggerPane::TileMap(map) => write!(f, "{}", map),

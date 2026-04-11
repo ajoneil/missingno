@@ -36,3 +36,31 @@ pub const TEAL: Color = Color::from_rgb(
     0xe2 as f32 / 255.0,
     0xd5 as f32 / 255.0,
 );
+
+/// Dim label (Catppuccin Mocha "overlay0") — #6C7086
+pub const OVERLAY0: Color = Color::from_rgb(
+    0x6c as f32 / 255.0,
+    0x70 as f32 / 255.0,
+    0x86 as f32 / 255.0,
+);
+
+/// Inactive/off state (Catppuccin Mocha "surface2") — #585B70
+pub const SURFACE2: Color = Color::from_rgb(
+    0x58 as f32 / 255.0,
+    0x5b as f32 / 255.0,
+    0x70 as f32 / 255.0,
+);
+
+/// Positive/on state (Catppuccin Mocha "green") — #A6E3A1
+pub const GREEN: Color = Color::from_rgb(
+    0xa6 as f32 / 255.0,
+    0xe3 as f32 / 255.0,
+    0xa1 as f32 / 255.0,
+);
+
+/// Changed/warning (Catppuccin Mocha "yellow") — #F9E2AF
+pub const YELLOW: Color = Color::from_rgb(
+    0xf9 as f32 / 255.0,
+    0xe2 as f32 / 255.0,
+    0xaf as f32 / 255.0,
+);

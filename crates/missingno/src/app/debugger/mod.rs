@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use iced::{Element, Subscription, Task, time, widget::container};
+use iced::{Element, Subscription, Task, time, widget::{container, row, rule}};
 
 use crate::app::{
     self,
-    ui::sizes::m,
+    ui::sizes::s,
     emulator::Emulator,
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
@@ -17,16 +17,16 @@ use missingno_gb::{
 };
 
 use panes::DebuggerPanes;
+use sidebar::Sidebar;
 
 mod audio;
-mod breakpoints;
-mod cpu;
 mod instructions;
 mod interrupts;
 pub mod panes;
 pub mod playback;
 mod ppu;
 mod screen;
+mod sidebar;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -39,6 +39,7 @@ pub enum Message {
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
 
+    Sidebar(sidebar::Message),
     Pane(panes::Message),
 }
 
@@ -59,6 +60,7 @@ struct ActivePlayback {
 
 pub struct Debugger {
     debugger: missingno_gb::debugger::Debugger,
+    sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
     frame: u64,
@@ -71,6 +73,7 @@ impl Debugger {
     pub fn new(game_boy: GameBoy) -> Self {
         Self {
             debugger: missingno_gb::debugger::Debugger::new(game_boy),
+            sidebar: Sidebar::new(),
             panes: DebuggerPanes::new(),
             running: false,
             frame: 0,
@@ -83,6 +86,7 @@ impl Debugger {
     pub fn from_emulator(game_boy: GameBoy, screen_view: ScreenView) -> Self {
         Self {
             debugger: missingno_gb::debugger::Debugger::new(game_boy),
+            sidebar: Sidebar::new(),
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
             frame: 0,
@@ -188,8 +192,13 @@ impl Debugger {
                 Task::none()
             }
 
+            Message::Sidebar(message) => {
+                self.sidebar.update(&message, &mut self.debugger);
+                Task::none()
+            }
+
             Message::Pane(message) => {
-                self.panes.update(message, &mut self.debugger);
+                self.panes.update(message);
                 Task::none()
             }
         }
@@ -200,9 +209,13 @@ impl Debugger {
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {
-        container(self.panes.view(&self.debugger, self))
-            .padding(m())
-            .into()
+        row![
+            self.sidebar.view(&self.debugger),
+            container(rule::vertical(1)).padding([s(), 0.0]),
+            self.panes.view(&self.debugger, self),
+        ]
+        .padding(s())
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<app::Message> {

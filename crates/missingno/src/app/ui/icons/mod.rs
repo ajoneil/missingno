@@ -10,10 +10,12 @@ pub enum Icon {
     Back,
     Camera,
     CircuitBoard,
+    Clock,
     Close,
     Debug,
     Download,
     Expand,
+    Eye,
     FolderOpen,
     Front,
     Gamepad,
@@ -37,10 +39,12 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::CircuitBoard => {
             Handle::from_memory(include_bytes!("pixelarticons/circuit-board.svg"))
         }
+        Icon::Clock => Handle::from_memory(include_bytes!("pixelarticons/clock.svg")),
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
         Icon::Debug => Handle::from_memory(include_bytes!("pixelarticons/debug.svg")),
         Icon::Download => Handle::from_memory(include_bytes!("pixelarticons/download.svg")),
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
+        Icon::Eye => Handle::from_memory(include_bytes!("pixelarticons/eye.svg")),
         Icon::FolderOpen => Handle::from_memory(include_bytes!("pixelarticons/folder.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("pixelarticons/chevron-right.svg")),
         Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
@@ -66,6 +70,15 @@ pub fn m<'a>(icon: Icon) -> Svg<'a, Theme> {
         .height(ICON_SIZE)
         .style(|theme: &Theme, _state| Style {
             color: Some(theme.palette().text),
+        })
+}
+
+pub fn m_muted<'a>(icon: Icon) -> Svg<'a, Theme> {
+    svg(icon_data(icon))
+        .width(ICON_SIZE)
+        .height(ICON_SIZE)
+        .style(|_: &Theme, _state| Style {
+            color: Some(super::palette::MUTED),
         })
 }
 
