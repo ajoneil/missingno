@@ -1,9 +1,9 @@
 use iced::{
-    Border, Element,
+    Border, Color, Element,
     Length::{self, Fill},
     alignment::Vertical,
     widget::{
-        button, column, container, row, rule, scrollable, text, text_input, tooltip, Column,
+        button, column, container, row, rule, text, text_input, tooltip, Column, Space,
     },
 };
 
@@ -11,7 +11,7 @@ use crate::app::{
     self,
     ui::{
         fonts, icons, palette,
-        sizes::s,
+        sizes::{s, xs},
     },
     debugger,
 };
@@ -28,15 +28,34 @@ use super::ppu::ppu_sidebar;
 
 /// Monospace text size for all register labels and values.
 const REG: f32 = 14.0;
+/// Detail text size for collapsed summaries.
+const DETAIL: f32 = 11.0;
 
 const SIDEBAR_WIDTH: f32 = 260.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Cpu,
+    Ppu,
+}
+
 pub struct Sidebar {
     breakpoint_input: String,
+    collapsed: [bool; 2], // indexed by Section
+}
+
+impl Section {
+    fn index(self) -> usize {
+        match self {
+            Section::Cpu => 0,
+            Section::Ppu => 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    ToggleSection(Section),
     BreakpointInputChanged(String),
     AddBreakpoint,
 }
@@ -51,11 +70,20 @@ impl Sidebar {
     pub fn new() -> Self {
         Self {
             breakpoint_input: String::new(),
+            collapsed: [false, false], // CPU and PPU expanded by default
         }
+    }
+
+    fn is_collapsed(&self, section: Section) -> bool {
+        self.collapsed[section.index()]
     }
 
     pub fn update(&mut self, message: &Message, debugger: &mut Debugger) {
         match message {
+            Message::ToggleSection(section) => {
+                let idx = section.index();
+                self.collapsed[idx] = !self.collapsed[idx];
+            }
             Message::BreakpointInputChanged(input) => {
                 self.breakpoint_input = input
                     .chars()
@@ -74,39 +102,71 @@ impl Sidebar {
     }
 
     pub fn view<'a>(&'a self, debugger: &'a Debugger, pal: &'a Palette) -> Element<'a, app::Message> {
-        let cpu = debugger.game_boy().cpu();
         let game_boy = debugger.game_boy();
 
-        container(
-            scrollable(
-                column![
-                    pointers(cpu),
-                    row![
-                        button("Step").on_press(debugger::Message::Step.into()),
-                        button("Step Over").on_press(debugger::Message::StepOver.into()),
-                    ]
-                    .spacing(s()),
-                    rule::horizontal(1),
-                    register_a_row(cpu),
-                    register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),
-                    register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
-                    register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
-                    rule::horizontal(1),
-                    interrupts(game_boy),
-                    rule::horizontal(1),
-                    ppu_sidebar(game_boy.ppu(), pal),
-                    rule::horizontal(1),
-                    self.breakpoints_view(debugger),
-                    self.add_breakpoint(),
-                ]
-                .spacing(s())
-                .padding(s()),
-            ),
-        )
+        column![
+            self.cpu_section(game_boy.cpu(), game_boy),
+            self.ppu_section(game_boy.ppu(), pal),
+            self.breakpoints_view(debugger),
+            self.add_breakpoint(),
+        ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
-        .style(sidebar_style)
+        .spacing(s())
         .into()
+    }
+
+    fn cpu_section<'a>(&self, cpu: &'a Cpu, game_boy: &'a missingno_gb::GameBoy) -> Element<'a, app::Message> {
+        let summary = format!(
+            "pc {:04X} · sp {:04X}",
+            cpu.bus_counter, cpu.stack_pointer,
+        );
+        let collapsed = self.is_collapsed(Section::Cpu);
+
+        let body = column![
+            pointers(cpu),
+            row![
+                button("Step").on_press(debugger::Message::Step.into()),
+                button("Step Over").on_press(debugger::Message::StepOver.into()),
+            ]
+            .spacing(s()),
+            rule::horizontal(1),
+            register_a_row(cpu),
+            register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),
+            register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
+            register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
+            rule::horizontal(1),
+            interrupts(game_boy),
+        ]
+        .padding(s())
+        .spacing(s())
+        .into();
+
+        let running = cpu.halt_state != HaltState::Halted;
+        section("CPU", &summary, collapsed, Section::Cpu,
+            Some((running, palette::GREEN)),
+            None,
+            body,
+        )
+    }
+
+    fn ppu_section<'a>(&self, ppu: &'a missingno_gb::ppu::Ppu, pal: &'a Palette) -> Element<'a, app::Message> {
+        let mode = ppu.mode();
+        let (mode_text, mode_color) = mode_display(mode);
+        let summary = format!("{} · ly {}", mode_text, ppu.video.ly());
+        let collapsed = self.is_collapsed(Section::Ppu);
+
+        let mode_detail: Element<'_, app::Message> = text(mode_text)
+            .font(fonts::monospace())
+            .size(DETAIL)
+            .color(mode_color)
+            .into();
+
+        section("PPU", &summary, collapsed, Section::Ppu,
+            Some((ppu.control().video_enabled(), palette::GREEN)),
+            Some(mode_detail),
+            ppu_sidebar(ppu, pal),
+        )
     }
 
     fn breakpoints_view(&self, debugger: &Debugger) -> Element<'_, app::Message> {
@@ -128,11 +188,100 @@ impl Sidebar {
     }
 }
 
-fn sidebar_style(theme: &iced::Theme) -> container::Style {
-    let palette = theme.extended_palette();
+// --- Collapsible section ---
+
+fn section<'a>(
+    label: &'a str,
+    summary: &str,
+    collapsed: bool,
+    section_id: Section,
+    pip_state: Option<(bool, Color)>,
+    detail: Option<Element<'a, app::Message>>,
+    body: Element<'a, app::Message>,
+) -> Element<'a, app::Message> {
+    use super::interrupts::pip;
+
+    let mut header_left = Vec::new();
+
+    if let Some((active, color)) = pip_state {
+        header_left.push(pip(active, color));
+    }
+
+    header_left.push(
+        text(label)
+            .font(fonts::title())
+            .size(13.0)
+            .color(palette::MUTED)
+            .into(),
+    );
+
+    // Right side: collapsed summary, or expanded detail if provided
+    let header_right: Element<'_, app::Message> = if collapsed {
+        text(summary.to_owned())
+            .font(fonts::monospace())
+            .size(DETAIL)
+            .color(palette::OVERLAY0)
+            .into()
+    } else if let Some(detail) = detail {
+        detail
+    } else {
+        Space::new().into()
+    };
+
+    let header = button(
+        container(
+            row(header_left)
+                .push(Space::new().width(Length::Fill))
+                .push(header_right)
+                .spacing(xs())
+                .align_y(Vertical::Center),
+        )
+        .width(Length::Fill)
+        .padding([xs(), s()])
+        .style(section_header_style),
+    )
+    .on_press(Message::ToggleSection(section_id).into())
+    .padding(0)
+    .style(|_, _| button::Style::default())
+    .width(Length::Fill);
+
+    let mut content = column![header].width(Length::Fill);
+    if !collapsed {
+        content = content.push(body);
+    }
+
+    container(content)
+        .width(Length::Fill)
+        .style(section_style)
+        .into()
+}
+
+fn section_style(theme: &iced::Theme) -> container::Style {
+    let pal = theme.extended_palette();
     container::Style {
-        background: Some(palette.background.base.color.into()),
+        background: Some(pal.background.base.color.into()),
+        border: Border::default()
+            .rounded(4.0)
+            .width(1.0)
+            .color(Color::from_rgba(1.0, 1.0, 1.0, 0.06)),
         ..Default::default()
+    }
+}
+
+fn section_header_style(_theme: &iced::Theme) -> container::Style {
+    container::Style {
+        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.03).into()),
+        ..Default::default()
+    }
+}
+
+fn mode_display(mode: missingno_gb::ppu::rendering::Mode) -> (&'static str, Color) {
+    use missingno_gb::ppu::rendering::Mode;
+    match mode {
+        Mode::HorizontalBlank => ("HBlank", palette::BLUE),
+        Mode::VerticalBlank => ("VBlank", palette::GREEN),
+        Mode::OamScan => ("OAM Scan", palette::YELLOW),
+        Mode::Drawing => ("Drawing", palette::PEACH),
     }
 }
 

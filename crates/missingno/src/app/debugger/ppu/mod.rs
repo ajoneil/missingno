@@ -16,7 +16,6 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
-    rendering::Mode,
     types::{
         control::Control,
         palette::{Palette, PaletteMap},
@@ -36,14 +35,13 @@ const REG: f32 = 14.0;
 /// Small label size for section headers and dim annotations.
 const LABEL: f32 = 11.0;
 
-/// PPU section for the left sidebar — returns the PPU state display as an Element.
+/// PPU section body for the left sidebar — returns the PPU state display as an Element.
+/// The section header is handled by the sidebar's collapsible section wrapper.
 pub fn ppu_sidebar<'a>(ppu: &'a Ppu, pal: &Palette) -> Element<'a, Message> {
     let control = ppu.control();
-    let mode = ppu.mode();
     let palettes = ppu.palettes();
 
     column![
-        section_header(control.video_enabled(), mode),
         row![
             label_value("ly", &ppu.video.ly().to_string()),
             label_value("lx", &ppu.lx().to_string()),
@@ -57,32 +55,8 @@ pub fn ppu_sidebar<'a>(ppu: &'a Ppu, pal: &Palette) -> Element<'a, Message> {
         rule::horizontal(1),
         sprites_section(control, palettes, pal),
     ]
+    .padding(s())
     .spacing(s())
-    .into()
-}
-
-fn section_header(lcd_on: bool, mode: Mode) -> Element<'static, Message> {
-    let (mode_text, mode_color) = match mode {
-        Mode::HorizontalBlank => ("HBlank", palette::BLUE),
-        Mode::VerticalBlank => ("VBlank", palette::GREEN),
-        Mode::OamScan => ("OAM Scan", palette::YELLOW),
-        Mode::Drawing => ("Drawing", palette::PEACH),
-    };
-
-    row![
-        pip(lcd_on, palette::GREEN),
-        text("PPU")
-            .font(fonts::title())
-            .size(13.0)
-            .color(palette::MUTED),
-        Space::new().width(Length::Fill),
-        text(mode_text)
-            .font(fonts::monospace())
-            .size(LABEL)
-            .color(mode_color),
-    ]
-    .spacing(xs())
-    .align_y(Vertical::Center)
     .into()
 }
 

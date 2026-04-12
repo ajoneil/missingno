@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use iced::{Element, Subscription, Task, time, widget::{container, row, rule}};
+use iced::{Element, Subscription, Task, time, widget::row};
 
 use crate::app::{
     self,
@@ -187,10 +187,10 @@ impl Debugger {
         let pal = self.display_palette();
         row![
             self.sidebar.view(&self.debugger, pal),
-            container(rule::vertical(1)).padding([s(), s()]),
             self.panes.view(&self.debugger, pal),
             self.panes.icon_rail(),
         ]
+        .spacing(s())
         .padding(s())
         .into()
     }
