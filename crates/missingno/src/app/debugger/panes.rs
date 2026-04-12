@@ -291,7 +291,7 @@ impl DebuggerPane {
     pub fn icon(&self) -> Icon {
         match self {
             DebuggerPane::Screen => Icon::Monitor,
-            DebuggerPane::Instructions => Icon::Debug,
+            DebuggerPane::Instructions => Icon::FileText,
             DebuggerPane::Tiles => Icon::Grid,
             DebuggerPane::TileMap(_) => Icon::Image,
             DebuggerPane::Sprites => Icon::Human,

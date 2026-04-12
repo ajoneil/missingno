@@ -37,7 +37,6 @@ mod sidebar;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BottomPanel {
     Breakpoints,
-    Watchpoints,
 }
 
 #[derive(Debug, Clone)]
@@ -337,7 +336,6 @@ impl Debugger {
         pane_grid(state, |_handle, panel, _maximized| {
             let content: Element<'_, app::Message> = match panel {
                 BottomPanel::Breakpoints => self.breakpoints_content(),
-                BottomPanel::Watchpoints => self.watchpoints_content(),
             };
 
             panes::pane(
@@ -377,17 +375,6 @@ impl Debugger {
         .into()
     }
 
-    fn watchpoints_content(&self) -> Element<'_, app::Message> {
-        container(
-            text("Watchpoints coming soon")
-                .font(fonts::monospace())
-                .size(13.0)
-                .color(palette::OVERLAY0),
-        )
-        .padding(s())
-        .into()
-    }
-
     fn icon_rail(&self) -> Element<'_, app::Message> {
         use icons::Icon;
 
@@ -401,8 +388,7 @@ impl Debugger {
         });
 
         let panel_buttons = [
-            (BottomPanel::Breakpoints, Icon::Debug, "Breakpoints"),
-            (BottomPanel::Watchpoints, Icon::Eye, "Watchpoints"),
+            (BottomPanel::Breakpoints, Icon::Circle, "Breakpoints"),
         ]
         .into_iter()
         .map(|(panel, icon, label)| {
@@ -486,7 +472,6 @@ impl BottomPanel {
     fn label(&self) -> &'static str {
         match self {
             BottomPanel::Breakpoints => "Breakpoints",
-            BottomPanel::Watchpoints => "Watchpoints",
         }
     }
 }

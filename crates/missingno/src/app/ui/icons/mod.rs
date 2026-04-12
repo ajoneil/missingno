@@ -10,6 +10,7 @@ pub enum Icon {
     Back,
     Brush,
     Camera,
+    Circle,
     CircuitBoard,
     Clock,
     Close,
@@ -18,6 +19,7 @@ pub enum Icon {
     Download,
     Expand,
     Eye,
+    FileText,
     FolderOpen,
     Front,
     Gamepad,
@@ -47,6 +49,7 @@ fn icon_data(icon: Icon) -> Handle {
         }
         Icon::Clock => Handle::from_memory(include_bytes!("pixelarticons/clock.svg")),
         Icon::Close => Handle::from_memory(include_bytes!("pixelarticons/close.svg")),
+        Icon::Circle => Handle::from_memory(include_bytes!("pixelarticons/circle.svg")),
         Icon::ColorsSwatch => {
             Handle::from_memory(include_bytes!("pixelarticons/colors-swatch.svg"))
         }
@@ -54,6 +57,7 @@ fn icon_data(icon: Icon) -> Handle {
         Icon::Download => Handle::from_memory(include_bytes!("pixelarticons/download.svg")),
         Icon::Expand => Handle::from_memory(include_bytes!("pixelarticons/expand.svg")),
         Icon::Eye => Handle::from_memory(include_bytes!("pixelarticons/eye.svg")),
+        Icon::FileText => Handle::from_memory(include_bytes!("pixelarticons/file-text.svg")),
         Icon::FolderOpen => Handle::from_memory(include_bytes!("pixelarticons/folder.svg")),
         Icon::Front => Handle::from_memory(include_bytes!("pixelarticons/chevron-right.svg")),
         Icon::Gamepad => Handle::from_memory(include_bytes!("pixelarticons/gamepad.svg")),
