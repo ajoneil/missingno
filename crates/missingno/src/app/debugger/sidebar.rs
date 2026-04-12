@@ -125,11 +125,6 @@ impl Sidebar {
 
         let body = column![
             pointers(cpu),
-            row![
-                button("Step").on_press(debugger::Message::Step.into()),
-                button("Step Over").on_press(debugger::Message::StepOver.into()),
-            ]
-            .spacing(s()),
             rule::horizontal(1),
             register_a_row(cpu),
             register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),

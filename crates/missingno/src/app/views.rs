@@ -15,7 +15,7 @@ use super::ui::{
     text,
 };
 use super::{
-    controls, library, load, settings,
+    controls, debugger, library, load, settings,
     App, CartridgeMessage, DetailMessage, DetailSubScreen, FlashState, Fullscreen, Game, LoadedGame, Message, PendingAction, Screen,
 };
 use crate::cartridge_rw;
@@ -128,9 +128,18 @@ impl App {
                 has_items = true;
             }
             Screen::Emulator => {
-                items = items.push(menu_item(Icon::Camera, "Screenshot", Message::TakeScreenshot));
                 if !self.debugger_enabled {
                     items = items.push(menu_item(Icon::Debug, "Debugger", Message::ToggleDebugger(true)));
+                    items = items.push(menu_divider());
+                }
+                if self.debugger_enabled {
+                    items = items.push(menu_item(Icon::Play, "Step Frame", debugger::Message::StepFrame.into()));
+                }
+                items = items.push(menu_item_danger(Icon::Close, "Reset", Message::Reset));
+                items = items.push(menu_divider());
+                items = items.push(menu_item(Icon::Camera, "Screenshot", Message::TakeScreenshot));
+                if self.debugger_enabled {
+                    items = items.push(menu_item(Icon::Download, "Capture Trace", debugger::Message::CaptureFrame.into()));
                 }
                 has_items = true;
             }

@@ -126,7 +126,7 @@ impl ActionBar {
                     )
                     .clip(true)
                     .width(Fill),
-                    controls(app.running(), app.debugger_enabled),
+                    controls(app.running(), is_debugger),
                     self.trailing()
                 ]
             }
@@ -154,16 +154,13 @@ impl ActionBar {
 }
 
 fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
-    let row = row![play_pause(running)];
+    let mut r = row![];
 
-    let row = if debugger {
-        row.push(step_frame(running)).push(capture_frame(running))
-    } else {
-        row
-    };
+    if debugger {
+        r = r.push(step(running)).push(step_over(running));
+    }
 
-    row.push(reset())
-        .push(stop())
+    r.push(play_pause(running))
         .spacing(s())
         .wrap()
         .into()
@@ -182,30 +179,20 @@ fn play_pause(running: bool) -> Button<'static, app::Message> {
     }
 }
 
-fn step_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard("Step Frame");
-
+fn step(running: bool) -> Button<'static, app::Message> {
+    let button = buttons::standard("Step");
     if running {
         button
     } else {
-        button.on_press(debugger::Message::StepFrame.into())
+        button.on_press(debugger::Message::Step.into())
     }
 }
 
-fn capture_frame(running: bool) -> Button<'static, app::Message> {
-    let button = buttons::standard("Capture Frame");
-
+fn step_over(running: bool) -> Button<'static, app::Message> {
+    let button = buttons::standard("Over");
     if running {
         button
     } else {
-        button.on_press(debugger::Message::CaptureFrame.into())
+        button.on_press(debugger::Message::StepOver.into())
     }
-}
-
-fn reset() -> Button<'static, app::Message> {
-    buttons::danger("Reset").on_press(app::Message::Reset.into())
-}
-
-fn stop() -> Button<'static, app::Message> {
-    buttons::danger("Stop").on_press(app::Message::StopGame)
 }
