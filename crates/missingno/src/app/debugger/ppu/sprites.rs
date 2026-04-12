@@ -1,8 +1,8 @@
 use iced::{
     Element,
     Length::Fill,
-    Theme, never,
-    widget::{Row, column, pane_grid, radio, rich_text, row, scrollable, span, toggler},
+    never,
+    widget::{Row, column, container, pane_grid, rich_text, row, scrollable, span, toggler, tooltip},
 };
 
 use crate::app::{
@@ -10,18 +10,17 @@ use crate::app::{
     ui::{
         fonts, palette,
         icons::{self, Icon},
-        sizes::{l, m, s, xs},
-        text,
+        sizes::{s, xs},
     },
     debugger::{
         panes::{self, pane, title_bar_with_detail},
-        ppu::{palette_widget::palette3, tile_widget::tile_flip},
+        ppu::tile_widget::tile_flip,
     },
 };
 use missingno_gb::ppu::{
     Ppu,
     memory::Vram,
-    types::palette::{Palette, PaletteMap},
+    types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     types::tiles::{TileAddressMode, TileIndex},
 };
@@ -80,48 +79,18 @@ impl SpritesPane {
             ),
             scrollable(
                 column![
-                    self.sprite_size(ppu.control().sprite_size()),
-                    row![
-                        text::label("Palette 0"),
-                        palette3(&PaletteMap(ppu.palettes().sprite0.output()), palette)
-                    ]
-                    .spacing(m()),
-                    row![
-                        text::label("Palette 1"),
-                        palette3(&PaletteMap(ppu.palettes().sprite1.output()), palette)
-                    ]
-                    .spacing(m()),
                     toggler(self.on_screen_only)
-                        .label("Show on-screen only")
+                        .label("On-screen only")
+                        .size(14.0)
                         .on_toggle(|on| Message::ToggleOnScreenOnly(on).into()),
                     self.sprites(ppu, vram, palette)
                 ]
                 .width(Fill)
                 .spacing(s())
-                .padding(m()),
+                .padding(s()),
             )
             .into(),
         )
-    }
-
-    fn sprite_size(&self, size: SpriteSize) -> Element<'static, app::Message> {
-        row![
-            text::label("Size"),
-            radio(
-                SpriteSize::Single.to_string(),
-                SpriteSize::Single,
-                Some(size),
-                |_| -> app::Message { app::Message::None }
-            ),
-            radio(
-                SpriteSize::Double.to_string(),
-                SpriteSize::Double,
-                Some(size),
-                |_| -> app::Message { app::Message::None }
-            )
-        ]
-        .spacing(m())
-        .into()
     }
 
     fn sprites<'a>(
@@ -130,9 +99,9 @@ impl SpritesPane {
         vram: &'a Vram,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
-        let mut sprites = (0..40)
-            .map(|i| ppu.sprite(SpriteId(i)))
-            .filter(|s| {
+        let mut sprites = (0u8..40)
+            .map(|i| (i, ppu.sprite(SpriteId(i))))
+            .filter(|(_, s)| {
                 if self.on_screen_only {
                     s.position.on_screen_x() && s.position.on_screen_y(ppu.control().sprite_size())
                 } else {
@@ -142,10 +111,14 @@ impl SpritesPane {
             .peekable();
 
         if sprites.peek().is_none() {
-            text::label("No on-screen sprites").into()
+            iced::widget::text("No on-screen sprites")
+                .font(fonts::monospace())
+                .size(13.0)
+                .color(palette::OVERLAY0)
+                .into()
         } else {
-            Row::with_children(sprites.map(|s| self.sprite(ppu, vram, s, palette)))
-                .spacing(l())
+            Row::with_children(sprites.map(|(i, s)| self.sprite(i, ppu, vram, s, palette)))
+                .spacing(s())
                 .wrap()
                 .into()
         }
@@ -153,22 +126,32 @@ impl SpritesPane {
 
     fn sprite<'a>(
         &'a self,
+        index: u8,
         ppu: &'a Ppu,
         vram: &'a Vram,
         sprite: &Sprite,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
-        row![
-            self.priority(sprite.attributes.priority()),
-            column![
-                self.tiles(sprite, vram, ppu, palette),
-                self.position(&sprite.position, ppu.control().sprite_size())
-            ]
-            .spacing(xs())
-            .width(60)
+        let left = column![
+            iced::widget::text(format!("{}", index))
+                .font(fonts::monospace())
+                .size(11.0)
+                .color(palette::OVERLAY0),
+            priority_icon(sprite.attributes.priority()),
         ]
-        .spacing(s())
-        .into()
+        .spacing(xs())
+        .align_x(iced::Alignment::Center);
+
+        let right = column![
+            self.tiles(sprite, vram, ppu, palette),
+            self.position(&sprite.position, ppu.control().sprite_size()),
+        ]
+        .spacing(xs())
+        .width(60);
+
+        row![left, right]
+            .spacing(xs())
+            .into()
     }
 
     fn tiles(
@@ -189,8 +172,8 @@ impl SpritesPane {
                 flip_y,
                 palette,
             )
-            .width(48)
-            .height(48)
+            .width(40)
+            .height(40)
             .into(),
             SpriteSize::Double => {
                 let tile1 = tile_flip(
@@ -199,8 +182,8 @@ impl SpritesPane {
                     flip_y,
                     palette,
                 )
-                .width(48)
-                .height(48);
+                .width(40)
+                .height(40);
 
                 let tile2 = tile_flip(
                     vram.tile_block(tile_block_id)
@@ -209,8 +192,8 @@ impl SpritesPane {
                     flip_y,
                     palette,
                 )
-                .width(48)
-                .height(48);
+                .width(40)
+                .height(40);
 
                 if flip_y {
                     column![tile2, tile1]
@@ -222,32 +205,45 @@ impl SpritesPane {
         }
     }
 
-    fn position(&self, position: &Position, size: SpriteSize) -> Element<'_, app::Message> {
-        let visible = Theme::CatppuccinMocha.palette().success;
-        let offscreen = Theme::CatppuccinMocha.palette().danger;
-
+    fn position(&self, position: &Position, size: SpriteSize) -> Element<'static, app::Message> {
         rich_text![
             span(position.x_plus_8 as i16 - 8).color(if position.on_screen_x() {
-                visible
+                palette::GREEN
             } else {
-                offscreen
+                palette::RED
             }),
-            span(","),
+            span(",").color(palette::MUTED),
             span(position.y_plus_16 as i16 - 16).color(if position.on_screen_y(size) {
-                visible
+                palette::GREEN
             } else {
-                offscreen
+                palette::RED
             }),
         ]
+        .font(fonts::monospace())
+        .size(13.0)
         .on_link_click(never)
         .into()
     }
+}
 
-    fn priority(&self, priority: Priority) -> Element<'_, app::Message> {
-        icons::m(match priority {
-            Priority::Sprite => Icon::Front,
-            Priority::Background => Icon::Back,
-        })
-        .into()
-    }
+fn priority_icon(priority: Priority) -> Element<'static, app::Message> {
+    use crate::app::debugger::sidebar::tooltip_style;
+
+    let (icon, label) = match priority {
+        Priority::Sprite => (Icon::Front, "Above BG"),
+        Priority::Background => (Icon::Back, "Behind BG"),
+    };
+
+    tooltip(
+        icons::m_muted(icon),
+        container(
+            iced::widget::text(label)
+                .font(fonts::monospace())
+                .size(11.0),
+        )
+        .padding([2.0, s()]),
+        tooltip::Position::Right,
+    )
+    .style(tooltip_style)
+    .into()
 }

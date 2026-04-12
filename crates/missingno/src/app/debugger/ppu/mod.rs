@@ -23,7 +23,6 @@ use missingno_gb::ppu::{
     },
 };
 
-pub mod palette_widget;
 pub mod sprites;
 mod tile_atlas;
 pub mod tile_maps;
