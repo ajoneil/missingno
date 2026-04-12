@@ -22,7 +22,6 @@ use crate::app::{
         audio::AudioPane,
         instructions::InstructionsPane,
         ppu::{
-            PpuPane,
             sprites::{self, SpritesPane},
             tile_maps::TileMapPane,
             tiles::TilesPane,
@@ -71,7 +70,6 @@ pub struct DebuggerPanes {
 pub enum DebuggerPane {
     Screen,
     Instructions,
-    Ppu,
     Tiles,
     TileMap(TileMapId),
     Sprites,
@@ -81,7 +79,6 @@ pub enum DebuggerPane {
 enum PaneInstance {
     Screen(ScreenPane),
     Instructions(InstructionsPane),
-    Ppu(PpuPane),
     Tiles(TilesPane),
     TileMap(TileMapPane),
     Sprites(SpritesPane),
@@ -125,16 +122,6 @@ impl DebuggerPanes {
         handles.insert(DebuggerPane::Screen, screen_handle);
         panes.resize(split, 1.0 / 3.0);
 
-        let (ppu_handle, split) = panes
-            .split(
-                Horizontal,
-                screen_handle,
-                Self::construct_pane(DebuggerPane::Ppu),
-            )
-            .unwrap();
-        handles.insert(DebuggerPane::Ppu, ppu_handle);
-        panes.resize(split, 3.0 / 4.0);
-
         Self {
             panes,
             handles,
@@ -146,7 +133,6 @@ impl DebuggerPanes {
         match pane {
             DebuggerPane::Screen => PaneInstance::Screen(ScreenPane::new()),
             DebuggerPane::Instructions => PaneInstance::Instructions(InstructionsPane::new()),
-            DebuggerPane::Ppu => PaneInstance::Ppu(PpuPane::new()),
             DebuggerPane::Tiles => PaneInstance::Tiles(TilesPane::new()),
             DebuggerPane::TileMap(map) => PaneInstance::TileMap(TileMapPane::new(map)),
             DebuggerPane::Sprites => PaneInstance::Sprites(SpritesPane::new()),
@@ -207,6 +193,10 @@ impl DebuggerPanes {
         }
     }
 
+    pub fn palette(&self) -> &Palette {
+        self.palette.palette()
+    }
+
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
         self.panes.iter_mut().for_each(|(_, pane)| {
@@ -219,12 +209,8 @@ impl DebuggerPanes {
     pub fn view<'a>(
         &'a self,
         debugger: &'a Debugger,
+        pal: &'a Palette,
     ) -> Element<'a, app::Message> {
-        let pal = if debugger.game_boy().sgb().is_some() {
-            &Palette::CLASSIC
-        } else {
-            self.palette.palette()
-        };
         pane_grid(
             &self.panes,
             |_handle, instance, _is_maximized| match instance {
@@ -234,7 +220,6 @@ impl DebuggerPanes {
                     debugger.game_boy().cpu().bus_counter,
                     debugger.breakpoints(),
                 ),
-                PaneInstance::Ppu(ppu_pane) => ppu_pane.content(debugger.game_boy().ppu(), pal),
                 PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
                 PaneInstance::TileMap(tile_map) => {
                     tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
@@ -259,7 +244,6 @@ impl DebuggerPanes {
         &[
             DebuggerPane::Screen,
             DebuggerPane::Instructions,
-            DebuggerPane::Ppu,
             DebuggerPane::Tiles,
             DebuggerPane::TileMap(TileMapId(0)),
             DebuggerPane::TileMap(TileMapId(1)),
@@ -306,7 +290,6 @@ impl DebuggerPane {
         match self {
             DebuggerPane::Screen => Icon::Monitor,
             DebuggerPane::Instructions => Icon::Debug,
-            DebuggerPane::Ppu => Icon::Brush,
             DebuggerPane::Tiles => Icon::Grid,
             DebuggerPane::TileMap(_) => Icon::Image,
             DebuggerPane::Sprites => Icon::Human,
@@ -320,7 +303,6 @@ impl fmt::Display for DebuggerPane {
         match self {
             DebuggerPane::Screen => write!(f, "Screen"),
             DebuggerPane::Instructions => write!(f, "Instructions"),
-            DebuggerPane::Ppu => write!(f, "PPU"),
             DebuggerPane::Tiles => write!(f, "Tiles"),
             DebuggerPane::TileMap(map) => write!(f, "{}", map),
             DebuggerPane::Sprites => write!(f, "Sprites"),
@@ -373,25 +355,6 @@ pub fn title_bar_with_detail<'a>(
 ) -> pane_grid::TitleBar<'a, app::Message> {
     build_title_bar(
         iced::widget::text(label).font(fonts::title()).size(13.0).into(),
-        detail,
-    )
-}
-
-pub fn pip_title_bar_with_detail<'a>(
-    label: &'a str,
-    active: bool,
-    detail: impl Into<Element<'a, app::Message>>,
-) -> pane_grid::TitleBar<'a, app::Message> {
-    use crate::app::debugger::interrupts::pip;
-
-    build_title_bar(
-        iced::widget::row![
-            pip(active, palette::GREEN),
-            iced::widget::text(label).font(fonts::title()).size(13.0),
-        ]
-        .spacing(xs())
-        .align_y(iced::alignment::Vertical::Center)
-        .into(),
         detail,
     )
 }

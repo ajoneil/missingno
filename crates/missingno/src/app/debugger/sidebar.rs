@@ -21,8 +21,10 @@ use missingno_gb::cpu::{
     registers::{Register16, Register8},
 };
 use missingno_gb::debugger::Debugger;
+use missingno_gb::ppu::types::palette::Palette;
 
 use super::interrupts::interrupts;
+use super::ppu::ppu_sidebar;
 
 /// Monospace text size for all register labels and values.
 const REG: f32 = 14.0;
@@ -71,31 +73,35 @@ impl Sidebar {
         }
     }
 
-    pub fn view<'a>(&'a self, debugger: &'a Debugger) -> Element<'a, app::Message> {
+    pub fn view<'a>(&'a self, debugger: &'a Debugger, pal: &'a Palette) -> Element<'a, app::Message> {
         let cpu = debugger.game_boy().cpu();
         let game_boy = debugger.game_boy();
 
         container(
-            column![
-                pointers(cpu),
-                row![
-                    button("Step").on_press(debugger::Message::Step.into()),
-                    button("Step Over").on_press(debugger::Message::StepOver.into()),
+            scrollable(
+                column![
+                    pointers(cpu),
+                    row![
+                        button("Step").on_press(debugger::Message::Step.into()),
+                        button("Step Over").on_press(debugger::Message::StepOver.into()),
+                    ]
+                    .spacing(s()),
+                    rule::horizontal(1),
+                    register_a_row(cpu),
+                    register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),
+                    register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
+                    register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
+                    rule::horizontal(1),
+                    interrupts(game_boy),
+                    rule::horizontal(1),
+                    ppu_sidebar(game_boy.ppu(), pal),
+                    rule::horizontal(1),
+                    self.breakpoints_view(debugger),
+                    self.add_breakpoint(),
                 ]
-                .spacing(s()),
-                rule::horizontal(1),
-                register_a_row(cpu),
-                register_pair_row(cpu, Register8::B, Register8::C, Register16::Bc),
-                register_pair_row(cpu, Register8::D, Register8::E, Register16::De),
-                register_pair_row(cpu, Register8::H, Register8::L, Register16::Hl),
-                rule::horizontal(1),
-                interrupts(game_boy),
-                rule::horizontal(1),
-                self.breakpoints_view(debugger),
-                self.add_breakpoint(),
-            ]
-            .spacing(s())
-            .padding(s()),
+                .spacing(s())
+                .padding(s()),
+            ),
         )
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
@@ -104,13 +110,12 @@ impl Sidebar {
     }
 
     fn breakpoints_view(&self, debugger: &Debugger) -> Element<'_, app::Message> {
-        scrollable(Column::from_iter(
+        Column::from_iter(
             debugger
                 .breakpoints()
                 .iter()
                 .map(|address| breakpoint(*address)),
-        ))
-        .height(Fill)
+        )
         .into()
     }
 

@@ -2,7 +2,7 @@ use iced::{
     Background, Border, Color, Element,
     Length,
     alignment::Vertical,
-    widget::{column, container, pane_grid, row, rule, scrollable, text, Space},
+    widget::{column, container, row, rule, text, Space},
 };
 
 use crate::app::{
@@ -12,10 +12,7 @@ use crate::app::{
         fonts, palette,
         sizes::{s, xs},
     },
-    debugger::{
-        interrupts::pip,
-        panes::{pane, pip_title_bar_with_detail},
-    },
+    debugger::interrupts::pip,
 };
 use missingno_gb::ppu::{
     Ppu,
@@ -39,64 +36,54 @@ const REG: f32 = 14.0;
 /// Small label size for section headers and dim annotations.
 const LABEL: f32 = 11.0;
 
-pub struct PpuPane;
+/// PPU section for the left sidebar — returns the PPU state display as an Element.
+pub fn ppu_sidebar<'a>(ppu: &'a Ppu, pal: &Palette) -> Element<'a, Message> {
+    let control = ppu.control();
+    let mode = ppu.mode();
+    let palettes = ppu.palettes();
 
-impl PpuPane {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn content(&self, ppu: &Ppu, pal: &Palette) -> pane_grid::Content<'_, Message> {
-        let control = ppu.control();
-        let mode = ppu.mode();
-        let palettes = ppu.palettes();
-
-        pane(
-            pip_title_bar_with_detail("PPU", control.video_enabled(), mode_label(mode)),
-            scrollable(
-                column![
-                    row![
-                        timing_value("ly", ppu.video.ly()),
-                        timing_value("lx", ppu.lx()),
-                    ]
-                    .spacing(s())
-                    .align_y(Vertical::Center),
-                    rule::horizontal(1),
-                    background_section(control, palettes.background.output(), ppu, pal),
-                    rule::horizontal(1),
-                    window_section(control, ppu),
-                    rule::horizontal(1),
-                    sprites_section(control, palettes, pal),
-                ]
-                .spacing(s())
-                .padding(s()),
-            )
-            .into(),
-        )
-    }
+    column![
+        section_header(control.video_enabled(), mode),
+        row![
+            label_value("ly", &ppu.video.ly().to_string()),
+            label_value("lx", &ppu.lx().to_string()),
+        ]
+        .spacing(s())
+        .align_y(Vertical::Center),
+        rule::horizontal(1),
+        background_section(control, palettes.background.output(), ppu, pal),
+        rule::horizontal(1),
+        window_section(control, ppu),
+        rule::horizontal(1),
+        sprites_section(control, palettes, pal),
+    ]
+    .spacing(s())
+    .into()
 }
 
-// --- Mode label ---
-
-fn mode_label(mode: Mode) -> Element<'static, Message> {
-    let (label, color) = match mode {
+fn section_header(lcd_on: bool, mode: Mode) -> Element<'static, Message> {
+    let (mode_text, mode_color) = match mode {
         Mode::HorizontalBlank => ("HBlank", palette::BLUE),
         Mode::VerticalBlank => ("VBlank", palette::GREEN),
         Mode::OamScan => ("OAM Scan", palette::YELLOW),
         Mode::Drawing => ("Drawing", palette::PEACH),
     };
 
-    text(label)
-        .font(fonts::monospace())
-        .size(LABEL)
-        .color(color)
-        .into()
-}
-
-// --- Timing values ---
-
-fn timing_value(label: &str, value: impl std::fmt::Display) -> Element<'static, Message> {
-    label_value(label, &value.to_string())
+    row![
+        pip(lcd_on, palette::GREEN),
+        text("PPU")
+            .font(fonts::title())
+            .size(13.0)
+            .color(palette::MUTED),
+        Space::new().width(Length::Fill),
+        text(mode_text)
+            .font(fonts::monospace())
+            .size(LABEL)
+            .color(mode_color),
+    ]
+    .spacing(xs())
+    .align_y(Vertical::Center)
+    .into()
 }
 
 // --- Subsystem sections ---

@@ -11,7 +11,7 @@ use crate::app::{
 use missingno_gb::{
     GameBoy,
     joypad::Button,
-    ppu::types::palette::PaletteChoice,
+    ppu::types::palette::{Palette, PaletteChoice},
     sgb::MaskMode,
 };
 
@@ -184,14 +184,23 @@ impl Debugger {
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {
+        let pal = self.display_palette();
         row![
-            self.sidebar.view(&self.debugger),
+            self.sidebar.view(&self.debugger, pal),
             container(rule::vertical(1)).padding([s(), s()]),
-            self.panes.view(&self.debugger),
+            self.panes.view(&self.debugger, pal),
             self.panes.icon_rail(),
         ]
         .padding(s())
         .into()
+    }
+
+    fn display_palette(&self) -> &Palette {
+        if self.debugger.game_boy().sgb().is_some() {
+            &Palette::CLASSIC
+        } else {
+            self.panes.palette()
+        }
     }
 
     pub fn subscription(&self) -> Subscription<app::Message> {
