@@ -33,7 +33,7 @@ impl<Message> shader::Program<Message> for TextureRenderer {
         &self,
         _state: &Self::State,
         _cursor: iced::mouse::Cursor,
-        bounds: Rectangle,
+        _bounds: Rectangle,
     ) -> Self::Primitive {
         TexturePrimitive {
             id: self.id,
@@ -41,7 +41,6 @@ impl<Message> shader::Program<Message> for TextureRenderer {
                 width: self.width,
                 height: self.height,
                 pixels: self.pixels.clone(),
-                bounds,
             }),
         }
     }
@@ -59,7 +58,6 @@ enum PrimitiveState {
         width: u32,
         height: u32,
         pixels: Vec<u8>,
-        bounds: Rectangle,
     },
     Prepared {
         width: u32,
@@ -93,7 +91,6 @@ impl shader::Primitive for TexturePrimitive {
                 width,
                 height,
                 pixels,
-                bounds,
             } => {
                 pipeline.ensure_texture(device, self.id, width, height);
 
@@ -121,12 +118,15 @@ impl shader::Primitive for TexturePrimitive {
                 );
 
                 drop(textures);
-                pipeline.update_vertices(queue, self.id, bounds, viewport);
+                // Use prepare()'s bounds (screen-space) not draw()'s bounds
+                // (content-space), so the texture renders at the correct
+                // position when inside a scrollable.
+                pipeline.update_vertices(queue, self.id, *bounds, viewport);
 
                 *state = PrimitiveState::Prepared {
                     width,
                     height,
-                    bounds,
+                    bounds: *bounds,
                 };
             }
             PrimitiveState::Prepared {
@@ -359,11 +359,9 @@ impl TexturePipeline {
         viewport: &shader::Viewport,
     ) {
         // Transform bounds to NDC space based on viewport
-        let scale_x = viewport.scale_factor();
-        let scale_y = viewport.scale_factor();
-
-        let viewport_width = viewport.physical_width() as f32 / scale_x;
-        let viewport_height = viewport.physical_height() as f32 / scale_y;
+        let scale = viewport.scale_factor();
+        let viewport_width = viewport.physical_width() as f32 / scale;
+        let viewport_height = viewport.physical_height() as f32 / scale;
 
         // Convert widget bounds to NDC coordinates
         // X: 0..width maps to -1..1
