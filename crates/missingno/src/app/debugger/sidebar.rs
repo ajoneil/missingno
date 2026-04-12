@@ -3,14 +3,14 @@ use iced::{
     Length::{self, Fill},
     alignment::Vertical,
     widget::{
-        button, column, container, row, rule, text, text_input, tooltip, Column, Space,
+        button, column, container, row, rule, text, tooltip, Space,
     },
 };
 
 use crate::app::{
     self,
     ui::{
-        fonts, icons, palette,
+        fonts, palette,
         sizes::{s, xs},
     },
     debugger,
@@ -40,7 +40,6 @@ pub enum Section {
 }
 
 pub struct Sidebar {
-    breakpoint_input: String,
     collapsed: [bool; 2], // indexed by Section
 }
 
@@ -56,8 +55,6 @@ impl Section {
 #[derive(Debug, Clone)]
 pub enum Message {
     ToggleSection(Section),
-    BreakpointInputChanged(String),
-    AddBreakpoint,
 }
 
 impl From<Message> for app::Message {
@@ -69,7 +66,6 @@ impl From<Message> for app::Message {
 impl Sidebar {
     pub fn new() -> Self {
         Self {
-            breakpoint_input: String::new(),
             collapsed: [false, false], // CPU and PPU expanded by default
         }
     }
@@ -78,25 +74,11 @@ impl Sidebar {
         self.collapsed[section.index()]
     }
 
-    pub fn update(&mut self, message: &Message, debugger: &mut Debugger) {
+    pub fn update(&mut self, message: &Message) {
         match message {
             Message::ToggleSection(section) => {
                 let idx = section.index();
                 self.collapsed[idx] = !self.collapsed[idx];
-            }
-            Message::BreakpointInputChanged(input) => {
-                self.breakpoint_input = input
-                    .chars()
-                    .filter(|c| c.is_ascii_hexdigit())
-                    .take(4)
-                    .collect()
-            }
-            Message::AddBreakpoint => {
-                if self.breakpoint_input.len() == 4 {
-                    debugger
-                        .set_breakpoint(u16::from_str_radix(&self.breakpoint_input, 16).unwrap());
-                    self.breakpoint_input.clear();
-                }
             }
         }
     }
@@ -107,8 +89,6 @@ impl Sidebar {
         column![
             self.cpu_section(game_boy.cpu(), game_boy),
             self.ppu_section(game_boy.ppu(), pal),
-            self.breakpoints_view(debugger),
-            self.add_breakpoint(),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
@@ -164,23 +144,6 @@ impl Sidebar {
         )
     }
 
-    fn breakpoints_view(&self, debugger: &Debugger) -> Element<'_, app::Message> {
-        Column::from_iter(
-            debugger
-                .breakpoints()
-                .iter()
-                .map(|address| breakpoint(*address)),
-        )
-        .into()
-    }
-
-    fn add_breakpoint(&self) -> Element<'_, app::Message> {
-        text_input("Add breakpoint...", &self.breakpoint_input)
-            .font(fonts::monospace())
-            .on_input(|value| Message::BreakpointInputChanged(value).into())
-            .on_submit(Message::AddBreakpoint.into())
-            .into()
-    }
 }
 
 // --- Collapsible section ---
@@ -290,19 +253,6 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
             .color(palette.background.strong.color),
         ..Default::default()
     }
-}
-
-fn breakpoint(address: u16) -> Element<'static, app::Message> {
-    container(
-        row![
-            button(icons::breakpoint_enabled())
-                .on_press(debugger::Message::ClearBreakpoint(address).into())
-                .style(button::text),
-            text(format!("{:04X}", address)).font(fonts::monospace())
-        ]
-        .align_y(Vertical::Center),
-    )
-    .into()
 }
 
 // --- Pointers + halt ---

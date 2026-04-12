@@ -1,10 +1,18 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
-use iced::{Element, Subscription, Task, time, widget::row};
+use iced::{
+    Element, Length, Subscription, Task, time,
+    alignment::Vertical,
+    widget::{button, column, container, pane_grid, row, text, text_input, Column},
+};
 
 use crate::app::{
     self,
-    ui::sizes::s,
+    ui::{
+        fonts, icons, palette,
+        sizes::{s, xs},
+    },
     emulator::Emulator,
     screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
@@ -26,6 +34,30 @@ mod ppu;
 mod screen;
 mod sidebar;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BottomPanel {
+    Breakpoints,
+    Watchpoints,
+}
+
+#[derive(Debug, Clone)]
+pub enum BottomPaneMessage {
+    Show(BottomPanel),
+    Close(BottomPanel),
+    Resize(pane_grid::ResizeEvent),
+    Drag(pane_grid::DragEvent),
+}
+
+/// Vertical split ratio between main pane area and bottom panels.
+const DEFAULT_SPLIT_RATIO: f32 = 0.75;
+
+#[derive(Debug, Clone, Copy)]
+enum MainSplit {
+    Top,
+    Bottom,
+}
+
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Step,
@@ -36,6 +68,11 @@ pub enum Message {
 
     SetBreakpoint(u16),
     ClearBreakpoint(u16),
+    BreakpointInputChanged(String),
+    AddBreakpoint,
+
+    BottomPane(BottomPaneMessage),
+    MainSplitResize(pane_grid::ResizeEvent),
 
     Sidebar(sidebar::Message),
     Pane(panes::Message),
@@ -53,6 +90,10 @@ pub struct Debugger {
     panes: DebuggerPanes,
     running: bool,
     frame: u64,
+    bottom_panes: Option<pane_grid::State<BottomPanel>>,
+    bottom_handles: HashMap<BottomPanel, pane_grid::Pane>,
+    main_split: Option<pane_grid::State<MainSplit>>,
+    breakpoint_input: String,
 }
 
 impl Debugger {
@@ -63,6 +104,10 @@ impl Debugger {
             panes: DebuggerPanes::new(),
             running: false,
             frame: 0,
+            bottom_panes: None,
+            bottom_handles: HashMap::new(),
+            main_split: None,
+            breakpoint_input: String::new(),
         }
     }
 
@@ -73,6 +118,10 @@ impl Debugger {
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
             frame: 0,
+            bottom_panes: None,
+            bottom_handles: HashMap::new(),
+            main_split: None,
+            breakpoint_input: String::new(),
         }
     }
 
@@ -166,9 +215,78 @@ impl Debugger {
                 self.debugger.clear_breakpoint(address);
                 Task::none()
             }
+            Message::BreakpointInputChanged(input) => {
+                self.breakpoint_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_hexdigit())
+                    .take(4)
+                    .collect();
+                Task::none()
+            }
+            Message::AddBreakpoint => {
+                if self.breakpoint_input.len() == 4 {
+                    self.debugger
+                        .set_breakpoint(u16::from_str_radix(&self.breakpoint_input, 16).unwrap());
+                    self.breakpoint_input.clear();
+                }
+                Task::none()
+            }
+
+            Message::BottomPane(msg) => {
+                match msg {
+                    BottomPaneMessage::Show(panel) => {
+                        if !self.bottom_handles.contains_key(&panel) {
+                            if let Some(panes) = &mut self.bottom_panes {
+                                let (last, _) = panes.iter().last().unwrap();
+                                let (handle, _) = panes
+                                    .split(pane_grid::Axis::Vertical, *last, panel)
+                                    .unwrap();
+                                self.bottom_handles.insert(panel, handle);
+                            } else {
+                                let (panes, handle) = pane_grid::State::new(panel);
+                                self.bottom_panes = Some(panes);
+                                self.bottom_handles.insert(panel, handle);
+                                self.create_main_split();
+                            }
+                        }
+                    }
+                    BottomPaneMessage::Close(panel) => {
+                        if let Some(&handle) = self.bottom_handles.get(&panel) {
+                            if self.bottom_handles.len() == 1 {
+                                self.bottom_panes = None;
+                                self.bottom_handles.clear();
+                                self.main_split = None;
+                            } else if let Some(panes) = &mut self.bottom_panes {
+                                panes.close(handle);
+                                self.bottom_handles.remove(&panel);
+                            }
+                        }
+                    }
+                    BottomPaneMessage::Resize(resize) => {
+                        if let Some(panes) = &mut self.bottom_panes {
+                            panes.resize(resize.split, resize.ratio);
+                        }
+                    }
+                    BottomPaneMessage::Drag(drag) => {
+                        if let pane_grid::DragEvent::Dropped { pane, target } = drag {
+                            if let Some(panes) = &mut self.bottom_panes {
+                                panes.drop(pane, target);
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+
+            Message::MainSplitResize(resize) => {
+                if let Some(split) = &mut self.main_split {
+                    split.resize(resize.split, resize.ratio);
+                }
+                Task::none()
+            }
 
             Message::Sidebar(message) => {
-                self.sidebar.update(&message, &mut self.debugger);
+                self.sidebar.update(&message);
                 Task::none()
             }
 
@@ -185,14 +303,139 @@ impl Debugger {
 
     pub fn view(&self) -> Element<'_, app::Message> {
         let pal = self.display_palette();
+
+        let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
+            pane_grid(split_state, |_handle, zone, _maximized| {
+                let content: Element<'_, app::Message> = match zone {
+                    MainSplit::Top => self.panes.view(&self.debugger, pal),
+                    MainSplit::Bottom => self.bottom_pane_grid(
+                        self.bottom_panes.as_ref().expect("bottom_panes must exist when main_split exists"),
+                    ),
+                };
+                pane_grid::Content::new(content)
+            })
+            .on_resize(10.0, |resize| {
+                Message::MainSplitResize(resize).into()
+            })
+            .spacing(s())
+            .into()
+        } else {
+            self.panes.view(&self.debugger, pal)
+        };
+
         row![
             self.sidebar.view(&self.debugger, pal),
-            self.panes.view(&self.debugger, pal),
-            self.panes.icon_rail(),
+            center,
+            self.icon_rail(),
         ]
         .spacing(s())
         .padding(s())
         .into()
+    }
+
+    fn bottom_pane_grid<'a>(&'a self, state: &'a pane_grid::State<BottomPanel>) -> Element<'a, app::Message> {
+        pane_grid(state, |_handle, panel, _maximized| {
+            let content: Element<'_, app::Message> = match panel {
+                BottomPanel::Breakpoints => self.breakpoints_content(),
+                BottomPanel::Watchpoints => self.watchpoints_content(),
+            };
+
+            panes::pane(
+                panes::title_bar(panel.label()),
+                content,
+            )
+        })
+        .on_resize(10.0, |resize| {
+            Message::BottomPane(BottomPaneMessage::Resize(resize)).into()
+        })
+        .on_drag(|drag| {
+            Message::BottomPane(BottomPaneMessage::Drag(drag)).into()
+        })
+        .spacing(s())
+        .into()
+    }
+
+    fn breakpoints_content(&self) -> Element<'_, app::Message> {
+        let breakpoint_list = Column::from_iter(
+            self.debugger
+                .breakpoints()
+                .iter()
+                .map(|&address| breakpoint_row(address)),
+        );
+
+        let input = text_input("Address (hex)...", &self.breakpoint_input)
+            .font(fonts::monospace())
+            .on_input(|value| Message::BreakpointInputChanged(value).into())
+            .on_submit(Message::AddBreakpoint.into());
+
+        column![
+            breakpoint_list,
+            input,
+        ]
+        .spacing(s())
+        .padding(s())
+        .into()
+    }
+
+    fn watchpoints_content(&self) -> Element<'_, app::Message> {
+        container(
+            text("Watchpoints coming soon")
+                .font(fonts::monospace())
+                .size(13.0)
+                .color(palette::OVERLAY0),
+        )
+        .padding(s())
+        .into()
+    }
+
+    fn icon_rail(&self) -> Element<'_, app::Message> {
+        use icons::Icon;
+
+        let pane_buttons = self.panes.available_panes().iter().map(|&pane| {
+            rail_icon(
+                pane.icon(),
+                &pane.to_string(),
+                self.panes.plane_shown(pane),
+                panes::Message::if_shown(pane, self.panes.plane_shown(pane)).into(),
+            )
+        });
+
+        let panel_buttons = [
+            (BottomPanel::Breakpoints, Icon::Debug, "Breakpoints"),
+            (BottomPanel::Watchpoints, Icon::Eye, "Watchpoints"),
+        ]
+        .into_iter()
+        .map(|(panel, icon, label)| {
+            let shown = self.bottom_handles.contains_key(&panel);
+            let message = if shown {
+                BottomPaneMessage::Close(panel)
+            } else {
+                BottomPaneMessage::Show(panel)
+            };
+            rail_icon(
+                icon,
+                label,
+                shown,
+                Message::BottomPane(message).into(),
+            )
+        });
+
+        column![
+            column(pane_buttons).spacing(xs()),
+            iced::widget::Space::new().height(Length::Fill),
+            column(panel_buttons).spacing(xs()),
+        ]
+        .padding([s(), xs()])
+        .into()
+    }
+
+    fn create_main_split(&mut self) {
+        let (mut state, top_handle) = pane_grid::State::new(MainSplit::Top);
+        let (_, split) = state
+            .split(pane_grid::Axis::Horizontal, top_handle, MainSplit::Bottom)
+            .unwrap();
+        state.resize(split, DEFAULT_SPLIT_RATIO);
+        self.main_split = Some(state);
     }
 
     fn display_palette(&self) -> &Palette {
@@ -237,4 +480,51 @@ impl Debugger {
     pub fn release_button(&mut self, button: Button) {
         self.debugger.game_boy_mut().release_button(button);
     }
+}
+
+impl BottomPanel {
+    fn label(&self) -> &'static str {
+        match self {
+            BottomPanel::Breakpoints => "Breakpoints",
+            BottomPanel::Watchpoints => "Watchpoints",
+        }
+    }
+}
+
+fn rail_icon<'a>(
+    icon: icons::Icon,
+    label: &str,
+    active: bool,
+    message: app::Message,
+) -> Element<'a, app::Message> {
+    use crate::app::debugger::sidebar::tooltip_style;
+    use iced::widget::tooltip;
+
+    let color = if active { palette::PURPLE } else { palette::SURFACE2 };
+
+    let btn: Element<'_, app::Message> = button(icons::m_colored(icon, color))
+        .on_press(message)
+        .style(button::text)
+        .into();
+
+    tooltip(
+        btn,
+        container(text(label.to_owned()).font(fonts::monospace()).size(13.0)).padding([2.0, s()]),
+        tooltip::Position::Left,
+    )
+    .style(tooltip_style)
+    .into()
+}
+
+fn breakpoint_row(address: u16) -> Element<'static, app::Message> {
+    container(
+        row![
+            button(icons::breakpoint_enabled())
+                .on_press(Message::ClearBreakpoint(address).into())
+                .style(button::text),
+            text(format!("{:04X}", address)).font(fonts::monospace())
+        ]
+        .align_y(Vertical::Center),
+    )
+    .into()
 }

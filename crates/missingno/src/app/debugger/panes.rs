@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use iced::{
     Border, Color, Element, Theme,
     widget::{
-        button, column, container, pane_grid, tooltip,
+        container, pane_grid,
         pane_grid::Axis::{Horizontal, Vertical},
         toggler,
     },
@@ -14,7 +14,7 @@ use crate::app::{
     self,
     ui::{
         fonts, palette,
-        icons::{self, Icon},
+        icons::Icon,
         sizes::{self as sizes, s, xs},
     },
     debugger::{
@@ -39,7 +39,6 @@ use missingno_gb::ppu::types::{
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowPane(DebuggerPane),
-    #[allow(dead_code)]
     ClosePane(DebuggerPane),
 
     ResizePane(pane_grid::ResizeEvent),
@@ -61,7 +60,7 @@ impl From<Message> for app::Message {
 }
 
 pub struct DebuggerPanes {
-    panes: pane_grid::State<PaneInstance>,
+    panes: Option<pane_grid::State<PaneInstance>>,
     handles: HashMap<DebuggerPane, pane_grid::Pane>,
     palette: PaletteChoice,
 }
@@ -95,15 +94,17 @@ impl DebuggerPanes {
     }
 
     pub fn take_screen_view(self) -> ScreenView {
-        for (_, pane) in self.panes.iter() {
-            if let PaneInstance::Screen(screen_pane) = pane {
-                let view = screen_pane.screen_view();
-                return ScreenView {
-                    screen: view.screen.clone(),
-                    palette: view.palette,
-                    sgb_render_data: view.sgb_render_data,
-                    use_sgb_colors: view.use_sgb_colors,
-                };
+        if let Some(panes) = &self.panes {
+            for (_, pane) in panes.iter() {
+                if let PaneInstance::Screen(screen_pane) = pane {
+                    let view = screen_pane.screen_view();
+                    return ScreenView {
+                        screen: view.screen.clone(),
+                        palette: view.palette,
+                        sgb_render_data: view.sgb_render_data,
+                        use_sgb_colors: view.use_sgb_colors,
+                    };
+                }
             }
         }
         ScreenView::new()
@@ -123,7 +124,7 @@ impl DebuggerPanes {
         panes.resize(split, 1.0 / 3.0);
 
         Self {
-            panes,
+            panes: Some(panes),
             handles,
             palette: PaletteChoice::default(),
         }
@@ -146,48 +147,60 @@ impl DebuggerPanes {
                 if self.handles.get(&pane).is_none() {
                     let pane_instance = Self::construct_pane(pane);
 
-                    if self.panes.is_empty() {
-                        let (panes, handle) = pane_grid::State::new(pane_instance);
-                        self.handles.insert(pane, handle);
-                        self.panes = panes;
-                    } else {
-                        let (last_pane, _) = self.panes.iter().last().unwrap();
-                        let (handle, _) = self
-                            .panes
+                    if let Some(panes) = &mut self.panes {
+                        let (last_pane, _) = panes.iter().last().unwrap();
+                        let (handle, _) = panes
                             .split(Horizontal, *last_pane, pane_instance)
                             .unwrap();
                         self.handles.insert(pane, handle);
+                    } else {
+                        let (panes, handle) = pane_grid::State::new(pane_instance);
+                        self.handles.insert(pane, handle);
+                        self.panes = Some(panes);
                     }
                 }
             }
             Message::ClosePane(pane) => {
                 if let Some(&handle) = self.handles.get(&pane) {
-                    if self.panes.close(handle).is_some() {
+                    if self.handles.len() == 1 {
+                        self.panes = None;
+                        self.handles.clear();
+                    } else if let Some(panes) = &mut self.panes {
+                        panes.close(handle);
                         self.handles.remove(&pane);
                     }
                 }
             }
 
-            Message::ResizePane(resize) => self.panes.resize(resize.split, resize.ratio),
-            Message::DragPane(drag) => match drag {
-                pane_grid::DragEvent::Dropped { pane, target } => self.panes.drop(pane, target),
-                _ => {}
-            },
-
-            Message::Pane(pane_message) => match &pane_message {
-                PaneMessage::Screen(message) => {
-                    self.panes.iter_mut().for_each(|(_, pane)| {
-                        if let PaneInstance::Screen(screen_pane) = pane {
-                            screen_pane.update(message.clone());
-                        }
-                    });
+            Message::ResizePane(resize) => {
+                if let Some(panes) = &mut self.panes {
+                    panes.resize(resize.split, resize.ratio);
                 }
-                PaneMessage::Sprites(message) => {
-                    self.panes.iter_mut().for_each(|(_, pane)| {
-                        if let PaneInstance::Sprites(sprites_pane) = pane {
-                            sprites_pane.update(*message);
-                        }
-                    });
+            }
+            Message::DragPane(drag) => {
+                if let pane_grid::DragEvent::Dropped { pane, target } = drag {
+                    if let Some(panes) = &mut self.panes {
+                        panes.drop(pane, target);
+                    }
+                }
+            }
+
+            Message::Pane(pane_message) => if let Some(panes) = &mut self.panes {
+                match &pane_message {
+                    PaneMessage::Screen(message) => {
+                        panes.iter_mut().for_each(|(_, pane)| {
+                            if let PaneInstance::Screen(screen_pane) = pane {
+                                screen_pane.update(message.clone());
+                            }
+                        });
+                    }
+                    PaneMessage::Sprites(message) => {
+                        panes.iter_mut().for_each(|(_, pane)| {
+                            if let PaneInstance::Sprites(sprites_pane) = pane {
+                                sprites_pane.update(*message);
+                            }
+                        });
+                    }
                 }
             },
         }
@@ -199,11 +212,13 @@ impl DebuggerPanes {
 
     pub fn set_palette(&mut self, palette: PaletteChoice) {
         self.palette = palette;
-        self.panes.iter_mut().for_each(|(_, pane)| {
-            if let PaneInstance::Screen(screen_pane) = pane {
-                screen_pane.set_palette(palette);
-            }
-        });
+        if let Some(panes) = &mut self.panes {
+            panes.iter_mut().for_each(|(_, pane)| {
+                if let PaneInstance::Screen(screen_pane) = pane {
+                    screen_pane.set_palette(palette);
+                }
+            });
+        }
     }
 
     pub fn view<'a>(
@@ -211,29 +226,36 @@ impl DebuggerPanes {
         debugger: &'a Debugger,
         pal: &'a Palette,
     ) -> Element<'a, app::Message> {
-        pane_grid(
-            &self.panes,
-            |_handle, instance, _is_maximized| match instance {
-                PaneInstance::Screen(screen) => screen.content(),
-                PaneInstance::Instructions(instructions) => instructions.content(
-                    debugger.game_boy(),
-                    debugger.game_boy().cpu().bus_counter,
-                    debugger.breakpoints(),
-                ),
-                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
-                PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                }
-                PaneInstance::Sprites(sprites) => {
-                    sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                }
-                PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
-            },
-        )
-        .on_resize(10.0, |resize| Message::ResizePane(resize).into())
-        .on_drag(|drag| Message::DragPane(drag).into())
-        .spacing(s())
-        .into()
+        if let Some(panes) = &self.panes {
+            pane_grid(
+                panes,
+                |_handle, instance, _is_maximized| match instance {
+                    PaneInstance::Screen(screen) => screen.content(),
+                    PaneInstance::Instructions(instructions) => instructions.content(
+                        debugger.game_boy(),
+                        debugger.game_boy().cpu().bus_counter,
+                        debugger.breakpoints(),
+                    ),
+                    PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
+                    PaneInstance::TileMap(tile_map) => {
+                        tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
+                    }
+                    PaneInstance::Sprites(sprites) => {
+                        sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
+                    }
+                    PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
+                },
+            )
+            .on_resize(10.0, |resize| Message::ResizePane(resize).into())
+            .on_drag(|drag| Message::DragPane(drag).into())
+            .spacing(s())
+            .into()
+        } else {
+            iced::widget::Space::new()
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .into()
+        }
     }
 
     pub fn plane_shown(&self, plane: DebuggerPane) -> bool {
@@ -253,40 +275,20 @@ impl DebuggerPanes {
     }
 
 
-    pub fn icon_rail(&self) -> Element<'_, app::Message> {
-        use crate::app::debugger::sidebar::tooltip_style;
+}
 
-        let buttons = self.available_panes().iter().map(|&pane| {
-            let shown = self.plane_shown(pane);
-            let color = if shown { palette::PURPLE } else { palette::SURFACE2 };
-            let message = if shown {
-                Message::ClosePane(pane)
-            } else {
-                Message::ShowPane(pane)
-            };
-
-            let btn: Element<'_, app::Message> = button(
-                icons::m_colored(pane.icon(), color),
-            )
-            .on_press(message.into())
-            .style(button::text)
-            .into();
-
-            tooltip(btn, container(iced::widget::text(pane.to_string()).font(fonts::monospace()).size(13.0)).padding([2.0, s()]), tooltip::Position::Left)
-                .style(tooltip_style)
-                .into()
-        });
-
-        container(
-            column(buttons).spacing(xs()),
-        )
-        .padding([s(), xs()])
-        .into()
+impl Message {
+    pub fn if_shown(pane: DebuggerPane, shown: bool) -> Self {
+        if shown {
+            Message::ClosePane(pane)
+        } else {
+            Message::ShowPane(pane)
+        }
     }
 }
 
 impl DebuggerPane {
-    fn icon(&self) -> Icon {
+    pub fn icon(&self) -> Icon {
         match self {
             DebuggerPane::Screen => Icon::Monitor,
             DebuggerPane::Instructions => Icon::Debug,
