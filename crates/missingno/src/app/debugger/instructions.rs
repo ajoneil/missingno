@@ -28,9 +28,9 @@ use palette::{BLUE as SYN_OPCODE, GREEN as SYN_REGISTER, PEACH as SYN_IMMEDIATE,
 const ROW_HEIGHT: f32 = 20.0;
 
 /// Number of instructions to show before the current PC.
-const CONTEXT_BEFORE: usize = 15;
+const CONTEXT_BEFORE: usize = 4;
 /// Number of instructions to show after (and including) the current PC.
-const CONTEXT_AFTER: usize = 40;
+const CONTEXT_AFTER: usize = 80;
 
 pub struct InstructionsPane;
 
