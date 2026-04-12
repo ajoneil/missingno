@@ -14,7 +14,7 @@ missingno-gb = { path = "../missingno-gb", features = ["gbtrace"] }
 cpal = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 clap = { version = "4.6.0", features = ["derive"] }
-iced = { version = "0.14.0", features = ["advanced", "image", "smol", "svg", "wgpu"] }
+iced = { version = "0.14.0", features = ["advanced", "canvas", "image", "smol", "svg", "wgpu"] }
 replace_with = "0.1.8"
 rtrb = "0.3"
 rgb = { workspace = true }
