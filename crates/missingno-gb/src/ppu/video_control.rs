@@ -47,10 +47,16 @@ pub struct VideoControl {
     pub ly_comparison_pending: bool,
 
     /// Latched LY==LYC result (ROPO DFF output). Unconditionally latched
-    /// from `ly_comparison_pending` at each TALU rising edge. This is what
-    /// STAT bit 2 reads and what drives the LYC STAT interrupt source.
+    /// from `ly_comparison_pending` at each TALU rising edge. Drives the
+    /// LYC STAT interrupt source.
     /// Reset only by SYS_RST, NOT by VID_RST (LCD off/on).
     pub ly_comparison_latched: bool,
+
+    /// STAT bit 2 visible value (RUPO NOR latch). Asymmetric update:
+    /// match clearing is immediate (PAGO always drives "no match"),
+    /// match onset requires ROPO DFF to latch. Also updated at TALU
+    /// rising (normal ROPO cadence). Frame-wrap follows ROPO only.
+    pub ly_comparison_stat_visible: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
     pub stat_flags: InterruptFlags,
@@ -151,6 +157,26 @@ impl VideoControl {
 
     pub fn ly_eq_lyc(&self) -> bool {
         self.ly_comparison_latched
+    }
+
+    /// RUPO output: the STAT bit 2 visible value. Clears immediately
+    /// when comparison goes false; onset follows ROPO latch cadence.
+    pub fn ly_eq_lyc_stat(&self) -> bool {
+        self.ly_comparison_stat_visible
+    }
+
+    /// Update the STAT-visible comparison (RUPO) from the pending value.
+    pub fn latch_stat_visible(&mut self) {
+        self.ly_comparison_stat_visible = self.ly_comparison_pending;
+    }
+
+    /// RUPO immediate clear: when PALY goes false, PAGO (always asserted)
+    /// immediately drives RUPO to "no match" without waiting for ROPO.
+    /// Match onset (false→true) still requires the ROPO DFF pipeline.
+    pub fn clear_stat_visible_if_no_match(&mut self) {
+        if !self.ly_comparison_pending {
+            self.ly_comparison_stat_visible = false;
+        }
     }
 
     pub fn write_ly(&mut self, value: u8) {

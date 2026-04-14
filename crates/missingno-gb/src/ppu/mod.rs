@@ -107,6 +107,7 @@ impl Ppu {
                 lyc: 0,
                 ly_comparison_pending: false,
                 ly_comparison_latched: false,
+                ly_comparison_stat_visible: false,
                 // The first bit is unused, but is set at boot time
                 stat_flags: InterruptFlags::DUMMY,
                 stat_line_was_high: false,
@@ -152,6 +153,7 @@ impl Ppu {
                 lyc: 0,
                 ly_comparison_pending: false,
                 ly_comparison_latched: true,
+                ly_comparison_stat_visible: true,
                 stat_flags: InterruptFlags::empty(),
                 stat_line_was_high: false,
                 delayed_line_end: false,
@@ -186,7 +188,7 @@ impl Ppu {
                     Some(_) => self.mode() as u8,
                     None => 0,
                 };
-                let line_compare = if self.video.ly_eq_lyc() {
+                let line_compare = if self.video.ly_eq_lyc_stat() {
                     0b00000100
                 } else {
                     0
@@ -496,12 +498,19 @@ impl Ppu {
                 // PALY is combinational — recompute after any LY change
                 // so the next ROPO latch (TALU rising) sees the fresh value.
                 self.video.update_ly_comparison();
+                // RUPO NOR latch: PAGO immediately clears "match" when
+                // comparison goes false. Exclude frame wraps (MYTA async
+                // reset has different propagation characteristics).
+                if scanline_boundary && !self.video.popu_holdover {
+                    self.video.clear_stat_visible_if_no_match();
+                }
             }
 
             if !talu_was && self.video.mcycle_divider {
                 // TALU rising edge: LX increment, SANU detect, ROPO latch.
                 self.video.tick_talu_rise();
                 self.video.latch_ly_comparison();
+                self.video.latch_stat_visible();
             }
         }
 
@@ -692,6 +701,7 @@ impl Ppu {
             lyc: snap.lyc,
             ly_comparison_pending: snap.ly == snap.lyc,
             ly_comparison_latched: snap.ly == snap.lyc,
+            ly_comparison_stat_visible: snap.ly == snap.lyc,
             stat_flags,
             stat_line_was_high: snap.stat_line_was_high,
             delayed_line_end: false,
