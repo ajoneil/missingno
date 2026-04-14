@@ -2,6 +2,20 @@
 
 This file provides guidance to AI coding agents when working with code in this repository.
 
+## Skill System Rules
+
+These are the top-level rules governing how skills interact. They survive context compaction and override any default agent behavior.
+
+1. **Always use skills — never ad-hoc.** When asked to investigate, debug, research, or analyze, invoke the appropriate skill (`/investigate`, `/research`, `/compare-traces`, etc.). Never start ad-hoc analysis, use WebSearch directly, read reference emulator source yourself, or trace behavior in your head. The skill system exists to enforce scope discipline and produce durable receipts. Bypassing it produces unreliable, unreproducible results that don't survive context compaction.
+
+2. **Hardware is the source of truth.** The goal is always to understand what the real hardware does and model that behavior. Prioritize hardware documentation, decaps, test measurements, and direct hardware observations over any emulator implementation. Other emulators (SameBoy, Gambatte, GateBoy, etc.) are reference material — useful for confirming hardware behavior, but never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?"
+
+3. **Skills are subroutine calls — never stopping points.** When a skill subagent returns, the caller MUST immediately read the receipt, update `summary.md`, and continue the investigation in the same turn. Never end your turn after receiving a skill report. Skill dispatches are function calls, not async tasks you wait on.
+
+4. **summary.md is the single source of truth for investigation state.** Update it before every skill dispatch and after every skill return — no exceptions. If context were compacted right now, `summary.md` alone must tell you exactly where you are and what to do next. Only the `/investigate` skill writes to `summary.md`.
+
+5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources: gbtrace execution traces (both comparison and individual inspection), PPU propagation delay analysis (`../gmb-ppu-analysis/`), hardware timing data (`../gb-timing-data/`), or existing research documents in `receipts/research/`. Generate new diagnostic data only when existing sources don't answer the question.
+
 ## Agent Infrastructure
 
 - **`AGENTS.md`** — Canonical agent instructions. Tool-specific config files (e.g. `CLAUDE.md`) symlink here so all agents share a single source of truth.
@@ -10,109 +24,40 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ### Context hygiene
 
-The conversation context is volatile — it will be compacted unpredictably and you cannot control what survives. Treat files on disk as the primary memory. The conversation context is scratch space.
+The conversation context is volatile — it will be compacted unpredictably. Treat files on disk as the primary memory; conversation is scratch space.
 
-**Write early, write often.** After every meaningful step — a finding, a decision, a measurement, a hypothesis update — write it to the appropriate file (a receipt, a research doc, or `summary.md` if you're the investigate skill). Do not accumulate results across turns and write them later. If the context were compacted right now, would your progress survive? If not, you haven't written enough.
-
-**Keep context lean.** After writing state to disk, do not continue to carry it in conversation. When you need to recall earlier findings, re-read the file rather than relying on conversation memory. This applies especially to:
-- Research findings — once written to a research doc, re-read the doc when you need the information; don't try to remember it.
-- Diagnostic output — once recorded in a log file and referenced by a receipt, the raw output in conversation can be forgotten. Reference the log file path, not the content.
-- Investigation state — re-read `summary.md` to check current state rather than scrolling back through conversation.
-
-**Act on every subagent return.** When a skill subagent (hypothesize, research, analyze, design, implement, instrument, inspect) returns, the caller must: (1) read the receipt file the subagent produced, (2) update `summary.md` with the findings (only the investigate skill writes to summary.md), (3) continue working from the file state. Since skills run as Task subagents, the caller's context is not displaced — no re-reading of skill files is needed.
-
-### Staying aligned with skill directives
-
-Skills contain specific, detailed instructions (e.g. "use curl not WebFetch", "always tee to a log file", "update summary.md before every test run") that are critical to follow. These details are easy to lose — either through context compaction or simply drifting during a long session.
-
-**After context compaction**: When context is compacted mid-skill, the full skill text is lost. Before continuing work, **re-read the active skill file** from `.agents/skills/` and the active investigation's `summary.md` (if any). Do not rely on the compaction summary to preserve skill directives — it won't.
-
-**Periodically during long sessions**: Every ~10 tool calls, re-read the active skill file and `summary.md` to check that you're still following the skill's rules. Drift happens gradually — you start cutting corners on logging, skip summary updates, or forget discipline rules. A periodic re-read catches this before it compounds.
+- **Write early, write often.** After every meaningful step, write it to the appropriate file. Test: if context were compacted right now, would your progress survive?
+- **Keep context lean.** After writing state to disk, re-read the file when you need the information — don't carry it in conversation memory.
+- **After context compaction**: Re-read the active skill file from `.agents/skills/` and `summary.md` before continuing. The compaction summary won't preserve skill directives.
+- **Periodically during long sessions**: Every ~10 tool calls, re-read the active skill file and `summary.md` to catch drift.
 
 ### Skill invocation protocol
 
-Skills invoke other skills as subroutines (e.g. investigate invokes hypothesize, research, measure, analyze, and design). Every cross-skill invocation must follow this protocol. The protocol exists to enforce strict context boundaries — the caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
+Skills invoke other skills as subroutines via Task subagents. The caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
 
 #### Request format (caller → callee)
 
-Every skill invocation must include exactly these fields. Extraneous context is a protocol violation.
-
 ```
 **Question**: <one specific, concrete, testable question — one sentence>
-**Context**: <only what the callee needs to find the answer — file paths, subsystem names, output location>
-**Log path**: <where to save command output> (measure only)
+**Context**: <only what the callee needs — file paths, subsystem names, output location>
+**Log path**: <where to save command output> (instrument only)
 ```
 
-**What must NOT be in a request:**
-- The caller's hypotheses about what the answer is
-- Diagnostic output or log excerpts from prior steps
-- Reasoning about what the answer means for the investigation
-- Multiple unrelated questions bundled together
-
-If you can't state the question in one sentence, it's not focused enough — split it into multiple invocations.
+Do NOT include: caller's hypotheses, diagnostic output from prior steps, reasoning about what the answer means, or multiple unrelated questions.
 
 #### Report format (callee → caller)
 
-Every skill report must use the format below. Interpretation, recommendations, and problem-solving are protocol violations.
-
-**Research reports:**
-```
-## Findings
-<factual answer to the question, with enough detail to act on>
-
-## Sources
-<URLs, doc names, or repo + file path + line numbers>
-
-## Confidence
-<high/medium/low — based on source quality>
-
-## See also
-<one-line notes on tangential discoveries, if any — optional>
-```
-
-**Instrument reports:**
-```
-## Test result
-<pass/fail, which sub-test if applicable>
-
-## Measurements
-<the specific values requested, extracted from log output>
-
-## Raw data
-<compact summary of relevant log lines, with file:line references into the log>
-
-## Also observed
-<unexpected findings not part of the original question — optional>
-```
-
-**What must NOT be in a report:**
-- "This means..." / "This suggests..." / "This confirms..."
-- "The fix should be..." / "You should try..."
-- "This is probably caused by..."
-- Any reasoning about what the findings mean for the caller's problem
-- Any scope expansion beyond what was asked
-
-#### Enforcement
-
-1. **Request validation.** Before invoking a skill, re-read the request and delete anything that isn't Question, Context, or Log path.
-2. **Report validation.** Before returning from a skill, re-read the report and delete any sentence that interprets, recommends, or analyzes. The test: "Could a reader who knows nothing about the caller's problem still understand this report?" If it requires investigation context to parse, it's leaking.
-3. **Scope tripwire.** If a callee catches itself reasoning about the caller's problem (why is the test failing, what should the fix be, does this confirm the hypothesis), that's a scope violation. Stop, delete the reasoning, return to reporting facts or measurements.
-4. **One question, one answer.** Each invocation has exactly one question. If the caller has two unrelated questions, that's two invocations. Multiple measurements that all serve the same hypothesis are fine in a single invocation — but unrelated hypotheses must be separate. If the callee discovers two things, the asked-for answer goes in the report; the other goes in "See also" / "Also observed" as a one-liner.
+Reports must contain only facts and measurements — no interpretation, recommendations, or analysis. Research reports use: Findings / Sources / Confidence / See also. Instrument reports use: Test result / Measurements / Raw data / Also observed. If a sentence starts with "This means..." or "The fix should be..." — delete it.
 
 #### Subroutine discipline
 
-Skills run as Task subagents — each skill is launched via the Task tool, operates in isolated context, writes a receipt file, and stops. The caller (investigate) reads the receipt and continues. This provides natural context isolation without any shared-context protocol.
-
-**Callee isolation.** Each skill subagent receives the full content of its skill file in the Task prompt. It follows only those instructions. It does NOT inherit the caller's context, hypotheses, or reasoning. If a skill reaches a dead end within its own methodology, it reports what it found with `Confidence: low` — it does NOT escalate to tools outside its skill definition.
-
-**Decision ownership.** Only the investigate skill (the top-level caller) makes decisions about what to do next — which hypothesis to pursue, whether to measure or research, when to move to design, what to implement. Subroutine skills (research, analyze, hypothesize, design, implement, instrument, inspect) report their output and stop. They do not prescribe next steps, choose hypotheses, or continue the caller's workflow.
+Each skill subagent receives its skill file in the Task prompt, writes a receipt file, and stops. It does NOT inherit the caller's context or hypotheses. Only `/investigate` makes decisions about what to do next — all other skills report output and stop.
 
 ## Workflow Discipline
 
-- When asked to investigate or debug, always use the appropriate skill (investigate, measure, research, etc.) — never start ad-hoc analysis or use WebSearch directly. Follow the skill discipline hierarchy.
-- When asked to update documentation, commit, or do a simple task, do exactly that — don't go on analysis tangents or start investigating new issues. Complete the requested task first.
+- When asked to update documentation, commit, or do a simple task, do exactly that — don't go on analysis tangents or start investigating new issues.
 - Before starting any work, check git status and ensure the working directory is clean. If there are uncommitted changes or stashed work, ask before proceeding.
-- If the Read tool returns content that seems stale or inconsistent (especially after git operations like stash or checkout), fall back to `cat <file>` via Bash to get accurate file state.
+- If the Read tool returns stale content (especially after git operations), fall back to `cat <file>` via Bash.
 
 ## Project Overview
 
@@ -147,7 +92,8 @@ cargo fmt                                    # Format
 
 - **Hardware fidelity**: Model the hardware as closely as possible so correct behavior emerges naturally. Avoid hacks and special-case workarounds — if something needs a hack to work, the underlying model is wrong.
 - **Code as documentation**: The code should teach the reader how the hardware works. Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself, not from comments. Strike a balance between clarity and jargon; assume the reader is a competent programmer but not necessarily a domain expert in the specific hardware.
-- **Hardware over emulator comparisons**: When debugging, prioritize real hardware behavior and documentation over comparing with other emulator implementations (e.g., SameBoy). Other emulators are reference material, not ground truth.
+- **Hardware over emulator comparisons**: Other emulators are reference material, not ground truth. Always attribute emulator-sourced findings explicitly ("SameBoy does X") rather than as hardware fact.
+- **Data-driven debugging**: Use available data resources (gbtrace, gmb-ppu-analysis, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
 - **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
 
 ## Architecture
@@ -155,7 +101,7 @@ cargo fmt                                    # Format
 The project is a Cargo workspace with crates under `crates/`:
 
 - **`crates/missingno-gb/`** (`missingno-gb`) — Core emulation library. No GUI dependencies (only `bitflags` and `rgb`). Contains:
-  - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns a `Cpu` and `MemoryMapped` (which aggregates all hardware: cartridge, video, audio, timers, joypad, interrupts). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
+  - **`crates/missingno-gb/src/`** — Core emulation. `GameBoy` owns all hardware components directly (`Cpu`, `Ppu`, `Audio`, `Joypad`, `Timers`, `Dma`, `ExternalBus`, `HighRam`, etc.). `GameBoy::step()` executes one instruction and returns a `StepResult` with `new_screen` and `dots` (T-cycle count).
   - **`crates/missingno-gb/src/debugger/`** — Debugging backend. Wraps `GameBoy` with breakpoints, stepping, disassembly, and a T-cycle counter.
   - **`crates/missingno-gb/tests/accuracy/`** — Integration tests (ROM-based accuracy tests).
 - **`crates/missingno/`** (`missingno`) — Iced 0.14 GUI binary. Elm architecture (`Message` → `update()` → `view()`), wgpu shader rendering, cpal audio output via lock-free ring buffer. Lives in `crates/missingno/src/app/`.
@@ -165,11 +111,11 @@ The project is a Cargo workspace with crates under `crates/`:
 `GameBoy::step()` in `crates/missingno-gb/src/execute.rs` runs one instruction in two phases:
 
 1. **Fetch/decode**: Reads the opcode byte, ticks hardware, then reads operand bytes one at a time (ticking hardware after each). `operand_count()` determines byte count from the opcode alone. The buffered bytes are passed to `Instruction::decode()`.
-2. **Process**: A `Processor` state machine (`crates/missingno-gb/src/cpu/mcycle/`) yields one `BusAction` per M-cycle for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware.
+2. **Process**: The `Cpu` state machine (`crates/missingno-gb/src/cpu/mcycle/`) yields one `DotAction` per dot for post-decode work (memory reads/writes, internal cycles). The step loop executes each action and ticks hardware via `next_dot()`.
 
-The `Processor` is split across three files in `crates/missingno-gb/src/cpu/mcycle/`:
-- `mod.rs` — `Phase` enum, `BusAction` enum, `Processor` struct and `next()` method
-- `build.rs` — Constructs the `Phase` for each instruction type
+The M-cycle logic is split across three files in `crates/missingno-gb/src/cpu/mcycle/`:
+- `mod.rs` — `DotAction` enum, `BusDot` ring counter model, `BusAction` enum, and `next_dot()` method
+- `build.rs` — Constructs the action sequence for each instruction type
 - `apply.rs` — Pure CPU mutations (ALU, flags, DAA, etc.)
 
 ### Clock Model and Phase Architecture
@@ -180,65 +126,53 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 - `rise()`: PPU pixel output (`ppu.rise()`), CPU state advance (`next_dot()`), CPU reads
 - `fall()`: PPU fetcher/control (`ppu.fall()`), CPU bus writes
 
-**There is no ordering between rise and fall.** They are alternating edges in a continuous clock. The emulator calls `rise()` then `fall()` as an implementation choice, not because hardware has that ordering. Do not reason about "rise happens before fall" — instead, think about which edge a DFF captures on and which edge reads it. A value captured on one edge is available to anything that reads the DFF output until the next capture.
+**There is no ordering between rise and fall.** They are alternating edges in a continuous clock. Do not reason about "rise happens before fall" — think about which edge a DFF captures on and which edge reads it.
 
-**DFF visibility rule**: When a DFF captures a value on edge E, that value is available to all combinational reads of the DFF output from edge E onward, until the DFF captures again. There is no "same edge" vs "next edge" distinction — the output simply holds its value between captures. This applies whether the reading circuit fires on the same edge type or a different one.
+**DFF visibility**: When a DFF captures on edge E, the output holds that value until the next capture. No "same edge" vs "next edge" distinction. `DffLatch`: `write()` sets pending, `tick()` resolves to output (capture edge), `output()` reads last captured value.
 
-**The `pending`/`tick` mechanism in `DffLatch`**: Models the DFF capture edge. `write()` sets a pending value (data on the input). `tick()` resolves pending to output (the capture edge fires). Code that reads `output()` between ticks sees the last captured value. The tick placement determines which edge the capture models — `tick_palette_latches()` at the start of `ppu.fall()` models DFF8 capture at DELTA_EVEN.
+**CPU bus writes**: Action determined in `rise()` via `next_dot()`, executed in `fall()` via `drive_ppu_bus()`. DFF9 registers (LCDC, SCY, SCX) use the "early write path" before `ppu.fall()`. DFF8 palette registers (BGP, OBP0, OBP1) use early write + `tick_palette_latches()` inside `ppu.fall()`. To add registers to the early write path, update the match at `execute.rs` line ~398.
 
-**CPU bus writes**: The CPU determines its bus action via `next_dot()` (called in `rise()`). The write is executed in `fall()` via `drive_ppu_bus()`. For registers that need to be visible to `ppu.fall()` operations (DFF9: LCDC, SCY, SCX), writes fire in the "early write path" before `ppu.fall()`. For palette registers (DFF8: BGP, OBP0, OBP1), the early write path combined with `tick_palette_latches()` inside `ppu.fall()` resolves the pending value, making it available on the next edge.
+**GateBoy conventions**: 8 sub-phases (A-H) per M-cycle, 2 per dot. `mcycle_phase` packs ring counter DFFs: 0x0C=B, 0x0F=D, 0x03=F, 0x00=H. `_evn` DFFs latch on EVEN edges; `_odd` on ODD. CPU register writes latch at DELTA_GH (first visible at phase H). See `receipts/research/` for phase mapping docs.
 
-**GateBoy conventions**: GateBoy uses 8 sub-phases (A through H) per M-cycle, with 2 sub-phases per dot. The `mcycle_phase` trace field packs 4 ring counter DFFs: `(AFUR<<3)|(ALEF<<2)|(APUK<<1)|(ADYK<<0)`. Trace entries are emitted after EVEN edges, producing values 0x0C (phase B), 0x0F (phase D), 0x03 (phase F), 0x00 (phase H). GateBoy's `_evn` suffix DFFs latch on EVEN edges (A→B, C→D, E→F, G→H); `_odd` suffix DFFs latch on ODD edges (B→C, D→E, F→G, H→A). The DFF latch point for CPU register writes is DELTA_GH — the first trace entry showing the new value is `mcycle_phase=0x00` (phase H). See `receipts/research/` for detailed phase mapping documents.
-
-**Common pitfall — rise/fall ordering reasoning**: When investigating timing bugs, do NOT frame hypotheses as "the write needs to happen before/after the read within the same dot." Instead, identify which edge captures the DFF and which edge the consumer reads from, then check whether the DFF output holds the correct value at the consumer's read point. The implementation detail of which method (`rise()` or `fall()`) runs first in the emulator is irrelevant to correctness — what matters is whether the DFF capture and the combinational read are on the correct edges relative to each other.
-
-**Early write path pattern**: For a CPU bus write to be visible to a `ppu.fall()` operation (via `tick()`), the write must fire BEFORE `ppu.fall()` — this is the "early write path" in `execute.rs::fall()`. DFF9 registers (LCDC, SCY, SCX) use this for the fetcher; DFF8 palette registers (BGP, OBP0, OBP1) use it for the pixel pipeline. The pattern is: early `drive_ppu_bus()` sets `pending` → `tick_palette_latches()` inside `ppu.fall()` resolves it → combinational consumers see the new output. Without the early write, the pending value sits until the NEXT dot's tick, adding 1 dot of latency. When adding new registers to the early write path, add their addresses to the match at `execute.rs` line ~398.
-
-**Common pitfall — multi-component pipeline fixes**: When a pipeline has multiple stages that each add latency (e.g., DFF pending→tick AND data_latch buffering), fixing one stage alone may show ZERO effect because the other stage still delays the value by the same amount. Both stages need fixing for the change to be observable. If a fix has zero test impact, check whether it's part of a multi-stage pipeline where another stage compensates. Test the combined fix before concluding that either individual fix is wrong.
+**Common pitfalls**: (1) Never frame timing hypotheses as "move X before/after Y in rise/fall" — think about DFF capture edges and combinational read points. (2) Multi-stage pipeline fixes: if a fix has zero effect, check whether another pipeline stage compensates — both stages may need fixing together.
 
 ### Key Patterns
 
-- **CPU and memory separation**: `Cpu` and `MemoryMapped` are separate structs so memory subsystems can be borrowed independently.
+- **Flat component ownership**: `GameBoy` owns all hardware components as separate fields (`cpu`, `ppu`, `audio`, `timers`, `interrupts`, `dma`, etc.) so subsystems can be borrowed independently.
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
 - **Enum-based MBC dispatch**: `Mbc` enum in `crates/missingno-gb/src/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
-- **PPU state machine**: `PixelProcessingUnit` alternates between `Rendering` and `BetweenFrames`. Rendering tracks per-line state (mode 2→3→0) and draws pixels one at a time with cycle-accurate timing.
-- **PPU propagation delay analysis**: The sibling project [`gmb-ppu-analysis`](https://github.com/ajoneil/gmb-ppu-analysis) (local clone: `../gmb-ppu-analysis/`) provides static analysis of GateBoy's PPU netlist, identifying deep combinatorial paths and signal races that cause propagation delay on real hardware. Key outputs in `../gmb-ppu-analysis/output/`:
-  - `critical_paths_report.md` — Overview and key findings (start here)
-  - `operational_paths.md` — Per-dot/per-scanline paths by functional area
-  - `race_pairs_report.md` — Signal race pairs with observable effects and depth differentials
-  - `signal_concordance.md` — GateBoy cell name ↔ Pan Docs register name mapping
-  - `race_pairs.json`, `critical_paths.json`, `ppu_graph.json` — Machine-readable data
-  - Interactive explorer: [ajoneil.github.io/gmb-ppu-analysis](https://ajoneil.github.io/gmb-ppu-analysis/)
+- **PPU state machine**: `Ppu` holds an `Option<Rendering>` — `None` when the LCD is off (hardware reset state), `Some(Rendering)` when on. `Rendering` persists through both active display and VBlank (matching hardware where pixel circuits are always present when LCD is on). Modes are derived from `video.vblank` and scanning state within `Rendering`. Draws pixels one at a time with cycle-accurate timing.
+- **PPU propagation delay analysis**: The sibling project [`gmb-ppu-analysis`](https://github.com/ajoneil/gmb-ppu-analysis) (local clone: `../gmb-ppu-analysis/`) provides static analysis of GateBoy's PPU netlist — signal races, deep combinatorial paths, and propagation delays. Key outputs in `../gmb-ppu-analysis/output/`: `race_pairs_report.md` (observable effects by symptom), `critical_paths_report.md` (deepest paths), `signal_concordance.md` (GateBoy cell names ↔ Pan Docs names). For one-dot timing discrepancies, check race pairs first.
 
-  This data is a primary source for understanding PPU timing. When investigating one-dot discrepancies, consult the race pairs and critical paths to identify which propagation delays could explain the behavior. The signal concordance maps between GateBoy's 4-letter cell names and standard register/signal names.
-
-- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
-  - **`crates/missingno-gb/src/trace.rs`** — `Tracer` struct captures per-instruction state to parquet files using profile-driven field selection.
-  - **Test runner integration** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`. Activated by env var:
+- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy traces at T-cycle granularity. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
+  - **Capturing traces** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`:
     ```bash
     GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
     ```
-    Writes to `receipts/traces/<rom_name>.parquet`.
-  - **Profiles**: Per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`. Each profile specifies a trigger type (`tcycle` or `instruction`) and field selection using layered subsystem config (`cpu = "registers"`, `ppu = "all"`, `ppu = ["registers", "output"]`, `timer = true`, `interrupt = true`, etc.) plus optional `[fields.memory]` for custom address watches. The `GBTRACE_PROFILE` env var takes the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`).
-  - **gbtrace CLI** (`../gbtrace/crates/gbtrace/`) — CLI for working with trace files. Build with `cargo build -p gbtrace --features cli` from the gbtrace repo. Commands:
-    - `gbtrace info <file>` — summary: emulator, model, entry count, frame count, cycle range, file size.
-    - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions, with optional `--context N` and `--max N`. Use `--last N` to show the last N entries without a condition.
-    - `gbtrace diff <trace_a> <trace_b>` — compare two traces, report first divergence and per-field divergence counts. Options: `--sync <CONDITION>` (default: sync on `pc`; use `none` to disable, or `field=value`/`field&mask`), `--fields pc,a,f`, `--exclude ime`, `--summary` (one-line-per-field output).
-    - `gbtrace frames <file>` — show frame boundaries detected from LY field.
-    - `gbtrace render <file>` — render LCD frames from pixel trace data to PNG files. Options: `-o <dir>` (output directory), `--frames 1,3,5` (render specific frames only). Useful for visual comparison of PPU output between emulators.
-    - `gbtrace convert <file>` — convert JSONL (`.gbtrace.jsonl`) to native `.gbtrace` format. Use `-o <file>` to specify output path.
-  - **Reference traces and test manifests**: Hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/) with structured manifests for 6 test suites (~700 tests total). Each suite has a `manifest.json` listing tests with per-emulator pass/fail status and a `profile.toml` defining trace fields. URLs follow a predictable pattern:
-    - Manifest: `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`
-    - Trace: `https://ajoneil.github.io/gbtrace/tests/{suite}/{test}_{emulator}_{status}.gbtrace`
-    - ROM: `https://ajoneil.github.io/gbtrace/tests/{suite}/{rom_path}`
-    - Tracked emulators: gambatte, gateboy, mgba, missingno, sameboy.
-    - Suites: gbmicrotest (481 tests), blargg (24), mooneye (73), gambatte-tests (97), mealybug-tearoom (24), dmg-acid2 (1).
-  - **Comparison workflow**: Use the `/compare-traces` skill for structured trace comparison. It handles generating traces, choosing sync points, filtering noisy fields, and interpreting results. For manual use: capture traces from missingno and a reference emulator running the same ROM, then use `gbtrace diff` with `--sync` (align at a meaningful event like `lcdc&0x80` for PPU-on) and `--exclude` (drop noisy initial-state fields like `div,tac,if_`). Reference traces can be downloaded from the hosted manifests or found locally in `../gbtrace/test-suites/`. 
-- **Boot ROM support**: The emulator optionally runs the DMG boot ROM. Without a boot ROM, it uses post-boot initialization (e.g., LCDC=0x91 in `Control::default()`, CPU registers in `Cpu::new()`). With a boot ROM, it uses power-on state (`Cpu::power_on()`, `Ppu::power_on()`, etc.) and starts execution at 0x0000. Boot ROMs are proprietary and must never be committed to the repo. CLI: `--boot-rom <path>`. Tests: set `DMG_BOOT_ROM` env var. Running the boot ROM adds significant startup time per test — only use it on targeted tests when boot state is suspected to play a role, not across the full test suite.
-- **Serialization**: Hand-written serialization for config (`~/.config/missingno/settings.ron`, `recent.ron`).
-- **Timestamps**: Uses the `jiff` crate (not `chrono`) for date/time formatting.
+    Writes to `receipts/traces/<rom_name>.gbtrace`. Profiles are per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`.
+  - **gbtrace CLI** — Build with `cargo build -p gbtrace --features cli` from the gbtrace repo. Key commands:
+    - `gbtrace info <file>` — trace metadata summary.
+    - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions (`--context N`, `--max N`, `--last N`, `--range START..END`, `--fields`).
+    - `gbtrace diff <a> <b>` — compare traces (`--sync`, `--fields`, `--exclude`, `--summary`).
+    - `gbtrace frames <file>` — frame boundaries from LY.
+    - `gbtrace render <file> -o <dir>` — render LCD frames to PNG (`--frames 1,3,5`).
+    - `gbtrace convert <file>` — convert JSONL to native `.gbtrace` format.
+  - **Reference traces**: Hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/) with manifests for 15 test suites. URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`. Use the `/compare-traces` skill for structured comparison and individual trace inspection.
+- **Boot ROM support**: Optional DMG boot ROM via `--boot-rom <path>` (CLI) or `DMG_BOOT_ROM=<path>` (tests). Boot ROMs are proprietary — never commit them. Without one, post-boot initialization is used. Only use on targeted tests (adds significant startup time).
+- **Config**: `settings.ron` and `recent.ron` in platform config dir via `dirs` crate. Uses `jiff` (not `chrono`) for timestamps.
+
+### Data Sources for Debugging and Research
+
+When investigating emulator issues, these data sources are available in priority order. Always check existing data before generating new diagnostics.
+
+1. **Hardware documentation**: Pan Docs, TCAGBD, hardware manuals.
+2. **PPU propagation delay analysis** (`../gmb-ppu-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
+3. **Cross-emulator execution traces** (gbtrace): 5 emulators, 15 test suites. Use for both `diff` and individual inspection. See Key Patterns above.
+4. **Hardware timing measurements** (`../gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `../gb-timing-data/campaigns/` for available campaigns.
+5. **Test ROM sources**: Assembly source reveals exactly what tests measure and what expected values mean.
+6. **Hardware test harness** (`../slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
 
 ### Debugger
 
-- **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants. Each pane is a separate module with a struct (e.g. `CpuPane`, `PlaybackPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum with `Into<app::Message>` impl for routing through the nested message chain (`PaneMessage` → `panes::Message` → `debugger::Message` → `app::Message`). Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
-- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events). Recording state (`ActiveRecording`) lives in `crates/missingno/src/app/debugger/mod.rs` on the `Debugger` struct — `press_button`/`release_button` log events with frame numbers during recording. The Playback pane (`crates/missingno/src/app/debugger/playback.rs`) provides the UI.
+- **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants (Screen, Instructions, Tiles, TileMap, Sprites, Audio). Each pane is a separate module with a struct (e.g. `ScreenPane`, `InstructionsPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum. Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
+- **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events).

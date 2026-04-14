@@ -38,7 +38,7 @@ for suite in age blargg bully dmg-acid2 gambatte-tests gbmicrotest little-things
 done
 ```
 
-Tracked emulators: `gambatte`, `gateboy`, `mgba`, `missingno`, `sameboy`.
+Tracked emulators: `gambatte`, `gateboy`, `docboy`, `missingno`, `sameboy`. (DocBoy provides T-cycle granularity traces.)
 
 ### 3. Cross-reference each failing test
 
@@ -75,23 +75,6 @@ MODULE_TO_SUITE = {
 }
 ```
 
-**Suite name mapping** (Rust test module → manifest suite):
-- `age::*` → `age`
-- `blargg::*` → `blargg`
-- `bully::*` → `bully`
-- `dmg_acid2::*` → `dmg-acid2`
-- `gambatte::*` → `gambatte-tests`
-- `gbmicrotest::*` → `gbmicrotest`
-- `little_things::*` → `little-things`
-- `mbc3_tester::*` → `mbc3-tester`
-- `mealybug_tearoom::*` → `mealybug-tearoom`
-- `mooneye::*` → `mooneye`
-- `mooneye_wilbertpol::*` → `mooneye-wilbertpol`
-- `samesuite::*` → `samesuite`
-- `scribbltests::*` → `scribbltests`
-- `strikethrough::*` → `strikethrough`
-- `turtle_tests::*` → `turtle-tests`
-
 **Test name matching strategy:**
 
 The manifest uses ROM filename stems with path separators encoded as `__`. The Rust test name uses `_` for everything. Matching requires suite-specific transformations.
@@ -125,8 +108,8 @@ Assign each failing test to one of these categories:
 #### Category A: GateBoy passes
 GateBoy (gate-level simulation) passes this test. This means the correct behaviour is capturable from the logic gate model. **Primary reference**: GateBoy traces and source code. These are the most approachable fixes — we can study exactly what the hardware does by comparing traces.
 
-#### Category B: SameBoy/Gambatte pass, GateBoy fails
-High-accuracy behavioural emulators pass but the gate-level simulation does not. This points to behaviours that require modelling propagation delays, signal races, or sub-dot timing that GateBoy's simulation model doesn't capture. **Primary reference**: PPU propagation delay analysis (`../gmb-ppu-analysis/`), SameBoy/Gambatte behaviour. These are harder fixes — the hardware behaviour must be inferred from race pair analysis and other emulators' implementations.
+#### Category B: SameBoy/Gambatte/DocBoy pass, GateBoy fails
+High-accuracy behavioural emulators pass but the gate-level simulation does not. This points to behaviours that require modelling propagation delays, signal races, or sub-dot timing that GateBoy's simulation model doesn't capture. **Primary reference**: PPU propagation delay analysis (`../gmb-ppu-analysis/`), hardware timing data (`../gb-timing-data/`), DocBoy/SameBoy/Gambatte traces. DocBoy is particularly valuable here as it provides T-cycle granularity traces. These are harder fixes — the hardware behaviour must be inferred from race pair analysis, hardware measurements, and cross-emulator trace comparison.
 
 #### Category C: All reference emulators fail
 No tracked emulator passes this test. These may be tests with incorrect expected values, very obscure hardware edge cases, or bugs in the test ROMs themselves. **Low priority** — not worth investigating until categories A and B are resolved.
@@ -171,8 +154,8 @@ Get the current timestamp: `date +%Y-%m-%d-%H%M`.
 ### Cluster: <descriptive name>
 <1-2 sentence description of the shared mechanism>
 
-| Test | GateBoy | SameBoy | Gambatte | mGBA | Detail |
-|------|---------|---------|----------|------|--------|
+| Test | GateBoy | SameBoy | Gambatte | DocBoy | Detail |
+|------|---------|---------|----------|--------|--------|
 | test_name | pass | pass | pass | pass | got X, exp Y |
 
 **Likely root cause**: <brief hypothesis based on test names and patterns>
@@ -186,9 +169,9 @@ Get the current timestamp: `date +%Y-%m-%d-%H%M`.
 
 ## Category C: All reference emulators fail (low priority)
 
-| Test | GateBoy | SameBoy | Gambatte | mGBA | Detail |
-|------|---------|---------|----------|------|--------|
-| ... | fail | fail | fail | fail | |
+| Test | GateBoy | SameBoy | Gambatte | DocBoy | Detail |
+|------|---------|---------|----------|--------|--------|
+| ... | fail | fail | fail | fail  | |
 
 ## Category D: No manifest data
 
@@ -212,3 +195,6 @@ Rank the Category A and B clusters from easiest to hardest to fix, considering:
 - Manifest data may be stale relative to the current test suite — some tests may exist in the suite but not in the manifest, or vice versa.
 - When a test name doesn't match any manifest entry, always try the fuzzy matching strategies in step 3 before giving up.
 - The Detail column should include got/expected values for register-based tests (gbmicrotest, gambatte) and pixel mismatch counts for screenshot tests (mealybug_tearoom, age, scribbltests).
+- **DocBoy provides T-cycle granularity traces** — when a test passes on DocBoy but fails on missingno, DocBoy traces are especially valuable for pinpointing the exact T-cycle where behavior diverges.
+- **Hardware timing data** (`../gb-timing-data/`): When clustering failures by root cause, check whether relevant measurement campaigns exist. Campaign data can confirm hypothesized root causes (e.g., "sprite penalty offset" cluster matches the `stat-mode-sprite-penalty` campaign). **Note: data collection is in progress — check what's available.**
+- **Slowpeek** (`../slowpeek/`): When a cluster of failures points to a timing behavior that no existing data source covers, note that a Slowpeek sweep test could provide definitive hardware measurements for that cluster. **Note: hardware serial path not yet complete.**

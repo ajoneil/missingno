@@ -77,7 +77,7 @@ If the plan reveals a confound (e.g. sprites cover the area of interest), adjust
 ### Starting a server
 
 ```bash
-gb_start core/tests/game_boy/roms/dmg-acid2.gb
+gb_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
 # Prints: ready (pid 12345)
 ```
 
@@ -101,7 +101,7 @@ gb_stop            # Kills the server cleanly
 
 ### ROM paths
 
-Test ROMs live under `core/tests/game_boy/roms/` (e.g. `core/tests/game_boy/roms/dmg-acid2.gb`). Always verify the path exists before starting the server.
+Test ROMs live under `crates/missingno-gb/tests/accuracy/roms/` (e.g. `crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb`). Always verify the path exists before starting the server.
 
 ## Helper functions reference
 
@@ -324,7 +324,7 @@ for i in $(seq 1 60); do curl -s -X POST "$GB_URL/step-dot" > /dev/null; done
 ### Correct pattern: use helpers and watchpoints
 ```bash
 . scripts/debugger.sh
-gb_start core/tests/game_boy/roms/dmg-acid2.gb
+gb_start crates/missingno-gb/tests/accuracy/roms/dmg-acid2/dmg-acid2.gb
 gb_run_frames 10
 gb_goto 60 drawing        # Jump directly to scanline 60, Mode 3
 gb_step_to_px 85           # Jump directly to pixel_counter=85

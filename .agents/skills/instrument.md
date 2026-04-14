@@ -11,7 +11,11 @@ The caller sent you a Question (hypothesis), Context (where to instrument), and 
 ## Before you start
 
 1. **Read the hypothesis.** The caller should have told you what they're testing and why. If the request is vague ("add some logging"), ask for a specific hypothesis before proceeding.
-2. **Consider gbtrace first.** If the hypothesis can be tested by examining CPU/PPU/timer/interrupt state at instruction boundaries, a gbtrace capture may answer the question without modifying code. Capture with `GBTRACE_PROFILE=gbmicrotest` (or the appropriate suite profile), then query with `gbtrace query <file> --where pc=0x0150 --context 5`. Use `eprintln!` instrumentation for internal state not visible through gbtrace (e.g. FIFO contents, fetcher phases, mid-instruction timing).
+2. **Consider existing data sources first.** Before adding code instrumentation, check whether the question can be answered without modifying code:
+   - **gbtrace**: If the hypothesis can be tested by examining CPU/PPU/timer/interrupt state at instruction boundaries, a gbtrace capture may answer the question. Capture with `GBTRACE_PROFILE=gbmicrotest` (or the appropriate suite profile), then query with `gbtrace query <file> --where pc=0x0150 --context 5`. Use `gbtrace query <file> --last 20` for end-of-test state. Use `gbtrace render <file> -o <dir>` for visual inspection of PPU output.
+   - **Hardware timing data** (`../gb-timing-data/campaigns/`): Check if a measurement campaign covers the behavior being tested. Campaign CSV data provides cycle-level hardware measurements that may directly answer the hypothesis. **Status: data collection in progress.**
+   - **Slowpeek** (`../slowpeek/`): If the hypothesis requires measuring a specific hardware behavior not covered by existing data, note that a Slowpeek sweep test would provide the definitive answer. **Hardware serial path not yet complete** — flag when it would be useful.
+   - Use `eprintln!` instrumentation only for internal state not visible through gbtrace or other data sources (e.g. FIFO contents, fetcher phases, mid-instruction timing, DFF pending values).
 3. **Check existing instrumentation.** Read the files you'll be modifying to see if diagnostic logging is already in place. Build on existing log lines rather than duplicating or conflicting with them.
 4. **Identify the measurement points.** Before writing any code, list the exact locations in the source where you'll add `eprintln!` calls. Each log line must directly address the hypothesis.
 
@@ -34,7 +38,7 @@ Based on the caller's request, add targeted `eprintln!` tracing that captures:
 
 **Always gate diagnostic output to a specific frame (or narrow frame range).** The same LY value repeats every frame. A test ROM that runs for 60 frames produces 60 copies of LY=6, and filtering the log after the fact to find the right one is error-prone and wastes investigation time. Instead, add a temporary frame counter and gate on it.
 
-The PPU has no built-in frame counter. When you need frame-level gating, add a temporary `frame_count: u32` field to the relevant struct (e.g. `Rendering` or `PixelProcessingUnit`) and increment it at the frame boundary (when `Rendering` is constructed from `BetweenFrames`, or at the start of line 0). This is diagnostic scaffolding — it gets removed with the rest of the logging after measurement.
+The `Ppu` struct has a `frame_number` field, but `Rendering` does not have its own frame counter. When you need frame-level gating within `Rendering`, add a temporary `frame_count: u32` field and increment it at the frame boundary (at the start of line 0). This is diagnostic scaffolding — it gets removed with the rest of the logging after measurement.
 
 **Pattern:**
 ```rust

@@ -1,6 +1,6 @@
 # Compare Traces
 
-Compare execution traces between missingno and a reference emulator (GateBoy, Gambatte, SameBoy) to find the exact divergence point in a test failure.
+Compare and inspect execution traces between missingno and reference emulators (GateBoy, Gambatte, SameBoy, DocBoy) to find the exact divergence point in a test failure, or inspect individual traces to understand emulator behavior.
 
 ## When to use
 
@@ -8,6 +8,12 @@ Use this skill when investigating a test failure where:
 - A reference trace exists (check suite manifests at `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` or locally in `../gbtrace/test-suites/`)
 - You need to find **where** execution diverges, not just **that** it fails
 - The failure involves timing, register values, or execution path differences
+- You need to understand what the emulator did during a test (individual trace inspection)
+
+**Choose the right approach for the test:**
+- **Small, focused tests** (gbmicrotest, small mooneye tests): Direct `gbtrace diff` between missingno and a reference trace is usually productive. The divergence point is close to the root cause.
+- **Larger tests** (blargg, full mooneye suites, mealybug-tearoom): Direct diff becomes less useful — the first divergence may be far from the root cause, or initial state differences create noise. Use individual trace inspection (`gbtrace query`, `gbtrace render`, `gbtrace frames`) to understand what each emulator does, then compare specific regions of interest.
+- **Visual tests** (mealybug-tearoom, dmg-acid2, scribbltests): Use `gbtrace render` to produce frame images and compare visually. Then use `gbtrace query` to examine the trace around the scanline/dot where the visual difference occurs.
 
 Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the full execution history and let you find the divergence without guessing where to set breakpoints. Use `/inspect` for follow-up once you know the area of interest.
 
@@ -22,7 +28,7 @@ Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the
 ### Missingno trace
 ```bash
 GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
-# Writes to: receipts/traces/<rom_name>.parquet
+# Writes to: receipts/traces/<rom_name>.gbtrace
 ```
 
 The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
@@ -55,7 +61,7 @@ curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_ga
 
 URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
 
-Tracked emulators: gambatte, gateboy, mgba, missingno, sameboy. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2.
+Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy provides T-cycle granularity traces. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2, age, mooneye-wilbertpol, samesuite, scribbltests, bully, little-things, mbc3-tester, strikethrough, turtle-tests.
 
 Reference traces are also available locally in `../gbtrace/test-suites/` if the gbtrace repo has them built.
 
@@ -63,7 +69,7 @@ Reference traces are also available locally in `../gbtrace/test-suites/` if the 
 
 ### Basic diff
 ```bash
-gbtrace diff <missingno.parquet> <reference.gbtrace>
+gbtrace diff <missingno.gbtrace> <reference.gbtrace>
 ```
 
 ### Alignment gotchas
@@ -122,7 +128,7 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 
 For PPU tests, render frames from both traces and compare visually:
 ```bash
-gbtrace render <missingno.parquet> -o receipts/traces/renders/missingno/
+gbtrace render <missingno.gbtrace> -o receipts/traces/renders/missingno/
 gbtrace render <reference.gbtrace> -o receipts/traces/renders/reference/
 # Render specific frames only:
 gbtrace render <trace> --frames 2,3
@@ -164,7 +170,7 @@ gbtrace query <trace> --last 5
 ### Compare test results across SCX values
 ```bash
 for scx in 0 1 2 3 4 5 6 7; do
-  trace="receipts/traces/int_hblank_nops_scx${scx}.parquet"
+  trace="receipts/traces/int_hblank_nops_scx${scx}.gbtrace"
   result=$(gbtrace query "$trace" --where "test_pass=1" --max 1 2>&1 | grep -oP 'test_result=\K\S+')
   echo "SCX=${scx}: ${result:-FAIL}"
 done
@@ -189,6 +195,57 @@ Write a measurement receipt to the investigation's `measurements/` folder with:
 ## Also observed
 <unexpected findings>
 ```
+
+## Individual trace inspection
+
+When direct diff is impractical or insufficient, inspect traces individually to build understanding.
+
+### Understand the test structure
+```bash
+# How many frames? Where are the frame boundaries?
+gbtrace frames <trace>
+
+# What does the trace contain?
+gbtrace info <trace>
+```
+
+### Find specific events
+```bash
+# When does a specific register value appear?
+gbtrace query <trace> --where "scx=3" --max 5 --context 3
+
+# When does mode 3 start on a specific line?
+gbtrace query <trace> --where "ly=66" --fields ly,stat,pix_count --max 20
+
+# What happens at the end of the test?
+gbtrace query <trace> --last 30
+
+# What's happening around a specific index?
+gbtrace query <trace> --range 50000..50100
+```
+
+### Visual inspection
+```bash
+# Render all frames
+gbtrace render <trace> -o receipts/traces/renders/
+
+# Render specific frames for comparison
+gbtrace render <missingno.gbtrace> -o receipts/traces/renders/missingno/ --frames 2
+gbtrace render <reference.gbtrace> -o receipts/traces/renders/reference/ --frames 2
+```
+
+### Compare specific regions (not full diff)
+When the full diff is too noisy, narrow the comparison to a specific region:
+1. Use `gbtrace query` on both traces to find the same logical event (e.g., start of scanline 66)
+2. Extract the index ranges around that event
+3. Compare those ranges manually or use `--fields` to focus the diff on relevant fields
+
+### Data sources for context
+
+When interpreting trace data, cross-reference with:
+- **Hardware timing data** (`../gb-timing-data/`): If a campaign exists for the behavior you're investigating, the CSV data provides ground-truth cycle measurements. Check `../gb-timing-data/campaigns/` for relevant TOML definitions. **Note: data collection is in progress — check what's available before assuming a campaign has results.**
+- **PPU race pairs** (`../gmb-ppu-analysis/output/race_pairs_report.md`): For 1-dot timing discrepancies, check whether the divergence corresponds to a known signal race.
+- **Slowpeek** (`../slowpeek/`): For behaviors where no existing data covers the question, note that a Slowpeek sweep test could provide definitive hardware measurements. **Note: hardware serial path not yet complete — emulator-only for now.**
 
 ## Limitations — suggest improvements
 

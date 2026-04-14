@@ -4,21 +4,33 @@ Run a structured investigation into any technical problem — a compatibility bu
 
 ## Discipline requirements
 
-These rules override default agent behavior. Follow them exactly:
+The investigate skill is a **pure dispatcher**. It decides which subroutine to invoke, reads their receipts, and updates summary.md. It does NOT read source code, trace behavior, interpret data, design fixes, or implement changes.
 
-1. **Never run instrumented diagnostics directly.** Code instrumentation (adding logging, targeted print statements, instrumented test runs) goes through `/instrument`. Do not add `eprintln!` or `dbg!` yourself — hand it to the instrument skill, which handles logging, output capture, and reporting. **Exception: test report runs** (`./scripts/test-report.sh --diff`) are investigate's direct responsibility — they're bookkeeping, not instrumentation.
-2. **Never skip summary.md updates.** Update summary.md after every subroutine return and before every subroutine invocation — no exceptions. This is a write-after-every-action rule, not a write-when-convenient rule. If you just read an analysis receipt, update summary.md before doing anything else. If you're about to invoke `/inspect`, update summary.md with what you're testing and why first. If the last thing you did was NOT update summary.md, you have already fallen behind. The test: if context were compacted right now, would summary.md alone tell you exactly where you are and what to do next? If not, update it now.
-3. **Never do ad-hoc research.** Use the `research` skill for ALL external information gathering. This includes documentation, source code from other projects, specifications, blog posts, and any `curl`, `WebFetch`, or `WebSearch` call for technical content. If you catch yourself about to fetch a URL or clone a repo, dispatch `/research` as a subagent instead. Format every skill request using the skill invocation protocol defined in AGENTS.md. **Always update summary.md before and after every skill dispatch** — see "Dispatch mechanism" for the protocol. **After any skill returns, you MUST immediately continue the investigation in the same turn.** Skill dispatches are subroutine calls, not stopping points. Never end your turn after receiving a skill report.
-4. **Never interpret data inline.** When `/inspect`, `/instrument`, or `/research` returns new data, invoke `/analyze` to interpret it. Do not reason about what measurements mean or what research findings imply in the investigate skill itself. The analyze skill writes a durable analysis receipt. You then read the receipt, update summary.md, and continue. **This includes after failed fixes.** When a test run shows the fix didn't work, do NOT write paragraphs about why it failed or what the results mean — invoke `/analyze` with the log file. Read the analysis receipt, update summary.md, and continue. Your only inline job is dispatching to subroutines and updating summary.md, not thinking.
-5. **Never guess at changes.** Invoke `/inspect` to observe what the system is actually doing before making changes. Observation tells you what's happening — your mental model of the code is not a substitute.
-6. **Never trace behavior in your head.** If you want to know what value a variable has at a specific point, or what state a system is in when a particular event occurs — invoke `/inspect`. Do not manually trace execution paths, count cycles, or simulate state machines. Your mental model will be wrong. **This applies to ALL code** — this project, reference implementations, anything. If you catch yourself stepping through a state machine iteration by iteration to figure out what it does, stop and hand the question to `/research` or `/inspect`. This also applies after failed fixes. If a fix attempt produces unexpected results, do not reason about why — invoke `/inspect` to observe what actually happened, or `/research` to verify your understanding of the expected behavior. **Corollary: questions that require cycle-counting or arithmetic derivation are `/inspect` questions, not `/research` questions.** "At what scanline dot does this BGP write land?" requires counting cycles through interrupt dispatch and instruction execution — that's tracing, not fact-finding. Observe it via the debugger. `/research` finds stated facts in sources; `/inspect` determines derived values through observation.
-7. **Never build on unverified changes.** After any code change — even "obviously correct" ones — run verification (tests, benchmarks, the relevant diagnostic) before building further changes on top. If a foundational change introduces regressions, you must know immediately — not after stacking three more changes on top. This is a blocking prerequisite: do not start the next change until the current one passes verification.
-8. **Hardware is the source of truth.** The goal of every investigation is to understand what the **real hardware** does and model that behavior. Research should target hardware documentation, specifications, test ROM analysis, and hardware-level observations — not how other emulators implement things. Reference emulators can be useful as a secondary data point to confirm *what* the hardware does (e.g., confirming a timing value or state transition), but they are never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?"
-9. **Never cargo-cult values from reference emulators.** When `/research` returns a specific value from a reference emulator (e.g., "SameBoy initializes position to -15"), that value is evidence about *what the hardware does*, not a specification for *what our code should do*. Before using any externally-sourced value in a design, you must understand what that value *controls* in our emulator — which functions read it, what conditionals depend on it, what downstream behavior it affects. A value that works in another emulator's architecture may need a different value, a different sign, or a different mechanism entirely in ours. **The question is not "what value does the reference use?" but "what hardware behavior does this value produce, and how does our code need to change to produce that same behavior?"** If you cannot explain what a value does in *our* code, you do not understand it well enough to change it. Invoke `/research` with a question about our emulator's mechanism (e.g., "How does `mode()` use `stat_boundary_pixels` to determine the Mode 3→0 transition?") before proceeding to `/design`.
-10. **Never design fixes inline.** When you know what needs to change, invoke `/design` — do not write multi-paragraph plans in conversation about what code to modify and how. The design skill reads the architecture, reviews the code, and produces a receipt. Then invoke `/implement` to apply it. If you catch yourself writing sentences like "the simplest approach would be..." or "what if we..." or "the trick is..." — you are designing inline. Stop and invoke `/design`. The only exception is a true one-line experiment explicitly framed as a hypothesis test (not a fix attempt).
-11. **Never read reference implementation source directly.** If you need to know how another project handles a behavior, formulate the question as a hardware behavior question and invoke `/research`. Do not open the file yourself, do not `grep` through it, do not `sed` or `cat` it. The research skill can consult sources and report back with the specific facts you need. Reading reference source yourself leads to rabbit holes: you read one function, then need to understand its callers, then its data structures, then you're tracing execution (violating rule 6). The research skill has scope discipline to prevent this — you don't. One question in, one answer out. **When reference source is consulted, the research report should translate implementation details into hardware behavior facts** — "the hardware does X at cycle Y" not "emulator Z implements X by doing Y".
-12. **Never implement fixes directly.** When `/design` returns a design receipt, invoke `/implement` to apply it. Do not make code changes yourself — the implement skill reads the design, modifies the code, runs verification, and reports results. If you catch yourself editing source files, writing code, or running `cargo test` to verify a change — stop, you are implementing inline. Hand it to `/implement`.
-13. **Never read project source code directly.** The investigate skill is a pure dispatcher — it decides which subroutine to invoke next, reads their reports, and updates summary.md. It does not read `.rs` files, `grep` through the codebase, or explore the code structure. If you need to understand how the code works, that's a `/research` question ("How does subsystem X work in this codebase?"). If you need to know what the code is doing at runtime, that's an `/inspect` question. If you catch yourself opening a source file, searching for a function, or reading module structure — stop. Formulate the question and hand it to the right subroutine. The only files investigate reads are: summary.md, skill files, receipts, and analysis/design documents.
+### What investigate does directly
+- Update `summary.md` (before every dispatch, after every return — no exceptions)
+- Run `./scripts/test-report.sh --diff` (bookkeeping, not instrumentation)
+- Read receipts, skill files, and summary.md
+
+### What gets delegated (always)
+| Need | Delegate to |
+|------|-------------|
+| External info (docs, specs, URLs, other projects) | `/research` |
+| Runtime observation (values, state, timing) | `/inspect` or `/compare-traces` |
+| Code instrumentation (logging, eprintln) | `/instrument` |
+| Interpreting data or measurements | `/analyze` |
+| Generating testable hypotheses | `/hypothesize` |
+| Planning code changes | `/design` |
+| Making code changes | `/implement` |
+| Reading source code (this project or others) | `/research` or `/inspect` |
+
+### Critical rules
+1. **summary.md before and after every dispatch.** If context compacted right now, could you continue from summary.md alone?
+2. **Skills are subroutine calls, not stopping points.** After a skill returns, immediately read the receipt, update summary.md, and continue in the same turn.
+3. **Never trace behavior in your head.** If you need a value, state, or timing — observe it via `/inspect`. Questions requiring cycle-counting are `/inspect` questions, not `/research` questions.
+4. **Never build on unverified changes.** Run verification after every code change before stacking more changes.
+5. **Hardware is the source of truth.** Research targets hardware behavior, not emulator implementations. Frame all questions as "what does the hardware do?" not "what does emulator X do?"
+6. **Never cargo-cult values from reference emulators.** Before using any externally-sourced value, understand what it controls in *our* code via `/research`. A value correct for the hardware may need a different mechanism in our architecture.
+7. **Never design or interpret inline.** If you're writing >3 sentences about what code to change → invoke `/design`. If you're writing >3 sentences about what results mean → invoke `/analyze`.
 
 ## Dispatch mechanism
 
@@ -42,47 +54,31 @@ No return context block is needed. No re-reading of the investigate skill file i
 
 ## Periodic self-check
 
-**Every 3-4 tool calls, pause and ask yourself these questions:**
+**Every 3-4 tool calls, check:**
 
-1. **Is my progress on disk?** If context were compacted right now, could you continue from `summary.md` alone? If not, stop and write. Every finding, hypothesis, measurement, and decision must be in `summary.md` or a research doc — not just in conversation history.
-2. **Am I carrying stale context?** If you're relying on memory of earlier conversation turns rather than re-reading files, you're drifting. Re-read `summary.md` and your skill file. Work from the file state, not from what you remember.
-3. **Am I reading anything other than receipts and summary.md?** If the last 2+ actions were file reads, grep searches, or bash commands — and the targets weren't summary.md, skill files, or receipt documents — you're doing work that belongs to a subroutine. Stop. Formulate the question and invoke the right skill.
-4. **Am I tracing behavior in my head?** If you've written more than ~4 lines of state/timing/logic reasoning since the last log file, you're guessing. Invoke `/inspect`.
-4b. **Am I analyzing or designing inline?** If you've written more than ~3 sentences interpreting data (what results mean, why something failed, what the implications are), you're doing `/analyze`'s job inline. If you've written more than ~3 sentences about what code to change and how (approaches, tradeoffs, mechanisms), you're doing `/design`'s job inline. In either case: stop, delete what you wrote, invoke the appropriate skill. The investigate skill is a dispatcher — it decides WHICH subroutine to call next, not what the subroutine should conclude.
-5. **Do I have an unanswered domain question?** If you're unsure how something is supposed to work and you're trying to figure it out by reading source code, stop. Invoke `/research` with a specific question instead.
-5b. **Am I reading source code?** If any of your last 2+ tool calls read, grepped, or globbed `.rs` files (or any source files), you are violating rule 13. The investigate skill does not read source code — not this project's, not reference implementations', not anyone's. Stop immediately. Formulate the specific question you're trying to answer and invoke `/research` (for understanding code or hardware) or `/inspect` (for runtime behavior). The only files you should be reading are summary.md, skill files, and receipts.
-5c. **Am I framing questions in terms of hardware or in terms of other emulators?** If your research questions or hypotheses mention what another emulator does rather than what the hardware does, reframe them. "What does the hardware do when X?" not "How does emulator Y handle X?"
-6. **Is my current approach making progress?** Compare where you are now to where you were 3 tool calls ago. If the answer is "I understand the problem better but haven't changed anything" for more than one cycle, you're stuck. Either invoke `/inspect`, or invoke `/research`.
-7. **Am I in trial-and-error mode?** If I've made a code change and re-run the test more than once without invoking `/inspect` or `/research` in between, I'm guessing. A failed fix means my model is wrong — I need new information, not new code.
-8. **Am I proposing a code change without a hardware model?** If the active hypothesis describes what code to change (e.g., "add idle dots", "shorten startup", "bonus flush") rather than what the hardware does (e.g., "the hardware overlaps fetch with pixel output"), it's a fix attempt disguised as a hypothesis. Reframe it: what hardware behavior would make this code change correct? Then research whether that hardware behavior is real.
-9. **Have I tried more than 2 implementations without updating the hardware model?** Count the `impl/` branches since the last update to `## Hardware model` in summary.md. If more than 2, the hardware model is wrong. Stop implementing entirely and go back to `/research`. No new designs or implementations until the hardware model is updated with new research findings.
-10. **Am I changing a value without understanding what it controls in our code?** If the design says "change X from A to B" and you cannot explain — without reading the code right now — what functions consume X, what conditionals depend on it, and what downstream behavior changes when X changes, you are cargo-culting. The value may be correct for the hardware, but if you don't know what it does in *our* architecture, you can't predict whether the change will work or what side effects it will have. Invoke `/research` with a question about our emulator's mechanism before proceeding. This is especially dangerous when the value comes from a reference emulator — their code may use the value differently than ours does.
-11. **Am I reasoning about rise/fall ordering?** If your hypothesis involves "moving X from fall() to rise() so it runs before Y" or "the write needs to happen before the read within the same dot," you are reasoning about the emulator's procedural call order, not about hardware. On hardware, rise and fall are alternating clock edges with no inherent ordering — a DFF captures on one edge and its output is available until the next capture. The correct framing is: "which edge does the DFF capture on, and does the output hold the correct value when the consumer reads it?" If you catch yourself writing "before" or "after" in the context of rise/fall, reframe in terms of DFF capture edges and combinational read points. See the "Clock Model and Phase Architecture" section in CLAUDE.md.
+1. **Is summary.md current?** If context compacted now, could you continue from it alone?
+2. **Am I reading source code or doing research/analysis/design inline?** If your last 2+ tool calls weren't reading receipts/summary.md/skill files, you're doing subroutine work. Stop and delegate.
+3. **Am I tracing behavior in my head?** More than ~4 lines of state/timing reasoning = guessing. Invoke `/inspect`.
+4. **Am I making progress?** Same understanding as 3 tool calls ago with no changes = stuck. Invoke `/inspect` or `/research`.
+5. **Am I in trial-and-error mode?** More than 1 code change without new diagnostic data = guessing. A failed fix means the model is wrong — get new information, not new code.
+6. **Two-strike rule:** More than 2 implementations without updating `## Hardware model` = stop implementing, go back to `/research`.
+7. **Am I reasoning about rise/fall ordering?** Reframe in terms of DFF capture edges, not procedural call order.
+8. **Zero-effect fix?** Check for multi-stage pipelines where another stage compensates.
 
-12. **Did a fix have zero effect? Check for multi-stage pipelines.** If a change is architecturally correct but produces zero test impact, the fix may be part of a multi-stage pipeline where another stage compensates. Example: fixing a DFF pending→tick delay has no effect if a downstream data_latch still buffers the stale value for 1 more dot. Both stages need fixing for the change to be observable. Before concluding a zero-effect fix is wrong, ask: "is there another stage in this pipeline that also needs fixing?" Trace the full path from the source (register write) to the consumer (pixel output / screen column) and check for intermediate latches or buffers that each add delay.
-
-**The default action when uncertain is: invoke `/inspect`.** Not: read more source code. Not: reason about behavior. Not: check another implementation. `/inspect` will tell you if it can't answer the question — you don't need to predict its capabilities.
+**Default action when uncertain: invoke `/inspect`.**
 
 ## Working style: hypothesize, measure, analyze
 
-Follow this loop for every investigation step:
+The core loop:
 
-1. **Invoke `/hypothesize`** — generates ranked testable hypotheses, writes a receipt.
-2. **Update summary.md** — read the receipt, add the top hypothesis to the RCA tree as `[ ] **bold** ← ACTIVE`.
-3. **Measure** — invoke `/inspect` with the active hypothesis and what you need to observe. Writes a report.
-4. **Invoke `/analyze`** — hand the instrument report (log file path) and summary.md. Writes an analysis receipt with confirmed/refuted/inconclusive.
-5. **Update summary.md** — read the analysis receipt, mark the hypothesis in the RCA tree (`[x]` confirmed, `[x] ~~struck~~` refuted), rewrite Current understanding. This is the investigate skill's job — subroutines never touch summary.md.
-6. **Re-read and continue** — re-read this skill file and summary.md. If the problem isn't solved, loop back to step 1.
+1. `/hypothesize` → receipt with ranked hypotheses
+2. Update summary.md — add top hypothesis to RCA tree as `[ ] **bold** ← ACTIVE`
+3. `/compare-traces` or `/inspect` → observation receipt
+4. `/analyze` → interpretation receipt (confirmed/refuted/inconclusive)
+5. Update summary.md — mark hypothesis (`[x]` confirmed, `[x] ~~struck~~` refuted), update Current understanding
+6. Loop back to step 1 if not solved
 
-The same loop applies when `/research` returns new data: invoke `/analyze` with the research document path, then update summary.md yourself, then `/hypothesize` if a new direction is needed.
-
-**summary.md is owned exclusively by investigate.** No subroutine skill writes to it. After every subroutine return, you (investigate) read the receipt and update summary.md — typically one or two lines in the RCA tree plus a rewrite of Current understanding if the model changed.
-
-**If you catch yourself forming hypotheses inline instead of invoking `/hypothesize`, stop.** Hand it to the skill so the reasoning is recorded in a receipt.
-
-**If you catch yourself writing more than ~4 lines of analysis without invoking `/analyze`, stop.** You are doing interpretation inline. Hand it to `/analyze` so it's recorded in a receipt.
-
-**If a change attempt fails and you don't know why, do not analyze the code harder.** Invoke `/inspect` with targeted observation on the specific area that surprised you, then `/analyze` to interpret the results, then `/hypothesize` to generate new hypotheses from the updated understanding.
+**summary.md is owned exclusively by investigate.** No subroutine writes to it. When `/research` returns new data, pass it through `/analyze` before updating summary.md.
 
 ## Workflow
 
@@ -105,7 +101,11 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
 - Classify the problem type and write it in summary.md.
 
 **For compatibility investigations:**
-- After capturing the baseline, **invoke `/compare-traces` first** to find the exact divergence point between missingno and a reference emulator. This is faster and more precise than interactive debugging — it shows you exactly where and how execution differs. Only fall back to `/inspect` (debugger) when you need sub-dot observation that traces can't provide.
+- After capturing the baseline, **check available data sources before generating new data.** In order:
+  1. **Hardware timing data** (`../gb-timing-data/campaigns/`): Check if a measurement campaign covers the behavior. Campaign CSV data provides definitive cycle-level measurements from real hardware. If a relevant campaign exists but has no results yet, note that it would be valuable when complete.
+  2. **`/compare-traces`**: Invoke to find the exact divergence point between missingno and a reference emulator (GateBoy, DocBoy, Gambatte, SameBoy). For small focused tests, direct diff is productive. For larger tests, use individual trace inspection (`gbtrace query`, `gbtrace render`) to understand behavior. DocBoy provides T-cycle granularity traces, making it especially useful for timing investigations.
+  3. **`/inspect`** (debugger): Fall back when you need sub-dot observation, internal pipeline state, or information that traces can't provide.
+  4. **Slowpeek** (`../slowpeek/`): If the investigation requires measuring a specific hardware behavior that no existing data source covers, note that a Slowpeek sweep test could provide the definitive answer. **Hardware serial path not yet complete** — do not attempt to use hardware mode, but do flag when it would be useful.
 - **When `/compare-traces` is not enough:** If the trace comparison can't answer the question (e.g. you need internal pipeline state, sub-dot phase timing, or the reference emulator has no trace available), invoke `/inspect` for targeted observation at the divergence point that `/compare-traces` identified.
 - **Boot ROM consideration.** If boot state is suspected to play a role (e.g., tests that depend on initial register values, VRAM contents, or hardware state that the boot ROM sets up differently from post-boot initialization), ask the user for a DMG boot ROM path and re-run the specific failing test with `DMG_BOOT_ROM=<path>`. Boot ROMs are proprietary and cannot be in the repo. Do NOT run the entire test suite with the boot ROM — it adds significant startup time per test. Use it only on targeted tests.
 - Classify the failure type:
@@ -113,138 +113,63 @@ The same loop applies when `/research` returns new data: invoke `/analyze` with 
   - **Screenshot mismatch**: Pixel differences between rendered output and reference image.
   - **Timeout/hang**: The ROM never reached a halt condition — likely wrong control flow or missing hardware behavior.
 
-### 2. Understand the domain
+### 2. Understand the domain and research correct behavior
 
-- Identify the subsystem or area involved.
-- **Use the `research` skill** (`/research`) to fill any domain knowledge gaps — specifications, documentation, expected behavior from authoritative sources.
-- **Update summary.md** with the problem description and domain context.
-- Capture investigation-specific notes in the session's `research/` folder.
+- Identify the hardware subsystem. Use `/research` to fill knowledge gaps — frame questions as "what does the hardware do?" not "what does emulator X do?"
+- Use `/research` any time you're uncertain about expected behavior — not just at the start.
+- Pass research results through `/analyze` before updating summary.md.
 
-**For compatibility investigations:**
-- Identify the hardware subsystem (video/PPU, audio/APU, timers, interrupts, memory mapping, DMA, input, serial, etc.).
-- Use `/research` to understand what **hardware behavior** the test ROM is validating — what the real hardware does, not how other emulators pass the test. Research the test ROM's source code and any relevant hardware documentation or specifications.
+### 3. Track test state
 
-### 3. Research correct behavior
+Run `./scripts/test-report.sh --diff` directly (investigate's bookkeeping) after every code change. Update summary.md `## Baseline` with current counts.
 
-- **Format every `/research` request using the protocol in AGENTS.md.** One question, one context block, no hypotheses or diagnostic output.
-- **Frame research questions in terms of hardware behavior.** "What does the Game Boy PPU do when SCX is non-zero during mode 3?" not "How does emulator X handle SCX scrolling?" The answer should describe what the silicon does, grounded in specifications, hardware tests, and authoritative documentation. Reference emulators may be consulted as secondary evidence, but the research report must translate any implementation details into hardware behavior facts.
-- **Research is not just for steps 2-3.** Any time during the investigation that you're uncertain about expected behavior — while diagnosing, while interpreting diagnostic output, while designing a change — stop and formulate a research question.
-- **Use research to resolve contradictions.** If existing research documents contradict each other — or if diagnostic output contradicts what a research document claims — invoke `/research` with the specific contradiction as the question. Prefer hardware documentation and test ROM evidence over what any particular emulator does.
-- **Invoke `/analyze` to interpret.** When research returns, invoke `/analyze` with the research document path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret research findings inline.
+### 4. Observe and diagnose
 
-### 4. Track test state
+Observation priority: `/compare-traces` → `/inspect` → `/instrument` (with user approval). Don't guess — observe.
 
-Investigate owns test state tracking directly, the same way it owns branch hygiene. Run `./scripts/test-report.sh --diff` yourself whenever you need to check where things stand — after implementations, after reverting failed attempts, before committing. Do not delegate test report runs to `/instrument`.
+- `/inspect` first for runtime observation. If it can't answer, ask the user before falling back to `/instrument`.
+- `/instrument` only after `/inspect` is insufficient. More invasive — modifies code temporarily.
+- Pass all observation results through `/analyze` before updating summary.md.
 
-- The baseline was captured in step 1. Throughout the investigation, re-run the test report after any code change to detect regressions immediately.
-- Compare against the `main` branch with `git diff main..<branch> -- <relevant files>` to determine if an issue is a regression or pre-existing.
-- **Update summary.md** `## Baseline` with current counts after every implementation attempt.
+### 5. Analyze and fix
 
-### 5. Observe and diagnose
+**Stuck = more than one hypothesis-test cycle without progress.** The fix is always: invoke `/inspect` to observe, or `/research` to learn. Never reason your way out of being stuck.
 
-**Do not guess at changes. Do not reason through behavior in your head.** The goal is to collect precise information about what the system is actually doing vs what it should do. If you're unsure what the system is doing at a particular point, observe it — don't try to trace through the code mentally.
+#### Hardware model gate (blocking prerequisite for `/design`)
 
-#### Invoke `/inspect` with what you need to know
+Before invoking `/design`, summary.md must have all three sections filled (not "Unknown" or blank):
+1. `## Hardware model` — what the hardware does step by step (from a research receipt)
+2. `## Model divergence` — what our emulator does differently, naming specific structs/enums (from an analysis receipt)
+3. **Emulator mechanism understanding** (in `## Model divergence`) — how our code uses the values we're about to change. **Most commonly skipped gate.** Without this, you'll cargo-cult values from references without understanding their effect in our architecture.
 
-**Always invoke `/inspect` first.** Describe what you need to observe — don't try to predict whether the debugger can answer it. The inspect skill knows its own capabilities and will either answer the question or report back that it can't, explaining what would be needed instead. Do not maintain a mental model of what `/inspect` can and can't do — its capabilities change as the debugger evolves.
+If any section is missing → `/research` or `/inspect` + `/analyze`, not `/design`.
 
-**If `/inspect` reports it can't answer**, it will explain what's missing (e.g., "fine_scroll state is not exposed in the pipeline snapshot"). At that point, ask the user whether to extend the debugger API or fall back to `/instrument`. Do not silently fall back — the user should decide.
+#### Design → implement → verify
 
-**Use `/instrument` only after `/inspect` has been tried and found insufficient, and the user has approved the fallback.** `/instrument` adds code instrumentation (logging, print statements) and captures output. It's more invasive than `/inspect` and modifies the codebase temporarily.
+1. `/design` — produces a design receipt. Do not design inline.
+2. `/implement` — applies the design, runs verification, reports results. Do not implement inline.
+3. Update summary.md with results. `/implement` runs the full test suite — check for regressions.
 
-**Format every `/inspect` or `/instrument` request using the protocol in AGENTS.md.** The Question is what you need to observe. The Context is which subsystem/scenario. The Log path is where to save output (for `/instrument`).
+#### When a fix fails
 
-**Observation is not just for step 5.** Any time during the investigation that you need to know what the system is actually doing — while diagnosing, while verifying a change, while investigating a regression — stop and invoke `/inspect`.
+A failed fix means the hardware model or model divergence is wrong — not that the code needs tweaking.
 
-**Invoke `/analyze` to interpret.** When `/inspect` or `/instrument` returns, invoke `/analyze` with the receipt path and summary.md. The analyze skill writes an analysis receipt. Then update summary.md yourself with the conclusions. Do not interpret results inline.
+1. Stop implementing. Record expected vs actual in summary.md.
+2. Identify which understanding is wrong: hardware model or model divergence?
+3. `/research` or `/inspect` + `/analyze` to fill the gap.
+4. Redesign only after updating the relevant summary.md section.
 
-**Every diagnostic observation goes through `/compare-traces`, `/inspect`, or `/instrument`**, not directly. Do not run diagnostics yourself. Prefer `/compare-traces` for initial diagnosis of compatibility failures — it shows exactly where execution diverges without guessing. Use `/inspect` for targeted follow-up when you need sub-dot timing or internal pipeline state that traces don't capture. If `/compare-traces` can't answer the question, report what's missing so gbtrace tooling can be improved.
+**Reference value trap**: If a value from a reference emulator doesn't work, the next step is NEVER "try a different value" — it's `/research` to understand what the value controls in *our* code.
 
-### 6. Analyze and fix
+#### Spinning off a new investigation
 
-#### Recognize when you're stuck
+When the root cause is in a different subsystem than scoped, or the investigation name no longer describes the problem:
+1. Set current summary.md Status to `resolved → spawned new investigation`
+2. Create new investigation folder with correct problem name
+3. New branch from `main`: `git checkout -b <new-name>`
+4. Carry forward validated findings only, not dead-end history
 
-**Stuck means: you've spent more than one hypothesis-test cycle without making progress.** Symptoms:
-
-- You're mentally tracing through state transitions to predict what should happen at a specific point. **Stop. Invoke `/inspect`.**
-- You're counting steps or cycles by hand to figure out when something executes. **Stop. Invoke `/inspect`** to observe the actual value at that point.
-- You're unsure what value something should have at a particular point. **Stop. Formulate the question and invoke `/research`.**
-- You've written more than ~4 lines of behavioral analysis without citing log output. **Stop. You are guessing. Invoke `/inspect`.**
-- Your change attempt didn't work and you're re-reading the same code trying to figure out why. **Stop. Invoke `/inspect`** with targeted observation on the area that surprised you.
-- You're reading diagnostic output and can't tell whether the behavior is correct or wrong. **Stop. Write down what specific hardware behavior you need to understand, and invoke `/research` with that question.** Frame it as "what does the real hardware do when X?" not "what does emulator Y do when X?"
-- Your existing research documents contradict each other, or diagnostic output contradicts what a research document says. **Stop. Formulate the specific contradiction as a question and invoke `/research` to get the authoritative answer, then correct the wrong document.**
-- You've made more than one fix attempt without new diagnostic data between them. **Stop. The second attempt is a guess.** Go back to the hypothesis→measure loop. Invoke `/inspect` to observe what the first attempt actually changed, then invoke `/research` if the measurements reveal a domain knowledge gap.
-
-The fix for every kind of stuck is the same: invoke `/inspect` to observe what the system is doing, or invoke `/research` to learn what it should do. Never reason your way out of being stuck — and never send vague requests to any skill. Write the specific question or hypothesis down first.
-
-#### Root cause analysis
-
-- Study the diagnostic output to identify the root cause.
-- **Update summary.md** with your hypothesis before attempting a fix.
-
-##### Hardware model gate
-
-**Before invoking `/design`, the investigation must have all four:**
-
-1. **A documented hardware behavior model** (in a research receipt) answering: "What does the hardware do, step by step, in this scenario?" This must be cited in summary.md's `## Hardware model` section.
-2. **A documented model divergence** (in an analysis receipt) answering: "What does our emulator do differently, and which specific data structures / state machines / enums are wrong?" This must be cited in summary.md's `## Model divergence` section.
-3. **A documented emulator mechanism understanding** (in a research receipt) answering: "How does our code use the values we're about to change? What functions read them, what conditionals depend on them, what downstream behavior do they control?" This must be cited in summary.md's `## Model divergence` section alongside the structural divergence. **This is the most commonly skipped gate** — it's tempting to jump from "the hardware uses value X" to "change our code to X" without understanding what X controls in our architecture. Values that are correct in the hardware model may need transformation, sign-flipping, or an entirely different mechanism in our code.
-4. **All three sections in summary.md must be filled in** — not "Unknown", not blank.
-
-If any of these are missing, `/design` is blocked. Redirect to `/research` (to understand the hardware OR to understand our emulator's mechanism) or `/inspect` + `/analyze` (to understand the model divergence). The point: you must understand what the hardware does, how our model differs, AND how our code uses the values you're changing before you can design a fix. Skipping any of these leads to trial-and-error implementation attempts — particularly skipping (3), which causes cargo-culting values from reference emulators without understanding their effect in our architecture.
-
-##### Design and implement
-
-- **Invoke `/design` only after the hardware model gate is satisfied.** The design skill reads the architectural requirements, reviews the current code and research, and produces a solution that aligns with the project's philosophy. Do not skip this step — do not design fixes inline. Format the request using the skill invocation protocol: Question (what needs to change), Context (files, research docs, summary.md path). The design skill returns a receipt.
-- **Invoke `/implement` to apply the design.** The implement skill reads the design receipt, makes the code changes, runs verification, and reports results. Do not make code changes yourself — hand them to `/implement`. Format the request using the skill invocation protocol: Design (path to design receipt), Context (summary.md path). The implement skill handles: reading the code, making changes, running `cargo check`, running the test suite, removing diagnostic logging, and reporting pass/fail with test counts.
-- **Update summary.md** after `/implement` returns — whether it succeeded or not, how results changed, what you'll try next if it didn't work. This must happen before you move on to anything else.
-
-#### When the premise changes — spinning off a new investigation
-
-Sometimes an investigation discovers that the original premise was wrong — the root cause is in a completely different subsystem, or the problem is fundamentally different from what was initially scoped. When this happens, **start a new investigation** rather than continuing under the old one.
-
-**Spin off when:**
-- The root cause is in a different subsystem than the investigation was scoped for (e.g., investigation was "write-conflict timing" but root cause is "PPU pixel output pipeline timing")
-- The fix requires changes to code that has nothing to do with the original hypothesis
-- The investigation name no longer describes the problem being solved
-- The RCA tree has exhausted all hypotheses within the original scope and the new direction is a fundamentally different problem, not a refinement of the same one
-
-**How to spin off:**
-1. Write a final update to the current investigation's summary.md: set Status to `resolved → spawned new investigation`, update Current understanding with the reframed root cause, and add a link to the new investigation.
-2. Create a new investigation folder with a name that describes the actual problem (e.g., `2026-02-15-1600-mode3-first-pixel-timing` instead of continuing `write-conflict-flush-fix`).
-3. In the new investigation's summary.md, reference the parent investigation and carry forward only the validated findings — not the dead-end history. The new investigation starts clean with a correct problem statement.
-4. Create a new investigation branch from the base branch (usually `main`): `git checkout main && git checkout -b <new-investigation-short-name>`. The new investigation always gets its own branch — do not reuse the parent investigation's branch, even if it shares the same base.
-
-**Do NOT spin off when:**
-- A hypothesis within the original scope was refuted and you're trying the next one — that's normal investigation flow
-- The fix is more complex than expected but still addresses the original problem
-- You need to change a helper function in a different file — the subsystem boundary is about conceptual scope, not file boundaries
-
-The test: "Would someone reading the investigation name and problem statement understand why the current active hypothesis is being pursued?" If yes, continue. If no, spin off.
-
-#### When a fix attempt fails
-
-A failed fix is diagnostic data, not a prompt to tweak and retry.
-
-**Never attempt fix N+1 without new diagnostic evidence that fix N didn't have.** If you're changing code based on the same information that produced the failed fix, you're guessing.
-
-When a fix produces unexpected results:
-
-1. **Stop implementing.** Do not tweak the fix. Do not stack another change on top.
-2. **Record what the failure tells you.** Update summary.md: expected result, actual result, which hypothesis this invalidates.
-3. **Identify which understanding is wrong.** A failed fix means either the **hardware model** or the **model divergence** analysis is specifically wrong. The question is not "what other code change could work?" but "what did I get wrong about the hardware or about our model?" Write the gap as a specific question targeting one of these two documents.
-4. **Fill the gap.** Invoke `/research` to correct the hardware model, or `/inspect` + `/analyze` to correct the model divergence. Update the `## Hardware model` or `## Model divergence` section of summary.md with the corrected understanding.
-5. **Redesign only after the gap is filled.** The hardware model gate must still be satisfied — both sections must reflect the updated understanding. Do not patch the old design — the old design was based on wrong assumptions.
-
-**Two-strike rule:** If you've attempted 2 implementations without updating the `## Hardware model` section, your hardware understanding is insufficient. Stop implementing entirely and go back to `/research`. New implementation attempts are blocked until the hardware model is updated with new research findings.
-
-**Reference value trap:** A common failure mode is: research finds "reference emulator uses value X" → design changes our code to use X → implementation fails → design tries X-1, X+1, -X, etc. This is trial-and-error with extra steps. The problem is not the value — it's that you don't understand what the value *controls* in your own code. When a reference-emulator-sourced value produces unexpected results, the next step is NEVER "try a different value." It is ALWAYS: invoke `/research` to understand how our code uses that value (rule 9 in discipline requirements), then `/analyze` to reconcile the hardware model with our mechanism.
-
-The loop is: **`/hypothesize` → `/compare-traces` or `/inspect` → `/analyze` → (repeat until confident) → `/design` → `/implement` → verify.** A failed verification sends you back to `/hypothesize`, not back to "implement with tweaks". For compatibility investigations, prefer `/compare-traces` for the observation step — it finds divergence points faster than interactive debugging.
-
-**For compatibility investigations:**
-- **Design fixes based on hardware behavior, not other emulators' code.** The intermediate step is always understanding what the real hardware does — then modeling that behavior in your architecture. Never shortcut from "emulator X does Y" to "we should do Y". Instead: research establishes what the hardware does → design models that behavior in your architecture → implementation follows the design. Reference emulators are evidence about hardware behavior, not templates to copy. Do not copy data structures, variable names, or architectural patterns from reference emulators — they have different designs and their implementation choices may not fit yours.
-- `/implement` runs the full test suite as part of its verification — check its report for regression counts.
+Don't spin off for: refuted hypotheses within scope, more complex fixes, or changes to helper functions in other files.
 
 ### 7. Branch and commit hygiene
 
