@@ -21,7 +21,7 @@ These are the top-level rules governing how skills interact. They survive contex
 - **`AGENTS.md`** — Canonical agent instructions. Tool-specific config files (e.g. `CLAUDE.md`) symlink here so all agents share a single source of truth.
 - **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here. **Symlinks between these directories are user-managed. Do not modify them.**
 - **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored. **Never reference receipt paths in committed code** (comments, commit messages, etc.) — they are ephemeral working documents, not permanent artifacts.
-- **`receipts/resources/`** — External resources checked out on demand: sibling projects, reference emulator source, hardware schematics. These are working copies managed by agents — clone from the canonical repos as needed. See `receipts/resources/README.md` for URLs.
+- **`receipts/resources/`** — External resources: sibling projects, reference emulator source, hardware schematics, etc. Clone or download whatever you need into this directory. It's gitignored, so treat it as a workspace for external material.
 
 ### Context hygiene
 
@@ -177,3 +177,14 @@ When investigating emulator issues, these data sources are available in priority
 
 - **Pane system**: `crates/missingno/src/app/debugger/panes.rs` manages a `pane_grid` of `DebuggerPane` variants (Screen, Instructions, Tiles, TileMap, Sprites, Audio). Each pane is a separate module with a struct (e.g. `ScreenPane`, `InstructionsPane`), a `content()` method returning `pane_grid::Content`, and optionally a `Message` enum. Register new panes by adding to `DebuggerPane` enum, `PaneInstance` enum, `construct_pane()`, `view()`, `available_panes()`, and `Display` impl.
 - **Input recording**: `crates/missingno-gb/src/recording.rs` defines the `Recording` data model (ROM header + initial state + input events).
+
+### Resources
+
+External resources live in `receipts/resources/`. Clone or download whatever you need there — it's gitignored. These sibling projects are referenced throughout the skills and documentation:
+
+| Directory | Repository | Description |
+|-----------|------------|-------------|
+| `gb-propagation-delay-analysis` | https://github.com/ajoneil/gb-propagation-delay-analysis | GateBoy netlist analysis — signal races, critical paths, propagation delays |
+| `gbtrace` | https://github.com/ajoneil/gbtrace | Execution trace capture, diff, and render across emulators |
+| `gb-timing-data` | https://github.com/ajoneil/gb-timing-data | Cycle-level hardware timing measurements |
+| `slowpeek` | https://github.com/ajoneil/slowpeek | Cycle-precise hardware test harness |
