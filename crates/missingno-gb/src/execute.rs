@@ -1,9 +1,10 @@
 use super::{
-    BusAccess, BusAccessKind, ClockPhase, GameBoy,
+    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedPpuWrite,
     cpu::mcycle::DotAction,
     interrupts::Interrupt,
     memory::Bus,
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
+    ppu_write_visibility_dot,
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -173,6 +174,9 @@ impl GameBoy {
 
         // ── M-cycle boundary: g42 latch, then PPU + interrupt capture, BEFORE CPU transition ──
         if is_mcycle_boundary {
+            // Clear any staged PPU write from the previous M-cycle.
+            self.staged_ppu_write = None;
+
             // Timer ticks once per M-cycle (BOGA). On hardware, BOGA fires
             // at the same phase A edge as the ring counter. Place the timer
             // tick at the very start of the M-cycle boundary, before g42.
@@ -226,6 +230,23 @@ impl GameBoy {
         let dot = self.cpu.dot_for_execute();
         self.current_dot = dot;
 
+        // Stage PPU register writes at dot 0. On hardware, the CPU
+        // places the address on the bus at phase A and the address
+        // decode chain begins propagating. We look ahead to the
+        // M-cycle's bus action and record the write so it can be
+        // applied at the hardware-correct visibility dot.
+        if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
+            let visible_at = ppu_write_visibility_dot(address);
+            if visible_at < 4 {
+                self.staged_ppu_write = Some(StagedPpuWrite {
+                    address,
+                    value,
+                    visible_at,
+                    applied: false,
+                });
+            }
+        }
+
         // BOWA (dot 0): record OAM bug from address in the upcoming action.
         if dot.bowa()
             && let DotAction::InternalOamBug { address } = &self.current_dot_action
@@ -241,6 +262,25 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
+            // Apply staged PPU write at dot 2 (visibility_dot == 2).
+            // On hardware, the write pulse settles through address decode
+            // and the register DFF captures. Combinational readers (LCDC,
+            // SCX, BGP, OBP, STAT) see the new value from this point.
+            if dot.as_u8() == 2 {
+                let apply_dot2 = self
+                    .staged_ppu_write
+                    .as_ref()
+                    .is_some_and(|s| s.visible_at == 2);
+                if apply_dot2 {
+                    let staged = self.staged_ppu_write.as_ref().unwrap();
+                    let (addr, val) = (staged.address, staged.value);
+                    if self.drive_ppu_bus(addr, val) {
+                        self.interrupts.request(Interrupt::VideoStatus);
+                    }
+                    self.staged_ppu_write.as_mut().unwrap().applied = true;
+                }
+            }
+
             // Snapshot LY==LYC comparison state before PPU rise.
             // ROPO latches LYC comparison at TALU rising edge during
             // ppu.rise(). If the comparison transitions to match,
@@ -389,21 +429,22 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // DFF9 register writes (LCDC, SCY, SCX, WX) land before ppu.fall()
-        // so that the fetcher's VRAM address logic sees the new values
-        // immediately. On hardware, all DFF9 registers use identical cells
-        // and are read combinationally — the write settles before the
-        // fetcher computes its next address.
-        let early_ppu_write = if let DotAction::Write { address, value } = &self.current_dot_action
-            && matches!(*address, 0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49)
-        {
-            if self.drive_ppu_bus(*address, *value) {
+        // Apply staged PPU write at dot 3 fall (visibility_dot == 3).
+        // SCY's consumer sits behind one pipeline stage, so the write
+        // becomes visible one dot later than the baseline.
+        let apply_dot3 = dot.as_u8() == 3
+            && self
+                .staged_ppu_write
+                .as_ref()
+                .is_some_and(|s| s.visible_at == 3 && !s.applied);
+        if apply_dot3 {
+            let staged = self.staged_ppu_write.as_ref().unwrap();
+            let (addr, val) = (staged.address, staged.value);
+            if self.drive_ppu_bus(addr, val) {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
-            true
-        } else {
-            false
-        };
+            self.staged_ppu_write.as_mut().unwrap().applied = true;
+        }
 
         // PPU falling phase: fetcher, DFF8/DFF9, LCD-off.
         let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
@@ -425,11 +466,11 @@ impl GameBoy {
                 if (0xFE00..=0xFEFF).contains(&address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
-                // Skip drive_ppu_bus for DFF9 regs — already handled before ppu.fall().
-                if !early_ppu_write {
-                    if self.drive_ppu_bus(address, value) {
-                        self.interrupts.request(Interrupt::VideoStatus);
-                    }
+                // Skip drive_ppu_bus if the staged write mechanism already
+                // applied this write at the correct visibility dot.
+                let already_applied = self.staged_ppu_write.as_ref().is_some_and(|s| s.applied);
+                if !already_applied && self.drive_ppu_bus(address, value) {
+                    self.interrupts.request(Interrupt::VideoStatus);
                 }
                 self.write_byte(address, value);
             }

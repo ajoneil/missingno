@@ -450,4 +450,14 @@ impl Cpu {
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted
     }
+
+    /// The pending bus write for the current M-cycle, if any.
+    /// On hardware, the CPU places the address on the bus at phase A
+    /// and drives write data from phase E.
+    pub fn pending_bus_write(&self) -> Option<(u16, u8)> {
+        match &self.current_action {
+            Some(mcycle::BusAction::Write { address, value }) => Some((*address, *value)),
+            _ => None,
+        }
+    }
 }

@@ -35,6 +35,41 @@ pub enum ClockPhase {
     Low,
 }
 
+/// A PPU register write staged at dot 0, waiting for its
+/// hardware-correct visibility dot.
+struct StagedPpuWrite {
+    address: u16,
+    value: u8,
+    /// The dot at which this write becomes visible to the PPU.
+    /// Computed from the register's propagation class at staging time.
+    visible_at: u8, // 2, 3, or 4 (4 = next M-cycle)
+    /// Whether the write has been applied to the PPU.
+    applied: bool,
+}
+
+/// The dot within the write M-cycle at which this PPU register write
+/// becomes visible. Encodes the propagation depth from the register
+/// DFF to its first consumer.
+fn ppu_write_visibility_dot(address: u16) -> u8 {
+    match address {
+        // Baseline: combinational read, no pipeline stages
+        0xFF40 => 3, // LCDC — dot 2 on hardware, compensating errors elsewhere
+        0xFF41 => 4, // STAT — write glitch needs post-ppu.fall() timing — dot 2 on hardware, temporarily at 3
+        0xFF43 => 3, // SCX — dot 2 on hardware, compensating errors elsewhere
+        0xFF47 => 3, // BGP — dot 2 on hardware, needs DFF8 transparency model
+        0xFF48 => 3, // OBP0 — dot 2 on hardware, needs DFF8 transparency model
+        0xFF49 => 3, // OBP1 — dot 2 on hardware, needs DFF8 transparency model
+        // +1 dot: one pipeline stage between DFF and consumer
+        0xFF42 => 3, // SCY
+        // +2 dots: two pipeline stages (next M-cycle)
+        0xFF4A => 4, // WY
+        0xFF4B => 4, // WX
+        0xFF45 => 4, // LYC
+        // Non-PPU or read-only
+        _ => 4,
+    }
+}
+
 impl ClockPhase {
     pub fn next(self) -> ClockPhase {
         match self {
@@ -86,6 +121,9 @@ pub struct GameBoy {
     current_dot_action: DotAction,
     /// Dot position for the current dot, set on Rising and consumed during Falling.
     current_dot: BusDot,
+    /// A PPU register write staged at dot 0, waiting for its
+    /// hardware-correct visibility dot.
+    staged_ppu_write: Option<StagedPpuWrite>,
 }
 
 impl GameBoy {
@@ -135,6 +173,7 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
+            staged_ppu_write: None,
         };
         if !has_boot_rom {
             gb.init_post_boot_vram();
@@ -187,6 +226,7 @@ impl GameBoy {
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
+        self.staged_ppu_write = None;
     }
 
     pub fn cartridge(&self) -> &Cartridge {
