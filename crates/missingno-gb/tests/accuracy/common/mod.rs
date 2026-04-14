@@ -146,7 +146,7 @@ impl Drop for TestRun {
 fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
 
-    let gbtrace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gbtrace");
+    let gbtrace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/resources/gbtrace");
     // Search for the profile in several locations:
     // 1. profiles/<name>.toml (standard profiles)
     // 2. test-suites/<name>/profile.toml (test-suite-specific)

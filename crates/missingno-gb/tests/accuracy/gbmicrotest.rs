@@ -188,7 +188,7 @@ gbmicrotest!(lcdon_to_stat1_c);
 // These two tests fail — the mode 0 "glitch" at the line 153→0 boundary may
 // be caused by propagation delay races (GateBoy also fails them, but GateBoy
 // resolves combinatorial logic instantly, so it has the same limitation).
-// See ../gmb-ppu-analysis for relevant signal races.
+// See receipts/resources/gb-propagation-delay-analysis for relevant signal races.
 gbmicrotest!(lcdon_to_stat1_d);
 gbmicrotest!(lcdon_to_stat1_e);
 // First scanline after LCD enable is 6 dots too long (454 vs ≤448). The

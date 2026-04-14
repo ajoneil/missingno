@@ -14,13 +14,14 @@ These are the top-level rules governing how skills interact. They survive contex
 
 4. **summary.md is the single source of truth for investigation state.** Update it before every skill dispatch and after every skill return — no exceptions. If context were compacted right now, `summary.md` alone must tell you exactly where you are and what to do next. Only the `/investigate` skill writes to `summary.md`.
 
-5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources: gbtrace execution traces (both comparison and individual inspection), PPU propagation delay analysis (`../gmb-ppu-analysis/`), hardware timing data (`../gb-timing-data/`), or existing research documents in `receipts/research/`. Generate new diagnostic data only when existing sources don't answer the question.
+5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources: gbtrace execution traces (both comparison and individual inspection), propagation delay analysis (`receipts/resources/gb-propagation-delay-analysis/`), hardware timing data (`receipts/resources/gb-timing-data/`), or existing research documents in `receipts/research/`. Generate new diagnostic data only when existing sources don't answer the question.
 
 ## Agent Infrastructure
 
 - **`AGENTS.md`** — Canonical agent instructions. Tool-specific config files (e.g. `CLAUDE.md`) symlink here so all agents share a single source of truth.
 - **`.agents/skills/`** — Canonical skill/command definitions (slash commands). Tool-specific command directories (e.g. `.claude/commands/`) symlink here. **Symlinks between these directories are user-managed. Do not modify them.**
 - **`receipts/`** — Output directory for skill executions. Skills should write any persistent output (logs, reports, diffs) here. Gitignored. **Never reference receipt paths in committed code** (comments, commit messages, etc.) — they are ephemeral working documents, not permanent artifacts.
+- **`receipts/resources/`** — External resources checked out on demand: sibling projects, reference emulator source, hardware schematics. These are working copies managed by agents — clone from the canonical repos as needed. See `receipts/resources/README.md` for URLs.
 
 ### Context hygiene
 
@@ -93,7 +94,7 @@ cargo fmt                                    # Format
 - **Hardware fidelity**: Model the hardware as closely as possible so correct behavior emerges naturally. Avoid hacks and special-case workarounds — if something needs a hack to work, the underlying model is wrong.
 - **Code as documentation**: The code should teach the reader how the hardware works. Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself, not from comments. Strike a balance between clarity and jargon; assume the reader is a competent programmer but not necessarily a domain expert in the specific hardware.
 - **Hardware over emulator comparisons**: Other emulators are reference material, not ground truth. Always attribute emulator-sourced findings explicitly ("SameBoy does X") rather than as hardware fact.
-- **Data-driven debugging**: Use available data resources (gbtrace, gmb-ppu-analysis, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
+- **Data-driven debugging**: Use available data resources (gbtrace, gb-propagation-delay-analysis, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
 - **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
 
 ## Architecture
@@ -142,15 +143,15 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 - **Memory-mapped I/O**: `MappedAddress::map()` translates raw addresses to typed enum variants, routing reads/writes to the correct subsystem.
 - **Enum-based MBC dispatch**: `Mbc` enum in `crates/missingno-gb/src/cartridge/mbc/mod.rs` with variants for all known Game Boy cartridge types (NoMbc, MBC1-3, MBC5-7, HuC1, HuC3), selected at runtime from cartridge header byte 0x147. ROM data is owned by `Cartridge` and passed to MBC `read()` methods as `&[u8]`.
 - **PPU state machine**: `Ppu` holds an `Option<Rendering>` — `None` when the LCD is off (hardware reset state), `Some(Rendering)` when on. `Rendering` persists through both active display and VBlank (matching hardware where pixel circuits are always present when LCD is on). Modes are derived from `video.vblank` and scanning state within `Rendering`. Draws pixels one at a time with cycle-accurate timing.
-- **PPU propagation delay analysis**: The sibling project [`gmb-ppu-analysis`](https://github.com/ajoneil/gmb-ppu-analysis) (local clone: `../gmb-ppu-analysis/`) provides static analysis of GateBoy's PPU netlist — signal races, deep combinatorial paths, and propagation delays. Key outputs in `../gmb-ppu-analysis/output/`: `race_pairs_report.md` (observable effects by symptom), `critical_paths_report.md` (deepest paths), `signal_concordance.md` (GateBoy cell names ↔ Pan Docs names). For one-dot timing discrepancies, check race pairs first.
+- **Propagation delay analysis**: The sibling project [`gb-propagation-delay-analysis`](https://github.com/ajoneil/gb-propagation-delay-analysis) (local clone: `receipts/resources/gb-propagation-delay-analysis/`) provides static analysis of GateBoy's netlist — signal races, deep combinatorial paths, and propagation delays. Key outputs in `receipts/resources/gb-propagation-delay-analysis/output/`: `race_pairs_report.md` (observable effects by symptom), `critical_paths_report.md` (deepest paths), `signal_concordance.md` (GateBoy cell names ↔ Pan Docs names). For one-dot timing discrepancies, check race pairs first.
 
-- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `../gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy traces at T-cycle granularity. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
+- **Execution tracing (gbtrace)**: The sibling project [`gbtrace`](https://github.com/ajoneil/gbtrace) (local clone: `receipts/resources/gbtrace/`) defines a standardised format for recording and comparing Game Boy emulator execution state across multiple emulators. Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy traces at T-cycle granularity. Missingno integrates this behind the `gbtrace` feature flag on `missingno-gb`:
   - **Capturing traces** — `tests/accuracy/common/` wraps `GameBoy` in `TestRun`, which optionally traces each `step()`:
     ```bash
     GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <test_name>
     ```
-    Writes to `receipts/traces/<rom_name>.gbtrace`. Profiles are per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`.
-  - **gbtrace CLI** — Build with `cargo build -p gbtrace --features cli` from the gbtrace repo. Key commands:
+    Writes to `receipts/traces/<rom_name>.gbtrace`. Profiles are per-suite TOML files in `receipts/resources/gbtrace/test-suites/*/profile.toml`.
+  - **gbtrace CLI** — Build with `cargo build -p gbtrace --features cli` from `receipts/resources/gbtrace/`. Key commands:
     - `gbtrace info <file>` — trace metadata summary.
     - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions (`--context N`, `--max N`, `--last N`, `--range START..END`, `--fields`).
     - `gbtrace diff <a> <b>` — compare traces (`--sync`, `--fields`, `--exclude`, `--summary`).
@@ -166,11 +167,11 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 When investigating emulator issues, these data sources are available in priority order. Always check existing data before generating new diagnostics.
 
 1. **Hardware documentation**: Pan Docs, TCAGBD, hardware manuals.
-2. **PPU propagation delay analysis** (`../gmb-ppu-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
+2. **Propagation delay analysis** (`receipts/resources/gb-propagation-delay-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
 3. **Cross-emulator execution traces** (gbtrace): 5 emulators, 15 test suites. Use for both `diff` and individual inspection. See Key Patterns above.
-4. **Hardware timing measurements** (`../gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `../gb-timing-data/campaigns/` for available campaigns.
+4. **Hardware timing measurements** (`receipts/resources/gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `receipts/resources/gb-timing-data/campaigns/` for available campaigns.
 5. **Test ROM sources**: Assembly source reveals exactly what tests measure and what expected values mean.
-6. **Hardware test harness** (`../slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
+6. **Hardware test harness** (`receipts/resources/slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
 
 ### Debugger
 

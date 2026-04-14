@@ -22,7 +22,7 @@ The caller provides:
 ## Process
 
 1. **Re-read the data source and summary.md.** Do not work from memory. Read the actual files.
-1b. **For PPU timing analysis, consult propagation delay data.** If the analysis involves PPU one-dot discrepancies or timing races, read `../gmb-ppu-analysis/output/race_pairs_report.md` to check whether the observed behavior matches a known signal race. The race pairs report lists observable effects grouped by symptom (e.g. "OAM scan extends one dot", "fine scroll applies one dot late"). A match between measured behavior and a known race is strong evidence for the hypothesis.
+1b. **For timing analysis, consult propagation delay data.** If the analysis involves one-dot discrepancies or timing races (especially PPU, where races have the largest observable effects), read `receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md` to check whether the observed behavior matches a known signal race. The race pairs report lists observable effects grouped by symptom (e.g. "OAM scan extends one dot", "fine scroll applies one dot late"). A match between measured behavior and a known race is strong evidence for the hypothesis.
 2. **State what the data shows.** Extract the specific measurements or findings relevant to the active hypothesis. Be concrete — cite values, line numbers in log files, specific statements from research docs.
 3. **Compare against expectations.** What did the hypothesis predict? What did the data show? Where do they match and where do they diverge?
 4. **Update the model.** Based on the comparison:

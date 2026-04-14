@@ -5,7 +5,7 @@ Compare and inspect execution traces between missingno and reference emulators (
 ## When to use
 
 Use this skill when investigating a test failure where:
-- A reference trace exists (check suite manifests at `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` or locally in `../gbtrace/test-suites/`)
+- A reference trace exists (check suite manifests at `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json` or locally in `receipts/resources/gbtrace/test-suites/`)
 - You need to find **where** execution diverges, not just **that** it fails
 - The failure involves timing, register values, or execution path differences
 - You need to understand what the emulator did during a test (individual trace inspection)
@@ -19,9 +19,9 @@ Prefer this over `/inspect` (debugger) for initial diagnosis — traces show the
 
 ## Prerequisites
 
-1. **gbtrace CLI** built: `cd ../gbtrace && cargo build -p gbtrace --features cli`
+1. **gbtrace CLI** built: `cd receipts/resources/gbtrace && cargo build -p gbtrace --features cli`
 2. **gbtrace feature** on missingno: `cargo test -p missingno-gb --features gbtrace`
-3. **GBTRACE_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `../gbtrace/test-suites/*/profile.toml`.
+3. **GBTRACE_PROFILE** env var set to the suite name (e.g. `gbmicrotest`, `blargg`, `mooneye`). Profiles are per-suite TOML files in `receipts/resources/gbtrace/test-suites/*/profile.toml`.
 
 ## Generating traces
 
@@ -35,9 +35,9 @@ The test runner captures state at every T-cycle (for tcycle profiles) or every i
 
 ### GateBoy trace (fresh, with fixed adapter)
 ```bash
-../gbtrace/adapters/gateboy/gbtrace-gateboy \
-  --rom ../gbtrace/test-suites/gbmicrotest/<test>.gb \
-  --profile ../gbtrace/test-suites/gbmicrotest/profile.toml \
+receipts/resources/gbtrace/adapters/gateboy/gbtrace-gateboy \
+  --rom receipts/resources/gbtrace/test-suites/gbmicrotest/<test>.gb \
+  --profile receipts/resources/gbtrace/test-suites/gbmicrotest/profile.toml \
   --output <output_path> \
   --stop-when FF82=01 --stop-when FF82=FF \
   --frames 5
@@ -63,7 +63,7 @@ URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
 
 Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy provides T-cycle granularity traces. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2, age, mooneye-wilbertpol, samesuite, scribbltests, bully, little-things, mbc3-tester, strikethrough, turtle-tests.
 
-Reference traces are also available locally in `../gbtrace/test-suites/` if the gbtrace repo has them built.
+Reference traces are also available locally in `receipts/resources/gbtrace/test-suites/` if the gbtrace repo has them built.
 
 ## Diffing traces
 
@@ -243,9 +243,9 @@ When the full diff is too noisy, narrow the comparison to a specific region:
 ### Data sources for context
 
 When interpreting trace data, cross-reference with:
-- **Hardware timing data** (`../gb-timing-data/`): If a campaign exists for the behavior you're investigating, the CSV data provides ground-truth cycle measurements. Check `../gb-timing-data/campaigns/` for relevant TOML definitions. **Note: data collection is in progress — check what's available before assuming a campaign has results.**
-- **PPU race pairs** (`../gmb-ppu-analysis/output/race_pairs_report.md`): For 1-dot timing discrepancies, check whether the divergence corresponds to a known signal race.
-- **Slowpeek** (`../slowpeek/`): For behaviors where no existing data covers the question, note that a Slowpeek sweep test could provide definitive hardware measurements. **Note: hardware serial path not yet complete — emulator-only for now.**
+- **Hardware timing data** (`receipts/resources/gb-timing-data/`): If a campaign exists for the behavior you're investigating, the CSV data provides ground-truth cycle measurements. Check `receipts/resources/gb-timing-data/campaigns/` for relevant TOML definitions. **Note: data collection is in progress — check what's available before assuming a campaign has results.**
+- **PPU race pairs** (`receipts/resources/gb-propagation-delay-analysis/output/race_pairs_report.md`): For 1-dot timing discrepancies, check whether the divergence corresponds to a known signal race.
+- **Slowpeek** (`receipts/resources/slowpeek/`): For behaviors where no existing data covers the question, note that a Slowpeek sweep test could provide definitive hardware measurements. **Note: hardware serial path not yet complete — emulator-only for now.**
 
 ## Limitations — suggest improvements
 
