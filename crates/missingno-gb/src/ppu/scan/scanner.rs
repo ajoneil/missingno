@@ -33,13 +33,14 @@ pub(in crate::ppu) struct SpriteScanner {
     /// where the scanner starts but the first comparison happens on the
     /// next falling edge.
     catu_just_fired: bool,
-    /// BYBA: DFF17 capturing scan_done() on rising edge. Because rise()
-    /// runs before fall() (which ticks the counter), BYBA sees the
-    /// counter state from the previous XUPY cycle. Single DFF delay =
-    /// 2 dots.
+    /// BYBA: DFF17 clocked by XUPY (captures in fall).
     byba: bool,
-    /// DOBA: DFF17 capturing BYBA on falling edge.
+    /// DOBA: DFF17 clocked by alet (captures in fall).
     doba: bool,
+    /// AVAP result from fall(), consumed by rise(). On hardware AVAP
+    /// is combinational (valid as soon as BYBA/DOBA settle in fall()),
+    /// but the rendering pipeline reacts in rise().
+    avap_pending: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -63,6 +64,7 @@ impl SpriteScanner {
             catu_just_fired: false,
             byba: false,
             doba: false,
+            avap_pending: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -154,37 +156,15 @@ impl SpriteScanner {
     /// by BESU.
     pub(in crate::ppu) fn rise(
         &mut self,
-        xupy_rising: bool,
-        ly: u8,
-        regs: &PipelineRegisters,
-        oam: &Oam,
+        _xupy_rising: bool,
+        _ly: u8,
+        _regs: &PipelineRegisters,
+        _oam: &Oam,
     ) -> ScanSignals {
-        // BYBA: DFF capturing scan_done() on rising edge. rise() runs
-        // before fall(), so the counter hasn't ticked yet — BYBA naturally
-        // sees the previous XUPY cycle's value.
-        if xupy_rising {
-            self.byba = self.counter.scan_done();
-        }
-
-        // AVAP: combinational scan-done trigger.
-        let avap = self.byba && !self.doba;
-
-        // On the AVAP dot, complete entry 39's comparison then clear
-        // scanning/besu atomically. On hardware, the comparison runs on
-        // separate clocks (COTA/WUDA) that complete alongside BESU
-        // clearing — both happen in the same simulation pass.
-        if avap && self.scanning {
-            if xupy_rising {
-                self.counter
-                    .compare_and_store(ly, &mut self.sprites, regs, oam);
-            }
-            self.scanning = false;
-            self.besu = false;
-        }
-
-        // CATU pipeline was already advanced by tick_catu() (unconditional,
-        // not gated by VBlank). See tick_catu() for the DFF shift and BESU logic.
-
+        // AVAP was already evaluated in fall() (after BYBA/DOBA captured).
+        // Return the stored result so rendering.rise() can react to it.
+        let avap = self.avap_pending;
+        self.avap_pending = false;
         ScanSignals { avap }
     }
 
@@ -230,28 +210,34 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // OAM comparison and counter tick are suppressed on the dot CATU
-        // fires — the scanner just started, the first real comparison happens
-        // on the next falling edge.
+        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
+        self.doba = self.byba;
+
+        // BYBA captures scan_done on XUPY rising.
+        if xupy_rising {
+            self.byba = self.counter.scan_done();
+        }
+
+        // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
+        let avap = self.byba && !self.doba;
+        if avap && self.scanning {
+            self.scanning = false;
+            self.besu = false;
+            self.avap_pending = true;
+        }
+
+        // OAM comparison and counter tick.
         if self.catu_just_fired {
             self.catu_just_fired = false;
         } else {
-            // OAM comparison and sprite store population only happen during scanning.
-            // Must run before tick_clock() — compare uses current entry, then clock advances.
-            // On the AVAP dot, scanning is already false (cleared in rise() alongside
-            // entry 39's comparison), so this naturally skips — no double-comparison.
             if self.scanning && xupy_rising {
                 self.counter
                     .compare_and_store(ly, &mut self.sprites, regs, oam);
             }
-
             if xupy_rising {
                 self.counter.tick_clock();
             }
         }
-
-        // DOBA: captures BYBA on falling edge.
-        self.doba = self.byba;
     }
 
     /// Reset at scanline boundary. Sets rutu = true so the CATU DFF
@@ -266,6 +252,7 @@ impl SpriteScanner {
         // But we reset them for cleanliness.
         self.byba = false;
         self.doba = false;
+        self.avap_pending = false;
         self.catu = false;
         self.catu_just_fired = false;
         // RUTU fires at the scanline boundary. CATU captures it on the
