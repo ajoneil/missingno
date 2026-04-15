@@ -193,7 +193,7 @@ impl GameBoy {
             self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
 
             // PPU rising phase at the M-cycle boundary (dot 0).
-            let ppu_result = self.ppu.rise(&self.vram_bus.vram);
+            let ppu_result = self.ppu.rise();
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -288,7 +288,7 @@ impl GameBoy {
             let lyc_was_matched = self.ppu.ly_eq_lyc();
 
             // PPU rising phase for non-boundary dots.
-            let ppu_result = self.ppu.rise(&self.vram_bus.vram);
+            let ppu_result = self.ppu.rise();
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }

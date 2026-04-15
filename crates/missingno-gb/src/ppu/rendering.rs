@@ -437,7 +437,6 @@ impl Rendering {
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
-        vram: &Vram,
     ) -> Option<PixelOutput> {
         // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated.
         // CATU was already advanced by tick_catu().
@@ -483,8 +482,6 @@ impl Rendering {
             self.mode3_pixel_pipeline(
                 regs,
                 video,
-                oam,
-                vram,
                 rydy_before_pory,
                 pixel_counter_before_sacu,
             )
@@ -528,19 +525,19 @@ impl Rendering {
     ///
     /// Fetcher VRAM reads (counter doesn't increment on fall — LEBO fires
     /// on rise only), cascade DFFs (NYKA, PYGO), NOR latches (POKY),
-    /// combinational signals (TYFA bridge), and fine scroll match (PUXA)
-    /// fire on the falling edge.
+    /// combinational signals (TYFA), sprite fetch counter advance (SABE),
+    /// and fine scroll match (PUXA) fire on the falling edge.
     fn mode3_falling(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        _oam: &Oam,
+        oam: &Oam,
         vram: &Vram,
         palette_changed: bool,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
         // (TYFA suppression) and is latched into hblank for next dot's wodu().
-        let fepo = self.fepo(regs);
+        let mut fepo = self.fepo(regs);
 
         // LYRY: combinational on fetch_counter (>= 5). The counter only
         // increments on rising (LEBO clock), so the value here reflects
@@ -562,6 +559,40 @@ impl Rendering {
             );
 
             self.cascade.fall(lyry);
+        }
+
+        // Sprite fetch counter advance (SABE clock). On hardware, SABE =
+        // NAND2(LAPE, TAME) fires when alet rises (= master falls = this
+        // falling phase). Placed BEFORE the TEKY/RYCE block so a newly
+        // initiated sprite fetch doesn't advance on its first dot (matching
+        // hardware where SABE needs one alet cycle after TAKA sets).
+        if self.sprite_trigger.taka() {
+            match self.sprite_state {
+                SpriteState::Fetching(ref mut sf) => {
+                    let done = sf.advance(regs, oam, vram);
+                    if done {
+                        sf.merge_into(&mut self.obj_shifter, oam);
+                        // Data-pin pixel overwrite: REMY/RAVO update
+                        // combinationally after sprite merge.
+                        pixel_output::sprite_overwrite_data_latch(
+                            &self.bg_shifter,
+                            &self.obj_shifter,
+                            self.lcd.data_latch_mut(),
+                            self.window.window_zero_pixel_mut(),
+                            regs,
+                        );
+                        self.sprite_state = SpriteState::Idle;
+                        self.sprite_trigger.clear_taka();
+                        // Recompute FEPO: the sprite is now marked as fetched,
+                        // so FEPO goes false. On hardware, FEPO is purely
+                        // combinational — TYFA sees the updated value
+                        // immediately, allowing CLKPIPE to resume on the
+                        // next rising edge.
+                        fepo = self.fepo(regs);
+                    }
+                }
+                SpriteState::Idle => {}
+            }
         }
 
         // TEKY: combinational sprite fetch request.
@@ -698,15 +729,14 @@ impl Rendering {
     /// than the myvo-clocked DFFs. This method evaluates against the
     /// settled fetcher state from `mode3_advance_fetcher`.
     ///
-    /// Handles: TYFA consumption, PUXA/POVA fine scroll match, sprite
-    /// fetch advance, pixel shift registers, SEKO tile reload, LCD
-    /// output, fine scroll counter, and NUKO window trigger.
+    /// Handles: TYFA consumption, PUXA/POVA fine scroll match, pixel
+    /// shift registers, SEKO tile reload, LCD output, fine scroll
+    /// counter, and NUKO window trigger. Sprite fetch advance now
+    /// happens in mode3_falling (SABE clock, alet-rise edge).
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        oam: &Oam,
-        vram: &Vram,
         rydy_before_pory: bool,
         pixel_counter_before_sacu: u8,
     ) -> Option<PixelOutput> {
@@ -730,39 +760,13 @@ impl Rendering {
             false
         };
 
-        // Track whether sprite fetch just completed this dot. On hardware,
-        // FEPO_old (previous dot's FEPO) gates TYFA — even after sfetch_done
-        // clears TAKA, FEPO_old keeps TYFA suppressed for one more dot because
-        // FEPO was still true on the preceding dot (sprite store X isn't cleared
-        // until sfetch_done). In missingno, we model this by not running the
-        // pixel pipeline on the sfetch_done dot — TAKA clears but the pipeline
-        // waits until the next dot when TYFA is recomputed with FEPO=false.
-        let mut sfetch_done_this_dot = false;
+        // Sprite fetch counter now advances in mode3_falling (SABE clock,
+        // alet-rise edge). When TAKA is true, the pixel pipeline is frozen.
+        // After sprite fetch completes in falling, TAKA clears and FEPO is
+        // recomputed, so TYFA correctly enables the pixel clock on the next
+        // rising edge.
 
-        if self.sprite_trigger.taka() {
-            // Sprite fetch active: advance sprite data pipeline.
-            match self.sprite_state {
-                SpriteState::Fetching(ref mut sf) => {
-                    let done = sf.advance(regs, oam, vram);
-                    if done {
-                        sf.merge_into(&mut self.obj_shifter, oam);
-                        pixel_output::sprite_overwrite_data_latch(
-                            &self.bg_shifter,
-                            &self.obj_shifter,
-                            self.lcd.data_latch_mut(),
-                            self.window.window_zero_pixel_mut(),
-                            regs,
-                        );
-                        self.sprite_state = SpriteState::Idle;
-                        self.sprite_trigger.clear_taka();
-                        sfetch_done_this_dot = true;
-                    }
-                }
-                SpriteState::Idle => {}
-            }
-        }
-
-        if !self.sprite_trigger.taka() && !sfetch_done_this_dot {
+        if !self.sprite_trigger.taka() {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
             if sacu {

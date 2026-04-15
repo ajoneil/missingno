@@ -475,7 +475,7 @@ impl Ppu {
     ///
     /// XOTA divider chain toggle, scanline boundary handling, pixel
     /// output pipeline, VBlank IF, and LYC comparison.
-    pub fn rise(&mut self, vram: &Vram) -> PpuTickResult {
+    pub fn rise(&mut self) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
@@ -557,7 +557,7 @@ impl Ppu {
         // POPU. During VBlank, XYMU and BESU are both low, so
         // rendering.rise() is effectively a no-op.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.rise(&self.registers, &self.video, &self.oam, vram);
+            result.pixel = rendering.rise(&self.registers, &self.video, &self.oam);
         }
 
         // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
