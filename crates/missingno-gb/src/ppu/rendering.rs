@@ -40,20 +40,6 @@ impl fmt::Display for Mode {
     }
 }
 
-/// Within-phase snapshot of signals that are both read and written during
-/// `mode3_rising`. On hardware, combinational logic within a phase reads DFF
-/// outputs from before the clock edge (rising edge). This struct captures
-/// those values at the top of `mode3_rising` before any sequential mutations
-/// within the same phase.
-struct RisingPhaseInputs {
-    /// RYDY value from the previous phase boundary. TYFA, SEKO, and SUZU
-    /// all read this (modeling state_old.RYDY) rather than the live value.
-    rydy: bool,
-    /// Pixel counter value before SACU increment. NUKO (window trigger
-    /// comparator) reads pix_count DFF Q-outputs combinationally — the
-    /// pre-clock value, before the SACU edge advances the counter.
-    pixel_counter: u8,
-}
 
 pub struct SpriteStoreSnapshot {
     pub count: u8,
@@ -131,27 +117,6 @@ pub struct PipelineSnapshot {
     pub doba: bool,
 }
 
-/// Values bridged between half-phases. The pipeline alternates:
-/// fall() produces FallingToRising (tyfa), rise() consumes it.
-/// rise() produces RisingConsumed as a sentinel, fall() ignores it.
-///
-/// TEKY is computed directly in mode3_falling (where SOBU captures it
-/// on the TAVA clock edge), so it no longer needs bridging from rising.
-/// This also ensures FEPO/TEKY see the current LCDC sprites_enabled
-/// value (LCDC writes land before ppu.fall() in execute.rs).
-enum PhaseBridge {
-    /// Produced by mode3_falling, consumed by mode3_rising.
-    FallingToRising {
-        /// TYFA (pixel clock enable). On hardware, TYFA is clocked by
-        /// alet (captures on master-clock fall). Bridged to the next
-        /// rise() where CLKPIPE consumes it.
-        /// AND(!FEPO, !WODU, !RYDY, POKY).
-        tyfa: bool,
-    },
-    /// Sentinel written by mode3_rising after consuming FallingToRising.
-    /// Prevents stale tyfa from being re-consumed on the next rising.
-    RisingConsumed,
-}
 
 pub struct Rendering {
     /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
@@ -175,9 +140,9 @@ pub struct Rendering {
     /// Window control block (die page 27): RYDY latch, WX comparator,
     /// window line counter, window zero pixel.
     window: WindowControl,
-    /// Combinational values crossing the half-phase boundary. Alternates
-    /// between FallingToRising (tyfa) and RisingConsumed.
-    phase_bridge: PhaseBridge,
+    /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
+    /// Computed in mode3_falling, consumed in mode3_rising.
+    tyfa: bool,
     /// LCD Control block (die page 24): pixel X counter, LCD clock
     /// gating (WUSA), POVA trigger, LCD shift register, data latch.
     lcd: LcdControl,
@@ -199,7 +164,7 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            phase_bridge: PhaseBridge::RisingConsumed,
+            tyfa: false,
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
@@ -502,8 +467,27 @@ impl Rendering {
 
         // Mode 3 (drawing) — pixel output phase.
         // Runs when XYMU is set (rendering active).
+        //
+        // Two sub-phases model the hardware's signal domains:
+        // 1. Fetcher DFF advance (myvo-clocked, depth 16-22 ge)
+        // 2. Pixel pipeline (CLKPIPE/SACU-driven, depth 63.8 ge)
         if self.hblank.xymu() {
-            self.mode3_rising(regs, video, oam, vram)
+            // Snapshot pre-step-2 RYDY for SEKO and window check_trigger.
+            // PORY may clear RYDY during mode3_advance_fetcher, but SEKO
+            // and the window reactivation path need the pre-PORY value.
+            // Pixel counter is unchanged by mode3_advance_fetcher (only
+            // SACU increments it, which happens in mode3_pixel_pipeline).
+            let rydy_before_pory = self.window.rydy();
+            let pixel_counter_before_sacu = self.lcd.pixel_counter();
+            self.mode3_advance_fetcher(regs);
+            self.mode3_pixel_pipeline(
+                regs,
+                video,
+                oam,
+                vram,
+                rydy_before_pory,
+                pixel_counter_before_sacu,
+            )
         } else {
             None
         }
@@ -522,7 +506,7 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
 
-        self.phase_bridge = PhaseBridge::RisingConsumed;
+        self.tyfa = false;
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.sprite_trigger.reset();
@@ -616,7 +600,7 @@ impl Rendering {
         // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
         // the WODU storage path that caused pix_count to overshoot to 168.
         let tyfa = !fepo && !self.lcd.xugu() && !self.window.rydy() && self.cascade.poky();
-        self.phase_bridge = PhaseBridge::FallingToRising { tyfa };
+        self.tyfa = tyfa;
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -639,39 +623,20 @@ impl Rendering {
         }
     }
 
-    /// Rising edge Mode 3 pixel pipeline processing.
-    fn mode3_rising(
-        &mut self,
-        regs: &PipelineRegisters,
-        video: &VideoControl,
-        oam: &Oam,
-        vram: &Vram,
-    ) -> Option<PixelOutput> {
-        let mut pixel_out: Option<PixelOutput> = None;
-
-        // Consume TYFA from falling phase. On the first rising phase
-        // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
-        // (pixel clock not yet enabled).
-        let tyfa = match self.phase_bridge {
-            PhaseBridge::FallingToRising { tyfa } => tyfa,
-            PhaseBridge::RisingConsumed => false,
-        };
-        // Mark bridge as consumed. TEKY is computed directly in
-        // mode3_falling (where SOBU captures it), so no data is bridged
-        // from rising to falling.
-        self.phase_bridge = PhaseBridge::RisingConsumed;
-
+    /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
+    ///
+    /// Runs first within rise(), before the pixel pipeline. Myvo-clocked
+    /// DFFs capture here: SUDA (sprite trigger), PORY (cascade), BG fetch
+    /// counter (LEBO). NOR latch responses (RYDY clear via PORY) and the
+    /// TAVE one-shot preload also fire here.
+    ///
+    /// On hardware, these signals settle at depth 16-22 ge — well before
+    /// CLKPIPE fires at depth 63.8 ge. Separating them models the
+    /// hardware's actual signal domains: fetcher DFFs settle first, then
+    /// the pixel pipeline evaluates against the settled state.
+    fn mode3_advance_fetcher(&mut self, regs: &PipelineRegisters) {
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
         self.sprite_trigger.rise();
-
-        // Phase-boundary snapshot: capture pre-edge values of signals
-        // that are both read and written within this half-phase. All
-        // combinational logic (TYFA, SEKO, SUZU, NUKO) reads from
-        // `inputs`; all mutations go to `self`.
-        let inputs = RisingPhaseInputs {
-            rydy: self.window.rydy(),
-            pixel_counter: self.lcd.pixel_counter(),
-        };
 
         // BG fetcher rising-edge advance: counter increment (LEBO clock).
         // Paused during sprite fetch (TAKA gates fetcher counter).
@@ -724,6 +689,34 @@ impl Rendering {
             // be 7 pixels instead of 8.
             self.fine_scroll.reset_counter();
         }
+    }
+
+    /// Rising edge Mode 3 — pixel pipeline (CLKPIPE / SACU domain).
+    ///
+    /// Runs second within rise(), after fetcher DFFs have settled. SACU
+    /// (the pixel clock) fires at depth 63.8 ge — significantly later
+    /// than the myvo-clocked DFFs. This method evaluates against the
+    /// settled fetcher state from `mode3_advance_fetcher`.
+    ///
+    /// Handles: TYFA consumption, PUXA/POVA fine scroll match, sprite
+    /// fetch advance, pixel shift registers, SEKO tile reload, LCD
+    /// output, fine scroll counter, and NUKO window trigger.
+    fn mode3_pixel_pipeline(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        oam: &Oam,
+        vram: &Vram,
+        rydy_before_pory: bool,
+        pixel_counter_before_sacu: u8,
+    ) -> Option<PixelOutput> {
+        let mut pixel_out: Option<PixelOutput> = None;
+
+        // Consume TYFA from falling phase. On the first rising phase
+        // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
+        // (pixel clock not yet enabled).
+        let tyfa = self.tyfa;
+        self.tyfa = false;
 
         // PUXA capture: ROXO fires when TYFA is active. TYFA is
         // combinational (AND3(SOCY, POKY, VYBO)), but POKY only updates
@@ -752,15 +745,7 @@ impl Rendering {
                 SpriteState::Fetching(ref mut sf) => {
                     let done = sf.advance(regs, oam, vram);
                     if done {
-                        // WUTY fires on the rising phase of counter=5 (the
-                        // same dot as the tile data HIGH read). On hardware,
-                        // sprite pixel merge (RACA latch) and TAKA clear
-                        // happen on the same dot — no separate "done" phase.
                         sf.merge_into(&mut self.obj_shifter, oam);
-
-                        // Data-pin pixel overwrite: REMY/RAVO update
-                        // combinationally after sprite merge. Overwrite the
-                        // last SEMU-written position with merged pixel data.
                         pixel_output::sprite_overwrite_data_latch(
                             &self.bg_shifter,
                             &self.obj_shifter,
@@ -769,62 +754,28 @@ impl Rendering {
                             regs,
                         );
                         self.sprite_state = SpriteState::Idle;
-                        // VEKU clears TAKA — sprite fetch complete.
-                        // Do NOT fall through to the pixel pipeline on this
-                        // dot. On hardware, FEPO_old (from the previous dot,
-                        // when FEPO was still true) suppresses TYFA for one
-                        // more dot after sfetch_done. The pixel pipeline will
-                        // resume on the next dot when TYFA is recomputed.
                         self.sprite_trigger.clear_taka();
                         sfetch_done_this_dot = true;
                     }
                 }
-                SpriteState::Idle => {
-                    // TAKA set but no sprite fetching yet — RYCE just fired
-                    // on the falling phase and start_sprite_fetch set up the
-                    // fetch. The first advance will happen on the next rising.
-                }
+                SpriteState::Idle => {}
             }
         }
 
         if !self.sprite_trigger.taka() && !sfetch_done_this_dot {
-            // Normal pixel pipeline — no sprite fetch active.
-
-            // SACU_CLKPIPE = pixel clock edge, derived from TYFA and ROXY.
-            // SEGU = NOT(TYFA). SACU = OR2(SEGU, ROXY) through toggle.
-            // Net: SACU fires when TYFA is high AND ROXY is done (fine
-            // scroll complete). Drives pipe shift registers and pixel counter.
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
-            // Hardware within-tick ordering for DFF22 shift register cells:
-            // 1. Synchronous shift (SACU clock edge)
-            // 2. Async parallel load (LOZE SET/RST — overwrites shift)
-            // 3. Pixel output reads final state
             if sacu {
                 self.bg_shifter.shift();
                 self.obj_shifter.shift();
             }
 
-            // RYFA DFF captures (count==7 && !RYDY) on each dot.
-            // SEKO is the rising-edge detector on RYFA — it fires one dot
-            // after count reaches 7. Reading count HERE (before tick)
-            // naturally models this one-dot DFF delay. PANY gates RYFA
-            // on !RYDY (window hit blocks tile boundary detection).
-            let seko_fire = self.fine_scroll.count == 7 && !inputs.rydy;
+            let seko_fire = self.fine_scroll.count == 7 && !rydy_before_pory;
 
-            // SEKO → TEVO → NYXU: pipe reload (async). LOZE SET/RST
-            // overwrites the shift result on the same tick — the load
-            // naturally wins because the shift already fired above
-            // (matching DFF22 behavior).
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);
-                // SEKO resets the fetcher counter (TEVO -> LOVY/LAXU/TYFO
-                // reset), which drives LYRY low combinationally (phase < 10).
             }
 
-            // LCD Control (page 24): pixel counter, XAJO, TOBA, shift
-            // register, data latch — all internal to the block. We
-            // provide SACU, the resolved pixel, and POVA.
             let pixel = pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
@@ -835,64 +786,32 @@ impl Rendering {
             pixel_out = pix;
 
             if !toba && tyfa {
-                // Consume window_zero_pixel during pre-visible TYFA
-                // cycles (fine scroll gating, pre-WUSA). On hardware,
-                // the data pins update on every TYFA edge — the window
-                // zero pixel is consumed even when SACU/TOBA don't fire.
                 self.window.consume_window_zero_pixel();
             }
 
-            // BG fetcher advances on falling (mode3_falling).
-            // SUZU (window fetch completion) is triggered by PORY in mode3_rising.
-
-            // PECU (fine counter clock) derives from ROXO, which derives
-            // from TYFA. Fine scroll ticks whenever the pixel clock is
-            // enabled, regardless of ROXY (fine scroll itself).
             if tyfa {
                 self.fine_scroll.tick();
             }
 
-            // TEVO → PASO: when SEKO fired this dot, reset the fine
-            // counter to 0. Placed after tick() because tick() self-stops
-            // at 7 (ROZE gate) — PASO then clears the stopped counter.
             if seko_fire {
                 self.fine_scroll.reset_counter();
             }
         }
 
-        // NUKO (combinational WX comparator) reads pre-SACU
-        // pixel_counter (inputs.pixel_counter). On hardware, NUKO
-        // reads pix_count DFF Q-outputs combinationally; PYCO
-        // captures on the same ROCO edge that SACU increments
-        // pix_count. The pygo parameter gates the comparison
-        // (PYCO requires ROCO, which requires POKY). Placed
-        // outside the sprite_state match because NUKO is combinational
-        // — it fires regardless of sprite fetch state. During sprite
-        // fetch, pixel_counter is frozen, so the match just re-checks
-        // the same value each dot.
-        // XOFO: combinational gate — when WIN_EN is low, resets PYNU
-        // (wx_triggered), allowing re-triggering when WIN_EN goes high.
-        // Placed before check_trigger so a fresh trigger can fire on the
-        // same dot that WIN_EN transitions high.
         self.window.apply_xofo(regs.control.window_enabled());
 
         let pygo = self.cascade.pygo();
         self.window.check_trigger(
-            inputs.rydy,
+            rydy_before_pory,
             &mut self.fetcher,
             &mut self.cascade,
             &mut self.fine_scroll,
-            inputs.pixel_counter,
+            pixel_counter_before_sacu,
             pygo,
             regs,
             video,
         );
 
-        // Update NUKO's WX input from the live DFF8 output. Placed
-        // unconditionally at the end of mode3_rising so the cache tracks
-        // the DFF output even during sprite fetch. On hardware, the
-        // DFF8 slave captures on every clock edge regardless of XYMU
-        // or sprite fetch state.
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
 
         pixel_out
