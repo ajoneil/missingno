@@ -348,37 +348,13 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // ALET settle: VOGA captures WODU_old, XYMU clears.
-        // On hardware, ALET falls at F->G before BUKE opens at G-H.
-        // Both M-cycle boundary and non-boundary paths converge here.
+        // ALET settle: VOGA captures WODU_old, XYMU clears. This updates
+        // XYMU so CPU STAT reads see the correct mode. On hardware, VOGA
+        // actually captures on alet rising (= fall()), but we run it here
+        // so the CPU mode() readback is correct. The STAT INTERRUPT from
+        // HBlank fires in fall() (via check_stat_edge after ppu.fall()),
+        // NOT here — confirmed by dmg-sim showing XYMU clears in fall().
         self.ppu.settle_alet();
-
-        // SUKO is combinational — recheck STAT edge after XYMU may have changed.
-        let settle_stat_edge = self.ppu.check_stat_edge();
-        if settle_stat_edge {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        // settle_alet can fire hblank STAT after mcycle_halted/update_interrupt_state
-        // already ran. On hardware, the ALET-settle cascade (VOGA->XYMU->TARU->STAT)
-        // propagates within the same M-cycle, reaching g42. Re-capture interrupt
-        // state and handle HALT wakeup for the late interrupt.
-        if settle_stat_edge {
-            let triggered = self.interrupts.triggered();
-            self.cpu.update_interrupt_state(triggered);
-
-            if is_mcycle_boundary {
-                // mcycle_halted already ran and missed this interrupt.
-                // The current idle Read[PC] serves as the wakeup NOP.
-                self.cpu.retry_halt_wakeup();
-            } else {
-                // Non-boundary: signal g42 mid-M-cycle propagation so
-                // mcycle_halted takes the fast path at the next boundary.
-                if self.cpu.is_halted() && self.interrupts.enabled(Interrupt::VideoStatus) {
-                    self.cpu.g42_mid_mcycle = true;
-                }
-            }
-        }
 
         // CPU data latch: capture bus value on the rising edge, after
         // PPU rise and ALET settle so the read sees the current PPU mode
@@ -445,15 +421,23 @@ impl GameBoy {
         {
             self.cpu.g42_mid_mcycle = true;
         }
-        // TALU-driven interrupts (LYC, VBlank STAT) fire in fall() now.
-        // For HALT wakeup, signal g42 when the TALU cascade produces a
-        // new LYC match in this fall().
+        // STAT edges from TALU cascade (LYC, VBlank) and from HBlank
+        // (VOGA→XYMU, confirmed by dmg-sim to fire in fall()) all need
+        // g42 propagation for HALT wakeup. The HBlank edge was
+        // previously handled by settle_alet in rise(), but now correctly
+        // fires here in fall().
         if stat_edge
             && self.cpu.is_halted()
             && self.interrupts.enabled(Interrupt::VideoStatus)
-            && self.ppu.ly_eq_lyc()
         {
-            self.cpu.g42_mid_mcycle = true;
+            // Check if HBlank just fired — mode transitioned to HBlank
+            // in this fall(). Only propagate g42 early enough in the
+            // M-cycle for the cascade to settle before the next boundary.
+            let is_hblank = self.ppu.mode() == ppu::rendering::Mode::HorizontalBlank;
+            let is_lyc = self.ppu.ly_eq_lyc();
+            if is_lyc || (is_hblank && dot.as_u8() <= 1) {
+                self.cpu.g42_mid_mcycle = true;
+            }
         }
 
         // Capture interrupt state so HALT sees it.
