@@ -390,6 +390,16 @@ impl Rendering {
         // AVAP evaluation (all XUPY/alet-clocked, fire in fall).
         self.scan.fall(xupy_rising, video.ly(), regs, oam);
 
+        // AVAP reaction: XYMU NOR latch responds immediately to AVAP.
+        // Mode 3 init (fetcher preload, NYXU reset, window WX cache)
+        // fires in the same fall() so Mode 3 is ready for the next rise().
+        if self.scan.avap_pending() {
+            self.hblank.set_xymu();
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+            self.fetcher.load_into(&mut self.bg_shifter);
+            self.fetcher.nyxu_reset_active = true;
+        }
+
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return None;
@@ -444,21 +454,8 @@ impl Rendering {
         let xupy_rising = video.xupy();
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
-        // React to scan signals.
-        // AVAP fires identically on normal lines and the LCD-on first line —
-        // the scan counter runs to 39 independent of BESU (scanning latch).
-        if scan.avap {
-            self.hblank.set_xymu();
-            self.window.init_nuko_wx(regs.window.x_plus_7.output());
-            // NYXU fires: load stale tile_temp into BG pipe (LOZE -> DFF22 SET/RST).
-            // On hardware, tile_temp retains data from the previous line's last
-            // BG fetch. TileFetcher's tile_data_low/tile_data_high model tile_temp.
-            self.fetcher.load_into(&mut self.bg_shifter);
-            // NYXU reset overrides LEBO on this rising phase — the counter
-            // stays at 0 until the next rise. Suppress the advance_rising
-            // that will run later this same dot in mode3_rising.
-            self.fetcher.nyxu_reset_active = true;
-        }
+        // AVAP reaction (XYMU set, fetcher preload, NYXU reset, window
+        // WX init) now fires in fall() when AVAP is detected.
 
         // SARY/REJO: sample the WY==LY latch every dot in all modes.
         // On hardware, SARY is clocked by TALU (rising-edge-derived).
