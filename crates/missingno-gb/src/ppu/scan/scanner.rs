@@ -121,6 +121,11 @@ impl SpriteScanner {
         self.doba
     }
 
+    /// Whether AVAP fired in the last fall(). Consumed by rise().
+    pub(in crate::ppu) fn avap_pending(&self) -> bool {
+        self.avap_pending
+    }
+
     /// The OAM address the scanner is currently driving, if scanning.
     pub(in crate::ppu) fn oam_address(&self) -> Option<u8> {
         if self.scanning {

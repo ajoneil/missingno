@@ -436,11 +436,22 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
-        // g42 mid-M-cycle cascade: VBlank fires from the TALU cascade
-        // (now in fall). If enabled, g42 captures IF&IE.
+        // g42 mid-M-cycle cascade: events from the TALU cascade (now in
+        // fall) need to propagate to g42 for HALT wakeup. VBlank and
+        // LYC-driven STAT edges can both trigger g42.
         if video_result.request_vblank
             && (self.interrupts.enabled(Interrupt::VideoBetweenFrames)
                 || (stat_edge && self.interrupts.enabled(Interrupt::VideoStatus)))
+        {
+            self.cpu.g42_mid_mcycle = true;
+        }
+        // TALU-driven interrupts (LYC, VBlank STAT) fire in fall() now.
+        // For HALT wakeup, signal g42 when the TALU cascade produces a
+        // new LYC match in this fall().
+        if stat_edge
+            && self.cpu.is_halted()
+            && self.interrupts.enabled(Interrupt::VideoStatus)
+            && self.ppu.ly_eq_lyc()
         {
             self.cpu.g42_mid_mcycle = true;
         }

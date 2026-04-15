@@ -386,7 +386,8 @@ impl Rendering {
         // just went low→high.
         let xupy_rising = video.xupy();
 
-        // Sprite scanner falling edge: counter tick, DOBA capture.
+        // Sprite scanner falling edge: counter tick, BYBA/DOBA capture,
+        // AVAP evaluation (all XUPY/alet-clocked, fire in fall).
         self.scan.fall(xupy_rising, video.ly(), regs, oam);
 
         if self.scan.scanning() {
