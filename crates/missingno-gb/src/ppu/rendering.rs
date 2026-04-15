@@ -228,7 +228,11 @@ impl Rendering {
         self.hblank.voga()
     }
 
-    /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
+    /// WODU: combinational hblank gate. AND2(XUGU, !FEPO).
+    /// On hardware, WODU is purely combinational — it does not
+    /// depend on XYMU. During HBlank, WODU stays high (PX frozen
+    /// at 167, FEPO=0), which is correct for CLKPIPE freeze and
+    /// STAT mode readback.
     pub(super) fn wodu(&self) -> bool {
         self.hblank.wodu(self.lcd.xugu())
     }

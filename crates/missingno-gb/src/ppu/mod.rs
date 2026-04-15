@@ -350,9 +350,10 @@ impl Ppu {
             None => return Mode::VerticalBlank,
         };
         // XYMU settles before the CPU reads STAT (ALET falls at F->G
-        // before BUKE opens at G-H). Our settle_alet() models this. The
-        // combination xymu && !wodu represents XYMU's settled state:
-        // when WODU fires, XYMU will clear on the next ALET edge.
+        // before BUKE opens at G-H). Our settle_alet() models this.
+        // WODU is purely combinational (AND2(XUGU, !FEPO)). When WODU
+        // fires (PX=167), XYMU will clear on the next ALET edge. The
+        // combination xymu && !wodu gives the settled rendering state.
         let xymu = rendering.xymu() && !rendering.wodu();
         let bit0 = xymu || self.video.vblank;
         let bit1 = xymu || rendering.is_scanning();

@@ -6,7 +6,12 @@
 /// producing WEGO which clears the XYMU rendering latch.
 ///
 /// Hardware clock: VOGA is DFF17 on ALET (falling, depth 5).
-/// WODU is combinational (AND3(XYMU, XUGU, !FEPO)).
+/// WODU is combinational: AND2(XUGU, !FEPO). WODU is purely a
+/// function of the pixel counter decode and sprite match — it does
+/// not depend on XYMU. During HBlank, WODU stays high (PX frozen
+/// at 167, FEPO=0), which is correct: CLKPIPE stays frozen via
+/// VYBO, and VOGA is already set keeping XYMU cleared.
+///
 /// XYMU is a NOR latch cleared by WEGO = OR2(VID_RST, VOGA).
 ///
 /// Race pair data (mode3-race-pairs.md):
@@ -20,19 +25,14 @@ pub(in crate::ppu) struct HblankPipeline {
     /// delay). Feeds WEGO. Reset by TADY (line reset).
     voga: bool,
     /// FEPO captured at start of falling phase. Feeds wodu() and
-    /// wodu_pre_settle() for VOGA capture. Also feeds TYFA
-    /// computation. Latched because FEPO changes mid-fall but WODU
-    /// needs the value from the start of the falling phase.
+    /// TYFA computation. Latched because FEPO changes mid-fall but
+    /// WODU needs the value from the start of the falling phase.
     fepo: bool,
     /// Whether XYMU was true before settle_alet() cleared it.
     /// fall() needs this to gate mode3_falling() — on the dot
     /// VOGA fires, XYMU clears in settle_alet but mode3_falling
     /// still needs to run for the final fetcher/TYFA work.
     xymu_before_settle: bool,
-    /// Whether settle_alet() ran this dot. When false (e.g. during
-    /// the Mode 2→3 transition where scanning was still true during
-    /// settle_alet), fall() must compute values itself.
-    settled: bool,
 }
 
 impl HblankPipeline {
@@ -42,22 +42,14 @@ impl HblankPipeline {
             voga: false,
             fepo: false,
             xymu_before_settle: false,
-            settled: false,
         }
     }
 
-    /// WODU: combinational hblank gate. AND3(XYMU, XUGU, !FEPO).
-    /// On hardware, WODU is not a latch — it's valid whenever its
-    /// inputs are valid. TARU (STAT mode 0) reads WODU directly.
+    /// WODU: combinational hblank gate. AND2(XUGU, !FEPO).
+    /// On hardware, WODU is purely combinational — it does not
+    /// depend on XYMU. TARU (STAT mode 0) reads WODU directly.
     pub(in crate::ppu) fn wodu(&self, xugu: bool) -> bool {
-        self.xymu && xugu && !self.fepo
-    }
-
-    /// Compute WODU using pre-settle XYMU state. On the VOGA dot,
-    /// settle_alet() has already cleared XYMU, but WODU's inputs were
-    /// valid before the clear. This recovers the correct WODU value.
-    fn wodu_pre_settle(&self, xugu: bool) -> bool {
-        self.xymu_before_settle && xugu && !self.fepo
+        xugu && !self.fepo
     }
 
     /// ALET falling edge: VOGA captures WODU, WEGO clears XYMU.
@@ -73,10 +65,9 @@ impl HblankPipeline {
         // Capture XYMU state before any clearing — fall() uses this to
         // gate mode3_falling() on the transition dot.
         self.xymu_before_settle = self.xymu;
-        self.settled = true;
 
-        // Compute WODU from current state — pixel_counter was already
-        // incremented on the rising phase, so xugu reflects this dot.
+        // WODU is purely combinational (no XYMU dependency), so it's
+        // valid at any point during the dot.
         let wodu_now = self.wodu(xugu);
 
         // VOGA DFF17 captures WODU on ALET falling. On hardware this is
@@ -91,27 +82,14 @@ impl HblankPipeline {
 
     /// Falling edge (ALET clock): VOGA captures WODU, WEGO clears XYMU.
     ///
-    /// settle_alet() may have already cleared XYMU for the CPU's benefit.
-    /// This method does the full VOGA/wodu computation — the XYMU clear
-    /// is idempotent.
+    /// settle_alet() has already cleared XYMU for the CPU's benefit and
+    /// set xymu_before_settle. This method does the full VOGA/wodu
+    /// computation — the XYMU clear is idempotent.
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
     pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> bool {
-        // xymu_before_settle was set by settle_alet if it ran. If settle_alet
-        // didn't run (scanning was true), capture it now before fall mutates.
-        if !self.settled {
-            self.xymu_before_settle = self.xymu;
-        }
-
-        // WODU is combinational from XYMU. If settle_alet() already ran,
-        // XYMU was cleared by VOGA, so self.wodu(xugu) would return false.
-        // Use pre-settle XYMU to recover the correct WODU value.
-        let wodu_now = if self.settled {
-            self.wodu_pre_settle(xugu)
-        } else {
-            self.wodu(xugu)
-        };
-        self.settled = false;
+        // WODU is purely combinational — no XYMU dependency, so always valid.
+        let wodu_now = self.wodu(xugu);
 
         // VOGA DFF17 captures CURRENT dot's WODU (half-cycle delay).
         // On hardware, WODU's inputs are valid before ALET falls.
@@ -160,6 +138,5 @@ impl HblankPipeline {
         self.voga = false;
         self.fepo = false;
         self.xymu_before_settle = false;
-        self.settled = false;
     }
 }
