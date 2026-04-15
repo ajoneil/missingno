@@ -1,19 +1,18 @@
 use iced::{
-    Background, Border, Color, Element,
-    Length,
+    Background, Border, Color, Element, Length,
     alignment::Vertical,
-    widget::{column, container, row, text, tooltip, Space},
+    widget::{Space, column, container, row, text, tooltip},
 };
 
 use crate::app::{
     Message,
+    debugger::sidebar::tooltip_style,
     ui::{
         fonts,
         icons::{self, Icon},
         palette,
         sizes::{border_s, s},
     },
-    debugger::sidebar::tooltip_style,
 };
 use missingno_gb::GameBoy;
 use missingno_gb::interrupts::Interrupt;
@@ -46,9 +45,14 @@ pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
         .align_y(Vertical::Center),
         // IE row
         row![
-            container(text("IE").font(fonts::monospace()).size(LABEL_SIZE).color(palette::MUTED))
-                .width(Length::Fixed(LABEL_COL))
-                .align_right(Length::Fixed(LABEL_COL)),
+            container(
+                text("IE")
+                    .font(fonts::monospace())
+                    .size(LABEL_SIZE)
+                    .color(palette::MUTED)
+            )
+            .width(Length::Fixed(LABEL_COL))
+            .align_right(Length::Fixed(LABEL_COL)),
             pip_cell(ints.enabled(Interrupt::VideoBetweenFrames), palette::GREEN),
             pip_cell(ints.enabled(Interrupt::VideoStatus), palette::GREEN),
             pip_cell(ints.enabled(Interrupt::Timer), palette::GREEN),
@@ -59,10 +63,18 @@ pub fn interrupts(game_boy: &GameBoy) -> Element<'static, Message> {
         .align_y(Vertical::Center),
         // IF row
         row![
-            container(text("IF").font(fonts::monospace()).size(LABEL_SIZE).color(palette::MUTED))
-                .width(Length::Fixed(LABEL_COL))
-                .align_right(Length::Fixed(LABEL_COL)),
-            pip_cell(ints.requested(Interrupt::VideoBetweenFrames), palette::YELLOW),
+            container(
+                text("IF")
+                    .font(fonts::monospace())
+                    .size(LABEL_SIZE)
+                    .color(palette::MUTED)
+            )
+            .width(Length::Fixed(LABEL_COL))
+            .align_right(Length::Fixed(LABEL_COL)),
+            pip_cell(
+                ints.requested(Interrupt::VideoBetweenFrames),
+                palette::YELLOW
+            ),
             pip_cell(ints.requested(Interrupt::VideoStatus), palette::YELLOW),
             pip_cell(ints.requested(Interrupt::Timer), palette::YELLOW),
             pip_cell(ints.requested(Interrupt::Serial), palette::YELLOW),
@@ -80,8 +92,12 @@ fn icon_cell(icon: Icon, name: &str) -> Element<'static, Message> {
         container(icons::m_muted(icon))
             .width(Length::Fixed(COL))
             .center_x(COL),
-        container(text(name.to_owned()).font(fonts::monospace()).size(LABEL_SIZE))
-            .padding([2.0, s()]),
+        container(
+            text(name.to_owned())
+                .font(fonts::monospace())
+                .size(LABEL_SIZE),
+        )
+        .padding([2.0, s()]),
         tooltip::Position::Top,
     )
     .style(tooltip_style)
@@ -108,7 +124,10 @@ pub fn pip(active: bool, active_color: Color) -> Element<'static, Message> {
         .height(10.0)
         .style(move |_: &iced::Theme| container::Style {
             background: bg,
-            border: Border::default().rounded(5.0).width(1.5).color(border_color),
+            border: Border::default()
+                .rounded(5.0)
+                .width(1.5)
+                .color(border_color),
             ..Default::default()
         })
         .into()

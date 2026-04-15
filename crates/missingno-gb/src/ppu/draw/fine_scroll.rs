@@ -3,7 +3,7 @@
 /// ROXY NOR latch state. On hardware, ROXY gates the pixel clock
 /// (SACU = or2(SEGU, ROXY)) until the fine scroll counter matches
 /// SCX & 7. SET between lines (PAHA_RENDERINGn), RESET on fine
-/// scroll match (POVA_FINE_MATCH_TRIGp_evn). One-shot per line.
+/// scroll match (POVA fine match trigger). One-shot per line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Roxy {
     /// ROXY=1: pixel clock gated. The fine counter is still counting
@@ -26,8 +26,8 @@ pub(in crate::ppu) struct FineScroll {
     /// phase. Used for POVA rising-edge detection: POVA = AND2(PUXA,
     /// !NYZE). Fires once per PUXA 0→1 transition.
     nyze: bool,
-    /// POHU comparator result, computed on falling (EVEN phase).
-    /// PUXA captures this on the next rising (ODD phase) when ROXO fires.
+    /// POHU comparator result, computed on falling (alet rises).
+    /// PUXA captures this on the next rising (alet falls) when ROXO fires.
     pohu: bool,
 }
 

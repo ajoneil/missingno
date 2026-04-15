@@ -8,17 +8,17 @@ use iced::{
 
 use crate::app::{
     self,
+    library::{
+        GameEntry,
+        activity::{self, ActivityKind, SessionFile},
+        store::{ActivityState, SessionSummary},
+    },
     ui::{
         buttons, containers, fonts, horizontal_rule,
         icons::{self, Icon},
         palette::MUTED,
         sizes::{border_s, l, m, s},
         text as app_text,
-    },
-    library::{
-        GameEntry,
-        activity::{self, ActivityKind, SessionFile},
-        store::{ActivityState, SessionSummary},
     },
 };
 use crate::cartridge_rw;
@@ -112,8 +112,7 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
 
     // Title + metadata column
     let mut info = column![
-        app_text::heading(data.entry.display_title())
-            .wrapping(iced::widget::text::Wrapping::None),
+        app_text::heading(data.entry.display_title()).wrapping(iced::widget::text::Wrapping::None),
     ]
     .spacing(4);
 
@@ -220,15 +219,15 @@ fn game_header<'a>(data: &DetailData<'a>) -> Element<'a, app::Message> {
                         .spacing(s())
                         .align_y(Center),
                 )
-                .on_press(app::Message::Cartridge(app::CartridgeMessage::ShowActions(data.entry.sha1.clone()))),
+                .on_press(app::Message::Cartridge(
+                    app::CartridgeMessage::ShowActions(data.entry.sha1.clone()),
+                )),
             );
         }
     }
 
-    primary = primary.push(
-        buttons::subtle(icons::m(Icon::Menu))
-            .on_press(app::Message::ToggleMenu),
-    );
+    primary =
+        primary.push(buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu));
 
     let right = column![primary].align_x(iced::alignment::Horizontal::Right);
 
@@ -374,10 +373,14 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         if is_hovered {
             header = header.push(
                 row![
-                    buttons::subtle(app_text::detail("Export"))
-                        .on_press(app::Message::Detail(app::DetailMessage::ExportSave(entry.filename.clone()))),
-                    buttons::subtle(app_text::detail("Play from here"))
-                        .on_press(app::Message::Detail(app::DetailMessage::PlayWithSave(entry.filename.clone()))),
+                    buttons::subtle(app_text::detail("Export")).on_press(app::Message::Detail(
+                        app::DetailMessage::ExportSave(entry.filename.clone())
+                    )),
+                    buttons::subtle(app_text::detail("Play from here")).on_press(
+                        app::Message::Detail(app::DetailMessage::PlayWithSave(
+                            entry.filename.clone()
+                        ))
+                    ),
                 ]
                 .spacing(s()),
             );
@@ -402,7 +405,9 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
         for (i, handle) in entry.screenshots.iter().take(max_visible).enumerate() {
             thumb_row = thumb_row.push(
                 button(image(handle.clone()).width(160).height(144))
-                    .on_press(app::Message::Detail(app::DetailMessage::OpenScreenshotGallery(filename.clone(), i)))
+                    .on_press(app::Message::Detail(
+                        app::DetailMessage::OpenScreenshotGallery(filename.clone(), i),
+                    ))
                     .padding(0)
                     .style(|_, _| button::Style::default()),
             );
@@ -425,10 +430,9 @@ fn session_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, ap
                             }
                         }),
                 )
-                .on_press(app::Message::Detail(app::DetailMessage::OpenScreenshotGallery(
-                    filename.clone(),
-                    max_visible,
-                )))
+                .on_press(app::Message::Detail(
+                    app::DetailMessage::OpenScreenshotGallery(filename.clone(), max_visible),
+                ))
                 .padding(0)
                 .style(|_, _| button::Style::default()),
             );
@@ -472,10 +476,12 @@ fn import_card(entry: &SessionSummary, is_hovered: bool) -> Element<'static, app
     if is_hovered {
         content = content.push(
             row![
-                buttons::subtle(app_text::detail("Export"))
-                    .on_press(app::Message::Detail(app::DetailMessage::ExportSave(entry.filename.clone()))),
-                buttons::subtle(app_text::detail("Play from here"))
-                    .on_press(app::Message::Detail(app::DetailMessage::PlayWithSave(entry.filename.clone()))),
+                buttons::subtle(app_text::detail("Export")).on_press(app::Message::Detail(
+                    app::DetailMessage::ExportSave(entry.filename.clone())
+                )),
+                buttons::subtle(app_text::detail("Play from here")).on_press(app::Message::Detail(
+                    app::DetailMessage::PlayWithSave(entry.filename.clone())
+                )),
             ]
             .spacing(s()),
         );

@@ -1,5 +1,4 @@
 pub(crate) mod activity;
-pub(in crate::app) mod update;
 pub(crate) mod catalogue;
 pub(crate) mod detail_view;
 pub(crate) mod game_db;
@@ -9,6 +8,7 @@ pub(crate) mod homebrew_hub;
 pub(crate) mod scanner;
 pub(crate) mod screenshot_gallery;
 pub(crate) mod store;
+pub(in crate::app) mod update;
 pub(crate) mod view;
 
 use std::{

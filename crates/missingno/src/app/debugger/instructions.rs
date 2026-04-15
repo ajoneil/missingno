@@ -3,26 +3,26 @@ use std::collections::BTreeSet;
 use iced::{
     Background, Border, Element, Length,
     alignment::Vertical,
-    widget::{Column, button, container, pane_grid, rich_text, row, text},
     widget::text::Span,
+    widget::{Column, button, container, pane_grid, rich_text, row, text},
 };
 
 use crate::app::{
     self,
-    ui::{
-        fonts, palette,
-        sizes::s,
-    },
     debugger::{
         self,
         panes::{pane, title_bar, title_bar_with_detail},
     },
+    ui::{fonts, palette, sizes::s},
 };
 use missingno_gb::debugger::instructions::{InstructionsIterator, addresses_before};
 use missingno_gb::{GameBoy, cpu::instructions::Instruction};
 
 // Syntax highlighting — mapped from palette colors.
-use palette::{BLUE as SYN_OPCODE, GREEN as SYN_REGISTER, PEACH as SYN_IMMEDIATE, PURPLE as SYN_MEMORY, YELLOW as SYN_CONDITION};
+use palette::{
+    BLUE as SYN_OPCODE, GREEN as SYN_REGISTER, PEACH as SYN_IMMEDIATE, PURPLE as SYN_MEMORY,
+    YELLOW as SYN_CONDITION,
+};
 
 /// Fixed height per instruction row so partial rows clip cleanly.
 const ROW_HEIGHT: f32 = 20.0;
@@ -53,7 +53,10 @@ impl InstructionsPane {
             let mut iter = InstructionsIterator::new(addr, memory);
             if let Some(decoded) = Instruction::decode(&mut iter) {
                 instructions.push(instruction_row(
-                    addr, decoded, false, breakpoints.contains(&addr),
+                    addr,
+                    decoded,
+                    false,
+                    breakpoints.contains(&addr),
                 ));
             }
         }
@@ -78,10 +81,7 @@ impl InstructionsPane {
         let header = if breakpoints.is_empty() {
             title_bar("Instructions")
         } else {
-            let detail = format!(
-                "{} bp",
-                breakpoints.len(),
-            );
+            let detail = format!("{} bp", breakpoints.len(),);
             title_bar_with_detail(
                 "Instructions",
                 text(detail)
@@ -93,14 +93,14 @@ impl InstructionsPane {
 
         pane(
             header,
-            iced::widget::scrollable(
-                Column::from_vec(instructions).width(Length::Fill),
-            )
-            .direction(iced::widget::scrollable::Direction::Vertical(
-                iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
-            ))
-            .width(Length::Fill)
-            .into(),
+            iced::widget::scrollable(Column::from_vec(instructions).width(Length::Fill))
+                .direction(iced::widget::scrollable::Direction::Vertical(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(0)
+                        .scroller_width(0),
+                ))
+                .width(Length::Fill)
+                .into(),
         )
     }
 }
@@ -126,22 +126,23 @@ fn instruction_row(
             .width(Length::Fixed(8.0))
             .height(Length::Fixed(8.0))
             .style(|_: &iced::Theme| container::Style {
-                border: Border::default().rounded(4.0).width(1.0).color(palette::SURFACE2),
+                border: Border::default()
+                    .rounded(4.0)
+                    .width(1.0)
+                    .color(palette::SURFACE2),
                 ..Default::default()
             })
             .into()
     };
 
-    let gutter = button(bp_icon)
-        .style(button::text)
-        .on_press(
-            if is_breakpoint {
-                debugger::Message::ClearBreakpoint(address)
-            } else {
-                debugger::Message::SetBreakpoint(address)
-            }
-            .into(),
-        );
+    let gutter = button(bp_icon).style(button::text).on_press(
+        if is_breakpoint {
+            debugger::Message::ClearBreakpoint(address)
+        } else {
+            debugger::Message::SetBreakpoint(address)
+        }
+        .into(),
+    );
 
     let the_row = row![
         gutter,

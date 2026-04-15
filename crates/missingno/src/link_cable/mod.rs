@@ -28,10 +28,7 @@ enum State {
     },
     /// We are master (internal clock). We sent Sync1 and have the remote's
     /// response byte buffered for bit-by-bit delivery via exchange_bit().
-    MasterTransfer {
-        response_byte: u8,
-        bits_shifted: u8,
-    },
+    MasterTransfer { response_byte: u8, bits_shifted: u8 },
 }
 
 pub struct BgbLink {
@@ -80,7 +77,8 @@ impl BgbLink {
             state: State::Idle,
             recv_buf: [0; Packet::SIZE],
             recv_len: 0,
-            timestamp: 0, pending_sync1: None,
+            timestamp: 0,
+            pending_sync1: None,
         };
 
         link.handshake()?;
@@ -102,7 +100,8 @@ impl BgbLink {
             state: State::Listening,
             recv_buf: [0; Packet::SIZE],
             recv_len: 0,
-            timestamp: 0, pending_sync1: None,
+            timestamp: 0,
+            pending_sync1: None,
         })
     }
 
@@ -234,8 +233,7 @@ impl BgbLink {
 
     /// Process non-transfer packets. Sync3 responses are suppressed to
     /// avoid ping-pong during rapid exchanges.
-    fn handle_housekeeping(&mut self, _packet: &Packet) {
-    }
+    fn handle_housekeeping(&mut self, _packet: &Packet) {}
 }
 
 impl SerialLink for BgbLink {

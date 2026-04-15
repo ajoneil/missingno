@@ -68,10 +68,9 @@ const RAM_SIZES: &[(u8, u32)] = &[
 
 /// Known Nintendo logo bytes at 0x104-0x133.
 const NINTENDO_LOGO: [u8; 48] = [
-    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00,
-    0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD,
-    0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB,
-    0xB9, 0x33, 0x3E,
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
 
 #[derive(Debug, Clone)]
@@ -454,11 +453,10 @@ fn detect_flash(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Opti
     let original = read_rom_bytes(port, fw_ver, 0, 8)?;
 
     // Send AMD flash ID command sequence
-    cart_write_flash(port, &[
-        (0x0AAA, 0x00AA),
-        (0x0555, 0x0055),
-        (0x0AAA, 0x0090),
-    ])?;
+    cart_write_flash(
+        port,
+        &[(0x0AAA, 0x00AA), (0x0555, 0x0055), (0x0AAA, 0x0090)],
+    )?;
 
     // Read back — if data changed, a flash chip responded
     let chip_id = read_rom_bytes(port, fw_ver, 0, 8)?;
@@ -497,10 +495,8 @@ fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<
     let _ = cart_write_flash(port, &[(0x0000, 0x00F0)]);
 
     // Check for "QRY" magic at 16-bit offsets (0x20/0x22/0x24) or 8-bit (0x10/0x11/0x12)
-    let is_16bit = cfi.len() > 0x24
-        && cfi[0x20] == b'Q' && cfi[0x22] == b'R' && cfi[0x24] == b'Y';
-    let is_8bit = cfi.len() > 0x12
-        && cfi[0x10] == b'Q' && cfi[0x11] == b'R' && cfi[0x12] == b'Y';
+    let is_16bit = cfi.len() > 0x24 && cfi[0x20] == b'Q' && cfi[0x22] == b'R' && cfi[0x24] == b'Y';
+    let is_8bit = cfi.len() > 0x12 && cfi[0x10] == b'Q' && cfi[0x11] == b'R' && cfi[0x12] == b'Y';
 
     if !is_16bit && !is_8bit {
         return None;
@@ -525,7 +521,11 @@ fn query_cfi(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Option<
 
     // Write buffer size
     let buffer_raw = (cfi[0x56] as u32) << 8 | cfi[0x54] as u32;
-    let buffer_size = if buffer_raw > 1 { 1u32 << buffer_raw } else { 0 };
+    let buffer_size = if buffer_raw > 1 {
+        1u32 << buffer_raw
+    } else {
+        0
+    };
 
     // Erase capabilities
     let sector_erase = cfi[0x42] > 0 && cfi[0x42] < 0xFF;
@@ -609,9 +609,9 @@ fn select_rom_bank(mapper_byte: u8, bank: u32) -> (Vec<(u32, u8)>, u32) {
         // MBC1
         0x01..=0x03 => {
             let writes = vec![
-                (0x6000, 0x01u8),                       // Mode 1 (advanced banking)
-                (0x2000, (bank & 0x1F) as u8),           // Lower 5 bits
-                (0x4000, ((bank >> 5) & 0x03) as u8),    // Upper 2 bits
+                (0x6000, 0x01u8),                     // Mode 1 (advanced banking)
+                (0x2000, (bank & 0x1F) as u8),        // Lower 5 bits
+                (0x4000, ((bank >> 5) & 0x03) as u8), // Upper 2 bits
             ];
             let addr = if bank & 0x1F == 0 { 0x0000 } else { 0x4000 };
             (writes, addr)
@@ -634,8 +634,8 @@ fn select_rom_bank(mapper_byte: u8, bank: u32) -> (Vec<(u32, u8)>, u32) {
         // MBC5 — 9-bit bank number, high byte first
         0x19..=0x1e => {
             let writes = vec![
-                (0x3000, ((bank >> 8) & 0x01) as u8),    // High bit first
-                (0x2100, (bank & 0xFF) as u8),            // Low 8 bits
+                (0x3000, ((bank >> 8) & 0x01) as u8), // High bit first
+                (0x2100, (bank & 0xFF) as u8),        // Low 8 bits
             ];
             let addr = if bank == 0 { 0x0000 } else { 0x4000 };
             (writes, addr)
@@ -676,8 +676,7 @@ pub fn dump_rom(
     port.clear(serialport::ClearBuffer::All).ok();
 
     // We require Lesserkuma firmware v12+
-    write_cmd(&mut port, &[OFW_PCB_VER])
-        .ok_or("Failed to query PCB version")?;
+    write_cmd(&mut port, &[OFW_PCB_VER]).ok_or("Failed to query PCB version")?;
     let _pcb = read_byte(&mut port).ok_or("No PCB version response")?;
     let (fw_ver, _) = query_firmware_info(&mut port)
         .ok_or("Failed to query firmware — is this a GBxCart RW with Lesserkuma firmware?")?;
@@ -692,7 +691,11 @@ pub fn dump_rom(
     let rom_size = header.rom_size as usize;
     let no_mbc = matches!(header.mapper_byte, 0x00 | 0x08 | 0x09);
     // No MBC: one flat 32K read. MBC: 16K banks.
-    let num_banks = if no_mbc { 1 } else { rom_size / ROM_BANK_SIZE as usize };
+    let num_banks = if no_mbc {
+        1
+    } else {
+        rom_size / ROM_BANK_SIZE as usize
+    };
     let mut rom = Vec::with_capacity(rom_size);
 
     for bank in 0..num_banks as u32 {
@@ -704,14 +707,15 @@ pub fn dump_rom(
         }
 
         // Set up read for this bank
-        set_variable(&mut port, fw_ver, 2, 0x00, bulk_chunk)
-            .ok_or("Set TRANSFER_SIZE failed")?;
-        set_variable(&mut port, fw_ver, 4, 0x00, start_addr)
-            .ok_or("Set ADDRESS failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x01, 1)
-            .ok_or("Set DMG_ACCESS_MODE failed")?;
+        set_variable(&mut port, fw_ver, 2, 0x00, bulk_chunk).ok_or("Set TRANSFER_SIZE failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, start_addr).ok_or("Set ADDRESS failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x01, 1).ok_or("Set DMG_ACCESS_MODE failed")?;
 
-        let mut remaining = if no_mbc { rom_size } else { ROM_BANK_SIZE as usize };
+        let mut remaining = if no_mbc {
+            rom_size
+        } else {
+            ROM_BANK_SIZE as usize
+        };
         while remaining > 0 {
             let chunk = remaining.min(bulk_chunk as usize);
             // Update transfer size if last chunk is smaller
@@ -720,8 +724,7 @@ pub fn dump_rom(
                     .ok_or("Set TRANSFER_SIZE for final chunk failed")?;
             }
 
-            write_cmd(&mut port, &[DMG_CART_READ])
-                .ok_or("DMG_CART_READ send failed")?;
+            write_cmd(&mut port, &[DMG_CART_READ]).ok_or("DMG_CART_READ send failed")?;
 
             let mut buf = vec![0u8; chunk];
             port.read_exact(&mut buf)
@@ -750,10 +753,7 @@ const RAM_BANK_SIZE: usize = 0x2000; // 8 KB per bank
 ///
 /// Returns the save data bytes. For MBC2, each byte is masked to 4 bits.
 /// Designed to be called from a background thread via `smol::unblock`.
-pub fn read_sram(
-    port_name: &str,
-    header: &CartridgeHeader,
-) -> Result<Vec<u8>, String> {
+pub fn read_sram(port_name: &str, header: &CartridgeHeader) -> Result<Vec<u8>, String> {
     if header.ram_size == 0 {
         return Err("Cartridge has no SRAM".to_string());
     }
@@ -788,7 +788,11 @@ pub fn read_sram(
         header.ram_size as usize
     };
     let num_banks = (ram_size / RAM_BANK_SIZE).max(1);
-    let bank_size = if ram_size < RAM_BANK_SIZE { ram_size } else { RAM_BANK_SIZE };
+    let bank_size = if ram_size < RAM_BANK_SIZE {
+        ram_size
+    } else {
+        RAM_BANK_SIZE
+    };
     let chunk_size: u16 = 512;
 
     let mut sram = Vec::with_capacity(ram_size);
@@ -800,12 +804,9 @@ pub fn read_sram(
 
         set_variable(&mut port, fw_ver, 2, 0x00, chunk_size as u32)
             .ok_or("Set TRANSFER_SIZE failed")?;
-        set_variable(&mut port, fw_ver, 4, 0x00, 0xA000)
-            .ok_or("Set ADDRESS failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x01, 3)
-            .ok_or("Set DMG_ACCESS_MODE failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x08, 1)
-            .ok_or("Set DMG_READ_CS_PULSE failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, 0xA000).ok_or("Set ADDRESS failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x01, 3).ok_or("Set DMG_ACCESS_MODE failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x08, 1).ok_or("Set DMG_READ_CS_PULSE failed")?;
 
         let mut remaining = bank_size;
         while remaining > 0 {
@@ -816,13 +817,13 @@ pub fn read_sram(
             }
             write_cmd(&mut port, &[DMG_CART_READ]).ok_or("DMG_CART_READ failed")?;
             let mut buf = vec![0u8; n];
-            port.read_exact(&mut buf).map_err(|e| format!("SRAM read failed: {e}"))?;
+            port.read_exact(&mut buf)
+                .map_err(|e| format!("SRAM read failed: {e}"))?;
             sram.extend_from_slice(&buf);
             remaining -= n;
         }
 
-        set_variable(&mut port, fw_ver, 1, 0x08, 0)
-            .ok_or("Clear DMG_READ_CS_PULSE failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x08, 0).ok_or("Clear DMG_READ_CS_PULSE failed")?;
     }
 
     // MBC2: mask to 4-bit
@@ -846,11 +847,7 @@ pub fn read_sram(
 /// Write SRAM to the cartridge.
 ///
 /// Designed to be called from a background thread via `smol::unblock`.
-pub fn write_sram(
-    port_name: &str,
-    header: &CartridgeHeader,
-    data: &[u8],
-) -> Result<(), String> {
+pub fn write_sram(port_name: &str, header: &CartridgeHeader, data: &[u8]) -> Result<(), String> {
     if header.ram_size == 0 {
         return Err("Cartridge has no SRAM".to_string());
     }
@@ -884,7 +881,11 @@ pub fn write_sram(
         header.ram_size as usize
     };
     let num_banks = (ram_size / RAM_BANK_SIZE).max(1);
-    let bank_size = if ram_size < RAM_BANK_SIZE { ram_size } else { RAM_BANK_SIZE };
+    let bank_size = if ram_size < RAM_BANK_SIZE {
+        ram_size
+    } else {
+        RAM_BANK_SIZE
+    };
     let chunk_size: u16 = 256; // MAX_BUFFER_WRITE
 
     // Pad or truncate data to match RAM size
@@ -901,17 +902,14 @@ pub fn write_sram(
 
         set_variable(&mut port, fw_ver, 2, 0x00, chunk_size as u32)
             .ok_or("Set TRANSFER_SIZE failed")?;
-        set_variable(&mut port, fw_ver, 4, 0x00, 0xA000)
-            .ok_or("Set ADDRESS failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x01, 4)
-            .ok_or("Set DMG_ACCESS_MODE failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x09, 1)
-            .ok_or("Set DMG_WRITE_CS_PULSE failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, 0xA000).ok_or("Set ADDRESS failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x01, 4).ok_or("Set DMG_ACCESS_MODE failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x09, 1).ok_or("Set DMG_WRITE_CS_PULSE failed")?;
 
         for chunk in bank_data.chunks(chunk_size as usize) {
-            write_cmd(&mut port, &[DMG_CART_WRITE_SRAM])
-                .ok_or("DMG_CART_WRITE_SRAM failed")?;
-            port.write_all(chunk).map_err(|e| format!("SRAM write failed: {e}"))?;
+            write_cmd(&mut port, &[DMG_CART_WRITE_SRAM]).ok_or("DMG_CART_WRITE_SRAM failed")?;
+            port.write_all(chunk)
+                .map_err(|e| format!("SRAM write failed: {e}"))?;
             port.flush().map_err(|e| format!("Flush failed: {e}"))?;
 
             let ack = read_byte(&mut port).ok_or("No ACK after SRAM write")?;
@@ -920,10 +918,8 @@ pub fn write_sram(
             }
         }
 
-        set_variable(&mut port, fw_ver, 4, 0x00, 0)
-            .ok_or("Clear ADDRESS failed")?;
-        set_variable(&mut port, fw_ver, 1, 0x09, 0)
-            .ok_or("Clear DMG_WRITE_CS_PULSE failed")?;
+        set_variable(&mut port, fw_ver, 4, 0x00, 0).ok_or("Clear ADDRESS failed")?;
+        set_variable(&mut port, fw_ver, 1, 0x09, 0).ok_or("Clear DMG_WRITE_CS_PULSE failed")?;
     }
 
     // Disable RAM
@@ -987,8 +983,7 @@ pub fn flash_rom(
     // Query firmware
     write_cmd(&mut port, &[OFW_PCB_VER]).ok_or("Failed to query PCB version")?;
     let _pcb = read_byte(&mut port).ok_or("No PCB version response")?;
-    let (fw_ver, _) = query_firmware_info(&mut port)
-        .ok_or("Failed to query firmware")?;
+    let (fw_ver, _) = query_firmware_info(&mut port).ok_or("Failed to query firmware")?;
     if fw_ver < 12 {
         return Err(format!("Firmware v{fw_ver} too old, need v12+"));
     }
@@ -1084,11 +1079,11 @@ pub fn flash_rom(
             }
 
             if last_ack != 0x03 {
-                write_cmd(&mut port, &[FLASH_PROGRAM])
-                    .ok_or("FLASH_PROGRAM send failed")?;
+                write_cmd(&mut port, &[FLASH_PROGRAM]).ok_or("FLASH_PROGRAM send failed")?;
             }
 
-            port.write_all(chunk).map_err(|e| format!("Write failed: {e}"))?;
+            port.write_all(chunk)
+                .map_err(|e| format!("Write failed: {e}"))?;
             port.flush().map_err(|e| format!("Flush failed: {e}"))?;
 
             last_ack = read_byte(&mut port).ok_or("No ACK after flash program")?;
@@ -1176,9 +1171,7 @@ fn configure_flash_engine(
 /// Configure auto bank switching via DMG_SET_BANK_CHANGE_CMD (0xB8).
 ///
 /// Sets up MBC5-style bank switching: write bank number to address 0x2100.
-fn configure_bank_switching(
-    port: &mut Box<dyn serialport::SerialPort>,
-) -> Result<(), String> {
+fn configure_bank_switching(port: &mut Box<dyn serialport::SerialPort>) -> Result<(), String> {
     let mut buf = [0u8; 7];
     buf[0] = DMG_SET_BANK_CHANGE_CMD;
     buf[1] = 1; // 1 command
@@ -1197,19 +1190,20 @@ fn configure_bank_switching(
 ///
 /// Sends the 6-byte erase sequence, then polls DQ7 until the chip reports
 /// erase complete (address 0 reads 0xFF).
-fn chip_erase_amd(
-    port: &mut Box<dyn serialport::SerialPort>,
-    fw_ver: u16,
-) -> Result<(), String> {
+fn chip_erase_amd(port: &mut Box<dyn serialport::SerialPort>, fw_ver: u16) -> Result<(), String> {
     // AMD chip erase: 6-command sequence
-    cart_write_flash(port, &[
-        (0x0AAA, 0x00AA), // unlock 1
-        (0x0555, 0x0055), // unlock 2
-        (0x0AAA, 0x0080), // erase setup
-        (0x0AAA, 0x00AA), // unlock 1
-        (0x0555, 0x0055), // unlock 2
-        (0x0AAA, 0x0010), // chip erase
-    ]).ok_or("Chip erase command failed")?;
+    cart_write_flash(
+        port,
+        &[
+            (0x0AAA, 0x00AA), // unlock 1
+            (0x0555, 0x0055), // unlock 2
+            (0x0AAA, 0x0080), // erase setup
+            (0x0AAA, 0x00AA), // unlock 1
+            (0x0555, 0x0055), // unlock 2
+            (0x0AAA, 0x0010), // chip erase
+        ],
+    )
+    .ok_or("Chip erase command failed")?;
 
     // Poll for erase completion: read address 0, wait for 0xFF
     // Chip erase can take up to 60 seconds

@@ -3,20 +3,24 @@ use iced::{
     Element,
     Length::Fill,
     Padding, Subscription, Task, event, mouse, time,
-    widget::{Stack, center, column, container, mouse_area, opaque, row, scrollable, svg, text as iced_text},
+    widget::{
+        Stack, center, column, container, mouse_area, opaque, row, scrollable, svg,
+        text as iced_text,
+    },
     window,
 };
 
 use super::ui::{
-    buttons, containers, fonts, horizontal_rule, menu_divider,
+    buttons, containers, fonts, horizontal_rule,
     icons::{self, Icon},
+    menu_divider,
     palette::MUTED,
     sizes::{border_m, l, m, s},
     text,
 };
 use super::{
-    controls, debugger, library, load, settings,
-    App, CartridgeMessage, DetailMessage, DetailSubScreen, FlashState, Fullscreen, Game, LoadedGame, Message, PendingAction, Screen,
+    App, CartridgeMessage, DetailMessage, DetailSubScreen, FlashState, Fullscreen, Game,
+    LoadedGame, Message, PendingAction, Screen, controls, debugger, library, load, settings,
 };
 use crate::cartridge_rw;
 
@@ -36,15 +40,40 @@ impl App {
                 let screen = container(self.emulator_view(false)).center(Fill);
                 column![self.action_bar.view(self), horizontal_rule(), screen].into()
             }
-            (Screen::Settings { section, listening_for, .. }, _) => settings::view::view(
+            (
+                Screen::Settings {
+                    section,
+                    listening_for,
+                    ..
+                },
+                _,
+            ) => settings::view::view(
                 &self.settings,
                 *section,
                 *listening_for,
                 &self.detected_cartridge_devices,
             ),
-            (Screen::ViewingGame { sub_screen: DetailSubScreen::Detail { .. }, .. }, _) => self.detail_view(),
-            (Screen::ViewingGame { sub_screen: DetailSubScreen::CartridgeActions { .. }, .. }, _) => self.cartridge_actions_view(),
-            (Screen::ViewingGame { sub_screen: DetailSubScreen::FlashCartridge { flash_state }, .. }, _) => self.flash_cartridge_view(flash_state),
+            (
+                Screen::ViewingGame {
+                    sub_screen: DetailSubScreen::Detail { .. },
+                    ..
+                },
+                _,
+            ) => self.detail_view(),
+            (
+                Screen::ViewingGame {
+                    sub_screen: DetailSubScreen::CartridgeActions { .. },
+                    ..
+                },
+                _,
+            ) => self.cartridge_actions_view(),
+            (
+                Screen::ViewingGame {
+                    sub_screen: DetailSubScreen::FlashCartridge { flash_state },
+                    ..
+                },
+                _,
+            ) => self.flash_cartridge_view(flash_state),
             _ => {
                 let page_content = self.page_content();
                 column![
@@ -73,21 +102,20 @@ impl App {
             Screen::HomebrewBrowser { state } => {
                 library::homebrew_browser::view(state, &self.catalogue)
             }
-            Screen::ViewingGame { sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state }, .. } => {
-                library::screenshot_gallery::view(gallery_state)
-            }
+            Screen::ViewingGame {
+                sub_screen: DetailSubScreen::ScreenshotGallery { gallery_state },
+                ..
+            } => library::screenshot_gallery::view(gallery_state),
             _ => unreachable!(),
         }
     }
 
     fn fullscreen_emulator_view(&self, cursor_hidden: bool) -> Element<'_, Message> {
         let screen = self.emulator_view(true);
-        let content = container(screen)
-            .center(Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Color::BLACK.into()),
-                ..Default::default()
-            });
+        let content = container(screen).center(Fill).style(|_| container::Style {
+            background: Some(iced::Color::BLACK.into()),
+            ..Default::default()
+        });
         let mut area = mouse_area(content).on_move(|_| Message::MouseMoved);
         if cursor_hidden {
             area = area.interaction(mouse::Interaction::Hidden);
@@ -114,32 +142,75 @@ impl App {
         // Per-screen menu items
         match &self.screen {
             Screen::Library { .. } | Screen::HomebrewBrowser { .. } => {
-                items = items.push(menu_item(Icon::FolderOpen, "Open ROM file...", load::Message::Pick.into()));
+                items = items.push(menu_item(
+                    Icon::FolderOpen,
+                    "Open ROM file...",
+                    load::Message::Pick.into(),
+                ));
                 has_items = true;
             }
-            Screen::ViewingGame { sub_screen: DetailSubScreen::Detail { .. }, .. } => {
-                items = items.push(menu_item(Icon::FolderOpen, "Open ROM file...", load::Message::Pick.into()));
+            Screen::ViewingGame {
+                sub_screen: DetailSubScreen::Detail { .. },
+                ..
+            } => {
+                items = items.push(menu_item(
+                    Icon::FolderOpen,
+                    "Open ROM file...",
+                    load::Message::Pick.into(),
+                ));
                 items = items.push(menu_divider());
-                items = items.push(menu_item(Icon::Download, "Import Save...", Message::Detail(DetailMessage::ImportSave)));
-                items = items.push(menu_item(Icon::FolderOpen, "Open Folder", Message::Detail(DetailMessage::OpenGameFolder)));
-                items = items.push(menu_item(Icon::Globe, "Refresh Metadata", Message::Detail(DetailMessage::RefreshMetadata)));
+                items = items.push(menu_item(
+                    Icon::Download,
+                    "Import Save...",
+                    Message::Detail(DetailMessage::ImportSave),
+                ));
+                items = items.push(menu_item(
+                    Icon::FolderOpen,
+                    "Open Folder",
+                    Message::Detail(DetailMessage::OpenGameFolder),
+                ));
+                items = items.push(menu_item(
+                    Icon::Globe,
+                    "Refresh Metadata",
+                    Message::Detail(DetailMessage::RefreshMetadata),
+                ));
                 items = items.push(menu_divider());
-                items = items.push(menu_item_danger(Icon::Close, "Remove Game", Message::Detail(DetailMessage::RemoveGame)));
+                items = items.push(menu_item_danger(
+                    Icon::Close,
+                    "Remove Game",
+                    Message::Detail(DetailMessage::RemoveGame),
+                ));
                 has_items = true;
             }
             Screen::Emulator => {
                 if !self.debugger_enabled {
-                    items = items.push(menu_item(Icon::Debug, "Debugger", Message::ToggleDebugger(true)));
+                    items = items.push(menu_item(
+                        Icon::Debug,
+                        "Debugger",
+                        Message::ToggleDebugger(true),
+                    ));
                     items = items.push(menu_divider());
                 }
                 if self.debugger_enabled {
-                    items = items.push(menu_item(Icon::Play, "Step Frame", debugger::Message::StepFrame.into()));
+                    items = items.push(menu_item(
+                        Icon::Play,
+                        "Step Frame",
+                        debugger::Message::StepFrame.into(),
+                    ));
                 }
                 items = items.push(menu_item_danger(Icon::Close, "Reset", Message::Reset));
                 items = items.push(menu_divider());
-                items = items.push(menu_item(Icon::Camera, "Screenshot", Message::TakeScreenshot));
+                items = items.push(menu_item(
+                    Icon::Camera,
+                    "Screenshot",
+                    Message::TakeScreenshot,
+                ));
                 if self.debugger_enabled {
-                    items = items.push(menu_item(Icon::Download, "Capture Trace", debugger::Message::CaptureFrame.into()));
+                    items = items.push(menu_item(
+                        Icon::Download,
+                        "Capture Trace",
+                        debugger::Message::CaptureFrame.into(),
+                    ));
                 }
                 has_items = true;
             }
@@ -152,27 +223,24 @@ impl App {
         }
         items = items.push(menu_item(Icon::Gear, "Settings", Message::ShowSettings));
 
-        let menu_panel = container(items.padding(s()))
-            .style(containers::menu);
+        let menu_panel = container(items.padding(s())).style(containers::menu);
 
         // Anchor top-right: scrim covers everything, menu sits in corner
         Stack::new()
             .push(content)
             .push(opaque(
-                mouse_area(
-                    container(menu_panel)
-                        .align_right(Fill)
-                        .padding(Padding { top: m() + 40.0, right: m(), bottom: 0.0, left: 0.0 }),
-                )
+                mouse_area(container(menu_panel).align_right(Fill).padding(Padding {
+                    top: m() + 40.0,
+                    right: m(),
+                    bottom: 0.0,
+                    left: 0.0,
+                }))
                 .on_press(Message::DismissMenu),
             ))
             .into()
     }
 
-    fn apply_confirmation_dialog<'a>(
-        &self,
-        content: Element<'a, Message>,
-    ) -> Element<'a, Message> {
+    fn apply_confirmation_dialog<'a>(&self, content: Element<'a, Message>) -> Element<'a, Message> {
         let Some(action) = &self.pending_action else {
             return content;
         };
@@ -205,9 +273,8 @@ impl App {
                         .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
                 );
             } else {
-                info = info.push(
-                    iced_text("No saves").color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)),
-                );
+                info = info
+                    .push(iced_text("No saves").color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.6)));
             }
         }
 
@@ -220,10 +287,8 @@ impl App {
                             column![
                                 info,
                                 row![
-                                    buttons::standard("Cancel")
-                                        .on_press(Message::DismissConfirm),
-                                    buttons::danger(confirm_label)
-                                        .on_press(Message::ConfirmAction),
+                                    buttons::standard("Cancel").on_press(Message::DismissConfirm),
+                                    buttons::danger(confirm_label).on_press(Message::ConfirmAction),
                                 ]
                                 .spacing(s()),
                             ]
@@ -247,7 +312,11 @@ impl App {
         let (viewing_sha1, hovered_log_entry, header_hovered) = match &self.screen {
             Screen::ViewingGame {
                 sha1,
-                sub_screen: DetailSubScreen::Detail { hovered_log_entry, header_hovered },
+                sub_screen:
+                    DetailSubScreen::Detail {
+                        hovered_log_entry,
+                        header_hovered,
+                    },
             } => (Some(sha1.as_str()), *hovered_log_entry, *header_hovered),
             _ => (None, None, false),
         };
@@ -346,12 +415,10 @@ impl App {
             Some(c) => c,
             None => {
                 // Cart was disconnected — go back
-                return container(
-                    column![
-                        screen_header("Cartridge", Message::Cartridge(CartridgeMessage::Back)),
-                        container(iced_text("No cartridge inserted.").color(MUTED)).padding(l()),
-                    ],
-                )
+                return container(column![
+                    screen_header("Cartridge", Message::Cartridge(CartridgeMessage::Back)),
+                    container(iced_text("No cartridge inserted.").color(MUTED)).padding(l()),
+                ])
                 .height(Fill)
                 .width(Fill)
                 .into();
@@ -364,7 +431,11 @@ impl App {
 
         let (flash_write_save, has_save) = match &self.screen {
             Screen::ViewingGame {
-                sub_screen: DetailSubScreen::CartridgeActions { flash_write_save, has_save },
+                sub_screen:
+                    DetailSubScreen::CartridgeActions {
+                        flash_write_save,
+                        has_save,
+                    },
                 ..
             } => (*flash_write_save, *has_save),
             _ => (true, false),
@@ -397,11 +468,18 @@ impl App {
             let hardware = if let Some(flash) = &cart.flash {
                 let mut hw = format!("Flash {}", cartridge_rw::format_size(flash.size));
                 if cart.ram_size > 0 {
-                    hw.push_str(&format!(" · RAM {}", cartridge_rw::format_size(cart.ram_size)));
+                    hw.push_str(&format!(
+                        " · RAM {}",
+                        cartridge_rw::format_size(cart.ram_size)
+                    ));
                 }
                 hw
             } else {
-                format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size))
+                format!(
+                    "{} · {}",
+                    cart.mapper_name,
+                    cartridge_rw::format_size(cart.rom_size)
+                )
             };
             body = body.push(library::view::cartridge_tile(
                 &title,
@@ -427,15 +505,17 @@ impl App {
                         reflash_col = reflash_col.push(
                             iced::widget::toggler(flash_write_save)
                                 .label("Also write save to cartridge")
-                                .on_toggle(|v| Message::Cartridge(CartridgeMessage::FlashToggleSave(v)))
+                                .on_toggle(|v| {
+                                    Message::Cartridge(CartridgeMessage::FlashToggleSave(v))
+                                })
                                 .size(m()),
                         );
                     }
 
-                    reflash_col = reflash_col.push(
-                        buttons::subtle("Reflash ROM to Cartridge")
-                            .on_press(Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))),
-                    );
+                    reflash_col =
+                        reflash_col.push(buttons::subtle("Reflash ROM to Cartridge").on_press(
+                            Message::Cartridge(CartridgeMessage::Flash(sha1.to_string())),
+                        ));
 
                     body = body.push(reflash_col);
                 }
@@ -461,11 +541,7 @@ impl App {
                     .unwrap_or_default();
 
                 // Side-by-side: game → cartridge
-                let game_tile = library::view::game_tile(
-                    &flash_title,
-                    &rom_size,
-                    flash_cover,
-                );
+                let game_tile = library::view::game_tile(&flash_title, &rom_size, flash_cover);
                 // Cart hardware info
                 let flash_size = cart.flash.as_ref().map(|f| f.size).unwrap_or(0);
                 let cart_hw = if cart.ram_size > 0 {
@@ -510,22 +586,23 @@ impl App {
 
                 body = body.push(
                     column![
-                        iced_text("This will erase the cartridge and replace it with this game's ROM.").color(MUTED),
-                        buttons::danger("Erase and Write to Cartridge")
-                            .on_press(Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))),
+                        iced_text(
+                            "This will erase the cartridge and replace it with this game's ROM."
+                        )
+                        .color(MUTED),
+                        buttons::danger("Erase and Write to Cartridge").on_press(
+                            Message::Cartridge(CartridgeMessage::Flash(sha1.to_string()))
+                        ),
                     ]
                     .spacing(s()),
                 );
             }
         }
 
-        container(
-            column![
-                screen_header("Cartridge", Message::Cartridge(CartridgeMessage::Back)),
-                container(scrollable(container(body).padding(l())).height(Fill))
-                    .center_x(Fill),
-            ],
-        )
+        container(column![
+            screen_header("Cartridge", Message::Cartridge(CartridgeMessage::Back)),
+            container(scrollable(container(body).padding(l())).height(Fill)).center_x(Fill),
+        ])
         .height(Fill)
         .width(Fill)
         .into()
@@ -546,7 +623,9 @@ impl App {
                 .color(MUTED)
                 .into()
         } else {
-            iced_text("Never synced with this cartridge.").color(MUTED).into()
+            iced_text("Never synced with this cartridge.")
+                .color(MUTED)
+                .into()
         };
 
         column![
@@ -570,9 +649,7 @@ impl App {
         // Look up the game being flashed for the tile
         let sha1 = self.viewing_sha1();
         let game_entry = sha1.and_then(|s| self.store.entry(s));
-        let game_title = game_entry
-            .map(|e| e.display_title())
-            .unwrap_or_default();
+        let game_title = game_entry.map(|e| e.display_title()).unwrap_or_default();
         let game_cover = sha1
             .and_then(|s| self.store.summary(s))
             .and_then(|s| s.thumbnail.as_ref());
@@ -581,22 +658,18 @@ impl App {
             FlashState::InProgress(progress) => {
                 let pct = match progress.phase {
                     cartridge_rw::FlashPhase::Erasing => None,
-                    cartridge_rw::FlashPhase::Writing => Some(
-                        if progress.bytes_total > 0 {
-                            progress.bytes_done as f32 / progress.bytes_total as f32
-                        } else {
-                            0.0
-                        },
-                    ),
+                    cartridge_rw::FlashPhase::Writing => Some(if progress.bytes_total > 0 {
+                        progress.bytes_done as f32 / progress.bytes_total as f32
+                    } else {
+                        0.0
+                    }),
                 };
 
-                let mut body = column![
-                    library::view::cartridge_tile(
-                        &game_title,
-                        &cart_subtitle(game_entry, "Writing to cartridge…"),
-                        game_cover,
-                    ),
-                ]
+                let mut body = column![library::view::cartridge_tile(
+                    &game_title,
+                    &cart_subtitle(game_entry, "Writing to cartridge…"),
+                    game_cover,
+                ),]
                 .spacing(s());
 
                 match progress.phase {
@@ -614,14 +687,11 @@ impl App {
                 }
 
                 if let Some(pct) = pct {
-                    body = body.push(
-                        iced::widget::progress_bar(0.0..=1.0, pct).girth(8),
-                    );
+                    body = body.push(iced::widget::progress_bar(0.0..=1.0, pct).girth(8));
                 }
 
-                body = body.push(
-                    iced_text("Do not disconnect the cartridge or device.").color(MUTED),
-                );
+                body =
+                    body.push(iced_text("Do not disconnect the cartridge or device.").color(MUTED));
 
                 column![
                     screen_header_no_back("Writing to Cartridge"),
@@ -629,41 +699,38 @@ impl App {
                 ]
                 .into()
             }
-            FlashState::Complete => {
-                column![
-                    screen_header_no_back("Write Complete"),
-                    container(
-                        column![
-                            library::view::cartridge_tile(
-                                &game_title,
-                                &cart_subtitle(game_entry, "Written successfully"),
-                                game_cover,
-                            ),
-                            buttons::primary("Done")
-                                .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
-                        ]
-                        .spacing(s())
-                        .max_width(600),
-                    )
-                    .padding(l()),
-                ]
-                .into()
-            }
-            FlashState::Failed(error) => {
-                column![
-                    screen_header_no_back("Write Failed"),
-                    container(
-                        column![
-                            iced_text(format!("Error: {error}")),
-                            buttons::primary("Back").on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
-                        ]
-                        .spacing(s())
-                        .max_width(600),
-                    )
-                    .padding(l()),
-                ]
-                .into()
-            }
+            FlashState::Complete => column![
+                screen_header_no_back("Write Complete"),
+                container(
+                    column![
+                        library::view::cartridge_tile(
+                            &game_title,
+                            &cart_subtitle(game_entry, "Written successfully"),
+                            game_cover,
+                        ),
+                        buttons::primary("Done")
+                            .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                    ]
+                    .spacing(s())
+                    .max_width(600),
+                )
+                .padding(l()),
+            ]
+            .into(),
+            FlashState::Failed(error) => column![
+                screen_header_no_back("Write Failed"),
+                container(
+                    column![
+                        iced_text(format!("Error: {error}")),
+                        buttons::primary("Back")
+                            .on_press(Message::Cartridge(CartridgeMessage::FlashCancel)),
+                    ]
+                    .spacing(s())
+                    .max_width(600),
+                )
+                .padding(l()),
+            ]
+            .into(),
         };
 
         container(content).height(Fill).width(Fill).into()
@@ -784,8 +851,7 @@ impl App {
                 Subscription::none()
             },
             if self.settings.cartridge_rw_enabled {
-                time::every(std::time::Duration::from_secs(2))
-                    .map(|_| Message::CartridgeRwPoll)
+                time::every(std::time::Duration::from_secs(2)).map(|_| Message::CartridgeRwPoll)
             } else {
                 Subscription::none()
             },
@@ -794,10 +860,7 @@ impl App {
 }
 
 /// Build a cartridge tile subtitle combining library metadata with hardware info.
-fn cart_subtitle(
-    entry: Option<&library::GameEntry>,
-    hardware: &str,
-) -> String {
+fn cart_subtitle(entry: Option<&library::GameEntry>, hardware: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     let publisher;
     let year;
@@ -816,25 +879,17 @@ fn cart_subtitle(
 }
 
 fn menu_item<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
-    buttons::subtle(
-        row![icons::m(icon), label]
-            .spacing(s())
-            .align_y(Center),
-    )
-    .on_press(Message::MenuAction(Box::new(message)))
-    .width(Fill)
-    .into()
+    buttons::subtle(row![icons::m(icon), label].spacing(s()).align_y(Center))
+        .on_press(Message::MenuAction(Box::new(message)))
+        .width(Fill)
+        .into()
 }
 
 fn menu_item_danger<'a>(icon: Icon, label: &'a str, message: Message) -> Element<'a, Message> {
-    buttons::danger(
-        row![icons::m(icon), label]
-            .spacing(s())
-            .align_y(Center),
-    )
-    .on_press(Message::MenuAction(Box::new(message)))
-    .width(Fill)
-    .into()
+    buttons::danger(row![icons::m(icon), label].spacing(s()).align_y(Center))
+        .on_press(Message::MenuAction(Box::new(message)))
+        .width(Fill)
+        .into()
 }
 
 /// Standard screen header: back button + title + horizontal rule.

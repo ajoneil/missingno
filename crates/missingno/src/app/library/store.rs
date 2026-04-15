@@ -314,7 +314,11 @@ impl GameStore {
         let sha1 = raw.sha1;
         self.activity_state = Some((
             sha1.clone(),
-            ActivityState::Loaded(ActivityDetail { sha1, sessions, last_cart_sync: raw.last_cart_sync }),
+            ActivityState::Loaded(ActivityDetail {
+                sha1,
+                sessions,
+                last_cart_sync: raw.last_cart_sync,
+            }),
         ));
     }
 

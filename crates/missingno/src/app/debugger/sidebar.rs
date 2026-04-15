@@ -2,23 +2,20 @@ use iced::{
     Border, Color, Element,
     Length::{self, Fill},
     alignment::Vertical,
-    widget::{
-        button, column, container, row, rule, text, tooltip, Space,
-    },
+    widget::{Space, button, column, container, row, rule, text, tooltip},
 };
 
 use crate::app::{
-    self,
+    self, debugger,
     ui::{
         fonts, palette,
         sizes::{s, xs},
     },
-    debugger,
 };
 use missingno_gb::cpu::{
     Cpu, HaltState,
     flags::Flags,
-    registers::{Register16, Register8},
+    registers::{Register8, Register16},
 };
 use missingno_gb::debugger::Debugger;
 use missingno_gb::ppu::types::palette::Palette;
@@ -83,7 +80,11 @@ impl Sidebar {
         }
     }
 
-    pub fn view<'a>(&'a self, debugger: &'a Debugger, pal: &'a Palette) -> Element<'a, app::Message> {
+    pub fn view<'a>(
+        &'a self,
+        debugger: &'a Debugger,
+        pal: &'a Palette,
+    ) -> Element<'a, app::Message> {
         let game_boy = debugger.game_boy();
 
         column![
@@ -96,11 +97,12 @@ impl Sidebar {
         .into()
     }
 
-    fn cpu_section<'a>(&self, cpu: &'a Cpu, game_boy: &'a missingno_gb::GameBoy) -> Element<'a, app::Message> {
-        let summary = format!(
-            "pc {:04X} · sp {:04X}",
-            cpu.bus_counter, cpu.stack_pointer,
-        );
+    fn cpu_section<'a>(
+        &self,
+        cpu: &'a Cpu,
+        game_boy: &'a missingno_gb::GameBoy,
+    ) -> Element<'a, app::Message> {
+        let summary = format!("pc {:04X} · sp {:04X}", cpu.bus_counter, cpu.stack_pointer,);
         let collapsed = self.is_collapsed(Section::Cpu);
 
         let body = column![
@@ -118,14 +120,22 @@ impl Sidebar {
         .into();
 
         let running = cpu.halt_state != HaltState::Halted;
-        section("CPU", &summary, collapsed, Section::Cpu,
+        section(
+            "CPU",
+            &summary,
+            collapsed,
+            Section::Cpu,
             Some((running, palette::GREEN)),
             None,
             body,
         )
     }
 
-    fn ppu_section<'a>(&self, ppu: &'a missingno_gb::ppu::Ppu, pal: &'a Palette) -> Element<'a, app::Message> {
+    fn ppu_section<'a>(
+        &self,
+        ppu: &'a missingno_gb::ppu::Ppu,
+        pal: &'a Palette,
+    ) -> Element<'a, app::Message> {
         let mode = ppu.mode();
         let (mode_text, mode_color) = mode_display(mode);
         let summary = format!("{} · ly {}", mode_text, ppu.video.ly());
@@ -137,13 +147,16 @@ impl Sidebar {
             .color(mode_color)
             .into();
 
-        section("PPU", &summary, collapsed, Section::Ppu,
+        section(
+            "PPU",
+            &summary,
+            collapsed,
+            Section::Ppu,
             Some((ppu.control().video_enabled(), palette::GREEN)),
             Some(mode_detail),
             ppu_sidebar(ppu, pal),
         )
     }
-
 }
 
 // --- Collapsible section ---
@@ -259,7 +272,11 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
 
 fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
     let halted = cpu.halt_state == HaltState::Halted;
-    let pc_color = if halted { palette::OVERLAY0 } else { palette::PURPLE };
+    let pc_color = if halted {
+        palette::OVERLAY0
+    } else {
+        palette::PURPLE
+    };
 
     let pc_display: Element<'_, app::Message> = row![
         text("pc")
@@ -278,8 +295,7 @@ fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
     let pc_element: Element<'_, app::Message> = if halted {
         tooltip(
             pc_display,
-            container(text("halted").font(fonts::monospace()).size(REG))
-                .padding([2.0, s()]),
+            container(text("halted").font(fonts::monospace()).size(REG)).padding([2.0, s()]),
             tooltip::Position::Bottom,
         )
         .style(tooltip_style)
@@ -288,10 +304,13 @@ fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
         pc_display
     };
 
-    row![pc_element, pointer("sp", format!("{:04X}", cpu.stack_pointer)),]
-        .spacing(s())
-        .align_y(Vertical::Center)
-        .into()
+    row![
+        pc_element,
+        pointer("sp", format!("{:04X}", cpu.stack_pointer)),
+    ]
+    .spacing(s())
+    .align_y(Vertical::Center)
+    .into()
 }
 
 fn pointer(label: &str, value: String) -> Element<'_, app::Message> {

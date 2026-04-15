@@ -2,19 +2,20 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use iced::{
-    Element, Length, Subscription, Task, time,
+    Element, Length, Subscription, Task,
     alignment::Vertical,
-    widget::{button, column, container, pane_grid, row, text, text_input, Column},
+    time,
+    widget::{Column, button, column, container, pane_grid, row, text, text_input},
 };
 
 use crate::app::{
     self,
+    emulator::Emulator,
+    screen::{GameBoyScreen, ScreenView, SgbScreen},
     ui::{
         fonts, icons, palette,
         sizes::{s, xs},
     },
-    emulator::Emulator,
-    screen::{GameBoyScreen, ScreenView, SgbScreen},
 };
 use missingno_gb::{
     GameBoy,
@@ -55,7 +56,6 @@ enum MainSplit {
     Top,
     Bottom,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -308,14 +308,14 @@ impl Debugger {
                 let content: Element<'_, app::Message> = match zone {
                     MainSplit::Top => self.panes.view(&self.debugger, pal),
                     MainSplit::Bottom => self.bottom_pane_grid(
-                        self.bottom_panes.as_ref().expect("bottom_panes must exist when main_split exists"),
+                        self.bottom_panes
+                            .as_ref()
+                            .expect("bottom_panes must exist when main_split exists"),
                     ),
                 };
                 pane_grid::Content::new(content)
             })
-            .on_resize(10.0, |resize| {
-                Message::MainSplitResize(resize).into()
-            })
+            .on_resize(10.0, |resize| Message::MainSplitResize(resize).into())
             .spacing(s())
             .into()
         } else {
@@ -332,23 +332,21 @@ impl Debugger {
         .into()
     }
 
-    fn bottom_pane_grid<'a>(&'a self, state: &'a pane_grid::State<BottomPanel>) -> Element<'a, app::Message> {
+    fn bottom_pane_grid<'a>(
+        &'a self,
+        state: &'a pane_grid::State<BottomPanel>,
+    ) -> Element<'a, app::Message> {
         pane_grid(state, |_handle, panel, _maximized| {
             let content: Element<'_, app::Message> = match panel {
                 BottomPanel::Breakpoints => self.breakpoints_content(),
             };
 
-            panes::pane(
-                panes::title_bar(panel.label()),
-                content,
-            )
+            panes::pane(panes::title_bar(panel.label()), content)
         })
         .on_resize(10.0, |resize| {
             Message::BottomPane(BottomPaneMessage::Resize(resize)).into()
         })
-        .on_drag(|drag| {
-            Message::BottomPane(BottomPaneMessage::Drag(drag)).into()
-        })
+        .on_drag(|drag| Message::BottomPane(BottomPaneMessage::Drag(drag)).into())
         .spacing(s())
         .into()
     }
@@ -366,13 +364,10 @@ impl Debugger {
             .on_input(|value| Message::BreakpointInputChanged(value).into())
             .on_submit(Message::AddBreakpoint.into());
 
-        column![
-            breakpoint_list,
-            input,
-        ]
-        .spacing(s())
-        .padding(s())
-        .into()
+        column![breakpoint_list, input,]
+            .spacing(s())
+            .padding(s())
+            .into()
     }
 
     fn icon_rail(&self) -> Element<'_, app::Message> {
@@ -387,24 +382,17 @@ impl Debugger {
             )
         });
 
-        let panel_buttons = [
-            (BottomPanel::Breakpoints, Icon::Circle, "Breakpoints"),
-        ]
-        .into_iter()
-        .map(|(panel, icon, label)| {
-            let shown = self.bottom_handles.contains_key(&panel);
-            let message = if shown {
-                BottomPaneMessage::Close(panel)
-            } else {
-                BottomPaneMessage::Show(panel)
-            };
-            rail_icon(
-                icon,
-                label,
-                shown,
-                Message::BottomPane(message).into(),
-            )
-        });
+        let panel_buttons = [(BottomPanel::Breakpoints, Icon::Circle, "Breakpoints")]
+            .into_iter()
+            .map(|(panel, icon, label)| {
+                let shown = self.bottom_handles.contains_key(&panel);
+                let message = if shown {
+                    BottomPaneMessage::Close(panel)
+                } else {
+                    BottomPaneMessage::Show(panel)
+                };
+                rail_icon(icon, label, shown, Message::BottomPane(message).into())
+            });
 
         column![
             column(pane_buttons).spacing(xs()),
@@ -485,7 +473,11 @@ fn rail_icon<'a>(
     use crate::app::debugger::sidebar::tooltip_style;
     use iced::widget::tooltip;
 
-    let color = if active { palette::PURPLE } else { palette::SURFACE2 };
+    let color = if active {
+        palette::PURPLE
+    } else {
+        palette::SURFACE2
+    };
 
     let btn: Element<'_, app::Message> = button(icons::m_colored(icon, color))
         .on_press(message)

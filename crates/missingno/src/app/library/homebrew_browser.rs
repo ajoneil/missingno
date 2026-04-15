@@ -7,6 +7,7 @@ use iced::{
 
 use crate::app::{
     self,
+    library::catalogue::{Catalogue, CatalogueEntry},
     ui::{
         buttons, containers, fonts,
         icons::{self, Icon},
@@ -14,7 +15,6 @@ use crate::app::{
         sizes::{border_m, l, m, s},
         text as app_text,
     },
-    library::catalogue::{Catalogue, CatalogueEntry},
 };
 
 use crate::app::library::activity;
@@ -239,9 +239,9 @@ fn entry_card<'a>(
     let card = row![cover_el, container(info.width(Fill)).padding(m()),].height(CARD_HEIGHT);
 
     iced::widget::mouse_area(container(card).width(Fill).style(containers::card))
-    .on_press(Message::SelectEntry(slug).into())
-    .interaction(iced::mouse::Interaction::Pointer)
-    .into()
+        .on_press(Message::SelectEntry(slug).into())
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
 }
 
 fn error_bar(error: Option<&str>) -> Option<Element<'static, app::Message>> {

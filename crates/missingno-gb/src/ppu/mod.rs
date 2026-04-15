@@ -463,9 +463,17 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Rising half-phase (DELTA_ODD, H→A boundary): XOTA divider chain
-    /// toggle, scanline boundary handling, pixel output pipeline, VBlank
-    /// IF, and LYC comparison. All rising-phase work in a single method.
+    /// Rising half-phase: master clock rises → alet falls → myvo rises.
+    ///
+    /// Clock mapping (master clock → PPU clocks):
+    ///   Master rises → alet falls, myvo rises. LEBO fires (BG fetch
+    ///     counter), PORY captures (myvo-clocked). CLKPIPE fires (SACU
+    ///     rising edge, depth 63.8 ge). Pixel shift and output.
+    ///   Master falls → alet rises, myvo falls. NYKA/PYGO/VOGA capture
+    ///     (alet-clocked). Sprite fetch counter advances (SABE).
+    ///
+    /// XOTA divider chain toggle, scanline boundary handling, pixel
+    /// output pipeline, VBlank IF, and LYC comparison.
     pub fn rise(&mut self, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
@@ -561,8 +569,10 @@ impl Ppu {
         result
     }
 
-    /// Falling half-phase (DELTA_EVEN): fetcher pipeline (advance,
-    /// cascade DFFs, TYFA), DFF8/DFF9 latches, LCD-off handling.
+    /// Falling half-phase: master clock falls → alet rises → myvo falls.
+    ///
+    /// Fetcher pipeline (VRAM reads, cascade DFFs, TYFA), DFF8/DFF9
+    /// latches, LCD-off handling.
     pub fn fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,

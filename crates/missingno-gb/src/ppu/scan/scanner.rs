@@ -33,13 +33,12 @@ pub(in crate::ppu) struct SpriteScanner {
     /// where the scanner starts but the first comparison happens on the
     /// next falling edge.
     catu_just_fired: bool,
-    /// BYBA_SCAN_DONEp_odd: DFF17 capturing scan_done() on XUPY rising edge.
-    /// Because rise() runs before fall() (which ticks the counter), BYBA
-    /// sees the counter state from the previous XUPY cycle — matching
-    /// GateBoy's `reg_old.FETO.out_old()` without an explicit pipeline
-    /// register. Single DFF delay = 2 dots.
+    /// BYBA: DFF17 capturing scan_done() on rising edge. Because rise()
+    /// runs before fall() (which ticks the counter), BYBA sees the
+    /// counter state from the previous XUPY cycle. Single DFF delay =
+    /// 2 dots.
     byba: bool,
-    /// DOBA_SCAN_DONEp_evn: DFF17 capturing BYBA on falling edge.
+    /// DOBA: DFF17 capturing BYBA on falling edge.
     doba: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
@@ -139,13 +138,13 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (DELTA_ODD): BYBA captures scan_done(), AVAP evaluated,
-    /// CATU scan-start fires, and AVAP-triggered scanning termination.
+    /// Rising edge (master clock rises): BYBA captures scan_done(), AVAP
+    /// evaluated, CATU scan-start fires, and AVAP-triggered scanning
+    /// termination.
     ///
-    /// Hardware: BYBA_SCAN_DONEp_odd has _odd suffix → latches on rising edge.
-    /// BYBA captures scan_done() directly. Because rise() runs before fall()
-    /// (which ticks the counter), BYBA sees the counter state from the
-    /// previous XUPY cycle — matching GateBoy's `reg_old.FETO.out_old()`.
+    /// BYBA captures scan_done() directly. Because rise() runs before
+    /// fall() (which ticks the counter), BYBA sees the counter state
+    /// from the previous XUPY cycle.
     ///
     /// On hardware, AVAP fires and BESU clears atomically in the same
     /// simulation pass. We match this by clearing scanning/besu here in
@@ -218,11 +217,12 @@ impl SpriteScanner {
         }
     }
 
-    /// Falling edge (DELTA_EVEN): scanner tick and DOBA capture.
+    /// Falling edge (master clock falls → alet rises): scanner tick and
+    /// DOBA capture.
     ///
-    /// Hardware: DOBA_SCAN_DONEp_evn has _evn suffix → latches on falling edge.
-    /// FETO is sampled after tick_clock(), matching hardware's combinational gate.
-    /// BESU clearing (via AVAP) is handled in rise() for atomic transition.
+    /// FETO is sampled after tick_clock(), matching hardware's
+    /// combinational gate. BESU clearing (via AVAP) is handled in rise()
+    /// for atomic transition.
     pub(in crate::ppu) fn fall(
         &mut self,
         xupy_rising: bool,
@@ -250,7 +250,7 @@ impl SpriteScanner {
             }
         }
 
-        // DOBA_SCAN_DONEp_evn: captures BYBA on falling edge.
+        // DOBA: captures BYBA on falling edge.
         self.doba = self.byba;
     }
 

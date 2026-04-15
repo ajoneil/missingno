@@ -6,14 +6,13 @@ use iced::{
 };
 
 use crate::app::{
-    self, App, Game, LoadedGame,
+    self, App, Game, LoadedGame, debugger,
     ui::{
         buttons,
         icons::{self, Icon},
         sizes::{m, s, xl},
         text as app_text,
     },
-    debugger,
 };
 
 pub struct ActionBar;
@@ -28,7 +27,8 @@ impl ActionBar {
         let title = match &app.screen {
             app::Screen::ViewingGame { sha1, .. } => {
                 // Show the viewed game's title
-                app.store.entry(sha1)
+                app.store
+                    .entry(sha1)
                     .map(|e| e.display_title())
                     .unwrap_or_default()
             }
@@ -83,7 +83,10 @@ impl ActionBar {
                     self.trailing(),
                 ]
             }
-            app::Screen::ViewingGame { sub_screen: app::DetailSubScreen::ScreenshotGallery { .. }, .. } => {
+            app::Screen::ViewingGame {
+                sub_screen: app::DetailSubScreen::ScreenshotGallery { .. },
+                ..
+            } => {
                 row![
                     container(
                         row![
@@ -143,13 +146,10 @@ impl ActionBar {
     fn trailing(&self) -> Element<'_, app::Message> {
         let row = row![];
 
-        row.push(
-            buttons::subtle(icons::m(Icon::Menu))
-                .on_press(app::Message::ToggleMenu),
-        )
-        .spacing(m())
-        .align_y(Center)
-        .into()
+        row.push(buttons::subtle(icons::m(Icon::Menu)).on_press(app::Message::ToggleMenu))
+            .spacing(m())
+            .align_y(Center)
+            .into()
     }
 }
 
@@ -160,10 +160,7 @@ fn controls(running: bool, debugger: bool) -> Element<'static, app::Message> {
         r = r.push(step(running)).push(step_over(running));
     }
 
-    r.push(play_pause(running))
-        .spacing(s())
-        .wrap()
-        .into()
+    r.push(play_pause(running)).spacing(s()).wrap().into()
 }
 
 fn play_pause(running: bool) -> Button<'static, app::Message> {

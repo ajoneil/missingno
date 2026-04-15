@@ -26,9 +26,9 @@
 ///     gates sprite fetch advance in mode3_rising
 ///   - `ryce()` return from `fall()` → triggers sprite fetch start
 pub(in crate::ppu) struct SpriteTrigger {
-    /// SOBU_SFETCH_REQp_evn: DFF17, latches on TAVA falling edge.
+    /// SOBU: DFF17, latches on TAVA falling edge (master-clock fall).
     sobu: bool,
-    /// SUDA_SFETCH_REQp_odd: DFF17, latches on LAPE rising edge.
+    /// SUDA: DFF17, latches on LAPE rising edge (master-clock rise).
     suda: bool,
     /// TAKA NAND latch: sprite fetch running. Set by RYCE (SOBU
     /// rising edge detect), cleared by VEKU (sprite fetch done).

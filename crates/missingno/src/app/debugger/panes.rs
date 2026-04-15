@@ -12,11 +12,6 @@ use iced::{
 
 use crate::app::{
     self,
-    ui::{
-        fonts, palette,
-        icons::Icon,
-        sizes::{self as sizes, s, xs},
-    },
     debugger::{
         self,
         audio::AudioPane,
@@ -29,6 +24,12 @@ use crate::app::{
         screen::{self, ScreenPane},
     },
     screen::ScreenView,
+    ui::{
+        fonts,
+        icons::Icon,
+        palette,
+        sizes::{self as sizes, s, xs},
+    },
 };
 use missingno_gb::debugger::Debugger;
 use missingno_gb::ppu::types::{
@@ -118,7 +119,11 @@ impl DebuggerPanes {
         handles.insert(DebuggerPane::Instructions, instructions_handle);
 
         let (screen_handle, split) = panes
-            .split(Vertical, instructions_handle, PaneInstance::Screen(screen_pane))
+            .split(
+                Vertical,
+                instructions_handle,
+                PaneInstance::Screen(screen_pane),
+            )
             .unwrap();
         handles.insert(DebuggerPane::Screen, screen_handle);
         panes.resize(split, 1.0 / 3.0);
@@ -149,9 +154,8 @@ impl DebuggerPanes {
 
                     if let Some(panes) = &mut self.panes {
                         let (last_pane, _) = panes.iter().last().unwrap();
-                        let (handle, _) = panes
-                            .split(Horizontal, *last_pane, pane_instance)
-                            .unwrap();
+                        let (handle, _) =
+                            panes.split(Horizontal, *last_pane, pane_instance).unwrap();
                         self.handles.insert(pane, handle);
                     } else {
                         let (panes, handle) = pane_grid::State::new(pane_instance);
@@ -185,24 +189,26 @@ impl DebuggerPanes {
                 }
             }
 
-            Message::Pane(pane_message) => if let Some(panes) = &mut self.panes {
-                match &pane_message {
-                    PaneMessage::Screen(message) => {
-                        panes.iter_mut().for_each(|(_, pane)| {
-                            if let PaneInstance::Screen(screen_pane) = pane {
-                                screen_pane.update(message.clone());
-                            }
-                        });
-                    }
-                    PaneMessage::Sprites(message) => {
-                        panes.iter_mut().for_each(|(_, pane)| {
-                            if let PaneInstance::Sprites(sprites_pane) = pane {
-                                sprites_pane.update(*message);
-                            }
-                        });
+            Message::Pane(pane_message) => {
+                if let Some(panes) = &mut self.panes {
+                    match &pane_message {
+                        PaneMessage::Screen(message) => {
+                            panes.iter_mut().for_each(|(_, pane)| {
+                                if let PaneInstance::Screen(screen_pane) = pane {
+                                    screen_pane.update(message.clone());
+                                }
+                            });
+                        }
+                        PaneMessage::Sprites(message) => {
+                            panes.iter_mut().for_each(|(_, pane)| {
+                                if let PaneInstance::Sprites(sprites_pane) = pane {
+                                    sprites_pane.update(*message);
+                                }
+                            });
+                        }
                     }
                 }
-            },
+            }
         }
     }
 
@@ -227,25 +233,22 @@ impl DebuggerPanes {
         pal: &'a Palette,
     ) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
-            pane_grid(
-                panes,
-                |_handle, instance, _is_maximized| match instance {
-                    PaneInstance::Screen(screen) => screen.content(),
-                    PaneInstance::Instructions(instructions) => instructions.content(
-                        debugger.game_boy(),
-                        debugger.game_boy().cpu().bus_counter,
-                        debugger.breakpoints(),
-                    ),
-                    PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
-                    PaneInstance::TileMap(tile_map) => {
-                        tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                    }
-                    PaneInstance::Sprites(sprites) => {
-                        sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                    }
-                    PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
-                },
-            )
+            pane_grid(panes, |_handle, instance, _is_maximized| match instance {
+                PaneInstance::Screen(screen) => screen.content(),
+                PaneInstance::Instructions(instructions) => instructions.content(
+                    debugger.game_boy(),
+                    debugger.game_boy().cpu().bus_counter,
+                    debugger.breakpoints(),
+                ),
+                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
+                PaneInstance::TileMap(tile_map) => {
+                    tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
+                }
+                PaneInstance::Sprites(sprites) => {
+                    sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
+                }
+                PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
+            })
             .on_resize(10.0, |resize| Message::ResizePane(resize).into())
             .on_drag(|drag| Message::DragPane(drag).into())
             .spacing(s())
@@ -273,8 +276,6 @@ impl DebuggerPanes {
             DebuggerPane::Audio,
         ]
     }
-
-
 }
 
 impl Message {
@@ -345,8 +346,7 @@ fn title_style(_theme: &Theme) -> container::Style {
 
 pub fn title_bar(label: &str) -> pane_grid::TitleBar<'_, app::Message> {
     pane_grid::TitleBar::new(
-        container(iced::widget::text(label).font(fonts::title()).size(13.0))
-            .padding([xs(), s()]),
+        container(iced::widget::text(label).font(fonts::title()).size(13.0)).padding([xs(), s()]),
     )
     .style(title_style)
 }
@@ -356,7 +356,10 @@ pub fn title_bar_with_detail<'a>(
     detail: impl Into<Element<'a, app::Message>>,
 ) -> pane_grid::TitleBar<'a, app::Message> {
     build_title_bar(
-        iced::widget::text(label).font(fonts::title()).size(13.0).into(),
+        iced::widget::text(label)
+            .font(fonts::title())
+            .size(13.0)
+            .into(),
         detail,
     )
 }
@@ -369,20 +372,20 @@ fn build_title_bar<'a>(
         // +1px top padding nudge: the detail font (monospace 11px) is shorter
         // than the title font (Chakra Petch 13px), so it needs a small offset
         // to visually center within the title bar height.
-        .controls(Element::from(
-            container(detail).padding([xs() + 1.0, s()]),
-        ))
+        .controls(Element::from(container(detail).padding([xs() + 1.0, s()])))
         .always_show_controls()
         .style(title_style)
 }
 
-pub fn checkbox_title_bar(
-    label: &str,
-    checked: bool,
-) -> pane_grid::TitleBar<'_, app::Message> {
+pub fn checkbox_title_bar(label: &str, checked: bool) -> pane_grid::TitleBar<'_, app::Message> {
     pane_grid::TitleBar::new(
-        container(toggler(checked).label(label).font(fonts::title()).size(13.0))
-            .padding([xs(), s()]),
+        container(
+            toggler(checked)
+                .label(label)
+                .font(fonts::title())
+                .size(13.0),
+        )
+        .padding([xs(), s()]),
     )
     .style(title_style)
 }

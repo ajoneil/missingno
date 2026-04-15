@@ -2,19 +2,22 @@ use iced::{
     Element,
     Length::Fill,
     never,
-    widget::{Row, column, container, pane_grid, rich_text, row, scrollable, span, toggler, tooltip},
+    widget::{
+        Row, column, container, pane_grid, rich_text, row, scrollable, span, toggler, tooltip,
+    },
 };
 
 use crate::app::{
     self,
-    ui::{
-        fonts, palette,
-        icons::{self, Icon},
-        sizes::{s, xs},
-    },
     debugger::{
         panes::{self, pane, title_bar_with_detail},
         ppu::tile_widget::tile_flip,
+    },
+    ui::{
+        fonts,
+        icons::{self, Icon},
+        palette,
+        sizes::{s, xs},
     },
 };
 use missingno_gb::ppu::{
@@ -64,10 +67,7 @@ impl SpritesPane {
             .map(|i| ppu.sprite(SpriteId(i)))
             .filter(|s| s.position.on_screen_x() && s.position.on_screen_y(size))
             .count();
-        let detail = format!(
-            "{} · {} visible",
-            size, visible_count,
-        );
+        let detail = format!("{} · {} visible", size, visible_count,);
 
         pane(
             title_bar_with_detail(
@@ -149,9 +149,7 @@ impl SpritesPane {
         .spacing(xs())
         .width(60);
 
-        row![left, right]
-            .spacing(xs())
-            .into()
+        row![left, right].spacing(xs()).into()
     }
 
     fn tiles(

@@ -152,7 +152,6 @@ pub fn enrich_next() -> EnrichResult {
     }
 }
 
-
 fn is_rom_file(path: &std::path::Path) -> bool {
     path.is_file()
         && matches!(

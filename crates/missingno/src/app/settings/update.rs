@@ -1,6 +1,6 @@
 use iced::Task;
 
-use crate::app::{self, controls, library, Game, LoadedGame};
+use crate::app::{self, Game, LoadedGame, controls, library};
 
 pub(in crate::app) fn handle(
     app: &mut app::App,
@@ -8,12 +8,20 @@ pub(in crate::app) fn handle(
 ) -> Task<app::Message> {
     match message {
         super::view::Message::SelectSection(section) => {
-            if let app::Screen::Settings { section: ref mut s, .. } = app.screen {
+            if let app::Screen::Settings {
+                section: ref mut s, ..
+            } = app.screen
+            {
                 *s = section;
             }
         }
         super::view::Message::Back => {
-            if let app::Screen::Settings { previous_screen, was_running, .. } = std::mem::replace(&mut app.screen, app::Screen::Library { hovered_game: None }) {
+            if let app::Screen::Settings {
+                previous_screen,
+                was_running,
+                ..
+            } = std::mem::replace(&mut app.screen, app::Screen::Library { hovered_game: None })
+            {
                 app.screen = *previous_screen;
                 if was_running {
                     app.run();
@@ -89,12 +97,20 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::StartListening(target) => {
-            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+            if let app::Screen::Settings {
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
                 *listening_for = Some(target);
             }
         }
         super::view::Message::CaptureBinding(key_str) => {
-            let target = if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+            let target = if let app::Screen::Settings {
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
                 listening_for.take()
             } else {
                 None
@@ -116,7 +132,11 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::ClearBinding => {
-            let target = if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+            let target = if let app::Screen::Settings {
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
                 listening_for.take()
             } else {
                 None
@@ -138,7 +158,11 @@ pub(in crate::app) fn handle(
             }
         }
         super::view::Message::CancelCapture => {
-            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+            if let app::Screen::Settings {
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
                 *listening_for = None;
             }
         }
@@ -146,7 +170,11 @@ pub(in crate::app) fn handle(
             app.settings.keyboard_bindings = super::Bindings::default_keyboard();
             app.settings.gamepad_bindings = super::Bindings::default_gamepad();
             app.settings.save();
-            if let app::Screen::Settings { ref mut listening_for, .. } = app.screen {
+            if let app::Screen::Settings {
+                ref mut listening_for,
+                ..
+            } = app.screen
+            {
                 *listening_for = None;
             }
             controls::update_bindings(

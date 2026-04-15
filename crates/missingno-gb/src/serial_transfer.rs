@@ -126,10 +126,7 @@ impl Registers {
 
         if self.control.contains(Control::ENABLE) {
             self.bits_remaining = 8;
-            link.notify_transfer_start(
-                self.data,
-                self.control.contains(Control::INTERNAL_CLOCK),
-            );
+            link.notify_transfer_start(self.data, self.control.contains(Control::INTERNAL_CLOCK));
         }
     }
 

@@ -245,10 +245,18 @@ impl Catalogue {
                 }
                 let m = &e.manifest;
                 m.title.to_lowercase().contains(&query_lower)
-                    || m.developer.as_ref().is_some_and(|d| d.to_lowercase().contains(&query_lower))
-                    || m.publisher.as_ref().is_some_and(|p| p.to_lowercase().contains(&query_lower))
-                    || m.description.as_ref().is_some_and(|d| d.to_lowercase().contains(&query_lower))
-                    || m.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
+                    || m.developer
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                    || m.publisher
+                        .as_ref()
+                        .is_some_and(|p| p.to_lowercase().contains(&query_lower))
+                    || m.description
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                    || m.tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
             })
             .collect();
         results.sort_by(|a, b| {

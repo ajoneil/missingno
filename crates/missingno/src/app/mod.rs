@@ -1,18 +1,14 @@
 use std::{fs, path::PathBuf, time::Instant};
 
-use iced::{
-    Task, Theme,
-    window,
-};
 use action_bar::ActionBar;
 use audio_output::AudioOutput;
-use ui::fonts;
+use iced::{Task, Theme, window};
 use missingno_gb::joypad;
+use ui::fonts;
 
 mod action_bar;
 mod audio_output;
 mod controls;
-mod ui;
 mod debugger;
 mod emulation;
 mod emulator;
@@ -22,6 +18,7 @@ mod recent;
 mod screen;
 pub mod settings;
 mod texture_renderer;
+mod ui;
 mod views;
 
 // Cartridge reader/writer hardware support
@@ -117,7 +114,6 @@ impl App {
             _ => None,
         }
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -282,7 +278,9 @@ enum Message {
     ReleaseButton(joypad::Button),
 
     ToggleDebugger(bool),
-    CompleteSetup { internet_enabled: bool },
+    CompleteSetup {
+        internet_enabled: bool,
+    },
     Settings(settings::view::Message),
     Library(library::view::Message),
     ScanComplete(bool),
@@ -398,10 +396,16 @@ impl App {
             Message::Load(message) => return load::update(message, self),
 
             // Emulation messages
-            Message::Run | Message::Pause | Message::TogglePause | Message::Reset
-            | Message::SaveBattery | Message::TakeScreenshot | Message::DismissScreenshotToast
-            | Message::PressButton(_) | Message::ReleaseButton(_) | Message::ToggleDebugger(_)
-                => return self.handle_emulation_message(message),
+            Message::Run
+            | Message::Pause
+            | Message::TogglePause
+            | Message::Reset
+            | Message::SaveBattery
+            | Message::TakeScreenshot
+            | Message::DismissScreenshotToast
+            | Message::PressButton(_)
+            | Message::ReleaseButton(_)
+            | Message::ToggleDebugger(_) => return self.handle_emulation_message(message),
 
             // Settings messages
             Message::CompleteSetup { internet_enabled } => {
@@ -412,15 +416,23 @@ impl App {
             Message::Settings(message) => return settings::update::handle(self, message),
 
             // Library messages
-            Message::Library(message) => return library::update::handle_library_message(self, message),
+            Message::Library(message) => {
+                return library::update::handle_library_message(self, message);
+            }
             Message::Detail(msg) => return library::update::handle(self, Message::Detail(msg)),
-            Message::Cartridge(msg) => return library::update::handle(self, Message::Cartridge(msg)),
-            Message::HomebrewDownloaded(..) | Message::OpenHomebrewBrowser
-            | Message::HomebrewBrowser(_) | Message::ScreenshotGallery(_)
+            Message::Cartridge(msg) => {
+                return library::update::handle(self, Message::Cartridge(msg));
+            }
+            Message::HomebrewDownloaded(..)
+            | Message::OpenHomebrewBrowser
+            | Message::HomebrewBrowser(_)
+            | Message::ScreenshotGallery(_)
             | Message::ActivityLoaded(_)
-            | Message::ScanComplete(_) | Message::EnrichComplete(_) | Message::OpenUrl(_)
-            | Message::CartridgeRwDumpProgress(_) | Message::CartridgeRwDumpComplete(_)
-                => return library::update::handle(self, message),
+            | Message::ScanComplete(_)
+            | Message::EnrichComplete(_)
+            | Message::OpenUrl(_)
+            | Message::CartridgeRwDumpProgress(_)
+            | Message::CartridgeRwDumpComplete(_) => return library::update::handle(self, message),
 
             // Navigation
             Message::BackToLibrary => {
@@ -533,7 +545,8 @@ impl App {
                 self.menu_open = false;
                 let was_running = self.running();
                 self.pause();
-                let previous = std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
+                let previous =
+                    std::mem::replace(&mut self.screen, Screen::Library { hovered_game: None });
                 self.screen = Screen::Settings {
                     section: settings::view::Section::default(),
                     listening_for: None,

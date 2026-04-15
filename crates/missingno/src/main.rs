@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand};
 
 mod app;
 mod cartridge_rw;
-mod link_cable;
 mod headless;
+mod link_cable;
 mod trace;
 
 #[derive(Parser)]

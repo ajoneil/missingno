@@ -9,11 +9,11 @@ use iced::{
 
 use crate::app::{
     self,
+    screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
     ui::{
         icons::{self, Icon},
         sizes::border_s,
     },
-    screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
 };
 use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};
 

@@ -1,18 +1,17 @@
 use iced::{
-    Background, Border, Color, Element,
-    Length,
+    Background, Border, Color, Element, Length,
     alignment::Vertical,
-    widget::{column, container, row, rule, text, Space},
+    widget::{Space, column, container, row, rule, text},
 };
 
 use crate::app::{
     Message,
+    debugger::interrupts::pip,
     screen::iced_color,
     ui::{
         fonts, palette,
         sizes::{s, xs},
     },
-    debugger::interrupts::pip,
 };
 use missingno_gb::ppu::{
     Ppu,
@@ -120,10 +119,13 @@ fn sprites_section(
     column![
         row![
             enable_pip("sprites", control.sprites_enabled()),
-            label_value("size", match control.sprite_size() {
-                SpriteSize::Single => "8×8",
-                SpriteSize::Double => "8×16",
-            }),
+            label_value(
+                "size",
+                match control.sprite_size() {
+                    SpriteSize::Single => "8×8",
+                    SpriteSize::Double => "8×16",
+                }
+            ),
         ]
         .spacing(s())
         .align_y(Vertical::Center),
@@ -142,7 +144,11 @@ fn enable_pip(label: &str, enabled: bool) -> Element<'static, Message> {
         text(label.to_owned())
             .font(fonts::monospace())
             .size(LABEL)
-            .color(if enabled { palette::TEXT } else { palette::SURFACE2 }),
+            .color(if enabled {
+                palette::TEXT
+            } else {
+                palette::SURFACE2
+            }),
     ]
     .spacing(xs())
     .align_y(Vertical::Center)

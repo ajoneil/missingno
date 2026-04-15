@@ -6,7 +6,7 @@ use iced::{
 };
 
 use crate::app::{
-    self,
+    self, load,
     settings::view as settings_view,
     ui::{
         buttons, containers, fonts,
@@ -15,7 +15,6 @@ use crate::app::{
         sizes::{border_l, l, m, s},
         text as app_text,
     },
-    load,
 };
 
 use crate::app::library;
@@ -164,9 +163,8 @@ fn empty_view(homebrew_enabled: bool) -> Element<'static, app::Message> {
         );
     }
 
-    actions = actions.push(
-        buttons::subtle("Open a ROM file...").on_press(load::Message::Pick.into()),
-    );
+    actions =
+        actions.push(buttons::subtle("Open a ROM file...").on_press(load::Message::Pick.into()));
 
     container(
         column![
@@ -368,11 +366,18 @@ fn cartridge_game_card<'a>(
     if let Some(flash) = &cart.flash {
         let mut hw = format!("Flash {}", cartridge_rw::format_size(flash.size));
         if cart.ram_size > 0 {
-            hw.push_str(&format!(" · RAM {}", cartridge_rw::format_size(cart.ram_size)));
+            hw.push_str(&format!(
+                " · RAM {}",
+                cartridge_rw::format_size(cart.ram_size)
+            ));
         }
         parts.push(hw);
     } else {
-        parts.push(format!("{} · {}", cart.mapper_name, cartridge_rw::format_size(cart.rom_size)));
+        parts.push(format!(
+            "{} · {}",
+            cart.mapper_name,
+            cartridge_rw::format_size(cart.rom_size)
+        ));
     }
 
     let subtitle = parts.join("\n");
@@ -394,7 +399,11 @@ fn unmatched_cartridge_card<'a>(
     dump_progress: Option<&'a cartridge_rw::DumpProgress>,
 ) -> Element<'a, app::Message> {
     let display_title = if cart.title.is_empty() {
-        if cart.flashable() { "Empty Flash Cart" } else { "Unknown Cartridge" }
+        if cart.flashable() {
+            "Empty Flash Cart"
+        } else {
+            "Unknown Cartridge"
+        }
     } else {
         &cart.title
     };
@@ -456,14 +465,10 @@ fn unmatched_cartridge_card<'a>(
             progress.bytes_total as u32,
             MUTED,
         ));
-        info = info.push(
-            iced::widget::progress_bar(0.0..=1.0, pct)
-                .girth(6),
-        );
+        info = info.push(iced::widget::progress_bar(0.0..=1.0, pct).girth(6));
     } else if cart.rom_size > 0 {
-        info = info.push(
-            buttons::primary("Add to Library").on_press(Message::DumpCartridge.into()),
-        );
+        info =
+            info.push(buttons::primary("Add to Library").on_press(Message::DumpCartridge.into()));
     }
 
     let card_row =
@@ -551,9 +556,8 @@ pub(crate) fn cartridge_tile<'a>(
 
     let info = column![
         row![
-            icons::m(Icon::CircuitBoard).style(move |_, _| iced::widget::svg::Style {
-                color: Some(TEAL),
-            }),
+            icons::m(Icon::CircuitBoard)
+                .style(move |_, _| iced::widget::svg::Style { color: Some(TEAL) }),
             text(title.to_string()).font(fonts::bold()),
         ]
         .spacing(s())

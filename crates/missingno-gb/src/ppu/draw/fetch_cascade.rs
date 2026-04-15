@@ -20,11 +20,11 @@
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
 pub(in crate::ppu) struct FetchCascade {
-    /// NYKA_FETCH_DONEp_evn: DFF17, latches on falling edge (ALET).
+    /// NYKA: DFF17, clocked by alet (captures on master-clock fall).
     nyka: bool,
-    /// PORY_FETCH_DONEp_odd: latches on rising edge (MYVO).
+    /// PORY: DFF17, clocked by myvo (captures on master-clock rise).
     pory: bool,
-    /// PYGO_FETCH_DONEp_evn: latches on falling edge (ALET).
+    /// PYGO: DFF17, clocked by alet (captures on master-clock fall).
     pygo: bool,
     /// POKY NOR latch: fires from PYGO on falling edge.
     poky: bool,

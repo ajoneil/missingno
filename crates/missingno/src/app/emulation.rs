@@ -5,10 +5,7 @@ use replace_with::replace_with_or_abort;
 
 use missingno_gb::joypad::Button;
 
-use super::{
-    App, Game, LoadedGame, Message, PendingAction,
-    library,
-};
+use super::{App, Game, LoadedGame, Message, PendingAction, library};
 
 impl App {
     pub(super) fn handle_emulation_message(&mut self, message: Message) -> Task<Message> {

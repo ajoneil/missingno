@@ -142,7 +142,9 @@ pub struct PipelineSnapshot {
 enum PhaseBridge {
     /// Produced by mode3_falling, consumed by mode3_rising.
     FallingToRising {
-        /// TYFA_CLKPIPE_evn: pixel clock enable.
+        /// TYFA (pixel clock enable). On hardware, TYFA is clocked by
+        /// alet (captures on master-clock fall). Bridged to the next
+        /// rise() where CLKPIPE consumes it.
         /// AND(!FEPO, !WODU, !RYDY, POKY).
         tyfa: bool,
     },
@@ -392,17 +394,16 @@ impl Rendering {
         self.vram_locked()
     }
 
-    /// Falling edge (DELTA_EVEN): setup phase.
+    /// Falling edge (master clock falls → alet rises): setup phase.
     ///
-    /// On hardware, the falling edge handles XUPY-derived logic (DOBA,
-    /// scan-counter), fetcher control signals (NYKA, POKY), mode
-    /// transitions (VOGA/WEGO clearing XYMU), fine scroll match (PUXA),
-    /// and window WX match (PYCO). AVAP and CATU moved to rise().
+    /// Alet-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
+    /// (hblank). Also handles XUPY-derived logic (DOBA, scan-counter),
+    /// NOR latches (POKY), combinational signals (TYFA bridge), fine
+    /// scroll match (PUXA), and window WX match (PYCO).
     ///
-    /// XUPY derives from WUVU, which is clocked by XOTA rising (H→A
-    /// boundary). The XOTA divider toggle runs in Ppu::rise(), before
-    /// this Falling-phase method, so video.xupy() reflects the
-    /// post-toggle state here.
+    /// XUPY derives from WUVU, which is clocked by XOTA rising.
+    /// The XOTA divider toggle runs in Ppu::rise(), before this method,
+    /// so video.xupy() reflects the post-toggle state here.
     pub(super) fn fall(
         &mut self,
         regs: &PipelineRegisters,
@@ -454,12 +455,14 @@ impl Rendering {
         self.scan.tick_catu(video.xupy(), video.ly());
     }
 
-    /// Rising edge (DELTA_ODD): output phase.
+    /// Rising edge (master clock rises → alet falls): output phase.
     ///
-    /// On hardware, the rising edge handles BYBA capture, AVAP evaluation,
-    /// pixel counter increment, fine counter increment, pipe shift, and
-    /// sprite X matching. CATU pipeline is advanced separately by
-    /// `tick_catu()` (unconditional, not gated by VBlank).
+    /// Myvo-clocked DFFs capture here: PORY (cascade). BG fetch counter
+    /// advances (LEBO fires when alet falls). CLKPIPE fires (SACU
+    /// rising edge, late in the dot). Handles BYBA capture, AVAP
+    /// evaluation, pixel counter increment, fine counter increment,
+    /// pipe shift, sprite X matching, and pixel output. CATU pipeline
+    /// is advanced separately by `tick_catu()` (unconditional).
     pub(super) fn rise(
         &mut self,
         regs: &PipelineRegisters,
@@ -482,9 +485,9 @@ impl Rendering {
             // On hardware, tile_temp retains data from the previous line's last
             // BG fetch. TileFetcher's tile_data_low/tile_data_high model tile_temp.
             self.fetcher.load_into(&mut self.bg_shifter);
-            // NYXU reset overrides LEBO on this ODD phase — the counter stays
-            // at 0 until the next rise. Suppress the advance_rising that will
-            // run later this same dot in mode3_rising.
+            // NYXU reset overrides LEBO on this rising phase — the counter
+            // stays at 0 until the next rise. Suppress the advance_rising
+            // that will run later this same dot in mode3_rising.
             self.fetcher.nyxu_reset_active = true;
         }
 
@@ -533,10 +536,10 @@ impl Rendering {
         self.reset_scanline(0);
     }
 
-    /// Falling edge Mode 3 processing.
+    /// Falling edge Mode 3 processing (master falls → alet rises).
     ///
     /// Fetcher VRAM reads (counter doesn't increment on fall — LEBO fires
-    /// on ODD/rise only), cascade DFFs (NYKA, PYGO), NOR latches (POKY),
+    /// on rise only), cascade DFFs (NYKA, PYGO), NOR latches (POKY),
     /// combinational signals (TYFA bridge), and fine scroll match (PUXA)
     /// fire on the falling edge.
     fn mode3_falling(

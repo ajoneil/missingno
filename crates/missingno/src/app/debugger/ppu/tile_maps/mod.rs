@@ -1,7 +1,7 @@
 use iced::{
     Length,
     Length::Fill,
-    widget::{container, pane_grid, responsive, shader, Stack},
+    widget::{Stack, container, pane_grid, responsive, shader},
 };
 
 use crate::app::{

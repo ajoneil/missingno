@@ -6,11 +6,11 @@ use iced::{
 
 use crate::app::{
     Message,
-    ui::sizes::m,
     debugger::{
         panes::{pane, title_bar},
         ppu::tile_atlas::tile_block_atlas,
     },
+    ui::sizes::m,
 };
 use missingno_gb::ppu::{memory::Vram, types::palette::Palette, types::tiles::TileBlockId};
 

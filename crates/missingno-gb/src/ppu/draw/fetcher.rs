@@ -7,16 +7,17 @@ use super::shifters::BgShifter;
 
 pub(in crate::ppu) struct TileFetcher {
     /// Hardware fetcher counter (LAXU/MESU/NYVA): 3-bit ripple counter,
-    /// values 0-5. Clocked by LEBO = NAND(ALET, MOCE), which fires on
-    /// ODD phases only (rise in emulator convention). VRAM reads occur on
-    /// EVEN phases (fall) at counter values 0, 2, 4. Terminal value 5:
-    /// MOCE = NAND(LAXU, NYVA) goes low, freezing the counter and firing
-    /// LYRY. Reset to 0 on TAVE (pipe load) or window trigger.
+    /// values 0-5. Clocked by LEBO = NAND(ALET, MOCE), which fires when
+    /// alet falls (master clock rises → rise() in the emulator). VRAM
+    /// reads occur on the opposite edge (master falls → fall()) at
+    /// counter values 0, 2, 4. Terminal value 5: MOCE = NAND(LAXU,
+    /// NYVA) goes low, freezing the counter and firing LYRY. Reset to 0
+    /// on TAVE (pipe load) or window trigger.
     pub(in crate::ppu) fetch_counter: u8,
     /// Models NYXU_BFETCH_RSTn holding the counter at 0. Set by AVAP
     /// (load_into called before advance_rising on the same dot) to suppress
     /// the first LEBO edge — on hardware, the async reset overrides the
-    /// clock on the same ODD phase. Cleared by advance_rising().
+    /// clock on the same rising phase. Cleared by advance_rising().
     pub(in crate::ppu) nyxu_reset_active: bool,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
@@ -174,9 +175,9 @@ impl TileFetcher {
     /// Falling-edge advance: VRAM reads only (no counter increment).
     ///
     /// The hardware fetcher counter is clocked by LEBO = NAND(ALET, MOCE),
-    /// which fires on ODD phases (rise) only. VRAM reads are driven by the
-    /// counter value that settled after the preceding rise. Reads happen at
-    /// counter values 0, 2, 4 on EVEN phases (fall).
+    /// which fires on the rising edge (alet falls) only. VRAM reads are
+    /// driven by the counter value that settled after the preceding rise.
+    /// Reads happen at counter values 0, 2, 4 on the falling edge.
     pub(in crate::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,
@@ -204,17 +205,18 @@ impl TileFetcher {
             }
             _ => {}
         }
-        // No counter increment on falling — LEBO only fires on ODD (rise).
+        // No counter increment on falling — LEBO only fires on rising.
     }
 
     /// Rising-edge advance: counter increment (LEBO clock).
     ///
-    /// LEBO = NAND(ALET, MOCE) fires on ODD phases (rise). The counter
-    /// increments 0→1→2→3→4→5 then saturates (MOCE goes low at 5,
-    /// freezing LEBO). LYRY fires combinationally when counter reaches 5.
+    /// LEBO = NAND(ALET, MOCE) fires when alet falls (master clock
+    /// rises). The counter increments 0→1→2→3→4→5 then saturates
+    /// (MOCE goes low at 5, freezing LEBO). LYRY fires combinationally
+    /// when counter reaches 5.
     ///
     /// On the AVAP/window-trigger dot, NYXU reset overrides the LEBO
-    /// clock — the counter stays at 0 for this ODD phase. The first
+    /// clock — the counter stays at 0 for this rising phase. The first
     /// real increment happens on the next rise.
     pub(in crate::ppu) fn advance_rising(&mut self) {
         if self.nyxu_reset_active {

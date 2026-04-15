@@ -8,6 +8,7 @@ use missingno_gb::ppu::types::palette::PaletteChoice;
 
 use crate::app::{
     self,
+    library::activity::{self, DisplayMode, FrameCapture},
     ui::{
         buttons, containers,
         icons::{self, Icon},
@@ -15,7 +16,6 @@ use crate::app::{
         sizes::{border_s, l, m, s},
         text as app_text,
     },
-    library::activity::{self, DisplayMode, FrameCapture},
 };
 
 /// State for the screenshot gallery view.

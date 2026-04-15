@@ -93,9 +93,7 @@ pub fn m_colored<'a>(icon: Icon, color: iced::Color) -> Svg<'a, Theme> {
     svg(icon_data(icon))
         .width(ICON_SIZE)
         .height(ICON_SIZE)
-        .style(move |_: &Theme, _state| Style {
-            color: Some(color),
-        })
+        .style(move |_: &Theme, _state| Style { color: Some(color) })
 }
 
 pub fn m_muted<'a>(icon: Icon) -> Svg<'a, Theme> {

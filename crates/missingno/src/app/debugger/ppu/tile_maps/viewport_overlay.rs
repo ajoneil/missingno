@@ -1,6 +1,5 @@
 use iced::{
-    Rectangle, Renderer, Theme,
-    mouse,
+    Rectangle, Renderer, Theme, mouse,
     widget::canvas::{self, Frame, Geometry, Path, Stroke},
 };
 
@@ -82,9 +81,7 @@ fn draw_wrapping_rect(
     color: iced::Color,
     line_width: f32,
 ) {
-    let stroke = Stroke::default()
-        .with_color(color)
-        .with_width(line_width);
+    let stroke = Stroke::default().with_color(color).with_width(line_width);
 
     if x + w <= map_size && y + h <= map_size {
         frame.stroke(
@@ -143,9 +140,7 @@ fn draw_rect(
     color: iced::Color,
     line_width: f32,
 ) {
-    let stroke = Stroke::default()
-        .with_color(color)
-        .with_width(line_width);
+    let stroke = Stroke::default().with_color(color).with_width(line_width);
 
     frame.stroke(
         &Path::rectangle(iced::Point::new(x, y), iced::Size::new(w, h)),
