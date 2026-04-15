@@ -77,6 +77,13 @@ pub struct Ppu {
     /// Frame counter for gbtrace output. Incremented each time a
     /// completed frame is extracted from the rendering pipeline.
     pub frame_number: u16,
+    /// Deferred LCD-on initialization. On hardware, writing LCDC bit 7
+    /// high makes VID_RST deassert at phase G (dot 3 rise), not
+    /// immediately. When LCDC bit 7 transitions 0→1, this is set to 2
+    /// (dots remaining). Each rise() decrements it; at 0 the PPU
+    /// initializes. This models the propagation delay from LCDC through
+    /// the XOPO→XODO→VID_RST chain to the XOTA falling edge at G→H.
+    lcd_on_countdown: u8,
 }
 
 impl Ppu {
@@ -125,6 +132,7 @@ impl Ppu {
             // popu is true, so pipeline ticking is gated off.
             pixel_pipeline: Some(Rendering::new()),
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 
@@ -168,6 +176,7 @@ impl Ppu {
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 
@@ -255,14 +264,18 @@ impl Ppu {
 
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
-    /// On hardware, VID_RST deasserts at G→H (XOTA falling). All
-    /// dividers start at qp=0 (async reset). We initialize wuvu=false
-    /// to model this reset state. The first rise() call will toggle
-    /// WUVU 0→1 (phase A), and the second rise() call will toggle
-    /// WUVU 1→0 (phase C), triggering the first TALU rise and LX
-    /// increment. This gives LX=0 the correct 3-half-phase duration.
+    /// VID_RST deasserts at XOTA rising (= master clock falls = our
+    /// fall()). All dividers async-reset to Q=0. TALU = NOT(VENA=0) = 1.
+    /// tick_dot() runs on the same fall() after init returns, providing
+    /// the first WUVU toggle (0→1). The divider chain then runs
+    /// normally from fall() onward.
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
+        // After VID_RST, VENA.Q=0, so TALU = NOT(VENA.Q) = 1. vid_rst
+        // sets mcycle_divider=false (wrong). Fix to match hardware.
+        // WUVU stays at 0 — tick_dot() runs on this same fall() after
+        // init returns, providing the first XOTA toggle (WUVU 0→1).
+        self.video.mcycle_divider = true; // TALU = NOT(VENA=0) = 1
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
         // PALY is combinational and settles immediately when LY resets to 0,
         // so recompute the pending comparison here. The ROPO DFF will latch
@@ -299,9 +312,12 @@ impl Ppu {
                 self.write_register_immediate(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // VID_RST deasserts when bit 7 transitions 0→1.
+                // VID_RST deasserts at XOTA falling = our fall().
+                // The write fires at BusDot 1 rise. VID_RST deasserts
+                // at the next xota falling edge = BusDot 1 fall. Set
+                // countdown=1 so the init fires in the next fall().
                 if !was_enabled && self.registers.control.video_enabled() {
-                    self.initialize_lcd_on();
+                    self.lcd_on_countdown = 1;
                 }
                 false
             }
@@ -482,6 +498,12 @@ impl Ppu {
             request_vblank: false,
         };
 
+        // lcd_on_countdown is processed in fall() — VID_RST deasserts
+        // at XOTA falling (our fall()), not XOTA rising (our rise()).
+        if self.lcd_on_countdown > 0 {
+            return result;
+        }
+
         if !self.control().video_enabled() {
             return result;
         }
@@ -490,81 +512,17 @@ impl Ppu {
             return result;
         }
 
-        // Save POPU state before divider chain updates it.
-        let popu_was = self.video.vblank;
+        // Divider chain (WUVU/VENA/TALU) and CATU now run in fall() —
+        // confirmed by dmg-sim: XOTA rises when master clock falls,
+        // and WUVU/XUPY/CATU all toggle on XOTA rising.
 
-        // XOTA rising edge: toggle WUVU (dot-rate clock).
-        self.video.tick_dot();
-
-        // VENA/TALU cascade: only fires when WUVU falls.
-        let mut scanline_boundary = false;
-        if self.video.dot_divider_fell() {
-            let talu_was = self.video.tick_mcycle_divider();
-
-            if talu_was && !self.video.mcycle_divider {
-                // TALU falling edge: RUTU fire, LY increment.
-                scanline_boundary = self.video.tick_talu_fall();
-                // PALY is combinational — recompute after any LY change
-                // so the next ROPO latch (TALU rising) sees the fresh value.
-                self.video.update_ly_comparison();
-                // RUPO NOR latch: PAGO immediately clears "match" when
-                // comparison goes false. Exclude frame wraps (MYTA async
-                // reset has different propagation characteristics).
-                if scanline_boundary && !self.video.popu_holdover {
-                    self.video.clear_stat_visible_if_no_match();
-                }
-            }
-
-            if !talu_was && self.video.mcycle_divider {
-                // TALU rising edge: LX increment, SANU detect, ROPO latch.
-                self.video.tick_talu_rise();
-                self.video.latch_ly_comparison();
-                self.video.latch_stat_visible();
-            }
-        }
-
-        if scanline_boundary {
-            // Scanline boundary — RUTU fired, LY incremented. LX was
-            // reset to 0 in tick_talu_fall().
-            if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                let ly = self.video.ly();
-                if ly == screen::NUM_SCANLINES {
-                    // Line 144: frame complete, enter VBlank.
-                    // Increment frame counter here (VSYNC start) to match
-                    // GateBoy's MEDA_VSYNC_OUTn rising edge timing.
-                    self.frame_number = self.frame_number.wrapping_add(1);
-                    result.new_frame = true;
-                } else if self.video.ly == 0 {
-                    // Line 0: VBlank → Active Display. Reset for new frame.
-                    rendering.reset_frame();
-                } else if self.video.ly() < 144 {
-                    // Lines 1-143: per-scanline reset.
-                    rendering.reset_scanline(ly);
-                }
-            }
-        }
-
-        // CATU DFF pipeline — runs every dot regardless of VBlank.
-        // On hardware, CATU evaluates every XUPY cycle independent of POPU.
-        // This allows CATU to fire at the 153->0 frame boundary while POPU
-        // is still high, setting BESU before vblank clears.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            rendering.tick_catu(&self.video);
-        }
-
-        // Pixel output, scanner, SACU, pipe shift. On hardware these
-        // circuits are gated by XYMU (mode 3) and BESU (scanning), not
-        // POPU. During VBlank, XYMU and BESU are both low, so
-        // rendering.rise() is effectively a no-op.
+        // Pixel output, scanner, SACU, pipe shift. These run on the
+        // alet-falling / myvo-rising edge (our rise()). They read
+        // WUVU/XUPY state from the PREVIOUS fall()'s tick_dot, which
+        // is correct: on hardware, these circuits see the WUVU state
+        // that settled at the previous XOTA edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel = rendering.rise(&self.registers, &self.video, &self.oam);
-        }
-
-        // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
-        // transitions from low to high. POPU latches at NYPE rising edge,
-        // so this detects the combinational cascade within one tick.
-        if self.video.vblank && !popu_was && self.pixel_pipeline.is_some() {
-            result.request_vblank = true;
         }
 
         result
@@ -580,6 +538,73 @@ impl Ppu {
             new_frame: false,
             request_vblank: false,
         };
+
+        // Deferred LCD-on: VID_RST deasserts at XOTA rising = our
+        // fall(). On the init fall, XOTA fires at the same edge,
+        // toggling WUVU for the first time. Fall through to tick_dot
+        // so the divider chain starts on the init dot.
+        if self.lcd_on_countdown > 0 {
+            self.lcd_on_countdown -= 1;
+            if self.lcd_on_countdown == 0 {
+                self.initialize_lcd_on();
+                // Fall through — tick_dot runs below on this same fall.
+            } else {
+                return result;
+            }
+        }
+
+        // XOTA rising edge (= master clock falls = our fall()): toggle
+        // WUVU, cascade VENA/TALU, handle scanline boundaries. Confirmed
+        // by dmg-sim gate-level simulation.
+        if self.control().video_enabled() && self.pixel_pipeline.is_some() {
+            let popu_was = self.video.vblank;
+
+            self.video.tick_dot();
+
+            let mut scanline_boundary = false;
+            if self.video.dot_divider_fell() {
+                let talu_was = self.video.tick_mcycle_divider();
+
+                if talu_was && !self.video.mcycle_divider {
+                    scanline_boundary = self.video.tick_talu_fall();
+                    self.video.update_ly_comparison();
+                    if scanline_boundary && !self.video.popu_holdover {
+                        self.video.clear_stat_visible_if_no_match();
+                    }
+                }
+
+                if !talu_was && self.video.mcycle_divider {
+                    self.video.tick_talu_rise();
+                    self.video.latch_ly_comparison();
+                    self.video.latch_stat_visible();
+                }
+            }
+
+            if scanline_boundary {
+                if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                    let ly = self.video.ly();
+                    if ly == screen::NUM_SCANLINES {
+                        self.frame_number = self.frame_number.wrapping_add(1);
+                        result.new_frame = true;
+                    } else if self.video.ly == 0 {
+                        rendering.reset_frame();
+                    } else if self.video.ly() < 144 {
+                        rendering.reset_scanline(ly);
+                    }
+                }
+            }
+
+            // CATU DFF pipeline — clocked by XUPY = NOT(WUVU), which
+            // transitions when WUVU toggles (same XOTA edge = this fall).
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                rendering.tick_catu(&self.video);
+            }
+
+            // POPU rising edge → VYPU → LOPE: VBlank IF.
+            if self.video.vblank && !popu_was {
+                result.request_vblank = true;
+            }
+        }
 
         if self.control().video_enabled() {
             // Resolve DFF8/DFF9 latches BEFORE the pipeline reads them.
@@ -749,6 +774,7 @@ impl Ppu {
             video,
             oam,
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 }
