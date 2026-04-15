@@ -136,10 +136,10 @@ impl VideoControl {
         self.mcycle_divider
     }
 
-    /// XUPY signal: buffered WUVU.qp (2-dot clock).
-    /// Clocks OAM scan counter (via GAVA), BYBA/CATU pipeline DFFs.
+    /// XUPY = NOT(WUVU). True when WUVU.Q is low. Clocks OAM scan
+    /// counter (via GAVA), BYBA/CATU pipeline DFFs.
     pub fn xupy(&self) -> bool {
-        self.dot_divider
+        !self.dot_divider
     }
 
     /// Delayed line-end signal (NYPE output). High for one TALU period
