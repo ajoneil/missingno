@@ -177,10 +177,19 @@ impl SpriteScanner {
     /// can advance during the 153->0 frame boundary while POPU is
     /// still high.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
-        // Process PREVIOUS CATU capture: start scanning with 1-dot
-        // propagation delay. dmg-sim confirms CATU and the first scan
-        // advance fire simultaneously, 1 dot after RUTU.
-        if self.catu && !self.scanning {
+        // CATU DFF captures RUTU on XUPY rising edge, then propagates
+        // through ANEL (clocked by NOT(XUPY)) → BYHA → ATEJ → ANOM
+        // to drive the scan counter reset. This chain takes 1 full
+        // XUPY cycle (2 dots) to complete.
+        //
+        // dmg-sim confirms: first XUPY rising after LCD-on is at BD=2
+        // (120ns after VID_RST). AVAP fires at BD=0 (40 XUPY cycles
+        // later). This means the scan counter starts on the SECOND
+        // XUPY rising edge after CATU captures — the BD=0 edge.
+        //
+        // Model: CATU captures RUTU on XUPY N. Processing (scan start)
+        // is gated on XUPY N+1, giving the 1-XUPY-cycle propagation delay.
+        if xupy_rising && self.catu && !self.scanning {
             self.scanning = true;
             if self.catu_enabled {
                 self.besu = true;
