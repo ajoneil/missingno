@@ -36,6 +36,15 @@ pub(in crate::ppu) struct SpriteScanner {
     /// is combinational (valid as soon as BYBA/DOBA settle in fall()),
     /// but the rendering pipeline reacts in rise().
     avap_pending: bool,
+    /// ANEL propagation delay: suppresses the first scan tick after CATU
+    /// starts scanning. On hardware, CATU.Q propagates through ANEL
+    /// (clocked by NOT(XUPY)) → BYHA → ATEJ → ANOM before the counter
+    /// reset reaches the scan counter. This chain takes long enough that
+    /// the counter reset arrives AFTER the first XUPY rising edge (N+1),
+    /// so the first compare+tick doesn't happen until XUPY N+2.
+    /// dmg-sim confirms AVAP at BD=0, which requires 41 XUPY cycles from
+    /// CATU capture (not 40).
+    scan_start_delay: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -59,6 +68,7 @@ impl SpriteScanner {
             byba: false,
             doba: false,
             avap_pending: false,
+            scan_start_delay: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -196,6 +206,10 @@ impl SpriteScanner {
             }
             self.counter.reset();
             self.catu = false;
+            // ANEL propagation delay: the counter reset arrives after
+            // this XUPY edge, so the first compare+tick is suppressed
+            // until the next XUPY rising.
+            self.scan_start_delay = true;
         }
 
         // CATU DFF captures RUTU on XUPY rising.
@@ -215,18 +229,20 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // OAM comparison and counter tick. No catu_just_fired delay —
-        // dmg-sim shows first scan advance fires simultaneously with
-        // CATU, 1 dot after RUTU. Since tick_catu processes the
-        // previous CATU in the same fall() before this runs, scanning
-        // is already true and the counter is reset. The first compare
-        // and tick happen on this same fall().
-        if self.scanning && xupy_rising {
-            self.counter
-                .compare_and_store(ly, &mut self.sprites, regs, oam);
-        }
-        if xupy_rising {
-            self.counter.tick_clock();
+        // OAM comparison and counter tick. Gated by scan_start_delay:
+        // on the XUPY edge where CATU starts scanning, the ANEL
+        // propagation delay prevents the counter from ticking. The
+        // first compare+tick happens on the NEXT XUPY rising edge.
+        if self.scan_start_delay && xupy_rising {
+            self.scan_start_delay = false;
+        } else {
+            if self.scanning && xupy_rising {
+                self.counter
+                    .compare_and_store(ly, &mut self.sprites, regs, oam);
+            }
+            if xupy_rising {
+                self.counter.tick_clock();
+            }
         }
 
         // DOBA captures OLD BYBA (alet clock arrives after XUPY).
@@ -263,6 +279,7 @@ impl SpriteScanner {
         self.byba = false;
         self.doba = false;
         self.avap_pending = false;
+        self.scan_start_delay = false;
         self.catu = false;
         // RUTU fires at the scanline boundary. CATU captures it on the
         // next XUPY rising edge.
