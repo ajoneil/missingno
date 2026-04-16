@@ -218,23 +218,8 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
-        self.doba = self.byba;
-
-        // BYBA captures scan_done on XUPY rising.
-        if xupy_rising {
-            self.byba = self.counter.scan_done();
-        }
-
-        // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
-        let avap = self.byba && !self.doba;
-        if avap && self.scanning {
-            self.scanning = false;
-            self.besu = false;
-            self.avap_pending = true;
-        }
-
-        // OAM comparison and counter tick.
+        // OAM comparison and counter tick FIRST — compare uses current
+        // entry, then tick_clock advances and may freeze via FETO.
         if self.catu_just_fired {
             self.catu_just_fired = false;
         } else {
@@ -245,6 +230,26 @@ impl SpriteScanner {
             if xupy_rising {
                 self.counter.tick_clock();
             }
+        }
+
+        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
+        self.doba = self.byba;
+
+        // BYBA captures scan_done AFTER counter advance/freeze.
+        // On hardware, BYBA and the counter share the XUPY clock.
+        // When the counter reaches 39, FETO freezes it on the same
+        // tick_clock call, and BYBA reads scan_done(39)=true on the
+        // same XUPY edge — no extra cycle needed.
+        if xupy_rising {
+            self.byba = self.counter.scan_done();
+        }
+
+        // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
+        let avap = self.byba && !self.doba;
+        if avap && self.scanning {
+            self.scanning = false;
+            self.besu = false;
+            self.avap_pending = true;
         }
     }
 
