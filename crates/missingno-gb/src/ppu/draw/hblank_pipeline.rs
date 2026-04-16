@@ -21,8 +21,14 @@ pub(in crate::ppu) struct HblankPipeline {
     /// XYMU rendering latch (page 21). SET by AVAP (Mode 2→3),
     /// CLEAR by WEGO = OR2(VID_RST, VOGA).
     xymu: bool,
-    /// VOGA DFF17: captures WODU on ALET falling edge (half-cycle
-    /// delay). Feeds WEGO. Reset by TADY (line reset).
+    /// VOGA DFF17: captures WODU on ALET rising edge. Feeds WEGO.
+    /// Reset by TADY (line reset).
+    ///
+    /// Spec Section 6.3: "Mode 3 ends one alet-edge after the
+    /// H-blank condition is combinationally true." The one-edge
+    /// delay is the half-dot from rise() (where WODU goes true
+    /// when PX=167) to fall() (where VOGA captures). This is
+    /// naturally modeled by the rise-then-fall execution order.
     voga: bool,
     /// FEPO captured at start of falling phase. Feeds wodu() and
     /// TYFA computation. Latched because FEPO changes mid-fall but
@@ -66,15 +72,14 @@ impl HblankPipeline {
         // gate mode3_falling() on the transition dot.
         self.xymu_before_settle = self.xymu;
 
-        // WODU is purely combinational (no XYMU dependency), so it's
-        // valid at any point during the dot.
+        // WODU is combinational from PX and FEPO, valid here.
         let wodu_now = self.wodu(xugu);
 
-        // VOGA DFF17 captures WODU on ALET falling. On hardware this is
-        // the same dot WODU fires (half-cycle delay, not full-dot).
+        // VOGA will capture WODU on the upcoming fall().
         let voga_will_fire = self.voga || wodu_now;
 
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early.
+        // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early for CPU
+        // STAT readback visibility.
         if voga_will_fire {
             self.xymu = false;
         }
@@ -82,23 +87,25 @@ impl HblankPipeline {
 
     /// Falling edge (ALET clock): VOGA captures WODU, WEGO clears XYMU.
     ///
-    /// settle_alet() has already cleared XYMU for the CPU's benefit and
-    /// set xymu_before_settle. This method does the full VOGA/wodu
-    /// computation — the XYMU clear is idempotent.
+    /// The one-edge pipeline delay (spec Section 6.3) is the half-dot
+    /// from rise() (where WODU goes true when PX=167 via CLKPIPE) to
+    /// fall() (where VOGA captures). WODU's inputs (PX, FEPO) settled
+    /// during the preceding rise(), so VOGA captures the current dot's
+    /// WODU value — which reflects the PX state from this dot's
+    /// CLKPIPE step.
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
     pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> bool {
         // WODU is purely combinational — no XYMU dependency, so always valid.
         let wodu_now = self.wodu(xugu);
 
-        // VOGA DFF17 captures CURRENT dot's WODU (half-cycle delay).
-        // On hardware, WODU's inputs are valid before ALET falls.
+        // VOGA DFF17 captures CURRENT dot's WODU. The one-edge delay
+        // is from rise (WODU settles) to fall (VOGA captures).
         if wodu_now {
             self.voga = true;
         }
 
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU (idempotent if
-        // settle_alet already cleared it).
+        // WEGO = OR2(VID_RST, VOGA) clears XYMU.
         if self.voga {
             self.xymu = false;
         }

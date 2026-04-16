@@ -365,12 +365,16 @@ impl Ppu {
             Some(r) => r,
             None => return Mode::VerticalBlank,
         };
-        // XYMU settles before the CPU reads STAT (ALET falls at F->G
-        // before BUKE opens at G-H). Our settle_alet() models this.
-        // WODU is purely combinational (AND2(XUGU, !FEPO)). When WODU
-        // fires (PX=167), XYMU will clear on the next ALET edge. The
-        // combination xymu && !wodu gives the settled rendering state.
-        let xymu = rendering.xymu() && !rendering.wodu();
+        // Hardware (schematic page 21): mode bits are independent NOR gates.
+        //   bit 0 = XYMU OR POPU (rendering OR vblank)
+        //   bit 1 = ACYL OR XYMU (scanning OR rendering)
+        //
+        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). VOGA captures
+        // WODU with a one-edge pipeline delay (spec Section 6.3), so
+        // XYMU stays set for 1 dot after WODU fires. The CPU reads the
+        // correct mode because fall() (where VOGA captures and XYMU
+        // clears) runs before the next rise()'s CPU bus read.
+        let xymu = rendering.xymu();
         let bit0 = xymu || self.video.vblank;
         let bit1 = xymu || rendering.is_scanning();
         match (bit1, bit0) {
