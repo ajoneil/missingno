@@ -348,13 +348,12 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // ALET settle: VOGA captures WODU_old, XYMU clears. This updates
-        // XYMU so CPU STAT reads see the correct mode. On hardware, VOGA
-        // actually captures on alet rising (= fall()), but we run it here
-        // so the CPU mode() readback is correct. The STAT INTERRUPT from
-        // HBlank fires in fall() (via check_stat_edge after ppu.fall()),
-        // NOT here — confirmed by dmg-sim showing XYMU clears in fall().
-        self.ppu.settle_alet();
+        // VOGA capture (HBlank) happens in fall() via hblank.fall() —
+        // confirmed by dmg-sim: VOGA is clocked by alet rising (= fall).
+        // The mode() function uses `xymu && !wodu` to predict HBlank
+        // state for CPU STAT reads, so settle_alet is not needed.
+        // G4.2 confirmed WODU doesn't depend on XYMU, making the
+        // prediction reliable.
 
         // CPU data latch: capture bus value on the rising edge, after
         // PPU rise and ALET settle so the read sees the current PPU mode

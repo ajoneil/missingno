@@ -28,11 +28,6 @@ pub(in crate::ppu) struct SpriteScanner {
     /// RUTU signal: set true at the scanline boundary. Consumed by
     /// tick_catu on the next XUPY rising edge.
     rutu: bool,
-    /// Set when CATU fires in tick_catu. Suppresses counter tick and
-    /// OAM comparison in fall() for one dot, modeling the hardware delay
-    /// where the scanner starts but the first comparison happens on the
-    /// next falling edge.
-    catu_just_fired: bool,
     /// BYBA: DFF17 clocked by XUPY (captures in fall).
     byba: bool,
     /// DOBA: DFF17 clocked by alet (captures in fall).
@@ -61,7 +56,6 @@ impl SpriteScanner {
             catu_enabled: false,
             catu: false,
             rutu: false,
-            catu_just_fired: false,
             byba: false,
             doba: false,
             avap_pending: false,
@@ -183,6 +177,18 @@ impl SpriteScanner {
     /// can advance during the 153->0 frame boundary while POPU is
     /// still high.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
+        // Process PREVIOUS CATU capture: start scanning with 1-dot
+        // propagation delay. dmg-sim confirms CATU and the first scan
+        // advance fire simultaneously, 1 dot after RUTU.
+        if self.catu && !self.scanning {
+            self.scanning = true;
+            if self.catu_enabled {
+                self.besu = true;
+            }
+            self.counter.reset();
+            self.catu = false;
+        }
+
         // CATU DFF captures RUTU on XUPY rising.
         if xupy_rising {
             let xyvo = ly & 0x90 == 0x90;
@@ -191,26 +197,8 @@ impl SpriteScanner {
         }
     }
 
-    /// ANEL DFF: processes CATU output with half-dot delay.
-    /// Called from rise() to model ANEL capturing on NOT(XUPY) rising.
-    pub(in crate::ppu) fn process_catu(&mut self) {
-        if self.catu && !self.scanning {
-            self.scanning = true;
-            if self.catu_enabled {
-                self.besu = true;
-            }
-            self.counter.reset();
-            self.catu = false;
-            self.catu_just_fired = true;
-        }
-    }
-
     /// Falling edge (master clock falls → alet rises): scanner tick and
     /// DOBA capture.
-    ///
-    /// FETO is sampled after tick_clock(), matching hardware's
-    /// combinational gate. BESU clearing (via AVAP) is handled in rise()
-    /// for atomic transition.
     pub(in crate::ppu) fn fall(
         &mut self,
         xupy_rising: bool,
@@ -218,18 +206,18 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // OAM comparison and counter tick FIRST — compare uses current
-        // entry, then tick_clock advances and may freeze via FETO.
-        if self.catu_just_fired {
-            self.catu_just_fired = false;
-        } else {
-            if self.scanning && xupy_rising {
-                self.counter
-                    .compare_and_store(ly, &mut self.sprites, regs, oam);
-            }
-            if xupy_rising {
-                self.counter.tick_clock();
-            }
+        // OAM comparison and counter tick. No catu_just_fired delay —
+        // dmg-sim shows first scan advance fires simultaneously with
+        // CATU, 1 dot after RUTU. Since tick_catu processes the
+        // previous CATU in the same fall() before this runs, scanning
+        // is already true and the counter is reset. The first compare
+        // and tick happen on this same fall().
+        if self.scanning && xupy_rising {
+            self.counter
+                .compare_and_store(ly, &mut self.sprites, regs, oam);
+        }
+        if xupy_rising {
+            self.counter.tick_clock();
         }
 
         // DOBA captures OLD BYBA (alet clock arrives after XUPY).
@@ -267,7 +255,6 @@ impl SpriteScanner {
         self.doba = false;
         self.avap_pending = false;
         self.catu = false;
-        self.catu_just_fired = false;
         // RUTU fires at the scanline boundary. CATU captures it on the
         // next XUPY rising edge.
         self.rutu = true;

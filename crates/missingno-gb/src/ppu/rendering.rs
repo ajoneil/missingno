@@ -405,19 +405,18 @@ impl Rendering {
             return None;
         }
 
-        // Hblank pipeline: if settle_alet() already ran this dot,
-        // returns cached values. Otherwise computes fresh (e.g.
-        // Mode 2→3 transition where scanning was active during settle).
+        // Capture XYMU before hblank.fall() may clear it via VOGA/WEGO.
+        let was_rendering = self.hblank.xymu();
+
+        // Hblank pipeline: VOGA captures WODU on alet rising (= fall).
+        // WEGO clears XYMU. This is the primary Mode 3→0 path.
         let wodu = self.hblank.fall(self.lcd.xugu());
 
         // lcd.fall() receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).
         let pixel = self.lcd.fall(self.hblank.voga(), wodu);
 
-        if self.hblank.xymu_before_settle() {
-            // Use xymu_before_settle: on the dot VOGA fires, settle_alet()
-            // already cleared XYMU, but mode3_falling still needs to run
-            // for the final fetcher/TYFA work.
+        if was_rendering {
             self.mode3_falling(regs, video, oam, vram, palette_changed);
         }
 
@@ -449,7 +448,9 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
     ) -> Option<PixelOutput> {
-        self.scan.process_catu();
+        // CATU processing (scanning start) is back in tick_catu (fall)
+        // with 1-dot propagation delay — matching dmg-sim data showing
+        // CATU and first scan advance simultaneous, 1 dot after RUTU.
         let xupy_rising = video.xupy();
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
