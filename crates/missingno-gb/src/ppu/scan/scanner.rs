@@ -183,11 +183,17 @@ impl SpriteScanner {
     /// can advance during the 153->0 frame boundary while POPU is
     /// still high.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
-        // CATU DFF output from the PREVIOUS XUPY edge drives BESU and
-        // counter reset. On hardware, CATU.Q takes ~1 dot (243ps) to
-        // propagate after the XUPY edge — scanning starts on the NEXT
-        // tick, not immediately. Process the previous capture BEFORE
-        // updating CATU with the current XUPY edge.
+        // CATU DFF captures RUTU on XUPY rising.
+        if xupy_rising {
+            let xyvo = ly & 0x90 == 0x90;
+            self.catu = self.rutu && !xyvo;
+            self.rutu = false;
+        }
+    }
+
+    /// ANEL DFF: processes CATU output with half-dot delay.
+    /// Called from rise() to model ANEL capturing on NOT(XUPY) rising.
+    pub(in crate::ppu) fn process_catu(&mut self) {
         if self.catu && !self.scanning {
             self.scanning = true;
             if self.catu_enabled {
@@ -196,14 +202,6 @@ impl SpriteScanner {
             self.counter.reset();
             self.catu = false;
             self.catu_just_fired = true;
-        }
-
-        // CATU DFF captures RUTU on XUPY rising. The output won't be
-        // visible until the next tick_catu call (modeling propagation).
-        if xupy_rising {
-            let xyvo = ly & 0x90 == 0x90;
-            self.catu = self.rutu && !xyvo;
-            self.rutu = false;
         }
     }
 

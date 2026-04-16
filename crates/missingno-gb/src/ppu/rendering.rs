@@ -449,8 +449,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
     ) -> Option<PixelOutput> {
-        // Sprite scanner rising edge: BYBA captures FETO, AVAP evaluated.
-        // CATU was already advanced by tick_catu().
+        self.scan.process_catu();
         let xupy_rising = video.xupy();
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
