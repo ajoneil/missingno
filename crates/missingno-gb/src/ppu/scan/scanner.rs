@@ -206,19 +206,6 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
-        self.doba = self.byba;
-
-        // BYBA captures scan_done BEFORE counter advance.
-        // On hardware, BYBA is a DFF on XUPY. At the XUPY rising edge,
-        // BYBA captures its D input (scan_done) which reflects the
-        // counter state that settled from the PREVIOUS XUPY cycle —
-        // standard DFF semantics where D is sampled before the clock
-        // edge updates same-clock DFFs.
-        if xupy_rising {
-            self.byba = self.counter.scan_done();
-        }
-
         // OAM comparison and counter tick. No catu_just_fired delay —
         // dmg-sim shows first scan advance fires simultaneously with
         // CATU, 1 dot after RUTU. Since tick_catu processes the
@@ -231,6 +218,18 @@ impl SpriteScanner {
         }
         if xupy_rising {
             self.counter.tick_clock();
+        }
+
+        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
+        self.doba = self.byba;
+
+        // BYBA captures scan_done AFTER counter advance/freeze.
+        // On hardware, BYBA and the counter share the XUPY clock.
+        // When the counter reaches 39, FETO freezes it on the same
+        // tick_clock call, and BYBA reads scan_done(39)=true on the
+        // same XUPY edge — no extra cycle needed.
+        if xupy_rising {
+            self.byba = self.counter.scan_done();
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
