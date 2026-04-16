@@ -153,7 +153,7 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
     Writes to `receipts/traces/<rom_name>.gbtrace`. Profiles are per-suite TOML files in `receipts/resources/gbtrace/test-suites/*/profile.toml`.
   - **gbtrace CLI** — Build with `cargo build -p gbtrace --features cli` from `receipts/resources/gbtrace/`. Key commands:
     - `gbtrace info <file>` — trace metadata summary.
-    - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions (`--context N`, `--max N`, `--last N`, `--range START..END`, `--fields`).
+    - `gbtrace query <file> --where pc=0x0150` — find entries matching conditions (`--context N`, `--max N`, `--last N`, `--range START..END`, `--fields`). Multiple `--where` args for AND conditions (not comma-separated).
     - `gbtrace diff <a> <b>` — compare traces (`--sync`, `--fields`, `--exclude`, `--summary`).
     - `gbtrace frames <file>` — frame boundaries from LY.
     - `gbtrace render <file> -o <dir>` — render LCD frames to PNG (`--frames 1,3,5`).

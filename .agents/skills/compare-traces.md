@@ -163,6 +163,9 @@ gbtrace query <trace> --where "pc=0x48" --max 1 --context 10
 # When does a register change?
 gbtrace query <trace> --where "scx=1" --max 1 --context 3
 
+# Multiple conditions — use separate --where arguments (NOT comma-separated):
+gbtrace query <trace> --where "ly=9" --where "stat&3=3" --max 5
+
 # Show the last 5 entries (no condition needed):
 gbtrace query <trace> --last 5
 ```
