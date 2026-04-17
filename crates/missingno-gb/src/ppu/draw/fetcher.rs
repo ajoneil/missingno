@@ -14,11 +14,6 @@ pub(in crate::ppu) struct TileFetcher {
     /// NYVA) goes low, freezing the counter and firing LYRY. Reset to 0
     /// on TAVE (pipe load) or window trigger.
     pub(in crate::ppu) fetch_counter: u8,
-    /// Models NYXU_BFETCH_RSTn holding the counter at 0. Set by AVAP
-    /// (load_into called before advance_rising on the same dot) to suppress
-    /// the first LEBO edge — on hardware, the async reset overrides the
-    /// clock on the same rising phase. Cleared by advance_rising().
-    pub(in crate::ppu) nyxu_reset_active: bool,
     /// Window tile X counter (hardware's win_x.map). Increments per
     /// window tile fetched. Reset to 0 on window trigger.
     pub(in crate::ppu) window_tile_x: u8,
@@ -68,7 +63,6 @@ impl TileFetcher {
     pub(in crate::ppu) fn new() -> Self {
         Self {
             fetch_counter: 0,
-            nyxu_reset_active: false,
             window_tile_x: 0,
             tile_index: 0,
             tile_data_low: 0,
@@ -84,7 +78,6 @@ impl TileFetcher {
     /// across scanlines.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.fetch_counter = 0;
-        self.nyxu_reset_active = false;
         self.window_tile_x = 0;
         self.tile_index = 0;
         self.fetching_window = false;
@@ -215,14 +208,10 @@ impl TileFetcher {
     /// (MOCE goes low at 5, freezing LEBO). LYRY fires combinationally
     /// when counter reaches 5.
     ///
-    /// On the AVAP/window-trigger dot, NYXU reset overrides the LEBO
-    /// clock — the counter stays at 0 for this rising phase. The first
-    /// real increment happens on the next rise.
+    /// On the AVAP-reaction rise, the caller gates out this advance
+    /// (via `was_rendering`) so the counter stays at 0 — modeling
+    /// NYXU's reset hold through the first LEBO edge after AVAP.
     pub(in crate::ppu) fn advance_rising(&mut self) {
-        if self.nyxu_reset_active {
-            self.nyxu_reset_active = false;
-            return;
-        }
         if self.fetch_counter < 5 {
             self.fetch_counter += 1;
         }

@@ -149,20 +149,17 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (master clock rises): BYBA captures scan_done(), AVAP
-    /// evaluated, CATU scan-start fires, and AVAP-triggered scanning
-    /// termination.
+    /// Rising edge (master clock rises → alet falls): consume AVAP
+    /// detection from the preceding fall(), clear scanning/besu when
+    /// AVAP fires.
     ///
-    /// BYBA captures scan_done() directly. Because rise() runs before
-    /// fall() (which ticks the counter), BYBA sees the counter state
-    /// from the previous XUPY cycle.
-    ///
-    /// On hardware, AVAP fires and BESU clears atomically in the same
-    /// simulation pass. We match this by clearing scanning/besu here in
-    /// rise(), alongside XYMU assertion (handled by the caller). Entry 39's
-    /// OAM comparison runs before the clear, matching hardware where the
-    /// comparison logic (COTA/WUDA) operates on separate clocks not gated
-    /// by BESU.
+    /// AVAP was evaluated combinationally in the previous fall() when
+    /// BYBA/DOBA settled. BYBA captures on alet falling (= this rise()
+    /// in the emulator; OQ-1 measurement in
+    /// receipts/ppu-overhaul/avap-edge-investigation.md). The scanning
+    /// latch (BESU) clears here, co-located with XYMU set (handled by
+    /// the caller) — both occur at the alet falling edge matching
+    /// hardware's AVAP↑ time (t=0 in the spec's reference frame).
     pub(in crate::ppu) fn rise(
         &mut self,
         _xupy_rising: bool,
@@ -170,10 +167,12 @@ impl SpriteScanner {
         _regs: &PipelineRegisters,
         _oam: &Oam,
     ) -> ScanSignals {
-        // AVAP was already evaluated in fall() (after BYBA/DOBA captured).
-        // Return the stored result so rendering.rise() can react to it.
         let avap = self.avap_pending;
         self.avap_pending = false;
+        if avap {
+            self.scanning = false;
+            self.besu = false;
+        }
         ScanSignals { avap }
     }
 
@@ -258,10 +257,14 @@ impl SpriteScanner {
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
+        // Detection fires in fall() (when BYBA captures and DOBA settles).
+        // The scanning/besu clear is deferred to the next rise(), where
+        // it co-locates with the rendering-side AVAP reaction — matching
+        // hardware where XYMU set and BESU clear both occur at the alet
+        // falling edge (H-A; see receipts/ppu-overhaul/
+        // avap-edge-investigation.md).
         let avap = self.byba && !self.doba;
         if avap && self.scanning {
-            self.scanning = false;
-            self.besu = false;
             self.avap_pending = true;
         }
     }

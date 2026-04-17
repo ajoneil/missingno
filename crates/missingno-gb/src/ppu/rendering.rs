@@ -387,18 +387,12 @@ impl Rendering {
         let xupy_rising = video.xupy();
 
         // Sprite scanner falling edge: counter tick, BYBA/DOBA capture,
-        // AVAP evaluation (all XUPY/alet-clocked, fire in fall).
+        // AVAP evaluation (BYBA/DOBA-combinational, fires in fall).
+        // AVAP reaction (XYMU set, fetcher load_into, BESU/scanning
+        // clear) is deferred to the following rise() to align with
+        // hardware's alet-falling AVAP edge (H-A; see receipts/
+        // ppu-overhaul/avap-edge-investigation.md).
         self.scan.fall(xupy_rising, video.ly(), regs, oam);
-
-        // AVAP reaction: XYMU NOR latch responds immediately to AVAP.
-        // Mode 3 init (fetcher preload, NYXU reset, window WX cache)
-        // fires in the same fall() so Mode 3 is ready for the next rise().
-        if self.scan.avap_pending() {
-            self.hblank.set_xymu();
-            self.window.init_nuko_wx(regs.window.x_plus_7.output());
-            self.fetcher.load_into(&mut self.bg_shifter);
-            self.fetcher.nyxu_reset_active = true;
-        }
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
@@ -448,14 +442,28 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
     ) -> Option<PixelOutput> {
-        // CATU processing (scanning start) is back in tick_catu (fall)
-        // with 1-dot propagation delay — matching dmg-sim data showing
-        // CATU and first scan advance simultaneous, 1 dot after RUTU.
         let xupy_rising = video.xupy();
+
+        // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
+        // the fetcher advance so the first LAXU toggle occurs on the
+        // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay (§5.3,
+        // Q.A). The natural rise→rise gap plays the role previously
+        // filled by the nyxu_reset_active hold.
+        let was_rendering = self.hblank.xymu();
+
+        // Scanner rise(): consumes avap_pending from previous fall(),
+        // clears scanning/besu when AVAP fires.
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
-        // AVAP reaction (XYMU set, fetcher preload, NYXU reset, window
-        // WX init) now fires in fall() when AVAP is detected.
+        // AVAP reaction: BYBA captures on alet falling (= this rise()
+        // per OQ-1 measurement). XYMU set, fetcher preload, and window
+        // WX init fire here so Mode 3 init aligns with hardware t=0
+        // (H-A; receipts/ppu-overhaul/avap-edge-investigation.md).
+        if scan.avap {
+            self.hblank.set_xymu();
+            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+            self.fetcher.load_into(&mut self.bg_shifter);
+        }
 
         // SARY/REJO: sample the WY==LY latch every dot in all modes.
         // On hardware, SARY is clocked by TALU (rising-edge-derived).
@@ -468,6 +476,11 @@ impl Rendering {
         // Two sub-phases model the hardware's signal domains:
         // 1. Fetcher DFF advance (myvo-clocked, depth 16-22 ge)
         // 2. Pixel pipeline (CLKPIPE/SACU-driven, depth 63.8 ge)
+        //
+        // mode3_advance_fetcher is gated on was_rendering: on the
+        // AVAP-reaction rise, xymu was just set and the counter must
+        // remain at 0 (LAXU reset still asserted through NYXU pulse).
+        // The first advance fires on the next rise.
         if self.hblank.xymu() {
             // Snapshot pre-step-2 RYDY for SEKO and window check_trigger.
             // PORY may clear RYDY during mode3_advance_fetcher, but SEKO
@@ -476,7 +489,9 @@ impl Rendering {
             // SACU increments it, which happens in mode3_pixel_pipeline).
             let rydy_before_pory = self.window.rydy();
             let pixel_counter_before_sacu = self.lcd.pixel_counter();
-            self.mode3_advance_fetcher(regs);
+            if was_rendering {
+                self.mode3_advance_fetcher(regs);
+            }
             self.mode3_pixel_pipeline(
                 regs,
                 video,
