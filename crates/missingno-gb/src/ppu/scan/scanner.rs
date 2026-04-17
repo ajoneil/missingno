@@ -228,15 +228,6 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // BYBA is a DFF17 clocked by XUPY. Per DFF semantics, it samples
-        // its D input (scan_done, combinational from the counter) at the
-        // clock rising edge BEFORE the counter's own output transitions
-        // in response to the same edge. Capture scan_done HERE, before
-        // tick_clock advances the counter — so BYBA sees the pre-tick
-        // counter state. The NEXT XUPY rising captures the post-tick
-        // (=39) state and triggers AVAP. Spec §6.2, OQ-1 measurement.
-        let pre_tick_scan_done = self.counter.scan_done();
-
         // OAM comparison and counter tick. Gated by scan_start_delay:
         // on the XUPY edge where CATU starts scanning, the ANEL
         // propagation delay prevents the counter from ticking. The
@@ -256,9 +247,13 @@ impl SpriteScanner {
         // DOBA captures OLD BYBA (alet clock arrives after XUPY).
         self.doba = self.byba;
 
-        // BYBA captures pre-tick scan_done on XUPY rising.
+        // BYBA captures scan_done AFTER counter advance/freeze.
+        // On hardware, BYBA and the counter share the XUPY clock.
+        // When the counter reaches 39, FETO freezes it on the same
+        // tick_clock call, and BYBA reads scan_done(39)=true on the
+        // same XUPY edge — no extra cycle needed.
         if xupy_rising {
-            self.byba = pre_tick_scan_done;
+            self.byba = self.counter.scan_done();
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
