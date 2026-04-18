@@ -607,7 +607,7 @@ impl Ppu {
                 let talu_was = self.video.tick_mcycle_divider();
 
                 if talu_was && !self.video.mcycle_divider {
-                    scanline_boundary = self.video.tick_talu_fall();
+                    scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
                     if scanline_boundary && !self.video.popu_holdover {
                         self.video.clear_stat_visible_if_no_match();
@@ -615,7 +615,7 @@ impl Ppu {
                 }
 
                 if !talu_was && self.video.mcycle_divider {
-                    self.video.tick_talu_rise();
+                    self.video.on_lx_counter_clock_rise();
                     self.video.latch_ly_comparison();
                     self.video.latch_stat_visible();
                 }

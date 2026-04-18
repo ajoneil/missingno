@@ -1,3 +1,14 @@
+//! Video timing and control.
+//!
+//! The "LX counter clock" is the subsystem-idiomatic name for the 1 MHz
+//! M-cycle-cadence clock that advances the LX scanline-position counter
+//! and drives LY/LYC/NYPE/POPU/MYTA updates; TALU is its gate name in
+//! the netlist (spec §1.2 "1 MHz LX counter clock"). Edge methods use
+//! the role-based name (`on_lx_counter_clock_rise` / `on_lx_counter_clock_fall`);
+//! gate-level comments reference TALU directly where explaining hardware
+//! derivations (e.g., `TALU = NOT(VENA)`, "TALU cascade" named-phenomenon
+//! framing).
+
 use bitflags::bitflags;
 
 bitflags! {
@@ -41,21 +52,21 @@ pub struct VideoControl {
     pub lyc: u8,
 
     /// Pending LY==LYC comparison result (PALY combinational comparator).
-    /// Recomputed at TALU falling (via `update_ly_comparison()`) and on
-    /// CPU writes to LYC. Promoted to `ly_comparison_latched` at TALU
-    /// rising by `latch_ly_comparison()`.
+    /// Recomputed at LX counter clock fall (via `update_ly_comparison()`)
+    /// and on CPU writes to LYC. Promoted to `ly_comparison_latched` at
+    /// LX counter clock rise by `latch_ly_comparison()`.
     pub ly_comparison_pending: bool,
 
     /// Latched LY==LYC result (ROPO DFF output). Unconditionally latched
-    /// from `ly_comparison_pending` at each TALU rising edge. Drives the
-    /// LYC STAT interrupt source.
+    /// from `ly_comparison_pending` at each LX counter clock rise. Drives
+    /// the LYC STAT interrupt source.
     /// Reset only by SYS_RST, NOT by VID_RST (LCD off/on).
     pub ly_comparison_latched: bool,
 
     /// STAT bit 2 visible value (RUPO NOR latch). Asymmetric update:
     /// match clearing is immediate (PAGO always drives "no match"),
-    /// match onset requires ROPO DFF to latch. Also updated at TALU
-    /// rising (normal ROPO cadence). Frame-wrap follows ROPO only.
+    /// match onset requires ROPO DFF to latch. Also updated at LX counter
+    /// clock rise (normal ROPO cadence). Frame-wrap follows ROPO only.
     pub ly_comparison_stat_visible: bool,
 
     /// STAT interrupt enable flags (FF41 bits 3-6).
@@ -70,18 +81,18 @@ pub struct VideoControl {
     pub delayed_line_end: bool,
 
     /// Pending line-end state for NYPE's D input. Set true when RUTU
-    /// fires (TALU falling of the LX=113 M-cycle), consumed by NYPE
-    /// on the next TALU rising edge.
+    /// fires (LX counter clock fall of the LX=113 M-cycle), consumed by
+    /// NYPE on the next LX counter clock rise.
     pub line_end_pending: bool,
 
     /// Line-end detected flag (SANU combinational gate). True when
-    /// dot_position == 113. Set on TALU rising, consumed by RUTU on
-    /// the next TALU falling (2 dots later, same M-cycle).
+    /// dot_position == 113. Set on LX counter clock rise, consumed by
+    /// RUTU on the next LX counter clock fall (2 dots later, same M-cycle).
     pub line_end_detected: bool,
 
-    /// Line-end pulse active (RUTU). Set at TALU falling when the
-    /// scanline boundary fires, cleared at the next TALU rising.
-    /// Duration: 2 dots. Drives TAPA (Mode 2 interrupt) and the
+    /// Line-end pulse active (RUTU). Set at LX counter clock fall when
+    /// the scanline boundary fires, cleared at the next LX counter clock
+    /// rise. Duration: 2 dots. Drives TAPA (Mode 2 interrupt) and the
     /// line-144 VBlank STAT condition.
     pub line_end_active: bool,
 
@@ -91,10 +102,10 @@ pub struct VideoControl {
     pub frame_end_reset: bool,
 
     /// MYTA new-match suppression. When MYTA fires, the PALY comparator
-    /// runs normally at the next TALU falling but any false-to-true
+    /// runs normally at the next LX counter clock fall but any false-to-true
     /// transition (new match onset) is suppressed. This models the
     /// hardware's reg_old lag: PALY reads the registered LY value which
-    /// doesn't reflect the MYTA async reset until one TALU cycle later.
+    /// doesn't reflect the MYTA async reset until one M-cycle later.
     /// True-to-false transitions (match clearing) are NOT suppressed,
     /// so LYC=153 clears in 1 M-cycle while LYC=0 onset is delayed.
     pub myta_suppress_new_match: bool,
@@ -142,8 +153,8 @@ impl VideoControl {
         !self.dot_divider
     }
 
-    /// Delayed line-end signal (NYPE output). High for one TALU period
-    /// (4 dots) starting 2 dots after RUTU fires.
+    /// Delayed line-end signal (NYPE output). High for one M-cycle
+    /// (4 dots; one LX-counter-clock period) starting 2 dots after RUTU fires.
     pub fn delayed_line_end(&self) -> bool {
         self.delayed_line_end
     }
@@ -184,15 +195,16 @@ impl VideoControl {
     }
 
     /// ROPO DFF latch: unconditionally capture the pending PALY comparison
-    /// result at TALU rising edge. On hardware, RUPO (the NOR latch downstream
-    /// of ROPO) is transparent because PAGO is permanently held high during
-    /// normal operation. STAT bit 2 and the STAT interrupt both read this value.
+    /// result at LX counter clock rise. On hardware, RUPO (the NOR latch
+    /// downstream of ROPO) is transparent because PAGO is permanently held
+    /// high during normal operation. STAT bit 2 and the STAT interrupt both
+    /// read this value.
     pub fn latch_ly_comparison(&mut self) {
         self.ly_comparison_latched = self.ly_comparison_pending;
     }
 
     /// PALY combinational comparator: recompute the pending LY==LYC
-    /// result. Called at TALU falling and on CPU writes to LYC.
+    /// result. Called at LX counter clock fall and on CPU writes to LYC.
     ///
     /// When `myta_suppress_new_match` is active, the comparison runs
     /// normally but only false-to-true transitions (new match onset)
@@ -257,15 +269,16 @@ impl VideoControl {
         talu_was
     }
 
-    // ── TALU rising edge: NYPE, POPU, MYTA, LX, SANU ────────
+    // ── LX counter clock rise (gate: TALU rising): NYPE, POPU, MYTA, LX, SANU ──
 
-    /// TALU rising edge processing. Four hardware events fire in sequence:
+    /// LX counter clock rising edge (gate: TALU rising). Dispatcher —
+    /// four hardware events fire in sequence at this edge:
     ///
     /// 1. NYPE DFF captures the pending line-end state
     /// 2. NYPE rising edge clocks POPU (VBlank) and MYTA (frame-end)
     /// 3. LX advances (suppressed during RUTU line-end pulse)
     /// 4. SANU detects LX=113 (line-end for this scanline)
-    pub fn tick_talu_rise(&mut self) {
+    pub fn on_lx_counter_clock_rise(&mut self) {
         // 1. NYPE DFF: latch pending line-end on TALU rising.
         let nype_was = self.delayed_line_end;
         self.delayed_line_end = self.line_end_pending;
@@ -294,11 +307,11 @@ impl VideoControl {
         self.line_end_detected = self.dot_position == 113;
     }
 
-    // ── TALU falling edge: RUTU ──────────────────────────────
+    // ── LX counter clock fall (gate: TALU falling): RUTU ──────
 
-    /// TALU falling edge: fire RUTU if line-end was detected.
-    /// Returns true at scanline boundary (RUTU fires).
-    pub fn tick_talu_fall(&mut self) -> bool {
+    /// LX counter clock falling edge (gate: TALU falling). Fires RUTU
+    /// if line-end was detected; returns true at scanline boundary.
+    pub fn on_lx_counter_clock_fall(&mut self) -> bool {
         if self.line_end_detected {
             self.line_end_detected = false;
             if self.ly >= 153 {
