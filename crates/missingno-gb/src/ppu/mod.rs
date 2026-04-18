@@ -496,6 +496,8 @@ impl Ppu {
     /// alet rises, myvo falls — NYKA/PYGO/VOGA capture (alet-clocked),
     /// sprite fetch counter advances (SABE).
     ///
+    /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL → AZOF → ZAXY → ZEME → ALET.
+    ///
     /// Also: XOTA divider chain toggle, scanline boundary handling,
     /// pixel output pipeline, VBlank IF, and LYC comparison.
     pub fn on_master_clock_rise(&mut self) -> PpuTickResult {
@@ -543,6 +545,8 @@ impl Ppu {
     /// (= master falls), which toggles WUVU → the divider chain
     /// (WUVU/VENA/TALU) cascades; XUPY transitions, clocking the
     /// OAM-scan subsystem (CATU, BYBA, CENO).
+    ///
+    /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL → AZOF → ZAXY → ZEME → ALET.
     ///
     /// Also: fetcher pipeline (VRAM reads, cascade DFFs, TYFA),
     /// DFF8/DFF9 register latches, scanline-boundary handling, and
