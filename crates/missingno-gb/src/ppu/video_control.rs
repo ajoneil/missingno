@@ -3,9 +3,9 @@
 //! The "LX counter clock" is the subsystem-idiomatic name for the 1 MHz
 //! M-cycle-cadence clock that advances the LX scanline-position counter
 //! and drives LY/LYC/NYPE/POPU/MYTA updates; TALU is its gate name in
-//! the netlist (spec §1.2 "1 MHz LX counter clock"). Edge methods use
-//! the role-based name (`on_lx_counter_clock_rise` / `on_lx_counter_clock_fall`);
-//! gate-level comments reference TALU directly where explaining hardware
+//! the netlist. Edge methods use the role-based name
+//! (`on_lx_counter_clock_rise` / `on_lx_counter_clock_fall`); gate-level
+//! comments reference TALU directly where explaining hardware
 //! derivations (e.g., `TALU = NOT(VENA)`, "TALU cascade" named-phenomenon
 //! framing).
 
