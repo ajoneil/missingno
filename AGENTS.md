@@ -123,15 +123,15 @@ The M-cycle logic is split across three files in `crates/missingno-gb/src/cpu/mc
 
 The Game Boy's master clock produces alternating edges. On hardware, each edge triggers specific circuits — there is no inherent "first" or "second" edge within a dot. The CPU and PPU are clocked by the same master clock and tick in lockstep.
 
-**Emulator model**: `execute.rs` alternates `rise()` and `fall()` calls. One dot = one `rise()` + one `fall()`. The CPU and PPU both do work on each edge:
-- `rise()`: PPU pixel output (`ppu.rise()`), CPU state advance (`next_dot()`), CPU reads
-- `fall()`: PPU fetcher/control (`ppu.fall()`), CPU bus writes
+**Emulator model**: `execute.rs` alternates `rise()` and `fall()` phase methods. One dot = one `rise()` + one `fall()`. These are master-clock edges (`ck1_ck2` rising and falling — see PPU timing spec §1.1). The CPU and PPU both do work on each edge:
+- `rise()`: PPU pixel output (`ppu.on_master_clock_rise()`), CPU state advance (`next_dot()`), CPU reads
+- `fall()`: PPU fetcher/control (`ppu.on_master_clock_fall()`), CPU bus writes
 
 **There is no ordering between rise and fall.** They are alternating edges in a continuous clock. Do not reason about "rise happens before fall" — think about which edge a DFF captures on and which edge reads it.
 
 **DFF visibility**: When a DFF captures on edge E, the output holds that value until the next capture. No "same edge" vs "next edge" distinction. `DffLatch`: `write()` sets pending, `tick()` resolves to output (capture edge), `output()` reads last captured value.
 
-**CPU bus writes**: Action determined in `rise()` via `next_dot()`, executed in `fall()` via `drive_ppu_bus()`. DFF9 registers (LCDC, SCY, SCX) use the "early write path" before `ppu.fall()`. DFF8 palette registers (BGP, OBP0, OBP1) use early write + `tick_palette_latches()` inside `ppu.fall()`. To add registers to the early write path, update the match at `execute.rs` line ~398.
+**CPU bus writes**: Action determined in `rise()` via `next_dot()`, executed in `fall()` via `drive_ppu_bus()`. DFF9 registers (LCDC, SCY, SCX) use the "early write path" before `ppu.on_master_clock_fall()`. DFF8 palette registers (BGP, OBP0, OBP1) use early write + `tick_palette_latches()` inside `ppu.on_master_clock_fall()`. To add registers to the early write path, update the match at `execute.rs` line ~398.
 
 **GateBoy conventions**: 8 sub-phases (A-H) per M-cycle, 2 per dot. `mcycle_phase` packs ring counter DFFs: 0x0C=B, 0x0F=D, 0x03=F, 0x00=H. `_evn` DFFs latch on EVEN edges; `_odd` on ODD. CPU register writes latch at DELTA_GH (first visible at phase H). See `receipts/research/` for phase mapping docs.
 

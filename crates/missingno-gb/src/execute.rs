@@ -184,8 +184,8 @@ impl GameBoy {
             self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
             self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
 
-            // PPU rising phase at the M-cycle boundary (dot 0).
-            let ppu_result = self.ppu.rise();
+            // PPU master-clock rising edge at the M-cycle boundary (dot 0).
+            let ppu_result = self.ppu.on_master_clock_rise();
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -272,14 +272,15 @@ impl GameBoy {
                 }
             }
 
-            // Snapshot LY==LYC comparison state before PPU rise.
-            // ROPO latches LYC comparison at TALU rising edge during
-            // ppu.rise(). If the comparison transitions to match,
-            // this is a TALU-cascade-driven interrupt.
+            // Snapshot LY==LYC comparison state before the PPU's
+            // master-clock rising edge. ROPO latches LYC comparison at
+            // TALU rising edge during on_master_clock_rise(). If the
+            // comparison transitions to match, this is a TALU-cascade-
+            // driven interrupt.
             let lyc_was_matched = self.ppu.ly_eq_lyc();
 
-            // PPU rising phase for non-boundary dots.
-            let ppu_result = self.ppu.rise();
+            // PPU master-clock rising edge for non-boundary dots.
+            let ppu_result = self.ppu.on_master_clock_rise();
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -395,9 +396,11 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // PPU falling phase: divider chain (WUVU/VENA/TALU), CATU,
-        // scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
+        // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
+        // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
+        let video_result = self
+            .ppu
+            .on_master_clock_fall(is_mcycle_boundary, &self.vram_bus.vram);
 
         // VBlank IF: the divider chain now runs in fall(), so POPU
         // (VBlank) transitions happen here, not in rise().

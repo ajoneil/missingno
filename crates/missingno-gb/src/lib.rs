@@ -42,7 +42,8 @@ pub enum ClockPhase {
 /// falling). The register latch becomes transparent and combinational
 /// PPU logic sees the new value immediately. The emulator stages the
 /// write at dot 0 (when the CPU places the address on the bus) and
-/// applies it at dot 1 rise (before ppu.rise()) to model this.
+/// applies it at dot 1 rise (before ppu.on_master_clock_rise()) to
+/// model this.
 struct StagedPpuWrite {
     address: u16,
     value: u8,

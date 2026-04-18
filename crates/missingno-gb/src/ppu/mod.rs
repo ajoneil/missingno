@@ -484,18 +484,21 @@ impl Ppu {
                 && self.video.ly_eq_lyc())
     }
 
-    /// Rising half-phase: master clock rises → alet falls → myvo rises.
+    /// Master clock rising edge — one of the two edges of `ck1_ck2`
+    /// that bound a single dot. The master clock is the DMG's 4.194304
+    /// MHz crystal oscillator input; all on-chip clocks derive from it.
     ///
-    /// Clock mapping (master clock → PPU clocks):
-    ///   Master rises → alet falls, myvo rises. LEBO fires (BG fetch
-    ///     counter), PORY captures (myvo-clocked). CLKPIPE fires (SACU
-    ///     rising edge, depth 63.8 ge). Pixel shift and output.
-    ///   Master falls → alet rises, myvo falls. NYKA/PYGO/VOGA capture
-    ///     (alet-clocked). Sprite fetch counter advances (SABE).
+    /// Clock mapping on this edge: alet falls, myvo rises. LEBO fires
+    /// (BG fetch counter), PORY captures (myvo-clocked). CLKPIPE fires
+    /// (SACU rising edge, depth 63.8 ge). Pixel shift and output.
     ///
-    /// XOTA divider chain toggle, scanline boundary handling, pixel
-    /// output pipeline, VBlank IF, and LYC comparison.
-    pub fn rise(&mut self) -> PpuTickResult {
+    /// The complementary edge (`on_master_clock_fall`) handles:
+    /// alet rises, myvo falls — NYKA/PYGO/VOGA capture (alet-clocked),
+    /// sprite fetch counter advances (SABE).
+    ///
+    /// Also: XOTA divider chain toggle, scanline boundary handling,
+    /// pixel output pipeline, VBlank IF, and LYC comparison.
+    pub fn on_master_clock_rise(&mut self) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
@@ -532,11 +535,19 @@ impl Ppu {
         result
     }
 
-    /// Falling half-phase: master clock falls → alet rises → myvo falls.
+    /// Master clock falling edge — the complementary edge to
+    /// `on_master_clock_rise`. Together they bound one dot = one full
+    /// cycle of `ck1_ck2`.
     ///
-    /// Fetcher pipeline (VRAM reads, cascade DFFs, TYFA), DFF8/DFF9
-    /// latches, LCD-off handling.
-    pub fn fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Clock mapping on this edge: alet rises, myvo falls. XOTA rises
+    /// (= master falls), which toggles WUVU → the divider chain
+    /// (WUVU/VENA/TALU) cascades; XUPY transitions, clocking the
+    /// OAM-scan subsystem (CATU, BYBA, CENO).
+    ///
+    /// Also: fetcher pipeline (VRAM reads, cascade DFFs, TYFA),
+    /// DFF8/DFF9 register latches, scanline-boundary handling, and
+    /// LCD-off state management.
+    pub fn on_master_clock_fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
