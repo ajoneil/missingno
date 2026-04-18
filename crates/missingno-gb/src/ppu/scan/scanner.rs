@@ -1,3 +1,11 @@
+//! Sprite scanner — OAM scan (Mode 2) state machine.
+//!
+//! Signal naming follows the project's PPU timing spec. Netlist gate
+//! names (BYBA, DOBA, CATU, RUTU, BESU, from the dmgcpu netlist,
+//! msinger/dmg-schematics) appear in doc comments for traceability.
+//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §6.2 (Mode 2→3
+//! transition) and §6.4.1 (CATU/ANEL scan counter reset chain).
+
 use crate::ppu::{PipelineRegisters, memory::Oam};
 
 use super::oam_scan::{ScanCounter, SpriteStore};
@@ -28,10 +36,17 @@ pub(in crate::ppu) struct SpriteScanner {
     /// RUTU signal: set true at the scanline boundary. Consumed by
     /// tick_catu on the next XUPY rising edge.
     rutu: bool,
-    /// BYBA: DFF17 clocked by XUPY (captures in fall).
-    byba: bool,
-    /// DOBA: DFF17 clocked by alet (captures in fall).
-    doba: bool,
+    /// Scan-done flag. BYBA (dffr, clocked by XUPY — captures in fall).
+    ///
+    /// Combined with `scan_done_prev` for AVAP rising-edge detection:
+    /// AVAP = BYBA && !DOBA (§6.2).
+    scan_done_flag: bool,
+    /// Scan-done flag from the previous XUPY cycle. DOBA (dffr, clocked
+    /// by ALET — captures in fall, one half-cycle after BYBA).
+    ///
+    /// Forms the rising-edge detector with `scan_done_flag` that
+    /// produces AVAP (§6.2).
+    scan_done_prev: bool,
     /// AVAP result from fall(), consumed by rise(). On hardware AVAP
     /// is combinational (valid as soon as BYBA/DOBA settle in fall()),
     /// but the rendering pipeline reacts in rise().
@@ -65,8 +80,8 @@ impl SpriteScanner {
             catu_enabled: false,
             catu: false,
             rutu: false,
-            byba: false,
-            doba: false,
+            scan_done_flag: false,
+            scan_done_prev: false,
             avap_pending: false,
             scan_start_delay: false,
             sprites: SpriteStore::new(),
@@ -115,14 +130,14 @@ impl SpriteScanner {
         self.counter.entry()
     }
 
-    /// BYBA state, for debug snapshot.
-    pub(in crate::ppu) fn byba(&self) -> bool {
-        self.byba
+    /// Scan-done flag (BYBA) state, for debug snapshot.
+    pub(in crate::ppu) fn scan_done_flag(&self) -> bool {
+        self.scan_done_flag
     }
 
-    /// DOBA state, for debug snapshot.
-    pub(in crate::ppu) fn doba(&self) -> bool {
-        self.doba
+    /// Previous scan-done flag (DOBA) state, for debug snapshot.
+    pub(in crate::ppu) fn scan_done_prev(&self) -> bool {
+        self.scan_done_prev
     }
 
     /// Whether AVAP fired in the last fall(). Consumed by rise().
@@ -244,8 +259,8 @@ impl SpriteScanner {
             }
         }
 
-        // DOBA captures OLD BYBA (alet clock arrives after XUPY).
-        self.doba = self.byba;
+        // DOBA captures OLD BYBA (ALET clock arrives after XUPY).
+        self.scan_done_prev = self.scan_done_flag;
 
         // BYBA captures scan_done AFTER counter advance/freeze.
         // On hardware, BYBA and the counter share the XUPY clock.
@@ -253,7 +268,7 @@ impl SpriteScanner {
         // tick_clock call, and BYBA reads scan_done(39)=true on the
         // same XUPY edge — no extra cycle needed.
         if xupy_rising {
-            self.byba = self.counter.scan_done();
+            self.scan_done_flag = self.counter.scan_done();
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
@@ -263,7 +278,7 @@ impl SpriteScanner {
         // hardware where XYMU set and BESU clear both occur at the alet
         // falling edge (H-A; see receipts/ppu-overhaul/
         // avap-edge-investigation.md).
-        let avap = self.byba && !self.doba;
+        let avap = self.scan_done_flag && !self.scan_done_prev;
         if avap && self.scanning {
             self.avap_pending = true;
         }
@@ -279,8 +294,8 @@ impl SpriteScanner {
         // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
         // they naturally clear because FETO is false after counter reset.
         // But we reset them for cleanliness.
-        self.byba = false;
-        self.doba = false;
+        self.scan_done_flag = false;
+        self.scan_done_prev = false;
         self.avap_pending = false;
         self.scan_start_delay = false;
         self.catu = false;

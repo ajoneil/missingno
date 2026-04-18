@@ -374,9 +374,9 @@ impl Ppu {
         // XYMU stays set for 1 dot after WODU fires. The CPU reads the
         // correct mode because fall() (where VOGA captures and XYMU
         // clears) runs before the next rise()'s CPU bus read.
-        let xymu = rendering.xymu();
-        let bit0 = xymu || self.video.vblank;
-        let bit1 = xymu || rendering.is_scanning();
+        let rendering_active = rendering.mode_3_active();
+        let bit0 = rendering_active || self.video.vblank;
+        let bit1 = rendering_active || rendering.is_scanning();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
             (false, true) => Mode::VerticalBlank,
@@ -431,9 +431,9 @@ impl Ppu {
 
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
-            // Hardware: XYMU is the rendering gate (mode 3 active).
+            // Hardware: XYMU is the rendering gate (Mode 3 active).
             // During VBlank, XYMU is always low — no POPU guard needed.
-            Some(r) => r.xymu(),
+            Some(r) => r.mode_3_active(),
             _ => false,
         }
     }
