@@ -1,3 +1,12 @@
+//! Timing in this module is measured in **dots**. One dot is one
+//! full `ck1_ck2` cycle (one master clock period), driven by the
+//! `ck1_ck2` → ANOS/AVET → ATAL → AZOF → ZAXY → ZEME → ALET cascade.
+//!
+//! Vocabulary equivalences: 1 dot = 1 T-cycle = 2 atal half-cycles.
+//! "Dot" is primary in PPU code; "atal half-cycle" and "T-cycle"
+//! appear in definitional contexts and where comments bridge to
+//! CPU-subsystem timing (register-write strobes, M-cycle phasing).
+
 use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
