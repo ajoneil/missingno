@@ -1,3 +1,11 @@
+//! Sprite fetch trigger pipeline.
+//!
+//! SOBU captures TEKY on the master-clock edge where alet falls (TAVA
+//! falling, 2 inverters deeper than alet). SUDA captures SOBU on the
+//! complementary edge (LAPE rising, myvo-aligned). The methods are
+//! named for the DFFs they clock, not for alet/myvo edges directly
+//! — the TAVA/LAPE delays are documented per-signal.
+
 /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
 ///
 /// A DFF chain that propagates the sprite fetch request signal (TEKY)
@@ -44,16 +52,13 @@ impl SpriteTrigger {
         }
     }
 
-    /// Falling edge (TAVA clock): SOBU captures TEKY from the preceding
-    /// rising phase. Returns true if RYCE fires (sprite fetch should start).
-    ///
-    /// TEKY is passed in as a parameter — it's combinational, computed
-    /// during the preceding rising phase and bridged to falling. Same
-    /// pattern as `FetchCascade::fall(lyry)`.
+    /// SOBU captures TEKY on TAVA falling. TEKY is combinational, computed
+    /// during the preceding alet-falling phase and bridged here. Returns
+    /// true if RYCE fires (sprite fetch should start).
     ///
     /// RYCE is a combinational rising-edge detect: SOBU just went high,
-    /// SUDA still holds the value from the previous rising phase.
-    pub(in crate::ppu) fn fall(&mut self, teky: bool) -> bool {
+    /// SUDA still holds the value from the previous phase.
+    pub(in crate::ppu) fn capture_sobu(&mut self, teky: bool) -> bool {
         self.sobu = teky;
         let ryce = self.sobu && !self.suda;
         if ryce {
@@ -62,8 +67,9 @@ impl SpriteTrigger {
         ryce
     }
 
-    /// Rising edge (LAPE clock): SUDA captures SOBU.
-    pub(in crate::ppu) fn rise(&mut self) {
+    /// SUDA captures SOBU on LAPE rising (myvo-aligned, the alet-falling /
+    /// master-clock-rising phase in the emulator).
+    pub(in crate::ppu) fn capture_suda(&mut self) {
         self.suda = self.sobu;
     }
 

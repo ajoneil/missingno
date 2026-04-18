@@ -376,7 +376,7 @@ impl Rendering {
         self.vram_locked()
     }
 
-    /// Falling edge (master clock falls → alet rises): setup phase.
+    /// Alet rising edge (master-clock falling): setup phase dispatcher.
     ///
     /// Alet-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
     /// (hblank). Also handles XUPY-derived logic (DOBA, scan-counter),
@@ -384,9 +384,9 @@ impl Rendering {
     /// scroll match (PUXA), and window WX match (PYCO).
     ///
     /// XUPY derives from WUVU, which is clocked by XOTA rising.
-    /// The XOTA divider toggle runs in Ppu::rise(), before this method,
+    /// The XOTA divider toggle runs in the preceding alet-falling phase,
     /// so video.xupy() reflects the post-toggle state here.
-    pub(super) fn fall(
+    pub(super) fn on_alet_rise(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -394,34 +394,34 @@ impl Rendering {
         vram: &Vram,
         palette_changed: bool,
     ) -> Option<PixelOutput> {
-        // XUPY rising edge detection: the XOTA divider toggle (in
-        // Ppu::rise()) ran before this, so xupy()==true means WUVU
-        // just went low→high.
+        // XUPY rising edge detection: the XOTA divider toggle (in the
+        // preceding alet-falling phase) ran before this, so xupy()==true
+        // means WUVU just went low→high.
         let xupy_rising = video.xupy();
 
-        // Sprite scanner falling edge: counter tick, BYBA/DOBA capture,
-        // AVAP evaluation (BYBA/DOBA-combinational, fires in fall).
+        // Sprite scanner advance: counter tick, BYBA/DOBA capture,
+        // AVAP evaluation (BYBA/DOBA-combinational, fires here).
         // AVAP reaction (XYMU set, fetcher load_into, BESU/scanning
-        // clear) is deferred to the following rise() so Mode 3 init
-        // co-occurs with AVAP's rising edge, which follows BYBA's
-        // XUPY-rising capture at the alet-falling boundary.
-        self.scan.fall(xupy_rising, video.ly(), regs, oam);
+        // clear) is deferred to the following alet-falling phase so
+        // Mode 3 init co-occurs with AVAP's rising edge, which follows
+        // BYBA's XUPY-rising capture at the alet-falling boundary.
+        self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return None;
         }
 
-        // Capture XYMU before hblank.fall() may clear it via VOGA/WEGO.
+        // Capture XYMU before capture_voga() may clear it via VOGA/WEGO.
         let was_rendering = self.hblank.mode_3_active();
 
-        // Hblank pipeline: VOGA captures WODU on alet rising (= fall).
+        // Hblank pipeline: VOGA captures WODU on alet rising.
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
-        let wodu = self.hblank.fall(self.lcd.xugu());
+        let wodu = self.hblank.capture_voga(self.lcd.xugu());
 
-        // lcd.fall() receives current-dot wodu for last_pixel (the final
+        // lcd fall receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).
-        let pixel = self.lcd.fall(self.hblank.voga(), wodu);
+        let pixel = self.lcd.on_alet_rise(self.hblank.voga(), wodu);
 
         if was_rendering {
             self.mode3_falling(regs, video, oam, vram, palette_changed);
@@ -441,7 +441,7 @@ impl Rendering {
         self.scan.tick_catu(video.xupy(), video.ly());
     }
 
-    /// Rising edge (master clock rises → alet falls): output phase.
+    /// Alet falling edge (master-clock rising): output phase dispatcher.
     ///
     /// Myvo-clocked DFFs capture here: PORY (cascade). BG fetch counter
     /// advances (LEBO fires when alet falls). CLKPIPE fires (SACU
@@ -449,7 +449,7 @@ impl Rendering {
     /// evaluation, pixel counter increment, fine counter increment,
     /// pipe shift, sprite X matching, and pixel output. CATU pipeline
     /// is advanced separately by `tick_catu()` (unconditional).
-    pub(super) fn rise(
+    pub(super) fn on_alet_fall(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -464,9 +464,9 @@ impl Rendering {
         // filled by the nyxu_reset_active hold.
         let was_rendering = self.hblank.mode_3_active();
 
-        // Scanner rise(): consumes avap_pending from previous fall(),
-        // clears scanning/besu when AVAP fires.
-        let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
+        // Scanner consumes avap_pending from the preceding advance_scan(),
+        // clearing scanning/besu when AVAP fires.
+        let scan = self.scan.apply_pending_avap(xupy_rising, video.ly(), regs, oam);
 
         // AVAP reaction: BYBA captures on XUPY rising, which follows
         // alet falling in the divider chain (= this rise() in the
@@ -519,7 +519,7 @@ impl Rendering {
     }
 
     /// Reset per-line state at the scanline boundary. Called by
-    /// `Ppu::rise()` when `tick_dot` signals a new scanline.
+    /// `Ppu::on_master_clock_fall()` when `tick_dot` signals a new scanline.
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.hblank.reset();
         self.scan.reset();
@@ -586,7 +586,7 @@ impl Rendering {
                 vram,
             );
 
-            self.cascade.fall(lyry);
+            self.cascade.advance_cascade(lyry);
         }
 
         // Sprite fetch counter advance (SABE clock). On hardware, SABE =
@@ -640,7 +640,7 @@ impl Rendering {
         // when a BG fetch completes.
         let lyry_for_teky = lyry && self.cascade.poky();
         let teky = fepo && !self.window.rydy() && lyry_for_teky && !self.sprite_trigger.taka();
-        let ryce = self.sprite_trigger.fall(teky);
+        let ryce = self.sprite_trigger.capture_sobu(teky);
 
         if ryce {
             // Find and mark the matching sprite entry, start the fetch.
@@ -684,10 +684,10 @@ impl Rendering {
 
     /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
     ///
-    /// Runs first within rise(), before the pixel pipeline. Myvo-clocked
-    /// DFFs capture here: SUDA (sprite trigger), PORY (cascade), BG fetch
-    /// counter (LEBO). NOR latch responses (RYDY clear via PORY) and the
-    /// TAVE one-shot preload also fire here.
+    /// Runs first within on_alet_fall(), before the pixel pipeline. Myvo-
+    /// clocked DFFs capture here: SUDA (sprite trigger), PORY (cascade),
+    /// BG fetch counter (LEBO). NOR latch responses (RYDY clear via PORY)
+    /// and the TAVE one-shot preload also fire here.
     ///
     /// On hardware, these signals settle at depth 16-22 ge — well before
     /// CLKPIPE fires at depth 63.8 ge. Separating them models the
@@ -695,13 +695,13 @@ impl Rendering {
     /// the pixel pipeline evaluates against the settled state.
     fn mode3_advance_fetcher(&mut self, regs: &PipelineRegisters) {
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
-        self.sprite_trigger.rise();
+        self.sprite_trigger.capture_suda();
 
         // BG fetcher rising-edge advance: counter increment (LEBO clock).
         // Paused during sprite fetch (TAKA gates fetcher counter).
         if !self.sprite_trigger.taka() {
             self.fetcher.advance_rising();
-            self.cascade.rise();
+            self.cascade.capture_pory();
         }
 
         // PORY clears RYDY: on hardware, PORY is a reset input to the
@@ -752,8 +752,8 @@ impl Rendering {
 
     /// Rising edge Mode 3 — pixel pipeline (CLKPIPE / SACU domain).
     ///
-    /// Runs second within rise(), after fetcher DFFs have settled. SACU
-    /// (the pixel clock) fires at depth 63.8 ge — significantly later
+    /// Runs second within on_alet_fall(), after fetcher DFFs have settled.
+    /// SACU (the pixel clock) fires at depth 63.8 ge — significantly later
     /// than the myvo-clocked DFFs. This method evaluates against the
     /// settled fetcher state from `mode3_advance_fetcher`.
     ///
@@ -814,7 +814,7 @@ impl Rendering {
                 self.window.window_zero_pixel_mut(),
                 regs,
             );
-            let (toba, pix) = self.lcd.rise(sacu, pixel, pova);
+            let (toba, pix) = self.lcd.on_alet_fall(sacu, pixel, pova);
             pixel_out = pix;
 
             if !toba && tyfa {

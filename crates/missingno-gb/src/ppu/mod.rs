@@ -516,8 +516,9 @@ impl Ppu {
             request_vblank: false,
         };
 
-        // lcd_on_countdown is processed in fall() — VID_RST deasserts
-        // at XOTA falling (our fall()), not XOTA rising (our rise()).
+        // lcd_on_countdown is processed in on_master_clock_fall() — VID_RST
+        // deasserts at XOTA falling (= alet rising), not XOTA rising (= alet
+        // falling).
         if self.lcd_on_countdown > 0 {
             return result;
         }
@@ -530,17 +531,17 @@ impl Ppu {
             return result;
         }
 
-        // Divider chain (WUVU/VENA/TALU) and CATU now run in fall() —
-        // confirmed by dmg-sim: XOTA rises when master clock falls,
-        // and WUVU/XUPY/CATU all toggle on XOTA rising.
+        // Divider chain (WUVU/VENA/TALU) and CATU now run in
+        // on_master_clock_fall() — confirmed by dmg-sim: XOTA rises when
+        // master clock falls, and WUVU/XUPY/CATU all toggle on XOTA rising.
 
         // Pixel output, scanner, SACU, pipe shift. These run on the
-        // alet-falling / myvo-rising edge (our rise()). They read
-        // WUVU/XUPY state from the PREVIOUS fall()'s tick_dot, which
-        // is correct: on hardware, these circuits see the WUVU state
+        // alet-falling / myvo-rising edge. They read WUVU/XUPY state
+        // from the preceding alet-rising phase's tick_dot, which is
+        // correct: on hardware, these circuits see the WUVU state
         // that settled at the previous XOTA edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.rise(&self.registers, &self.video, &self.oam);
+            result.pixel = rendering.on_alet_fall(&self.registers, &self.video, &self.oam);
         }
 
         result
@@ -648,7 +649,7 @@ impl Ppu {
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel = rendering.fall(
+                result.pixel = rendering.on_alet_rise(
                     &self.registers,
                     &self.video,
                     &self.oam,

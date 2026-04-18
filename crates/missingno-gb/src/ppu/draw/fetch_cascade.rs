@@ -1,3 +1,10 @@
+//! Fetch-done cascade module.
+//!
+//! DFF chain that propagates the fetcher-idle signal through alet/myvo
+//! pipeline stages. NYKA and PYGO are alet-clocked (capture on alet
+//! rising = master-clock falling); PORY is myvo-clocked (captures on
+//! myvo rising = alet falling = master-clock rising).
+
 /// Fetch-done cascade: LYRY → NYKA → PORY → PYGO → POKY.
 ///
 /// A DFF chain that propagates the fetcher-idle signal (LYRY) through four
@@ -40,13 +47,13 @@ impl FetchCascade {
         }
     }
 
-    /// Falling edge: clock NYKA from LYRY, clock PYGO from PORY,
-    /// fire POKY NOR from PYGO.
+    /// Advance the alet-rising-clocked stages: NYKA captures LYRY, PYGO
+    /// captures PORY, POKY NOR latch fires from PYGO.
     ///
-    /// LYRY fires on the preceding rising edge (fetcher counter reaches
-    /// 5 in advance_rising). NYKA captures live LYRY here — the
-    /// rise-to-fall separation provides the 1 half-phase DFF delay.
-    pub(in crate::ppu) fn fall(&mut self, lyry: bool) {
+    /// LYRY fires on the preceding alet-falling edge (fetcher counter reaches
+    /// 5 in advance_rising). NYKA captures live LYRY here — the half-phase
+    /// separation provides the 1 half-phase DFF delay.
+    pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
         // NYKA DFF17: captures live LYRY on falling edge (ALET clock).
         if lyry && !self.nyka {
             self.nyka = true;
@@ -63,8 +70,8 @@ impl FetchCascade {
         }
     }
 
-    /// Rising edge: clock PORY from NYKA.
-    pub(in crate::ppu) fn rise(&mut self) {
+    /// PORY captures NYKA on myvo rising (= alet falling = master-clock rising).
+    pub(in crate::ppu) fn capture_pory(&mut self) {
         if self.nyka && !self.pory {
             self.pory = true;
         }

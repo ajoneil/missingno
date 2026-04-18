@@ -21,7 +21,7 @@ pub(in crate::ppu) struct SpriteScanner {
     /// 6-bit scan counter + Y comparator (YFEL-FONY).
     counter: ScanCounter,
     /// Scan machinery active — set on all lines including LCD-on line 0.
-    /// Controls counter ticking, OAM comparisons, and mode 3 gating in fall().
+    /// Controls counter ticking, OAM comparisons, and mode 3 gating in advance_scan().
     scanning: bool,
     /// BESU scanning latch — drives ACYL for STAT mode bits and OAM bus locking.
     /// Set by CATU only when catu_enabled is true (NOT set on LCD-on line 0).
@@ -48,8 +48,8 @@ pub(in crate::ppu) struct SpriteScanner {
     /// produces AVAP (§6.2).
     scan_done_prev: bool,
     /// AVAP result from fall(), consumed by rise(). On hardware AVAP
-    /// is combinational (valid as soon as BYBA/DOBA settle in fall()),
-    /// but the rendering pipeline reacts in rise().
+    /// is combinational (valid as soon as BYBA/DOBA settle in advance_scan()),
+    /// but the rendering pipeline reacts in apply_pending_avap().
     avap_pending: bool,
     /// ANEL propagation delay: suppresses the first scan tick after CATU
     /// starts scanning. On hardware, CATU.Q propagates through ANEL
@@ -65,7 +65,7 @@ pub(in crate::ppu) struct SpriteScanner {
     sprites: SpriteStore,
 }
 
-/// Signals produced by `SpriteScanner::fall()` for the rest of the pipeline.
+/// Signals produced by `SpriteScanner::advance_scan()` for the rest of the pipeline.
 pub(in crate::ppu) struct ScanSignals {
     /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
     pub(in crate::ppu) avap: bool,
@@ -164,18 +164,15 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Rising edge (master clock rises → alet falls): consume AVAP
-    /// detection from the preceding fall(), clear scanning/besu when
-    /// AVAP fires.
+    /// Consume AVAP detection from the preceding `advance_scan()`; clear
+    /// scanning/besu when AVAP fires. Called on the alet-falling phase
+    /// (master-clock rising), co-located with the rendering-side XYMU set.
     ///
-    /// AVAP was evaluated combinationally in the previous fall() when
-    /// BYBA/DOBA settled. BYBA captures on XUPY rising, which in the
-    /// WUVU/XOTA divider chain transitions shortly after alet falling
-    /// — i.e., this rise() in the emulator's clock convention. The
-    /// scanning latch (BESU) clears here, co-located with XYMU set
-    /// (handled by the caller); both fire at AVAP's rising edge,
-    /// which follows the alet-falling transition that sets BYBA.
-    pub(in crate::ppu) fn rise(
+    /// AVAP was evaluated combinationally when BYBA/DOBA settled. BYBA
+    /// captures on XUPY rising, which in the WUVU/XOTA divider chain
+    /// transitions shortly after alet falling — both AVAP's rising edge
+    /// and the BESU clear land here.
+    pub(in crate::ppu) fn apply_pending_avap(
         &mut self,
         _xupy_rising: bool,
         _ly: u8,
@@ -234,9 +231,10 @@ impl SpriteScanner {
         }
     }
 
-    /// Falling edge (master clock falls → alet rises): scanner tick and
-    /// DOBA capture.
-    pub(in crate::ppu) fn fall(
+    /// Advance one scan cycle: counter tick, BYBA/DOBA capture, AVAP
+    /// combinational detection. Called on the alet-rising phase
+    /// (master-clock falling).
+    pub(in crate::ppu) fn advance_scan(
         &mut self,
         xupy_rising: bool,
         ly: u8,
@@ -272,7 +270,7 @@ impl SpriteScanner {
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
-        // Detection fires in fall() (when BYBA captures and DOBA settles).
+        // Detection fires here in advance_scan() (when BYBA captures and DOBA settles).
         // The scanning/besu clear is deferred to the next rise(), where
         // it co-locates with the rendering-side AVAP reaction — matching
         // hardware where XYMU set and BESU clear both occur at the alet

@@ -1,3 +1,11 @@
+//! LCD Control block (die page 24).
+//!
+//! The two edge methods (`on_alet_fall` / `on_alet_rise`) dispatch
+//! multiple discrete concerns per edge — SACU-driven pixel counter
+//! advance, WUSA latch management, TOBA gated-clock generation, data
+//! latch rotation, and WODU-dot final-pixel push — so they are
+//! signal-named rather than work-semantic.
+
 use crate::ppu::PixelOutput;
 use crate::ppu::types::palette::PaletteIndex;
 
@@ -63,14 +71,15 @@ impl LcdControl {
         }
     }
 
-    /// Rising edge: pixel counter increment, XAJO/WUSA set, TOBA
-    /// pixel output, data latch update. All internal to LCD Control
-    /// on the die — the caller provides SACU, the resolved pixel,
-    /// and POVA.
+    /// Alet falling edge (master-clock rising): pixel counter increment,
+    /// XAJO/WUSA set, TOBA pixel output, data latch update. Dispatcher
+    /// for the SACU-driven pixel-output concerns on this edge — multiple
+    /// unrelated effects at one edge. All internal to LCD Control on the
+    /// die — the caller provides SACU, the resolved pixel, and POVA.
     ///
     /// Returns `(toba, pixel_out)` where `toba` is the gated LCD clock
     /// and `pixel_out` is the pixel pushed to the LCD (if any).
-    pub(in crate::ppu) fn rise(
+    pub(in crate::ppu) fn on_alet_fall(
         &mut self,
         sacu: bool,
         pixel: PaletteIndex,
@@ -123,12 +132,13 @@ impl LcdControl {
         (toba, pixel_out)
     }
 
-    /// Falling edge: WEGO = OR2(VID_RST, VOGA). When VOGA is set,
-    /// clears WUSA. On the WODU dot (last_pixel), pushes the final
-    /// pixel to the LCD.
+    /// Alet rising edge (master-clock falling): WEGO = OR2(VID_RST, VOGA).
+    /// When VOGA is set, clears WUSA. On the WODU dot (last_pixel), pushes
+    /// the final pixel to the LCD. Two discrete concerns tied to the hblank
+    /// transition — signal-named for the dispatch shape.
     ///
     /// Returns the pixel pushed to the LCD on the WODU dot (if any).
-    pub(in crate::ppu) fn fall(&mut self, voga: bool, wodu: bool) -> Option<PixelOutput> {
+    pub(in crate::ppu) fn on_alet_rise(&mut self, voga: bool, wodu: bool) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
         // The final pixel push happens on the WODU dot, before VOGA
         // captures on the same falling phase.

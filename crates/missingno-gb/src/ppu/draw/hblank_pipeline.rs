@@ -107,16 +107,18 @@ impl HblankPipeline {
         }
     }
 
-    /// Falling edge (ALET clock): VOGA captures WODU, WEGO clears XYMU.
+    /// VOGA (DFF17) captures WODU on alet rising; WEGO = OR2(VID_RST, VOGA)
+    /// then clears the XYMU rendering latch. One unit of work — the Mode 3→0
+    /// trigger.
     ///
-    /// The one-edge pipeline delay (spec §6.3) is the half-dot from
-    /// rise() (where WODU goes true when PX=167 via CLKPIPE) to fall()
-    /// (where VOGA captures). WODU's inputs (PX, FEPO) settled during
-    /// the preceding rise(), so VOGA captures the current dot's WODU
-    /// value — which reflects the PX state from this dot's CLKPIPE step.
+    /// The one-edge pipeline delay (spec §6.3) is the half-dot from the
+    /// preceding alet falling (where WODU goes true when PX=167 via CLKPIPE)
+    /// to this alet rising (where VOGA captures). WODU's inputs (PX, FEPO)
+    /// settled during the preceding edge, so VOGA captures the current dot's
+    /// WODU value.
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
-    pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> bool {
+    pub(in crate::ppu) fn capture_voga(&mut self, xugu: bool) -> bool {
         // WODU is purely combinational — no XYMU dependency, so always valid.
         let wodu_now = self.wodu(xugu);
 
@@ -151,7 +153,7 @@ impl HblankPipeline {
     }
 
     /// Whether `mode_3_active` was true before settle_alet() ran this dot.
-    /// Used by rendering.fall() to gate mode3_falling() — on the dot
+    /// Used by Rendering::on_alet_rise() to gate mode3_falling() — on the dot
     /// VOGA fires, mode_3_active is already cleared but the final
     /// mode3 falling work still needs to run.
     pub(in crate::ppu) fn mode_3_before_settle(&self) -> bool {
