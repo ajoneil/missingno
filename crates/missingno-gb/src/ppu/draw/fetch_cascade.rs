@@ -47,12 +47,13 @@ impl FetchCascade {
         }
     }
 
-    /// Advance the alet-rising-clocked stages: NYKA captures LYRY, PYGO
-    /// captures PORY, POKY NOR latch fires from PYGO.
+    /// Advance the ALET-rising-clocked stages (PPU-clock-rise phase):
+    /// NYKA captures LYRY, PYGO captures PORY, POKY NOR latch fires
+    /// from PYGO.
     ///
-    /// LYRY fires on the preceding alet-falling edge (fetcher counter reaches
-    /// 5 in advance_rising). NYKA captures live LYRY here — the half-phase
-    /// separation provides the 1 half-phase DFF delay.
+    /// LYRY fires on the preceding PPU-clock-fall edge (fetcher counter
+    /// reaches 5 in advance_rising). NYKA captures live LYRY here — the
+    /// half-phase separation provides the 1 half-phase DFF delay.
     pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
         // NYKA DFF17: captures live LYRY on falling edge (ALET clock).
         if lyry && !self.nyka {
@@ -70,7 +71,7 @@ impl FetchCascade {
         }
     }
 
-    /// PORY captures NYKA on myvo rising (= alet falling = master-clock rising).
+    /// PORY captures NYKA on MYVO rising (= PPU clock fall, master-clock rise).
     pub(in crate::ppu) fn capture_pory(&mut self) {
         if self.nyka && !self.pory {
             self.pory = true;

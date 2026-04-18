@@ -376,17 +376,18 @@ impl Rendering {
         self.vram_locked()
     }
 
-    /// Alet rising edge (master-clock falling): setup phase dispatcher.
+    /// PPU clock rise (master-clock fall; gate: ALET rising): setup
+    /// phase dispatcher.
     ///
-    /// Alet-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
+    /// ALET-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
     /// (hblank). Also handles XUPY-derived logic (DOBA, scan-counter),
     /// NOR latches (POKY), combinational signals (TYFA bridge), fine
     /// scroll match (PUXA), and window WX match (PYCO).
     ///
     /// XUPY derives from WUVU, which is clocked by XOTA rising.
-    /// The XOTA divider toggle runs in the preceding alet-falling phase,
-    /// so video.xupy() reflects the post-toggle state here.
-    pub(super) fn on_alet_rise(
+    /// The XOTA divider toggle runs in the preceding PPU-clock-fall
+    /// phase, so video.xupy() reflects the post-toggle state here.
+    pub(super) fn on_ppu_clock_rise(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -395,16 +396,16 @@ impl Rendering {
         palette_changed: bool,
     ) -> Option<PixelOutput> {
         // XUPY rising edge detection: the XOTA divider toggle (in the
-        // preceding alet-falling phase) ran before this, so xupy()==true
+        // preceding PPU-clock-fall phase) ran before this, so xupy()==true
         // means WUVU just went low→high.
         let xupy_rising = video.xupy();
 
         // Sprite scanner advance: counter tick, BYBA/DOBA capture,
         // AVAP evaluation (BYBA/DOBA-combinational, fires here).
         // AVAP reaction (XYMU set, fetcher load_into, BESU/scanning
-        // clear) is deferred to the following alet-falling phase so
+        // clear) is deferred to the following PPU-clock-fall phase so
         // Mode 3 init co-occurs with AVAP's rising edge, which follows
-        // BYBA's XUPY-rising capture at the alet-falling boundary.
+        // BYBA's XUPY-rising capture at the PPU-clock-fall boundary.
         self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
 
         if self.scan.scanning() {
@@ -415,13 +416,13 @@ impl Rendering {
         // Capture XYMU before capture_voga() may clear it via VOGA/WEGO.
         let was_rendering = self.hblank.mode_3_active();
 
-        // Hblank pipeline: VOGA captures WODU on alet rising.
+        // Hblank pipeline: VOGA captures WODU on PPU clock rise (ALET rising).
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
         let wodu = self.hblank.capture_voga(self.lcd.xugu());
 
         // lcd fall receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).
-        let pixel = self.lcd.on_alet_rise(self.hblank.voga(), wodu);
+        let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
 
         if was_rendering {
             self.mode3_falling(regs, video, oam, vram, palette_changed);
@@ -441,15 +442,17 @@ impl Rendering {
         self.scan.tick_catu(video.xupy(), video.ly());
     }
 
-    /// Alet falling edge (master-clock rising): output phase dispatcher.
+    /// PPU clock fall (master-clock rise; gate: ALET falling): output
+    /// phase dispatcher.
     ///
-    /// Myvo-clocked DFFs capture here: PORY (cascade). BG fetch counter
-    /// advances (LEBO fires when alet falls). CLKPIPE fires (SACU
-    /// rising edge, late in the dot). Handles BYBA capture, AVAP
-    /// evaluation, pixel counter increment, fine counter increment,
-    /// pipe shift, sprite X matching, and pixel output. CATU pipeline
-    /// is advanced separately by `tick_catu()` (unconditional).
-    pub(super) fn on_alet_fall(
+    /// MYVO-clocked DFFs capture here: PORY (cascade). BG fetch counter
+    /// advances (LEBO fires on the PPU-clock-fall edge — LEBO =
+    /// NAND(ALET, MOCE)). CLKPIPE fires (SACU rising edge, late in the
+    /// dot). Handles BYBA capture, AVAP evaluation, pixel counter
+    /// increment, fine counter increment, pipe shift, sprite X matching,
+    /// and pixel output. CATU pipeline is advanced separately by
+    /// `tick_catu()` (unconditional).
+    pub(super) fn on_ppu_clock_fall(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -469,11 +472,11 @@ impl Rendering {
         let scan = self.scan.apply_pending_avap(xupy_rising, video.ly(), regs, oam);
 
         // AVAP reaction: BYBA captures on XUPY rising, which follows
-        // alet falling in the divider chain (= this rise() in the
-        // emulator's clock convention). AVAP propagates combinationally
-        // from the BYBA/DOBA/BALU scan-done detector. XYMU set,
-        // fetcher preload, and window WX init fire here so Mode 3
-        // init aligns with hardware's AVAP-rising edge.
+        // ALET falling in the divider chain (= PPU clock fall = this
+        // method's edge). AVAP propagates combinationally from the
+        // BYBA/DOBA/BALU scan-done detector. XYMU set, fetcher preload,
+        // and window WX init fire here so Mode 3 init aligns with
+        // hardware's AVAP-rising edge.
         if scan.avap {
             self.hblank.enter_mode_3();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
@@ -549,12 +552,13 @@ impl Rendering {
         self.reset_scanline(0);
     }
 
-    /// Falling edge Mode 3 processing (master falls → alet rises).
+    /// Mode 3 processing on the PPU-clock-rise phase (master clock
+    /// falls; gate: ALET rising).
     ///
-    /// Fetcher VRAM reads (counter doesn't increment on fall — LEBO fires
-    /// on rise only), cascade DFFs (NYKA, PYGO), NOR latches (POKY),
-    /// combinational signals (TYFA), sprite fetch counter advance (SABE),
-    /// and fine scroll match (PUXA) fire on the falling edge.
+    /// Fetcher VRAM reads (counter doesn't increment here — LEBO fires
+    /// on PPU clock fall only), cascade DFFs (NYKA, PYGO), NOR latches
+    /// (POKY), combinational signals (TYFA), sprite fetch counter
+    /// advance (SABE), and fine scroll match (PUXA) fire on this edge.
     fn mode3_falling(
         &mut self,
         regs: &PipelineRegisters,
@@ -590,10 +594,11 @@ impl Rendering {
         }
 
         // Sprite fetch counter advance (SABE clock). On hardware, SABE =
-        // NAND2(LAPE, TAME) fires when alet rises (= master falls = this
-        // falling phase). Placed BEFORE the TEKY/RYCE block so a newly
-        // initiated sprite fetch doesn't advance on its first dot (matching
-        // hardware where SABE needs one alet cycle after TAKA sets).
+        // NAND2(LAPE, TAME) fires when ALET rises (= master clock fall =
+        // PPU clock rise = this method's edge). Placed BEFORE the
+        // TEKY/RYCE block so a newly initiated sprite fetch doesn't
+        // advance on its first dot (matching hardware where SABE needs
+        // one ALET cycle after TAKA sets).
         if self.sprite_trigger.taka() {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
@@ -684,10 +689,10 @@ impl Rendering {
 
     /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
     ///
-    /// Runs first within on_alet_fall(), before the pixel pipeline. Myvo-
-    /// clocked DFFs capture here: SUDA (sprite trigger), PORY (cascade),
-    /// BG fetch counter (LEBO). NOR latch responses (RYDY clear via PORY)
-    /// and the TAVE one-shot preload also fire here.
+    /// Runs first within on_ppu_clock_fall(), before the pixel pipeline.
+    /// MYVO-clocked DFFs capture here: SUDA (sprite trigger), PORY
+    /// (cascade), BG fetch counter (LEBO). NOR latch responses (RYDY
+    /// clear via PORY) and the TAVE one-shot preload also fire here.
     ///
     /// On hardware, these signals settle at depth 16-22 ge — well before
     /// CLKPIPE fires at depth 63.8 ge. Separating them models the
@@ -752,15 +757,15 @@ impl Rendering {
 
     /// Rising edge Mode 3 — pixel pipeline (CLKPIPE / SACU domain).
     ///
-    /// Runs second within on_alet_fall(), after fetcher DFFs have settled.
+    /// Runs second within on_ppu_clock_fall(), after fetcher DFFs have settled.
     /// SACU (the pixel clock) fires at depth 63.8 ge — significantly later
-    /// than the myvo-clocked DFFs. This method evaluates against the
+    /// than the MYVO-clocked DFFs. This method evaluates against the
     /// settled fetcher state from `mode3_advance_fetcher`.
     ///
     /// Handles: TYFA consumption, PUXA/POVA fine scroll match, pixel
     /// shift registers, SEKO tile reload, LCD output, fine scroll
     /// counter, and NUKO window trigger. Sprite fetch advance now
-    /// happens in mode3_falling (SABE clock, alet-rise edge).
+    /// happens in mode3_falling (SABE clock, PPU-clock-rise edge).
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
@@ -789,7 +794,7 @@ impl Rendering {
         };
 
         // Sprite fetch counter now advances in mode3_falling (SABE clock,
-        // alet-rise edge). When TAKA is true, the pixel pipeline is frozen.
+        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline is frozen.
         // After sprite fetch completes in falling, TAKA clears and FEPO is
         // recomputed, so TYFA correctly enables the pixel clock on the next
         // rising edge.
@@ -814,7 +819,7 @@ impl Rendering {
                 self.window.window_zero_pixel_mut(),
                 regs,
             );
-            let (toba, pix) = self.lcd.on_alet_fall(sacu, pixel, pova);
+            let (toba, pix) = self.lcd.on_ppu_clock_fall(sacu, pixel, pova);
             pixel_out = pix;
 
             if !toba && tyfa {

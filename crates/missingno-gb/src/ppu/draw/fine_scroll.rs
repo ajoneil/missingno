@@ -26,8 +26,8 @@ pub(in crate::ppu) struct FineScroll {
     /// phase. Used for POVA rising-edge detection: POVA = AND2(PUXA,
     /// !NYZE). Fires once per PUXA 0→1 transition.
     nyze: bool,
-    /// POHU comparator result, computed on falling (alet rises).
-    /// PUXA captures this on the next rising (alet falls) when ROXO fires.
+    /// POHU comparator result, computed on PPU clock rise.
+    /// PUXA captures this on the next PPU clock fall (when ROXO fires).
     pohu: bool,
 }
 

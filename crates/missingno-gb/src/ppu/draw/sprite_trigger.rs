@@ -52,9 +52,10 @@ impl SpriteTrigger {
         }
     }
 
-    /// SOBU captures TEKY on TAVA falling. TEKY is combinational, computed
-    /// during the preceding alet-falling phase and bridged here. Returns
-    /// true if RYCE fires (sprite fetch should start).
+    /// SOBU captures TEKY on TAVA falling (PPU-clock-rise phase; TAVA
+    /// is 2 inverters deeper than ALET). TEKY is combinational, computed
+    /// during the preceding PPU-clock-fall phase and bridged here.
+    /// Returns true if RYCE fires (sprite fetch should start).
     ///
     /// RYCE is a combinational rising-edge detect: SOBU just went high,
     /// SUDA still holds the value from the previous phase.
@@ -67,8 +68,8 @@ impl SpriteTrigger {
         ryce
     }
 
-    /// SUDA captures SOBU on LAPE rising (myvo-aligned, the alet-falling /
-    /// master-clock-rising phase in the emulator).
+    /// SUDA captures SOBU on LAPE rising (MYVO-aligned; the PPU-clock-
+    /// fall / master-clock-rise phase).
     pub(in crate::ppu) fn capture_suda(&mut self) {
         self.suda = self.sobu;
     }

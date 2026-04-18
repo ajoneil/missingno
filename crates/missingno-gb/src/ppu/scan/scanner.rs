@@ -165,13 +165,14 @@ impl SpriteScanner {
     }
 
     /// Consume AVAP detection from the preceding `advance_scan()`; clear
-    /// scanning/besu when AVAP fires. Called on the alet-falling phase
-    /// (master-clock rising), co-located with the rendering-side XYMU set.
+    /// scanning/besu when AVAP fires. Called on the PPU-clock-fall phase
+    /// (master-clock rise; gate: ALET falling), co-located with the
+    /// rendering-side XYMU set.
     ///
     /// AVAP was evaluated combinationally when BYBA/DOBA settled. BYBA
     /// captures on XUPY rising, which in the WUVU/XOTA divider chain
-    /// transitions shortly after alet falling — both AVAP's rising edge
-    /// and the BESU clear land here.
+    /// transitions shortly after PPU-clock-fall — both AVAP's rising
+    /// edge and the BESU clear land here.
     pub(in crate::ppu) fn apply_pending_avap(
         &mut self,
         _xupy_rising: bool,
@@ -232,8 +233,8 @@ impl SpriteScanner {
     }
 
     /// Advance one scan cycle: counter tick, BYBA/DOBA capture, AVAP
-    /// combinational detection. Called on the alet-rising phase
-    /// (master-clock falling).
+    /// combinational detection. Called on the PPU-clock-rise phase
+    /// (master-clock fall; gate: ALET rising).
     pub(in crate::ppu) fn advance_scan(
         &mut self,
         xupy_rising: bool,
