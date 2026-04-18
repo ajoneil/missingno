@@ -169,12 +169,12 @@ impl SpriteScanner {
     /// AVAP fires.
     ///
     /// AVAP was evaluated combinationally in the previous fall() when
-    /// BYBA/DOBA settled. BYBA captures on alet falling (= this rise()
-    /// in the emulator; OQ-1 measurement in
-    /// receipts/ppu-overhaul/avap-edge-investigation.md). The scanning
-    /// latch (BESU) clears here, co-located with XYMU set (handled by
-    /// the caller) — both occur at the alet falling edge matching
-    /// hardware's AVAP↑ time (t=0 in the spec's reference frame).
+    /// BYBA/DOBA settled. BYBA captures on XUPY rising, which in the
+    /// WUVU/XOTA divider chain transitions shortly after alet falling
+    /// — i.e., this rise() in the emulator's clock convention. The
+    /// scanning latch (BESU) clears here, co-located with XYMU set
+    /// (handled by the caller); both fire at AVAP's rising edge,
+    /// which follows the alet-falling transition that sets BYBA.
     pub(in crate::ppu) fn rise(
         &mut self,
         _xupy_rising: bool,
@@ -276,8 +276,7 @@ impl SpriteScanner {
         // The scanning/besu clear is deferred to the next rise(), where
         // it co-locates with the rendering-side AVAP reaction — matching
         // hardware where XYMU set and BESU clear both occur at the alet
-        // falling edge (H-A; see receipts/ppu-overhaul/
-        // avap-edge-investigation.md).
+        // falling edge that follows BYBA's XUPY-rising capture.
         let avap = self.scan_done_flag && !self.scan_done_prev;
         if avap && self.scanning {
             self.avap_pending = true;

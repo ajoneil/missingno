@@ -402,9 +402,9 @@ impl Rendering {
         // Sprite scanner falling edge: counter tick, BYBA/DOBA capture,
         // AVAP evaluation (BYBA/DOBA-combinational, fires in fall).
         // AVAP reaction (XYMU set, fetcher load_into, BESU/scanning
-        // clear) is deferred to the following rise() to align with
-        // hardware's alet-falling AVAP edge (H-A; see receipts/
-        // ppu-overhaul/avap-edge-investigation.md).
+        // clear) is deferred to the following rise() so Mode 3 init
+        // co-occurs with AVAP's rising edge, which follows BYBA's
+        // XUPY-rising capture at the alet-falling boundary.
         self.scan.fall(xupy_rising, video.ly(), regs, oam);
 
         if self.scan.scanning() {
@@ -468,10 +468,12 @@ impl Rendering {
         // clears scanning/besu when AVAP fires.
         let scan = self.scan.rise(xupy_rising, video.ly(), regs, oam);
 
-        // AVAP reaction: BYBA captures on alet falling (= this rise()
-        // per OQ-1 measurement). XYMU set, fetcher preload, and window
-        // WX init fire here so Mode 3 init aligns with hardware t=0
-        // (H-A; receipts/ppu-overhaul/avap-edge-investigation.md).
+        // AVAP reaction: BYBA captures on XUPY rising, which follows
+        // alet falling in the divider chain (= this rise() in the
+        // emulator's clock convention). AVAP propagates combinationally
+        // from the BYBA/DOBA/BALU scan-done detector. XYMU set,
+        // fetcher preload, and window WX init fire here so Mode 3
+        // init aligns with hardware's AVAP-rising edge.
         if scan.avap {
             self.hblank.enter_mode_3();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
