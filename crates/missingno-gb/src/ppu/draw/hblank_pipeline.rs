@@ -11,10 +11,11 @@
 ///
 /// Models the hardware path that terminates Mode 3 rendering. WODU
 /// fires combinationally when the pixel counter reaches 167 and no
-/// sprite is matching. VOGA (DFF17, ALET falling) captures WODU,
+/// sprite is matching. VOGA (DFF17, ALET rising) captures WODU,
 /// producing WEGO which clears the XYMU rendering latch.
 ///
-/// Hardware clock: VOGA is DFF17 on ALET (falling, depth 5).
+/// Hardware clock: VOGA is DFF17 on ALET (rising; same-dot capture,
+/// Question C).
 /// WODU is combinational: AND2(XUGU, !FEPO). WODU is purely a
 /// function of the pixel counter decode and sprite match — it does
 /// not depend on XYMU. During HBlank, WODU stays high (PX frozen
@@ -80,7 +81,7 @@ impl HblankPipeline {
         xugu && !self.fepo
     }
 
-    /// ALET falling edge: VOGA captures WODU, WEGO clears XYMU.
+    /// ALET rising edge: VOGA captures WODU, WEGO clears XYMU.
     ///
     /// On hardware, ALET falls at the boundary between sub-phases (e.g.
     /// F->G), before the CPU's BUKE window opens. This method models
