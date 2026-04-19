@@ -1,4 +1,4 @@
-//! §2.14 STAT Interrupt Generation subsystem.
+//! STAT Interrupt Generation subsystem.
 //!
 //! Owns STAT register primary state (LYC register, enable bits, LYC-match
 //! pipeline) and the LALU edge-detection state. Reads LY from LineCounter
@@ -6,9 +6,22 @@
 //! — those are Ppu aggregator methods that compose STAT state with
 //! rendering and line state.
 //!
-//! Hardware reference: spec §2.14. LYC-match three-level pipeline:
-//! PALY (combinational) → ROPO (synced DFF) → RUPO (STAT bit 2 NOR latch).
-//! STAT blocking emerges naturally from edge-triggered LALU capture.
+//! Hardware LYC-match pipeline: PALY (combinational LY==LYC) → ROPO
+//! (DFF captured on TALU rising) → RUPO (NOR latch that is transparent
+//! during normal operation, since PAGO is static-1). STAT bit 2 on the
+//! CPU bus tracks ROPO.Q via RUPO's transparent path. STAT IRQ blocking
+//! emerges naturally from the edge-triggered LALU capture.
+//!
+//! **Compensation-model note**: `comparison_stat_visible` and its
+//! asymmetric set/clear pair (`latch_stat_visible` /
+//! `clear_stat_visible_if_no_match`) are **not** hardware-faithful.
+//! Hardware RUPO is transparent; this emulator models an asymmetric
+//! update cadence to compensate for per-dot resolution plus the
+//! register-smoothed LY used by `update_comparison`. The compensation
+//! satisfies most hardware-captured tests but produces a known
+//! one-M-cycle-early clearing divergence at the LYC=153 scanline
+//! boundary. A hardware-faithful rewrite is deferred to a broader
+//! STAT-pipeline review.
 
 use bitflags::bitflags;
 
@@ -37,9 +50,12 @@ pub struct StatInterrupt {
     /// LYC STAT interrupt source. Reset only by SYS_RST, NOT by VID_RST.
     pub(in crate::ppu) comparison_latched: bool,
 
-    /// STAT bit 2 visible value (RUPO NOR latch). Asymmetric update:
-    /// match clearing is immediate (PAGO always drives "no match"), match
-    /// onset requires ROPO DFF to latch.
+    /// STAT bit 2 visible value (compensation-model field; see module
+    /// doc). Hardware RUPO is transparent during normal operation and
+    /// STAT bit 2 tracks ROPO.Q directly. This field plus the asymmetric
+    /// `latch_stat_visible` / `clear_stat_visible_if_no_match` pair
+    /// compensates for per-dot resolution + register-smoothed LY in
+    /// `update_comparison`.
     pub(in crate::ppu) comparison_stat_visible: bool,
 
     /// STAT interrupt enable bits (FF41 bits 3-6: ROXE/RUFO/REFE/RUGU
@@ -74,15 +90,28 @@ impl StatInterrupt {
         self.comparison_latched = self.comparison_pending;
     }
 
-    /// RUPO synced-onset latch: capture `comparison_pending` on LX counter
-    /// clock rising.
+    /// Compensation-model set path for STAT bit 2: capture
+    /// `comparison_pending` on LX counter clock rising.
+    ///
+    /// Hardware RUPO is transparent during normal operation; STAT bit 2
+    /// tracks ROPO.Q directly. This method pairs with
+    /// `clear_stat_visible_if_no_match` to model an asymmetric set/clear
+    /// cadence that compensates for per-dot resolution + register-
+    /// smoothed LY. See module doc for full context.
     pub(in crate::ppu) fn latch_stat_visible(&mut self) {
         self.comparison_stat_visible = self.comparison_pending;
     }
 
-    /// RUPO immediate clear: when PALY goes false, PAGO drives RUPO to
-    /// "no match" without waiting for ROPO. Match onset still requires
-    /// the ROPO DFF pipeline via `latch_stat_visible`.
+    /// Compensation-model clear path for STAT bit 2: clear
+    /// `comparison_stat_visible` when `comparison_pending` is false,
+    /// called at LX counter clock falling on scanline boundaries.
+    ///
+    /// Not hardware-faithful. Hardware RUPO is transparent (PAGO is
+    /// static-1 during normal operation; the "PAGO drives immediate
+    /// clear" framing in prior versions of this comment was hardware-
+    /// incorrect). The asymmetric set/clear pair compensates for
+    /// per-dot resolution + register-smoothed LY in `update_comparison`.
+    /// See module doc.
     pub(in crate::ppu) fn clear_stat_visible_if_no_match(&mut self) {
         if !self.comparison_pending {
             self.comparison_stat_visible = false;
