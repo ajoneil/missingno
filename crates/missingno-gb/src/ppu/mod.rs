@@ -33,7 +33,8 @@ pub use rendering::{
     PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
 };
-pub use video_control::{InterruptFlags, VideoControl};
+pub use stat_interrupt::{InterruptFlags, StatInterrupt};
+pub use video_control::VideoControl;
 
 /// A pixel pushed to the LCD — the PPU's primary output signal.
 /// One pixel per SEMU clock edge during Mode 3.
@@ -66,6 +67,7 @@ pub mod registers;
 pub mod rendering;
 mod scan;
 pub mod screen;
+pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
 
@@ -131,13 +133,15 @@ impl Ppu {
                 dot_divider: false,
                 mcycle_divider: false,
                 ly: 153,
-                lyc: 0,
-                ly_comparison_pending: false,
-                ly_comparison_latched: false,
-                ly_comparison_stat_visible: false,
-                // The first bit is unused, but is set at boot time
-                stat_flags: InterruptFlags::DUMMY,
-                stat_line_was_high: false,
+                stat: StatInterrupt {
+                    lyc: 0,
+                    comparison_pending: false,
+                    comparison_latched: false,
+                    comparison_stat_visible: false,
+                    // The first bit is unused, but is set at boot time
+                    enables: InterruptFlags::DUMMY,
+                    line_was_high: false,
+                },
                 delayed_line_end: false,
                 line_end_pending: false,
                 line_end_detected: false,
@@ -178,12 +182,14 @@ impl Ppu {
                 dot_divider: false,
                 mcycle_divider: false,
                 ly: 0,
-                lyc: 0,
-                ly_comparison_pending: false,
-                ly_comparison_latched: true,
-                ly_comparison_stat_visible: true,
-                stat_flags: InterruptFlags::empty(),
-                stat_line_was_high: false,
+                stat: StatInterrupt {
+                    lyc: 0,
+                    comparison_pending: false,
+                    comparison_latched: true,
+                    comparison_stat_visible: true,
+                    enables: InterruptFlags::empty(),
+                    line_was_high: false,
+                },
                 delayed_line_end: false,
                 line_end_pending: false,
                 line_end_detected: false,
@@ -217,19 +223,19 @@ impl Ppu {
                     Some(_) => self.mode() as u8,
                     None => 0,
                 };
-                let line_compare = if self.video.ly_eq_lyc_stat() {
+                let line_compare = if self.video.stat.ly_eq_lyc_stat() {
                     0b00000100
                 } else {
                     0
                 };
-                0x80 | (self.video.stat_flags.bits() & 0b01111000) | line_compare | mode
+                0x80 | (self.video.stat.enables().bits() & 0b01111000) | line_compare | mode
             }
             Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
             Register::BackgroundViewportX => self.registers.background_viewport.x.output(),
             Register::WindowY => self.registers.window.y,
             Register::WindowX => self.registers.window.x_plus_7.output(),
             Register::CurrentScanline => self.video.ly(),
-            Register::InterruptOnScanline => self.video.lyc,
+            Register::InterruptOnScanline => self.video.stat.lyc(),
             Register::BackgroundPalette => self.registers.palettes.background.output(),
             Register::Sprite0Palette => self.registers.palettes.sprite0.output(),
             Register::Sprite1Palette => self.registers.palettes.sprite1.output(),
@@ -249,16 +255,17 @@ impl Ppu {
             Register::Status => {
                 // DMG STAT write quirk: briefly set all enable bits high.
                 // If any condition is active, this produces a rising edge.
-                self.video.stat_flags = InterruptFlags::all();
+                // Glitch orchestration stays on Ppu per PW.2; StatInterrupt
+                // provides primitives (set_enables / write_stat_bits /
+                // detect_line_edge).
+                self.video.stat.set_enables(InterruptFlags::all());
                 let glitch_line = self.stat_line_active();
-                let glitch_edge = glitch_line && !self.video.stat_line_was_high;
-                self.video.stat_line_was_high = glitch_line;
+                let glitch_edge = self.video.stat.detect_line_edge(glitch_line);
 
                 // Now apply the real value.
-                self.video.stat_flags = InterruptFlags::from_bits_truncate(value);
+                self.video.stat.write_stat_bits(value);
                 let final_line = self.stat_line_active();
-                let final_edge = final_line && !self.video.stat_line_was_high;
-                self.video.stat_line_was_high = final_line;
+                let final_edge = self.video.stat.detect_line_edge(final_line);
 
                 return glitch_edge || final_edge;
             }
@@ -271,8 +278,7 @@ impl Ppu {
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
             Register::InterruptOnScanline => {
-                self.video.lyc = value;
-                self.video.update_ly_comparison();
+                self.video.write_lyc(value);
             }
             Register::BackgroundPalette => self.registers.palettes.background.write(value),
             Register::Sprite0Palette => self.registers.palettes.sprite0.write(value),
@@ -311,7 +317,8 @@ impl Ppu {
         // Sync the STAT edge detector: the STAT line and its edge detector
         // reach their new steady state simultaneously when VID_RST deasserts.
         // No false edge on the first evaluation.
-        self.video.stat_line_was_high = self.stat_line_active();
+        let stat_line = self.stat_line_active();
+        self.video.stat.set_line_was_high(stat_line);
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
@@ -446,7 +453,13 @@ impl Ppu {
 
     /// Whether the latched LY==LYC comparison is currently true (ROPO output).
     pub fn ly_eq_lyc(&self) -> bool {
-        self.video.ly_eq_lyc()
+        self.video.stat.ly_eq_lyc()
+    }
+
+    /// LALU edge-detection state (STAT line previous value). Exposed for
+    /// gbtrace snapshot capture.
+    pub fn stat_line_was_high(&self) -> bool {
+        self.video.stat.line_was_high()
     }
 
     pub fn is_rendering(&self) -> bool {
@@ -484,24 +497,15 @@ impl Ppu {
         // (true for 1 rising-phase window), VOGA latches on the falling
         // edge and stays true through HBlank. Together they cover the
         // full HBlank period.
-        (self
-            .video
-            .stat_flags
-            .contains(InterruptFlags::HORIZONTAL_BLANK)
+        let enables = self.video.stat.enables();
+        (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
             && !popu
             && (rendering.voga() || rendering.wodu()))
-            || (self
-                .video
-                .stat_flags
-                .contains(InterruptFlags::VERTICAL_BLANK)
-                && popu)
-            || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
+            || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
+            || (enables.contains(InterruptFlags::OAM_SCAN)
                 && (mode2_active || vblank_line_144))
-            || (self
-                .video
-                .stat_flags
-                .contains(InterruptFlags::CURRENT_LINE_COMPARE)
-                && self.video.ly_eq_lyc())
+            || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
+                && self.video.stat.ly_eq_lyc())
     }
 
     /// Master clock rising edge — one of the two edges of `ck1_ck2`
@@ -610,14 +614,14 @@ impl Ppu {
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
                     if scanline_boundary && !self.video.popu_holdover {
-                        self.video.clear_stat_visible_if_no_match();
+                        self.video.stat.clear_stat_visible_if_no_match();
                     }
                 }
 
                 if !talu_was && self.video.mcycle_divider {
                     self.video.on_lx_counter_clock_rise();
-                    self.video.latch_ly_comparison();
-                    self.video.latch_stat_visible();
+                    self.video.stat.latch_comparison();
+                    self.video.stat.latch_stat_visible();
                 }
             }
 
@@ -688,8 +692,9 @@ impl Ppu {
             // M-cycle to match.
             self.video.vid_rst();
 
-            // ly_comparison_latched is intentionally NOT updated — comparison clock
-            // stops when the PPU is off, freezing the last result.
+            // stat.comparison_latched is intentionally NOT updated —
+            // comparison clock stops when the PPU is off, freezing the
+            // last result.
             return result;
         }
 
@@ -726,9 +731,7 @@ impl Ppu {
             return false;
         }
         let stat_line_high = self.stat_line_active();
-        let edge = stat_line_high && !self.video.stat_line_was_high;
-        self.video.stat_line_was_high = stat_line_high;
-        edge
+        self.video.stat.detect_line_edge(stat_line_high)
     }
 
     pub fn palettes(&self) -> &Palettes {
@@ -768,19 +771,21 @@ impl Ppu {
     pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
-        let stat_flags = InterruptFlags::from_bits_truncate(snap.stat);
+        let enables = InterruptFlags::from_bits_truncate(snap.stat);
 
         let video = VideoControl {
             dot_position: snap.dot_position,
             dot_divider: false,
             mcycle_divider: false,
             ly: snap.ly,
-            lyc: snap.lyc,
-            ly_comparison_pending: snap.ly == snap.lyc,
-            ly_comparison_latched: snap.ly == snap.lyc,
-            ly_comparison_stat_visible: snap.ly == snap.lyc,
-            stat_flags,
-            stat_line_was_high: snap.stat_line_was_high,
+            stat: StatInterrupt {
+                lyc: snap.lyc,
+                comparison_pending: snap.ly == snap.lyc,
+                comparison_latched: snap.ly == snap.lyc,
+                comparison_stat_visible: snap.ly == snap.lyc,
+                enables,
+                line_was_high: snap.stat_line_was_high,
+            },
             delayed_line_end: false,
             line_end_pending: false,
             line_end_detected: false,

@@ -110,7 +110,7 @@ pub fn capture_ppu(gb: &GameBoy) -> PpuSnapshot {
         obp1: ppu.read_register(crate::ppu::Register::Sprite1Palette),
         dma: gb.dma().source_register(),
         dot_position: ppu.lx(),
-        stat_line_was_high: ppu.video.stat_line_was_high,
+        stat_line_was_high: ppu.stat_line_was_high(),
         window_line_counter: 0, // TODO: only accessible mid-frame via Rendering
     }
 }

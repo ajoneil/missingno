@@ -9,17 +9,7 @@
 //! derivations (e.g., `TALU = NOT(VENA)`, "TALU cascade" named-phenomenon
 //! framing).
 
-use bitflags::bitflags;
-
-bitflags! {
-    pub struct InterruptFlags: u8 {
-        const DUMMY                = 0b10000000;
-        const CURRENT_LINE_COMPARE = 0b01000000;
-        const OAM_SCAN             = 0b00100000;
-        const VERTICAL_BLANK       = 0b00010000;
-        const HORIZONTAL_BLANK     = 0b00001000;
-    }
-}
+use crate::ppu::stat_interrupt::StatInterrupt;
 
 /// Video timing and control (schematic page 21).
 ///
@@ -48,32 +38,10 @@ pub struct VideoControl {
     /// `ly()`. The internal counter stays at 153 until RUTU wraps it.
     pub ly: u8,
 
-    /// LYC register (FF45). CPU-writable comparison target.
-    pub lyc: u8,
-
-    /// Pending LY==LYC comparison result (PALY combinational comparator).
-    /// Recomputed at LX counter clock fall (via `update_ly_comparison()`)
-    /// and on CPU writes to LYC. Promoted to `ly_comparison_latched` at
-    /// LX counter clock rise by `latch_ly_comparison()`.
-    pub ly_comparison_pending: bool,
-
-    /// Latched LY==LYC result (ROPO DFF output). Unconditionally latched
-    /// from `ly_comparison_pending` at each LX counter clock rise. Drives
-    /// the LYC STAT interrupt source.
-    /// Reset only by SYS_RST, NOT by VID_RST (LCD off/on).
-    pub ly_comparison_latched: bool,
-
-    /// STAT bit 2 visible value (RUPO NOR latch). Asymmetric update:
-    /// match clearing is immediate (PAGO always drives "no match"),
-    /// match onset requires ROPO DFF to latch. Also updated at LX counter
-    /// clock rise (normal ROPO cadence). Frame-wrap follows ROPO only.
-    pub ly_comparison_stat_visible: bool,
-
-    /// STAT interrupt enable flags (FF41 bits 3-6).
-    pub stat_flags: InterruptFlags,
-
-    /// Previous STAT line state for rising-edge detection.
-    pub stat_line_was_high: bool,
+    /// §2.14 STAT Interrupt Generation subsystem (LYC register, enable
+    /// bits, LYC-match pipeline, LALU edge-detection state). Extracted
+    /// as its own container; see `stat_interrupt.rs`.
+    pub stat: StatInterrupt,
 
     /// Delayed line-end signal (NYPE DFF). Clocked by TALU rising edge,
     /// captures the previous RUTU state. Goes high 2 dots after RUTU,
@@ -166,65 +134,30 @@ impl VideoControl {
         if self.frame_end_reset { 0 } else { self.ly }
     }
 
-    pub fn ly_eq_lyc(&self) -> bool {
-        self.ly_comparison_latched
-    }
-
-    /// RUPO output: the STAT bit 2 visible value. Clears immediately
-    /// when comparison goes false; onset follows ROPO latch cadence.
-    pub fn ly_eq_lyc_stat(&self) -> bool {
-        self.ly_comparison_stat_visible
-    }
-
-    /// Update the STAT-visible comparison (RUPO) from the pending value.
-    pub fn latch_stat_visible(&mut self) {
-        self.ly_comparison_stat_visible = self.ly_comparison_pending;
-    }
-
-    /// RUPO immediate clear: when PALY goes false, PAGO (always asserted)
-    /// immediately drives RUPO to "no match" without waiting for ROPO.
-    /// Match onset (false→true) still requires the ROPO DFF pipeline.
-    pub fn clear_stat_visible_if_no_match(&mut self) {
-        if !self.ly_comparison_pending {
-            self.ly_comparison_stat_visible = false;
-        }
-    }
-
     pub fn write_ly(&mut self, value: u8) {
         self.ly = value;
     }
 
-    /// ROPO DFF latch: unconditionally capture the pending PALY comparison
-    /// result at LX counter clock rise. On hardware, RUPO (the NOR latch
-    /// downstream of ROPO) is transparent because PAGO is permanently held
-    /// high during normal operation. STAT bit 2 and the STAT interrupt both
-    /// read this value.
-    pub fn latch_ly_comparison(&mut self) {
-        self.ly_comparison_latched = self.ly_comparison_pending;
+    /// Cross-subsystem orchestration wrapper: triggers a PALY recompute
+    /// against the current register-visible LY, consuming the MYTA
+    /// propagation-race suppression flag (which stays on VideoControl
+    /// until Stage 4 moves it to LineCounterY).
+    pub fn update_ly_comparison(&mut self) {
+        let ly = self.ly();
+        let suppress_onset = self.myta_suppress_new_match;
+        self.myta_suppress_new_match = false;
+        self.stat.update_comparison(ly, suppress_onset);
     }
 
-    /// PALY combinational comparator: recompute the pending LY==LYC
-    /// result. Called at LX counter clock fall and on CPU writes to LYC.
-    ///
-    /// When `myta_suppress_new_match` is active, the comparison runs
-    /// normally but only false-to-true transitions (new match onset)
-    /// are suppressed. True-to-false transitions (match clearing) pass
-    /// through, modeling the reg_old lag after MYTA async reset.
-    pub fn update_ly_comparison(&mut self) {
-        let result = self.ly() == self.lyc;
-
-        if self.myta_suppress_new_match {
-            self.myta_suppress_new_match = false;
-            // Only apply clearing (true→false); suppress new match onset
-            // (false→true). The old LY value is gone from reg_old so PALY
-            // sees the mismatch, but the new LY=0 hasn't propagated yet.
-            if !result {
-                self.ly_comparison_pending = false;
-            }
-            return;
-        }
-
-        self.ly_comparison_pending = result;
+    /// LYC register write: CPU path. Updates the LYC register then
+    /// recomputes PALY against the current LY, consuming the MYTA
+    /// propagation-race suppression flag (same cross-subsystem rule as
+    /// `update_ly_comparison`).
+    pub fn write_lyc(&mut self, value: u8) {
+        let ly = self.ly();
+        let suppress_onset = self.myta_suppress_new_match;
+        self.myta_suppress_new_match = false;
+        self.stat.write_lyc(value, ly, suppress_onset);
     }
 
     /// Whether the line-end pulse is active (RUTU, 2-dot window at
