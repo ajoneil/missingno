@@ -271,63 +271,120 @@ impl VideoControl {
 
     // ── LX counter clock rise (gate: TALU rising): NYPE, POPU, MYTA, LX, SANU ──
 
-    /// LX counter clock rising edge (gate: TALU rising). Dispatcher —
-    /// four hardware events fire in sequence at this edge:
+    /// LX counter clock rising edge (gate: TALU rising). Dispatches four
+    /// subsystem-scoped private methods in order (ordering matters):
     ///
-    /// 1. NYPE DFF captures the pending line-end state
-    /// 2. NYPE rising edge clocks POPU (VBlank) and MYTA (frame-end)
-    /// 3. LX advances (suppressed during RUTU line-end pulse)
-    /// 4. SANU detects LX=113 (line-end for this scanline)
+    /// 1. §6.4 NYPE DFF captures the pending line-end state
+    /// 2. §2.7 POPU + MYTA DFFs capture on NYPE rising edge
+    /// 3. §2.6 LX advances (suppressed during RUTU line-end pulse)
+    /// 4. §2.6 SANU combinational detect of LX=113
     pub fn on_lx_counter_clock_rise(&mut self) {
-        // 1. NYPE DFF: latch pending line-end on TALU rising.
+        let nype_rising = self.capture_nype_dff();
+        if nype_rising {
+            self.capture_popu_myta();
+        }
+        self.advance_lx();
+        self.detect_sanu();
+    }
+
+    /// §6.4 NYPE DFF: captures `line_end_pending` on LX counter clock
+    /// rising; returns true on NYPE rising edge (0→1 transition).
+    fn capture_nype_dff(&mut self) -> bool {
         let nype_was = self.delayed_line_end;
         self.delayed_line_end = self.line_end_pending;
         self.line_end_pending = false;
+        !nype_was && self.delayed_line_end
+    }
 
-        // 2. NYPE rising edge → POPU (VBlank latch) and MYTA (frame-end).
-        if !nype_was && self.delayed_line_end {
-            // POPU DFF: latch whether we're in VBlank (LY >= 144).
-            self.vblank = self.ly >= 144;
+    /// §2.7 POPU (VBlank latch) and MYTA (frame-end) DFFs capture on
+    /// NYPE rising. Caller must have confirmed the rising edge via
+    /// `capture_nype_dff`.
+    fn capture_popu_myta(&mut self) {
+        // POPU DFF: latch whether we're in VBlank (LY >= 144).
+        self.vblank = self.ly >= 144;
 
-            // MYTA DFF: latch frame-end (LY == 153). Makes ly() return 0.
-            if self.ly == 153 {
-                self.frame_end_reset = true;
-                self.myta_suppress_new_match = true;
-            }
+        // MYTA DFF: latch frame-end (LY == 153). Makes ly() return 0.
+        if self.ly == 153 {
+            self.frame_end_reset = true;
+            self.myta_suppress_new_match = true;
         }
+    }
 
-        // 3. Advance dot position (LX). Suppressed during RUTU line-end
-        //    pulse — MUDE async-resets LX at the same TALU falling as RUTU.
+    /// §2.6 LX ripple counter advance on LX counter clock rising.
+    /// Suppressed during RUTU line-end pulse — MUDE async-resets LX at
+    /// the same TALU falling as RUTU.
+    fn advance_lx(&mut self) {
         if !self.line_end_active {
             self.dot_position += 1;
         }
         self.line_end_active = false;
+    }
 
-        // 4. SANU: combinational detect of LX reaching 113.
+    /// §2.6 SANU combinational decode of LX reaching 113.
+    fn detect_sanu(&mut self) {
         self.line_end_detected = self.dot_position == 113;
     }
 
     // ── LX counter clock fall (gate: TALU falling): RUTU ──────
 
-    /// LX counter clock falling edge (gate: TALU falling). Fires RUTU
-    /// if line-end was detected; returns true at scanline boundary.
+    /// LX counter clock falling edge (gate: TALU falling). Dispatches
+    /// scanline-boundary work within an atomic `if line_end_detected`
+    /// block (hardware-atomic: LX reset and LY wrap happen on the same
+    /// TALU fall). Returns true at a scanline boundary.
+    ///
+    /// Ordering within the atomic block:
+    /// 1. §2.6 RUTU fires; LX resets; SANU cleared
+    /// 2. §2.7 LY ripple counter advances or wraps (153→0)
+    /// 3. §2.7 POPU holdover armed on wrap (frame-boundary NYPE→POPU delay)
+    /// 4. §6.4 NYPE D input set for the subsequent TALU rising capture
     pub fn on_lx_counter_clock_fall(&mut self) -> bool {
         if self.line_end_detected {
-            self.line_end_detected = false;
-            if self.ly >= 153 {
-                self.ly = 0;
-                self.frame_end_reset = false;
-                self.popu_holdover = true;
-                self.vblank = false;
-            } else {
-                self.ly += 1;
-            }
-            self.dot_position = 0;
-            self.line_end_active = true;
-            self.line_end_pending = true;
+            self.rutu_fire_lx_reset();
+            let wrap_occurred = self.ly_advance_or_wrap();
+            self.update_popu_holdover(wrap_occurred);
+            self.feed_nype();
             return true;
         }
 
         false
+    }
+
+    /// §2.6 RUTU fires: line-end pulse active (2-dot); LX async-resets
+    /// to 0 via MUDE; SANU flag cleared (consumed).
+    fn rutu_fire_lx_reset(&mut self) {
+        self.line_end_detected = false;
+        self.dot_position = 0;
+        self.line_end_active = true;
+    }
+
+    /// §2.7 LY ripple counter advance or 153→0 wrap. On wrap, the
+    /// MYTA-held window clears (frame_end_reset=false) and POPU goes
+    /// low. Returns true if the wrap occurred.
+    fn ly_advance_or_wrap(&mut self) -> bool {
+        if self.ly >= 153 {
+            self.ly = 0;
+            self.frame_end_reset = false;
+            self.vblank = false;
+            true
+        } else {
+            self.ly += 1;
+            false
+        }
+    }
+
+    /// §2.7 POPU holdover: extends VBlank by one dot past the 153→0
+    /// frame wrap, modelling the NYPE→POPU DFF propagation delay. Armed
+    /// only on the wrap path; cleared on the next XOTA edge via
+    /// `tick_dot()`.
+    fn update_popu_holdover(&mut self, wrap_occurred: bool) {
+        if wrap_occurred {
+            self.popu_holdover = true;
+        }
+    }
+
+    /// §6.4 NYPE D input: set `line_end_pending` so NYPE captures the
+    /// RUTU pulse on the subsequent LX counter clock rising.
+    fn feed_nype(&mut self) {
+        self.line_end_pending = true;
     }
 }
