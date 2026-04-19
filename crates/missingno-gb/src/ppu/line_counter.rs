@@ -11,6 +11,8 @@
 //!
 //! Hardware reference: spec §2.6 (LX), §2.7 (LY/POPU/MYTA).
 
+use crate::ppu::line_end_pipeline::NypeEdge;
+
 pub struct LineCounter {
     pub x: LineCounterX,
     pub y: LineCounterY,
@@ -31,13 +33,18 @@ pub struct LineCounterY {
 }
 
 impl LineCounter {
-    /// LX counter clock rising — orchestrates §2.7 POPU/MYTA capture
-    /// (gated by NYPE rising from the §6.4 pipeline in VideoControl) and
-    /// §2.6 LX advance + SANU decode. `nype_rising` is passed in by the
-    /// orchestrator; when true, Y captures POPU/MYTA before X advances.
-    pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, nype_rising: bool) {
-        if nype_rising {
-            self.y.capture_popu_myta();
+    /// LX counter clock rising — orchestrates POPU/MYTA capture per
+    /// NYPE edge from the LineEndPipeline, plus LX advance + SANU
+    /// decode. `nype_edge` distinguishes rising (POPU fires) from
+    /// falling (MYTA fires) per the NYPE dual-edge distribution.
+    ///
+    /// Note: this is Stage-5a structural refactor. Both POPU and MYTA
+    /// fire on NypeEdge::Rising for now (pre-5a behaviour). Stage 5b
+    /// shifts MYTA to NypeEdge::Falling per hardware.
+    pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, nype_edge: NypeEdge) {
+        if nype_edge == NypeEdge::Rising {
+            self.y.capture_popu();
+            self.y.capture_myta(); // 5a: MYTA still on rising; 5b will move to Falling
         }
         self.x.advance();
         self.x.detect_line_end();
@@ -139,10 +146,20 @@ impl LineCounterY {
         }
     }
 
-    /// POPU (VBlank) and MYTA (frame-end) DFFs capture on NYPE rising.
-    /// Caller gates on the NYPE rising edge.
-    pub(in crate::ppu) fn capture_popu_myta(&mut self) {
+    /// POPU VBlank capture — fires on NYPE rising edge. Caller gates
+    /// on NypeEdge::Rising.
+    pub(in crate::ppu) fn capture_popu(&mut self) {
         self.vblank = self.value >= 144;
+    }
+
+    /// MYTA FRAME_END capture — fires on NYPE falling edge (nype_n
+    /// rising), one TALU period after POPU's capture edge. Caller
+    /// gates on NypeEdge::Falling.
+    ///
+    /// Sets `frame_end_reset` (register smoothing for LY=0) and
+    /// `myta_fired` (consumed by StatInterrupt for the propagation-race
+    /// suppression).
+    pub(in crate::ppu) fn capture_myta(&mut self) {
         if self.value == 153 {
             self.frame_end_reset = true;
             self.myta_fired = true;

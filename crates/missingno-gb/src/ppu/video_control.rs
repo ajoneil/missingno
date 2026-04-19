@@ -17,6 +17,7 @@
 
 use crate::ppu::dividers::Dividers;
 use crate::ppu::line_counter::LineCounter;
+use crate::ppu::line_end_pipeline::LineEndPipeline;
 use crate::ppu::stat_interrupt::StatInterrupt;
 
 /// Video timing and control (schematic page 21). Composes the extracted
@@ -32,14 +33,9 @@ pub struct VideoControl {
     /// LYC-match pipeline, LALU edge-detection state).
     pub stat: StatInterrupt,
 
-    /// §6.4 NYPE DFF output (delayed line-end). Clocked by TALU rising;
-    /// captures the pending line-end state. Stays in VideoControl until
-    /// Stage 5 extracts the LineEndPipeline container after §6.4 review.
-    pub delayed_line_end: bool,
-
-    /// §6.4 NYPE D input — pending line-end feed. Set when RUTU fires;
-    /// consumed by NYPE on the next LX counter clock rise.
-    pub line_end_pending: bool,
+    /// NYPE LINE_END redistribution DFF — produces NypeEdge
+    /// (rising / falling / none) for POPU / MYTA dispatch per hardware.
+    pub line_end: LineEndPipeline,
 }
 
 impl VideoControl {
@@ -48,8 +44,7 @@ impl VideoControl {
     pub fn vid_rst(&mut self) {
         self.dividers.vid_rst();
         self.lines.vid_rst();
-        self.delayed_line_end = false;
-        self.line_end_pending = false;
+        self.line_end.vid_rst();
     }
 
     // ── Clock pass-throughs (Stage 3) ─────────────────────────
@@ -103,10 +98,9 @@ impl VideoControl {
         self.lines.y.write_ly(value);
     }
 
-    /// §6.4 NYPE output accessor. Still owned by VideoControl until
-    /// Stage 5.
+    /// NYPE output accessor — pass-through to LineEndPipeline.
     pub fn delayed_line_end(&self) -> bool {
-        self.delayed_line_end
+        self.line_end.delayed_line_end()
     }
 
     // ── Cross-subsystem orchestration ─────────────────────────
@@ -139,39 +133,23 @@ impl VideoControl {
 
     // ── LX counter clock edges ───────────────────────────────
 
-    /// LX counter clock rising edge (TALU rising). §6.4 NYPE captures
-    /// line-end-pending; if NYPE rose, LineCounter.y captures POPU+MYTA;
-    /// LineCounter.x advances and decodes SANU.
+    /// LX counter clock rising edge (TALU rising). NYPE captures on
+    /// this edge and reports which Q-transition occurred (Rising /
+    /// Falling / None); LineCounter dispatches POPU (Rising) or MYTA
+    /// (Falling). LineCounter.x advances and decodes SANU regardless.
     pub fn on_lx_counter_clock_rise(&mut self) {
-        let nype_rising = self.capture_nype_dff();
-        self.lines.on_lx_counter_clock_rise(nype_rising);
+        let nype_edge = self.line_end.capture();
+        self.lines.on_lx_counter_clock_rise(nype_edge);
     }
 
     /// LX counter clock falling edge (TALU falling). LineCounter fires
     /// the scanline boundary (RUTU + LY advance) atomically; if the
-    /// boundary fired, §6.4 NYPE feed is set for the next rise.
+    /// boundary fired, NYPE feed is signalled for the next rise.
     pub fn on_lx_counter_clock_fall(&mut self) -> bool {
         let scanline_boundary = self.lines.on_lx_counter_clock_fall();
         if scanline_boundary {
-            self.feed_nype();
+            self.line_end.signal_line_end();
         }
         scanline_boundary
-    }
-
-    // ── §6.4 NYPE pipeline (stays until Stage 5) ─────────────
-
-    /// §6.4 NYPE DFF captures `line_end_pending` on LX counter clock
-    /// rising; returns true on NYPE rising edge (0→1 transition).
-    fn capture_nype_dff(&mut self) -> bool {
-        let nype_was = self.delayed_line_end;
-        self.delayed_line_end = self.line_end_pending;
-        self.line_end_pending = false;
-        !nype_was && self.delayed_line_end
-    }
-
-    /// §6.4 NYPE D input: set `line_end_pending` so NYPE captures RUTU
-    /// on the subsequent LX counter clock rising.
-    fn feed_nype(&mut self) {
-        self.line_end_pending = true;
     }
 }

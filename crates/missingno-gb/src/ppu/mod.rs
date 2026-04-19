@@ -23,6 +23,7 @@ use types::sprites::{Sprite, SpriteId};
 
 use dividers::Dividers;
 use line_counter::{LineCounter, LineCounterX, LineCounterY};
+use line_end_pipeline::LineEndPipeline;
 use memory::{Oam, OamAddress, Vram};
 use registers::BackgroundViewportPosition;
 use rendering::Rendering;
@@ -65,6 +66,7 @@ mod dff;
 mod dividers;
 mod draw;
 mod line_counter;
+mod line_end_pipeline;
 pub mod memory;
 mod oam_corruption;
 pub mod registers;
@@ -160,8 +162,10 @@ impl Ppu {
                     enables: InterruptFlags::DUMMY,
                     line_was_high: false,
                 },
-                delayed_line_end: false,
-                line_end_pending: false,
+                line_end: LineEndPipeline {
+                    delayed_line_end: false,
+                    line_end_pending: false,
+                },
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -216,8 +220,10 @@ impl Ppu {
                     enables: InterruptFlags::empty(),
                     line_was_high: false,
                 },
-                delayed_line_end: false,
-                line_end_pending: false,
+                line_end: LineEndPipeline {
+                    delayed_line_end: false,
+                    line_end_pending: false,
+                },
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
@@ -821,8 +827,10 @@ impl Ppu {
                 enables,
                 line_was_high: snap.stat_line_was_high,
             },
-            delayed_line_end: false,
-            line_end_pending: false,
+            line_end: LineEndPipeline {
+                delayed_line_end: false,
+                line_end_pending: false,
+            },
         };
 
         let registers = PipelineRegisters {
