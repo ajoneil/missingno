@@ -21,6 +21,7 @@
 use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
+use dividers::Dividers;
 use memory::{Oam, OamAddress, Vram};
 use registers::BackgroundViewportPosition;
 use rendering::Rendering;
@@ -60,6 +61,7 @@ pub struct PpuTickResult {
 }
 
 mod dff;
+mod dividers;
 mod draw;
 pub mod memory;
 mod oam_corruption;
@@ -130,8 +132,10 @@ impl Ppu {
             // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
                 dot_position: 98,
-                dot_divider: false,
-                mcycle_divider: false,
+                dividers: Dividers {
+                    half_mcycle: false,
+                    mcycle: false,
+                },
                 ly: 153,
                 stat: StatInterrupt {
                     lyc: 0,
@@ -179,8 +183,10 @@ impl Ppu {
             },
             video: VideoControl {
                 dot_position: 0,
-                dot_divider: false,
-                mcycle_divider: false,
+                dividers: Dividers {
+                    half_mcycle: false,
+                    mcycle: false,
+                },
                 ly: 0,
                 stat: StatInterrupt {
                     lyc: 0,
@@ -298,10 +304,10 @@ impl Ppu {
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
         // After VID_RST, VENA.Q=0, so TALU = NOT(VENA.Q) = 1. vid_rst
-        // sets mcycle_divider=false (wrong). Fix to match hardware.
+        // sets mcycle=false (wrong). Fix to match hardware.
         // WUVU stays at 0 — tick_dot() runs on this same fall() after
         // init returns, providing the first XOTA toggle (WUVU 0→1).
-        self.video.mcycle_divider = true; // TALU = NOT(VENA=0) = 1
+        self.video.dividers.set_mcycle(true); // TALU = NOT(VENA=0) = 1
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
         // PALY is combinational and settles immediately when LY resets to 0,
         // so recompute the pending comparison here. The ROPO DFF will latch
@@ -607,10 +613,11 @@ impl Ppu {
             self.video.tick_dot();
 
             let mut scanline_boundary = false;
-            if self.video.dot_divider_fell() {
-                let talu_was = self.video.tick_mcycle_divider();
+            if self.video.dividers.half_mcycle_fell() {
+                let talu_was = self.video.dividers.tick_mcycle();
+                let talu_now = self.video.dividers.mcycle();
 
-                if talu_was && !self.video.mcycle_divider {
+                if talu_was && !talu_now {
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
                     if scanline_boundary && !self.video.popu_holdover {
@@ -618,7 +625,7 @@ impl Ppu {
                     }
                 }
 
-                if !talu_was && self.video.mcycle_divider {
+                if !talu_was && talu_now {
                     self.video.on_lx_counter_clock_rise();
                     self.video.stat.latch_comparison();
                     self.video.stat.latch_stat_visible();
@@ -775,8 +782,10 @@ impl Ppu {
 
         let video = VideoControl {
             dot_position: snap.dot_position,
-            dot_divider: false,
-            mcycle_divider: false,
+            dividers: Dividers {
+                half_mcycle: false,
+                mcycle: false,
+            },
             ly: snap.ly,
             stat: StatInterrupt {
                 lyc: snap.lyc,

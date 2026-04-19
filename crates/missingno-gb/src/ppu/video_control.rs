@@ -9,6 +9,7 @@
 //! derivations (e.g., `TALU = NOT(VENA)`, "TALU cascade" named-phenomenon
 //! framing).
 
+use crate::ppu::dividers::Dividers;
 use crate::ppu::stat_interrupt::StatInterrupt;
 
 /// Video timing and control (schematic page 21).
@@ -23,14 +24,9 @@ pub struct VideoControl {
     /// the line-end sequence fires (SANU → RUTU).
     pub dot_position: u8,
 
-    /// 2-dot clock divider (WUVU DFF). Toggles every dot on XOTA rising.
-    /// Period = 2 dots. XUPY (= WUVU.qp) clocks the OAM scan counter.
-    pub dot_divider: bool,
-
-    /// 4-dot clock divider (VENA DFF). Toggles on WUVU falling edge.
-    /// Period = 4 dots = 1 M-cycle. TALU (= VENA.qp) clocks LX, ROPO,
-    /// and NYPE.
-    pub mcycle_divider: bool,
+    /// §1.2 WUVU + VENA clock dividers (half-M-cycle / M-cycle cadence).
+    /// Extracted as its own container; see `dividers.rs`.
+    pub dividers: Dividers,
 
     /// Internal scanline counter (MUWY-LAFO ripple counter). Counts
     /// 0-153, incrementing at each RUTU line-end pulse. On line 153,
@@ -97,8 +93,7 @@ impl VideoControl {
     pub fn vid_rst(&mut self) {
         self.ly = 0;
         self.dot_position = 0;
-        self.dot_divider = false;
-        self.mcycle_divider = false;
+        self.dividers.vid_rst();
         self.vblank = false;
         self.popu_holdover = false;
         self.delayed_line_end = false;
@@ -109,16 +104,16 @@ impl VideoControl {
         self.myta_suppress_new_match = false;
     }
 
-    /// TALU signal: buffered VENA.qp (4-dot M-cycle clock).
-    /// Rising edge clocks LX, ROPO, and NYPE.
+    /// TALU = VENA.Q — 1 MHz LX counter clock. Pass-through to Dividers
+    /// for external-reference sites under the TALU gate name.
     pub fn talu(&self) -> bool {
-        self.mcycle_divider
+        self.dividers.talu()
     }
 
-    /// XUPY = NOT(WUVU). True when WUVU.Q is low. Clocks OAM scan
-    /// counter (via GAVA), BYBA/CATU pipeline DFFs.
+    /// XUPY — scan-counter / OAM-pipeline clock (complement of the
+    /// emulator's stored WUVU state). Pass-through to Dividers.
     pub fn xupy(&self) -> bool {
-        !self.dot_divider
+        self.dividers.xupy()
     }
 
     /// Delayed line-end signal (NYPE output). High for one M-cycle
@@ -180,26 +175,15 @@ impl VideoControl {
         self.vblank || self.popu_holdover
     }
 
-    // ── Clock divider ticks ──────────────────────────────────
+    // ── Clock divider tick wrapper ────────────────────────────
 
-    /// XOTA rising edge: toggle the 2-dot divider (WUVU). Called every dot.
+    /// XOTA rising edge: toggle WUVU (via Dividers) and clear the §2.7
+    /// POPU holdover flag. Called every dot. The POPU holdover is a one-
+    /// dot extension at the 153→0 frame boundary that must clear on the
+    /// next XOTA edge; collocated here so callers make one call per dot.
     pub fn tick_dot(&mut self) {
-        self.dot_divider = !self.dot_divider;
+        self.dividers.tick_dot();
         self.popu_holdover = false;
-    }
-
-    /// Whether the 2-dot divider (WUVU) just fell. Check after `tick_dot()`
-    /// to know if the M-cycle divider should toggle.
-    pub fn dot_divider_fell(&self) -> bool {
-        !self.dot_divider
-    }
-
-    /// Toggle the M-cycle divider (VENA). Called when the 2-dot divider
-    /// falls. Returns the previous TALU state so the caller can detect edges.
-    pub fn tick_mcycle_divider(&mut self) -> bool {
-        let talu_was = self.mcycle_divider;
-        self.mcycle_divider = !self.mcycle_divider;
-        talu_was
     }
 
     // ── LX counter clock rise (gate: TALU rising): NYPE, POPU, MYTA, LX, SANU ──
