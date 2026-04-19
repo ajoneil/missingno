@@ -150,14 +150,12 @@ impl Ppu {
                         vblank: true,
                         popu_holdover: false,
                         frame_end_reset: true,
-                        myta_fired: false,
                     },
                 },
                 stat: StatInterrupt {
                     lyc: 0,
                     comparison_pending: false,
                     comparison_latched: false,
-                    comparison_stat_visible: false,
                     // The first bit is unused, but is set at boot time
                     enables: InterruptFlags::DUMMY,
                     line_was_high: false,
@@ -209,14 +207,12 @@ impl Ppu {
                         vblank: false,
                         popu_holdover: false,
                         frame_end_reset: false,
-                        myta_fired: false,
                     },
                 },
                 stat: StatInterrupt {
                     lyc: 0,
                     comparison_pending: false,
                     comparison_latched: true,
-                    comparison_stat_visible: true,
                     enables: InterruptFlags::empty(),
                     line_was_high: false,
                 },
@@ -640,15 +636,11 @@ impl Ppu {
                 if talu_was && !talu_now {
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
-                    if scanline_boundary && !self.video.popu_holdover() {
-                        self.video.stat.clear_stat_visible_if_no_match();
-                    }
                 }
 
                 if !talu_was && talu_now {
                     self.video.on_lx_counter_clock_rise();
                     self.video.stat.latch_comparison();
-                    self.video.stat.latch_stat_visible();
                 }
             }
 
@@ -816,14 +808,12 @@ impl Ppu {
                     vblank: snap.ly >= 144,
                     popu_holdover: false,
                     frame_end_reset: false,
-                    myta_fired: false,
                 },
             },
             stat: StatInterrupt {
                 lyc: snap.lyc,
                 comparison_pending: snap.ly == snap.lyc,
                 comparison_latched: snap.ly == snap.lyc,
-                comparison_stat_visible: snap.ly == snap.lyc,
                 enables,
                 line_was_high: snap.stat_line_was_high,
             },

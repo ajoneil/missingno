@@ -29,7 +29,6 @@ pub struct LineCounterY {
     pub(in crate::ppu) vblank: bool,
     pub(in crate::ppu) popu_holdover: bool,
     pub(in crate::ppu) frame_end_reset: bool,
-    pub(in crate::ppu) myta_fired: bool,
 }
 
 impl LineCounter {
@@ -153,13 +152,10 @@ impl LineCounterY {
     /// rising), one TALU period after POPU's capture edge. Caller
     /// gates on NypeEdge::Falling.
     ///
-    /// Sets `frame_end_reset` (register smoothing for LY=0) and
-    /// `myta_fired` (consumed by StatInterrupt for the propagation-race
-    /// suppression).
+    /// Sets `frame_end_reset` (register smoothing for LY=0).
     pub(in crate::ppu) fn capture_myta(&mut self) {
         if self.value == 153 {
             self.frame_end_reset = true;
-            self.myta_fired = true;
         }
     }
 
@@ -193,26 +189,6 @@ impl LineCounterY {
         self.vblank || self.popu_holdover
     }
 
-    /// Whether MYTA fired on the most recent NYPE rising (LY == 153 was
-    /// latched).
-    ///
-    /// Consumed by StatInterrupt for LYC-match onset suppression. The
-    /// suppression is hardware-faithful: MYTA's rising edge triggers an
-    /// async reset chain (MYTA → LAMA → LY DFFs) with ~8-12 ge
-    /// propagation delay, while ROPO captures PALY in ~1-2 ge. Result:
-    /// on the TALU rise where MYTA fires, ROPO captures pre-reset PALY
-    /// showing LY=153; for LYC=0, this would otherwise be a spurious
-    /// match onset. The suppression correctly prevents it.
-    ///
-    /// See `receipts/ppu-overhaul/missingno-analysis/myta-investigation.md`
-    /// (commit `4b074ad`) for the mechanism verification — the field
-    /// models hardware state (MYTA fired), not consumer effect.
-    pub(in crate::ppu) fn take_myta_fired(&mut self) -> bool {
-        let fired = self.myta_fired;
-        self.myta_fired = false;
-        fired
-    }
-
     pub(in crate::ppu) fn write_ly(&mut self, value: u8) {
         self.value = value;
     }
@@ -222,6 +198,5 @@ impl LineCounterY {
         self.vblank = false;
         self.popu_holdover = false;
         self.frame_end_reset = false;
-        self.myta_fired = false;
     }
 }

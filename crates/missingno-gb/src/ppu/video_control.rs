@@ -105,21 +105,16 @@ impl VideoControl {
 
     // ── Cross-subsystem orchestration ─────────────────────────
 
-    /// Triggers a PALY recompute against register-visible LY; consumes
-    /// the MYTA propagation-race suppression flag from LineCounterY (see
-    /// myta-investigation.md).
+    /// Triggers a PALY recompute against register-visible LY.
     pub fn update_ly_comparison(&mut self) {
         let ly = self.lines.ly();
-        let suppress_onset = self.lines.y.take_myta_fired();
-        self.stat.update_comparison(ly, suppress_onset);
+        self.stat.update_comparison(ly);
     }
 
-    /// LYC register write — CPU path. Updates LYC then recomputes PALY
-    /// with MYTA-suppression consumed.
+    /// LYC register write — CPU path. Updates LYC then recomputes PALY.
     pub fn write_lyc(&mut self, value: u8) {
         let ly = self.lines.ly();
-        let suppress_onset = self.lines.y.take_myta_fired();
-        self.stat.write_lyc(value, ly, suppress_onset);
+        self.stat.write_lyc(value, ly);
     }
 
     // ── Per-dot tick ─────────────────────────────────────────

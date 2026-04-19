@@ -9,42 +9,16 @@
 //! Hardware LYC-match pipeline: PALY (combinational LY==LYC) → ROPO
 //! (DFF captured on TALU rising) → RUPO (NOR latch that is transparent
 //! during normal operation, since PAGO is static-1). STAT bit 2 on the
-//! CPU bus tracks ROPO.Q via RUPO's transparent path. STAT IRQ blocking
-//! emerges naturally from the edge-triggered LALU capture.
+//! CPU bus tracks ROPO.Q directly via RUPO's transparent path. STAT IRQ
+//! blocking emerges naturally from the edge-triggered LALU capture.
 //!
-//! **Compensation-model note**: `comparison_stat_visible` and its
-//! asymmetric set/clear pair (`latch_stat_visible` /
-//! `clear_stat_visible_if_no_match`) are **not** hardware-faithful.
-//! Hardware RUPO is transparent; this emulator models an asymmetric
-//! update cadence to compensate for per-dot resolution.
-//!
-//! **Post-Stage-5 state** (missingno commits `132f8c2` 5a structural
-//! extraction + `88ffcd5` 5b MYTA edge correction): MYTA now fires on
-//! NYPE falling per hardware via the `LineEndPipeline` / `NypeEdge`
-//! distinction, resolving the one-M-cycle-early LYC=153 clearing
-//! divergence for one test case. Test movement from the MYTA-edge fix
-//! exposed three distinct compensation mechanisms that remain in this
-//! module:
-//!
-//! 1. **LYC=0 onset timing** — `update_comparison`'s suppression-
-//!    clearing branch bridges LYC=0 onset behaviour around the MYTA
-//!    window. Post-Stage-5 the suppression-consume point has shifted
-//!    and four LYC=0-related tests now fail
-//!    (`gpu_ly_lyc_0_gs`, `gpu_ly_lyc_0_write_gs`,
-//!    `line_153_lyc0_int_inc_sled`, `line_153_lyc0_stat_timing_d`).
-//! 2. **LY-tracking at frame boundary** — interaction with
-//!    `frame_end_reset` gating and the register-smoothed `ly()`
-//!    accessor shifted relative to downstream consumers. Three tests
-//!    now fail (`age::ly`, `line_153_ly_c`, `gpu_ly_new_frame_gs`).
-//! 3. **LYC=153 sub-case compensation** — compensation handled
-//!    LYC=153 sub-cases differently; Stage 5 resolved one
-//!    (`gpu_ly_lyc_153_write_gs` now passes) but exposed two
-//!    (`line_153_lyc153_stat_timing_c`, `gpu_ly_lyc_153_gs` now fail).
-//!
-//! Per-mechanism characterisation and resolution is deferred to a
-//! frame-boundary-focused investigation arc (narrower than a full STAT
-//! pipeline review). Current state is documented; code behaviour is
-//! unchanged post-Stage-5.
+//! STAT bit 2 visible value is derived from `comparison_latched` (ROPO.Q)
+//! directly — no separate `comparison_stat_visible` field. Earlier
+//! versions modelled RUPO as an asymmetric latch with distinct set/clear
+//! methods; that was compensation for a MYTA-edge timing gap closed by
+//! the LineEndPipeline extraction (missingno commits `132f8c2` 5a +
+//! `88ffcd5` 5b). Compensation simplification follows the hardware-
+//! faithful endpoint per the compensation-simplification analysis.
 
 use bitflags::bitflags;
 
@@ -71,19 +45,13 @@ pub struct StatInterrupt {
     /// Latched LY==LYC result (ROPO DFF output). Unconditionally latched
     /// from `comparison_pending` at each LX counter clock rise. Drives the
     /// LYC STAT interrupt source. Reset only by SYS_RST, NOT by VID_RST.
+    ///
+    /// Also drives STAT bit 2 directly via the transparent RUPO path:
+    /// `ly_eq_lyc_stat()` returns this field.
     pub(in crate::ppu) comparison_latched: bool,
-
-    /// STAT bit 2 visible value (compensation-model field; see module
-    /// doc). Hardware RUPO is transparent during normal operation and
-    /// STAT bit 2 tracks ROPO.Q directly. This field plus the asymmetric
-    /// `latch_stat_visible` / `clear_stat_visible_if_no_match` pair
-    /// compensates for per-dot resolution + register-smoothed LY in
-    /// `update_comparison`.
-    pub(in crate::ppu) comparison_stat_visible: bool,
 
     /// STAT interrupt enable bits (FF41 bits 3-6: ROXE/RUFO/REFE/RUGU
     /// drlatch_ee cells) plus the DUMMY pull-up bit 7 on the read path.
-    /// Renamed from `stat_flags` per OQ.8 container-context naming.
     pub(in crate::ppu) enables: InterruptFlags,
 
     /// Previous STAT line state for LALU edge detection.
@@ -92,26 +60,9 @@ pub struct StatInterrupt {
 
 impl StatInterrupt {
     /// PALY combinational comparator recompute. Called at LX counter clock
-    /// fall and on CPU writes to LYC. When `suppress_onset` is true, only
-    /// false-to-true transitions (new match onset) are suppressed; clearing
-    /// passes through, modelling the MYTA propagation-race window (see
-    /// `myta-investigation.md`).
-    ///
-    /// **Compensation mechanism 1 — LYC=0 onset timing**: the
-    /// suppression-clearing branch bridges LYC=0 onset behaviour around
-    /// the MYTA window. Post-Stage-5 (MYTA edge corrected), suppression
-    /// consumes at a shifted point and LYC=0 onset no longer lines up
-    /// for four hardware-captured tests. Deferred to frame-boundary
-    /// investigation arc.
-    pub(in crate::ppu) fn update_comparison(&mut self, ly: u8, suppress_onset: bool) {
-        let result = ly == self.lyc;
-        if suppress_onset {
-            if !result {
-                self.comparison_pending = false;
-            }
-            return;
-        }
-        self.comparison_pending = result;
+    /// fall and on CPU writes to LYC. Computes `pending = (ly == lyc)`.
+    pub(in crate::ppu) fn update_comparison(&mut self, ly: u8) {
+        self.comparison_pending = ly == self.lyc;
     }
 
     /// ROPO DFF capture: unconditionally latch `comparison_pending` on
@@ -120,48 +71,15 @@ impl StatInterrupt {
         self.comparison_latched = self.comparison_pending;
     }
 
-    /// Compensation-model set path for STAT bit 2: capture
-    /// `comparison_pending` on LX counter clock rising.
-    ///
-    /// Hardware RUPO is transparent during normal operation; STAT bit 2
-    /// tracks ROPO.Q directly. This method pairs with
-    /// `clear_stat_visible_if_no_match` to model an asymmetric set/clear
-    /// cadence that compensates for per-dot resolution.
-    ///
-    /// **Compensation mechanism 3 — LYC=153 sub-cases**: this pair's
-    /// set-at-rise / clear-at-fall cadence differentiates LYC=153
-    /// sub-case behaviour in ways the compensation model codes
-    /// implicitly; Stage-5 MYTA-edge fix resolved one sub-case but
-    /// exposed two others. See module doc.
-    pub(in crate::ppu) fn latch_stat_visible(&mut self) {
-        self.comparison_stat_visible = self.comparison_pending;
-    }
-
-    /// Compensation-model clear path for STAT bit 2: clear
-    /// `comparison_stat_visible` when `comparison_pending` is false,
-    /// called at LX counter clock falling on scanline boundaries.
-    ///
-    /// Not hardware-faithful. Hardware RUPO is transparent (PAGO is
-    /// static-1 during normal operation; the "PAGO drives immediate
-    /// clear" framing in prior versions of this comment was hardware-
-    /// incorrect). The asymmetric set/clear pair compensates for
-    /// per-dot resolution + register-smoothed LY in `update_comparison`.
-    /// See module doc.
-    pub(in crate::ppu) fn clear_stat_visible_if_no_match(&mut self) {
-        if !self.comparison_pending {
-            self.comparison_stat_visible = false;
-        }
-    }
-
     /// Whether the ROPO-latched LY==LYC is currently true (LYC IRQ term).
     pub(in crate::ppu) fn ly_eq_lyc(&self) -> bool {
         self.comparison_latched
     }
 
-    /// RUPO output: STAT bit 2 visible value. Clears immediately when
-    /// comparison goes false; onset follows ROPO latch cadence.
+    /// STAT bit 2 visible value. RUPO is transparent during normal
+    /// operation (PAGO static-1), so STAT bit 2 tracks ROPO.Q directly.
     pub(in crate::ppu) fn ly_eq_lyc_stat(&self) -> bool {
-        self.comparison_stat_visible
+        self.comparison_latched
     }
 
     pub(in crate::ppu) fn lyc(&self) -> u8 {
@@ -177,22 +95,22 @@ impl StatInterrupt {
     }
 
     /// Direct setter for `enables`. Used by the STAT write glitch path
-    /// (ppu/mod.rs) to install the transient all-bits-high state per PW.2
-    /// — glitch orchestration stays on Ppu.
+    /// (ppu/mod.rs) to install the transient all-bits-high state; glitch
+    /// orchestration stays on Ppu.
     pub(in crate::ppu) fn set_enables(&mut self, flags: InterruptFlags) {
         self.enables = flags;
     }
 
     /// LYC register write: apply the value then recompute PALY against
-    /// the provided LY, subject to `suppress_onset`.
-    pub(in crate::ppu) fn write_lyc(&mut self, value: u8, ly: u8, suppress_onset: bool) {
+    /// the provided LY.
+    pub(in crate::ppu) fn write_lyc(&mut self, value: u8, ly: u8) {
         self.lyc = value;
-        self.update_comparison(ly, suppress_onset);
+        self.update_comparison(ly);
     }
 
     /// CPU STAT register write primitive. Installs the enable bits from
     /// the written byte (truncated to valid bits). Glitch-edge orchestration
-    /// handled by the caller (ppu/mod.rs) per PW.2.
+    /// handled by the caller (ppu/mod.rs).
     pub(in crate::ppu) fn write_stat_bits(&mut self, value: u8) {
         self.enables = InterruptFlags::from_bits_truncate(value);
     }
