@@ -37,14 +37,11 @@ impl LineCounter {
     /// NYPE edge from the LineEndPipeline, plus LX advance + SANU
     /// decode. `nype_edge` distinguishes rising (POPU fires) from
     /// falling (MYTA fires) per the NYPE dual-edge distribution.
-    ///
-    /// Note: this is Stage-5a structural refactor. Both POPU and MYTA
-    /// fire on NypeEdge::Rising for now (pre-5a behaviour). Stage 5b
-    /// shifts MYTA to NypeEdge::Falling per hardware.
     pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, nype_edge: NypeEdge) {
-        if nype_edge == NypeEdge::Rising {
-            self.y.capture_popu();
-            self.y.capture_myta(); // 5a: MYTA still on rising; 5b will move to Falling
+        match nype_edge {
+            NypeEdge::Rising => self.y.capture_popu(),
+            NypeEdge::Falling => self.y.capture_myta(),
+            NypeEdge::None => {}
         }
         self.x.advance();
         self.x.detect_line_end();
