@@ -22,6 +22,7 @@ use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
 use dividers::Dividers;
+use line_counter::{LineCounter, LineCounterX, LineCounterY};
 use memory::{Oam, OamAddress, Vram};
 use registers::BackgroundViewportPosition;
 use rendering::Rendering;
@@ -63,6 +64,7 @@ pub struct PpuTickResult {
 mod dff;
 mod dividers;
 mod draw;
+mod line_counter;
 pub mod memory;
 mod oam_corruption;
 pub mod registers;
@@ -131,12 +133,24 @@ impl Ppu {
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
-                dot_position: 98,
                 dividers: Dividers {
                     half_mcycle: false,
                     mcycle: false,
                 },
-                ly: 153,
+                lines: LineCounter {
+                    x: LineCounterX {
+                        value: 98,
+                        line_end_detected: false,
+                        line_end_active: false,
+                    },
+                    y: LineCounterY {
+                        value: 153,
+                        vblank: true,
+                        popu_holdover: false,
+                        frame_end_reset: true,
+                        myta_fired: false,
+                    },
+                },
                 stat: StatInterrupt {
                     lyc: 0,
                     comparison_pending: false,
@@ -148,12 +162,6 @@ impl Ppu {
                 },
                 delayed_line_end: false,
                 line_end_pending: false,
-                line_end_detected: false,
-                line_end_active: false,
-                frame_end_reset: true,
-                myta_suppress_new_match: false,
-                vblank: true,
-                popu_holdover: false,
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
@@ -182,12 +190,24 @@ impl Ppu {
                 palettes: Palettes::default(),
             },
             video: VideoControl {
-                dot_position: 0,
                 dividers: Dividers {
                     half_mcycle: false,
                     mcycle: false,
                 },
-                ly: 0,
+                lines: LineCounter {
+                    x: LineCounterX {
+                        value: 0,
+                        line_end_detected: false,
+                        line_end_active: false,
+                    },
+                    y: LineCounterY {
+                        value: 0,
+                        vblank: false,
+                        popu_holdover: false,
+                        frame_end_reset: false,
+                        myta_fired: false,
+                    },
+                },
                 stat: StatInterrupt {
                     lyc: 0,
                     comparison_pending: false,
@@ -198,12 +218,6 @@ impl Ppu {
                 },
                 delayed_line_end: false,
                 line_end_pending: false,
-                line_end_detected: false,
-                line_end_active: false,
-                frame_end_reset: false,
-                myta_suppress_new_match: false,
-                vblank: false,
-                popu_holdover: false,
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
@@ -213,7 +227,7 @@ impl Ppu {
     }
 
     pub fn lx(&self) -> u8 {
-        self.video.dot_position
+        self.video.dot_position()
     }
 
     /// Current OAM scan counter entry (0-39). Returns None when not rendering.
@@ -408,7 +422,7 @@ impl Ppu {
         // correct mode because fall() (where VOGA captures and XYMU
         // clears) runs before the next rise()'s CPU bus read.
         let rendering_active = rendering.rendering_active();
-        let bit0 = rendering_active || self.video.vblank;
+        let bit0 = rendering_active || self.video.vblank();
         let bit1 = rendering_active || rendering.is_scanning();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
@@ -608,7 +622,7 @@ impl Ppu {
         // WUVU, cascade VENA/TALU, handle scanline boundaries. Confirmed
         // by dmg-sim gate-level simulation.
         if self.control().video_enabled() && self.pixel_pipeline.is_some() {
-            let popu_was = self.video.vblank;
+            let popu_was = self.video.vblank();
 
             self.video.tick_dot();
 
@@ -620,7 +634,7 @@ impl Ppu {
                 if talu_was && !talu_now {
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
-                    if scanline_boundary && !self.video.popu_holdover {
+                    if scanline_boundary && !self.video.popu_holdover() {
                         self.video.stat.clear_stat_visible_if_no_match();
                     }
                 }
@@ -638,7 +652,7 @@ impl Ppu {
                     if ly == screen::NUM_SCANLINES {
                         self.frame_number = self.frame_number.wrapping_add(1);
                         result.new_frame = true;
-                    } else if self.video.ly == 0 {
+                    } else if self.video.ly_hardware() == 0 {
                         rendering.reset_frame();
                     } else if self.video.ly() < 144 {
                         rendering.reset_scanline(ly);
@@ -653,7 +667,7 @@ impl Ppu {
             }
 
             // POPU rising edge → VYPU → LOPE: VBlank IF.
-            if self.video.vblank && !popu_was {
+            if self.video.vblank() && !popu_was {
                 result.request_vblank = true;
             }
         }
@@ -751,7 +765,7 @@ impl Ppu {
 
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         match &self.pixel_pipeline {
-            Some(rendering) if !self.video.vblank => Some(rendering.pipeline_state(&self.video)),
+            Some(rendering) if !self.video.vblank() => Some(rendering.pipeline_state(&self.video)),
             _ => None, // VBlank or LCD off: no pipeline to snapshot.
         }
     }
@@ -781,12 +795,24 @@ impl Ppu {
         let enables = InterruptFlags::from_bits_truncate(snap.stat);
 
         let video = VideoControl {
-            dot_position: snap.dot_position,
             dividers: Dividers {
                 half_mcycle: false,
                 mcycle: false,
             },
-            ly: snap.ly,
+            lines: LineCounter {
+                x: LineCounterX {
+                    value: snap.dot_position,
+                    line_end_detected: false,
+                    line_end_active: false,
+                },
+                y: LineCounterY {
+                    value: snap.ly,
+                    vblank: snap.ly >= 144,
+                    popu_holdover: false,
+                    frame_end_reset: false,
+                    myta_fired: false,
+                },
+            },
             stat: StatInterrupt {
                 lyc: snap.lyc,
                 comparison_pending: snap.ly == snap.lyc,
@@ -797,12 +823,6 @@ impl Ppu {
             },
             delayed_line_end: false,
             line_end_pending: false,
-            line_end_detected: false,
-            line_end_active: false,
-            frame_end_reset: false,
-            myta_suppress_new_match: false,
-            vblank: snap.ly >= 144,
-            popu_holdover: false,
         };
 
         let registers = PipelineRegisters {
