@@ -357,17 +357,6 @@ impl GameBoy {
         // G4.2 confirmed WODU doesn't depend on XYMU, making the
         // prediction reliable.
 
-        // CPU data latch: capture bus value on the rising edge, after
-        // PPU rise and ALET settle so the read sees the current PPU mode
-        // (for OAM/VRAM blocking). The timer tick is on the falling edge,
-        // so reads naturally see the pre-increment counter value.
-        if let DotAction::Read { address } = &self.current_dot_action {
-            if (0xFE00..=0xFEFF).contains(address) {
-                *pending_oam_bug = Some(OamBugKind::Read);
-            }
-            self.last_read_value = self.cpu_read(*address);
-        }
-
         // g151: CLK9-clocked DFF delays timer overflow → IF by 1 dot.
         // Drain at every rising edge so that overflow detected at fall()
         // is visible to update_interrupt_state in the next fall().
@@ -402,6 +391,21 @@ impl GameBoy {
         let video_result = self
             .ppu
             .on_master_clock_fall(is_mcycle_boundary, &self.vram_bus.vram);
+
+        // CPU data latch: capture bus value after PPU's master-clock
+        // fall updates land. Hardware reads are combinational (spec
+        // §10.6): the CPU samples the current DFF state via SM83-
+        // internal data_phase. PPU DFF transitions on the same master-
+        // clock cycle's TALU-rising edge (MYTA fire, ROPO capture) are
+        // visible to the CPU read because they settle before the CPU's
+        // data-phase latches. Placing the read after on_master_clock_fall
+        // matches that ordering.
+        if let DotAction::Read { address } = &self.current_dot_action {
+            if (0xFE00..=0xFEFF).contains(address) {
+                *pending_oam_bug = Some(OamBugKind::Read);
+            }
+            self.last_read_value = self.cpu_read(*address);
+        }
 
         // VBlank IF: the divider chain now runs in fall(), so POPU
         // (VBlank) transitions happen here, not in rise().
