@@ -16,12 +16,35 @@
 //! asymmetric set/clear pair (`latch_stat_visible` /
 //! `clear_stat_visible_if_no_match`) are **not** hardware-faithful.
 //! Hardware RUPO is transparent; this emulator models an asymmetric
-//! update cadence to compensate for per-dot resolution plus the
-//! register-smoothed LY used by `update_comparison`. The compensation
-//! satisfies most hardware-captured tests but produces a known
-//! one-M-cycle-early clearing divergence at the LYC=153 scanline
-//! boundary. A hardware-faithful rewrite is deferred to a broader
-//! STAT-pipeline review.
+//! update cadence to compensate for per-dot resolution.
+//!
+//! **Post-Stage-5 state** (missingno commits `132f8c2` 5a structural
+//! extraction + `88ffcd5` 5b MYTA edge correction): MYTA now fires on
+//! NYPE falling per hardware via the `LineEndPipeline` / `NypeEdge`
+//! distinction, resolving the one-M-cycle-early LYC=153 clearing
+//! divergence for one test case. Test movement from the MYTA-edge fix
+//! exposed three distinct compensation mechanisms that remain in this
+//! module:
+//!
+//! 1. **LYC=0 onset timing** — `update_comparison`'s suppression-
+//!    clearing branch bridges LYC=0 onset behaviour around the MYTA
+//!    window. Post-Stage-5 the suppression-consume point has shifted
+//!    and four LYC=0-related tests now fail
+//!    (`gpu_ly_lyc_0_gs`, `gpu_ly_lyc_0_write_gs`,
+//!    `line_153_lyc0_int_inc_sled`, `line_153_lyc0_stat_timing_d`).
+//! 2. **LY-tracking at frame boundary** — interaction with
+//!    `frame_end_reset` gating and the register-smoothed `ly()`
+//!    accessor shifted relative to downstream consumers. Three tests
+//!    now fail (`age::ly`, `line_153_ly_c`, `gpu_ly_new_frame_gs`).
+//! 3. **LYC=153 sub-case compensation** — compensation handled
+//!    LYC=153 sub-cases differently; Stage 5 resolved one
+//!    (`gpu_ly_lyc_153_write_gs` now passes) but exposed two
+//!    (`line_153_lyc153_stat_timing_c`, `gpu_ly_lyc_153_gs` now fail).
+//!
+//! Per-mechanism characterisation and resolution is deferred to a
+//! frame-boundary-focused investigation arc (narrower than a full STAT
+//! pipeline review). Current state is documented; code behaviour is
+//! unchanged post-Stage-5.
 
 use bitflags::bitflags;
 
@@ -73,6 +96,13 @@ impl StatInterrupt {
     /// false-to-true transitions (new match onset) are suppressed; clearing
     /// passes through, modelling the MYTA propagation-race window (see
     /// `myta-investigation.md`).
+    ///
+    /// **Compensation mechanism 1 — LYC=0 onset timing**: the
+    /// suppression-clearing branch bridges LYC=0 onset behaviour around
+    /// the MYTA window. Post-Stage-5 (MYTA edge corrected), suppression
+    /// consumes at a shifted point and LYC=0 onset no longer lines up
+    /// for four hardware-captured tests. Deferred to frame-boundary
+    /// investigation arc.
     pub(in crate::ppu) fn update_comparison(&mut self, ly: u8, suppress_onset: bool) {
         let result = ly == self.lyc;
         if suppress_onset {
@@ -96,8 +126,13 @@ impl StatInterrupt {
     /// Hardware RUPO is transparent during normal operation; STAT bit 2
     /// tracks ROPO.Q directly. This method pairs with
     /// `clear_stat_visible_if_no_match` to model an asymmetric set/clear
-    /// cadence that compensates for per-dot resolution + register-
-    /// smoothed LY. See module doc for full context.
+    /// cadence that compensates for per-dot resolution.
+    ///
+    /// **Compensation mechanism 3 — LYC=153 sub-cases**: this pair's
+    /// set-at-rise / clear-at-fall cadence differentiates LYC=153
+    /// sub-case behaviour in ways the compensation model codes
+    /// implicitly; Stage-5 MYTA-edge fix resolved one sub-case but
+    /// exposed two others. See module doc.
     pub(in crate::ppu) fn latch_stat_visible(&mut self) {
         self.comparison_stat_visible = self.comparison_pending;
     }
