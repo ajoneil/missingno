@@ -251,16 +251,15 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
-            // Apply staged PPU write at BusDot 1 rise. On hardware, cupa
-            // fires at the 4th atal half-cycle when alet is LOW. Alet LOW
-            // = alet has fallen = master clock has risen = our rise().
-            // The spec (Section 11.5): "Write strobe fires when alet
-            // falls" on the 2nd dot. The register latch becomes
-            // transparent — combinational PPU logic sees the new value.
-            // CLKPIPE fires later in this same rise() and sees the new
-            // value. Alet-clocked DFFs (which capture in fall()) will
+            // Apply staged PPU write at BusDot 2 rise (phase E). Per
+            // spec §10.3 (three-pulse FST measurement): CUPA rises at
+            // dot 2 of the M-cycle, coincident with an alet rising edge.
+            // The register latch becomes transparent from phase E through
+            // phase H (CUPA pulse width 1.498 dots) — combinational PPU
+            // logic sees the new value from this point onward. Alet-
+            // clocked DFFs (which capture on ALET rising = our fall())
             // see the new value in THIS dot's fall().
-            if dot.as_u8() == 1 {
+            if dot.as_u8() == 2 {
                 if let Some(staged) = self.staged_ppu_write.as_ref() {
                     if !staged.applied {
                         let (addr, val) = (staged.address, staged.value);
