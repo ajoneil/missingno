@@ -13,6 +13,7 @@ use super::draw::fetcher::TileFetcher;
 use super::draw::fine_scroll::FineScroll;
 use super::draw::hblank_pipeline::HblankPipeline;
 use super::draw::lcd_control::LcdControl;
+use super::draw::pixel_counter::PixelCounter;
 use super::draw::pixel_output;
 use super::draw::shifters::{BgShifter, ObjShifter};
 use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
@@ -154,8 +155,11 @@ pub struct Rendering {
     /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
     /// Computed in mode3_falling, consumed in mode3_rising.
     tyfa: bool,
-    /// LCD Control block (die page 24): pixel X counter, LCD clock
-    /// gating (WUSA), POVA trigger, LCD shift register, data latch.
+    /// Pixel X position counter (PX; spec §2.5). Advances on SACU; feeds
+    /// WODU via `terminal()` for the Mode 3→0 transition.
+    pixel_counter: PixelCounter,
+    /// LCD Control block (die page 24): LCD clock gating (WUSA),
+    /// POVA trigger, LCD shift register, data latch.
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
@@ -176,6 +180,7 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
             tyfa: false,
+            pixel_counter: PixelCounter::new(),
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
@@ -212,7 +217,7 @@ impl Rendering {
     /// at 167, FEPO=0), which is correct for CLKPIPE freeze and
     /// STAT mode readback.
     pub(super) fn wodu(&self) -> bool {
-        self.hblank.wodu(self.lcd.xugu())
+        self.hblank.wodu(self.pixel_counter.terminal())
     }
 
     /// Pre-CPU-read settling: VOGA captures WODU, XYMU clears.
@@ -222,7 +227,7 @@ impl Rendering {
         if self.scan.scanning() {
             return; // Mode 2: no hblank logic
         }
-        self.hblank.settle_alet(self.lcd.xugu());
+        self.hblank.settle_alet(self.pixel_counter.terminal());
     }
 
     /// Whether this is the LCD-enable first line (no prior scanline boundary).
@@ -310,7 +315,7 @@ impl Rendering {
             sfetch_state,
             tile_temp_a: self.fetcher.tile_data_low(),
             tile_temp_b: self.fetcher.tile_data_high(),
-            pix_count: self.lcd.pixel_counter(),
+            pix_count: self.pixel_counter.value(),
             sprite_count: sprites.count,
             scan_count: self.scan.scan_counter_entry(),
             rendering: self.hblank.rendering_active(),
@@ -329,7 +334,7 @@ impl Rendering {
             SpriteState::Idle => (None, None),
         };
         PipelineSnapshot {
-            pixel_counter: self.lcd.pixel_counter(),
+            pixel_counter: self.pixel_counter.value(),
             xymu: self.hblank.rendering_active(),
             bg_low,
             bg_high,
@@ -418,7 +423,7 @@ impl Rendering {
 
         // Hblank pipeline: VOGA captures WODU on PPU clock rise (ALET rising).
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
-        let wodu = self.hblank.capture_voga(self.lcd.xugu());
+        let wodu = self.hblank.capture_voga(self.pixel_counter.terminal());
 
         // lcd fall receives current-dot wodu for last_pixel (the final
         // pixel push happens on the dot WODU fires, not one dot later).
@@ -506,7 +511,7 @@ impl Rendering {
             // Pixel counter is unchanged by mode3_advance_fetcher (only
             // SACU increments it, which happens in mode3_pixel_pipeline).
             let rydy_before_pory = self.window.rydy();
-            let pixel_counter_before_sacu = self.lcd.pixel_counter();
+            let pixel_counter_before_sacu = self.pixel_counter.value();
             if was_rendering {
                 self.mode3_advance_fetcher(regs);
             }
@@ -535,6 +540,7 @@ impl Rendering {
         self.window.reset_scanline();
 
         self.tyfa = false;
+        self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         self.sprite_trigger.reset();
@@ -583,7 +589,7 @@ impl Rendering {
         // tfetch_state=05 for the entire duration of sfetch_state cycling.
         if !self.sprite_trigger.taka() {
             self.fetcher.advance_falling(
-                self.lcd.pixel_counter(),
+                self.pixel_counter.value(),
                 self.window.window_line_counter(),
                 regs,
                 video,
@@ -663,7 +669,7 @@ impl Rendering {
         // holds the post-increment value — which will be `state_old` on the
         // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
         // the WODU storage path that caused pix_count to overshoot to 168.
-        let tyfa = !fepo && !self.lcd.xugu() && !self.window.rydy() && self.cascade.poky();
+        let tyfa = !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
         self.tyfa = tyfa;
 
         // POHU: combinational comparator, count == SCX & 7.
@@ -819,7 +825,12 @@ impl Rendering {
                 self.window.window_zero_pixel_mut(),
                 regs,
             );
-            let (toba, pix) = self.lcd.on_ppu_clock_fall(sacu, pixel, pova);
+            if sacu {
+                self.pixel_counter.advance();
+            }
+            let (toba, pix) = self
+                .lcd
+                .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
             pixel_out = pix;
 
             if !toba && tyfa {
@@ -862,7 +873,7 @@ impl Rendering {
             return false; // AROR = AND(RENDERING, XYLO). XYLO off -> FEPO low.
         }
 
-        let match_x = self.lcd.pixel_counter();
+        let match_x = self.pixel_counter.value();
         let sprites = self.scan.sprites_ref();
         for i in 0..sprites.count as usize {
             if sprites.fetched & (1 << i) != 0 {
@@ -878,7 +889,7 @@ impl Rendering {
     /// Start sprite fetch for the first matching unfetched sprite.
     /// Called when RYCE fires (SOBU rising edge detected).
     fn start_sprite_fetch(&mut self, _regs: &PipelineRegisters) {
-        let match_x = self.lcd.pixel_counter();
+        let match_x = self.pixel_counter.value();
         let sprites = self.scan.sprites_mut();
 
         for i in 0..sprites.count as usize {

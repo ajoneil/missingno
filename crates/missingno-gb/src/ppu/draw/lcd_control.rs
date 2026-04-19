@@ -9,30 +9,21 @@
 use crate::ppu::PixelOutput;
 use crate::ppu::types::palette::PaletteIndex;
 
-/// Bit mask for XUGU NAND5 decode: PX bits 0+1+2+5+7 = 1+2+4+32+128 = 167.
-/// WODU = AND2(!FEPO, !XUGU). XUGU is low (WODU fires) when all five bits set.
-const XUGU_MASK: u8 = 0b1010_0111; // bits 0,1,2,5,7
-
 /// LCD Control block (die page 24).
 ///
-/// Owns the pixel X position counter (XEHO-SYBE), LCD clock gating
-/// (WUSA NOR latch), POVA fine-match trigger, and LCD data pin latch
-/// (REMY/RAVO).
+/// Owns LCD clock gating (WUSA NOR latch), POVA fine-match trigger,
+/// and LCD data pin latch (REMY/RAVO). The pixel X position counter
+/// (PX) lives in its own module — see `pixel_counter.rs` for §2.5.
 ///
 /// Pixel output is returned as a [`PixelOutput`] signal rather than
 /// written to an internal framebuffer — the caller (emulation loop)
 /// is responsible for building whatever representation it needs.
 ///
 /// Inputs: SACU (pixel clock edge from page 27), pixel data (from
-/// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21).
-/// Outputs: XUGU (pixel counter decode for WODU on page 21), TOBA
-/// (gated LCD clock, returned from `rise()`).
+/// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21),
+/// PX value (from `PixelCounter`, §2.5, used for WUSA XAJO gating).
+/// Outputs: TOBA (gated LCD clock, returned from edge methods).
 pub(in crate::ppu) struct LcdControl {
-    /// Hardware pixel counter (XEHO-SYBE). Counts from 0 when the
-    /// pixel clock starts after startup. Drives WODU (hblank gate)
-    /// at PX=167. Not reset on window trigger — PX is a monotonic
-    /// per-line counter.
-    pixel_counter: u8,
     /// WUSA NOR latch — LCD clock gate. SET by XAJO (AND2 of pixel
     /// counter bits 0 and 3, first at PX=9). CLEAR by WEGO
     /// (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
@@ -62,7 +53,6 @@ pub(in crate::ppu) struct LcdControl {
 impl LcdControl {
     pub(in crate::ppu) fn new() -> Self {
         LcdControl {
-            pixel_counter: 0,
             wusa: false,
             pova: false,
             lcd_push_count: 0,
@@ -71,12 +61,12 @@ impl LcdControl {
         }
     }
 
-    /// PPU clock fall (master-clock rise; gate: ALET falling): pixel
-    /// counter increment, XAJO/WUSA set, TOBA pixel output, data latch
-    /// update. Dispatcher for the SACU-driven pixel-output concerns on
-    /// this edge — multiple unrelated effects at one edge. All internal
-    /// to LCD Control on the die — the caller provides SACU, the
-    /// resolved pixel, and POVA.
+    /// PPU clock fall (master-clock rise; gate: ALET falling): XAJO/WUSA
+    /// set, TOBA pixel output, data latch update. Dispatcher for the
+    /// SACU-driven pixel-output concerns on this edge — multiple
+    /// unrelated effects at one edge. The caller advances `PixelCounter`
+    /// first and passes in the post-advance `px_value` so WUSA's XAJO
+    /// gate reads the current counter state.
     ///
     /// Returns `(toba, pixel_out)` where `toba` is the gated LCD clock
     /// and `pixel_out` is the pixel pushed to the LCD (if any).
@@ -85,15 +75,11 @@ impl LcdControl {
         sacu: bool,
         pixel: PaletteIndex,
         pova: bool,
+        px_value: u8,
     ) -> (bool, Option<PixelOutput>) {
-        // Pixel counter increment (SACU clock).
-        if sacu {
-            self.pixel_counter += 1;
-        }
-
         // XAJO: AND2(PX bit 0, PX bit 3). Sets the WUSA NOR latch,
         // opening the LCD clock gate. First fires at PX=9 (0b1001).
-        if !self.wusa && (self.pixel_counter & 0b1001 == 0b1001) {
+        if !self.wusa && (px_value & 0b1001 == 0b1001) {
             self.wusa = true;
         }
 
@@ -175,12 +161,6 @@ impl LcdControl {
         self.data_latch = pixel;
     }
 
-    /// XUGU decode: PX bits 0+1+2+5+7 all set (PX=167).
-    /// Output signal from page 24 → page 21 for WODU computation.
-    pub(in crate::ppu) fn xugu(&self) -> bool {
-        self.pixel_counter & XUGU_MASK == XUGU_MASK
-    }
-
     /// Reset per-scanline state.
     pub(in crate::ppu) fn reset(&mut self, scanline: u8) {
         debug_assert!(
@@ -188,7 +168,6 @@ impl LcdControl {
             "lcd_push_count={} at reset (scanline {scanline}), expected 0 or 160",
             self.lcd_push_count,
         );
-        self.pixel_counter = 0;
         self.wusa = false;
         self.pova = false;
         self.lcd_push_count = 0;
@@ -197,10 +176,6 @@ impl LcdControl {
     }
 
     // --- Accessors ---
-
-    pub(in crate::ppu) fn pixel_counter(&self) -> u8 {
-        self.pixel_counter
-    }
 
     pub(in crate::ppu) fn wusa(&self) -> bool {
         self.wusa
