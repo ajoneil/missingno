@@ -25,7 +25,7 @@
 /// XYMU is a NOR latch cleared by WEGO = OR2(VID_RST, VOGA).
 ///
 /// **Polarity note**: spec XYMU = 0 during Mode 3 (active-low "not
-/// rendering"). The emulator's `mode_3_active: bool` is `true` during
+/// rendering"). The emulator's `rendering_active: bool` is `true` during
 /// Mode 3 — semantic polarity, opposite sign from the spec's XYMU.
 /// Set by AVAP (Mode 2→3), cleared by WEGO.
 ///
@@ -37,7 +37,7 @@ pub(in crate::ppu) struct HblankPipeline {
     ///
     /// `true` when Mode 3 rendering is active (opposite polarity from
     /// spec XYMU). SET by AVAP (Mode 2→3), CLEAR by WEGO = OR2(VID_RST, VOGA).
-    mode_3_active: bool,
+    rendering_active: bool,
     /// HBLANK capture DFF. VOGA (dffr, captures WODU on ALET rising edge).
     ///
     /// Feeds WEGO. Reset by TADY (line reset).
@@ -55,22 +55,22 @@ pub(in crate::ppu) struct HblankPipeline {
     /// FEPO changes mid-fall but WODU needs the value from the start
     /// of the falling phase.
     fepo: bool,
-    /// Snapshot of `mode_3_active` before settle_alet() may have
+    /// Snapshot of `rendering_active` before settle_alet() may have
     /// cleared it. Corresponds to XYMU's pre-settle state.
     ///
     /// fall() needs this to gate mode3_falling() — on the dot VOGA
     /// fires, XYMU clears in settle_alet but mode3_falling still
     /// needs to run for the final fetcher/TYFA work.
-    mode_3_before_settle: bool,
+    rendering_before_settle: bool,
 }
 
 impl HblankPipeline {
     pub(in crate::ppu) fn new() -> Self {
         Self {
-            mode_3_active: false,
+            rendering_active: false,
             voga: false,
             fepo: false,
-            mode_3_before_settle: false,
+            rendering_before_settle: false,
         }
     }
 
@@ -91,9 +91,9 @@ impl HblankPipeline {
     /// the CPU sees post-XYMU state. The remaining fall() work
     /// (fetcher, cascade, TYFA) runs later in the falling phase.
     pub(in crate::ppu) fn settle_alet(&mut self, xugu: bool) {
-        // Capture mode_3_active state before any clearing — fall() uses
+        // Capture rendering_active state before any clearing — fall() uses
         // this to gate mode3_falling() on the transition dot.
-        self.mode_3_before_settle = self.mode_3_active;
+        self.rendering_before_settle = self.rendering_active;
 
         // WODU is combinational from PX and FEPO, valid here.
         let wodu_now = self.wodu(xugu);
@@ -104,7 +104,7 @@ impl HblankPipeline {
         // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early for CPU
         // STAT readback visibility.
         if voga_will_fire {
-            self.mode_3_active = false;
+            self.rendering_active = false;
         }
     }
 
@@ -131,7 +131,7 @@ impl HblankPipeline {
 
         // WEGO = OR2(VID_RST, VOGA) clears XYMU.
         if self.voga {
-            self.mode_3_active = false;
+            self.rendering_active = false;
         }
 
         wodu_now
@@ -144,21 +144,21 @@ impl HblankPipeline {
     }
 
     /// AVAP: Mode 2→3 transition. Sets the rendering-mode latch (XYMU set).
-    pub(in crate::ppu) fn enter_mode_3(&mut self) {
-        self.mode_3_active = true;
+    pub(in crate::ppu) fn begin_rendering(&mut self) {
+        self.rendering_active = true;
     }
 
     /// Rendering-mode latch (XYMU). True during Mode 3.
-    pub(in crate::ppu) fn mode_3_active(&self) -> bool {
-        self.mode_3_active
+    pub(in crate::ppu) fn rendering_active(&self) -> bool {
+        self.rendering_active
     }
 
-    /// Whether `mode_3_active` was true before settle_alet() ran this dot.
+    /// Whether `rendering_active` was true before settle_alet() ran this dot.
     /// Used by Rendering::on_ppu_clock_rise() to gate mode3_falling() — on the dot
-    /// VOGA fires, mode_3_active is already cleared but the final
+    /// VOGA fires, rendering_active is already cleared but the final
     /// mode3 falling work still needs to run.
-    pub(in crate::ppu) fn mode_3_before_settle(&self) -> bool {
-        self.mode_3_before_settle
+    pub(in crate::ppu) fn rendering_before_settle(&self) -> bool {
+        self.rendering_before_settle
     }
 
     pub(in crate::ppu) fn voga(&self) -> bool {
@@ -166,9 +166,9 @@ impl HblankPipeline {
     }
 
     pub(in crate::ppu) fn reset(&mut self) {
-        self.mode_3_active = false;
+        self.rendering_active = false;
         self.voga = false;
         self.fepo = false;
-        self.mode_3_before_settle = false;
+        self.rendering_before_settle = false;
     }
 }

@@ -191,8 +191,8 @@ impl Rendering {
 
     /// Rendering-mode latch. XYMU (nor_latch); `true` during Mode 3.
     /// Polarity is opposite-sign from spec XYMU (which is active-low).
-    pub(super) fn mode_3_active(&self) -> bool {
-        self.hblank.mode_3_active()
+    pub(super) fn rendering_active(&self) -> bool {
+        self.hblank.rendering_active()
     }
 
     /// ACYL signal: OAM scanning active (BESU-driven).
@@ -313,7 +313,7 @@ impl Rendering {
             pix_count: self.lcd.pixel_counter(),
             sprite_count: sprites.count,
             scan_count: self.scan.scan_counter_entry(),
-            rendering: self.hblank.mode_3_active(),
+            rendering: self.hblank.rendering_active(),
             win_mode: self.window.window_rendered(),
             frame_num: 0, // Set by Ppu::trace_snapshot()
         }
@@ -330,7 +330,7 @@ impl Rendering {
         };
         PipelineSnapshot {
             pixel_counter: self.lcd.pixel_counter(),
-            xymu: self.hblank.mode_3_active(),
+            xymu: self.hblank.rendering_active(),
             bg_low,
             bg_high,
             obj_low,
@@ -358,12 +358,12 @@ impl Rendering {
         // Also blocked when CATU is pending (RUTU set but not yet consumed) —
         // on hardware, the scan machinery gates the OAM bus as soon as the
         // scanline boundary fires, before BESU formally asserts.
-        self.scan.besu() || self.hblank.mode_3_active() || self.scan.catu_pending()
+        self.scan.besu() || self.hblank.rendering_active() || self.scan.catu_pending()
     }
 
     pub(super) fn vram_locked(&self) -> bool {
         // Hardware: VRAM blocked by XYMU_RENDERINGp.
-        self.hblank.mode_3_active()
+        self.hblank.rendering_active()
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
@@ -414,7 +414,7 @@ impl Rendering {
         }
 
         // Capture XYMU before capture_voga() may clear it via VOGA/WEGO.
-        let was_rendering = self.hblank.mode_3_active();
+        let was_rendering = self.hblank.rendering_active();
 
         // Hblank pipeline: VOGA captures WODU on PPU clock rise (ALET rising).
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
@@ -465,7 +465,7 @@ impl Rendering {
         // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay (§5.3,
         // Q.A). The natural rise→rise gap plays the role previously
         // filled by the nyxu_reset_active hold.
-        let was_rendering = self.hblank.mode_3_active();
+        let was_rendering = self.hblank.rendering_active();
 
         // Scanner consumes avap_pending from the preceding advance_scan(),
         // clearing scanning/besu when AVAP fires.
@@ -478,7 +478,7 @@ impl Rendering {
         // and window WX init fire here so Mode 3 init aligns with
         // hardware's AVAP-rising edge.
         if scan.avap {
-            self.hblank.enter_mode_3();
+            self.hblank.begin_rendering();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
             self.fetcher.load_into(&mut self.bg_shifter);
         }
@@ -499,7 +499,7 @@ impl Rendering {
         // AVAP-reaction rise, xymu was just set and the counter must
         // remain at 0 (LAXU reset still asserted through NYXU pulse).
         // The first advance fires on the next rise.
-        if self.hblank.mode_3_active() {
+        if self.hblank.rendering_active() {
             // Snapshot pre-step-2 RYDY for SEKO and window check_trigger.
             // PORY may clear RYDY during mode3_advance_fetcher, but SEKO
             // and the window reactivation path need the pre-PORY value.
