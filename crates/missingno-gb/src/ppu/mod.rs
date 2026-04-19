@@ -131,9 +131,11 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state per spec §11.1 (hardware state at
-            // PC=0x0100, measured via Question K): internal line 153,
-            // LX=98, VBlank; WUVU=0, VENA=1, TALU=1.
+            // Post-boot PPU state: internal line 153, LX=98, VBlank.
+            // Hardware divider state at DMG post-boot handoff: WUVU=0,
+            // VENA=1, TALU=1 (= VENA.Q). The boot ROM has cycled the
+            // dividers past their initial ramp, so TALU is already high
+            // at the first cartridge instruction.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             video: VideoControl {
                 dividers: Dividers {
@@ -314,17 +316,15 @@ impl Ppu {
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
     /// VID_RST deasserts at XOTA rising (= master clock falls = our
-    /// fall()). All dividers async-reset to Q=0. TALU = NOT(VENA=0) = 1.
-    /// tick_dot() runs on the same fall() after init returns, providing
-    /// the first WUVU toggle (0→1). The divider chain then runs
-    /// normally from fall() onward.
+    /// fall()). All dividers async-reset to Q=0. Hardware's divider
+    /// cascade then ramps: WUVU toggles first (~½ dot later), then
+    /// VENA (~1½ dots later), then TALU (~1½ dots later, tracking
+    /// VENA). Integer-dot model: no tick_dot on the init fall itself
+    /// (see on_master_clock_fall). TALU first rises at phase H of
+    /// the init M-cycle, placing steady-state TALU transitions at
+    /// phases D and H of each subsequent M-cycle.
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
-        // After VID_RST, VENA.Q=0, so TALU = NOT(VENA.Q) = 1. vid_rst
-        // sets mcycle=false (wrong). Fix to match hardware.
-        // WUVU stays at 0 — tick_dot() runs on this same fall() after
-        // init returns, providing the first XOTA toggle (WUVU 0→1).
-        self.video.dividers.set_mcycle(true); // TALU = NOT(VENA=0) = 1
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
         // PALY is combinational and settles immediately when LY resets to 0,
         // so recompute the pending comparison here. The ROPO DFF will latch
@@ -608,17 +608,19 @@ impl Ppu {
         };
 
         // Deferred LCD-on: VID_RST deasserts at XOTA rising = our
-        // fall(). On the init fall, XOTA fires at the same edge,
-        // toggling WUVU for the first time. Fall through to tick_dot
-        // so the divider chain starts on the init dot.
+        // fall(). The init fall ITSELF does not toggle WUVU — on
+        // hardware WUVU's first rising edge lands roughly half a dot
+        // after VID_RST deassertion (phase F), not coincident with
+        // init (phase D). Return early so tick_dot does NOT run on
+        // the init fall; the divider cascade begins cleanly on the
+        // subsequent fall, placing TALU's first rise at phase H of
+        // the init M-cycle.
         if self.lcd_on_countdown > 0 {
             self.lcd_on_countdown -= 1;
             if self.lcd_on_countdown == 0 {
                 self.initialize_lcd_on();
-                // Fall through — tick_dot runs below on this same fall.
-            } else {
-                return result;
             }
+            return result;
         }
 
         // XOTA rising edge (= master clock falls = our fall()): toggle
