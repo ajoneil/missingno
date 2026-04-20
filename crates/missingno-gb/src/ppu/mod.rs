@@ -608,19 +608,21 @@ impl Ppu {
         };
 
         // Deferred LCD-on: VID_RST deasserts at XOTA rising = our
-        // fall(). The init fall ITSELF does not toggle WUVU — on
-        // hardware WUVU's first rising edge lands roughly half a dot
-        // after VID_RST deassertion (phase F), not coincident with
-        // init (phase D). Return early so tick_dot does NOT run on
-        // the init fall; the divider cascade begins cleanly on the
-        // subsequent fall, placing TALU's first rise at phase H of
-        // the init M-cycle.
+        // fall(). On the init fall, the subsequent tick_dot (below)
+        // represents WUVU's first toggle — landing roughly half a
+        // dot after VID_RST deassertion, tracking hardware's divider
+        // ramp-up. The divider cascade then produces TALU's first
+        // rise at the NEXT M-cycle's dot 3 fall, establishing the
+        // steady-state alignment where TALU rises at phase H and
+        // falls at phase D of each M-cycle.
         if self.lcd_on_countdown > 0 {
             self.lcd_on_countdown -= 1;
             if self.lcd_on_countdown == 0 {
                 self.initialize_lcd_on();
+                // Fall through — tick_dot runs in the block below
+            } else {
+                return result;
             }
-            return result;
         }
 
         // XOTA rising edge (= master clock falls = our fall()): toggle
@@ -643,6 +645,13 @@ impl Ppu {
 
                 if !talu_was && talu_now {
                     self.video.on_lx_counter_clock_rise();
+                    // MYTA may have fired via NYPE falling (inside the
+                    // rise dispatch), flipping LY's register-smoothed
+                    // value. Recompute PALY here so the ROPO capture
+                    // below sees fresh `pending`. Matches hardware's
+                    // combinational PALY tracking LY changes, captured
+                    // by ROPO at TALU rising.
+                    self.video.update_ly_comparison();
                     self.video.stat.latch_comparison();
                 }
             }
