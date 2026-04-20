@@ -419,13 +419,11 @@ impl Ppu {
         //   bit 0 = XYMU OR POPU (rendering OR vblank)
         //   bit 1 = ACYL OR XYMU (scanning OR rendering)
         //
-        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). The WODU→XYMU
-        // chain spans two discrete edges in the emulator: VOGA
-        // captures at fall(); WEGO captures VOGA at the next rise()
-        // and clears XYMU there. The CPU read at this fall() (between
-        // VOGA capture and WEGO propagation) sees XYMU still set —
-        // matching hardware's CPU-observable Mode 3 on the transition
-        // dot.
+        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). Only VOGA is
+        // clocked (ALET rising DFF capture); WEGO and XYMU's set path
+        // are combinational. In the emulator, VOGA capture and the
+        // WEGO→XYMU chain all fire within the same master-clock edge
+        // (capture_voga() clears rendering_active when VOGA is set).
         let rendering_active = rendering.rendering_active();
         let bit0 = rendering_active || self.video.vblank();
         let bit1 = rendering_active || rendering.is_scanning();

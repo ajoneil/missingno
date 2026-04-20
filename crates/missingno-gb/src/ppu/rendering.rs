@@ -451,13 +451,6 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
     ) -> Option<PixelOutput> {
-        // WEGO pipeline stage: captures VOGA on this master-clock
-        // edge, one edge after VOGA's own capture at the preceding
-        // fall(). WEGO drives XYMU's set input, so rendering_active
-        // clears here when VOGA is set. Defers the Mode 3→0 register
-        // transition by one edge relative to VOGA capture.
-        self.hblank.propagate_wego();
-
         let xupy_rising = video.xupy();
 
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
