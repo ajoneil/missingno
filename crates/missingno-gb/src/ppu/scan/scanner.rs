@@ -49,21 +49,6 @@ pub(in crate::ppu) struct SpriteScanner {
     /// is combinational (valid as soon as BYBA/DOBA settle in advance_scan()),
     /// but the rendering pipeline reacts in apply_pending_avap().
     avap_pending: bool,
-    /// Suppresses the first scan tick after CATU captures RUTU, so
-    /// the first compare+tick happens on XUPY N+2 rather than N+1.
-    ///
-    /// Compensation-acknowledged: direct gate-level simulation
-    /// measurements show hardware ticks on XUPY N+1 (the
-    /// CATU→BYHA→ATEJ→ANOM reset pulse asserts and releases within
-    /// the CATU-capture XUPY cycle via the `NOT(catu)` combinational
-    /// path plus ANEL's half-cycle-later release), so structurally
-    /// this field is a 1-XUPY-cycle over-delay. The flag is retained
-    /// because removing it regresses ~70 downstream timing tests with
-    /// zero recoveries, indicating many downstream consumers are
-    /// calibrated to the delayed entry rather than an isolated bug.
-    /// Removing the delay requires a coordinated multi-location
-    /// correction.
-    scan_start_delay: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -87,7 +72,6 @@ impl SpriteScanner {
             scan_done_flag: false,
             scan_done_prev: false,
             avap_pending: false,
-            scan_start_delay: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -195,44 +179,41 @@ impl SpriteScanner {
 
     /// Advance the CATU DFF — runs every dot regardless of VBlank.
     ///
-    /// Single-stage: CATU captures RUTU directly on XUPY rising edge,
-    /// gated by XYVO (VBlank suppression). RUTU is cleared after capture.
+    /// On the XUPY rising edge where RUTU is asserted (scanline
+    /// boundary), CATU captures RUTU and the counter reset pulse
+    /// asserts combinationally on the same edge via the
+    /// NOT(CATU) → BYHA → ATEJ → ANOM path. ANEL's subsequent capture
+    /// on the following XUPY falling edge releases the reset via
+    /// BYHA's ANEL input path within the cycle. The counter sees
+    /// `r_n = 1` by the next XUPY rising edge and ticks 0 → 1 there.
     ///
-    /// On hardware, CATU has no POPU gate — it evaluates on every XUPY
+    /// Net: one XUPY cycle between CATU capture and the first counter
+    /// tick. Modeled by doing capture + scan-start atomically on this
+    /// edge; the first compare+tick runs in `advance_scan` on the
+    /// following xupy_rising.
+    ///
+    /// CATU has no POPU gate on hardware — it evaluates on every XUPY
     /// cycle. This method must be called unconditionally so the DFF
-    /// can advance during the 153->0 frame boundary while POPU is
+    /// can advance during the 153→0 frame boundary while POPU is
     /// still high.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
-        // Emulator model: CATU captures RUTU on XUPY N; scan-start
-        // (BESU assertion + counter reset) fires on XUPY N+1; the
-        // `scan_start_delay` flag then skips one further tick so
-        // the first compare+tick happens on XUPY N+2.
-        //
-        // Total: 2 XUPY cycles from CATU capture to first tick. This
-        // over-delays the hardware by 1 XUPY cycle (hardware: 1 XUPY
-        // cycle via the combinational NOT(catu)→BYHA→ATEJ→ANOM reset
-        // pulse that asserts and releases within the CATU-capture
-        // cycle). See the `scan_start_delay` field comment for the
-        // compensation-acknowledged rationale.
-        if xupy_rising && self.catu && !self.scanning {
+        if !xupy_rising {
+            return;
+        }
+
+        let xyvo = ly & 0x90 == 0x90;
+        let catu_captures = self.rutu && !xyvo;
+        self.rutu = false;
+
+        if catu_captures && !self.scanning {
             self.scanning = true;
             if self.catu_enabled {
                 self.besu = true;
             }
             self.counter.reset();
-            self.catu = false;
-            // ANEL propagation delay: the counter reset arrives after
-            // this XUPY edge, so the first compare+tick is suppressed
-            // until the next XUPY rising.
-            self.scan_start_delay = true;
         }
 
-        // CATU DFF captures RUTU on XUPY rising.
-        if xupy_rising {
-            let xyvo = ly & 0x90 == 0x90;
-            self.catu = self.rutu && !xyvo;
-            self.rutu = false;
-        }
+        self.catu = catu_captures;
     }
 
     /// Advance one scan cycle: counter tick, BYBA/DOBA capture, AVAP
@@ -245,20 +226,15 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // OAM comparison and counter tick. Gated by scan_start_delay:
-        // on the XUPY edge where CATU starts scanning, the ANEL
-        // propagation delay prevents the counter from ticking. The
-        // first compare+tick happens on the NEXT XUPY rising edge.
-        if self.scan_start_delay && xupy_rising {
-            self.scan_start_delay = false;
-        } else {
-            if self.scanning && xupy_rising {
-                self.counter
-                    .compare_and_store(ly, &mut self.sprites, regs, oam);
-            }
-            if xupy_rising {
-                self.counter.tick_clock();
-            }
+        // OAM comparison and counter tick. One XUPY after CATU's
+        // same-edge capture+reset, the counter ticks 0 → 1 here;
+        // subsequent edges walk 1..39.
+        if self.scanning && xupy_rising {
+            self.counter
+                .compare_and_store(ly, &mut self.sprites, regs, oam);
+        }
+        if xupy_rising {
+            self.counter.tick_clock();
         }
 
         // DOBA captures OLD BYBA (ALET clock arrives after XUPY).
@@ -298,7 +274,6 @@ impl SpriteScanner {
         self.scan_done_flag = false;
         self.scan_done_prev = false;
         self.avap_pending = false;
-        self.scan_start_delay = false;
         self.catu = false;
         // RUTU fires at the scanline boundary. CATU captures it on the
         // next XUPY rising edge.
