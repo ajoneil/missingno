@@ -35,15 +35,16 @@ pub enum ClockPhase {
     Low,
 }
 
-/// A PPU register write staged at dot 0, applied at dot 1 rise.
+/// A PPU register write staged at dot 0, applied at dot 2 rise.
 ///
-/// On hardware, all PPU registers share the `cupa` write strobe,
-/// active during the 4th atal half-cycle (phase D = dot 1, alet-
-/// falling). The register latch becomes transparent and combinational
-/// PPU logic sees the new value immediately. The emulator stages the
-/// write at dot 0 (when the CPU places the address on the bus) and
-/// applies it at dot 1 rise (before ppu.on_master_clock_rise()) to
-/// model this.
+/// On hardware, all PPU registers share the `cupa` write strobe.
+/// CUPA rises at dot 2 of the M-cycle (phase E, coincident with an
+/// alet rising edge) and stays high for 1.498 dots through dot 3.
+/// While CUPA is high, the register latch is transparent and
+/// combinational PPU logic sees the new value. The emulator stages
+/// the write at dot 0 (when the CPU places the address on the bus)
+/// and applies it at dot 2 rise (before ppu.on_master_clock_rise())
+/// to model CUPA's rising position.
 struct StagedPpuWrite {
     address: u16,
     value: u8,

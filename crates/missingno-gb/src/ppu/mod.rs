@@ -267,12 +267,27 @@ impl Ppu {
         }
     }
 
-    /// Write a value directly to the register backing store.
+    /// Apply a register write to its backing store.
+    ///
+    /// Per-register dispatch; the backing store's own semantics govern
+    /// whether the new value is visible immediately or after a staging
+    /// tick:
+    ///
+    /// - **Palette registers (BGP, OBP0, OBP1)**: `DffLatch::write`
+    ///   — sets pending; new value visible after the next
+    ///   `tick_palette_latches` (§2.15 dlatch_ee + CUPA staging).
+    /// - **Viewport / WindowX / control_latch**: `DffLatch::write_immediate`
+    ///   — updates the latch output directly (DFF9 register read is
+    ///   combinational).
+    /// - **STAT (FF41)**: runs the DMG write-glitch (briefly sets all
+    ///   enable bits high, then writes the final value); returns true
+    ///   if any STAT rising edge was produced.
+    /// - **LY**: ignored on DMG.
     ///
     /// Returns true if the write triggered a STAT interrupt request
-    /// (DMG STAT write quirk: writing to FF41 briefly sets all enable
-    /// bits high, which can produce a rising edge on the STAT line).
-    fn write_register_immediate(&mut self, register: &Register, value: u8) -> bool {
+    /// (DMG STAT write quirk produces a glitch edge when enable bits
+    /// transition).
+    fn apply_register_write(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
                 self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
@@ -349,17 +364,22 @@ impl Ppu {
 
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
-                // Palette DFF8 registers settle combinationally within a single
-                // dot (~10 gates), well before CLKPIPE fires (~16 gates). No
-                // deferred latch needed — always write immediately.
-                self.write_register_immediate(&register, value)
+                // Palette registers use DFF8 staging inside DffLatch —
+                // `apply_register_write` calls `DffLatch::write` (sets
+                // pending), and `tick_palette_latches` applies
+                // pending → output on the next PPU clock fall. This
+                // models §2.15's dlatch_ee + CUPA transparency → next-
+                // SACU-rising visibility window. No orchestration
+                // branch here (unlike WindowX's Mode-3-dependent
+                // staging); DffLatch handles the staging uniformly.
+                self.apply_register_write(&register, value)
             }
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
-                self.write_register_immediate(&register, value);
+                self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
                 // VID_RST deasserts at XOTA falling = our fall().
@@ -375,20 +395,20 @@ impl Ppu {
                 // SCY, SCX use DFF9 cells identical to LCDC on hardware.
                 // The fetcher reads them combinationally — no propagation delay
                 // needed. Always write immediately, matching LCDC behavior.
-                self.write_register_immediate(&register, value)
+                self.apply_register_write(&register, value)
             }
             Register::WindowX => {
                 if is_drawing {
                     self.registers.window.x_plus_7.write(value);
                     false
                 } else {
-                    self.write_register_immediate(&register, value)
+                    self.apply_register_write(&register, value)
                 }
             }
             _ => {
                 // Remaining DFF9 registers: no propagation delay, atomic
                 // latch at the write point (G→H boundary).
-                self.write_register_immediate(&register, value)
+                self.apply_register_write(&register, value)
             }
         }
     }

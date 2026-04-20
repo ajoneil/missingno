@@ -225,7 +225,8 @@ impl GameBoy {
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
         // decode chain begins propagating. The write is applied at
-        // dot 1 rise (cupa fires at the 4th atal half-cycle).
+        // dot 2 rise (CUPA rises at phase E per §10.3, spanning 1.498
+        // dots through phase H of dot 3).
         if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
             if is_ppu_register(address) {
                 self.staged_ppu_write = Some(StagedPpuWrite {
