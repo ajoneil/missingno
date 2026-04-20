@@ -46,13 +46,34 @@ impl LineCounter {
         self.x.detect_line_end();
     }
 
-    /// LX counter clock falling — atomic scanline boundary. Hardware-
-    /// atomic ordering: RUTU fires → LX resets → LY advances/wraps →
-    /// POPU holdover armed on wrap. Returns whether the boundary fired
-    /// (for the orchestrator's §7.3 NYPE feed).
+    /// LX counter clock falling — RUTU DFF captures SANU on every
+    /// TALU-falling edge. `line_end_active` reflects the current
+    /// RUTU.Q (0 when SANU was 0 at the prior TALU-fall; 1 when SANU
+    /// was 1). The pulse therefore spans one full TALU cycle — from
+    /// the TALU-fall that captures SANU=1 to the next TALU-fall that
+    /// captures SANU=0 (hardware RUTU.Q pulse width ≈ 976 ns).
+    ///
+    /// MUDE = NOR2(RUTU, reset) is a combinational LX reset: while
+    /// RUTU.Q=1, LX is held at 0 and SANU consequently settles to 0,
+    /// so the next TALU-fall captures SANU=0 and RUTU.Q drops.
+    ///
+    /// Returns `true` only on the RUTU-rising edge (the scanline
+    /// boundary), not for the whole pulse — the orchestrator runs
+    /// per-boundary work (NYPE feed + scan reset) once per scanline.
     pub(in crate::ppu) fn on_lx_counter_clock_fall(&mut self) -> bool {
-        if self.x.line_end_detected {
-            self.x.fire_rutu_and_reset();
+        let prior_rutu = self.x.line_end_active;
+        let new_rutu = self.x.line_end_detected;
+        self.x.line_end_active = new_rutu;
+
+        if new_rutu {
+            // MUDE async reset: LX held at 0 while RUTU=1 — capture
+            // the combinational effect here so SANU is cleared for
+            // the next decode.
+            self.x.value = 0;
+            self.x.line_end_detected = false;
+        }
+
+        if new_rutu && !prior_rutu {
             let wrap_occurred = self.y.advance_or_wrap();
             self.y.update_popu_holdover(wrap_occurred);
             true
@@ -92,27 +113,19 @@ impl LineCounter {
 }
 
 impl LineCounterX {
-    /// Advance LX on LX counter clock rising. Suppressed during RUTU
-    /// pulse — MUDE async-resets LX at the same TALU falling as RUTU.
+    /// Advance LX on LX counter clock rising. Suppressed while RUTU.Q=1
+    /// — MUDE = NOR2(RUTU, reset) holds LX at 0 for the full RUTU
+    /// pulse (one TALU cycle).
     pub(in crate::ppu) fn advance(&mut self) {
         if !self.line_end_active {
             self.value += 1;
         }
-        self.line_end_active = false;
     }
 
     /// SANU combinational LX=113 decode; cached for RUTU to consume on
     /// the next LX counter clock falling.
     pub(in crate::ppu) fn detect_line_end(&mut self) {
         self.line_end_detected = self.value == 113;
-    }
-
-    /// RUTU fires on LX counter clock falling when SANU is high: line-
-    /// end pulse active, LX async-resets to 0, SANU cleared.
-    pub(in crate::ppu) fn fire_rutu_and_reset(&mut self) {
-        self.line_end_detected = false;
-        self.value = 0;
-        self.line_end_active = true;
     }
 
     pub(in crate::ppu) fn value(&self) -> u8 {

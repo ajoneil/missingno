@@ -226,8 +226,9 @@ impl Rendering {
     /// Whether the TAPA_INT_OAM signal is active.
     ///
     /// On hardware, TAPA = AND(TOLU_VBLANKn, SELA), where SELA derives from
-    /// RUTU_LINE_ENDp — a 2-dot pulse at each scanline boundary. POPU
-    /// gating at the call site handles the VBlank delay on normal line 0.
+    /// RUTU_LINE_ENDp — a 4-dot pulse (one TALU cycle) at each scanline
+    /// boundary. POPU gating at the call site handles the VBlank delay
+    /// on normal line 0.
     ///
     /// On the LCD-enable first line, RUTU is suppressed (no scanline
     /// boundary has occurred), so TAPA never fires.
