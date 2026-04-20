@@ -41,7 +41,6 @@ impl fmt::Display for Mode {
     }
 }
 
-
 pub struct SpriteStoreSnapshot {
     pub count: u8,
     pub fetched: u16,
@@ -128,7 +127,6 @@ pub struct PipelineSnapshot {
     /// Scan-done flag from the previous XUPY cycle. DOBA (dffr, ALET).
     pub doba: bool,
 }
-
 
 pub struct Rendering {
     /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
@@ -218,16 +216,6 @@ impl Rendering {
     /// STAT mode readback.
     pub(super) fn wodu(&self) -> bool {
         self.hblank.wodu(self.pixel_counter.terminal())
-    }
-
-    /// Pre-CPU-read settling: VOGA captures WODU, XYMU clears.
-    /// Called after PPU rise, before CPU bus read. On hardware, ALET
-    /// falls at F->G before BUKE opens at G-H.
-    pub(super) fn settle_alet(&mut self) {
-        if self.scan.scanning() {
-            return; // Mode 2: no hblank logic
-        }
-        self.hblank.settle_alet(self.pixel_counter.terminal());
     }
 
     /// Whether this is the LCD-enable first line (no prior scanline boundary).
@@ -463,6 +451,13 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
     ) -> Option<PixelOutput> {
+        // WEGO pipeline stage: captures VOGA on this master-clock
+        // edge, one edge after VOGA's own capture at the preceding
+        // fall(). WEGO drives XYMU's set input, so rendering_active
+        // clears here when VOGA is set. Defers the Mode 3→0 register
+        // transition by one edge relative to VOGA capture.
+        self.hblank.propagate_wego();
+
         let xupy_rising = video.xupy();
 
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
@@ -474,7 +469,9 @@ impl Rendering {
 
         // Scanner consumes avap_pending from the preceding advance_scan(),
         // clearing scanning/besu when AVAP fires.
-        let scan = self.scan.apply_pending_avap(xupy_rising, video.ly(), regs, oam);
+        let scan = self
+            .scan
+            .apply_pending_avap(xupy_rising, video.ly(), regs, oam);
 
         // AVAP reaction: BYBA captures on XUPY rising, which follows
         // ALET falling in the divider chain (= PPU clock fall = this
@@ -515,12 +512,7 @@ impl Rendering {
             if was_rendering {
                 self.mode3_advance_fetcher(regs);
             }
-            self.mode3_pixel_pipeline(
-                regs,
-                video,
-                rydy_before_pory,
-                pixel_counter_before_sacu,
-            )
+            self.mode3_pixel_pipeline(regs, video, rydy_before_pory, pixel_counter_before_sacu)
         } else {
             None
         }
@@ -669,7 +661,8 @@ impl Rendering {
         // holds the post-increment value — which will be `state_old` on the
         // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
         // the WODU storage path that caused pix_count to overshoot to 168.
-        let tyfa = !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
+        let tyfa =
+            !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
         self.tyfa = tyfa;
 
         // POHU: combinational comparator, count == SCX & 7.
@@ -828,9 +821,9 @@ impl Rendering {
             if sacu {
                 self.pixel_counter.advance();
             }
-            let (toba, pix) = self
-                .lcd
-                .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
+            let (toba, pix) =
+                self.lcd
+                    .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
             pixel_out = pix;
 
             if !toba && tyfa {

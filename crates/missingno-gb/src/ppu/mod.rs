@@ -419,11 +419,13 @@ impl Ppu {
         //   bit 0 = XYMU OR POPU (rendering OR vblank)
         //   bit 1 = ACYL OR XYMU (scanning OR rendering)
         //
-        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). VOGA captures
-        // WODU with a one-edge pipeline delay (spec Section 6.3), so
-        // XYMU stays set for 1 dot after WODU fires. The CPU reads the
-        // correct mode because fall() (where VOGA captures and XYMU
-        // clears) runs before the next rise()'s CPU bus read.
+        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). The WODU→XYMU
+        // chain spans two discrete edges in the emulator: VOGA
+        // captures at fall(); WEGO captures VOGA at the next rise()
+        // and clears XYMU there. The CPU read at this fall() (between
+        // VOGA capture and WEGO propagation) sees XYMU still set —
+        // matching hardware's CPU-observable Mode 3 on the transition
+        // dot.
         let rendering_active = rendering.rendering_active();
         let bit0 = rendering_active || self.video.vblank();
         let bit1 = rendering_active || rendering.is_scanning();
@@ -525,8 +527,7 @@ impl Ppu {
             && !popu
             && (rendering.voga() || rendering.wodu()))
             || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
-            || (enables.contains(InterruptFlags::OAM_SCAN)
-                && (mode2_active || vblank_line_144))
+            || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
             || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
                 && self.video.stat.ly_eq_lyc())
     }
@@ -730,20 +731,6 @@ impl Ppu {
         }
 
         result
-    }
-
-    /// Settle ALET-clocked DFFs (VOGA/XYMU) before CPU bus read.
-    /// On hardware, ALET falls at F->G before BUKE opens at G-H --
-    /// this models that ordering so the CPU sees post-XYMU state.
-    pub fn settle_alet(&mut self) {
-        if !self.control().video_enabled() {
-            return;
-        }
-        // During VBlank, XYMU is already low and AVAP never fires,
-        // so settle_alet() is a no-op — no POPU guard needed.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            rendering.settle_alet();
-        }
     }
 
     /// Detect a rising edge on the STAT interrupt line (SUKO).

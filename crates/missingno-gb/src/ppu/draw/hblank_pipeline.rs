@@ -40,14 +40,17 @@ pub(in crate::ppu) struct HblankPipeline {
     rendering_active: bool,
     /// HBLANK capture DFF. VOGA (dffr, captures WODU on ALET rising edge).
     ///
-    /// Feeds WEGO. Reset by TADY (line reset).
-    ///
-    /// Spec §6.3: "Mode 3 ends one alet-edge after the H-blank
-    /// condition is combinationally true." The one-edge delay is the
-    /// half-dot from rise() (where WODU goes true when PX=167) to
-    /// fall() (where VOGA captures). This is naturally modeled by the
-    /// rise-then-fall execution order.
+    /// WODU becomes true in the PPU-clock-fall phase (rise() when PX
+    /// advances to 167); VOGA captures at the following PPU-clock-rise
+    /// (fall(), ALET rising).
     voga: bool,
+    /// WEGO pipeline stage. Captures VOGA on the master-clock edge
+    /// following VOGA's own capture, driving XYMU's set input on the
+    /// next rise(). The two-edge separation between VOGA capture and
+    /// XYMU clear models the hardware's sub-dot WODU→XYMU propagation
+    /// in the emulator's integer-dot representation, keeping Mode 3
+    /// observable to the CPU on the transition dot's fall().
+    wego: bool,
     /// Sprite X priority aggregate, latched at start of falling phase.
     /// FEPO (or2 of FOVE, FEFY).
     ///
@@ -55,13 +58,6 @@ pub(in crate::ppu) struct HblankPipeline {
     /// FEPO changes mid-fall but WODU needs the value from the start
     /// of the falling phase.
     fepo: bool,
-    /// Snapshot of `rendering_active` before settle_alet() may have
-    /// cleared it. Corresponds to XYMU's pre-settle state.
-    ///
-    /// fall() needs this to gate mode3_falling() — on the dot VOGA
-    /// fires, XYMU clears in settle_alet but mode3_falling still
-    /// needs to run for the final fetcher/TYFA work.
-    rendering_before_settle: bool,
 }
 
 impl HblankPipeline {
@@ -69,8 +65,8 @@ impl HblankPipeline {
         Self {
             rendering_active: false,
             voga: false,
+            wego: false,
             fepo: false,
-            rendering_before_settle: false,
         }
     }
 
@@ -81,60 +77,44 @@ impl HblankPipeline {
         xugu && !self.fepo
     }
 
-    /// ALET rising edge: VOGA captures WODU, WEGO clears XYMU.
+    /// VOGA (DFF17) captures WODU on PPU clock rise (gate: ALET rising).
+    /// Does NOT clear XYMU directly — the WEGO pipeline stage defers
+    /// XYMU clear by one master-clock edge.
     ///
-    /// On hardware, ALET falls at the boundary between sub-phases (e.g.
-    /// F->G), before the CPU's BUKE window opens. This method models
-    /// just the DFF capture and its combinational consequences.
-    ///
-    /// Called from the executor between PPU rise and CPU bus read, so
-    /// the CPU sees post-XYMU state. The remaining fall() work
-    /// (fetcher, cascade, TYFA) runs later in the falling phase.
-    pub(in crate::ppu) fn settle_alet(&mut self, xugu: bool) {
-        // Capture rendering_active state before any clearing — fall() uses
-        // this to gate mode3_falling() on the transition dot.
-        self.rendering_before_settle = self.rendering_active;
-
-        // WODU is combinational from PX and FEPO, valid here.
-        let wodu_now = self.wodu(xugu);
-
-        // VOGA will capture WODU on the upcoming fall().
-        let voga_will_fire = self.voga || wodu_now;
-
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early for CPU
-        // STAT readback visibility.
-        if voga_will_fire {
-            self.rendering_active = false;
-        }
-    }
-
-    /// VOGA (DFF17) captures WODU on PPU clock rise (gate: ALET rising);
-    /// WEGO = OR2(VID_RST, VOGA) then clears the XYMU rendering latch.
-    /// One unit of work — the Mode 3→0 trigger.
-    ///
-    /// The one-edge pipeline delay (spec §6.3) is the half-dot from the
-    /// preceding PPU clock fall (where WODU goes true when PX=167 via
-    /// CLKPIPE) to this PPU clock rise (where VOGA captures). WODU's
-    /// inputs (PX, FEPO) settled during the preceding edge, so VOGA
-    /// captures the current dot's WODU value.
+    /// The first edge of the chain is the half-dot from the preceding
+    /// PPU clock fall (WODU becomes true when PX=167 via CLKPIPE) to
+    /// this PPU clock rise (VOGA captures).
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
     pub(in crate::ppu) fn capture_voga(&mut self, xugu: bool) -> bool {
         // WODU is purely combinational — no XYMU dependency, so always valid.
         let wodu_now = self.wodu(xugu);
 
-        // VOGA DFF17 captures CURRENT dot's WODU. The one-edge delay
-        // is from rise (WODU settles) to fall (VOGA captures).
+        // VOGA DFF17 captures CURRENT dot's WODU.
         if wodu_now {
             self.voga = true;
         }
 
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU.
-        if self.voga {
+        wodu_now
+    }
+
+    /// WEGO pipeline stage: captures VOGA and drives XYMU set input.
+    ///
+    /// WEGO captures VOGA at the master-clock edge after VOGA captures
+    /// (= next rise(), the PPU-clock-fall / ALET-falling edge). On
+    /// that edge, XYMU set asserts and rendering_active clears.
+    ///
+    /// Called at the start of Rendering::on_ppu_clock_fall (executor's
+    /// rise() edge) so downstream pixel-output-phase work sees the
+    /// post-clear XYMU state.
+    pub(in crate::ppu) fn propagate_wego(&mut self) {
+        // WEGO DFF captures VOGA's current output.
+        self.wego = self.voga;
+
+        // WEGO=1 drives XYMU set input (NOR latch async set).
+        if self.wego {
             self.rendering_active = false;
         }
-
-        wodu_now
     }
 
     /// Latch FEPO for the next dot's wodu() evaluation. Called in
@@ -153,14 +133,6 @@ impl HblankPipeline {
         self.rendering_active
     }
 
-    /// Whether `rendering_active` was true before settle_alet() ran this dot.
-    /// Used by Rendering::on_ppu_clock_rise() to gate mode3_falling() — on the dot
-    /// VOGA fires, rendering_active is already cleared but the final
-    /// mode3 falling work still needs to run.
-    pub(in crate::ppu) fn rendering_before_settle(&self) -> bool {
-        self.rendering_before_settle
-    }
-
     pub(in crate::ppu) fn voga(&self) -> bool {
         self.voga
     }
@@ -168,7 +140,7 @@ impl HblankPipeline {
     pub(in crate::ppu) fn reset(&mut self) {
         self.rendering_active = false;
         self.voga = false;
+        self.wego = false;
         self.fepo = false;
-        self.rendering_before_settle = false;
     }
 }
