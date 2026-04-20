@@ -275,7 +275,7 @@ impl Ppu {
     ///
     /// - **Palette registers (BGP, OBP0, OBP1)**: `DffLatch::write`
     ///   — sets pending; new value visible after the next
-    ///   `tick_palette_latches` (§2.15 dlatch_ee + CUPA staging).
+    ///   `tick_palette_latches` (§4.7 dlatch_ee + CUPA staging).
     /// - **Viewport / WindowX / control_latch**: `DffLatch::write_immediate`
     ///   — updates the latch output directly (DFF9 register read is
     ///   combinational).
@@ -368,7 +368,7 @@ impl Ppu {
                 // `apply_register_write` calls `DffLatch::write` (sets
                 // pending), and `tick_palette_latches` applies
                 // pending → output on the next PPU clock fall. This
-                // models §2.15's dlatch_ee + CUPA transparency → next-
+                // models §4.7's dlatch_ee + CUPA transparency → next-
                 // SACU-rising visibility window. No orchestration
                 // branch here (unlike WindowX's Mode-3-dependent
                 // staging); DffLatch handles the staging uniformly.

@@ -153,7 +153,7 @@ pub struct Rendering {
     /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
     /// Computed in mode3_falling, consumed in mode3_rising.
     tyfa: bool,
-    /// Pixel X position counter (PX; spec §2.5). Advances on SACU; feeds
+    /// Pixel X position counter (PX; spec §6.3). Advances on SACU; feeds
     /// WODU via `terminal()` for the Mode 3→0 transition.
     pixel_counter: PixelCounter,
     /// LCD Control block (die page 24): LCD clock gating (WUSA),
@@ -455,7 +455,7 @@ impl Rendering {
 
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
         // the fetcher advance so the first LAXU toggle occurs on the
-        // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay (§5.3,
+        // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay (§6.5.1,
         // Q.A). The natural rise→rise gap plays the role previously
         // filled by the nyxu_reset_active hold.
         let was_rendering = self.hblank.rendering_active();

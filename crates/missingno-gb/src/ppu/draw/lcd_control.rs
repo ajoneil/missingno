@@ -21,7 +21,7 @@ use crate::ppu::types::palette::PaletteIndex;
 ///
 /// Inputs: SACU (pixel clock edge from page 27), pixel data (from
 /// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21),
-/// PX value (from `PixelCounter`, §2.5, used for WUSA XAJO gating).
+/// PX value (from `PixelCounter`, §6.3, used for WUSA XAJO gating).
 /// Outputs: TOBA (gated LCD clock, returned from edge methods).
 pub(in crate::ppu) struct LcdControl {
     /// WUSA NOR latch — LCD clock gate. SET by XAJO (AND2 of pixel

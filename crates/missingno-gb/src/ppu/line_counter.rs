@@ -1,7 +1,7 @@
-//! §2.6 + §2.7 line counters composed per hardware cascade.
+//! §2.1 + §2.2 line counters composed per hardware cascade.
 //!
-//! `LineCounter` composes `LineCounterX` (§2.6 scanline dot position; LX
-//! 7-bit ripple clocked by TALU) and `LineCounterY` (§2.7 scanline index;
+//! `LineCounter` composes `LineCounterX` (§2.1 scanline dot position; LX
+//! 7-bit ripple clocked by TALU) and `LineCounterY` (§2.2 scanline index;
 //! LY 8-bit ripple clocked by RUTU when X completes a line). The cascade
 //! matches hardware: LX's RUTU pulse clocks LY; no other coupling.
 //!
@@ -9,7 +9,7 @@
 //! (0-153); `y.value_register()` is the CPU-visible $FF44 value (MYTA-
 //! smoothed to 0 during the frame-end transition).
 //!
-//! Hardware reference: spec §2.6 (LX), §2.7 (LY/POPU/MYTA).
+//! Hardware reference: spec §2.1 (LX), §2.2 (LY/POPU/MYTA).
 
 use crate::ppu::line_end_pipeline::NypeEdge;
 
@@ -49,7 +49,7 @@ impl LineCounter {
     /// LX counter clock falling — atomic scanline boundary. Hardware-
     /// atomic ordering: RUTU fires → LX resets → LY advances/wraps →
     /// POPU holdover armed on wrap. Returns whether the boundary fired
-    /// (for the orchestrator's §6.4 NYPE feed).
+    /// (for the orchestrator's §7.3 NYPE feed).
     pub(in crate::ppu) fn on_lx_counter_clock_fall(&mut self) -> bool {
         if self.x.line_end_detected {
             self.x.fire_rutu_and_reset();

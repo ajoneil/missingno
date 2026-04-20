@@ -3,7 +3,7 @@
 //! Signal naming follows the project's PPU timing spec. Netlist gate
 //! names (XYMU, VOGA, WEGO, TOFU, etc. from the dmgcpu netlist,
 //! msinger/dmg-schematics) appear in doc comments for traceability.
-//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §2.4 and §6.3
+//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §3.2 and §7.2
 //! for the hardware reference; see
 //! `receipts/ppu-overhaul/spec-conventions.md` for the conventions.
 

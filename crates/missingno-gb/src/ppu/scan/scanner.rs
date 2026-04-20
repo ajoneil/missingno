@@ -3,8 +3,8 @@
 //! Signal naming follows the project's PPU timing spec. Netlist gate
 //! names (BYBA, DOBA, CATU, RUTU, BESU, from the dmgcpu netlist,
 //! msinger/dmg-schematics) appear in doc comments for traceability.
-//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §6.2 (Mode 2→3
-//! transition) and §6.4.1 (CATU/ANEL scan counter reset chain).
+//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §5.8/§7.1 (Mode 2→3
+//! transition) and §7.4 (CATU/ANEL scan counter reset chain).
 
 use crate::ppu::{PipelineRegisters, memory::Oam};
 
@@ -39,13 +39,13 @@ pub(in crate::ppu) struct SpriteScanner {
     /// Scan-done flag. BYBA (dffr, clocked by XUPY — captures in fall).
     ///
     /// Combined with `scan_done_prev` for AVAP rising-edge detection:
-    /// AVAP = BYBA && !DOBA (§6.2).
+    /// AVAP = BYBA && !DOBA (§5.8/§7.1).
     scan_done_flag: bool,
     /// Scan-done flag from the previous XUPY cycle. DOBA (dffr, clocked
     /// by ALET — captures in fall, one half-cycle after BYBA).
     ///
     /// Forms the rising-edge detector with `scan_done_flag` that
-    /// produces AVAP (§6.2).
+    /// produces AVAP (§5.8/§7.1).
     scan_done_prev: bool,
     /// AVAP result from fall(), consumed by rise(). On hardware AVAP
     /// is combinational (valid as soon as BYBA/DOBA settle in advance_scan()),

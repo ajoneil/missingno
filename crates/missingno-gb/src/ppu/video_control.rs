@@ -1,16 +1,16 @@
 //! Video timing and control orchestrator.
 //!
 //! After the Stage 1-4 decomposition, VideoControl is a thin composer
-//! of the §1.2 Dividers, §2.14 StatInterrupt, and §2.6+§2.7 LineCounter
-//! containers. The only state it still owns directly is the §6.4 NYPE
+//! of the §1.2 Dividers, §8 StatInterrupt, and §2.1+§2.2 LineCounter
+//! containers. The only state it still owns directly is the §7.3 NYPE
 //! pipeline (`line_end_pending` / `delayed_line_end`), awaiting Stage 5
-//! extraction after the §6.4 review.
+//! extraction after the §7.3 review.
 //!
 //! Dispatcher methods sequence the subsystems' per-edge work:
-//!   on_lx_counter_clock_rise: §6.4 NYPE capture → §2.7 POPU/MYTA →
-//!                             §2.6 LX advance → §2.6 SANU decode
-//!   on_lx_counter_clock_fall: §2.6 RUTU fire → §2.7 LY advance+wrap →
-//!                             §2.7 POPU holdover → §6.4 NYPE feed
+//!   on_lx_counter_clock_rise: §7.3 NYPE capture → §2.2 POPU/MYTA →
+//!                             §2.1 LX advance → §2.1 SANU decode
+//!   on_lx_counter_clock_fall: §2.1 RUTU fire → §2.2 LY advance+wrap →
+//!                             §2.2 POPU holdover → §7.3 NYPE feed
 //!
 //! Pass-through accessors preserve the external call-site interface
 //! per OQ.6 (`ly()`, `xupy()`, `line_end_active()`, etc.).
@@ -21,15 +21,15 @@ use crate::ppu::line_end_pipeline::LineEndPipeline;
 use crate::ppu::stat_interrupt::StatInterrupt;
 
 /// Video timing and control (schematic page 21). Composes the extracted
-/// subsystem containers; retains §6.4 NYPE state inline until Stage 5.
+/// subsystem containers; retains §7.3 NYPE state inline until Stage 5.
 pub struct VideoControl {
     /// §1.2 WUVU + VENA clock dividers.
     pub dividers: Dividers,
 
-    /// §2.6 + §2.7 LX and LY line counters, composed per hardware cascade.
+    /// §2.1 + §2.2 LX and LY line counters, composed per hardware cascade.
     pub lines: LineCounter,
 
-    /// §2.14 STAT Interrupt Generation (LYC register, enable bits,
+    /// §8 STAT Interrupt Generation (LYC register, enable bits,
     /// LYC-match pipeline, LALU edge-detection state).
     pub stat: StatInterrupt,
 
@@ -120,7 +120,7 @@ impl VideoControl {
     // ── Per-dot tick ─────────────────────────────────────────
 
     /// XOTA rising edge: toggle WUVU (via Dividers) and clear POPU
-    /// holdover (§2.7). Called every dot.
+    /// holdover (§2.2). Called every dot.
     pub fn tick_dot(&mut self) {
         self.dividers.tick_dot();
         self.lines.y.clear_popu_holdover();

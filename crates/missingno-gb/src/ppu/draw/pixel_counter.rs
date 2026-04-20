@@ -11,7 +11,7 @@
 //! scanline boundaries and VID_RST. `reset()` models the combined path.
 //!
 //! Terminal detection: XUGU (NAND5 over bits 0, 1, 2, 5, 7) fires at
-//! PX=167, driving WODU → VOGA → WEGO → XYMU (Mode 3→0 chain, §2.4).
+//! PX=167, driving WODU → VOGA → WEGO → XYMU (Mode 3→0 chain, §3.2).
 //! The `terminal()` method returns `true` at PX=167 — polarity-positive
 //! semantic (matches XANO = NOT(XUGU)) rather than XUGU's active-low
 //! hardware output.
@@ -31,8 +31,8 @@ impl PixelCounter {
         self.0 += 1;
     }
 
-    /// Scanline reset (TADY chain — shared with VOGA reset §2.4 and scan-
-    /// counter reset §6.4.1 via ATEJ). Called at scanline boundaries and
+    /// Scanline reset (TADY chain — shared with VOGA reset §3.2 and scan-
+    /// counter reset §7.4 via ATEJ). Called at scanline boundaries and
     /// LCD-off paths.
     pub(in crate::ppu) fn reset(&mut self) {
         self.0 = 0;
@@ -40,7 +40,7 @@ impl PixelCounter {
 
     /// Terminal-count decode. True at PX=167, matching XANO = NOT(XUGU)
     /// polarity (positive-at-terminal); the hardware XUGU NAND5 output is
-    /// active-low. Feeds WODU via XANO per §2.14.2, triggering the Mode
+    /// active-low. Feeds WODU via XANO per §8.2, triggering the Mode
     /// 3→0 chain per §2.4.
     pub(in crate::ppu) fn terminal(&self) -> bool {
         self.0 & TERMINAL_MASK == TERMINAL_MASK

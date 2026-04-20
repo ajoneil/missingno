@@ -225,7 +225,7 @@ impl GameBoy {
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
         // decode chain begins propagating. The write is applied at
-        // dot 2 rise (CUPA rises at phase E per §10.3, spanning 1.498
+        // dot 2 rise (CUPA rises at phase E per §4.3, spanning 1.498
         // dots through phase H of dot 3).
         if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
             if is_ppu_register(address) {
@@ -394,7 +394,7 @@ impl GameBoy {
 
         // CPU data latch: capture bus value after PPU's master-clock
         // fall updates land. Hardware reads are combinational (spec
-        // §10.6): the CPU samples the current DFF state via SM83-
+        // §4.6): the CPU samples the current DFF state via SM83-
         // internal data_phase. PPU DFF transitions on the same master-
         // clock cycle's TALU-rising edge (MYTA fire, ROPO capture) are
         // visible to the CPU read because they settle before the CPU's
