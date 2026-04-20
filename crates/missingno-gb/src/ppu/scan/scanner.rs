@@ -1,10 +1,8 @@
 //! Sprite scanner — OAM scan (Mode 2) state machine.
 //!
-//! Signal naming follows the project's PPU timing spec. Netlist gate
-//! names (BYBA, DOBA, CATU, RUTU, BESU, from the dmgcpu netlist,
-//! msinger/dmg-schematics) appear in doc comments for traceability.
-//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §5.8/§7.1 (Mode 2→3
-//! transition) and §7.4 (CATU/ANEL scan counter reset chain).
+//! Netlist gate names (BYBA, DOBA, CATU, RUTU, BESU, from the dmgcpu
+//! netlist, msinger/dmg-schematics) appear in doc comments for
+//! traceability to the hardware signal chain.
 
 use crate::ppu::{PipelineRegisters, memory::Oam};
 
@@ -39,26 +37,32 @@ pub(in crate::ppu) struct SpriteScanner {
     /// Scan-done flag. BYBA (dffr, clocked by XUPY — captures in fall).
     ///
     /// Combined with `scan_done_prev` for AVAP rising-edge detection:
-    /// AVAP = BYBA && !DOBA (§5.8/§7.1).
+    /// AVAP = BYBA && !DOBA.
     scan_done_flag: bool,
     /// Scan-done flag from the previous XUPY cycle. DOBA (dffr, clocked
     /// by ALET — captures in fall, one half-cycle after BYBA).
     ///
     /// Forms the rising-edge detector with `scan_done_flag` that
-    /// produces AVAP (§5.8/§7.1).
+    /// produces AVAP.
     scan_done_prev: bool,
     /// AVAP result from fall(), consumed by rise(). On hardware AVAP
     /// is combinational (valid as soon as BYBA/DOBA settle in advance_scan()),
     /// but the rendering pipeline reacts in apply_pending_avap().
     avap_pending: bool,
-    /// ANEL propagation delay: suppresses the first scan tick after CATU
-    /// starts scanning. On hardware, CATU.Q propagates through ANEL
-    /// (clocked by NOT(XUPY)) → BYHA → ATEJ → ANOM before the counter
-    /// reset reaches the scan counter. This chain takes long enough that
-    /// the counter reset arrives AFTER the first XUPY rising edge (N+1),
-    /// so the first compare+tick doesn't happen until XUPY N+2.
-    /// dmg-sim confirms AVAP at BD=0, which requires 41 XUPY cycles from
-    /// CATU capture (not 40).
+    /// Suppresses the first scan tick after CATU captures RUTU, so
+    /// the first compare+tick happens on XUPY N+2 rather than N+1.
+    ///
+    /// Compensation-acknowledged: direct gate-level simulation
+    /// measurements show hardware ticks on XUPY N+1 (the
+    /// CATU→BYHA→ATEJ→ANOM reset pulse asserts and releases within
+    /// the CATU-capture XUPY cycle via the `NOT(catu)` combinational
+    /// path plus ANEL's half-cycle-later release), so structurally
+    /// this field is a 1-XUPY-cycle over-delay. The flag is retained
+    /// because removing it regresses ~70 downstream timing tests with
+    /// zero recoveries, indicating many downstream consumers are
+    /// calibrated to the delayed entry rather than an isolated bug.
+    /// Removing the delay requires a coordinated multi-location
+    /// correction.
     scan_start_delay: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
@@ -199,18 +203,17 @@ impl SpriteScanner {
     /// can advance during the 153->0 frame boundary while POPU is
     /// still high.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
-        // CATU DFF captures RUTU on XUPY rising edge, then propagates
-        // through ANEL (clocked by NOT(XUPY)) → BYHA → ATEJ → ANOM
-        // to drive the scan counter reset. This chain takes 1 full
-        // XUPY cycle (2 dots) to complete.
+        // Emulator model: CATU captures RUTU on XUPY N; scan-start
+        // (BESU assertion + counter reset) fires on XUPY N+1; the
+        // `scan_start_delay` flag then skips one further tick so
+        // the first compare+tick happens on XUPY N+2.
         //
-        // dmg-sim confirms: first XUPY rising after LCD-on is at BD=2
-        // (120ns after VID_RST). AVAP fires at BD=0 (40 XUPY cycles
-        // later). This means the scan counter starts on the SECOND
-        // XUPY rising edge after CATU captures — the BD=0 edge.
-        //
-        // Model: CATU captures RUTU on XUPY N. Processing (scan start)
-        // is gated on XUPY N+1, giving the 1-XUPY-cycle propagation delay.
+        // Total: 2 XUPY cycles from CATU capture to first tick. This
+        // over-delays the hardware by 1 XUPY cycle (hardware: 1 XUPY
+        // cycle via the combinational NOT(catu)→BYHA→ATEJ→ANOM reset
+        // pulse that asserts and releases within the CATU-capture
+        // cycle). See the `scan_start_delay` field comment for the
+        // compensation-acknowledged rationale.
         if xupy_rising && self.catu && !self.scanning {
             self.scanning = true;
             if self.catu_enabled {

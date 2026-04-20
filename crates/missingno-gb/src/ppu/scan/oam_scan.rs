@@ -57,16 +57,17 @@ impl SpriteStore {
 /// from OAM, comparing Y against LY, and writing matches into the
 /// sprite store.
 ///
-/// The scan counter is clocked by GAVA = OR(FETO_SCAN_DONE, XUPY).
-/// On hardware, GAVA provides rising edges every 2 dots (via XUPY).
-/// When FETO fires (counter == 39), GAVA stays high — no more rising
-/// edges, counter frozen. The current entry's comparison still
-/// completes because the comparison logic runs on separate clocks
-/// (COTA, WUDA) that aren't gated by FETO.
+/// The scan counter is clocked by GAVA = OR2(XUPY, FETO). On hardware,
+/// GAVA provides rising edges every 2 dots (via XUPY). When FETO fires
+/// (counter == 39), GAVA stays high — no more rising edges, counter
+/// frozen. The Y comparison itself is combinational (an 8-stage
+/// full-adder carry chain + NAND6 decoder fed directly from the
+/// counter bits and the OAM bus), so freezing the counter does not
+/// block the compare result for entry 39 from settling.
 ///
-/// At the dot level, each XUPY tick compares the current entry and
-/// then increments the counter. The caller gates ticks on XUPY
-/// rising and !scan_done() (modeling GAVA freeze).
+/// At the dot level, each XUPY rising tick compares the current entry
+/// and then increments the counter. The caller gates ticks on XUPY
+/// rising (modeling GAVA freeze via the `frozen` field).
 pub(in crate::ppu) struct ScanCounter {
     /// 6-bit scan counter (YFEL-FONY). Drives OAM address and indexes
     /// the current entry for comparison. Range 0-39, frozen at 39
@@ -93,24 +94,20 @@ impl ScanCounter {
         self.frozen = false;
     }
 
-    /// Process one scan tick. On hardware, GAVA clocks the counter
-    /// and COTA latches OAM data on the same sub-phase (A/E), but
-    /// COTA latches the *previous* tick's data (pipeline delay).
-    /// At dot granularity this collapses to: compare current entry,
-    /// then increment the counter for the next tick.
-    ///
-    /// The caller must gate calls on XUPY rising. FETO freezes
-    /// only the counter increment, not the comparison — entry 39
-    /// is still compared even after FETO fires.
-    ///
-    /// Only bytes 0–1 (Y, X) are read from OAM during scanning — the
-    /// hardware's 16-bit OAM bus provides both in a single access.
-    /// Tile index and attributes (bytes 2–3) are not accessed until
-    /// Mode 3.
     /// Advance the scan counter clock (GAVA). On hardware, the counter
     /// is clocked by XUPY gated only by !VID_RST, not by BESU (scanning
     /// latch). The counter runs whenever the LCD is enabled, including
-    /// the LCD-on first line where scanning never starts.
+    /// the LCD-on first line where formal scanning (BESU) never asserts.
+    ///
+    /// The Y compare is combinational (8-stage full-adder chain + NAND6
+    /// decoder feeding a per-slot one-hot write-enable via the CARE
+    /// chain), so the compare for entry 39 still settles and can drive
+    /// a sprite-store write even after FETO freezes the counter here.
+    ///
+    /// Only bytes 0-1 (Y, X) are read from OAM during scanning — the
+    /// hardware's 16-bit OAM bus provides both in a single access.
+    /// Tile index and attributes (bytes 2-3) are not accessed until
+    /// Mode 3.
     pub(in crate::ppu) fn tick_clock(&mut self) {
         // GAVA freeze: once FETO fires, latch frozen=true so the
         // counter never increments again this scanline. On hardware,
@@ -127,9 +124,16 @@ impl ScanCounter {
         }
     }
 
-    /// Y comparison and sprite store write (COTA/WUDA). Only runs
-    /// when scanning is active — OAM access requires BESU. The counter
-    /// tick (`tick_clock`) must be called separately.
+    /// Y comparison and sprite store write. On hardware the compare is
+    /// combinational from the counter bits and OAM bus (an 8-stage
+    /// carry chain + NAND6 decoder); the per-slot write-enable
+    /// (`save_sprite_numN`) is gated via CARE (sprite_y_match AND
+    /// xoce AND ceha) against a 4-bit ripple slot counter. The
+    /// emulator collapses compare + slot-counter to an arithmetic
+    /// predicate + `sprites.count`. The counter tick (`tick_clock`)
+    /// runs separately.
+    ///
+    /// Only runs when scanning is active — OAM access requires BESU.
     pub(in crate::ppu) fn compare_and_store(
         &mut self,
         line_number: u8,
