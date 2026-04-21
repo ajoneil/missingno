@@ -50,10 +50,19 @@
 ///   NOT(SUVU). Emulator's TAVE one-shot in `rendering.rs` fires from
 ///   `NYKA && PORY && !PYGO` — `!PYGO` substitutes for `ROMO = !POKY`
 ///   using PYGO as the POKY precursor during the startup window.
-/// - Counter-bit sample: `LAXU → LYZU`. LYZU (dffr, ALET-clocked)
-///   samples LAXU. The spec lists LYZU in the §6.1 reference block but
-///   does not name its downstream consumer; the emulator reads
-///   `fetcher.fetch_counter` directly where bit-0 is needed.
+/// - Counter-bit sample: `LAXU → LYZU → MYSO → NYDY` (§6.6 temp-latch
+///   enable). LYZU (dffr, ALET-clocked) samples LAXU; its only consumer
+///   is `MYSO = NOR3(mode3_n, LAXE, LYZU)` where `LAXE = NOT(LAXU)`,
+///   making MYSO a LAXU rising-edge detector (fires for the half-dot
+///   window between LAXU↑ and LYZU catching up). MYSO feeds §6.6's
+///   `NYDY = NAND3(NOFU, MESU, MYSO)` temp-latch enable decode,
+///   gating the LUNA/LOMA pulse that captures the low-byte VRAM
+///   read at fetch counter = 3. Emulator collapses the temp-latch
+///   chain by reading VRAM directly into `fetcher.tile_data_low` /
+///   `tile_data_high` at counter 2 / 4 falling edges — observation-
+///   equivalent at the parallel-load consumer boundary for the
+///   clean-ROM case (mid-fetch LCDC writes fall under §6.14's
+///   already-flagged ambiguity territory).
 pub(in crate::ppu) struct FetchCascade {
     /// NYKA: DFF17, clocked by alet (captures on master-clock fall).
     nyka: bool,
