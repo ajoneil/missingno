@@ -23,9 +23,13 @@ pub enum SpriteFetchPhase {
     FetchingData,
 }
 
-/// Active sprite data fetch. Models the 3-bit counter (TOXE/TULY/TESE)
-/// that counts 0-5 over 6 dots, performing OAM reads (counter 0-1) and
-/// VRAM reads (counter 3 and 5) for sprite tile data.
+/// Active sprite data fetch. Collapses the 3-bit ripple counter
+/// (TOXE/TULY/TESE, clocked by SABE = NAND2(LAPE, TAME)) into a u8
+/// counting 0–5. Also collapses the fetch-done decode (WUTY =
+/// NOT(VUSA), VUSA = OR2(TYNO, TYFO_n), TYNO = NAND3(SEBA, TOXE,
+/// VONU) + TYFO = dffr(TOXE, LAPE)) into the `return true` at
+/// counter=5 — both hardware decode branches fire at the same
+/// counter-terminal state that the u8 check detects directly.
 pub(in crate::ppu) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(in crate::ppu) entry: SpriteStoreEntry,
