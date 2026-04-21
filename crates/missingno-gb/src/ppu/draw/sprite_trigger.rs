@@ -1,45 +1,36 @@
 //! Sprite fetch trigger pipeline.
 //!
-//! SOBU captures TEKY on the master-clock edge where alet falls (TAVA
-//! falling, 2 inverters deeper than alet). SUDA captures SOBU on the
-//! complementary edge (LAPE rising, myvo-aligned). The methods are
-//! named for the DFFs they clock, not for alet/myvo edges directly
-//! — the TAVA/LAPE delays are documented per-signal.
+//! SOBU captures TEKY on TAVA rising (= LAPE falling = ALET rising).
+//! SUDA captures SOBU on the complementary edge (LAPE rising = ALET
+//! falling). The methods are named for the DFFs they clock.
 
-/// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
+/// Sprite fetch trigger pipeline: TEKY → SOBU → {RYCE → TAKA, SUDA}.
 ///
-/// A DFF chain that propagates the sprite fetch request signal (TEKY)
-/// through two pipeline stages, with an edge detector (RYCE) that sets
-/// a latch (TAKA) to freeze the pixel clock during sprite data fetch.
-/// Same pattern as `FetchCascade` — clock and query.
+/// Collapses the hardware chain:
 ///
-/// Hardware clock ordering (from mode3-clock-domains.md):
-///   SOBU: DFF17, captures TEKY on TAVA falling edge (depth 7)
-///   SUDA: DFF17, captures SOBU on LAPE rising edge (depth 6)
-///   RYCE: combinational edge detect (SOBU && !SUDA)
-///   TAKA: NAND latch, set by RYCE, cleared by VEKU (fetch done)
+///   SOBU (dffr, clk=TAVA/clk5) captures TEKY (=AND4 of FEPO, !RYDY,
+///   LYRY, !TAKA)
+///   SUDA (dffr, clk=LAPE/clk4) captures SOBU one edge later
+///   RYCE = AND2(!SUDA, SOBU) — one-shot pulse at SOBU rise, clears
+///   when SUDA captures
+///   TAKA = nand_latch, set via SECA (RYCE-derived), cleared via
+///   VEKU (WUTY-derived); output freezes SACU for 6 dots via VYBO
+///   halt path
 ///
-/// TAVA is 2 inverters deeper than ALET in the clock chain. This is
-/// deliberate: SOBU must capture TEKY_old, which depends on LYRY —
-/// and LYRY depends on the fetcher counter, clocked by LEBO (gated
-/// by ALET). The extra delay ensures the counter has settled.
-///
-/// Race pair data (mode3-race-pairs.md):
-///   SECA (fetch start): depth 13, diff 13 (~65-195ns)
-///   SOBU: clocked at depth 8-9, diff 7-8
-///   SUDA: clocked at depth 7, diff 7
+/// SOWO = NOT(TAKA) is the local feedback inverter that blocks TEKY
+/// re-trigger while a fetch is active — handled by the `!taka()`
+/// term at TEKY's emulator call site.
 ///
 /// Consumers:
-///   - `taka()` → gates pixel clock (TYFA suppressed while taka is set),
-///     gates sprite fetch advance in mode3_rising
-///   - `ryce()` return from `fall()` → triggers sprite fetch start
+///   - `taka()` → gates SACU via TYFA suppression
+///   - `capture_sobu()` return → triggers sprite fetch start
 pub(in crate::ppu) struct SpriteTrigger {
-    /// SOBU: DFF17, latches on TAVA falling edge (master-clock fall).
+    /// SOBU: captures TEKY on TAVA rising (= ALET rising).
     sobu: bool,
-    /// SUDA: DFF17, latches on LAPE rising edge (master-clock rise).
+    /// SUDA: captures SOBU on LAPE rising (= ALET falling).
     suda: bool,
-    /// TAKA NAND latch: sprite fetch running. Set by RYCE (SOBU
-    /// rising edge detect), cleared by VEKU (sprite fetch done).
+    /// TAKA NAND latch: sprite fetch running. Set by RYCE (= AND2
+    /// of SOBU, !SUDA — one-shot); cleared by WUTY (fetch done).
     taka: bool,
 }
 
@@ -52,13 +43,9 @@ impl SpriteTrigger {
         }
     }
 
-    /// SOBU captures TEKY on TAVA falling (PPU-clock-rise phase; TAVA
-    /// is 2 inverters deeper than ALET). TEKY is combinational, computed
-    /// during the preceding PPU-clock-fall phase and bridged here.
-    /// Returns true if RYCE fires (sprite fetch should start).
-    ///
-    /// RYCE is a combinational rising-edge detect: SOBU just went high,
-    /// SUDA still holds the value from the previous phase.
+    /// SOBU captures TEKY on TAVA rising (= ALET rising). Returns
+    /// true if RYCE fires — the one-shot AND2(!SUDA, SOBU) pulse at
+    /// SOBU's rise sets TAKA via SECA.
     pub(in crate::ppu) fn capture_sobu(&mut self, teky: bool) -> bool {
         self.sobu = teky;
         let ryce = self.sobu && !self.suda;
@@ -68,8 +55,8 @@ impl SpriteTrigger {
         ryce
     }
 
-    /// SUDA captures SOBU on LAPE rising (MYVO-aligned; the PPU-clock-
-    /// fall / master-clock-rise phase).
+    /// SUDA captures SOBU on LAPE rising (= ALET falling). The capture
+    /// clears RYCE (= AND2(!SUDA, SOBU)) — ending the one-shot pulse.
     pub(in crate::ppu) fn capture_suda(&mut self) {
         self.suda = self.sobu;
     }
