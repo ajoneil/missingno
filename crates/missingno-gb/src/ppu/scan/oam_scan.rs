@@ -21,6 +21,19 @@ pub(in crate::ppu) struct SpriteStoreEntry {
     /// X position (the raw x_plus_8 value from OAM byte 1).
     /// Compared against the pixel position counter by the X matchers
     /// during Mode 3.
+    ///
+    /// Collapse boundary: hardware has 8 BODE-clocked dlatch cells
+    /// (`cyra` / `eced` / `wyno` / `xyky` / `yrum` / `ysex` / `yvel` /
+    /// `zuve`) forming the per-sprite X storage — the "other side"
+    /// of the NAND2-pair X comparator. Those 8 bits × 10 slots
+    /// collapse into this single u8 per slot. Durability during Mode
+    /// 3 is structurally preserved: the latches are written once
+    /// during Mode 2 OAM scan (BODE edges during scan write the X
+    /// bits) and held stable through Mode 3 while the SACU-clocked
+    /// comparator consumes them. The emulator matches that lifetime —
+    /// `x` is written by the OAM-scanner in Mode 2 and read
+    /// combinationally by the per-sprite match decode in Mode 3
+    /// (`Rendering::fepo`).
     pub(in crate::ppu) x: u8,
 }
 
