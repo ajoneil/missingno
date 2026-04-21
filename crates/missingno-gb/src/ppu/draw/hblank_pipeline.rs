@@ -46,11 +46,25 @@ pub(in crate::ppu) struct HblankPipeline {
     /// combinationally. Reset by TADY (line reset chain).
     voga: bool,
     /// Sprite X priority aggregate, latched at start of falling phase.
-    /// FEPO (or2 of FOVE, FEFY).
+    /// FEPO = OR2(FOVE, FEFY) per §6.8.
     ///
-    /// Feeds `hblank_condition()` and TYFA computation. Latched because
-    /// FEPO changes mid-fall but WODU needs the value from the start
-    /// of the falling phase.
+    /// Feeds WODU (via `wodu()`'s `!self.fepo` XENA term) and the TYFA
+    /// formula in `rendering.rs::mode3_falling` — both consume the
+    /// previous-dot FEPO state.
+    ///
+    /// Collapse boundary: the 16-cell SACU-clocked DFFSR chain on
+    /// hardware shifts per-sprite match state through the pixel pipe,
+    /// producing a 1-dot latency between FEPO computation (combinational
+    /// over the latched DFFSR bits) and downstream consumption (WODU,
+    /// VYBO). The emulator collapses the chain to a single latch here —
+    /// `Rendering::fepo()` recomputes the combinational match in
+    /// mode3_falling; `latch_fepo()` captures that value for the NEXT
+    /// dot's `wodu()` evaluation. The 1-dot latency is modelled
+    /// exactly; the multi-cell shift-register internals are observation-
+    /// equivalent because the latched bits at any given SACU edge
+    /// reflect the same per-sprite match relation that the emulator
+    /// recomputes (sprite X values are fixed during Mode 3; pixel
+    /// counter advances synchronously with SACU).
     fepo: bool,
 }
 
