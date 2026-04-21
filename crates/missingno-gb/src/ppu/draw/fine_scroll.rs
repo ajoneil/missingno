@@ -17,6 +17,40 @@ enum Roxy {
 /// Hardware fine scroll counter (RYKU/ROGA/RUBU) and pixel clock
 /// gate (ROXY). The ROXY latch gates the pixel clock (SACU) until
 /// the counter matches SCX & 7, implementing sub-tile fine scrolling.
+///
+/// # §6.2 collapsed match-decode signals (not modelled as explicit state)
+///
+/// The spec's §6.2 Fine Scroll subsystem decodes the counter-matches-SCX
+/// condition through a multi-gate chain that this module collapses to a
+/// single numeric comparison (`count == scx & 7`). Collapsed signals:
+///
+/// - Per-bit compare: `SUHA = XNOR(ff43_d0, RYKU)`,
+///   `SYBY = XNOR(ff43_d1, ROGA)`, `SOZU = XNOR(ff43_d2, RUBU)` — three
+///   XNORs each firing when one SCX bit matches the corresponding counter
+///   bit.
+/// - Drain-gated aggregate: `RONE = NAND4(ROXY, SUHA, SYBY, SOZU)` — the
+///   NAND4 whose ROXY input is the self-termination gate (ROXY=0 after
+///   first POVA forces RONE=1 forces POHU=0, de-asserting the match
+///   pipeline without needing a separate "done" flag).
+/// - Comparator output: `POHU = NOT(RONE) = AND4(ROXY, SUHA, SYBY, SOZU)`.
+///   Fires during ROXY-gated startup when all three counter bits match
+///   SCX[0:2].
+///
+/// Collapsed cascade: `SCX bits + counter bits → SUHA/SYBY/SOZU → RONE → POHU`.
+///
+/// The emulator's `compare_falling(scx)` computes `pohu = count == (scx & 7)`
+/// directly, dropping the per-bit XNOR decomposition and the NAND4
+/// aggregate. Observation-equivalence at the POHU-field output boundary is
+/// preserved because (a) the numeric equality is definitionally the
+/// AND4 of per-bit XNORs; (b) POHU's ROXY drain-gate is implicitly
+/// respected because the emulator only consumes the `pohu` field while
+/// `roxy == Roxy::Gating` (hardware POHU during ROXY=0 is always 0 via
+/// RONE; emulator bypasses POHU reads during Roxy::Done).
+///
+/// Counter self-stop (ROZE): spec §6.2 documents `ROZE = NAND3(RUBU, ROGA,
+/// RYKU)` as the count-at-7 self-stop feeding PECU. Emulator collapses this
+/// via `tick()`'s `if self.count < 7` guard — observation-equivalent at the
+/// counter-bits output boundary.
 pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
     pub(in crate::ppu) count: u8,
