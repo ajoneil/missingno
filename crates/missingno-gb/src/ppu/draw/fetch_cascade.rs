@@ -26,6 +26,34 @@
 /// - `pygo()` → sprite wait exit, TAVE guard, window trigger gate
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
+///
+/// # §6.1 collapsed cascade signals (not modelled as explicit state here)
+///
+/// The spec's §6.1 BG fetch counter subsystem includes several downstream
+/// signals feeding TEVO (the NYXU reset trigger for the per-tile fetch
+/// boundary). This module models NYKA / PORY / PYGO / POKY directly; the
+/// following §6.1 signals are collapsed or behaviourally derived elsewhere:
+///
+/// - Drain-detector path: `PANY → RYFA → RENE → SEKO → TEVO`.
+///   RYFA (dffr, SEGU-clocked) captures PANY = NOR2(ROZE, wxy_match).
+///   RENE (dffr, ALET-clocked) captures RYFA. SEKO = NOR2(RENE, RYFA)
+///   goes high when both drain to 0 (the spec's 8-dot tile-cycle 2-dot
+///   hold period, per §6.1 "SEKO drain-detector waveform"). Emulator
+///   fires SEKO behaviourally via shifter-drain detection in
+///   `rendering.rs::mode3_pixel_pipeline`.
+/// - Window-trigger path: `TUXY → SUZU → TEVO`. TUXY = NAND2(SOVY, SYLO)
+///   is a RYDY falling-edge detector; SUZU = NOT(TUXY) fires one half-
+///   cycle per RYDY 1→0 transition. Emulator fires the SUZU path on
+///   PORY-driven RYDY clear in `window_control.rs` / `rendering.rs`.
+/// - Startup / window-restart path: `ROMO → SUVU → TAVE → TEVO`.
+///   ROMO = NOT(POKY); SUVU = NAND4(NYKA, PORY, ROMO, XYMU); TAVE =
+///   NOT(SUVU). Emulator's TAVE one-shot in `rendering.rs` fires from
+///   `NYKA && PORY && !PYGO` — `!PYGO` substitutes for `ROMO = !POKY`
+///   using PYGO as the POKY precursor during the startup window.
+/// - Counter-bit sample: `LAXU → LYZU`. LYZU (dffr, ALET-clocked)
+///   samples LAXU. The spec lists LYZU in the §6.1 reference block but
+///   does not name its downstream consumer; the emulator reads
+///   `fetcher.fetch_counter` directly where bit-0 is needed.
 pub(in crate::ppu) struct FetchCascade {
     /// NYKA: DFF17, clocked by alet (captures on master-clock fall).
     nyka: bool,
