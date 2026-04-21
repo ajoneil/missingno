@@ -12,7 +12,9 @@ use super::fine_scroll::FineScroll;
 /// On the die, this block also contains the fine scroll counter and
 /// tile fetch state machine (modeled separately as `FineScroll` and
 /// `TileFetcher`). The window control signals gate TYFA (pixel clock)
-/// via SOCY = NOT(RYDY).
+/// via SOCY = NOT(RYDY) — RYDY=1 drops SOCY, which drops TYFA,
+/// raising SACU to halt the pixel pipe until the window tile fetch
+/// completes.
 ///
 /// Inputs: pixel counter (from page 24), PYGO (from cascade), PORY
 /// (cascade clear signal), register values (WX, WY, LCDC).
