@@ -655,6 +655,12 @@ impl Rendering {
         // holds the post-increment value — which will be `state_old` on the
         // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
         // the WODU storage path that caused pix_count to overshoot to 168.
+        //
+        // MYVO (sprite-fetch within-dot clock) appears in VYBO's hardware
+        // decomposition but not in this formula: the emulator evaluates
+        // SACU once per rising phase, which carries one SACU capture event
+        // per master-clock edge — matching the semantic MYVO gates on
+        // hardware without modelling its within-dot toggling waveform.
         let tyfa =
             !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
         self.tyfa = tyfa;
