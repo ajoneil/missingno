@@ -858,12 +858,59 @@ impl Rendering {
         pixel_out
     }
 
-    /// FEPO: combinational OR of all unfetched sprite store X comparators,
-    /// gated by AROR (sprites_enabled). True when any unfetched sprite
-    /// matches the current pixel counter.
+    /// FEPO: sprite X priority aggregate. True when any unfetched
+    /// sprite's stored X matches the current pixel counter.
+    ///
+    /// Collapses the §6.8 Sprite X Match cascade:
+    ///
+    ///   XYLO (LCDC.1) → AROR → 10 per-sprite NAND3 decoders
+    ///                                          ↓
+    ///                             FOVE (sprites 0-4 NAND5)
+    ///                             FEFY (sprites 5-9 NAND5)
+    ///                                          ↓
+    ///                                   FEPO = OR2(FOVE, FEFY)
+    ///
+    /// Collapse boundaries:
+    ///
+    /// - XYLO (LCDC.1 drlatch_ee) → `regs.control.sprites_enabled()`:
+    ///   direct 1:1 mapping via the control register's bit storage.
+    /// - AROR = AND2(XYLO, AZEM), AZEM = AND2(mode3, BYJO): the
+    ///   three combinational gates gating sprite-trigger collapse into
+    ///   a single early-return guard. The `mode3` factor is satisfied
+    ///   by the call site (this method runs inside `mode3_falling`);
+    ///   the BYJO=NOT(CEHA) factor resolves to steady-high during
+    ///   Mode 3 so the AROR chain reduces to XYLO alone at steady
+    ///   state.
+    /// - 10 per-sprite NAND3 decoders (`dego`/`dydu`/`dyka`/`efyl`/
+    ///   `egom`/`xage`/`ybez`/`ydug`/`ygem`/`yloz`) collapse into the
+    ///   `for i in 0..count` loop: each NAND3 fires when its sprite's
+    ///   latched X matches the pixel counter AND AROR=1. The
+    ///   iteration's any-match short-circuit is algebraically
+    ///   equivalent to the OR2(FOVE, FEFY) aggregate — FEPO is
+    ///   asserted whenever any enabled decoder fires.
+    /// - 16 SACU-clocked DFFSRs holding latched per-sprite X-match
+    ///   state + mask-pipe cells (page 33 of the die): their
+    ///   shift-and-latch behaviour collapses into recomputation
+    ///   against `pixel_counter.value()` because the stored X values
+    ///   are fixed during Mode 3 (loaded in Mode 2 OAM scan;
+    ///   `SpriteStoreEntry.x` is stable), the pixel counter advances
+    ///   synchronously with SACU, and the 1-dot FEPO→WODU propagation
+    ///   is modelled by `HblankPipeline::fepo` (see that field's
+    ///   doc-comment). The DFFSR chain exists on hardware to sequence
+    ///   the compare result relative to the pixel pipe; the emulator
+    ///   achieves the same ordering by evaluating FEPO inside the
+    ///   falling phase after the rising phase has advanced the pixel
+    ///   counter.
+    /// - `sprites.entries[i].x < 168` excludes off-screen sprites
+    ///   (X≥168 never match since pixel_counter maxes at 167).
+    ///
+    /// FEPO feeds three consumers (§6.4.1 cascade references):
+    /// `VYBO = NOR3(MYVO, WODU, FEPO)` for CLKPIPE freeze,
+    /// `XENA = NOT(FEPO)` for WODU's hblank gate (§8.2), and
+    /// `TEKY` (combinational sprite-fetch trigger into §6.9).
     fn fepo(&self, regs: &PipelineRegisters) -> bool {
         if !regs.control.sprites_enabled() {
-            return false; // AROR = AND(RENDERING, XYLO). XYLO off -> FEPO low.
+            return false; // AROR = AND(XYLO, AZEM). XYLO=0 forces AROR=0 → FEPO=0.
         }
 
         let match_x = self.pixel_counter.value();
