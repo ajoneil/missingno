@@ -39,8 +39,14 @@
 ///   RENE (dffr, ALET-clocked) captures RYFA. SEKO = NOR2(RENE, RYFA)
 ///   goes high when both drain to 0 (the spec's 8-dot tile-cycle 2-dot
 ///   hold period, per §6.1 "SEKO drain-detector waveform"). Emulator
-///   fires SEKO behaviourally via shifter-drain detection in
-///   `rendering.rs::mode3_pixel_pipeline`.
+///   fires SEKO behaviourally via the `fine_scroll.count == 7`
+///   condition in `rendering.rs::mode3_pixel_pipeline` — fires on the
+///   dot that completes an 8-pixel shift cycle, which matches the
+///   dot at which hardware's RENE/RYFA drain detector would fire
+///   (both trigger at each tile boundary during steady-state
+///   rendering, and both freeze in lockstep during SACU-suppressed
+///   sprite-fetch windows). Observation-equivalent at the
+///   TEVO→NYXU→load-into consumer boundary.
 /// - Window-trigger path: `TUXY → SUZU → TEVO`. TUXY = NAND2(SOVY, SYLO)
 ///   is a RYDY falling-edge detector; SUZU = NOT(TUXY) fires one half-
 ///   cycle per RYDY 1→0 transition. Emulator fires the SUZU path on
