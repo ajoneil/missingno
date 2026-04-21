@@ -56,9 +56,39 @@ pub(in crate::ppu) struct FineScroll {
     pub(in crate::ppu) count: u8,
     /// ROXY NOR latch — gates SACU until fine scroll match fires.
     roxy: Roxy,
-    /// NYZE DFF — captures PUXA (fine scroll match) from previous
-    /// phase. Used for POVA rising-edge detection: POVA = AND2(PUXA,
-    /// !NYZE). Fires once per PUXA 0→1 transition.
+    /// NYZE DFF — stores previous PUXA to support the emulator's
+    /// rising-edge detector for POVA. Hardware formula is level-AND:
+    /// `POVA = AND2(NYZE, PUXA)` where NYZE captures PUXA on MOXE
+    /// rising (one half-cycle lag), giving a pulse that starts when
+    /// NYZE catches up to PUXA=1 and ends when PUXA drops to 0 via
+    /// POHU self-termination (ROXY drain-gate through RONE). Emulator
+    /// instead computes `pova = puxa && !nyze` — a rising-edge detector
+    /// that fires for a single tick.
+    ///
+    /// **Known divergences** (not observation-equivalent at all
+    /// boundaries):
+    ///
+    /// 1. **POVA pulse width**: hardware produces a roughly-one-dot
+    ///    pulse (duration = MOXE half-cycle + propagation until PUXA
+    ///    drops via POHU drain); emulator produces a single-tick pulse.
+    ///    At the ROXY-clear consumer boundary this is benign — ROXY's
+    ///    NOR-latch only needs one rising edge to clear — but the
+    ///    pulse-shape itself differs.
+    /// 2. **Missing POVA contribution to SEMU**: hardware wires
+    ///    `SEMU = OR2(TOBA, POVA)` so each Mode 3 scanline has one
+    ///    extra CP rising edge from the POVA pulse (in addition to the
+    ///    per-pixel TOBA edges starting at PX=9). Emulator computes
+    ///    TOBA directly for pixel output with no POVA contribution; the
+    ///    extra CP edge is absent. The emulator does not model the
+    ///    cp_pad waveform (no rypo/SEMU implementation), so no current
+    ///    consumer observes the missing edge — but the behaviour is
+    ///    absent, not equivalent.
+    ///
+    /// Both divergences reach `cp_pad` / SEMU / rypo territory
+    /// (primary-§ in the LCD output pipeline). Resolution belongs to
+    /// the LCD-output alignment work, not the fine-scroll subsystem.
+    /// Flagged here as an honest-abstraction boundary, not a claim of
+    /// equivalence.
     nyze: bool,
     /// POHU comparator result, computed on PPU clock rise.
     /// PUXA captures this on the next PPU clock fall (when ROXO fires).
