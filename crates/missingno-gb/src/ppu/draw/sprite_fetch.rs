@@ -64,10 +64,18 @@ impl SpriteFetch {
 
     /// Read one byte of sprite tile data (low or high bitplane).
     ///
-    /// On the die, the sprite fetcher (page 29) uses the OAM index
-    /// from the sprite store to look up the tile index and attributes,
-    /// then generates a VRAM address from the tile index, line offset,
-    /// and flip flags. The VRAM interface (page 25) performs the read.
+    /// Collapses the gejy → famu → ~ma4 chain: hardware's gejy AO22
+    /// (XYMO-controlled mux — xuso_n for 8×8, wago = XOR(sprite_y_store_b3,
+    /// wuky) for 8×16) drives the famu tri-state inverter onto bus:~ma4
+    /// when abon = NOR2(tuly, vonu) OR NOT(mode3) goes low — the
+    /// (tuly OR vonu) sprite tile-data fetch window during Mode 3.
+    /// Emulator collapses to indexed VRAM access using live
+    /// `regs.control.sprite_size()` for tile_index masking (8×16:
+    /// tile.0 & 0xFE) and the row-within-sprite computation (flipped_y
+    /// → final_block / final_idx). Live sprite_size read at fetch time
+    /// matches gejy's combinational live-XYMO sampling; the famu enable
+    /// window is implicit via the fetch_counter==3/5 read positions
+    /// (called only inside SpriteState::Fetching).
     fn read_tile_data(&self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram, high: bool) -> u8 {
         let sprite = oam.sprite(SpriteId(self.entry.oam_index));
         let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
