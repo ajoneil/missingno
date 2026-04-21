@@ -70,6 +70,27 @@ pub(in crate::ppu) struct ObjShifter {
     low: u8,
     high: u8,
     palette: u8,
+    /// Mask-pipe shift register (BG-over-OBJ priority per pixel).
+    ///
+    /// Collapses the 8-stage SACU-clocked DFFSR mask pipe bounded
+    /// by VAVA (MSB) and VEZO (LSB), loaded from DEPO's capture of
+    /// OAM attribute bit 7 (BG-over-OBJ priority flag,
+    /// `bus:~oam_a_d7`).
+    ///
+    /// Hardware chain: DEPO (dlatch_ee on attribute bit 7) →
+    /// parallel-load into the mask-pipe DFFSRs at `sfetch_done`;
+    /// mask-pipe shifts left each SACU rising edge; VAVA's Q
+    /// (MSB output) gates BG-pixel visibility via
+    /// RYFU = AND2(RAJY, VAVA) in the pixel output path.
+    ///
+    /// Emulator collapse: 8 DFFSR cells + DEPO + async SET/RST
+    /// parallel-load → single u8. `merge()` loads `priority_bit`
+    /// (from `Attributes::PRIORITY`) into per-pixel positions at
+    /// sprite-fetch-complete; `shift()` advances per SACU edge;
+    /// the MSB read via `(priority >> 7) & 1` feeds the pixel-
+    /// output priority resolution — the same semantic VAVA's Q
+    /// carries on hardware. Structural alignment (shift register
+    /// directly mirrored); no divergence.
     priority: u8,
 }
 
