@@ -622,19 +622,11 @@ impl Rendering {
 
         // TEKY: combinational sprite fetch request.
         //
-        // Before POKY fires (during the initial tile fetch pipeline startup),
-        // TEKY is suppressed. On hardware, the TAVE→NYXU→MOCE combinational
-        // path kills LYRY before TEKY can fire during the initial BG fetch
-        // cascade. The cascade propagation (LYRY → NYKA → PORY → TAVE →
-        // NYXU → LYRY=false) completes within 2 dots, but TEKY would fire
-        // on the falling phase where LYRY first goes true — before TAVE
-        // has fired on the next rising. By suppressing TEKY until POKY fires
-        // (the end of the cascade), we ensure the second BG fetch completes
-        // before sprite triggers can fire.
-        //
-        // After POKY fires (TAVE permanently disabled, normal rendering),
-        // TEKY uses current LYRY directly — sprite triggers fire immediately
-        // when a BG fetch completes.
+        // Hardware: TEKY = AND4(FEPO, !RYDY, LYRY, !TAKA). Emulator's
+        // extra POKY term substitutes for the hardware LYRY-kill chain
+        // during Mode-3 startup (kill settles sub-edge; below half-dot
+        // resolution). POKY=1 steady-state matches the netlist for the
+        // rest of Mode 3.
         let lyry_for_teky = lyry && self.cascade.poky();
         let teky = fepo && !self.window.rydy() && lyry_for_teky && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.capture_sobu(teky);
