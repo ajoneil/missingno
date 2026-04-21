@@ -69,6 +69,21 @@
 ///   equivalent at the parallel-load consumer boundary for the
 ///   clean-ROM case (mid-fetch LCDC writes fall under §6.14's
 ///   already-flagged ambiguity territory).
+///
+/// # Honest-abstraction synthesis (§6.1 emulator-alignment arc, 2026-04-21)
+///
+/// All four collapsed paths above were verified observation-equivalent
+/// at their named consumer boundaries during the §6.1 emulator-alignment
+/// step. The collapsed-vs-modelled split preserves hardware fidelity at
+/// the observable boundaries (TEVO firing dot, BG shifter parallel-load
+/// content, window-trigger timing) while abstracting internals that
+/// would add state without adding observable behaviour. The LYRY → NYKA
+/// → PORY → PYGO → POKY chain is modelled directly because its DFFs
+/// gate the pixel-clock (POKY → TYFA) and the window check (PORY → RYDY
+/// clear) — consumers that read the pipeline's intermediate state on
+/// specific edges. The collapsed chains terminate at combinational
+/// outputs whose boundary-observable value is reproduced exactly by
+/// the behavioural conditions in `rendering.rs` / `window_control.rs`.
 pub(in crate::ppu) struct FetchCascade {
     /// NYKA: DFF17, clocked by alet (captures on master-clock fall).
     nyka: bool,
