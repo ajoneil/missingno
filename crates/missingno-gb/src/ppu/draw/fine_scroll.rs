@@ -18,11 +18,11 @@ enum Roxy {
 /// gate (ROXY). The ROXY latch gates the pixel clock (SACU) until
 /// the counter matches SCX & 7, implementing sub-tile fine scrolling.
 ///
-/// # §6.2 collapsed match-decode signals (not modelled as explicit state)
+/// # Collapsed match-decode signals (not modelled as explicit state)
 ///
-/// The spec's §6.2 Fine Scroll subsystem decodes the counter-matches-SCX
-/// condition through a multi-gate chain that this module collapses to a
-/// single numeric comparison (`count == scx & 7`). Collapsed signals:
+/// The fine-scroll subsystem decodes the counter-matches-SCX condition
+/// through a multi-gate chain that this module collapses to a single
+/// numeric comparison (`count == scx & 7`). Collapsed signals:
 ///
 /// - Per-bit compare: `SUHA = XNOR(ff43_d0, RYKU)`,
 ///   `SYBY = XNOR(ff43_d1, ROGA)`, `SOZU = XNOR(ff43_d2, RUBU)` — three
@@ -47,9 +47,9 @@ enum Roxy {
 /// `roxy == Roxy::Gating` (hardware POHU during ROXY=0 is always 0 via
 /// RONE; emulator bypasses POHU reads during Roxy::Done).
 ///
-/// Counter self-stop (ROZE): spec §6.2 documents `ROZE = NAND3(RUBU, ROGA,
-/// RYKU)` as the count-at-7 self-stop feeding PECU. Emulator collapses this
-/// via `tick()`'s `if self.count < 7` guard — observation-equivalent at the
+/// Counter self-stop (ROZE): `ROZE = NAND3(RUBU, ROGA, RYKU)` is the
+/// count-at-7 self-stop feeding PECU. Emulator collapses this via
+/// `tick()`'s `if self.count < 7` guard — observation-equivalent at the
 /// counter-bits output boundary.
 pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
