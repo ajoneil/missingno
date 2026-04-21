@@ -51,6 +51,43 @@ enum Roxy {
 /// count-at-7 self-stop feeding PECU. Emulator collapses this via
 /// `tick()`'s `if self.count < 7` guard — observation-equivalent at the
 /// counter-bits output boundary.
+///
+/// # Honest-abstraction synthesis
+///
+/// Fine-scroll collapse decisions are split into two categories:
+///
+/// **Observation-equivalent collapses** (internals abstracted; all
+/// visible boundaries reproduce hardware):
+///
+/// - Match decode (SUHA/SYBY/SOZU/RONE → POHU) collapsed into the
+///   numeric `count == scx & 7` compare with ROXY gating implicit in
+///   the consumer pattern (emulator only reads `pohu` while
+///   `roxy == Roxy::Gating`).
+/// - ROZE counter self-stop collapsed into the `count < 7` tick guard.
+/// - PASO reset collapsed into `FineScroll::new()` at scanline reset
+///   and `reset_counter()` at TEVO / window-trigger events.
+/// - ROXY clear transition modelled as a one-shot state change
+///   (`Roxy::Gating → Roxy::Done`) tracking hardware's NOR-latch set-
+///   once-per-scanline semantics; re-arming only at next scanline via
+///   struct reinitialisation.
+///
+/// **Flagged divergences** (known gaps, deferred to adjacent subsystem
+/// alignment; see `nyze` field doc-comment for detail):
+///
+/// - POVA pulse width: hardware level-AND (~1 dot) vs emulator
+///   rising-edge (single tick). Benign at the ROXY-clear consumer;
+///   pulse-shape differs for level-sensitive consumers (none in
+///   emulator currently).
+/// - Missing POVA contribution to SEMU: hardware
+///   `SEMU = OR2(TOBA, POVA)` generates an extra CP rising edge per
+///   Mode 3 scanline; emulator computes TOBA-only pixel output and
+///   doesn't model SEMU / rypo / cp_pad. The extra CP edge is absent.
+///
+/// Both flagged divergences belong to LCD-output-pipeline territory
+/// (SEMU / rypo / cp_pad primary in the output pin drivers). Resolution
+/// awaits the LCD-output alignment arc (tracked in alignment-log's
+/// "Deferred follow-on arcs" section) where cp_pad waveform modelling
+/// would make SEMU's POVA term a real consumer.
 pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
     pub(in crate::ppu) count: u8,
