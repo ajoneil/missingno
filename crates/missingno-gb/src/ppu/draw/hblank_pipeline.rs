@@ -63,11 +63,28 @@ impl HblankPipeline {
         }
     }
 
-    /// WODU: combinational hblank gate. AND2(XUGU, !FEPO).
-    /// On hardware, WODU is purely combinational — it does not
-    /// depend on XYMU. TARU (STAT mode 0) reads WODU directly.
-    pub(in crate::ppu) fn wodu(&self, xugu: bool) -> bool {
-        xugu && !self.fepo
+    /// WODU: combinational hblank gate. Hardware chain:
+    ///
+    ///   WODU = AND2(XENA, XANO)
+    ///   XENA = NOT(FEPO)   — "no sprite match"
+    ///   XANO = NOT(XUGU)   — "PX at terminal count 167"
+    ///   XUGU = NAND5(SYBE, SAVY, TUKY, XEHO, XODU)  — PX=167 decode
+    ///
+    /// Collapsed cascade: `FEPO, XUGU → XENA, XANO → WODU`.
+    ///
+    /// The emulator collapses the XENA and XANO inverters into their
+    /// consumers. `!self.fepo` is the XENA term (inverted inline from
+    /// the `fepo` field rather than storing XENA separately). The
+    /// `xano` parameter is `PixelCounter::terminal()`'s
+    /// positive-at-PX=167 output — which matches XANO's polarity
+    /// (NOT of netlist XUGU's active-low NAND5).
+    ///
+    /// So `xano && !self.fepo` = XANO AND XENA = WODU, matching the
+    /// AND2(XENA, XANO) netlist definition. WODU is purely
+    /// combinational on hardware — it does not depend on XYMU. TARU
+    /// (STAT mode 0) reads WODU directly.
+    pub(in crate::ppu) fn wodu(&self, xano: bool) -> bool {
+        xano && !self.fepo
     }
 
     /// WEGO: OR2(TOFU, VOGA). Combinational — no clock. Drives XYMU's
@@ -89,9 +106,9 @@ impl HblankPipeline {
     /// combinational.
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
-    pub(in crate::ppu) fn capture_voga(&mut self, xugu: bool) -> bool {
+    pub(in crate::ppu) fn capture_voga(&mut self, xano: bool) -> bool {
         // WODU is purely combinational — no XYMU dependency, so always valid.
-        let wodu_now = self.wodu(xugu);
+        let wodu_now = self.wodu(xano);
 
         // VOGA DFF captures CURRENT dot's WODU on this ALET rising edge.
         if wodu_now {
