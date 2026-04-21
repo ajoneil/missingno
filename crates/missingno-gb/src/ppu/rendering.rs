@@ -861,7 +861,7 @@ impl Rendering {
     /// FEPO: sprite X priority aggregate. True when any unfetched
     /// sprite's stored X matches the current pixel counter.
     ///
-    /// Collapses the §6.8 Sprite X Match cascade:
+    /// Collapses the Sprite X Match cascade:
     ///
     ///   XYLO (LCDC.1) → AROR → 10 per-sprite NAND3 decoders
     ///                                          ↓
@@ -889,25 +889,24 @@ impl Rendering {
     ///   equivalent to the OR2(FOVE, FEFY) aggregate — FEPO is
     ///   asserted whenever any enabled decoder fires.
     /// - 16 SACU-clocked DFFSRs holding latched per-sprite X-match
-    ///   state + mask-pipe cells (page 33 of the die): their
-    ///   shift-and-latch behaviour collapses into recomputation
-    ///   against `pixel_counter.value()` because the stored X values
-    ///   are fixed during Mode 3 (loaded in Mode 2 OAM scan;
-    ///   `SpriteStoreEntry.x` is stable), the pixel counter advances
-    ///   synchronously with SACU, and the 1-dot FEPO→WODU propagation
-    ///   is modelled by `HblankPipeline::fepo` (see that field's
-    ///   doc-comment). The DFFSR chain exists on hardware to sequence
-    ///   the compare result relative to the pixel pipe; the emulator
-    ///   achieves the same ordering by evaluating FEPO inside the
-    ///   falling phase after the rising phase has advanced the pixel
-    ///   counter.
+    ///   state + mask-pipe cells: their shift-and-latch behaviour
+    ///   collapses into recomputation against `pixel_counter.value()`
+    ///   because the stored X values are fixed during Mode 3 (loaded
+    ///   in Mode 2 OAM scan; `SpriteStoreEntry.x` is stable), the
+    ///   pixel counter advances synchronously with SACU, and the
+    ///   1-dot FEPO→WODU propagation is modelled by
+    ///   `HblankPipeline::fepo` (see that field's doc-comment). The
+    ///   DFFSR chain exists on hardware to sequence the compare
+    ///   result relative to the pixel pipe; the emulator achieves the
+    ///   same ordering by evaluating FEPO inside the falling phase
+    ///   after the rising phase has advanced the pixel counter.
     /// - `sprites.entries[i].x < 168` excludes off-screen sprites
     ///   (X≥168 never match since pixel_counter maxes at 167).
     ///
-    /// FEPO feeds three consumers (§6.4.1 cascade references):
-    /// `VYBO = NOR3(MYVO, WODU, FEPO)` for CLKPIPE freeze,
-    /// `XENA = NOT(FEPO)` for WODU's hblank gate (§8.2), and
-    /// `TEKY` (combinational sprite-fetch trigger into §6.9).
+    /// FEPO feeds three consumers: `VYBO = NOR3(MYVO, WODU, FEPO)`
+    /// for CLKPIPE freeze, `XENA = NOT(FEPO)` for WODU's hblank gate,
+    /// and `TEKY` (combinational sprite-fetch trigger into the sprite
+    /// fetch state machine).
     fn fepo(&self, regs: &PipelineRegisters) -> bool {
         if !regs.control.sprites_enabled() {
             return false; // AROR = AND(XYLO, AZEM). XYLO=0 forces AROR=0 → FEPO=0.

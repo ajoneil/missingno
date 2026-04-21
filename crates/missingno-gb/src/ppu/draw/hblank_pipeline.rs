@@ -46,7 +46,7 @@ pub(in crate::ppu) struct HblankPipeline {
     /// combinationally. Reset by TADY (line reset chain).
     voga: bool,
     /// Sprite X priority aggregate, latched at start of falling phase.
-    /// FEPO = OR2(FOVE, FEFY) per §6.8.
+    /// FEPO = OR2(FOVE, FEFY).
     ///
     /// Feeds WODU (via `wodu()`'s `!self.fepo` XENA term) and the TYFA
     /// formula in `rendering.rs::mode3_falling` — both consume the
