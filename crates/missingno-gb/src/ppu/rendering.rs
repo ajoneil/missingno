@@ -864,7 +864,8 @@ impl Rendering {
     /// X≥168 sprites are excluded (pixel_counter maxes at 167).
     ///
     /// Feeds VYBO (CLKPIPE freeze), XENA (WODU hblank gate), TEKY
-    /// (sprite-fetch trigger).
+    /// (sprite-fetch trigger). Pixel-MUX XYLO counterpart:
+    /// `draw::pixel_output::resolve_pixel`.
     fn fepo(&self, regs: &PipelineRegisters) -> bool {
         if !regs.control.sprites_enabled() {
             return false; // AROR = AND(XYLO, AZEM). XYLO=0 forces AROR=0 → FEPO=0.

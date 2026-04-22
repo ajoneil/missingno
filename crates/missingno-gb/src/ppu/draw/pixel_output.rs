@@ -25,8 +25,9 @@ use crate::ppu::{
 
 use super::shifters::{BgShifter, ObjShifter};
 
-/// Resolve BG and OBJ pixel values into a final palette index through
-/// priority logic and palette mapping.
+/// Pixel-MUX sprite-output chain: `xula` (plane-B AND2, xylo & wufy),
+/// `woxa` (plane-A AND2, xylo & vupy), `nuly` NOR2, `poka` NOR3.
+/// `sprites_enabled` carries XYLO.
 fn resolve_pixel(
     bg_lo: u8,
     bg_hi: u8,
