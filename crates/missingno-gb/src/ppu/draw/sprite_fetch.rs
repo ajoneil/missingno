@@ -32,16 +32,9 @@ pub enum SpriteFetchPhase {
 /// counter-terminal state that the u8 check detects directly.
 ///
 /// Also collapses the sprite temp-latch layer — 16 dlatch_ee_q cells
-/// (plane A: PEFO/ROKA/MYTU/RAMU/SELE/SUTO/RAMA/RYDU enabled by
+/// (plane A: PEFO/ROKA/MYTU/RAMU/SELE/SUTO/RAMA/RYDU via
 /// `latch_sp_bp_a`; plane B: REWO/PEBA/MOFO/PUDU/SAJA/SUNY/SEMO/SEGA
-/// enabled by `latch_sp_bp_b`) that capture the VRAM data bus
-/// (sp_d0..sp_d7) during each plane's data cycle. The emulator stores
-/// the captured byte directly into `tile_data_low` / `tile_data_high`
-/// at counter = 3 / 5 — the same dots at which hardware's latch enables
-/// fire — and holds it there until the wuty pulse consumes it via
-/// `merge_into`. Observation-equivalent at dot granularity; the
-/// intermediate bus-to-latch-to-NAND2-pair chain is not separately
-/// representable in the emulator's integer-dot timing.
+/// via `latch_sp_bp_b`) into `tile_data_low` / `tile_data_high`.
 pub(in crate::ppu) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(in crate::ppu) entry: SpriteStoreEntry,
@@ -49,15 +42,11 @@ pub(in crate::ppu) struct SpriteFetch {
     /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
     /// Self-stops at 5 via TAME clock gating.
     fetch_counter: u8,
-    /// Plane-A sprite tile byte. Collapses the 8 plane-A temp latches
-    /// (PEFO d0 / ROKA d1 / MYTU d2 / RAMU d3 / SELE d4 / SUTO d5 /
-    /// RAMA d6 / RYDU d7) — captured at counter = 3 (latch_sp_bp_a
-    /// window), held through counter = 5 until the wuty merge fires.
+    /// Plane-A tile byte — PEFO/ROKA/MYTU/RAMU/SELE/SUTO/RAMA/RYDU
+    /// temp latches, captured at counter = 3 (latch_sp_bp_a).
     tile_data_low: u8,
-    /// Plane-B sprite tile byte. Collapses the 8 plane-B temp latches
-    /// (REWO d0 / PEBA d1 / MOFO d2 / PUDU d3 / SAJA d4 / SUNY d5 /
-    /// SEMO d6 / SEGA d7) — captured at counter = 5 (latch_sp_bp_b
-    /// window, same dot as wuty fires and the merge consumes both).
+    /// Plane-B tile byte — REWO/PEBA/MOFO/PUDU/SAJA/SUNY/SEMO/SEGA
+    /// temp latches, captured at counter = 5 (latch_sp_bp_b).
     tile_data_high: u8,
 }
 
@@ -147,25 +136,9 @@ impl SpriteFetch {
         false
     }
 
-    /// Parallel-load the sprite temp-latch content into the OBJ shifter.
-    ///
-    /// Called on the wuty pulse (fetch complete at counter = 5). Hardware
-    /// wuty = NOT(vusa) rises, xefy = NOT(wuty) falls, the per-stage
-    /// sprite_onN gates assert at transparent shifter positions, and the
-    /// NAND2 pair at each dffsr's s_n / r_n drives the parallel-load from
-    /// the temp-latch content. Merge is transparency-conditional per stage
-    /// (see `ObjShifter::merge`).
-    ///
-    /// X-flip collapses hardware's bit-order reversal during load: the
-    /// shifter always reads its stage-7 Q as the leftmost pixel, so flipped
-    /// sprites must have their bit-order reversed going into the parallel-
-    /// load path. `reverse_bits` on the temp-latch bytes is the emulator's
-    /// equivalent of that reversal at the load boundary.
-    ///
-    /// Palette and priority bits come directly from the sprite's OAM
-    /// attributes (DEPO captures the priority bit from OAM-A bit 7), not
-    /// from the shift-register chain — they are broadcast uniformly to
-    /// all 8 stages that the transparency gate allows to load.
+    /// wuty-pulse merge — temp-latch bytes into ObjShifter via the
+    /// sprite_onN transparency gate. X-flip reversal applied here.
+    /// Palette / priority broadcast from OAM attributes (DEPO for priority).
     pub(in crate::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter, oam: &Oam) {
         let sprite = oam.sprite(SpriteId(self.entry.oam_index));
 
