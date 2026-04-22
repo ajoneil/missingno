@@ -51,33 +51,25 @@ impl BgShifter {
     }
 }
 
-/// Sprite pixel shift register (pages 33-34 on the die).
+/// Sprite pixel shift register.
 ///
-/// Four parallel 8-bit shift registers matching the hardware's DFF22 cells:
-/// - `low`/`high`: sprite bitplanes (SprPipeA/SprPipeB, page 33)
-/// - `palette`: palette selection bit per pixel (PalPipe, page 34)
-/// - `priority`: BG-over-OBJ priority bit per pixel (MaskPipe, page 26)
+/// Four parallel 8-bit shifters collapsed into four u8 fields:
+/// - `low` — sprite plane A: NYLU → PEFU → NATY → PYJO → VARE → WEBA →
+///   VANU → VUPY (stage 0 → 7 via dffsr `d` pin; stage-0 d=const0).
+/// - `high` — sprite plane B: NURO → MASO → LEFE → LESU → WYHO → WORA →
+///   VAFO → WUFY (same shift-chain structure).
+/// - `palette` — per-pixel OBJ palette selection shifter.
+/// - `priority` — mask pipe (VAVA MSB → VEZO LSB), BG-over-OBJ priority
+///   bit per pixel loaded from DEPO's capture of OAM attribute bit 7.
 ///
-/// On hardware, this is always 8 flip-flops that shift on every SACU clock
-/// edge unconditionally. Zero shifts in from bit 0. When no sprite has been
-/// loaded, all bits are 0 (transparent). The pixel mux determines
-/// transparency by checking if the color index is 0 (NULY NOR gate).
-///
-/// Sprites are merged via async SET/RST (same DFF22 mechanism as BG tile
-/// loads). The transparency mask prevents new sprite data from overwriting
-/// positions that already contain opaque pixels from a higher-priority sprite.
+/// All 32 dffsr cells are clocked by SACU (pixel pump); shift enters via
+/// the dffsr `d` pin from the previous stage's Q. Parallel-load fires
+/// asynchronously via NAND2-pair-driven s_n/r_n. Shift and parallel-load
+/// are independent mechanisms.
 pub(in crate::ppu) struct ObjShifter {
     low: u8,
     high: u8,
     palette: u8,
-    /// Mask-pipe shift register (BG-over-OBJ priority per pixel).
-    ///
-    /// Collapses the 8-stage SACU-clocked DFFSR mask pipe (VAVA MSB
-    /// → VEZO LSB) loaded from DEPO's capture of OAM attribute bit 7
-    /// into a single u8. `merge()` parallel-loads priority bits at
-    /// sprite-fetch-complete (DEPO → mask-pipe async SET/RST);
-    /// `shift()` advances each SACU edge; MSB read carries VAVA.Q
-    /// to the pixel-output priority decision.
     priority: u8,
 }
 
@@ -91,10 +83,10 @@ impl ObjShifter {
         }
     }
 
-    /// Read the MSB data — the shift register's output pins.
-    /// On hardware, bit 7 is always readable. When the pipe contains
-    /// all zeros (no sprite loaded or transparent pixel), the color
-    /// index is 0 and the pixel mux treats it as transparent.
+    /// Read the MSB data — the stage-7 dffsr Q outputs (sprite_px_a7 /
+    /// sprite_px_b7 plus palette / mask-pipe MSBs). When all four planes
+    /// at MSB are 0, the color index is 0 and the pixel mux treats it as
+    /// transparent (NULY NOR gate, XYLO-gated at `woxa` / `xula`).
     pub(in crate::ppu) fn read(&self) -> (u8, u8, u8, u8) {
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
@@ -103,9 +95,10 @@ impl ObjShifter {
         (lo, hi, pal, pri)
     }
 
-    /// Shift the register left by one position (SACU clock edge).
-    /// On hardware, the OBJ pipe shifts unconditionally — zero fills
-    /// in from bit 0 on every clock edge regardless of pipe contents.
+    /// Advance each dffsr's d input through the `d → clk → Q` rising-edge
+    /// capture. All four planes shift unconditionally on each SACU edge;
+    /// zero fills in from bit 0 because stage-0 cells NYLU / NURO (and
+    /// their palette / mask-pipe counterparts) have `d = const0`.
     pub(in crate::ppu) fn shift(&mut self) {
         self.low <<= 1;
         self.high <<= 1;
@@ -117,17 +110,35 @@ impl ObjShifter {
         (self.low, self.high, self.palette, self.priority)
     }
 
-    /// Merge sprite tile data into the shifter at fixed positions
-    /// (tile bit N → pipe bit N), with a per-bit transparency mask.
+    /// Parallel-load at wuty pulse — transparency-conditional per stage.
     ///
-    /// On hardware, the merge is a DFF22 async SET/RST that fires on
-    /// sfetch_done. The SPRITE_MASK signals (OR of existing pipe bits
-    /// at each position) prevent new sprite data from overwriting
-    /// positions with existing opaque pixels (first-sprite-wins priority).
+    /// Collapses the per-stage sprite_onN gate chain
+    /// (`sprite_onN = NOR3(xefy, sprite_px_aN, sprite_px_bN)`, where
+    /// xefy = NOT(wuty)) and the NAND2 pair at each dffsr's s_n / r_n.
+    /// Fires once per sprite-fetch completion; at each stage N the load
+    /// asserts only when the current shifter position is transparent
+    /// (both planes bit = 0) — the first-fetched sprite's opaque pixels
+    /// are preserved, later sprites fill only still-transparent positions.
+    /// The sprite-to-sprite overlap priority rule (lower OAM index wins
+    /// at same X) emerges from this gate combined with OAM-scan order
+    /// and the §6.8 X-match fetch sequencing.
     ///
-    /// `sprite_low`/`sprite_high` are the raw bitplane bytes from the
-    /// sprite tile fetch (already X-flipped if needed). `palette_bit`
-    /// and `priority_bit` are uniform for all 8 pixels of this sprite.
+    /// The emulator's two-check form (incoming-transparent short-circuit
+    /// + existing-opaque gate) is observation-equivalent: when incoming
+    /// is transparent and existing is transparent, hardware would reset
+    /// the cell to 0 (already 0 — no visible change); all other combinations
+    /// match the written code path exactly.
+    ///
+    /// The mask-pipe and palette-pipe per-stage loads are modelled with
+    /// the same transparency gating as planes A/B (honest-abstraction —
+    /// at transparent sprite-plane positions these bits are not consumed
+    /// at the pixel mux, so their values there are moot).
+    ///
+    /// `sprite_low`/`sprite_high` are the sprite tile bitplane bytes
+    /// captured by the sprite temp latches (PEFO/ROKA/MYTU/.. for plane A;
+    /// REWO/PEBA/MOFO/.. for plane B); x-flip reversal already applied.
+    /// `palette_bit` / `priority_bit` are broadcast uniformly from the
+    /// sprite's OAM attributes (DEPO capture of bit 7 for priority).
     pub(in crate::ppu) fn merge(
         &mut self,
         sprite_low: u8,
@@ -140,17 +151,16 @@ impl ObjShifter {
             let hi = (sprite_high >> bit_pos) & 1;
             let color = (hi << 1) | lo;
             if color == 0 {
-                continue; // Transparent sprite pixel — don't overwrite
+                continue;
             }
 
             let existing_lo = (self.low >> bit_pos) & 1;
             let existing_hi = (self.high >> bit_pos) & 1;
             let existing_color = (existing_hi << 1) | existing_lo;
             if existing_color != 0 {
-                continue; // Existing opaque pixel wins (DMG priority)
+                continue;
             }
 
-            // Write this sprite's pixel into the slot
             let mask = 1 << bit_pos;
             self.low = (self.low & !mask) | (lo << bit_pos);
             self.high = (self.high & !mask) | (hi << bit_pos);
