@@ -375,13 +375,6 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
-        // Capture interrupt state so HALT sees it. g42 ticks below to
-        // sample interrupt_pending into the DFF output.
-        {
-            let triggered = self.interrupts.triggered();
-            self.cpu.update_interrupt_state(triggered);
-        }
-
         let (ns, pixel) = self.apply_ppu_result(&video_result);
         new_screen |= ns;
 
@@ -402,6 +395,15 @@ impl GameBoy {
                 }
                 self.write_byte(address, value);
             }
+        }
+
+        // Capture interrupt state AFTER bus writes so IF updates from a CPU
+        // write to 0xFF0F (or STAT edges from PPU register writes) are
+        // visible to update_interrupt_state on the same fall. g42 ticks on
+        // the next rise to sample interrupt_pending into the DFF output.
+        {
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
         }
 
         if is_mcycle_boundary {
