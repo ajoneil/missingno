@@ -543,10 +543,12 @@ impl Cpu {
         // at this boundary's PPU rise (g42 hasn't captured yet). The cascade
         // settling decision below uses `g42_pending_dots`.
         if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            if self.g42_pending_dots >= 4 {
-                // g42 was held true for the full previous M-cycle — the
-                // g42→g43→g49 cascade has had ≥4 CLK9 edges to propagate.
-                // Skip the wakeup NOP and dispatch ISR directly.
+            if self.g42_pending_dots >= 5 {
+                // g42_q was true at the prior M-cycle boundary (held through
+                // ≥4 dots of the previous M-cycle plus ≥1 dot before that).
+                // PHI has had time to re-enable; skip the wakeup NOP and
+                // dispatch ISR directly. Empirically matches DocBoy reference
+                // for int_timer_halt and gambatte/halt_lycint tests.
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
@@ -1130,7 +1132,7 @@ impl Cpu {
     pub fn tick_g42(&mut self) {
         self.g42_q = self.interrupt_pending;
         if self.g42_q {
-            self.g42_pending_dots = self.g42_pending_dots.saturating_add(1).min(4);
+            self.g42_pending_dots = self.g42_pending_dots.saturating_add(1).min(5);
         } else {
             self.g42_pending_dots = 0;
         }

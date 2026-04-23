@@ -300,9 +300,11 @@ impl GameBoy {
         // G4.2 confirmed WODU doesn't depend on XYMU, making the
         // prediction reliable.
 
-        // g151: CLK9-clocked DFF delays timer overflow → IF by 1 dot.
-        // Drain at every rising edge so that overflow detected at fall()
-        // is visible to update_interrupt_state in the next fall().
+        // Drain timer overflow → IF.timer at every rising edge so overflow
+        // detected in fall() is visible to update_interrupt_state in the
+        // next fall(). Per spec §12.4, hardware delays TIMA overflow → IF
+        // bit 2 by one M-cycle (the reload cycle) via the nydu/moba
+        // clk_1mhz DFF chain — modeled as a one-tick handoff here.
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
         }

@@ -169,14 +169,14 @@ pub struct Cpu {
     /// (once per T-cycle = once per dot). Read by the dispatch check at
     /// instruction boundaries and by HALT wakeup.
     pub(super) g42_q: bool,
-    /// Consecutive dots `g42_q` has been held true. Models how long the
-    /// g42 → g43 → g49 cascade has had to settle before the next M-cycle
-    /// boundary's HALT wakeup check. A value of 4 means g42 was true for
-    /// the full previous M-cycle; HALT wakeup uses ≥ 4 as the
-    /// "cascade-already-settled" predicate (fast path → immediate ISR).
-    /// Below 4 takes the slow path (wakeup NOP, dispatch on the M-cycle
-    /// after). Saturates at 4 — higher values would never change the
-    /// decision.
+    /// Consecutive dots `g42_q` has been held true. Models how long PHI
+    /// (CPU clock) has had to re-enable after a HALT wake condition. The
+    /// HALT fast path (immediate ISR, skipping the wakeup NOP) requires
+    /// `g42_q` to have been true at the PRIOR M-cycle boundary — i.e.,
+    /// pending for ≥1 full M-cycle (4 dots) PLUS at least 1 additional
+    /// dot before that, so threshold ≥ 5. Below 5 takes the slow path
+    /// (one wakeup NOP M-cycle, then dispatch). Saturates at 5 — higher
+    /// values would never change the decision.
     pub(super) g42_pending_dots: u8,
     /// Set when the wakeup NOP Read[PC] has been emitted and the next
     /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
