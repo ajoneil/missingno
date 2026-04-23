@@ -52,14 +52,12 @@ pub enum EiDelay {
     Fired,
 }
 
-/// Models the CPU's interrupt dispatch latch (g42 DFF).
+/// Selected-interrupt latch consumed at the dispatch check.
 ///
-/// On hardware, the g42 DFF samples `IF & IE` combinationally at the
-/// M-cycle boundary. The PPU fires IF and the CPU checks dispatch at
-/// the same edge — there is no multi-cycle pipeline delay. The
-/// executor ensures `update_interrupt_state` runs after PPU rise and
-/// before the CPU's M-cycle transition so that `take_ready()` sees
-/// interrupts from the current boundary.
+/// Tracks which interrupt the priority encoder selected from `IF & IE`
+/// while IME=1. The g42 DFF on hardware gates whether dispatch fires;
+/// this latch carries which vector to dispatch to. `take_ready()`
+/// consumes the selection at the dispatch site.
 #[derive(Clone, Copy)]
 pub(super) enum InterruptLatch {
     /// No interrupt pending.
@@ -164,29 +162,22 @@ pub struct Cpu {
     /// step_instruction().
     pub(super) boundary_flag: bool,
     /// Whether an interrupt is currently pending (IF & IE != 0).
-    /// Updated every dot by `update_interrupt_state`. Used by the CPU
-    /// state machine for the HALT bug check.
+    /// Combinational input to the g42 DFF; also consumed directly by the
+    /// HALT bug check.
     pub(super) interrupt_pending: bool,
-    /// g42 DFF output: latched interrupt-pending state for HALT wakeup.
-    /// Sampled from `interrupt_pending` (IF & IE != 0) at dot 1 of every
-    /// M-cycle. Only consulted by `mcycle_halted` — running-mode dispatch
-    /// in `mcycle_fetch` uses the existing `interrupt_latch` / `take_ready()`
-    /// path without gating.
-    pub(super) g42_interrupt_pending: bool,
-    /// Snapshot of `g42_interrupt_pending` from the PREVIOUS M-cycle boundary.
-    /// When true at the point of wakeup detection, the g42→g43→g49 pipeline
-    /// has already propagated during the idle M-cycle, so the wakeup NOP can
-    /// be skipped and ISR dispatch proceeds immediately.
-    pub(super) g42_was_pending: bool,
-    /// g42 DFF mid-M-cycle snapshot: whether `interrupt_pending` was true
-    /// at dot 1 of the current M-cycle. When true at the next M-cycle
-    /// boundary, the g42->g43->g49 cascade has had >= 3 CLK9 edges to
-    /// propagate, so the wakeup NOP can be skipped (fast path).
-    ///
-    /// Reset to `false` at each M-cycle boundary. Set from
-    /// `interrupt_pending` at dot 1 (the first non-boundary dot after
-    /// the boundary). Not updated on dots 2-3.
-    pub(super) g42_mid_mcycle: bool,
+    /// g42 DFF output. Captures `interrupt_pending` on every CLK9 edge
+    /// (once per T-cycle = once per dot). Read by the dispatch check at
+    /// instruction boundaries and by HALT wakeup.
+    pub(super) g42_q: bool,
+    /// Consecutive dots `g42_q` has been held true. Models how long the
+    /// g42 → g43 → g49 cascade has had to settle before the next M-cycle
+    /// boundary's HALT wakeup check. A value of 4 means g42 was true for
+    /// the full previous M-cycle; HALT wakeup uses ≥ 4 as the
+    /// "cascade-already-settled" predicate (fast path → immediate ISR).
+    /// Below 4 takes the slow path (wakeup NOP, dispatch on the M-cycle
+    /// after). Saturates at 4 — higher values would never change the
+    /// decision.
+    pub(super) g42_pending_dots: u8,
     /// Set when the wakeup NOP Read[PC] has been emitted and the next
     /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
     /// extra M-cycle between HALT wakeup detection and ISR dispatch.
@@ -239,9 +230,8 @@ impl Cpu {
             boundary_flag: true, // Start at an instruction boundary
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
+            g42_q: false,
+            g42_pending_dots: 0,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -284,9 +274,8 @@ impl Cpu {
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
+            g42_q: false,
+            g42_pending_dots: 0,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -345,9 +334,8 @@ impl Cpu {
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
+            g42_q: false,
+            g42_pending_dots: 0,
             halt_isr_dispatch_pending: false,
         }
     }

@@ -161,28 +161,23 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At M-cycle boundaries, the g42 DFF latches interrupt state from
-    /// the previous M-cycle BEFORE the PPU's rising phase fires new IF
-    /// bits. Then the PPU rise and interrupt capture run, updating
-    /// interrupt_pending for the NEXT g42 latch. Finally, `next_dot`
-    /// transitions the CPU, where dispatch checks gate on the just-
-    /// latched g42 value.
+    /// The g42 DFF samples `interrupt_pending` once per dot (CLK9 edge)
+    /// in `fall()`. The dispatch check in `next_dot` consumes `g42_q` —
+    /// the value captured at end of the previous fall — so interrupts
+    /// asserted at this boundary's PPU rise are not visible until the
+    /// next M-cycle boundary (matching spec §13.1).
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: g42 latch, then PPU + interrupt capture ──
+        // ── M-cycle boundary: PPU + interrupt capture ──
         if is_mcycle_boundary {
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
 
             // Timer ticks once per M-cycle (BOGA).
             self.timers.mcycle();
-
-            // g42 DFF: latch IF & IE from the PREVIOUS M-cycle.
-            self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
-            self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
 
             // PPU master-clock rising edge at the M-cycle boundary (dot 0).
             let ppu_result = self.ppu.on_master_clock_rise();
@@ -272,13 +267,6 @@ impl GameBoy {
                 }
             }
 
-            // Snapshot LY==LYC comparison state before the PPU's
-            // master-clock rising edge. ROPO latches LYC comparison at
-            // TALU rising edge during on_master_clock_rise(). If the
-            // comparison transitions to match, this is a TALU-cascade-
-            // driven interrupt.
-            let lyc_was_matched = self.ppu.ly_eq_lyc();
-
             // PPU master-clock rising edge for non-boundary dots.
             let ppu_result = self.ppu.on_master_clock_rise();
             if ppu_result.request_vblank {
@@ -297,54 +285,9 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // g42 mid-M-cycle cascade propagation: when VBlank or LYC
-            // fires from the TALU cascade during PPU rise, g42 samples
-            // IF&IE. If the new interrupt makes IF&IE non-zero, g42
-            // captures it. On hardware, the cascade needs ~3 CLK9 edges
-            // to propagate. Our emulator's divider alignment may place
-            // these events at a different dot than hardware, so we
-            // accept any non-boundary dot and let mcycle_halted use it
-            // as the fast-path signal.
-            //
-            // Only VBlank and LYC (TALU-cascade-driven) qualify; HBlank
-            // and timer arrive through different paths and are excluded.
-            // The g42 DFF gates on IF&IE, not just IF — the interrupt
-            // source must also be in IE.
-            // VBlank fires from the TALU cascade. g42 captures IF&IE.
-            // The VBlank event can trigger either the VBlank interrupt
-            // (IF bit 0, if IE.vblank) or the STAT interrupt (IF bit 1,
-            // if IE.stat and STAT VBlank mode flag set). Either makes
-            // IF&IE non-zero, so g42 goes high for either path.
-            if ppu_result.request_vblank
-                && (self.interrupts.enabled(Interrupt::VideoBetweenFrames)
-                    || (stat_edge && self.interrupts.enabled(Interrupt::VideoStatus)))
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-            if !lyc_was_matched
-                && self.ppu.ly_eq_lyc()
-                && stat_edge
-                && self.interrupts.enabled(Interrupt::VideoStatus)
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-            // HBlank (mode 0) STAT edge: the ALET-settle cascade
-            // (VOGA→XYMU→TARU→STAT→IF→g42) can propagate within the
-            // same M-cycle if the edge fires early enough. On hardware,
-            // g42 needs ~3 CLK9 edges (1.5 dots) to settle. Edges at
-            // dots 0–1 have enough remaining time; dots 2–3 do not.
-            // Only relevant during HALT — running instructions use the
-            // DFF-latched g42 pipeline which correctly excludes this.
-            if stat_edge
-                && self.cpu.is_halted()
-                && self.interrupts.enabled(Interrupt::VideoStatus)
-                && self.ppu.mode() == ppu::rendering::Mode::HorizontalBlank
-                && self.current_dot.as_u8() <= 1
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-
-            // Capture interrupt state for non-boundary dots.
+            // Capture interrupt state for non-boundary dots. g42 ticks
+            // in the matching fall(), capturing this dot's interrupt_pending
+            // for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
@@ -419,39 +362,19 @@ impl GameBoy {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
-        // g42 mid-M-cycle cascade: events from the TALU cascade (now in
-        // fall) need to propagate to g42 for HALT wakeup. VBlank and
-        // LYC-driven STAT edges can both trigger g42.
-        if video_result.request_vblank
-            && (self.interrupts.enabled(Interrupt::VideoBetweenFrames)
-                || (stat_edge && self.interrupts.enabled(Interrupt::VideoStatus)))
-        {
-            self.cpu.g42_mid_mcycle = true;
-        }
-        // STAT edges from TALU cascade (LYC, VBlank) and from HBlank
-        // (VOGA→XYMU, confirmed by dmg-sim to fire in fall()) all need
-        // g42 propagation for HALT wakeup. The HBlank edge was
-        // previously handled by settle_alet in rise(), but now correctly
-        // fires here in fall().
-        if stat_edge
-            && self.cpu.is_halted()
-            && self.interrupts.enabled(Interrupt::VideoStatus)
-        {
-            // Check if HBlank just fired — mode transitioned to HBlank
-            // in this fall(). Only propagate g42 early enough in the
-            // M-cycle for the cascade to settle before the next boundary.
-            let is_hblank = self.ppu.mode() == ppu::rendering::Mode::HorizontalBlank;
-            let is_lyc = self.ppu.ly_eq_lyc();
-            if is_lyc || (is_hblank && dot.as_u8() <= 1) {
-                self.cpu.g42_mid_mcycle = true;
-            }
-        }
-
-        // Capture interrupt state so HALT sees it.
+        // Capture interrupt state so HALT sees it. g42 ticks below to
+        // sample interrupt_pending into the DFF output.
         {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
+
+        // CLK9 edge: g42 captures interrupt_pending once per dot.
+        // Placed in fall() (one master-clock edge per T-cycle) after
+        // update_interrupt_state so the DFF reflects this dot's IF state.
+        // Bus writes from this dot's CPU action follow below; their effect
+        // on IE/IF will be reflected in the next dot's tick.
+        self.cpu.tick_g42();
 
         let (ns, pixel) = self.apply_ppu_result(&video_result);
         new_screen |= ns;

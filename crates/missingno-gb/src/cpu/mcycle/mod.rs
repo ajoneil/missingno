@@ -438,8 +438,10 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Check for interrupt dispatch
-            if self.g42_interrupt_pending && self.interrupt_latch.take_ready().is_some() {
+            // Check for interrupt dispatch. g42_q reflects interrupt_pending
+            // sampled at the previous CLK9 edge — interrupts asserted at this
+            // boundary itself are not yet visible (per spec §13.1).
+            if self.g42_q && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
@@ -513,12 +515,6 @@ impl Cpu {
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
 
-        // Consume g42_mid_mcycle: snapshot from dot 1 of the previous
-        // M-cycle. If an interrupt fired at dot 1, the g42->g43->g49
-        // cascade had enough time (3 CLK9 edges) to propagate.
-        let g42_mid = self.g42_mid_mcycle;
-        self.g42_mid_mcycle = false;
-
         // ── IME=1 wakeup: deferred ISR dispatch ──
         // If the wakeup NOP was emitted last M-cycle, now dispatch to ISR.
         if self.halt_isr_dispatch_pending {
@@ -543,14 +539,14 @@ impl Cpu {
         }
 
         // ── IME=1 wakeup ──
-        // Use combinational interrupt_pending (updated after PPU rise on
-        // every dot) rather than the DFF-latched g42.  HALT has no
-        // pipeline to drain, so the combinational state is correct.
+        // Combinational `interrupt_pending` covers the case where IF asserts
+        // at this boundary's PPU rise (g42 hasn't captured yet). The cascade
+        // settling decision below uses `g42_pending_dots`.
         if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            if self.g42_was_pending || g42_mid {
-                // g42 was already latched at the prior M-cycle boundary —
-                // the g42→g43→g49 pipeline propagated during the idle
-                // M-cycle. Skip the wakeup NOP and dispatch ISR directly.
+            if self.g42_pending_dots >= 4 {
+                // g42 was held true for the full previous M-cycle — the
+                // g42→g43→g49 cascade has had ≥4 CLK9 edges to propagate.
+                // Skip the wakeup NOP and dispatch ISR directly.
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
@@ -569,10 +565,10 @@ impl Cpu {
                 self.pending_vector_resolve = false;
                 return self.mcycle_isr(0);
             } else {
-                // g42 just latched this boundary — emit Read[PC] as the
-                // wakeup NOP. A dummy fetch that is discarded. On hardware,
-                // PC increments here and ISR M0 decrements it back; we skip
-                // both for the same net effect.
+                // g42 just transitioned to true (or hasn't held long enough).
+                // Emit Read[PC] as the wakeup NOP — a dummy fetch that is
+                // discarded. On hardware, PC increments here and ISR M0
+                // decrements it back; we skip both for the same net effect.
                 self.halt_isr_dispatch_pending = true;
                 self.advance_ei_delay();
                 return Some(BusAction::Read {
@@ -1125,6 +1121,18 @@ impl Cpu {
             && triggered.is_some()
         {
             self.halt_wakeup_pending = true;
+        }
+    }
+
+    /// Clock g42 — capture the current `interrupt_pending` value into the
+    /// g42 DFF output and update the consecutive-dots-pending counter.
+    /// Called once per dot (one CLK9 edge per T-cycle) by the executor.
+    pub fn tick_g42(&mut self) {
+        self.g42_q = self.interrupt_pending;
+        if self.g42_q {
+            self.g42_pending_dots = self.g42_pending_dots.saturating_add(1).min(4);
+        } else {
+            self.g42_pending_dots = 0;
         }
     }
 
