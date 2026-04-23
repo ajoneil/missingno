@@ -164,6 +164,11 @@ pub struct Cpu {
     /// once per M-cycle on the master-clock rising edge. Read by the
     /// instruction-boundary dispatch check and by HALT wakeup.
     pub(super) g42_q: bool,
+    /// `int_entry` DFF output. Master-clock-cadence; captures `g42_q` one
+    /// M-cycle after `g42_q↑`. Gates interrupt dispatch; models the
+    /// ~1 M-cycle settling period between halt-release / interrupt-
+    /// recognition and ISR M1 start (spec §13.2).
+    pub(super) int_entry_q: bool,
 }
 
 impl Cpu {
@@ -213,6 +218,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
+            int_entry_q: false,
         }
     }
 
@@ -255,6 +261,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
+            int_entry_q: false,
         }
     }
 
@@ -313,6 +320,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
+            int_entry_q: false,
         }
     }
 

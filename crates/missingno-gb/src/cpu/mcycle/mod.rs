@@ -438,10 +438,11 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Check for interrupt dispatch. g42_q reflects interrupt_pending
-            // sampled at the previous CLK9 edge — interrupts asserted at this
-            // boundary itself are not yet visible (per spec §13.1).
-            if self.g42_q && self.interrupt_latch.take_ready().is_some() {
+            // Check for interrupt dispatch. int_entry_q reflects g42_q
+            // sampled at the previous CLK9 edge — the two-DFF pipeline
+            // (g42 → int_entry) yields ~1 M-cycle of settling between
+            // interrupt recognition and ISR M1 start (spec §13.2 / §13.5).
+            if self.int_entry_q && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
@@ -514,9 +515,11 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
 
         // ── IME=1 wakeup ──
-        // Dispatch when g42 has captured the IF. Per-source wakeup latency
-        // (PPU vs timer) emerges from g42's CLK9 setup-time differential.
-        if self.interrupt_pending && self.g42_q && self.interrupt_latch.take_ready().is_some() {
+        // Dispatch when int_entry has re-clocked g42. The two-DFF pipeline
+        // (g42 → int_entry) yields ~1 M-cycle of settling between halt-
+        // release and ISR M1 start (spec §13.2 / §13.5).
+        if self.interrupt_pending && self.int_entry_q && self.interrupt_latch.take_ready().is_some()
+        {
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
@@ -1087,6 +1090,14 @@ impl Cpu {
         self.g42_q = self.interrupt_pending;
     }
 
+    /// Clock `int_entry` — master-clock-cadence DFF, captures `g42_q`
+    /// once per M-cycle on the master-clock rising edge. Output gates
+    /// interrupt dispatch. Must be ticked BEFORE `tick_g42()` at each
+    /// M-cycle boundary (shift-register order: sample the downstream
+    /// DFF before the upstream DFF captures its new value).
+    pub fn tick_int_entry(&mut self) {
+        self.int_entry_q = self.g42_q;
+    }
 }
 
 #[derive(Clone, Copy)]

@@ -172,6 +172,12 @@ impl GameBoy {
 
         // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
+            // Two-DFF interrupt pipeline captures at the CLK9 rising edge.
+            // Shift-register discipline: sample the downstream DFF
+            // (int_entry) BEFORE the upstream DFF (g42) updates, so
+            // int_entry reads g42_q's pre-edge value (i.e. the value
+            // latched at the previous CLK9↑).
+            self.cpu.tick_int_entry();
             // g42 (yoii) captures interrupt_pending at the CLK9 rising edge.
             // Runs before any new IFs from this boundary's work — sources
             // that fire after this point miss the setup window and are
