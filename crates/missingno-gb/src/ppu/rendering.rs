@@ -663,19 +663,6 @@ impl Rendering {
         // (reg_old), matching hardware.
         self.fine_scroll
             .compare_falling(regs.background_viewport.x.output());
-
-        // REMY/RAVO combinational refresh: if a palette write resolved
-        // this dot, re-resolve the current pixel with the new palette
-        // values. On hardware, REMY/RAVO is combinational and immediately
-        // reflects palette changes — no pipeline delay.
-        if palette_changed {
-            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                self.window.window_zero_pixel_mut(),
-                regs,
-            ));
-        }
     }
 
     /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
