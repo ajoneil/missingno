@@ -13,13 +13,8 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
-/// Models the CPU's execution state with respect to the HALT instruction.
-///
-/// On hardware, HALT puts the CPU into a low-power idle loop where it
-/// continues to tick hardware (PPU, timers, etc.) each M-cycle but
-/// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
-/// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
-/// resume until the next M-cycle — the wakeup NOP.
+/// CPU execution state w.r.t. the HALT instruction. Halt-release fires
+/// combinationally via g43 → g49 once g42 captures `(IF & IE) != 0`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -165,22 +160,10 @@ pub struct Cpu {
     /// Combinational input to the g42 DFF; also consumed directly by the
     /// HALT bug check.
     pub(super) interrupt_pending: bool,
-    /// g42 DFF output. Captures `interrupt_pending` on every CLK9 edge
-    /// (once per T-cycle = once per dot). Read by the dispatch check at
-    /// instruction boundaries and by HALT wakeup.
+    /// g42 (yoii) DFF output. CLK9-clocked; captures `interrupt_pending`
+    /// once per M-cycle on the master-clock rising edge. Read by the
+    /// instruction-boundary dispatch check and by HALT wakeup.
     pub(super) g42_q: bool,
-    /// Snapshot of `g42_q` at the prior M-cycle boundary. Approximates the
-    /// state of g49 (the dispatch-ready RS latch, set combinationally from
-    /// g42 via g43) at that boundary. The HALT fast path (immediate ISR,
-    /// skipping the wakeup NOP) is legitimate only when this is true —
-    /// PHI was already re-enabling during the previous idle M-cycle. False
-    /// means g42_q transitioned to true within the current M-cycle, so a
-    /// wakeup NOP M-cycle is needed for PHI to re-enable.
-    pub(super) g42_was_pending: bool,
-    /// Set when the wakeup NOP Read[PC] has been emitted and the next
-    /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
-    /// extra M-cycle between HALT wakeup detection and ISR dispatch.
-    pub(super) halt_isr_dispatch_pending: bool,
 }
 
 impl Cpu {
@@ -230,8 +213,6 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_was_pending: false,
-            halt_isr_dispatch_pending: false,
         }
     }
 
@@ -274,8 +255,6 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_was_pending: false,
-            halt_isr_dispatch_pending: false,
         }
     }
 
@@ -334,8 +313,6 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_was_pending: false,
-            halt_isr_dispatch_pending: false,
         }
     }
 

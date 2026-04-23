@@ -161,18 +161,23 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// The g42 DFF samples `interrupt_pending` once per dot (CLK9 edge)
-    /// in `fall()`. The dispatch check in `next_dot` consumes `g42_q` —
-    /// the value captured at end of the previous fall — so interrupts
-    /// asserted at this boundary's PPU rise are not visible until the
-    /// next M-cycle boundary (matching spec §13.1).
+    /// At each M-cycle boundary, g42 (yoii) captures interrupt_pending
+    /// at the start of the rise — before any new IFs from this rise's
+    /// timer/PPU work. IFs asserted later in the rise miss this
+    /// boundary's CLK9↑ setup window and are captured at the next.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: PPU + interrupt capture ──
+        // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
+            // g42 (yoii) captures interrupt_pending at the CLK9 rising edge.
+            // Runs before any new IFs from this boundary's work — sources
+            // that fire after this point miss the setup window and are
+            // captured at the next M-cycle's CLK9↑.
+            self.cpu.tick_g42();
+
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
 
@@ -201,16 +206,8 @@ impl GameBoy {
         }
 
         // ── CPU dot advance ──
-        // The dispatch check inside next_dot reads g42_was_pending (snapshot
-        // from the PRIOR M-cycle boundary). After next_dot, refresh the
-        // snapshot from g42_q so the NEXT boundary's check sees this
-        // boundary's value.
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
-
-        if is_mcycle_boundary {
-            self.cpu.snapshot_g42_at_mcycle_boundary();
-        }
 
         // IE push bug: check after each M-cycle transition.
         if self.cpu.take_pending_vector_resolve() {
@@ -378,13 +375,6 @@ impl GameBoy {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
-
-        // CLK9 edge: g42 captures interrupt_pending once per dot.
-        // Placed in fall() (one master-clock edge per T-cycle) after
-        // update_interrupt_state so the DFF reflects this dot's IF state.
-        // Bus writes from this dot's CPU action follow below; their effect
-        // on IE/IF will be reflected in the next dot's tick.
-        self.cpu.tick_g42();
 
         let (ns, pixel) = self.apply_ppu_result(&video_result);
         new_screen |= ns;

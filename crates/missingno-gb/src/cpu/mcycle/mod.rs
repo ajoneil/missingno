@@ -505,20 +505,18 @@ impl Cpu {
 
     /// Halted phase: one HALT idle M-cycle.
     ///
-    /// Checks the interrupt pipeline. When an IME=1 interrupt is detected,
-    /// emits a wakeup NOP Read[PC] and defers ISR dispatch to the next
-    /// M-cycle via `halt_isr_dispatch_pending`. Each call is exactly one
-    /// M-cycle.
+    /// Each call is exactly one M-cycle. Dispatches to ISR when g42 has
+    /// captured an unmasked IF (IME=1) or signals wakeup (IME=0).
     fn mcycle_halted(&mut self, read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
 
-        // ── IME=1 wakeup: deferred ISR dispatch ──
-        // If the wakeup NOP was emitted last M-cycle, now dispatch to ISR.
-        if self.halt_isr_dispatch_pending {
-            self.halt_isr_dispatch_pending = false;
+        // ── IME=1 wakeup ──
+        // Dispatch when g42 has captured the IF. Per-source wakeup latency
+        // (PPU vs timer) emerges from g42's CLK9 setup-time differential.
+        if self.interrupt_pending && self.g42_q && self.interrupt_latch.take_ready().is_some() {
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
@@ -538,69 +536,16 @@ impl Cpu {
             return self.mcycle_isr(0);
         }
 
-        // ── IME=1 wakeup ──
-        // Combinational `interrupt_pending` covers the case where IF asserts
-        // at this boundary's PPU rise (g42 hasn't captured yet). The cascade
-        // settling decision below uses `g42_pending_dots`.
-        if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            if self.g42_was_pending {
-                // g42_q was true at the prior M-cycle boundary, so PHI was
-                // already re-enabling during the previous idle M-cycle.
-                // Skip the wakeup NOP and dispatch ISR directly.
-                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
-                self.ei_delay = None;
-                self.halt_state = HaltState::Running;
-
-                let pc = self.pc;
-                let pc_hi = (pc >> 8) as u8;
-                let pc_lo = (pc & 0xff) as u8;
-                let sp = self.stack_pointer;
-
-                self.phase = CpuPhase::InterruptDispatch {
-                    sp,
-                    pc_hi,
-                    pc_lo,
-                    step: 0,
-                };
-                self.pending_vector_resolve = false;
-                return self.mcycle_isr(0);
-            } else {
-                // g42 just transitioned to true (or hasn't held long enough).
-                // Emit Read[PC] as the wakeup NOP — a dummy fetch that is
-                // discarded. On hardware, PC increments here and ISR M0
-                // decrements it back; we skip both for the same net effect.
-                self.halt_isr_dispatch_pending = true;
-                self.advance_ei_delay();
-                return Some(BusAction::Read {
-                    address: self.bus_counter,
-                });
-            }
-        }
-
         // ── IME=0 wakeup ──
-        // On hardware, the HALT idle loop already reads [PC] every M-cycle.
-        // When wakeup occurs and PHI was already re-enabling (g42_q true at
-        // prior boundary), that read is consumed as the opcode — no extra
-        // fetch M-cycle. Otherwise an extra wakeup-NOP M-cycle is needed
-        // for PHI re-enable, same mechanism as the IME=1 path.
-        if self.interrupt_pending && self.halt_wakeup_pending {
-            if self.g42_was_pending {
-                // Fast path: consume the idle Read as the opcode.
-                self.halt_wakeup_pending = false;
-                self.halt_state = HaltState::Running;
-                self.advance_ei_delay();
-                self.phase = CpuPhase::Fetch;
-                self.exec_step = 1;
-                return self.mcycle_fetch(read_value);
-            } else {
-                // Slow path: emit one wakeup-NOP idle Read; next M-cycle
-                // boundary's mcycle_halted will see g42_was_pending=true
-                // and take the fast path. halt_wakeup_pending stays set.
-                self.advance_ei_delay();
-                return Some(BusAction::Read {
-                    address: self.bus_counter,
-                });
-            }
+        // Consume the idle Read as the next opcode when g42 has captured
+        // the IF. Same g42_q gate as IME=1 dispatch.
+        if self.interrupt_pending && self.g42_q && self.halt_wakeup_pending {
+            self.halt_wakeup_pending = false;
+            self.halt_state = HaltState::Running;
+            self.advance_ei_delay();
+            self.phase = CpuPhase::Fetch;
+            self.exec_step = 1;
+            return self.mcycle_fetch(read_value);
         }
 
         // ── Still halted ──
@@ -1136,41 +1081,12 @@ impl Cpu {
         }
     }
 
-    /// Clock g42 — capture the current `interrupt_pending` value into the
-    /// g42 DFF output. Called once per dot (one CLK9 edge per T-cycle) by
-    /// the executor.
+    /// Clock g42 (yoii) — CLK9-cadence DFF, captures interrupt_pending
+    /// once per M-cycle on the master-clock rising edge.
     pub fn tick_g42(&mut self) {
         self.g42_q = self.interrupt_pending;
     }
 
-    /// Snapshot `g42_q` into `g42_was_pending` at an M-cycle boundary.
-    /// Called by the executor after the boundary's dispatch check has read
-    /// the prior snapshot, so the new snapshot reflects g42_q at this
-    /// boundary (used by the next boundary's dispatch decision).
-    pub fn snapshot_g42_at_mcycle_boundary(&mut self) {
-        self.g42_was_pending = self.g42_q;
-    }
-
-    /// Re-evaluate HALT wakeup after a late interrupt arrived on the same
-    /// M-cycle boundary dot where mcycle_halted already emitted an idle
-    /// Read[PC].
-    ///
-    /// On hardware, the ALET-settle cascade (VOGA->XYMU->TARU->STAT->g42)
-    /// propagates within the same M-cycle. The idle read serves as the
-    /// wakeup NOP, and ISR dispatch begins on the next M-cycle boundary.
-    pub fn retry_halt_wakeup(&mut self) {
-        if self.halt_state != HaltState::Halted {
-            return;
-        }
-
-        // IME=1: consume the interrupt latch and set dispatch pending.
-        // The current idle Read[PC] becomes the wakeup NOP.
-        if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            self.halt_isr_dispatch_pending = true;
-        }
-
-        // IME=0: update_interrupt_state already set halt_wakeup_pending.
-    }
 }
 
 #[derive(Clone, Copy)]
