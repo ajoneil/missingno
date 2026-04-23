@@ -201,8 +201,16 @@ impl GameBoy {
         }
 
         // ── CPU dot advance ──
+        // The dispatch check inside next_dot reads g42_was_pending (snapshot
+        // from the PRIOR M-cycle boundary). After next_dot, refresh the
+        // snapshot from g42_q so the NEXT boundary's check sees this
+        // boundary's value.
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
+
+        if is_mcycle_boundary {
+            self.cpu.snapshot_g42_at_mcycle_boundary();
+        }
 
         // IE push bug: check after each M-cycle transition.
         if self.cpu.take_pending_vector_resolve() {

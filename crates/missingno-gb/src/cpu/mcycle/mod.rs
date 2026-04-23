@@ -543,12 +543,10 @@ impl Cpu {
         // at this boundary's PPU rise (g42 hasn't captured yet). The cascade
         // settling decision below uses `g42_pending_dots`.
         if self.interrupt_pending && self.interrupt_latch.take_ready().is_some() {
-            if self.g42_pending_dots >= 5 {
-                // g42_q was true at the prior M-cycle boundary (held through
-                // ≥4 dots of the previous M-cycle plus ≥1 dot before that).
-                // PHI has had time to re-enable; skip the wakeup NOP and
-                // dispatch ISR directly. Empirically matches DocBoy reference
-                // for int_timer_halt and gambatte/halt_lycint tests.
+            if self.g42_was_pending {
+                // g42_q was true at the prior M-cycle boundary, so PHI was
+                // already re-enabling during the previous idle M-cycle.
+                // Skip the wakeup NOP and dispatch ISR directly.
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
                 self.ei_delay = None;
                 self.halt_state = HaltState::Running;
@@ -1127,15 +1125,18 @@ impl Cpu {
     }
 
     /// Clock g42 — capture the current `interrupt_pending` value into the
-    /// g42 DFF output and update the consecutive-dots-pending counter.
-    /// Called once per dot (one CLK9 edge per T-cycle) by the executor.
+    /// g42 DFF output. Called once per dot (one CLK9 edge per T-cycle) by
+    /// the executor.
     pub fn tick_g42(&mut self) {
         self.g42_q = self.interrupt_pending;
-        if self.g42_q {
-            self.g42_pending_dots = self.g42_pending_dots.saturating_add(1).min(5);
-        } else {
-            self.g42_pending_dots = 0;
-        }
+    }
+
+    /// Snapshot `g42_q` into `g42_was_pending` at an M-cycle boundary.
+    /// Called by the executor after the boundary's dispatch check has read
+    /// the prior snapshot, so the new snapshot reflects g42_q at this
+    /// boundary (used by the next boundary's dispatch decision).
+    pub fn snapshot_g42_at_mcycle_boundary(&mut self) {
+        self.g42_was_pending = self.g42_q;
     }
 
     /// Re-evaluate HALT wakeup after a late interrupt arrived on the same

@@ -169,15 +169,14 @@ pub struct Cpu {
     /// (once per T-cycle = once per dot). Read by the dispatch check at
     /// instruction boundaries and by HALT wakeup.
     pub(super) g42_q: bool,
-    /// Consecutive dots `g42_q` has been held true. Models how long PHI
-    /// (CPU clock) has had to re-enable after a HALT wake condition. The
-    /// HALT fast path (immediate ISR, skipping the wakeup NOP) requires
-    /// `g42_q` to have been true at the PRIOR M-cycle boundary — i.e.,
-    /// pending for ≥1 full M-cycle (4 dots) PLUS at least 1 additional
-    /// dot before that, so threshold ≥ 5. Below 5 takes the slow path
-    /// (one wakeup NOP M-cycle, then dispatch). Saturates at 5 — higher
-    /// values would never change the decision.
-    pub(super) g42_pending_dots: u8,
+    /// Snapshot of `g42_q` at the prior M-cycle boundary. Approximates the
+    /// state of g49 (the dispatch-ready RS latch, set combinationally from
+    /// g42 via g43) at that boundary. The HALT fast path (immediate ISR,
+    /// skipping the wakeup NOP) is legitimate only when this is true —
+    /// PHI was already re-enabling during the previous idle M-cycle. False
+    /// means g42_q transitioned to true within the current M-cycle, so a
+    /// wakeup NOP M-cycle is needed for PHI to re-enable.
+    pub(super) g42_was_pending: bool,
     /// Set when the wakeup NOP Read[PC] has been emitted and the next
     /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
     /// extra M-cycle between HALT wakeup detection and ISR dispatch.
@@ -231,7 +230,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_pending_dots: 0,
+            g42_was_pending: false,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -275,7 +274,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_pending_dots: 0,
+            g42_was_pending: false,
             halt_isr_dispatch_pending: false,
         }
     }
@@ -335,7 +334,7 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            g42_pending_dots: 0,
+            g42_was_pending: false,
             halt_isr_dispatch_pending: false,
         }
     }
