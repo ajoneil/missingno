@@ -577,18 +577,30 @@ impl Cpu {
             }
         }
 
-        // ── IME=0 wakeup: consume the idle read as the opcode ──
-        // On hardware, the HALT idle loop already reads [PC] every
-        // M-cycle. When wakeup occurs, that read is consumed as the
-        // opcode — no extra fetch M-cycle. Chain directly to
-        // mcycle_fetch step 1 with the idle read's value.
+        // ── IME=0 wakeup ──
+        // On hardware, the HALT idle loop already reads [PC] every M-cycle.
+        // When wakeup occurs and PHI was already re-enabling (g42_q true at
+        // prior boundary), that read is consumed as the opcode — no extra
+        // fetch M-cycle. Otherwise an extra wakeup-NOP M-cycle is needed
+        // for PHI re-enable, same mechanism as the IME=1 path.
         if self.interrupt_pending && self.halt_wakeup_pending {
-            self.halt_wakeup_pending = false;
-            self.halt_state = HaltState::Running;
-            self.advance_ei_delay();
-            self.phase = CpuPhase::Fetch;
-            self.exec_step = 1;
-            return self.mcycle_fetch(read_value);
+            if self.g42_was_pending {
+                // Fast path: consume the idle Read as the opcode.
+                self.halt_wakeup_pending = false;
+                self.halt_state = HaltState::Running;
+                self.advance_ei_delay();
+                self.phase = CpuPhase::Fetch;
+                self.exec_step = 1;
+                return self.mcycle_fetch(read_value);
+            } else {
+                // Slow path: emit one wakeup-NOP idle Read; next M-cycle
+                // boundary's mcycle_halted will see g42_was_pending=true
+                // and take the fast path. halt_wakeup_pending stays set.
+                self.advance_ei_delay();
+                return Some(BusAction::Read {
+                    address: self.bus_counter,
+                });
+            }
         }
 
         // ── Still halted ──
