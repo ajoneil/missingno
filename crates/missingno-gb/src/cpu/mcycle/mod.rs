@@ -438,12 +438,12 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Check for interrupt dispatch. dispatch_ready_q is the
-            // running-CPU `int_entry` DFF output — a single master-clock
+            // Check for interrupt dispatch. int_entry (zacw) is the
+            // running-CPU dispatch-ready DFF — a single master-clock
             // DFF stage between `interrupt_pending` and the dispatch
             // gate (dmg-sim zacw_inst.d = zfex; zfex is combinational
             // from int_pending).
-            if self.dispatch_ready_q && self.interrupt_latch.take_ready().is_some() {
+            if self.int_entry.output() && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
                 self.ime.write_immediate(InterruptMasterEnable::Disabled);
@@ -516,17 +516,15 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
 
         // ── IME=1 wakeup ──
-        // Dispatch gate matches running-CPU dispatch: `dispatch_ready_q`
-        // is the `int_entry` (zacw_inst) DFF — a single master-clock DFF
-        // stage between IF assertion and ISR M1 entry, captured in
-        // parallel with `g42` on the same CLK9↑ that sees
-        // `interrupt_pending` with setup margin. `g42` drives the
+        // Dispatch gate matches running-CPU dispatch: int_entry (zacw) is
+        // a single master-clock DFF stage between IF assertion and ISR
+        // M1 entry, captured in parallel with g42 on the same CLK9↑ that
+        // sees `interrupt_pending` with setup margin. g42 drives the
         // combinational HALT release chain (g42 → g43 → g49 → halt↓);
-        // `int_entry` gates dispatch. Both sample `interrupt_pending`
-        // independently — there is no shift-register ordering between
-        // them.
+        // int_entry gates dispatch. Both sample `interrupt_pending`
+        // independently — no shift-register ordering between them.
         if self.interrupt_pending
-            && self.dispatch_ready_q
+            && self.int_entry.output()
             && self.interrupt_latch.take_ready().is_some()
         {
             self.ime.write_immediate(InterruptMasterEnable::Disabled);
@@ -554,7 +552,7 @@ impl Cpu {
         // The fetch M-cycle begins at the next BOGA edge, where the
         // phase dispatcher will route to mcycle_fetch.
         if self.interrupt_pending
-            && self.g42_q
+            && self.g42.output()
             && self.ime.output() == InterruptMasterEnable::Disabled
         {
             self.halt_state = HaltState::Running;
@@ -1093,16 +1091,18 @@ impl Cpu {
     /// once per M-cycle on the master-clock rising edge. Drives the HALT
     /// release chain (g42 → g43 → g49).
     pub fn tick_g42(&mut self) {
-        self.g42_q = self.interrupt_pending;
+        self.g42.write(self.interrupt_pending);
+        self.g42.tick();
     }
 
-    /// Clock the running-CPU `int_entry` DFF — captures `interrupt_pending`
-    /// directly (not `g42_q`). Models hardware `zacw_inst.d = zfex`
-    /// (dmg-sim sm83.sv): `int_take` is combinational from `int_pending`
-    /// with IME/boundary gating, so `int_entry` is a single master-clock
+    /// Clock int_entry (zacw) — captures `interrupt_pending` directly
+    /// (not `g42.output()`). Hardware cell: `zacw_inst.d = zfex`
+    /// (dmg-sim sm83.sv). `int_take` is combinational from `int_pending`
+    /// with IME/boundary gating, so int_entry is a single master-clock
     /// DFF stage between IF assertion and ISR M1 entry.
     pub fn tick_dispatch_ready(&mut self) {
-        self.dispatch_ready_q = self.interrupt_pending;
+        self.int_entry.write(self.interrupt_pending);
+        self.int_entry.tick();
     }
 }
 

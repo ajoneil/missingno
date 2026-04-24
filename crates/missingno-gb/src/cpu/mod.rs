@@ -161,17 +161,16 @@ pub struct Cpu {
     /// Combinational input to the g42 DFF; also consumed directly by the
     /// HALT bug check.
     pub(super) interrupt_pending: bool,
-    /// g42 (yoii) DFF output. CLK9-cadence; captures `interrupt_pending`
+    /// g42 (yoii) flip-flop. CLK9-cadence; captures `interrupt_pending`
     /// once per M-cycle on the master-clock rising edge. Drives the HALT
-    /// release chain (g42 → g43 → g49) and, via the per-M-cycle sampling
-    /// cadence, produces the per-source HALT-wake timing differential of
-    /// §13.5 (timer vs PPU IFs).
-    pub(super) g42_q: bool,
-    /// `int_entry` DFF output for the running-CPU dispatch-ready chain
-    /// (dmg-sim `zacw_inst.d = zfex`). Captures `interrupt_pending` once
-    /// per M-cycle on the master-clock rising edge — single DFF stage
-    /// between IF assertion and ISR M1 entry.
-    pub(super) dispatch_ready_q: bool,
+    /// release chain (g42 → g43 → g49) and produces the per-source
+    /// HALT-wake timing differential (timer vs PPU IFs).
+    pub(super) g42: Dff<bool>,
+    /// int_entry (zacw) flip-flop for the running-CPU dispatch-ready
+    /// chain. Captures `interrupt_pending` once per M-cycle on the
+    /// master-clock rising edge — single DFF stage between IF assertion
+    /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
+    pub(super) int_entry: Dff<bool>,
 }
 
 impl Cpu {
@@ -219,8 +218,8 @@ impl Cpu {
             boundary_flag: true, // Start at an instruction boundary
 
             interrupt_pending: false,
-            g42_q: false,
-            dispatch_ready_q: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
@@ -261,8 +260,8 @@ impl Cpu {
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_q: false,
-            dispatch_ready_q: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
@@ -319,8 +318,8 @@ impl Cpu {
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_q: false,
-            dispatch_ready_q: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
