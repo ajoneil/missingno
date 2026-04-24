@@ -435,6 +435,14 @@ impl Rendering {
         self.scan.tick_catu(video.xupy(), video.ly());
     }
 
+    /// Promote the RUTU latch's pending input to its output. Called
+    /// after `tick_catu` within the same PPU clock fall phase so the
+    /// CATU reader at this fall sees the pre-promotion value, giving
+    /// the one-XUPY-cycle RUTU→CATU latency.
+    pub(super) fn tick_rutu(&mut self) {
+        self.scan.tick_rutu();
+    }
+
     /// PPU clock fall (master-clock rise; gate: ALET falling): output
     /// phase dispatcher.
     ///
