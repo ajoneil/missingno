@@ -516,13 +516,17 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
 
         // ── IME=1 wakeup ──
-        // Dispatch via the emulator's two-stage HALT chain: g42_q
-        // captured by halt_dispatch_ready_q one M-cycle later. Hardware
-        // has a single `int_entry` DFF after halt release, but the §13
-        // HALT-wake latency tests are currently calibrated against this
-        // two-stage path.
+        // Dispatch gate matches running-CPU dispatch: `dispatch_ready_q`
+        // is the `int_entry` (zacw_inst) DFF — a single master-clock DFF
+        // stage between IF assertion and ISR M1 entry, captured in
+        // parallel with `g42` on the same CLK9↑ that sees
+        // `interrupt_pending` with setup margin. `g42` drives the
+        // combinational HALT release chain (g42 → g43 → g49 → halt↓);
+        // `int_entry` gates dispatch. Both sample `interrupt_pending`
+        // independently — there is no shift-register ordering between
+        // them.
         if self.interrupt_pending
-            && self.halt_dispatch_ready_q
+            && self.dispatch_ready_q
             && self.interrupt_latch.take_ready().is_some()
         {
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
@@ -1099,20 +1103,6 @@ impl Cpu {
     /// DFF stage between IF assertion and ISR M1 entry.
     pub fn tick_dispatch_ready(&mut self) {
         self.dispatch_ready_q = self.interrupt_pending;
-    }
-
-    /// Clock the HALT IME=1 dispatch DFF — captures `g42_q` once per
-    /// M-cycle on the master-clock rising edge. Emulator-side second
-    /// stage that models the settling delay between halt-release
-    /// (combinational from g42.q) and the next instruction-boundary
-    /// dispatch check. Must be ticked BEFORE `tick_g42()` at each
-    /// M-cycle boundary (shift-register order: sample the downstream
-    /// DFF before the upstream DFF captures its new value).
-    ///
-    /// The §13 HALT-wake latencies (timer=6 M-cycles, PPU=5) are
-    /// currently calibrated against this two-stage path.
-    pub fn tick_halt_dispatch_ready(&mut self) {
-        self.halt_dispatch_ready_q = self.g42_q;
     }
 }
 
