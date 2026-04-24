@@ -160,15 +160,30 @@ pub struct Cpu {
     /// Combinational input to the g42 DFF; also consumed directly by the
     /// HALT bug check.
     pub(super) interrupt_pending: bool,
-    /// g42 (yoii) DFF output. CLK9-clocked; captures `interrupt_pending`
-    /// once per M-cycle on the master-clock rising edge. Read by the
-    /// instruction-boundary dispatch check and by HALT wakeup.
+    /// g42 (yoii) DFF output. CLK9-cadence; captures `interrupt_pending`
+    /// once per M-cycle on the master-clock rising edge. Drives the HALT
+    /// release chain (g42 → g43 → g49) and, via the per-M-cycle sampling
+    /// cadence, produces the per-source HALT-wake timing differential of
+    /// §13.5 (timer vs PPU IFs).
     pub(super) g42_q: bool,
-    /// `int_entry` DFF output. Master-clock-cadence; captures `g42_q` one
-    /// M-cycle after `g42_q↑`. Gates interrupt dispatch; models the
-    /// ~1 M-cycle settling period between halt-release / interrupt-
-    /// recognition and ISR M1 start (spec §13.2).
-    pub(super) int_entry_q: bool,
+    /// `int_entry` DFF output for the running-CPU dispatch-ready chain
+    /// (dmg-sim `zacw_inst.d = zfex`). Captures `interrupt_pending` once
+    /// per M-cycle on the master-clock rising edge — single DFF stage
+    /// between IF assertion and ISR M1 entry.
+    pub(super) dispatch_ready_q: bool,
+    /// DFF output for the HALT IME=1 dispatch chain. Captures `g42_q`
+    /// once per M-cycle on the master-clock rising edge — an emulator-
+    /// side shift register that models the settling delay between halt
+    /// release (combinational from g42.q) and the next instruction-
+    /// boundary dispatch check.
+    ///
+    /// Hardware has no second DFF here: the HALT chain converges back
+    /// into the same `int_entry` DFF. Empirical per-source HALT-wake
+    /// latencies (timer=6 M-cycles, PPU=5) are currently calibrated
+    /// against this two-stage emulator path; preserving this field keeps
+    /// the HALT-wake test suite passing while running-CPU dispatch is
+    /// corrected.
+    pub(super) halt_dispatch_ready_q: bool,
 }
 
 impl Cpu {
@@ -218,7 +233,8 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            int_entry_q: false,
+            dispatch_ready_q: false,
+            halt_dispatch_ready_q: false,
         }
     }
 
@@ -261,7 +277,8 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            int_entry_q: false,
+            dispatch_ready_q: false,
+            halt_dispatch_ready_q: false,
         }
     }
 
@@ -320,7 +337,8 @@ impl Cpu {
 
             interrupt_pending: false,
             g42_q: false,
-            int_entry_q: false,
+            dispatch_ready_q: false,
+            halt_dispatch_ready_q: false,
         }
     }
 

@@ -161,28 +161,29 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At each M-cycle boundary, g42 (yoii) captures interrupt_pending
-    /// at the start of the rise — before any new IFs from this rise's
-    /// timer/PPU work. IFs asserted later in the rise miss this
-    /// boundary's CLK9↑ setup window and are captured at the next.
+    /// At each M-cycle boundary, three interrupt-chain DFFs capture at
+    /// the CLK9 rising edge: the HALT-chain `halt_dispatch_ready`
+    /// (samples `g42_q`), `g42` (samples `interrupt_pending`), and the
+    /// running-CPU `dispatch_ready` (samples `interrupt_pending`). IFs
+    /// asserted later in the rise miss this boundary's CLK9↑ setup
+    /// window and are captured at the next.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
+        // ── M-cycle boundary: interrupt-chain DFF captures, then PPU
+        //    + interrupt updates ──
         if is_mcycle_boundary {
-            // Two-DFF interrupt pipeline captures at the CLK9 rising edge.
-            // Shift-register discipline: sample the downstream DFF
-            // (int_entry) BEFORE the upstream DFF (g42) updates, so
-            // int_entry reads g42_q's pre-edge value (i.e. the value
-            // latched at the previous CLK9↑).
-            self.cpu.tick_int_entry();
-            // g42 (yoii) captures interrupt_pending at the CLK9 rising edge.
-            // Runs before any new IFs from this boundary's work — sources
-            // that fire after this point miss the setup window and are
-            // captured at the next M-cycle's CLK9↑.
-            self.cpu.tick_g42();
+            // Three interrupt-chain DFFs capture at the CLK9 rising
+            // edge. All three sample values that have been
+            // combinationally stable since the previous edge's fall()
+            // `update_interrupt_state`. Shift-register discipline
+            // applies only to `halt_dispatch_ready`, which samples
+            // `g42_q` — so it must run BEFORE `tick_g42`.
+            self.cpu.tick_halt_dispatch_ready(); // samples pre-edge g42_q
+            self.cpu.tick_g42(); // samples pre-edge interrupt_pending
+            self.cpu.tick_dispatch_ready(); // samples pre-edge interrupt_pending
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;

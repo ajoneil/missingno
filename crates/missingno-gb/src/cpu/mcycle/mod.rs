@@ -438,11 +438,12 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Check for interrupt dispatch. int_entry_q reflects g42_q
-            // sampled at the previous CLK9 edge — the two-DFF pipeline
-            // (g42 → int_entry) yields ~1 M-cycle of settling between
-            // interrupt recognition and ISR M1 start (spec §13.2 / §13.5).
-            if self.int_entry_q && self.interrupt_latch.take_ready().is_some() {
+            // Check for interrupt dispatch. dispatch_ready_q is the
+            // running-CPU `int_entry` DFF output — a single master-clock
+            // DFF stage between `interrupt_pending` and the dispatch
+            // gate (dmg-sim zacw_inst.d = zfex; zfex is combinational
+            // from int_pending).
+            if self.dispatch_ready_q && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
                 self.interrupt_master_enable = InterruptMasterEnable::Disabled;
@@ -515,10 +516,14 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
 
         // ── IME=1 wakeup ──
-        // Dispatch when int_entry has re-clocked g42. The two-DFF pipeline
-        // (g42 → int_entry) yields ~1 M-cycle of settling between halt-
-        // release and ISR M1 start (spec §13.2 / §13.5).
-        if self.interrupt_pending && self.int_entry_q && self.interrupt_latch.take_ready().is_some()
+        // Dispatch via the emulator's two-stage HALT chain: g42_q
+        // captured by halt_dispatch_ready_q one M-cycle later. Hardware
+        // has a single `int_entry` DFF after halt release, but the §13
+        // HALT-wake latency tests are currently calibrated against this
+        // two-stage path.
+        if self.interrupt_pending
+            && self.halt_dispatch_ready_q
+            && self.interrupt_latch.take_ready().is_some()
         {
             self.interrupt_master_enable = InterruptMasterEnable::Disabled;
             self.ei_delay = None;
@@ -1085,18 +1090,33 @@ impl Cpu {
     }
 
     /// Clock g42 (yoii) — CLK9-cadence DFF, captures interrupt_pending
-    /// once per M-cycle on the master-clock rising edge.
+    /// once per M-cycle on the master-clock rising edge. Drives the HALT
+    /// release chain (g42 → g43 → g49).
     pub fn tick_g42(&mut self) {
         self.g42_q = self.interrupt_pending;
     }
 
-    /// Clock `int_entry` — master-clock-cadence DFF, captures `g42_q`
-    /// once per M-cycle on the master-clock rising edge. Output gates
-    /// interrupt dispatch. Must be ticked BEFORE `tick_g42()` at each
+    /// Clock the running-CPU `int_entry` DFF — captures `interrupt_pending`
+    /// directly (not `g42_q`). Models hardware `zacw_inst.d = zfex`
+    /// (dmg-sim sm83.sv): `int_take` is combinational from `int_pending`
+    /// with IME/boundary gating, so `int_entry` is a single master-clock
+    /// DFF stage between IF assertion and ISR M1 entry.
+    pub fn tick_dispatch_ready(&mut self) {
+        self.dispatch_ready_q = self.interrupt_pending;
+    }
+
+    /// Clock the HALT IME=1 dispatch DFF — captures `g42_q` once per
+    /// M-cycle on the master-clock rising edge. Emulator-side second
+    /// stage that models the settling delay between halt-release
+    /// (combinational from g42.q) and the next instruction-boundary
+    /// dispatch check. Must be ticked BEFORE `tick_g42()` at each
     /// M-cycle boundary (shift-register order: sample the downstream
     /// DFF before the upstream DFF captures its new value).
-    pub fn tick_int_entry(&mut self) {
-        self.int_entry_q = self.g42_q;
+    ///
+    /// The §13 HALT-wake latencies (timer=6 M-cycles, PPU=5) are
+    /// currently calibrated against this two-stage path.
+    pub fn tick_halt_dispatch_ready(&mut self) {
+        self.halt_dispatch_ready_q = self.g42_q;
     }
 }
 
