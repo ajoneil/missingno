@@ -24,6 +24,15 @@ pub(in crate::ppu) struct SpriteScanner {
     /// BESU scanning latch — drives ACYL for STAT mode bits and OAM bus locking.
     /// Set by CATU only when catu_enabled is true (NOT set on LCD-on line 0).
     besu: bool,
+    /// STAT-readout mirror of `besu`. Captured at the start of each
+    /// PPU-clock-fall from the pre-fall internal value, so `Ppu::mode()`
+    /// sees the pre-transition value across the AVAP integer dot —
+    /// matching GateBoy's gbtrace adapter sampling phase. Not a hardware
+    /// DFF; this models the CPU's T-cycle STAT sampling window, which
+    /// observes BESU before AVAP↑ clears it within the AVAP integer dot.
+    /// Only read by `Ppu::mode()` via `besu_stat()`; all pipeline
+    /// consumers (OAM lock, scan gate) continue to read internal `besu`.
+    besu_stat: bool,
     /// Models NOT(VID_RST) for CATU gating. Starts false at LCD-on (VID_RST
     /// blocks CATU). Set to true by enable_catu() after the first scanline
     /// completes. Persists across scanline resets.
@@ -73,6 +82,7 @@ impl SpriteScanner {
             counter: ScanCounter::new(),
             scanning: false,
             besu: false,
+            besu_stat: false,
             catu_enabled: false,
             catu: false,
             rutu_pending: false,
@@ -100,6 +110,20 @@ impl SpriteScanner {
     /// BESU scanning latch — drives ACYL for STAT mode and OAM bus locking.
     pub(in crate::ppu) fn besu(&self) -> bool {
         self.besu
+    }
+
+    /// STAT-readout mirror of BESU (see `besu_stat` field). Lags the
+    /// internal `besu` by one PPU-clock-fall. Read only by
+    /// `Ppu::mode()` for the T-cycle STAT sampling window.
+    pub(in crate::ppu) fn besu_stat(&self) -> bool {
+        self.besu_stat
+    }
+
+    /// Capture the pre-fall `besu` into the STAT-readout mirror. Called
+    /// at the start of every PPU-clock-fall, before any writer touches
+    /// `self.besu` in that fall.
+    pub(in crate::ppu) fn capture_besu_stat(&mut self) {
+        self.besu_stat = self.besu;
     }
 
     /// Whether CATU is pending — RUTU has been set at the scanline boundary
@@ -295,6 +319,7 @@ impl SpriteScanner {
         self.counter.reset();
         self.scanning = false;
         self.besu = false;
+        self.besu_stat = false;
         self.sprites = SpriteStore::new();
         // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
         // they naturally clear because FETO is false after counter reset.

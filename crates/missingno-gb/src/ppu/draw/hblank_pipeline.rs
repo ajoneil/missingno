@@ -40,6 +40,17 @@ pub(in crate::ppu) struct HblankPipeline {
     /// Clear is combinational — XYMU responds to WEGO rising without
     /// a clock.
     rendering_active: bool,
+    /// STAT-readout mirror of `rendering_active`. Captured at the start
+    /// of each PPU-clock-fall from the pre-fall internal value, so
+    /// `Ppu::mode()` sees the pre-transition value across the AVAP
+    /// integer dot — matching GateBoy's gbtrace adapter sampling phase.
+    /// Not a hardware DFF; this models the CPU's T-cycle STAT sampling
+    /// window, which observes XYMU before AVAP↑ sets it within the
+    /// AVAP integer dot. Only read by `Ppu::mode()` via
+    /// `rendering_active_stat()`; all pipeline consumers (was_rendering
+    /// snapshot, VRAM/OAM lock) continue to read internal
+    /// `rendering_active`.
+    rendering_active_stat: bool,
     /// HBLANK capture DFF. VOGA (dffr, captures WODU on ALET rising edge).
     ///
     /// Only clocked element in the Mode 3→0 chain. Feeds WEGO
@@ -61,6 +72,7 @@ impl HblankPipeline {
     pub(in crate::ppu) fn new() -> Self {
         Self {
             rendering_active: false,
+            rendering_active_stat: false,
             voga: false,
             fepo: false,
         }
@@ -143,12 +155,27 @@ impl HblankPipeline {
         self.rendering_active
     }
 
+    /// STAT-readout mirror of XYMU (see `rendering_active_stat` field).
+    /// Lags the internal `rendering_active` by one PPU-clock-fall. Read
+    /// only by `Ppu::mode()` for the T-cycle STAT sampling window.
+    pub(in crate::ppu) fn rendering_active_stat(&self) -> bool {
+        self.rendering_active_stat
+    }
+
+    /// Capture the pre-fall `rendering_active` into the STAT-readout
+    /// mirror. Called at the start of every PPU-clock-fall, before any
+    /// writer touches `self.rendering_active` in that fall.
+    pub(in crate::ppu) fn capture_rendering_stat(&mut self) {
+        self.rendering_active_stat = self.rendering_active;
+    }
+
     pub(in crate::ppu) fn voga(&self) -> bool {
         self.voga
     }
 
     pub(in crate::ppu) fn reset(&mut self) {
         self.rendering_active = false;
+        self.rendering_active_stat = false;
         self.voga = false;
         self.fepo = false;
     }
