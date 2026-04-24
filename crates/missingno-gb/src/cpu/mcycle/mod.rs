@@ -657,13 +657,13 @@ impl Cpu {
                 (Some(BusAction::Read { address: *pc }), true)
             }
 
-            Phase::Empty => (Some(self.enter_fetch()), false),
+            Phase::Empty => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
 
             Phase::ReadOp { address, action } => match current_step {
                 0 => (Some(BusAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, read_value);
-                    (Some(self.enter_fetch()), false)
+                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
                 }
             },
 
@@ -681,7 +681,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
 
@@ -703,7 +703,7 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (Some(self.enter_fetch()), false),
+                _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -723,7 +723,7 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
 
@@ -731,13 +731,13 @@ impl Cpu {
                 if current_step < *count {
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (Some(self.enter_fetch()), false)
+                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
                 }
             }
 
             Phase::InternalOamBug { address } => match current_step {
                 0 => (Some(BusAction::InternalOamBug { address: *address }), true),
-                _ => (Some(self.enter_fetch()), false),
+                _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
             },
 
             Phase::Pop { sp, action } => {
@@ -760,10 +760,10 @@ impl Cpu {
                         if has_trailing {
                             (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
-                            (Some(self.enter_fetch()), false)
+                            (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
                         }
                     }
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
 
@@ -793,7 +793,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
 
@@ -807,13 +807,13 @@ impl Cpu {
                     self.pending_jump_target = Some(*target);
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (Some(self.enter_fetch()), false)
+                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (Some(self.enter_fetch()), false);
+                    return (Some(self.commit(Commit::NoOperation, Phase::Empty)), false);
                 }
                 let sp = *sp;
                 match current_step {
@@ -840,7 +840,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
 
@@ -849,7 +849,7 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(BusAction::Internal { address: self.pc }), true),
-                    1 if !taken => (Some(self.enter_fetch()), false),
+                    1 if !taken => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                     1 => (Some(BusAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = read_value;
@@ -864,7 +864,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
                         (Some(BusAction::Internal { address: self.pc }), true)
                     }
-                    _ => (Some(self.enter_fetch()), false),
+                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
                 }
             }
         }
@@ -912,7 +912,7 @@ impl Cpu {
             }
             4 => {
                 // ISR complete — transition to Fetch at the vector address.
-                Some(self.enter_fetch())
+                Some(self.commit(Commit::NoOperation, Phase::Empty))
             }
             _ => unreachable!(),
         }
