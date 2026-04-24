@@ -164,19 +164,6 @@ pub struct Cpu {
     /// per M-cycle on the master-clock rising edge — single DFF stage
     /// between IF assertion and ISR M1 entry.
     pub(super) dispatch_ready_q: bool,
-    /// DFF output for the HALT IME=1 dispatch chain. Captures `g42_q`
-    /// once per M-cycle on the master-clock rising edge — an emulator-
-    /// side shift register that models the settling delay between halt
-    /// release (combinational from g42.q) and the next instruction-
-    /// boundary dispatch check.
-    ///
-    /// Hardware has no second DFF here: the HALT chain converges back
-    /// into the same `int_entry` DFF. Empirical per-source HALT-wake
-    /// latencies (timer=6 M-cycles, PPU=5) are currently calibrated
-    /// against this two-stage emulator path; preserving this field keeps
-    /// the HALT-wake test suite passing while running-CPU dispatch is
-    /// corrected.
-    pub(super) halt_dispatch_ready_q: bool,
 }
 
 impl Cpu {
@@ -226,7 +213,6 @@ impl Cpu {
             interrupt_pending: false,
             g42_q: false,
             dispatch_ready_q: false,
-            halt_dispatch_ready_q: false,
         }
     }
 
@@ -269,7 +255,6 @@ impl Cpu {
             interrupt_pending: false,
             g42_q: false,
             dispatch_ready_q: false,
-            halt_dispatch_ready_q: false,
         }
     }
 
@@ -328,7 +313,6 @@ impl Cpu {
             interrupt_pending: false,
             g42_q: false,
             dispatch_ready_q: false,
-            halt_dispatch_ready_q: false,
         }
     }
 

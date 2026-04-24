@@ -161,12 +161,12 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At each M-cycle boundary, three interrupt-chain DFFs capture at
-    /// the CLK9 rising edge: the HALT-chain `halt_dispatch_ready`
-    /// (samples `g42_q`), `g42` (samples `interrupt_pending`), and the
-    /// running-CPU `dispatch_ready` (samples `interrupt_pending`). IFs
-    /// asserted later in the rise miss this boundary's CLK9↑ setup
-    /// window and are captured at the next.
+    /// At each M-cycle boundary, two interrupt-chain DFFs capture at
+    /// the CLK9 rising edge in parallel: `g42` (drives the HALT release
+    /// chain) and `dispatch_ready` / `int_entry` (gates ISR dispatch —
+    /// both running-CPU and HALT IME=1). Both sample `interrupt_pending`
+    /// independently. IFs asserted later in the rise miss this
+    /// boundary's CLK9↑ setup window and are captured at the next.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
@@ -175,13 +175,11 @@ impl GameBoy {
         // ── M-cycle boundary: interrupt-chain DFF captures, then PPU
         //    + interrupt updates ──
         if is_mcycle_boundary {
-            // Three interrupt-chain DFFs capture at the CLK9 rising
-            // edge. All three sample values that have been
+            // Two interrupt-chain DFFs capture at the CLK9 rising edge.
+            // Both sample `interrupt_pending`, which has been
             // combinationally stable since the previous edge's fall()
-            // `update_interrupt_state`. Shift-register discipline
-            // applies only to `halt_dispatch_ready`, which samples
-            // `g42_q` — so it must run BEFORE `tick_g42`.
-            self.cpu.tick_halt_dispatch_ready(); // samples pre-edge g42_q
+            // `update_interrupt_state`. They are independent — no
+            // ordering constraint between them.
             self.cpu.tick_g42(); // samples pre-edge interrupt_pending
             self.cpu.tick_dispatch_ready(); // samples pre-edge interrupt_pending
 
