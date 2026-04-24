@@ -622,11 +622,15 @@ impl Rendering {
 
         // TEKY: combinational sprite fetch request.
         //
-        // Hardware: TEKY = AND4(FEPO, !RYDY, LYRY, !TAKA). Emulator's
-        // extra POKY term substitutes for the hardware LYRY-kill chain
-        // during Mode-3 startup (kill settles sub-edge; below half-dot
-        // resolution). POKY=1 steady-state matches the netlist for the
-        // rest of Mode 3.
+        // Hardware: TEKY = AND4(FEPO, TUKU, LYRY, !TAKA), where TUKU =
+        // NOT(RYDY) via the SYLO/TOMU/TUKU triple-inversion (§6.12
+        // window-condition fanout). Emulator collapses TUKU to
+        // !window.rydy() at this call site.
+        //
+        // Emulator's extra POKY term substitutes for the hardware
+        // LYRY-kill chain during Mode-3 startup (kill settles sub-edge;
+        // below half-dot resolution). POKY=1 steady-state matches the
+        // netlist for the rest of Mode 3.
         let lyry_for_teky = lyry && self.cascade.poky();
         let teky = fepo && !self.window.rydy() && lyry_for_teky && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.capture_sobu(teky);
@@ -640,7 +644,11 @@ impl Rendering {
         self.hblank.latch_fepo(fepo);
 
         // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
-        // SOCY = NOT(RYDY). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
+        // SOCY = NOT(RYDY) via the SYLO/TOMU/SOCY triple-inversion
+        // (§6.12 window-condition fanout — same SYLO/TOMU stages as
+        // TUKU above; only the final inverter differs). Emulator
+        // collapses SOCY to !window.rydy() at this call site.
+        // VYBO = NOR3(FEPO_old, WODU_old, MYVO).
         //
         // LogicBoy uses `state_old.pix_count != 167` instead of `!WODU_old`.
         // At this point (falling, after rising incremented), pixel_counter
