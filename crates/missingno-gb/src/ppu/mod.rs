@@ -563,29 +563,28 @@ impl Ppu {
     /// that bound a single dot. The master clock is the DMG's 4.194304
     /// MHz crystal oscillator input; all on-chip clocks derive from it.
     ///
-    /// Clock mapping on this edge: PPU clock falls (ALET falls, MYVO
-    /// rises). LEBO fires (BG fetch counter), PORY captures (MYVO-
-    /// clocked). CLKPIPE fires (SACU rising edge, depth 63.8 ge). Pixel
-    /// shift and output.
+    /// Clock mapping on this edge: PPU clock **rises** (ALET rises in-
+    /// phase with ck1_ck2 — see spec §1.1/§1.2). ALET-clocked DFFs
+    /// capture here: NYKA, LYZU, PYGO (cascade), RENE, DOBA, NOPA, VOGA.
+    /// Sprite fetch counter advances on SABE (opposite edge from BG
+    /// fetcher's LEBO).
     ///
-    /// The complementary edge (`on_master_clock_fall`) handles:
-    /// PPU clock rises (ALET rises, MYVO falls) — NYKA/PYGO/VOGA
-    /// capture (ALET-clocked), sprite fetch counter advances (SABE).
+    /// The complementary edge (`on_master_clock_fall`) handles the XOTA
+    /// divider chain toggle (XOTA rises when ck1_ck2 falls, toggling
+    /// WUVU/VENA/TALU), CATU pipeline, MYVO-clocked DFFs (PORY), SACU
+    /// pixel shift, scanline boundary handling, VBlank IF, and LYC.
     ///
     /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU clock (ALET).
-    ///
-    /// Also: XOTA divider chain toggle, scanline boundary handling,
-    /// pixel output pipeline, VBlank IF, and LYC comparison.
-    pub fn on_master_clock_rise(&mut self) -> PpuTickResult {
+    pub fn on_master_clock_rise(&mut self, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
             request_vblank: false,
         };
 
-        // lcd_on_countdown is processed in on_master_clock_fall() — VID_RST
-        // deasserts at XOTA falling (= PPU clock rise), not XOTA rising
-        // (= PPU clock fall).
+        // lcd_on_countdown is processed in on_master_clock_fall() — the
+        // divider chain (WUVU) is clocked by XOTA rising = ck1_ck2
+        // falling, and VID_RST deasserts one XOTA edge before that.
         if self.lcd_on_countdown > 0 {
             return result;
         }
@@ -602,13 +601,14 @@ impl Ppu {
         // on_master_clock_fall() — confirmed by dmg-sim: XOTA rises when
         // master clock falls, and WUVU/XUPY/CATU all toggle on XOTA rising.
 
-        // Pixel output, scanner, SACU, pipe shift. These run on the
-        // PPU-clock-fall edge (ALET falling / MYVO rising). They read
-        // WUVU/XUPY state from the preceding PPU-clock-rise phase's
-        // tick_dot, which is correct: on hardware, these circuits see
-        // the WUVU state that settled at the previous XOTA edge.
+        // ALET rises in-phase with ck1_ck2 (§1.1/§1.2: ATAL → AZOF →
+        // ZAXY → ZEME → ALET is an even number of inversions from
+        // ck1_ck2, so ALET rising aligns with master-clock rising at
+        // 16.3 ge buffer delay). ALET-clocked DFFs capture here: NYKA,
+        // PYGO (cascade), VOGA (hblank), LYZU. Also XUPY-derived logic
+        // read at this edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.on_ppu_clock_fall(&self.registers, &self.video, &self.oam);
+            result.pixel = rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         result
@@ -618,17 +618,17 @@ impl Ppu {
     /// `on_master_clock_rise`. Together they bound one dot = one full
     /// cycle of `ck1_ck2`.
     ///
-    /// Clock mapping on this edge: PPU clock rises (ALET rises, MYVO
-    /// falls). XOTA rises (= master falls), which toggles WUVU → the
-    /// divider chain (WUVU/VENA/TALU) cascades; XUPY transitions,
-    /// clocking the OAM-scan subsystem (CATU, BYBA, CENO).
+    /// Clock mapping on this edge: PPU clock **falls** (ALET falls in-
+    /// phase with ck1_ck2). XOTA rises (XOTA = NOT(ck1_ck2), so XOTA
+    /// rises when ck1_ck2 falls), toggling the divider chain
+    /// (WUVU/VENA/TALU); XUPY transitions, clocking the OAM-scan
+    /// subsystem (CATU, BYBA, CENO). MYVO-clocked DFFs (PORY) capture
+    /// here; SACU fires (delayed via the VYBO/TYFA/SEGU chain) and
+    /// drives the pixel shift / output.
     ///
-    /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU clock (ALET).
-    ///
-    /// Also: fetcher pipeline (VRAM reads, cascade DFFs, TYFA),
-    /// DFF8/DFF9 register latches, scanline-boundary handling, and
-    /// LCD-off state management.
-    pub fn on_master_clock_fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Also: DFF8/DFF9 register latches, scanline-boundary handling,
+    /// and LCD-off state management.
+    pub fn on_master_clock_fall(&mut self, is_mcycle: bool) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
@@ -725,12 +725,13 @@ impl Ppu {
             self.registers.tick_palette_latches();
             self.registers.tick_register_latches();
 
-            // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
+            // ALET falls in-phase with ck1_ck2 falling. MYVO-clocked DFFs
+            // capture here (PORY), SACU fires (delayed via TYFA), pixel
+            // output advances, pixel counter / fine counter increment.
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel =
-                    rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
+                result.pixel = rendering.on_ppu_clock_fall(&self.registers, &self.video, &self.oam);
             }
 
             // STAT edge detection moved to check_stat_edge() — called

@@ -190,7 +190,7 @@ impl GameBoy {
             self.timers.mcycle();
 
             // PPU master-clock rising edge at the M-cycle boundary (dot 0).
-            let ppu_result = self.ppu.on_master_clock_rise();
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -278,7 +278,7 @@ impl GameBoy {
             }
 
             // PPU master-clock rising edge for non-boundary dots.
-            let ppu_result = self.ppu.on_master_clock_rise();
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -345,7 +345,7 @@ impl GameBoy {
         // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = self
             .ppu
-            .on_master_clock_fall(is_mcycle_boundary, &self.vram_bus.vram);
+            .on_master_clock_fall(is_mcycle_boundary);
 
         // CPU data latch: capture bus value after PPU's master-clock
         // fall updates land. Hardware reads are combinational (spec
