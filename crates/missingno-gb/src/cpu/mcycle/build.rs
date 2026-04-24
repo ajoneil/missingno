@@ -4,7 +4,7 @@ use super::super::{
     flags::Flags,
     instructions::{
         Address, Arithmetic, Arithmetic8, Arithmetic16, BitFlag, BitShift, Bitwise, Jump, Load,
-        Source8, Source16, Stack, Target8, Target16, bit_shift::Direction, jump,
+        Source8, Source16, Stack, Target8, Target16, jump,
     },
     registers::Register16,
 };
@@ -277,151 +277,144 @@ impl Cpu {
         }
     }
 
-    pub(super) fn build_bit_shift(cpu: &mut Cpu, bs: &BitShift) -> Phase {
+    pub(super) fn build_bit_shift(cpu: &mut Cpu, bs: &BitShift) -> (Phase, Commit) {
         match bs {
-            BitShift::RotateA(direction, carry) => {
-                let (new_value, new_carry) = Self::rotate(cpu, cpu.a, direction, carry);
-                cpu.flags = if new_carry {
-                    Flags::CARRY
-                } else {
-                    Flags::empty()
-                };
-                cpu.a = new_value;
-                Phase::Empty
-            }
+            BitShift::RotateA(direction, carry) => (
+                Phase::Empty,
+                Commit::RotateAccumulator {
+                    direction: direction.clone(),
+                    carry: carry.clone(),
+                },
+            ),
             BitShift::Rotate(direction, carry, target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    let (new_value, new_carry) = Self::rotate(cpu, val, direction, carry);
-                    cpu.flags.set(Flags::ZERO, new_value == 0);
-                    cpu.flags.set(Flags::CARRY, new_carry);
-                    cpu.flags.remove(Flags::NEGATIVE);
-                    cpu.flags.remove(Flags::HALF_CARRY);
-                    cpu.set_register8(*reg, new_value);
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::RotateReg {
+                        reg: *reg,
+                        direction: direction.clone(),
+                        carry: carry.clone(),
+                    },
+                ),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::Rotate(direction.clone(), carry.clone()),
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::Rotate(direction.clone(), carry.clone()),
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
             BitShift::ShiftArithmetical(direction, target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    let new_value = match direction {
-                        Direction::Left => {
-                            cpu.flags.set(Flags::CARRY, val & 0b1000_0000 != 0);
-                            val << 1
-                        }
-                        Direction::Right => {
-                            cpu.flags.set(Flags::CARRY, val & 0b0000_0001 != 0);
-                            val >> 1 | (val & 0b1000_0000)
-                        }
-                    };
-                    cpu.flags.remove(Flags::NEGATIVE);
-                    cpu.flags.remove(Flags::HALF_CARRY);
-                    cpu.flags.set(Flags::ZERO, new_value == 0);
-                    cpu.set_register8(*reg, new_value);
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::ShiftArithmetical {
+                        reg: *reg,
+                        direction: direction.clone(),
+                    },
+                ),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::ShiftArithmetical(direction.clone()),
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::ShiftArithmetical(direction.clone()),
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
             BitShift::ShiftRightLogical(target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    let new_value = val >> 1;
-                    cpu.flags.set(Flags::CARRY, val & 0b0000_0001 != 0);
-                    cpu.flags.remove(Flags::NEGATIVE);
-                    cpu.flags.remove(Flags::HALF_CARRY);
-                    cpu.flags.set(Flags::ZERO, new_value == 0);
-                    cpu.set_register8(*reg, new_value);
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::ShiftRightLogical { reg: *reg },
+                ),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::ShiftRightLogical,
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::ShiftRightLogical,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
             BitShift::Swap(target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    let new_value = val << 4 | (val >> 4 & 0xf);
-                    cpu.flags = if new_value == 0 {
-                        Flags::ZERO
-                    } else {
-                        Flags::empty()
-                    };
-                    cpu.set_register8(*reg, new_value);
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (Phase::Empty, Commit::SwapReg { reg: *reg }),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::Swap,
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::Swap,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
         }
     }
 
-    pub(super) fn build_bit_flag(cpu: &mut Cpu, bf: &BitFlag) -> Phase {
+    pub(super) fn build_bit_flag(cpu: &Cpu, bf: &BitFlag) -> (Phase, Commit) {
         match bf {
             BitFlag::Check(bit, source) => match source {
-                Source8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    cpu.flags.set(Flags::ZERO, val & (1 << bit) == 0);
-                    cpu.flags.remove(Flags::NEGATIVE);
-                    cpu.flags.insert(Flags::HALF_CARRY);
-                    Phase::Empty
-                }
+                Source8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::BitTest {
+                        bit: *bit,
+                        reg: *reg,
+                    },
+                ),
                 Source8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadOp {
-                        address: addr,
-                        action: ReadAction::BitTest(*bit),
-                    }
+                    (
+                        Phase::ReadOp {
+                            address: addr,
+                            action: ReadAction::BitTest(*bit),
+                        },
+                        Commit::NoOperation,
+                    )
                 }
                 Source8::Constant(_) => unreachable!(),
             },
             BitFlag::Set(bit, target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    cpu.set_register8(*reg, val | (1 << bit));
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::BitSet {
+                        bit: *bit,
+                        reg: *reg,
+                    },
+                ),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::BitSet(*bit),
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::BitSet(*bit),
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
             BitFlag::Unset(bit, target) => match target {
-                Target8::Register(reg) => {
-                    let val = cpu.get_register8(*reg);
-                    cpu.set_register8(*reg, val & !(1 << bit));
-                    Phase::Empty
-                }
+                Target8::Register(reg) => (
+                    Phase::Empty,
+                    Commit::BitReset {
+                        bit: *bit,
+                        reg: *reg,
+                    },
+                ),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
-                    Phase::ReadModifyWrite {
-                        address: addr,
-                        op: RmwOp::BitReset(*bit),
-                    }
+                    (
+                        Phase::ReadModifyWrite {
+                            address: addr,
+                            op: RmwOp::BitReset(*bit),
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
         }

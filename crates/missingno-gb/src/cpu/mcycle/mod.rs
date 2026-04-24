@@ -947,8 +947,8 @@ impl Cpu {
             Instruction::Load(load) => Self::build_load(self, load),
             Instruction::Arithmetic(arith) => Self::build_arithmetic(self, arith),
             Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
-            Instruction::BitShift(bs) => (Self::build_bit_shift(self, bs), Commit::NoOperation),
-            Instruction::BitFlag(bf) => (Self::build_bit_flag(self, bf), Commit::NoOperation),
+            Instruction::BitShift(bs) => Self::build_bit_shift(self, bs),
+            Instruction::BitFlag(bf) => Self::build_bit_flag(self, bf),
             Instruction::Jump(j) => (Self::build_jump(self, j), Commit::NoOperation),
             Instruction::Stack(s) => (Self::build_stack(self, s), Commit::NoOperation),
         };
