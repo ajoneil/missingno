@@ -156,43 +156,37 @@ impl Cpu {
         }
     }
 
-    pub(super) fn build_arithmetic(cpu: &mut Cpu, arith: &Arithmetic) -> Phase {
+    pub(super) fn build_arithmetic(cpu: &mut Cpu, arith: &Arithmetic) -> (Phase, Commit) {
         match arith {
             Arithmetic::Arithmetic8(a8) => match a8 {
                 Arithmetic8::Increment(target) => match target {
                     Target8::Register(reg) => {
-                        let val = cpu.get_register8(*reg);
-                        let result = val.wrapping_add(1);
-                        cpu.flags.set(Flags::ZERO, result == 0);
-                        cpu.flags.remove(Flags::NEGATIVE);
-                        cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0b0000);
-                        cpu.set_register8(*reg, result);
-                        Phase::Empty
+                        (Phase::Empty, Commit::IncR8 { reg: *reg })
                     }
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
-                        Phase::ReadModifyWrite {
-                            address: addr,
-                            op: RmwOp::Increment,
-                        }
+                        (
+                            Phase::ReadModifyWrite {
+                                address: addr,
+                                op: RmwOp::Increment,
+                            },
+                            Commit::NoOperation,
+                        )
                     }
                 },
                 Arithmetic8::Decrement(target) => match target {
                     Target8::Register(reg) => {
-                        let val = cpu.get_register8(*reg);
-                        let result = val.wrapping_sub(1);
-                        cpu.flags.set(Flags::ZERO, result == 0);
-                        cpu.flags.insert(Flags::NEGATIVE);
-                        cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0b1111);
-                        cpu.set_register8(*reg, result);
-                        Phase::Empty
+                        (Phase::Empty, Commit::DecR8 { reg: *reg })
                     }
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
-                        Phase::ReadModifyWrite {
-                            address: addr,
-                            op: RmwOp::Decrement,
-                        }
+                        (
+                            Phase::ReadModifyWrite {
+                                address: addr,
+                                op: RmwOp::Decrement,
+                            },
+                            Commit::NoOperation,
+                        )
                     }
                 },
                 Arithmetic8::AddA(source) => Self::build_alu_source(cpu, source, AluOp::Add),
@@ -217,16 +211,25 @@ impl Cpu {
             },
             Arithmetic::Arithmetic16(a16) => match a16 {
                 Arithmetic16::Increment(reg) => {
+                    // Decode-edge register write (multi-cycle — Phase::InternalOamBug
+                    // shows the OLD address on the bus).
                     let old = cpu.get_register16(*reg);
                     cpu.set_register16(*reg, old.wrapping_add(1));
-                    Phase::InternalOamBug { address: old }
+                    (
+                        Phase::InternalOamBug { address: old },
+                        Commit::NoOperation,
+                    )
                 }
                 Arithmetic16::Decrement(reg) => {
                     let old = cpu.get_register16(*reg);
                     cpu.set_register16(*reg, old.wrapping_sub(1));
-                    Phase::InternalOamBug { address: old }
+                    (
+                        Phase::InternalOamBug { address: old },
+                        Commit::NoOperation,
+                    )
                 }
                 Arithmetic16::AddHl(reg) => {
+                    // Decode-edge HL + flags write (multi-cycle).
                     let value = cpu.get_register16(*reg);
                     let hl = cpu.get_register16(Register16::Hl);
                     cpu.flags.remove(Flags::NEGATIVE);
@@ -237,44 +240,40 @@ impl Cpu {
                     cpu.flags
                         .set(Flags::CARRY, hl as u32 + value as u32 > 0xffff);
                     cpu.set_register16(Register16::Hl, hl.wrapping_add(value));
-                    Phase::InternalOp { count: 1 }
+                    (Phase::InternalOp { count: 1 }, Commit::NoOperation)
                 }
             },
         }
     }
 
-    fn build_alu_source(cpu: &mut Cpu, source: &Source8, op: AluOp) -> Phase {
+    fn build_alu_source(cpu: &mut Cpu, source: &Source8, op: AluOp) -> (Phase, Commit) {
         match source {
             Source8::Constant(val) => {
-                Self::apply_alu(cpu, &op, *val);
-                Phase::Empty
+                (Phase::Empty, Commit::AluA { op, value: *val })
             }
             Source8::Register(reg) => {
-                let val = cpu.get_register8(*reg);
-                Self::apply_alu(cpu, &op, val);
-                Phase::Empty
+                let value = cpu.get_register8(*reg);
+                (Phase::Empty, Commit::AluA { op, value })
             }
             Source8::Memory(address) => {
                 let addr = Self::resolve_address(cpu, address);
-                Phase::ReadOp {
-                    address: addr,
-                    action: ReadAction::AluA(op),
-                }
+                (
+                    Phase::ReadOp {
+                        address: addr,
+                        action: ReadAction::AluA(op),
+                    },
+                    Commit::NoOperation,
+                )
             }
         }
     }
 
-    pub(super) fn build_bitwise(cpu: &mut Cpu, bw: &Bitwise) -> Phase {
+    pub(super) fn build_bitwise(cpu: &mut Cpu, bw: &Bitwise) -> (Phase, Commit) {
         match bw {
             Bitwise::AndA(source) => Self::build_alu_source(cpu, source, AluOp::And),
             Bitwise::OrA(source) => Self::build_alu_source(cpu, source, AluOp::Or),
             Bitwise::XorA(source) => Self::build_alu_source(cpu, source, AluOp::Xor),
-            Bitwise::ComplementA => {
-                cpu.a = !cpu.a;
-                cpu.flags.insert(Flags::NEGATIVE);
-                cpu.flags.insert(Flags::HALF_CARRY);
-                Phase::Empty
-            }
+            Bitwise::ComplementA => (Phase::Empty, Commit::ComplementA),
         }
     }
 

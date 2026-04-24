@@ -140,7 +140,7 @@ pub enum DotAction {
 // ── Helper enums ────────────────────────────────────────────────────────
 
 /// ALU operation applied to A with a read value.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum AluOp {
     Add,
     Sub,
@@ -945,10 +945,8 @@ impl Cpu {
             // Transitional — build_* arms still apply mutations inline and
             // return Phase only. Step 6b converts each to (Phase, Commit).
             Instruction::Load(load) => Self::build_load(self, load),
-            Instruction::Arithmetic(arith) => {
-                (Self::build_arithmetic(self, arith), Commit::NoOperation)
-            }
-            Instruction::Bitwise(bw) => (Self::build_bitwise(self, bw), Commit::NoOperation),
+            Instruction::Arithmetic(arith) => Self::build_arithmetic(self, arith),
+            Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
             Instruction::BitShift(bs) => (Self::build_bit_shift(self, bs), Commit::NoOperation),
             Instruction::BitFlag(bf) => (Self::build_bit_flag(self, bf), Commit::NoOperation),
             Instruction::Jump(j) => (Self::build_jump(self, j), Commit::NoOperation),
