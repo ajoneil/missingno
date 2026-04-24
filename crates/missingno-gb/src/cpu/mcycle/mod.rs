@@ -140,7 +140,7 @@ pub enum DotAction {
 
 /// ALU operation applied to A with a read value.
 #[derive(Debug)]
-enum AluOp {
+pub(super) enum AluOp {
     Add,
     Sub,
     Adc { carry: u8 },

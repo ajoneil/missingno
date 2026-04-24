@@ -3,6 +3,7 @@ use flags::{Flag, Flags};
 use mcycle::{BusDot, CpuPhase};
 use registers::{Register8, Register16};
 
+pub mod commit;
 pub mod dff;
 pub mod flags;
 pub mod instructions;
