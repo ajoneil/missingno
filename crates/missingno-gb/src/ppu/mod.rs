@@ -430,6 +430,15 @@ impl Ppu {
     /// No priority logic — each bit is an independent OR of its input signals.
     /// During the POPU+BESU overlap at the 153->0 boundary, this produces
     /// mode 3 (both bits set) instead of the old priority-based mode 1.
+    ///
+    /// XYMU and BESU inputs are read from the STAT-readout mirrors
+    /// (`rendering_active_stat`, `besu_stat`), which lag the internal
+    /// NOR-latch state by one PPU-clock-fall. This models the CPU's
+    /// T-cycle STAT sampling phase — GateBoy's adapter samples where
+    /// BESU/XYMU's pre-transition values are still on the bus during
+    /// the AVAP integer dot, so Mode 2's observable duration is 80
+    /// dots. The NOR-gate formula is unchanged; only the inputs'
+    /// observation window shifts.
     pub fn mode(&self) -> rendering::Mode {
         let rendering = match &self.pixel_pipeline {
             Some(r) => r,
@@ -444,9 +453,9 @@ impl Ppu {
         // are combinational. In the emulator, VOGA capture and the
         // WEGO→XYMU chain all fire within the same master-clock edge
         // (capture_voga() clears rendering_active when VOGA is set).
-        let rendering_active = rendering.rendering_active();
+        let rendering_active = rendering.rendering_active_stat();
         let bit0 = rendering_active || self.video.vblank();
-        let bit1 = rendering_active || rendering.is_scanning();
+        let bit1 = rendering_active || rendering.is_scanning_stat();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
             (false, true) => Mode::VerticalBlank,

@@ -204,6 +204,31 @@ impl Rendering {
         self.scan.besu()
     }
 
+    /// STAT-readout mirror of `is_scanning`. Lags the internal BESU by
+    /// one PPU-clock-fall so the AVAP integer dot observes the
+    /// pre-transition scanning value (matches GateBoy's T-cycle STAT
+    /// sampling phase). Read only by `Ppu::mode()`.
+    pub(super) fn is_scanning_stat(&self) -> bool {
+        self.scan.besu_stat()
+    }
+
+    /// STAT-readout mirror of `rendering_active`. Lags the internal
+    /// XYMU by one PPU-clock-fall so the AVAP integer dot observes the
+    /// pre-transition rendering value (matches GateBoy's T-cycle STAT
+    /// sampling phase). Read only by `Ppu::mode()`.
+    pub(super) fn rendering_active_stat(&self) -> bool {
+        self.hblank.rendering_active_stat()
+    }
+
+    /// Capture the STAT-readout mirrors of BESU and XYMU at the top of
+    /// the PPU-clock-fall, before any writer touches the internal
+    /// fields. The mirror values are what `Ppu::mode()` observes during
+    /// the upcoming dot's T-cycle sampling window.
+    pub(super) fn capture_stat_mirrors(&mut self) {
+        self.scan.capture_besu_stat();
+        self.hblank.capture_rendering_stat();
+    }
+
     /// VOGA latch: true from the dot WODU fires through the rest of HBlank.
     pub(super) fn voga(&self) -> bool {
         self.hblank.voga()
@@ -460,6 +485,14 @@ impl Rendering {
         oam: &Oam,
     ) -> Option<PixelOutput> {
         let xupy_rising = video.xupy();
+
+        // STAT-readout mirrors capture the pre-fall values of BESU and
+        // XYMU. `Ppu::mode()` reads the mirrors so the CPU's T-cycle
+        // STAT sampling window observes the pre-AVAP values across the
+        // AVAP integer dot — matching GateBoy's adapter sampling phase.
+        // Internal `besu`/`rendering_active` transitions still fire
+        // same-dot as AVAP↑ (fetcher load, XYMU set, BESU clear).
+        self.capture_stat_mirrors();
 
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
         // the fetcher advance so the first LAXU toggle occurs on the
