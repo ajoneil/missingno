@@ -3,7 +3,7 @@ use super::super::{
     commit::Commit,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
-    instructions::{CarryFlag, Interrupt as InterruptInstruction},
+    instructions::CarryFlag,
     registers::Register16,
 };
 use super::{AluOp, PopAction, ReadAction, RmwOp};
@@ -232,31 +232,6 @@ impl Cpu {
                 cpu.flags.remove(Flags::NEGATIVE);
                 cpu.flags.remove(Flags::HALF_CARRY);
                 cpu.flags.insert(Flags::CARRY);
-            }
-        }
-    }
-
-    pub(super) fn apply_interrupt_instruction(cpu: &mut Cpu, instr: &InterruptInstruction) {
-        match instr {
-            InterruptInstruction::Enable => {
-                // On hardware, EI sets an RS latch — re-setting an already-set
-                // latch is a no-op. Guard against overwriting Fired with Pending,
-                // which would delay IME enablement by an extra instruction.
-                if cpu.ime.output() != InterruptMasterEnable::Enabled
-                    && cpu.ei_delay.is_none()
-                {
-                    cpu.ei_delay = Some(EiDelay::Pending);
-                }
-            }
-            InterruptInstruction::Disable => {
-                cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
-                // On real hardware, DI's combinational gate (g91) clears the
-                // EI pipeline latch (g92). Without this, an EI;DI sequence
-                // would let EI's delay survive and re-enable IME.
-                cpu.ei_delay = None;
-            }
-            InterruptInstruction::Await => {
-                cpu.halt_state = HaltState::Halted;
             }
         }
     }

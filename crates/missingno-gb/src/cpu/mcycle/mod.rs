@@ -923,43 +923,39 @@ impl Cpu {
         let mut iter = bytes[..bytes_read as usize].iter().copied();
         let instruction = Instruction::decode(&mut iter).unwrap();
 
-        let phase = match &instruction {
+        let (phase, commit) = match &instruction {
+            // Direct-apply arms — single-M-cycle instructions whose mutation
+            // is expressed entirely as a Commit variant. build_* arms below
+            // still use Phase-only returns in step 6a; step 6b converts each.
             Instruction::Interrupt(InterruptInstruction::Await) => {
-                self.halt_state = HaltState::Halting;
-                Phase::Empty
+                (Phase::Empty, Commit::EnterHalt)
             }
-            Instruction::Stop => {
-                self.halt_state = HaltState::Halting;
-                Phase::Empty
+            Instruction::Stop => (Phase::Empty, Commit::EnterStop),
+            Instruction::Invalid(_) => (Phase::Empty, Commit::Invalid),
+            Instruction::NoOperation => (Phase::Empty, Commit::NoOperation),
+            Instruction::DecimalAdjustAccumulator => (Phase::Empty, Commit::Daa),
+            Instruction::CarryFlag(cf) => (Phase::Empty, Commit::CarryFlag(cf.clone())),
+            Instruction::Interrupt(InterruptInstruction::Enable) => {
+                (Phase::Empty, Commit::EnableInterrupts)
             }
-            Instruction::Invalid(_) => {
-                self.halt_state = HaltState::Halting;
-                Phase::Empty
-            }
-
-            Instruction::NoOperation => Phase::Empty,
-            Instruction::DecimalAdjustAccumulator => {
-                Self::apply_daa(self);
-                Phase::Empty
-            }
-            Instruction::CarryFlag(cf) => {
-                Self::apply_carry_flag(self, cf);
-                Phase::Empty
-            }
-            Instruction::Interrupt(instr) => {
-                Self::apply_interrupt_instruction(self, instr);
-                Phase::Empty
+            Instruction::Interrupt(InterruptInstruction::Disable) => {
+                (Phase::Empty, Commit::DisableInterrupts)
             }
 
-            Instruction::Load(load) => Self::build_load(self, load),
-            Instruction::Arithmetic(arith) => Self::build_arithmetic(self, arith),
-            Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
-            Instruction::BitShift(bs) => Self::build_bit_shift(self, bs),
-            Instruction::BitFlag(bf) => Self::build_bit_flag(self, bf),
-            Instruction::Jump(j) => Self::build_jump(self, j),
-            Instruction::Stack(s) => Self::build_stack(self, s),
+            // Transitional — build_* arms still apply mutations inline and
+            // return Phase only. Step 6b converts each to (Phase, Commit).
+            Instruction::Load(load) => (Self::build_load(self, load), Commit::NoOperation),
+            Instruction::Arithmetic(arith) => {
+                (Self::build_arithmetic(self, arith), Commit::NoOperation)
+            }
+            Instruction::Bitwise(bw) => (Self::build_bitwise(self, bw), Commit::NoOperation),
+            Instruction::BitShift(bs) => (Self::build_bit_shift(self, bs), Commit::NoOperation),
+            Instruction::BitFlag(bf) => (Self::build_bit_flag(self, bf), Commit::NoOperation),
+            Instruction::Jump(j) => (Self::build_jump(self, j), Commit::NoOperation),
+            Instruction::Stack(s) => (Self::build_stack(self, s), Commit::NoOperation),
         };
 
+        Self::apply_commit(self, commit);
         self.instruction = instruction;
         self.phase = CpuPhase::Execute { phase, step: 0 };
     }
