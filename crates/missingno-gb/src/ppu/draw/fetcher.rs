@@ -84,14 +84,20 @@ impl TileFetcher {
         self.vram_address = 0;
     }
 
-    // --- Address generation (pages 26-27) ---
+    // --- Address generation ---
     //
-    // On the die, BG and window have separate address generators:
-    //   Page 26 (BACKGROUND): tilemap coords from pixel_counter, SCX, SCY, LY
-    //   Page 27 (WINDOW MAP LOOKUP): tilemap coords from window_tile_x, window_line_counter
-    // Both feed into the shared VRAM interface (page 25).
+    // BG and window paths share the VRAM address interface but use
+    // distinct coordinate generators: BG pulls scroll-adjusted (SCX, SCY,
+    // LY) coordinates; window pulls (window_tile_x, window_line_counter)
+    // with no scroll. Hardware AMUV/VEVY tri-states arbitrate which
+    // tilemap base address (LCDC.3 BG_MAP via XAFO; LCDC.6 WIN_MAP via
+    // WOKY) drives ~ma10 at counter=0, mutually exclusive per BAFY/WUKO
+    // arming. Tile-data stages (counter=2 and 4) drive ~ma12 via VURY
+    // gated by the NETA enable, with VUZA combining LCDC.4 (TILE_SEL via
+    // WEXU) and tile-index bit 7 to implement the signed-vs-unsigned
+    // tile-index arbitration.
 
-    /// BG tilemap coordinate computation (page 26).
+    /// BG tilemap coordinate computation.
     /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
     fn bg_tilemap_coords(
         &self,
@@ -107,14 +113,17 @@ impl TileFetcher {
         )
     }
 
-    /// Window tilemap coordinate computation (page 27).
+    /// Window tilemap coordinate computation.
     /// Uses the window's internal line counter, no scroll offset.
     fn window_tilemap_coords(&self, window_line_counter: u8) -> (u8, u8) {
         (self.window_tile_x, window_line_counter / 8)
     }
 
     /// Compute the VRAM offset for the current tilemap lookup.
-    /// Reads SCX, SCY, LCDC (tilemap select) from live registers.
+    /// Reads SCX, SCY, and the active tilemap-select bit (LCDC.3
+    /// BG_MAP via XAFO for BG; LCDC.6 WIN_MAP via WOKY for window)
+    /// live each fetch — mirrors the hardware AMUV/VEVY tri-state
+    /// drivers that arbitrate ~ma10 at counter=0 per BAFY/WUKO arming.
     fn tile_index_address(
         &self,
         pixel_counter: u8,
@@ -146,8 +155,14 @@ impl TileFetcher {
         window_line_counter % 8
     }
 
-    /// Compute the VRAM offset for tile data (GetTileDataLow/High T2).
-    /// Reads LCDC (tile address mode), SCY from live registers.
+    /// Compute the VRAM offset for tile data.
+    /// Reads LCDC.4 (TILE_SEL via WEXU) and SCY live each fetch, plus
+    /// the cached tile-index byte. Hardware drives ~ma12 via the VURY
+    /// tri-state, with VUZA combining WEXU and the tile-index bit 7
+    /// capture (PYJU.q = bg_tile7) to implement the signed-vs-unsigned
+    /// tile-block arbitration. Called twice per fetch (counter=2 low
+    /// bitplane, counter=4 high bitplane) — mirrors hardware's NETA
+    /// (`bp_cy`) enable asserting at both stages.
     fn tile_data_address(
         &self,
         window_line_counter: u8,
@@ -179,20 +194,26 @@ impl TileFetcher {
         video: &VideoControl,
         vram: &Vram,
     ) {
+        // Per-stage address drive matches hardware's tri-state arbitration:
+        //   counter=0 → BAFY/WUKO arm (XAFO/WOKY → ~ma10 via AMUV/VEVY)
+        //   counter=2 → NETA enable, low bitplane (VUZA → ~ma12 via VURY)
+        //   counter=4 → NETA enable, high bitplane (VUZA → ~ma12 via VURY)
+        // Counter values 1, 3, 5 are data-arrival stages with no LCDC
+        // contribution to the VRAM address (hardware enables deassert).
         match self.fetch_counter {
             0 => {
-                // Tilemap VRAM read (dot 0, falling). Counter=0 from reset.
+                // Tilemap VRAM read.
                 self.vram_address =
                     self.tile_index_address(pixel_counter, window_line_counter, regs, video);
                 self.tile_index = vram.read_byte(self.vram_address);
             }
             2 => {
-                // Tile data low VRAM read (dot 2, falling).
+                // Tile data low VRAM read.
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
                 self.tile_data_low = vram.read_byte(self.vram_address);
             }
             4 => {
-                // Tile data high VRAM read (dot 4, falling).
+                // Tile data high VRAM read.
                 self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
                 self.tile_data_high = vram.read_byte(self.vram_address);
             }

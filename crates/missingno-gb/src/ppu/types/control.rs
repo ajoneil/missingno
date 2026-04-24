@@ -42,6 +42,7 @@ impl Control {
         self.0.contains(ControlFlags::VIDEO_ENABLE)
     }
 
+    /// LCDC.4 (TILE_SEL); hardware WEXU `drlatch_ee` (q = `ff40_d4`).
     pub fn tile_address_mode(&self) -> TileAddressMode {
         if self.0.contains(ControlFlags::TILE_ADDRESS_MODE) {
             TileAddressMode::Block0Block1
@@ -54,6 +55,7 @@ impl Control {
         self.0.contains(ControlFlags::BACKGROUND_AND_WINDOW_ENABLE)
     }
 
+    /// LCDC.3 (BG_MAP); hardware XAFO `drlatch_ee` (q = `ff40_d3`).
     pub fn background_tile_map(&self) -> TileMapId {
         if self.0.contains(ControlFlags::BACKGROUND_TILE_MAP) {
             TileMapId(1)
@@ -66,6 +68,7 @@ impl Control {
         self.0.contains(ControlFlags::WINDOW_ENABLE)
     }
 
+    /// LCDC.6 (WIN_MAP); hardware WOKY `drlatch_ee` (q = `ff40_d6`).
     pub fn window_tile_map(&self) -> TileMapId {
         if self.0.contains(ControlFlags::WINDOW_TILE_MAP) {
             TileMapId(1)
