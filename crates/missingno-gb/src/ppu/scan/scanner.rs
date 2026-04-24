@@ -247,27 +247,31 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // OAM comparison and counter tick. One XUPY after CATU's
-        // same-edge capture+reset, the counter ticks 0 → 1 here;
-        // subsequent edges walk 1..39.
+        // OAM comparison. One XUPY after CATU's same-edge capture+reset,
+        // the counter ticks 0 → 1 below; subsequent edges walk 1..39.
         if self.scanning && xupy_rising {
             self.counter
                 .compare_and_store(ly, &mut self.sprites, regs, oam);
-        }
-        if xupy_rising {
-            self.counter.tick_clock();
         }
 
         // DOBA captures OLD BYBA (ALET clock arrives after XUPY).
         self.scan_done_prev = self.scan_done_flag;
 
-        // BYBA captures scan_done AFTER counter advance/freeze.
-        // On hardware, BYBA and the counter share the XUPY clock.
-        // When the counter reaches 39, FETO freezes it on the same
-        // tick_clock call, and BYBA reads scan_done(39)=true on the
-        // same XUPY edge — no extra cycle needed.
+        // BYBA captures FETO sampled from the *pre-tick* counter.
+        // FETO is a combinational AND4 over the counter bits; its
+        // propagation depth exceeds BYBA's clock-to-Q path, so at an
+        // XUPY rising edge BYBA's D-input reflects FETO over the
+        // counter's pre-tick value. We model this by reading
+        // `counter.scan_done()` before `counter.tick_clock()`. The
+        // XUPY rising edge that ticks the counter to 39 captures
+        // FETO(38) = 0; the next XUPY rising edge captures
+        // FETO(39) = 1.
         if xupy_rising {
             self.scan_done_flag = self.counter.scan_done();
+        }
+
+        if xupy_rising {
+            self.counter.tick_clock();
         }
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
