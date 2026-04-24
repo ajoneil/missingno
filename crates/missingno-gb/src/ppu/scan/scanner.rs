@@ -31,8 +31,15 @@ pub(in crate::ppu) struct SpriteScanner {
     /// CATU_LINE_ENDp DFF17: clocked by XUPY rising, D = ABOV_LINE_ENDp.
     /// Single-stage: boundary sets `rutu` → next XUPY rise CATU fires.
     catu: bool,
-    /// RUTU signal: set true at the scanline boundary. Consumed by
-    /// tick_catu on the next XUPY rising edge.
+    /// RUTU pending input: written true by the scanline-boundary reset.
+    /// Promoted to `rutu` by `tick_rutu`, which runs after `tick_catu`
+    /// within the same PPU clock fall phase. This separation makes the
+    /// one-XUPY-cycle latency between RUTU assertion and CATU capture
+    /// explicit, independent of dispatch ordering within a fall phase.
+    rutu_pending: bool,
+    /// RUTU signal (output of the latch): set true by `tick_rutu` after
+    /// the scanline-boundary write; cleared by `tick_catu` only on
+    /// capture. Consumed by tick_catu on the next XUPY rising edge.
     rutu: bool,
     /// Scan-done flag. BYBA (dffr, clocked by XUPY — captures in fall).
     ///
@@ -68,6 +75,7 @@ impl SpriteScanner {
             besu: false,
             catu_enabled: false,
             catu: false,
+            rutu_pending: false,
             rutu: false,
             scan_done_flag: false,
             scan_done_prev: false,
@@ -198,7 +206,14 @@ impl SpriteScanner {
 
         let xyvo = ly & 0x90 == 0x90;
         let catu_captures = self.rutu && !xyvo;
-        self.rutu = false;
+
+        if catu_captures {
+            // Hardware: CATU capturing + the downstream reset path
+            // deasserts RUTU. Clear on capture only — an XYVO-gated XUPY
+            // edge must not lose RUTU, since the latched model relies on
+            // RUTU persisting until a non-blocked edge actually captures.
+            self.rutu = false;
+        }
 
         if catu_captures && !self.scanning {
             self.scanning = true;
@@ -209,6 +224,17 @@ impl SpriteScanner {
         }
 
         self.catu = catu_captures;
+    }
+
+    /// Promote `rutu_pending` → `rutu` for the RUTU latch. Called after
+    /// `tick_catu` within the same PPU clock fall phase, so the CATU
+    /// reader at this fall sees the pre-promotion output and the first
+    /// capture happens on the next XUPY rising edge.
+    pub(in crate::ppu) fn tick_rutu(&mut self) {
+        if self.rutu_pending {
+            self.rutu = true;
+            self.rutu_pending = false;
+        }
     }
 
     /// Advance one scan cycle: counter tick, BYBA/DOBA capture, AVAP
@@ -256,8 +282,11 @@ impl SpriteScanner {
         }
     }
 
-    /// Reset at scanline boundary. Sets rutu = true so the CATU DFF
-    /// fires on the next XUPY rising edge (1 XUPY cycle = 2 dots).
+    /// Reset at scanline boundary. Writes the RUTU latch's pending input;
+    /// `tick_rutu` promotes it to the visible `rutu` output after
+    /// `tick_catu` has already read the pre-promotion value on this fall
+    /// phase. The first CATU capture therefore lands on the *next* XUPY
+    /// rising edge (1 XUPY cycle = 2 dots later).
     pub(in crate::ppu) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
@@ -270,8 +299,13 @@ impl SpriteScanner {
         self.scan_done_prev = false;
         self.avap_pending = false;
         self.catu = false;
-        // RUTU fires at the scanline boundary. CATU captures it on the
-        // next XUPY rising edge.
-        self.rutu = true;
+        // RUTU_LINE_ENDp fires at the scanline boundary. Writing
+        // `rutu_pending` (not `rutu`) keeps the latch input separate
+        // from its output, so `tick_catu` at this fall reads the
+        // pre-promotion `rutu` (false) and the first capture lands on
+        // the next XUPY rising edge. `rutu` itself is intentionally not
+        // overwritten — it may still be asserted from a previous
+        // XYVO-gated line boundary, and must survive until captured.
+        self.rutu_pending = true;
     }
 }

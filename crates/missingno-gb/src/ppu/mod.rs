@@ -691,8 +691,13 @@ impl Ppu {
 
             // CATU DFF pipeline — clocked by XUPY = NOT(WUVU), which
             // transitions when WUVU toggles (same XOTA edge = this fall).
+            // `tick_rutu` runs after `tick_catu` so the CATU reader sees
+            // the pre-promotion RUTU value, and the scanline-boundary
+            // write promoted by `tick_rutu` is only visible on the next
+            // XUPY rising edge.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 rendering.tick_catu(&self.video);
+                rendering.tick_rutu();
             }
 
             // POPU rising edge → VYPU → LOPE: VBlank IF.
@@ -715,12 +720,8 @@ impl Ppu {
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel = rendering.on_ppu_clock_rise(
-                    &self.registers,
-                    &self.video,
-                    &self.oam,
-                    vram,
-                );
+                result.pixel =
+                    rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
             }
 
             // STAT edge detection moved to check_stat_edge() — called
