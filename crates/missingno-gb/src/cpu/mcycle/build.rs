@@ -1,5 +1,6 @@
 use super::super::{
     Cpu,
+    commit::Commit,
     flags::Flags,
     instructions::{
         Address, Arithmetic, Arithmetic8, Arithmetic16, BitFlag, BitShift, Bitwise, Jump, Load,
@@ -52,16 +53,19 @@ impl Cpu {
         }
     }
 
-    pub(super) fn build_load(cpu: &mut Cpu, load: &Load) -> Phase {
+    pub(super) fn build_load(cpu: &mut Cpu, load: &Load) -> (Phase, Commit) {
         match load {
             Load::Load8(target, source) => match (target, source) {
-                (Target8::Register(treg), Source8::Constant(val)) => {
-                    cpu.set_register8(*treg, *val);
-                    Phase::Empty
-                }
+                (Target8::Register(treg), Source8::Constant(val)) => (
+                    Phase::Empty,
+                    Commit::LoadR8 {
+                        reg: *treg,
+                        value: *val,
+                    },
+                ),
                 (Target8::Register(treg), Source8::Register(sreg)) => {
-                    cpu.set_register8(*treg, cpu.get_register8(*sreg));
-                    Phase::Empty
+                    let value = cpu.get_register8(*sreg);
+                    (Phase::Empty, Commit::LoadR8 { reg: *treg, value })
                 }
                 (Target8::Register(treg), Source8::Memory(address)) => {
                     let addr = Self::resolve_address(cpu, address);
@@ -71,10 +75,13 @@ impl Cpu {
                     } else {
                         ReadAction::LoadRegister(*treg)
                     };
-                    Phase::ReadOp {
-                        address: addr,
-                        action,
-                    }
+                    (
+                        Phase::ReadOp {
+                            address: addr,
+                            action,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
                 (Target8::Memory(address), source) => {
                     let addr = Self::resolve_address(cpu, address);
@@ -84,24 +91,37 @@ impl Cpu {
                         Source8::Register(r) => cpu.get_register8(*r),
                         Source8::Memory(_) => unreachable!(),
                     };
-                    Phase::WriteOp {
-                        address: addr,
-                        value,
-                        hl_post: delta,
-                    }
+                    (
+                        Phase::WriteOp {
+                            address: addr,
+                            value,
+                            hl_post: delta,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
             Load::Load16(target, source) => match (target, source) {
-                (Target16::Register(reg), Source16::Constant(val)) => {
-                    cpu.set_register16(*reg, *val);
-                    Phase::Empty
-                }
+                (Target16::Register(reg), Source16::Constant(val)) => (
+                    Phase::Empty,
+                    Commit::LoadR16 {
+                        reg: *reg,
+                        value: *val,
+                    },
+                ),
                 (Target16::Register(reg), Source16::Register(sreg)) => {
+                    // LD SP,HL: decode-edge register write (multi-cycle
+                    // instruction — Phase::InternalOamBug follows).
                     let value = cpu.get_register16(*sreg);
                     cpu.set_register16(*reg, value);
-                    Phase::InternalOamBug { address: value }
+                    (
+                        Phase::InternalOamBug { address: value },
+                        Commit::NoOperation,
+                    )
                 }
                 (Target16::Register(reg), Source16::StackPointerWithOffset(offset)) => {
+                    // LD HL,SP+e8: decode-edge register + flags write
+                    // (multi-cycle — Phase::InternalOp follows).
                     let sp = cpu.stack_pointer;
                     let offset_u8 = *offset as u8;
                     let result = sp.wrapping_add(*offset as i16 as u16);
@@ -114,7 +134,7 @@ impl Cpu {
                     cpu.flags
                         .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
                     cpu.set_register16(*reg, result);
-                    Phase::InternalOp { count: 1 }
+                    (Phase::InternalOp { count: 1 }, Commit::NoOperation)
                 }
                 (Target16::Memory(address), source) => {
                     let addr = Self::resolve_address(cpu, address);
@@ -123,11 +143,14 @@ impl Cpu {
                         Source16::Register(r) => cpu.get_register16(*r),
                         Source16::StackPointerWithOffset(_) => unreachable!(),
                     };
-                    Phase::Write16 {
-                        address: addr,
-                        lo: (value & 0xff) as u8,
-                        hi: (value >> 8) as u8,
-                    }
+                    (
+                        Phase::Write16 {
+                            address: addr,
+                            lo: (value & 0xff) as u8,
+                            hi: (value >> 8) as u8,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             },
         }

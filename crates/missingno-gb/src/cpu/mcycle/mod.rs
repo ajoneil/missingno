@@ -944,7 +944,7 @@ impl Cpu {
 
             // Transitional — build_* arms still apply mutations inline and
             // return Phase only. Step 6b converts each to (Phase, Commit).
-            Instruction::Load(load) => (Self::build_load(self, load), Commit::NoOperation),
+            Instruction::Load(load) => Self::build_load(self, load),
             Instruction::Arithmetic(arith) => {
                 (Self::build_arithmetic(self, arith), Commit::NoOperation)
             }
