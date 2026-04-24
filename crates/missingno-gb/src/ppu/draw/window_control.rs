@@ -4,22 +4,23 @@ use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
 
-/// Window control block (die page 27).
+/// Window control: RYDY hit-and-latch, WX/WY match decoders + REJO
+/// frame latch, PYNU window-armed latch, NOPA window-mode latch,
+/// WAZY window-line counter, DMG zero-pixel reactivation flag.
 ///
-/// Owns the RYDY NOR latch (window hit signal), WX comparator state
-/// (NUKO/PYCO), window line counter, and window zero pixel flag.
+/// Hardware tie: collapses the WX-match capture pipeline (NUKO →
+/// PYCO → NUNU → PYNU → NUNY → PUKU → RYDY) into a single per-dot
+/// `check_trigger` evaluation gated on PYGO (POKY model). The PYCO
+/// ROCO-edge capture and NUNU MEHE-edge capture (one ALET cycle of
+/// pipeline latency in hardware) collapse to one dot of latency via
+/// the RisingPhaseInputs snapshot mechanism — observation-equivalent
+/// at half-dot resolution.
 ///
-/// On the die, this block also contains the fine scroll counter and
-/// tile fetch state machine (modeled separately as `FineScroll` and
-/// `TileFetcher`). The window control signals gate TYFA (pixel clock)
-/// via SOCY = NOT(RYDY) — RYDY=1 drops SOCY, which drops TYFA,
-/// raising SACU to halt the pixel pipe until the window tile fetch
-/// completes.
-///
-/// Inputs: pixel counter (from page 24), PYGO (from cascade), PORY
-/// (cascade clear signal), register values (WX, WY, LCDC).
-/// Outputs: RYDY (gates TYFA), window_zero_pixel (to pixel mux),
-/// window_line_counter (to fetcher for tile address).
+/// Consumed by `rendering.rs` via two distinct `!self.window.rydy()`
+/// call sites: TEKY's TUKU input (sprite-trigger block) and TYFA's
+/// SOCY input (CLKPIPE halt). Hardware reaches both sites via
+/// triple-inversion of RYDY through SYLO/TOMU/{TUKU,SOCY}; the
+/// emulator collapses each chain to one negation.
 pub(in crate::ppu) struct WindowControl {
     /// RYDY NOR latch — window hit signal. When high, gates TYFA
     /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
@@ -31,11 +32,13 @@ pub(in crate::ppu) struct WindowControl {
     /// AFTER the RisingPhaseInputs snapshot. The snapshot on the NEXT
     /// dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
     rydy: bool,
-    /// WX comparator suppression latch. Models the hardware behavior
-    /// where the RYDY latch prevents the WX comparator (PYCO) from
-    /// re-firing after the window has already triggered on this
-    /// scanline. Cleared when WX is written mid-scanline, allowing
-    /// reactivation with a new WX value.
+    /// PYNU window-armed latch model. Hardware: PYNU is a `nor_latch`
+    /// set by NUNU (one MEHE-edge after PYCO captures the NUKO match)
+    /// and reset by XOFO = NAND3(LCDC.5, NOT(atej), ppu_reset_n).
+    /// Emulator collapses NUKO/PYCO/NUNU into the per-dot
+    /// `check_trigger` evaluation; the latch state lives here.
+    /// Mid-scanline WX register changes clear this flag to allow
+    /// re-evaluation with a new WX value.
     wx_triggered: bool,
     /// Whether the window has been rendered on this line.
     window_rendered: bool,
