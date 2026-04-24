@@ -1,5 +1,6 @@
 use super::{
     Cpu, EiDelay, HaltState, InterruptLatch, InterruptMasterEnable,
+    commit::Commit,
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
     instructions::bit_shift::{Carry, Direction},
@@ -961,6 +962,29 @@ impl Cpu {
 
         self.instruction = instruction;
         self.phase = CpuPhase::Execute { phase, step: 0 };
+    }
+
+    /// Retire edge — commit the instruction's effects and transition to
+    /// the next phase.
+    ///
+    /// Step 5 structure: applies `commit` via `apply_commit`, then
+    /// delegates to `enter_fetch` (for Phase::Empty) or kicks off
+    /// `mcycle_execute` (for non-Empty phases). Step 8 moves int_take
+    /// snapshot, `ime.tick()`, int_entry `write`/`tick`, and the
+    /// dispatch-check into this method, replacing the current external
+    /// `tick_dispatch_ready` + top-of-step-1 dispatch gate.
+    #[allow(dead_code)]
+    pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
+        Self::apply_commit(self, commit);
+        match next_phase {
+            Phase::Empty => self.enter_fetch(),
+            phase => {
+                self.phase = CpuPhase::Execute { phase, step: 0 };
+                self.exec_step = 0;
+                self.mcycle_execute(0)
+                    .expect("execute phase must return Some")
+            }
+        }
     }
 
     /// Transition to the Fetch phase, run instruction-boundary side
