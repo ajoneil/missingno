@@ -5,7 +5,7 @@
 //! LY 8-bit ripple clocked by RUTU when X completes a line). The cascade
 //! matches hardware: LX's RUTU pulse clocks LY; no other coupling.
 //!
-//! Two-level LY vocabulary: `y.value()` is the hardware-internal counter
+//! Two-level LY vocabulary: `y.value` is the hardware-internal counter
 //! (0-153); `y.value_register()` is the CPU-visible $FF44 value (MYTA-
 //! smoothed to 0 during the frame-end transition).
 //!
@@ -128,10 +128,6 @@ impl LineCounterX {
         self.line_end_detected = self.value == 113;
     }
 
-    pub(in crate::ppu) fn value(&self) -> u8 {
-        self.value
-    }
-
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.value = 0;
         self.line_end_detected = false;
@@ -184,11 +180,6 @@ impl LineCounterY {
     /// Clear the POPU holdover flag. Called on each XOTA edge (tick_dot).
     pub(in crate::ppu) fn clear_popu_holdover(&mut self) {
         self.popu_holdover = false;
-    }
-
-    /// Hardware-internal LY (0-153). Use for hardware-level checks.
-    pub(in crate::ppu) fn value(&self) -> u8 {
-        self.value
     }
 
     /// CPU-visible LY value for $FF44. On line 153, MYTA's async-reset

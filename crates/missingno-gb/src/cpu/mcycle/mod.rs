@@ -509,7 +509,7 @@ impl Cpu {
     ///
     /// Each call is exactly one M-cycle. Dispatches to ISR when g42 has
     /// captured an unmasked IF (IME=1) or signals wakeup (IME=0).
-    fn mcycle_halted(&mut self, read_value: u8) -> Option<BusAction> {
+    fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;

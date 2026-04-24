@@ -70,14 +70,6 @@ impl Dividers {
         !self.half_mcycle
     }
 
-    /// Post-VID_RST override used by the LCD-enable startup sequence.
-    /// `Ppu::initialize_lcd_on` needs to set TALU to match hardware's
-    /// post-VID_RST state directly — see that method for the rationale.
-    /// Exists specifically for that path; not intended for general use.
-    pub(in crate::ppu) fn set_mcycle(&mut self, value: bool) {
-        self.mcycle = value;
-    }
-
     /// VID_RST: dividers reset to 0 (Q=0 for both DFFs).
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.half_mcycle = false;

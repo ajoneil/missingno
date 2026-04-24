@@ -708,7 +708,7 @@ impl Ppu {
             // transfers to output here, so the pipeline sees a 1-dot
             // delay — matching hardware's reg_new → reg_old copy at the
             // tick boundary followed by combinational read of reg_old.
-            let palette_changed = self.registers.tick_palette_latches();
+            self.registers.tick_palette_latches();
             self.registers.tick_register_latches();
 
             // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
@@ -720,7 +720,6 @@ impl Ppu {
                     &self.video,
                     &self.oam,
                     vram,
-                    palette_changed,
                 );
             }
 

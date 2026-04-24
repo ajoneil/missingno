@@ -387,7 +387,6 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-        palette_changed: bool,
     ) -> Option<PixelOutput> {
         // XUPY rising edge detection: the XOTA divider toggle (in the
         // preceding PPU-clock-fall phase) ran before this, so xupy()==true
@@ -419,7 +418,7 @@ impl Rendering {
         let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
 
         if was_rendering {
-            self.mode3_falling(regs, video, oam, vram, palette_changed);
+            self.mode3_falling(regs, video, oam, vram);
         }
 
         pixel
@@ -557,7 +556,6 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         vram: &Vram,
-        palette_changed: bool,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
         // (TYFA suppression) and is latched into hblank for next dot's wodu().
