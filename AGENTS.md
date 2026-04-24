@@ -14,7 +14,13 @@ These are the top-level rules governing how skills interact. They survive contex
 
 4. **summary.md is the single source of truth for investigation state.** Update it before every skill dispatch and after every skill return — no exceptions. If context were compacted right now, `summary.md` alone must tell you exactly where you are and what to do next. Only the `/investigate` skill writes to `summary.md`.
 
-5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources: gbtrace execution traces (both comparison and individual inspection), propagation delay analysis (`receipts/resources/gb-propagation-delay-analysis/`), hardware timing data (`receipts/resources/gb-timing-data/`), or existing research documents in `receipts/research/`. Generate new diagnostic data only when existing sources don't answer the question.
+5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources. Primary references in order:
+   1. **PPU timing model spec** (`receipts/ppu-overhaul/reference/ppu-timing-model-spec.md`) — gate-level hardware behaviour collated from dmg-sim measurements, netlist analysis, and propagation-delay analysis. This is the canonical hardware reference for the PPU. If the spec doesn't answer the question but a dmg-sim run would, **flag the gap to the user** so the spec can be updated — do not silently substitute emulator source or fall back to lower-priority references.
+   2. **gekkio's gb-ctr** (Game Boy Complete Technical Reference, https://gekkio.fi/files/gb-docs/gbctr.pdf) — detailed, reliable hardware reference covering the whole console.
+   3. **dmg-sim** (`receipts/resources/dmg-sim/`) — gate-level SystemVerilog simulation derived from the DMG-CPU B netlist. Use `scripts/dmg-sim-observe.sh` to run a ROM and capture an FST waveform for signal observation when the spec lacks the needed detail.
+   4. **Propagation delay analysis** (`receipts/resources/gb-propagation-delay-analysis/`), **existing research** (`receipts/research/`), and **cross-emulator traces** (gbtrace). For trace comparisons, **prefer the GateBoy adapter** — it is die-photo-derived and closest to hardware — and fall back to Gambatte/SameBoy/DocBoy only when GateBoy does not pass the test.
+
+   Generate new diagnostic data only when these existing sources don't answer the question.
 
 ## Agent Infrastructure
 
@@ -93,8 +99,9 @@ cargo fmt                                    # Format
 
 - **Hardware fidelity**: Model the hardware as closely as possible so correct behavior emerges naturally. Avoid hacks and special-case workarounds — if something needs a hack to work, the underlying model is wrong.
 - **Code as documentation**: The code should teach the reader how the hardware works. Use Rust's type system — enums, newtypes, descriptive variant names — to make structure and intent obvious from the code itself, not from comments. Strike a balance between clarity and jargon; assume the reader is a competent programmer but not necessarily a domain expert in the specific hardware.
-- **Hardware over emulator comparisons**: Other emulators are reference material, not ground truth. Always attribute emulator-sourced findings explicitly ("SameBoy does X") rather than as hardware fact.
-- **Data-driven debugging**: Use available data resources (gbtrace, gb-propagation-delay-analysis, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
+- **Hardware over emulator comparisons**: Other emulators are reference material, not ground truth. Always attribute emulator-sourced findings explicitly ("SameBoy does X") rather than as hardware fact. For trace comparisons, prefer the GateBoy adapter over other emulators — it is die-photo-derived and closest to hardware.
+- **Data-driven debugging**: Use available data resources (PPU timing model spec, gb-ctr, dmg-sim, gb-propagation-delay-analysis, gbtrace, gb-timing-data, slowpeek) rather than reasoning about behavior from code alone. Observe first, hypothesize second.
+- **Flag spec gaps, don't paper over them**: When the PPU timing model spec (`receipts/ppu-overhaul/reference/ppu-timing-model-spec.md`) doesn't cover a behaviour but a dmg-sim run could provide the measurement, raise it with the user so the spec can be extended. Do not fall back to emulator source or hand-wave the answer.
 - **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
 
 ## Architecture
@@ -166,12 +173,15 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 
 When investigating emulator issues, these data sources are available in priority order. Always check existing data before generating new diagnostics.
 
-1. **Hardware documentation**: Pan Docs, TCAGBD, hardware manuals.
-2. **Propagation delay analysis** (`receipts/resources/gb-propagation-delay-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
-3. **Cross-emulator execution traces** (gbtrace): 5 emulators, 15 test suites. Use for both `diff` and individual inspection. See Key Patterns above.
-4. **Hardware timing measurements** (`receipts/resources/gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `receipts/resources/gb-timing-data/campaigns/` for available campaigns.
-5. **Test ROM sources**: Assembly source reveals exactly what tests measure and what expected values mean.
-6. **Hardware test harness** (`receipts/resources/slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
+1. **PPU timing model spec** (`receipts/ppu-overhaul/reference/ppu-timing-model-spec.md`): Gate-level hardware behaviour for the DMG PPU, collated from dmg-sim measurements, netlist analysis, and propagation-delay analysis. Canonical hardware reference for PPU timing. Companion files: `ppu-signal-concordance.md` (gate name ↔ semantic role), `spec-conventions.md` (authoring conventions). **If a PPU question isn't covered by the spec but a dmg-sim measurement could answer it, flag this to the user so the spec can be updated** — do not fall back to emulator source.
+2. **gekkio's gb-ctr** (Game Boy Complete Technical Reference, https://gekkio.fi/files/gb-docs/gbctr.pdf): Detailed, reliable hardware reference for the whole console. Primary written reference outside the PPU spec.
+3. **dmg-sim** (`receipts/resources/dmg-sim/`): Gate-level SystemVerilog simulation built from the DMG-CPU B netlist. Run with `scripts/dmg-sim-observe.sh <rom> [seconds] [output_dir]` to capture an FST waveform (`receipts/traces/dmg-sim/<rom>.fst`, viewable in GTKWave). Use when the PPU timing model spec lacks detail the spec should contain — and update the spec afterwards.
+4. **Propagation delay analysis** (`receipts/resources/gb-propagation-delay-analysis/`): Signal races and deep combinatorial paths. See Key Patterns above.
+5. **Hardware documentation**: Pan Docs, TCAGBD, hardware manuals. Useful for non-PPU behaviour and as cross-reference.
+6. **Cross-emulator execution traces** (gbtrace): 5 emulators, 15 test suites. Use for both `diff` and individual inspection. **Prefer the GateBoy adapter** — die-photo-derived, closest to hardware. Fall back to Gambatte / SameBoy / DocBoy only when GateBoy does not pass the test or has no trace for it. See Key Patterns above.
+7. **Hardware timing measurements** (`receipts/resources/gb-timing-data/`): Empirical cycle-level data from real hardware via Slowpeek. Campaigns cover PPU timing (mode 3 duration, sprite penalties, OAM/VRAM lock boundaries) and timer subsystem timing (DIV phase, TIMA increment). Results are CSV files with multi-dimensional sweep data. **Status: data collection in progress** — check `receipts/resources/gb-timing-data/campaigns/` for available campaigns.
+8. **Test ROM sources**: Assembly source reveals exactly what tests measure and what expected values mean.
+9. **Hardware test harness** (`receipts/resources/slowpeek/`): Programmable harness for cycle-precise measurements on real Game Boy hardware via interrupt-driven sweeps. **Status: emulator-only for now; hardware serial bridge in development.** Note when a Slowpeek test would provide the definitive answer, but do not attempt hardware mode yet.
 
 ### Debugger
 
@@ -184,7 +194,15 @@ External resources live in `receipts/resources/`. Clone or download whatever you
 
 | Directory | Repository | Description |
 |-----------|------------|-------------|
+| `dmg-sim` | https://github.com/msinger/dmg-sim | Gate-level SystemVerilog simulation of DMG-CPU B (Icarus Verilog) — primary source for PPU timing measurements |
 | `gb-propagation-delay-analysis` | https://github.com/ajoneil/gb-propagation-delay-analysis | GateBoy netlist analysis — signal races, critical paths, propagation delays |
 | `gbtrace` | https://github.com/ajoneil/gbtrace | Execution trace capture, diff, and render across emulators |
 | `gb-timing-data` | https://github.com/ajoneil/gb-timing-data | Cycle-level hardware timing measurements |
 | `slowpeek` | https://github.com/ajoneil/slowpeek | Cycle-precise hardware test harness |
+
+Primary hardware documentation (not cloned — fetch as needed):
+
+| Resource | URL | Description |
+|----------|-----|-------------|
+| PPU timing model spec | `receipts/ppu-overhaul/reference/ppu-timing-model-spec.md` | Canonical DMG PPU timing reference, collated from dmg-sim, netlist, and propagation-delay analysis |
+| gb-ctr | https://gekkio.fi/files/gb-docs/gbctr.pdf | Gekkio's Game Boy Complete Technical Reference |
