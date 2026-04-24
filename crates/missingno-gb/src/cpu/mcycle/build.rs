@@ -420,37 +420,38 @@ impl Cpu {
         }
     }
 
-    pub(super) fn build_jump(cpu: &mut Cpu, j: &Jump) -> Phase {
+    pub(super) fn build_jump(cpu: &mut Cpu, j: &Jump) -> (Phase, Commit) {
         match j {
             Jump::Jump(condition, location) => {
                 let is_relative = matches!(location, jump::Location::Address(Address::Relative(_)));
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
-                    // JP HL: no internal M-cycle. On hardware, JP HL
-                    // redirects the bus address to HL but reg.pc retains
-                    // the post-fetch IDU value. pc updates naturally when
-                    // the next fetch step 1 fires.
+                    // JP HL: no internal M-cycle. bus_counter redirects
+                    // to HL at retire; pc updates naturally when the
+                    // next fetch step 1 fires.
                     if taken {
-                        cpu.bus_counter = address;
+                        (Phase::Empty, Commit::JumpAbsolute { target: address })
+                    } else {
+                        (Phase::Empty, Commit::NoOperation)
                     }
-                    Phase::Empty
                 } else if is_relative && taken {
-                    // JR: the internal M-cycle shows the jump target on
-                    // the bus (hardware cpu_bus_pass(reg.pc) after the
-                    // offset is applied). The OAM bug check uses the
-                    // target address, not the pre-jump address.
+                    // JR taken: decode-edge bus_counter + pc write
+                    // (multi-cycle — Phase::InternalOamBug shows target
+                    // on bus).
                     cpu.bus_counter = address;
                     cpu.pc = cpu.bus_counter;
-                    Phase::InternalOamBug { address }
+                    (Phase::InternalOamBug { address }, Commit::NoOperation)
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
-                    // M-cycle. On hardware, PC stays at the post-operand
-                    // address until the CondJump executes.
-                    Phase::CondJump {
-                        taken,
-                        target: address,
-                    }
+                    // M-cycle.
+                    (
+                        Phase::CondJump {
+                            taken,
+                            target: address,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             }
             Jump::Call(condition, location) => {
@@ -463,25 +464,31 @@ impl Cpu {
                     let sp = cpu.stack_pointer;
                     cpu.bus_counter = address;
                     cpu.pc = cpu.bus_counter;
-                    Phase::CondCall {
-                        taken: true,
-                        sp,
-                        hi: pc_hi,
-                        lo: pc_lo,
-                    }
+                    (
+                        Phase::CondCall {
+                            taken: true,
+                            sp,
+                            hi: pc_hi,
+                            lo: pc_lo,
+                        },
+                        Commit::NoOperation,
+                    )
                 } else {
-                    Phase::CondCall {
-                        taken: false,
-                        sp: 0,
-                        hi: 0,
-                        lo: 0,
-                    }
+                    (
+                        Phase::CondCall {
+                            taken: false,
+                            sp: 0,
+                            hi: 0,
+                            lo: 0,
+                        },
+                        Commit::NoOperation,
+                    )
                 }
             }
             Jump::Return(condition) => {
                 let has_condition = condition.is_some();
                 let taken = Self::check_condition(cpu, condition);
-                if has_condition {
+                let phase = if has_condition {
                     Phase::CondReturn {
                         taken,
                         sp: cpu.stack_pointer,
@@ -492,12 +499,16 @@ impl Cpu {
                         sp: cpu.stack_pointer,
                         action: PopAction::SetPc,
                     }
-                }
+                };
+                (phase, Commit::NoOperation)
             }
-            Jump::ReturnAndEnableInterrupts => Phase::Pop {
-                sp: cpu.stack_pointer,
-                action: PopAction::SetPcEnableInterrupts,
-            },
+            Jump::ReturnAndEnableInterrupts => (
+                Phase::Pop {
+                    sp: cpu.stack_pointer,
+                    action: PopAction::SetPcEnableInterrupts,
+                },
+                Commit::NoOperation,
+            ),
             Jump::Restart(address) => {
                 let pc = cpu.pc;
                 let pc_hi = (pc >> 8) as u8;
@@ -505,29 +516,37 @@ impl Cpu {
                 let sp = cpu.stack_pointer;
                 cpu.bus_counter = *address as u16;
                 cpu.pc = cpu.bus_counter;
-                Phase::Push {
-                    sp,
-                    hi: pc_hi,
-                    lo: pc_lo,
-                }
+                (
+                    Phase::Push {
+                        sp,
+                        hi: pc_hi,
+                        lo: pc_lo,
+                    },
+                    Commit::NoOperation,
+                )
             }
         }
     }
 
-    pub(super) fn build_stack(cpu: &mut Cpu, s: &Stack) -> Phase {
+    pub(super) fn build_stack(cpu: &mut Cpu, s: &Stack) -> (Phase, Commit) {
         match s {
             Stack::Push(register) => {
                 let value = cpu.get_register16(*register);
                 let hi = (value >> 8) as u8;
                 let lo = (value & 0xff) as u8;
                 let sp = cpu.stack_pointer;
-                Phase::Push { sp, hi, lo }
+                (Phase::Push { sp, hi, lo }, Commit::NoOperation)
             }
-            Stack::Pop(register) => Phase::Pop {
-                sp: cpu.stack_pointer,
-                action: PopAction::SetRegister(*register),
-            },
+            Stack::Pop(register) => (
+                Phase::Pop {
+                    sp: cpu.stack_pointer,
+                    action: PopAction::SetRegister(*register),
+                },
+                Commit::NoOperation,
+            ),
             Stack::Adjust(offset) => {
+                // ADD SP,e8: decode-edge SP + flags write (multi-cycle —
+                // two internal M-cycles follow).
                 let sp = cpu.stack_pointer;
                 let offset_u8 = *offset as u8;
                 cpu.stack_pointer = sp.wrapping_add(*offset as i16 as u16);
@@ -539,7 +558,7 @@ impl Cpu {
                 );
                 cpu.flags
                     .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
-                Phase::InternalOp { count: 2 }
+                (Phase::InternalOp { count: 2 }, Commit::NoOperation)
             }
         }
     }

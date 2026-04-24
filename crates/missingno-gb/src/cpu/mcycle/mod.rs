@@ -949,8 +949,8 @@ impl Cpu {
             Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
             Instruction::BitShift(bs) => Self::build_bit_shift(self, bs),
             Instruction::BitFlag(bf) => Self::build_bit_flag(self, bf),
-            Instruction::Jump(j) => (Self::build_jump(self, j), Commit::NoOperation),
-            Instruction::Stack(s) => (Self::build_stack(self, s), Commit::NoOperation),
+            Instruction::Jump(j) => Self::build_jump(self, j),
+            Instruction::Stack(s) => Self::build_stack(self, s),
         };
 
         Self::apply_commit(self, commit);
