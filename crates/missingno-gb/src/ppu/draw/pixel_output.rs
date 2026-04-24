@@ -1,19 +1,19 @@
-// --- Pixel mux (page 35 on the die) ---
+// Pixel mux: combines BG and OBJ shift register outputs into a single
+// colour index, applies sprite priority, and maps through the active
+// palette. Hardware chain: BG plane gates via LCDC.0 (VYXE) at RAJY /
+// TADE (§6.15); sprite priority MUX via RYFU / XULA / WOXA / NULY
+// (§6.10); palette lookup via AO2222 combiners MOKA / NURA / WUFU
+// combined in PATY (OR3); final pad drivers RAVO (LD1) and REMY (LD0).
 //
-// The pixel mux combines the BG and OBJ shift register outputs into a
-// single color index, applies priority logic, maps through the
-// appropriate palette, and writes the result to the screen.
-//
-// LCD data pin lag model (REMY/RAVO qp_ext_old):
-//   The LCD data pins update combinationally from the pipe MSBs every
-//   phase, but the LCD captures qp_ext_old — the previous half-cycle's
-//   value. This means each TOBA edge shifts the PREVIOUS dot's pixel
-//   into the LCD shift register, giving a 1-dot offset.
-//
-//   159 TOBA edges (PX=9–167) output pixels for PX=8–166.
-//   The 160th pixel (PX=167) is captured by the NOR latch at EOL.
-//   POVA fires for timing but its pixel is pushed off the register
-//   by the 160 subsequent pixels (159 TOBA + 1 NOR latch).
+// LCD data pin lag (REMY/RAVO qp_ext_old model): the LCD data pins
+// update combinationally from the pipe MSBs but the LCD captures the
+// previous half-cycle's value. Each TOBA edge shifts the PREVIOUS
+// dot's pixel into the LCD shift register, giving a 1-dot offset.
+// 159 TOBA edges (PX=9–167) output pixels for PX=8–166; the 160th
+// pixel (PX=167) is captured by the NOR latch at end-of-line. POVA
+// fires once per scanline's fine-scroll-match timing but its pixel
+// is shifted off by the 160 subsequent pushes (159 TOBA + 1 NOR
+// latch) — observation-equivalent to a collapsed single-push model.
 //
 // Sprite merge updates the lcd_data_latch combinationally (no SEMU
 // edge), so the next TOBA captures post-merge sprite data.

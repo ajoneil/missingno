@@ -1,4 +1,4 @@
-//! LCD Control block (die page 24).
+//! LCD control: LCD clock gating and pixel data pin latch.
 //!
 //! The two edge methods (`on_ppu_clock_fall` / `on_ppu_clock_rise`)
 //! dispatch multiple discrete concerns per edge — SACU-driven pixel
@@ -9,29 +9,43 @@
 use crate::ppu::PixelOutput;
 use crate::ppu::types::palette::PaletteIndex;
 
-/// LCD Control block (die page 24).
+/// LCD clock gating + LCD data pin latch.
 ///
-/// Owns LCD clock gating (WUSA NOR latch), POVA fine-match trigger,
-/// and LCD data pin latch (REMY/RAVO). The pixel X position counter
-/// (PX) lives in its own module — see `pixel_counter.rs` for §2.5.
+/// Owns the LCD clock gate (hardware WUSA `nor_latch`), a POVA
+/// fine-scroll-match trigger (consumed at the caller for LCD-clock
+/// generation), and the LCD data pin latch (hardware REMY/RAVO
+/// `qp_ext_old` model). The pixel X position counter (PX) lives in
+/// its own module (see `pixel_counter.rs`).
 ///
 /// Pixel output is returned as a [`PixelOutput`] signal rather than
 /// written to an internal framebuffer — the caller (emulation loop)
 /// is responsible for building whatever representation it needs.
 ///
-/// Inputs: SACU (pixel clock edge from page 27), pixel data (from
-/// pixel mux, page 35), POVA (fine scroll match), WEGO (from page 21),
-/// PX value (from `PixelCounter`, §6.3, used for WUSA XAJO gating).
-/// Outputs: TOBA (gated LCD clock, returned from edge methods).
+/// Inputs: SACU (pixel clock edge), pixel data (from the pixel mux),
+/// POVA (fine-scroll-match, from §6.2's FineScroll), WEGO
+/// (OR2(VID_RST, VOGA)), PX value (from PixelCounter, §6.3, used for
+/// the WUSA XAJO gate). Outputs: TOBA (gated LCD clock, returned
+/// from edge methods).
+///
+/// Hardware chain: WUSA `nor_latch` gates TOBA = AND2(WUSA, SACU).
+/// SEMU = OR2(TOBA, POVA) would be the cp_pad pixel-clock source on
+/// hardware (RYPO = NOT(SEMU) → cp_pad pad), but cp_pad waveform is
+/// not currently modelled — POVA's contribution would shift its pixel
+/// off the 159-stage LCD shift register per the collapsed-push model
+/// (see `pixel_output.rs`). Adding cp_pad state awaits a consumer
+/// (debugger panel or FST-comparison harness); tracked in the
+/// alignment-log's LCD output alignment deferred arc.
 pub(in crate::ppu) struct LcdControl {
-    /// WUSA NOR latch — LCD clock gate. SET by XAJO (AND2 of pixel
-    /// counter bits 0 and 3, first at PX=9). CLEAR by WEGO
-    /// (= OR2(VID_RST, VOGA)). Gates TOBA (LCD clock pin).
+    /// LCD clock gate latch (hardware WUSA `nor_latch`). SET by XAJO
+    /// (AND2 of pixel-counter bits 0 and 3, first at PX=9). CLEAR by
+    /// WEGO = OR2(VID_RST, VOGA). Gates TOBA = AND2(WUSA, SACU).
     wusa: bool,
-    /// POVA_FINE_MATCH_TRIGp — rising-edge trigger on the fine scroll
-    /// match signal. Computed on rising phases as AND2(PUXA, !NYZE).
-    /// Generates one extra LCD clock pulse via SEMU = OR2(TOBA, POVA),
-    /// providing the 160th LCD clock edge before WUSA opens.
+    /// Fine-scroll-match trigger (hardware POVA). Computed by
+    /// FineScroll as a rising-edge detector on PUXA; on hardware POVA
+    /// = AND2(PUXA, NYZE) fires for ~1 dot. Would contribute to
+    /// SEMU = OR2(TOBA, POVA) on hardware for an extra cp_pad clock
+    /// edge per Mode 3 scanline — not currently wired (no cp_pad
+    /// consumer; see LCD output alignment deferred arc).
     pova: bool,
     /// Number of pixels pushed to the LCD on this line. Replaces the
     /// old shift register's count — nothing reads intermediate pixel
