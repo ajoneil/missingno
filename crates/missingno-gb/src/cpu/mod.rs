@@ -111,13 +111,6 @@ pub struct Cpu {
     /// immediately but fails to increment PC on the next opcode fetch,
     /// causing that byte to be read twice.
     pub halt_bug: bool,
-    /// IME=0 HALT wakeup pending flag. Set by `update_interrupt_state`
-    /// when an interrupt fires during HALT with IME=0. Consumed by
-    /// `mcycle_halted` on the next M-cycle boundary, modeling the
-    /// hardware's CLK_ENA re-enable delay (g42 latches during the idle
-    /// M-cycle, but the CPU doesn't resume clocking until the next
-    /// M-cycle boundary).
-    pub(super) halt_wakeup_pending: bool,
 
     // ── Persistent state machine fields ──
     /// Current execution phase of the CPU state machine.
@@ -212,7 +205,6 @@ impl Cpu {
             ei_delay: None,
             halt_state: HaltState::Running,
             halt_bug: false,
-            halt_wakeup_pending: false,
 
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
@@ -257,7 +249,6 @@ impl Cpu {
             ei_delay: None,
             halt_state: HaltState::Running,
             halt_bug: false,
-            halt_wakeup_pending: false,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
@@ -317,7 +308,6 @@ impl Cpu {
                 _ => HaltState::Running,
             },
             halt_bug: snap.halt_bug,
-            halt_wakeup_pending: false,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,

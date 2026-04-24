@@ -545,15 +545,18 @@ impl Cpu {
         }
 
         // ── IME=0 wakeup ──
-        // Consume the idle Read as the next opcode when g42 has captured
-        // the IF. Same g42_q gate as IME=1 dispatch.
-        if self.interrupt_pending && self.g42_q && self.halt_wakeup_pending {
-            self.halt_wakeup_pending = false;
+        // Halt release is combinational on g42.q↑. This M-cycle is the
+        // halt-release M-cycle — it completes as a normal idle Read.
+        // The fetch M-cycle begins at the next BOGA edge, where the
+        // phase dispatcher will route to mcycle_fetch.
+        if self.interrupt_pending && self.g42_q {
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
             self.phase = CpuPhase::Fetch;
-            self.exec_step = 1;
-            return self.mcycle_fetch(read_value);
+            self.exec_step = 0;
+            return Some(BusAction::Read {
+                address: self.bus_counter,
+            });
         }
 
         // ── Still halted ──
@@ -1077,16 +1080,6 @@ impl Cpu {
             },
             InterruptMasterEnable::Disabled => InterruptLatch::Empty,
         };
-
-        // IME=0 halt wakeup: set the pending flag instead of immediately
-        // transitioning to Running. The current idle M-cycle completes as
-        // idle; mcycle_halted consumes the flag at the next M-cycle boundary.
-        if self.halt_state == HaltState::Halted
-            && self.interrupt_master_enable == InterruptMasterEnable::Disabled
-            && triggered.is_some()
-        {
-            self.halt_wakeup_pending = true;
-        }
     }
 
     /// Clock g42 (yoii) — CLK9-cadence DFF, captures interrupt_pending
