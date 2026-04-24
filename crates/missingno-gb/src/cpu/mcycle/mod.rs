@@ -446,7 +446,7 @@ impl Cpu {
             if self.dispatch_ready_q && self.interrupt_latch.take_ready().is_some() {
                 // Interrupt detected — enter ISR dispatch.
                 // PC stays at pre-fetch value (not incremented).
-                self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                self.ime.write_immediate(InterruptMasterEnable::Disabled);
                 self.ei_delay = None;
 
                 let pc = self.pc;
@@ -529,7 +529,7 @@ impl Cpu {
             && self.dispatch_ready_q
             && self.interrupt_latch.take_ready().is_some()
         {
-            self.interrupt_master_enable = InterruptMasterEnable::Disabled;
+            self.ime.write_immediate(InterruptMasterEnable::Disabled);
             self.ei_delay = None;
             self.halt_state = HaltState::Running;
 
@@ -555,7 +555,7 @@ impl Cpu {
         // phase dispatcher will route to mcycle_fetch.
         if self.interrupt_pending
             && self.g42_q
-            && self.interrupt_master_enable == InterruptMasterEnable::Disabled
+            && self.ime.output() == InterruptMasterEnable::Disabled
         {
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
@@ -1014,12 +1014,12 @@ impl Cpu {
             // IME=0 (the DFF pipeline hadn't propagated yet). The halt
             // bug triggers — PC is not incremented. But EI's IME
             // promotion still takes effect, so the interrupt dispatches.
-            self.interrupt_master_enable = InterruptMasterEnable::Enabled;
+            self.ime.write_immediate(InterruptMasterEnable::Enabled);
             self.bus_counter = self.bus_counter.wrapping_sub(1);
             self.pc = self.bus_counter;
             self.halt_state = HaltState::Running;
             self.ei_delay = None;
-        } else if self.interrupt_master_enable == InterruptMasterEnable::Disabled {
+        } else if self.ime.output() == InterruptMasterEnable::Disabled {
             self.halt_state = HaltState::Running;
             self.halt_bug = true;
         }
@@ -1032,7 +1032,7 @@ impl Cpu {
         self.ei_delay = match self.ei_delay {
             Some(EiDelay::Pending) => Some(EiDelay::Fired),
             Some(EiDelay::Fired) => {
-                self.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                self.ime.write_immediate(InterruptMasterEnable::Enabled);
                 None
             }
             None => None,
@@ -1080,7 +1080,7 @@ impl Cpu {
     ) {
         self.interrupt_pending = triggered.is_some();
 
-        self.interrupt_latch = match self.interrupt_master_enable {
+        self.interrupt_latch = match self.ime.output() {
             InterruptMasterEnable::Enabled => match triggered {
                 Some(interrupt) => InterruptLatch::Ready(interrupt),
                 None => InterruptLatch::Empty,

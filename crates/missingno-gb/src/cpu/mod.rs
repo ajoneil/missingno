@@ -1,3 +1,4 @@
+use dff::Dff;
 use flags::{Flag, Flags};
 use mcycle::{BusDot, CpuPhase};
 use registers::{Register8, Register16};
@@ -101,7 +102,13 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    pub interrupt_master_enable: InterruptMasterEnable,
+    /// IME flip-flop. On hardware, captures new value on CLK9↑ (retire
+    /// edge for DI/EI). `output()` reads pre-edge Q until `tick()` fires;
+    /// pending writes queued via `write()` are invisible to combinational
+    /// consumers (int_take) until the edge. Step 2 of the commit overhaul
+    /// preserves synchronous-mutation semantics via `write_immediate`;
+    /// step 8 introduces the pre/post-edge distinction inside `commit()`.
+    pub ime: Dff<InterruptMasterEnable>,
     /// EI delay pipeline — models the DFF cascade between EI's
     /// decode signal and the IME flip-flop. Advances one stage per
     /// instruction completion in `advance_ei_delay()`.
@@ -189,7 +196,7 @@ impl Cpu {
                 Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
             },
 
-            interrupt_master_enable: InterruptMasterEnable::Disabled,
+            ime: Dff::new(InterruptMasterEnable::Disabled),
             ei_delay: None,
             halt_state: HaltState::Running,
             halt_bug: false,
@@ -232,7 +239,7 @@ impl Cpu {
             pc: 0x0000,
             instruction_pc: 0x0000,
             flags: Flags::empty(),
-            interrupt_master_enable: InterruptMasterEnable::Disabled,
+            ime: Dff::new(InterruptMasterEnable::Disabled),
             ei_delay: None,
             halt_state: HaltState::Running,
             halt_bug: false,
@@ -278,11 +285,11 @@ impl Cpu {
             pc: snap.pc,
             instruction_pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
-            interrupt_master_enable: if snap.ime {
+            ime: Dff::new(if snap.ime {
                 InterruptMasterEnable::Enabled
             } else {
                 InterruptMasterEnable::Disabled
-            },
+            }),
             ei_delay: match snap.ei_delay {
                 1 => Some(EiDelay::Pending),
                 2 => Some(EiDelay::Fired),
@@ -377,7 +384,7 @@ impl Cpu {
     }
 
     pub fn interrupts_enabled(&self) -> bool {
-        self.interrupt_master_enable != InterruptMasterEnable::Disabled
+        self.ime.output() != InterruptMasterEnable::Disabled
     }
 
     /// Continuous instruction M-cycle counter. 0 = fetch M-cycle,

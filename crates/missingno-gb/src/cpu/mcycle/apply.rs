@@ -55,14 +55,14 @@ impl Cpu {
                 // On hardware, EI sets an RS latch — re-setting an already-set
                 // latch is a no-op. Guard against overwriting Fired with Pending,
                 // which would delay IME enablement by an extra instruction.
-                if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled
+                if cpu.ime.output() != InterruptMasterEnable::Enabled
                     && cpu.ei_delay.is_none()
                 {
                     cpu.ei_delay = Some(EiDelay::Pending);
                 }
             }
             InterruptInstruction::Disable => {
-                cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
+                cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
                 // On real hardware, DI's combinational gate (g91) clears the
                 // EI pipeline latch (g92). Without this, an EI;DI sequence
                 // would let EI's delay survive and re-enable IME.
@@ -267,7 +267,7 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
-                cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;
             }
