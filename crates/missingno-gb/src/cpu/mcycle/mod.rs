@@ -549,7 +549,10 @@ impl Cpu {
         // halt-release M-cycle — it completes as a normal idle Read.
         // The fetch M-cycle begins at the next BOGA edge, where the
         // phase dispatcher will route to mcycle_fetch.
-        if self.interrupt_pending && self.g42_q {
+        if self.interrupt_pending
+            && self.g42_q
+            && self.interrupt_master_enable == InterruptMasterEnable::Disabled
+        {
             self.halt_state = HaltState::Running;
             self.advance_ei_delay();
             self.phase = CpuPhase::Fetch;
