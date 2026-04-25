@@ -180,6 +180,14 @@ impl GameBoy {
             // Timer ticks once per M-cycle (BOGA).
             self.timers.mcycle();
 
+            // Drain g151 → g154: the CLK9-clocked g151 DFF latches the
+            // reload-cycle pulse during timers.mcycle(); g154 captures
+            // immediately after this CLK9↑, raising IF.bit2 before the
+            // CPU's dispatch read at this M-cycle.
+            if let Some(interrupt) = self.timers.take_pending_interrupt() {
+                self.interrupts.request(interrupt);
+            }
+
             // PPU master-clock rising edge at the M-cycle boundary (dot 0).
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
@@ -301,15 +309,6 @@ impl GameBoy {
         // G4.2 confirmed WODU doesn't depend on XYMU, making the
         // prediction reliable.
 
-        // Drain timer overflow → IF.timer at every rising edge so overflow
-        // detected in fall() is visible to update_interrupt_state in the
-        // next fall(). Hardware delays TIMA overflow → IF bit 2 by one
-        // M-cycle (the reload cycle) via the nydu/moba clk_1mhz DFF
-        // chain — modeled as a one-tick handoff here.
-        if let Some(interrupt) = self.timers.take_pending_interrupt() {
-            self.interrupts.request(interrupt);
-        }
-
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
             && !dot.boga()
@@ -334,9 +333,7 @@ impl GameBoy {
 
         // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
         // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let video_result = self
-            .ppu
-            .on_master_clock_fall(is_mcycle_boundary);
+        let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary);
 
         // CPU data latch: capture bus value after PPU's master-clock
         // fall updates land. Hardware reads are combinational (spec
