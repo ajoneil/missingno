@@ -122,6 +122,17 @@ pub struct Cpu {
     /// master-clock rising edge — single DFF stage between IF assertion
     /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
     pub(super) int_entry: Dff<bool>,
+    /// Carries the retire-rise int_entry-chain gate decision (set by
+    /// `commit()` when the retiring Commit is EnableInterrupts /
+    /// DisableInterrupts) across to the same-dot fall, where the zacw
+    /// DFF actually captures.
+    pub(super) pending_int_entry_gate: bool,
+    /// Carries the retire-rise dispatch-readiness state. Set by
+    /// `commit()` when a retire ran; the executor then calls
+    /// `tick_int_entry()` at the matching fall to perform the zacw
+    /// capture using the IF settled by that same dot's master-clock
+    /// fall. Cleared by `tick_int_entry()`.
+    pub(super) pending_int_entry_capture: bool,
 }
 
 impl Cpu {
@@ -169,6 +180,8 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
+            pending_int_entry_gate: false,
+            pending_int_entry_capture: false,
         }
     }
 
@@ -209,6 +222,8 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
+            pending_int_entry_gate: false,
+            pending_int_entry_capture: false,
         }
     }
 
@@ -262,6 +277,8 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
+            pending_int_entry_gate: false,
+            pending_int_entry_capture: false,
         }
     }
 

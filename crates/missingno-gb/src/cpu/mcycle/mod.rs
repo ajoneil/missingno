@@ -940,32 +940,37 @@ impl Cpu {
     }
 
     /// Retire edge — the end-of-instruction CLK9↑ where the register
-    /// file, IME, and `int_entry` (zacw) all capture.
+    /// file, IME, and `int_entry` (zacw) all capture on hardware.
+    ///
+    /// On hardware these are separate DFFs all clocked by the same
+    /// CLK9↑. The register-file / IME write-back happens here at
+    /// retire-rise; the `int_entry` (zacw) capture is deferred to
+    /// `tick_int_entry()` at the same dot's master-clock fall, after
+    /// the PPU fall has settled IF for this dot. The split is required
+    /// because IF can change between rise and fall of the retire dot
+    /// (e.g. HBlank STAT IF asserts on the master-clock falling edge
+    /// of the retire dot in the SCX=1 case), and the zacw DFF must
+    /// see that post-fall IF view at its CLK9↑ capture.
     ///
     /// Sequence:
     ///   1. Derive int_entry-chain gate from the Commit variant
     ///      (EI/DI block; zaij/zkog gate against their data_phase).
     ///   2. apply_commit — register / flag / IME mutations.
-    ///   3. Read int_take post-apply (DI's IME-clear is visible here,
-    ///      naturally suppressing dispatch in DI's own M-cycle).
-    ///   4. int_entry capture, gated by step 1's flag.
-    ///   5. enter_fetch-style side effects (HALT-bug check, pending
+    ///   3. Stash gate + capture-pending flags for the matching fall.
+    ///   4. enter_fetch-style side effects (HALT-bug check, pending
     ///      jump target, pc sync, boundary).
-    ///   6. Dispatch decision on the just-captured int_entry.q. Entry
-    ///      forces halt_state=Running (EI;HALT never enters halt).
+    ///   5. Speculatively prepare the next M-cycle's BusAction as if
+    ///      no dispatch will fire. `tick_int_entry()` may overwrite
+    ///      `self.current_action` with the ISR M1 BusAction at the
+    ///      matching fall if dispatch does fire.
     pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
         let int_entry_gated =
             matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
 
         Self::apply_commit(self, commit);
 
-        // int_take read post-apply: DI's IME-clear is visible here, so
-        // int_take=false naturally and dispatch can't fire in DI's own
-        // M-cycle. EI's IME-set is also visible, but the int_entry-chain
-        // gate above blocks capture anyway.
-        let int_take = self.int_take();
-        self.int_entry.write(!int_entry_gated && int_take);
-        self.int_entry.tick();
+        self.pending_int_entry_gate = int_entry_gated;
+        self.pending_int_entry_capture = true;
 
         self.check_halt_bug();
         if let Some(target) = self.pending_jump_target.take() {
@@ -974,28 +979,6 @@ impl Cpu {
         self.pc = self.bus_counter;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
-
-        if self.int_entry.output() {
-            // int_entry rising → dispatch M1 starts at this M-cycle
-            // boundary. IME gate is already in int_take (int_entry's
-            // source). Override halt_state — EI;HALT never enters the
-            // halt RS-latch state on hardware. IME clear (zacw) happens
-            // inside mcycle_isr step 0.
-            self.halt_state = HaltState::Running;
-            let pc = self.pc;
-            let pc_hi = (pc >> 8) as u8;
-            let pc_lo = (pc & 0xff) as u8;
-            let sp = self.stack_pointer;
-            self.phase = CpuPhase::InterruptDispatch {
-                sp,
-                pc_hi,
-                pc_lo,
-                step: 0,
-            };
-            self.exec_step = 0;
-            self.pending_vector_resolve = false;
-            return self.mcycle_isr(0).expect("mcycle_isr M1 must return Some");
-        }
 
         match next_phase {
             Phase::Empty => {
@@ -1010,6 +993,50 @@ impl Cpu {
                 self.mcycle_execute(0)
                     .expect("mcycle_execute must return Some")
             }
+        }
+    }
+
+    /// Capture the `int_entry` (zacw) DFF at the retire dot's
+    /// master-clock falling edge — the same physical CLK9↑ as
+    /// `commit()`'s register write-back. Split from `commit()` so the
+    /// zacw input sees IF *after* the same dot's PPU fall has settled
+    /// it (e.g. HBlank STAT IF on the boundary dot). If the capture
+    /// fires, replace the speculative next-M-cycle BusAction prepared
+    /// by `commit()` with the ISR M1 BusAction.
+    pub fn tick_int_entry(&mut self) {
+        if !self.pending_int_entry_capture {
+            return;
+        }
+
+        let int_take = self.int_take();
+        self.int_entry
+            .write(!self.pending_int_entry_gate && int_take);
+        self.int_entry.tick();
+
+        self.pending_int_entry_capture = false;
+        self.pending_int_entry_gate = false;
+
+        if self.int_entry.output() {
+            // int_entry rising → dispatch M1 starts at the next
+            // M-cycle boundary. IME gate is already in int_take
+            // (int_entry's source). Override halt_state — EI;HALT
+            // never enters the halt RS-latch state on hardware. IME
+            // clear (zacw) happens inside mcycle_isr step 0.
+            self.halt_state = HaltState::Running;
+            let pc = self.pc;
+            let pc_hi = (pc >> 8) as u8;
+            let pc_lo = (pc & 0xff) as u8;
+            let sp = self.stack_pointer;
+            self.phase = CpuPhase::InterruptDispatch {
+                sp,
+                pc_hi,
+                pc_lo,
+                step: 0,
+            };
+            self.exec_step = 0;
+            self.pending_vector_resolve = false;
+            let action = self.mcycle_isr(0).expect("mcycle_isr M1 must return Some");
+            self.current_action = Some(action);
         }
     }
 
