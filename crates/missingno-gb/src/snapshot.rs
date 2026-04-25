@@ -13,7 +13,7 @@ use gbtrace::snapshot::{
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
-use crate::cpu::{EiDelay, HaltState};
+use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
 use crate::{ClockPhase, GameBoy};
 
@@ -85,11 +85,11 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
             HaltState::Halting => 1,
             HaltState::Halted => 2,
         },
-        ei_delay: match cpu.ei_delay {
-            None => 0,
-            Some(EiDelay::Pending) => 1,
-            Some(EiDelay::Fired) => 2,
-        },
+        // Legacy gbtrace field. The emulator no longer models EI as a
+        // multi-stage pipeline — IME enables synchronously inside EI's
+        // commit, and the "1-instruction delay" lives in the int_entry
+        // chain. No persistent EI-delay state to capture here.
+        ei_delay: 0,
         halt_bug: cpu.halt_bug,
     }
 }
@@ -110,7 +110,7 @@ pub fn capture_ppu(gb: &GameBoy) -> PpuSnapshot {
         obp1: ppu.read_register(crate::ppu::Register::Sprite1Palette),
         dma: gb.dma().source_register(),
         dot_position: ppu.lx(),
-        stat_line_was_high: ppu.video.stat_line_was_high,
+        stat_line_was_high: ppu.stat_line_was_high(),
         window_line_counter: 0, // TODO: only accessible mid-frame via Rendering
     }
 }

@@ -30,16 +30,15 @@ impl PipelineRegisters {
     /// Advance DFF8 palette latches by one dot. The old value persists
     /// through the write dot; the new value appears atomically on the
     /// capture tick (one dot after write).
-    pub fn tick_palette_latches(&mut self) -> bool {
-        let bg = self.palettes.background.tick();
-        let sp0 = self.palettes.sprite0.tick();
-        let sp1 = self.palettes.sprite1.tick();
-        bg || sp0 || sp1
+    pub fn tick_palette_latches(&mut self) {
+        self.palettes.background.tick();
+        self.palettes.sprite0.tick();
+        self.palettes.sprite1.tick();
     }
 
     /// Advance DFF9 register latches by one dot. Runs after the pipeline
-    /// (in fall()) so the pipeline reads pre-tick values (reg_old),
-    /// matching hardware's combinational read-from-old behavior.
+    /// (in the PPU-clock-rise phase) so the pipeline reads pre-tick values
+    /// (reg_old), matching hardware's combinational read-from-old behavior.
     pub fn tick_register_latches(&mut self) {
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();

@@ -1,13 +1,202 @@
 use super::super::{
-    Cpu, EiDelay, HaltState, InterruptMasterEnable,
+    Cpu, HaltState, InterruptMasterEnable,
+    commit::Commit,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
-    instructions::{CarryFlag, Interrupt as InterruptInstruction},
+    instructions::CarryFlag,
     registers::Register16,
 };
 use super::{AluOp, PopAction, ReadAction, RmwOp};
 
 impl Cpu {
+    /// Route a `Commit` variant to the corresponding mutation. Mirrors the
+    /// inline mutations currently in `build_*` for each opcode class. Used
+    /// by `Cpu::commit` at retire edges — step 6 moves the inline code out
+    /// of `build_*` so this becomes the single mutation site for every
+    /// retiring instruction.
+    pub(super) fn apply_commit(cpu: &mut Cpu, commit: Commit) {
+        match commit {
+            Commit::NoOperation => {}
+            Commit::Invalid => {
+                cpu.halt_state = HaltState::Halting;
+            }
+
+            Commit::LoadR8 { reg, value } => cpu.set_register8(reg, value),
+            Commit::LoadR16 { reg, value } => cpu.set_register16(reg, value),
+
+            Commit::IncR8 { reg } => {
+                let val = cpu.get_register8(reg);
+                let result = val.wrapping_add(1);
+                cpu.flags.set(Flags::ZERO, result == 0);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0);
+                cpu.set_register8(reg, result);
+            }
+            Commit::DecR8 { reg } => {
+                let val = cpu.get_register8(reg);
+                let result = val.wrapping_sub(1);
+                cpu.flags.set(Flags::ZERO, result == 0);
+                cpu.flags.insert(Flags::NEGATIVE);
+                cpu.flags.set(Flags::HALF_CARRY, result & 0b1111 == 0b1111);
+                cpu.set_register8(reg, result);
+            }
+            Commit::AluA { op, value } => Self::apply_alu(cpu, &op, value),
+
+            Commit::Inc16 { reg } => {
+                let val = cpu.get_register16(reg);
+                cpu.set_register16(reg, val.wrapping_add(1));
+            }
+            Commit::Dec16 { reg } => {
+                let val = cpu.get_register16(reg);
+                cpu.set_register16(reg, val.wrapping_sub(1));
+            }
+            Commit::AddHl { source } => {
+                let value = cpu.get_register16(source);
+                let hl = cpu.get_register16(Register16::Hl);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.set(
+                    Flags::HALF_CARRY,
+                    (hl & 0xfff) as u32 + (value & 0xfff) as u32 > 0xfff,
+                );
+                cpu.flags
+                    .set(Flags::CARRY, hl as u32 + value as u32 > 0xffff);
+                cpu.set_register16(Register16::Hl, hl.wrapping_add(value));
+            }
+            Commit::AddSpOffset { offset } => {
+                let sp = cpu.stack_pointer;
+                let offset_u8 = offset as u8;
+                cpu.stack_pointer = sp.wrapping_add(offset as i16 as u16);
+                cpu.flags.remove(Flags::ZERO);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.set(
+                    Flags::HALF_CARRY,
+                    (sp & 0xf) + (offset_u8 as u16 & 0xf) > 0xf,
+                );
+                cpu.flags
+                    .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
+            }
+            Commit::LdHlSpOffset { offset } => {
+                let sp = cpu.stack_pointer;
+                let offset_u8 = offset as u8;
+                let result = sp.wrapping_add(offset as i16 as u16);
+                cpu.flags.remove(Flags::ZERO);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.set(
+                    Flags::HALF_CARRY,
+                    (sp & 0xf) + (offset_u8 as u16 & 0xf) > 0xf,
+                );
+                cpu.flags
+                    .set(Flags::CARRY, (sp & 0xff) + (offset_u8 as u16 & 0xff) > 0xff);
+                cpu.set_register16(Register16::Hl, result);
+            }
+
+            Commit::Daa => Self::apply_daa(cpu),
+            Commit::CarryFlag(cf) => Self::apply_carry_flag(cpu, &cf),
+            Commit::ComplementA => {
+                cpu.a = !cpu.a;
+                cpu.flags.insert(Flags::NEGATIVE);
+                cpu.flags.insert(Flags::HALF_CARRY);
+            }
+
+            Commit::RotateAccumulator { direction, carry } => {
+                let (new_value, new_carry) = Self::rotate(cpu, cpu.a, &direction, &carry);
+                cpu.flags = if new_carry {
+                    Flags::CARRY
+                } else {
+                    Flags::empty()
+                };
+                cpu.a = new_value;
+            }
+            Commit::RotateReg { reg, direction, carry } => {
+                let val = cpu.get_register8(reg);
+                let (new_value, new_carry) = Self::rotate(cpu, val, &direction, &carry);
+                cpu.flags.set(Flags::ZERO, new_value == 0);
+                cpu.flags.set(Flags::CARRY, new_carry);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.remove(Flags::HALF_CARRY);
+                cpu.set_register8(reg, new_value);
+            }
+            Commit::ShiftArithmetical { reg, direction } => {
+                let val = cpu.get_register8(reg);
+                let new_value = match direction {
+                    Direction::Left => {
+                        cpu.flags.set(Flags::CARRY, val & 0b1000_0000 != 0);
+                        val << 1
+                    }
+                    Direction::Right => {
+                        cpu.flags.set(Flags::CARRY, val & 0b0000_0001 != 0);
+                        val >> 1 | (val & 0b1000_0000)
+                    }
+                };
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.remove(Flags::HALF_CARRY);
+                cpu.flags.set(Flags::ZERO, new_value == 0);
+                cpu.set_register8(reg, new_value);
+            }
+            Commit::ShiftRightLogical { reg } => {
+                let val = cpu.get_register8(reg);
+                let new_value = val >> 1;
+                cpu.flags.set(Flags::CARRY, val & 0b0000_0001 != 0);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.remove(Flags::HALF_CARRY);
+                cpu.flags.set(Flags::ZERO, new_value == 0);
+                cpu.set_register8(reg, new_value);
+            }
+            Commit::SwapReg { reg } => {
+                let val = cpu.get_register8(reg);
+                let new_value = val << 4 | (val >> 4 & 0xf);
+                cpu.flags = if new_value == 0 {
+                    Flags::ZERO
+                } else {
+                    Flags::empty()
+                };
+                cpu.set_register8(reg, new_value);
+            }
+            Commit::BitTest { bit, reg } => {
+                let val = cpu.get_register8(reg);
+                cpu.flags.set(Flags::ZERO, val & (1 << bit) == 0);
+                cpu.flags.remove(Flags::NEGATIVE);
+                cpu.flags.insert(Flags::HALF_CARRY);
+            }
+            Commit::BitSet { bit, reg } => {
+                let val = cpu.get_register8(reg);
+                cpu.set_register8(reg, val | (1 << bit));
+            }
+            Commit::BitReset { bit, reg } => {
+                let val = cpu.get_register8(reg);
+                cpu.set_register8(reg, val & !(1 << bit));
+            }
+
+            Commit::JumpAbsolute { target } => {
+                cpu.bus_counter = target;
+                cpu.pc = target;
+            }
+            Commit::JumpReturnEnableInterrupts { target } => {
+                // RETI: zbpp sets ime_state during M3, IME captures within
+                // the multi-M-cycle pop. RETI is not in the int_entry
+                // chain's EI/DI gate.
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+                cpu.bus_counter = target;
+                cpu.pc = target;
+            }
+
+            Commit::DisableInterrupts => {
+                // DI: zwuu clears ime_state combinationally; IME DFF
+                // captures Disabled mid-M-cycle.
+                cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
+            }
+            Commit::EnableInterrupts => {
+                // EI: zbpp sets ime_state via the zjje SR latch; IME DFF
+                // captures Enabled mid-M-cycle.
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+            }
+
+            Commit::EnterHalt | Commit::EnterStop => {
+                cpu.halt_state = HaltState::Halting;
+            }
+        }
+    }
+
     pub(super) fn apply_daa(cpu: &mut Cpu) {
         let value = if cpu.flags.contains(Flags::NEGATIVE) {
             let mut adj = 0u8;
@@ -45,31 +234,6 @@ impl Cpu {
                 cpu.flags.remove(Flags::NEGATIVE);
                 cpu.flags.remove(Flags::HALF_CARRY);
                 cpu.flags.insert(Flags::CARRY);
-            }
-        }
-    }
-
-    pub(super) fn apply_interrupt_instruction(cpu: &mut Cpu, instr: &InterruptInstruction) {
-        match instr {
-            InterruptInstruction::Enable => {
-                // On hardware, EI sets an RS latch — re-setting an already-set
-                // latch is a no-op. Guard against overwriting Fired with Pending,
-                // which would delay IME enablement by an extra instruction.
-                if cpu.interrupt_master_enable != InterruptMasterEnable::Enabled
-                    && cpu.ei_delay.is_none()
-                {
-                    cpu.ei_delay = Some(EiDelay::Pending);
-                }
-            }
-            InterruptInstruction::Disable => {
-                cpu.interrupt_master_enable = InterruptMasterEnable::Disabled;
-                // On real hardware, DI's combinational gate (g91) clears the
-                // EI pipeline latch (g92). Without this, an EI;DI sequence
-                // would let EI's delay survive and re-enable IME.
-                cpu.ei_delay = None;
-            }
-            InterruptInstruction::Await => {
-                cpu.halt_state = HaltState::Halted;
             }
         }
     }
@@ -267,7 +431,11 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
-                cpu.interrupt_master_enable = InterruptMasterEnable::Enabled;
+                // RETI's terminal pop: zbpp set ime_state during M3, IME
+                // is stable Enabled by this edge. Not in EI/DI's
+                // int_entry-chain gate, so dispatch can fire on the
+                // following retire if int_pending=1.
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;
             }

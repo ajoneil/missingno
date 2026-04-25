@@ -1,3 +1,10 @@
+//! Fetch-done cascade module.
+//!
+//! DFF chain that propagates the fetcher-idle signal through alet/myvo
+//! pipeline stages. NYKA and PYGO are alet-clocked (capture on alet
+//! rising = master-clock falling); PORY is myvo-clocked (captures on
+//! myvo rising = alet falling = master-clock rising).
+
 /// Fetch-done cascade: LYRY → NYKA → PORY → PYGO → POKY.
 ///
 /// A DFF chain that propagates the fetcher-idle signal (LYRY) through four
@@ -19,6 +26,64 @@
 /// - `pygo()` → sprite wait exit, TAVE guard, window trigger gate
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
+///
+/// # §6.1 collapsed cascade signals (not modelled as explicit state here)
+///
+/// The spec's §6.1 BG fetch counter subsystem includes several downstream
+/// signals feeding TEVO (the NYXU reset trigger for the per-tile fetch
+/// boundary). This module models NYKA / PORY / PYGO / POKY directly; the
+/// following §6.1 signals are collapsed or behaviourally derived elsewhere:
+///
+/// - Drain-detector path: `PANY → RYFA → RENE → SEKO → TEVO`.
+///   RYFA (dffr, SEGU-clocked) captures PANY = NOR2(ROZE, wxy_match).
+///   RENE (dffr, ALET-clocked) captures RYFA. SEKO = NOR2(RENE, RYFA)
+///   goes high when both drain to 0 (the spec's 8-dot tile-cycle 2-dot
+///   hold period, per §6.1 "SEKO drain-detector waveform"). Emulator
+///   fires SEKO behaviourally via the `fine_scroll.count == 7`
+///   condition in `rendering.rs::mode3_pixel_pipeline` — fires on the
+///   dot that completes an 8-pixel shift cycle, which matches the
+///   dot at which hardware's RENE/RYFA drain detector would fire
+///   (both trigger at each tile boundary during steady-state
+///   rendering, and both freeze in lockstep during SACU-suppressed
+///   sprite-fetch windows). Observation-equivalent at the
+///   TEVO→NYXU→load-into consumer boundary.
+/// - Window-trigger path: `TUXY → SUZU → TEVO`. TUXY = NAND2(SOVY, SYLO)
+///   is a RYDY falling-edge detector; SUZU = NOT(TUXY) fires one half-
+///   cycle per RYDY 1→0 transition. Emulator fires the SUZU path on
+///   PORY-driven RYDY clear in `window_control.rs` / `rendering.rs`.
+/// - Startup / window-restart path: `ROMO → SUVU → TAVE → TEVO`.
+///   ROMO = NOT(POKY); SUVU = NAND4(NYKA, PORY, ROMO, XYMU); TAVE =
+///   NOT(SUVU). Emulator's TAVE one-shot in `rendering.rs` fires from
+///   `NYKA && PORY && !PYGO` — `!PYGO` substitutes for `ROMO = !POKY`
+///   using PYGO as the POKY precursor during the startup window.
+/// - Counter-bit sample: `LAXU → LYZU → MYSO → NYDY` (§6.6 temp-latch
+///   enable). LYZU (dffr, ALET-clocked) samples LAXU; its only consumer
+///   is `MYSO = NOR3(mode3_n, LAXE, LYZU)` where `LAXE = NOT(LAXU)`,
+///   making MYSO a LAXU rising-edge detector (fires for the half-dot
+///   window between LAXU↑ and LYZU catching up). MYSO feeds §6.6's
+///   `NYDY = NAND3(NOFU, MESU, MYSO)` temp-latch enable decode,
+///   gating the LUNA/LOMA pulse that captures the low-byte VRAM
+///   read at fetch counter = 3. Emulator collapses the temp-latch
+///   chain by reading VRAM directly into `fetcher.tile_data_low` /
+///   `tile_data_high` at counter 2 / 4 falling edges — observation-
+///   equivalent at the parallel-load consumer boundary for the
+///   clean-ROM case (mid-fetch LCDC writes fall under §6.14's
+///   already-flagged ambiguity territory).
+///
+/// # Honest-abstraction synthesis (§6.1 emulator-alignment arc, 2026-04-21)
+///
+/// All four collapsed paths above were verified observation-equivalent
+/// at their named consumer boundaries during the §6.1 emulator-alignment
+/// step. The collapsed-vs-modelled split preserves hardware fidelity at
+/// the observable boundaries (TEVO firing dot, BG shifter parallel-load
+/// content, window-trigger timing) while abstracting internals that
+/// would add state without adding observable behaviour. The LYRY → NYKA
+/// → PORY → PYGO → POKY chain is modelled directly because its DFFs
+/// gate the pixel-clock (POKY → TYFA) and the window check (PORY → RYDY
+/// clear) — consumers that read the pipeline's intermediate state on
+/// specific edges. The collapsed chains terminate at combinational
+/// outputs whose boundary-observable value is reproduced exactly by
+/// the behavioural conditions in `rendering.rs` / `window_control.rs`.
 pub(in crate::ppu) struct FetchCascade {
     /// NYKA: DFF17, clocked by alet (captures on master-clock fall).
     nyka: bool,
@@ -40,13 +105,14 @@ impl FetchCascade {
         }
     }
 
-    /// Falling edge: clock NYKA from LYRY, clock PYGO from PORY,
-    /// fire POKY NOR from PYGO.
+    /// Advance the ALET-rising-clocked stages (PPU-clock-rise phase):
+    /// NYKA captures LYRY, PYGO captures PORY, POKY NOR latch fires
+    /// from PYGO.
     ///
-    /// LYRY fires on the preceding rising edge (fetcher counter reaches
-    /// 5 in advance_rising). NYKA captures live LYRY here — the
-    /// rise-to-fall separation provides the 1 half-phase DFF delay.
-    pub(in crate::ppu) fn fall(&mut self, lyry: bool) {
+    /// LYRY fires on the preceding PPU-clock-fall edge (fetcher counter
+    /// reaches 5 in advance_rising). NYKA captures live LYRY here — the
+    /// half-phase separation provides the 1 half-phase DFF delay.
+    pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
         // NYKA DFF17: captures live LYRY on falling edge (ALET clock).
         if lyry && !self.nyka {
             self.nyka = true;
@@ -63,8 +129,8 @@ impl FetchCascade {
         }
     }
 
-    /// Rising edge: clock PORY from NYKA.
-    pub(in crate::ppu) fn rise(&mut self) {
+    /// PORY captures NYKA on MYVO rising (= PPU clock fall, master-clock rise).
+    pub(in crate::ppu) fn capture_pory(&mut self) {
         if self.nyka && !self.pory {
             self.pory = true;
         }

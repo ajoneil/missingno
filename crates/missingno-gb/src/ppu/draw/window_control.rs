@@ -4,62 +4,75 @@ use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
 
-/// Window control block (die page 27).
+/// Window control: window-hit latch, WX/WY match comparators + frame
+/// latch, window-armed latch, window-line counter, DMG zero-pixel
+/// reactivation flag.
 ///
-/// Owns the RYDY NOR latch (window hit signal), WX comparator state
-/// (NUKO/PYCO), window line counter, and window zero pixel flag.
+/// Per-dot `check_trigger` collapses the hardware WX-match capture
+/// pipeline (NUKO → PYCO → NUNU → PYNU → NUNY → PUKU → RYDY) into a
+/// single evaluation gated on PYGO; the PYCO/NUNU half-cycle pipeline
+/// latency collapses to one dot via the RisingPhaseInputs snapshot.
+/// Observation-equivalent at half-dot resolution.
 ///
-/// On the die, this block also contains the fine scroll counter and
-/// tile fetch state machine (modeled separately as `FineScroll` and
-/// `TileFetcher`). The window control signals gate TYFA (pixel clock)
-/// via SOCY = NOT(RYDY).
-///
-/// Inputs: pixel counter (from page 24), PYGO (from cascade), PORY
-/// (cascade clear signal), register values (WX, WY, LCDC).
-/// Outputs: RYDY (gates TYFA), window_zero_pixel (to pixel mux),
-/// window_line_counter (to fetcher for tile address).
+/// The window-hit signal (RYDY) drives two consumer chains in
+/// `rendering.rs`: it blocks sprite triggers (hardware TUKU input to
+/// TEKY's AND4) and halts the pixel clock (hardware SOCY input to
+/// TYFA's AND3). Hardware reaches both sites via triple-inversion of
+/// RYDY through SYLO/TOMU/{TUKU,SOCY}; the emulator collapses each
+/// chain to one negation at the consumer call site.
 pub(in crate::ppu) struct WindowControl {
-    /// RYDY NOR latch — window hit signal. When high, gates TYFA
-    /// (via SOCY_WIN_HITn = not1(TOMU_WIN_HITp)), freezing both the
-    /// fine counter (PECU via ROXO) and pixel counter (SACU via SEGU)
-    /// during a window fetch stall. SET by check_trigger (PYCO match),
-    /// CLEAR by PORY (NYKA/PORY cascade after fetcher completes).
+    /// Window-hit signal (hardware RYDY `nor_latch`). When high, the
+    /// pixel clock halts and sprite triggers are blocked until the
+    /// window's startup tile fetch completes. SET by `check_trigger`
+    /// at the WX-match dot; CLEAR by PORY rising during the BG fetch
+    /// cascade restart (`clear_rydy_on_pory`).
     ///
-    /// 1-dot delay: check_trigger sets rydy at the end of mode3_rising,
-    /// AFTER the RisingPhaseInputs snapshot. The snapshot on the NEXT
-    /// dot sees rydy=true, giving 1-dot NUKO-to-TYFA latency.
+    /// 1-dot delay: `check_trigger` sets this at the end of
+    /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The
+    /// snapshot on the NEXT dot sees the new value, giving 1-dot
+    /// NUKO-to-TYFA latency that mirrors hardware's PYCO/NUNU
+    /// capture cadence.
     rydy: bool,
-    /// WX comparator suppression latch. Models the hardware behavior
-    /// where the RYDY latch prevents the WX comparator (PYCO) from
-    /// re-firing after the window has already triggered on this
-    /// scanline. Cleared when WX is written mid-scanline, allowing
-    /// reactivation with a new WX value.
+    /// Window-armed latch (hardware PYNU `nor_latch`). Set by the
+    /// WX-match pulse — hardware path NUKO → PYCO → NUNU → PYNU.s,
+    /// collapsed in the emulator to per-dot `check_trigger`. Reset by
+    /// `apply_xofo` when LCDC.5 (WIN_EN) goes low — hardware path
+    /// XOFO = NAND3(LCDC.5, NOT(atej), ppu_reset_n) → PYNU.r.
+    ///
+    /// Mid-scanline WX register changes clear this flag to allow
+    /// re-evaluation with a new WX value (compensates for the
+    /// collapsed PYCO/NUNU pipeline that on hardware would naturally
+    /// re-fire on the new NUKO match).
     wx_triggered: bool,
-    /// Whether the window has been rendered on this line.
+    /// Whether the window has rendered at least one pixel on the
+    /// current line — used to gate WAZY (window-line-counter) advance
+    /// at the scanline boundary.
     window_rendered: bool,
-    /// Last observed WX output value, used to detect mid-scanline WX
-    /// changes that should clear the wx_triggered latch.
+    /// Previous-dot WX register value, used to detect mid-scanline WX
+    /// changes that should clear `wx_triggered` for re-evaluation.
     last_wx_value: u8,
-    /// Cached WX value for the NUKO comparator. On hardware, NUKO
-    /// reads the DFF8 slave output, which lags the master by one clock
-    /// edge. Updated unconditionally at the end of every mode3_rising
-    /// from the live DFF output. check_trigger reads this instead of
-    /// the live register, providing a 1-dot lag on mid-scanline WX writes.
+    /// Cached WX register value for the WX comparator (hardware NUKO
+    /// reads the WX register's DFF8 slave output, which lags the
+    /// master by one ALET edge). Updated unconditionally at the end
+    /// of every mode3_rising from the live register output;
+    /// `check_trigger` reads this instead of the live register,
+    /// providing the 1-dot lag on mid-scanline WX writes.
     nuko_wx: u8,
-    /// Window internal line counter. Incremented at scanline boundary
-    /// when window_rendered is true. Used by the fetcher for tile
-    /// map address generation.
+    /// Window internal line counter (hardware WAZY). Advances at the
+    /// scanline boundary when the window rendered on the line.
+    /// Consumed by the fetcher for the window tilemap address.
     window_line_counter: u8,
-    /// REJO NOR latch -- WY==LY frame latch. SET when LY==WY is
-    /// detected (sampled once per M-cycle via SARY). RESET only at
-    /// VBlank (REPU). Once set, stays set for the remainder of the
-    /// frame, enabling the NUKO WX comparator.
+    /// WY-match frame latch (hardware REJO `nor_latch`). Set when
+    /// LY==WY is first observed in the frame (sampled every TALU
+    /// edge via SARY); reset only at VBlank (REPU). Once set, stays
+    /// set for the remainder of the frame — a mid-scanline WY change
+    /// cannot retroactively arm or disarm the window.
     wy_matched: bool,
-    /// Window reactivation zero pixel (DMG only). Set when WX
-    /// re-matches while the window is active with specific
-    /// fetcher/FIFO conditions. Causes the next pixel output to use
-    /// bg_color=0 without popping the BG shifter. The OBJ shifter is
-    /// popped normally.
+    /// Window reactivation zero pixel (DMG-specific quirk; not in
+    /// spec reference block). Set when WX re-matches while the
+    /// window is already active with specific fetcher/FIFO
+    /// conditions; causes the next pixel output to use bg_color=0
+    /// without popping the BG shifter (OBJ shifter pops normally).
     window_zero_pixel: bool,
 }
 

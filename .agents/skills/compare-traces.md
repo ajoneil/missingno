@@ -2,6 +2,15 @@
 
 Compare and inspect execution traces between missingno and reference emulators (GateBoy, Gambatte, SameBoy, DocBoy) to find the exact divergence point in a test failure, or inspect individual traces to understand emulator behavior.
 
+## Adapter preference
+
+**Always prefer the GateBoy adapter.** GateBoy is die-photo-derived and the closest available approximation of the real hardware. Only fall back to Gambatte / SameBoy / DocBoy when:
+
+- GateBoy doesn't pass the test (so there's no pass trace to diff against), or
+- No GateBoy trace exists for the suite/test in the manifests.
+
+When falling back, state the reason explicitly in the measurement receipt (e.g. "no GateBoy pass trace for blargg/halt_bug; using SameBoy as reference"). Don't silently pick a non-GateBoy reference.
+
 ## When to use
 
 Use this skill when investigating a test failure where:
@@ -61,7 +70,7 @@ curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_ga
 
 URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
 
-Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. DocBoy provides T-cycle granularity traces. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2, age, mooneye-wilbertpol, samesuite, scribbltests, bully, little-things, mbc3-tester, strikethrough, turtle-tests.
+Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. **Prefer GateBoy** (die-photo-derived, closest to hardware). DocBoy provides T-cycle granularity traces — useful when you need sub-M-cycle visibility on non-PPU behaviour, but GateBoy is still first choice when a passing GateBoy trace exists. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2, age, mooneye-wilbertpol, samesuite, scribbltests, bully, little-things, mbc3-tester, strikethrough, turtle-tests.
 
 Reference traces are also available locally in `receipts/resources/gbtrace/test-suites/` if the gbtrace repo has them built.
 
@@ -162,6 +171,9 @@ gbtrace query <trace> --where "pc=0x48" --max 1 --context 10
 
 # When does a register change?
 gbtrace query <trace> --where "scx=1" --max 1 --context 3
+
+# Multiple conditions — use separate --where arguments (NOT comma-separated):
+gbtrace query <trace> --where "ly=9" --where "stat&3=3" --max 5
 
 # Show the last 5 entries (no condition needed):
 gbtrace query <trace> --last 5

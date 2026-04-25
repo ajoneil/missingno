@@ -3,6 +3,7 @@ pub(super) mod fetcher;
 pub(super) mod fine_scroll;
 pub(super) mod hblank_pipeline;
 pub(super) mod lcd_control;
+pub(super) mod pixel_counter;
 pub(super) mod pixel_output;
 pub(super) mod shifters;
 pub(super) mod sprite_fetch;

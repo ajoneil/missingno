@@ -1,7 +1,10 @@
+use dff::Dff;
 use flags::{Flag, Flags};
 use mcycle::{BusDot, CpuPhase};
 use registers::{Register8, Register16};
 
+pub mod commit;
+pub mod dff;
 pub mod flags;
 pub mod instructions;
 pub mod mcycle;
@@ -13,13 +16,8 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
-/// Models the CPU's execution state with respect to the HALT instruction.
-///
-/// On hardware, HALT puts the CPU into a low-power idle loop where it
-/// continues to tick hardware (PPU, timers, etc.) each M-cycle but
-/// doesn't execute instructions. When `(IF & IE) != 0`, the DFF cascade
-/// (g42 → g43 → g49) propagates within the idle M-cycle, but PHI doesn't
-/// resume until the next M-cycle — the wakeup NOP.
+/// CPU execution state w.r.t. the HALT instruction. Halt-release fires
+/// combinationally via g43 → g49 once g42 captures `(IF & IE) != 0`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -33,53 +31,7 @@ pub enum HaltState {
     Halted,
 }
 
-/// Models the EI instruction's one-instruction delay DFF pipeline.
-///
-/// On hardware, EI sets an intermediate RS latch in the sequencer.
-/// That latch propagates through a DFF chain (clocked by CLK9) before
-/// reaching the IME flip-flop, introducing a one-instruction delay.
-/// This enum represents the pipeline stages visible at instruction
-/// boundaries.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum EiDelay {
-    /// EI was executed this instruction. Will advance to Fired at this
-    /// instruction's completion boundary. IME is not yet promoted.
-    Pending,
-
-    /// EI's delay has advanced one stage. IME will be promoted to
-    /// Enabled at this instruction's completion boundary (i.e., the
-    /// instruction after EI).
-    Fired,
-}
-
-/// Models the CPU's interrupt dispatch latch (g42 DFF).
-///
-/// On hardware, the g42 DFF samples `IF & IE` combinationally at the
-/// M-cycle boundary. The PPU fires IF and the CPU checks dispatch at
-/// the same edge — there is no multi-cycle pipeline delay. The
-/// executor ensures `update_interrupt_state` runs after PPU rise and
-/// before the CPU's M-cycle transition so that `take_ready()` sees
-/// interrupts from the current boundary.
-#[derive(Clone, Copy)]
-pub(super) enum InterruptLatch {
-    /// No interrupt pending.
-    Empty,
-    /// Interrupt ready for dispatch. `take_ready()` consumes it.
-    Ready(super::interrupts::Interrupt),
-}
-
-impl InterruptLatch {
-    /// Take the interrupt if ready. Returns None for Empty.
-    pub(super) fn take_ready(&mut self) -> Option<super::interrupts::Interrupt> {
-        if let InterruptLatch::Ready(interrupt) = *self {
-            *self = InterruptLatch::Empty;
-            Some(interrupt)
-        } else {
-            None
-        }
-    }
-}
-
+/// Selected-interrupt latch consumed at the dispatch check.
 pub struct Cpu {
     pub a: u8,
     pub b: u8,
@@ -107,24 +59,19 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    pub interrupt_master_enable: InterruptMasterEnable,
-    /// EI delay pipeline — models the DFF cascade between EI's
-    /// decode signal and the IME flip-flop. Advances one stage per
-    /// instruction completion in `advance_ei_delay()`.
-    pub ei_delay: Option<EiDelay>,
+    /// IME flip-flop (zivv). EI/DI mutate this synchronously inside
+    /// their commit; the underlying SR-latch chain (zjje, zrsy) is
+    /// combinational, so by the retire edge the IME DFF has already
+    /// captured the new value. The "1-instruction delay" sits in the
+    /// int_entry chain (zaij/zkog gated against EI/DI data_phase),
+    /// not here.
+    pub ime: Dff<InterruptMasterEnable>,
     pub halt_state: HaltState,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
     /// immediately but fails to increment PC on the next opcode fetch,
     /// causing that byte to be read twice.
     pub halt_bug: bool,
-    /// IME=0 HALT wakeup pending flag. Set by `update_interrupt_state`
-    /// when an interrupt fires during HALT with IME=0. Consumed by
-    /// `mcycle_halted` on the next M-cycle boundary, modeling the
-    /// hardware's CLK_ENA re-enable delay (g42 latches during the idle
-    /// M-cycle, but the CPU doesn't resume clocking until the next
-    /// M-cycle boundary).
-    pub(super) halt_wakeup_pending: bool,
 
     // ── Persistent state machine fields ──
     /// Current execution phase of the CPU state machine.
@@ -157,40 +104,24 @@ pub struct Cpu {
     pub(super) last_dot: BusDot,
     /// IE push bug flag.
     pub(super) pending_vector_resolve: bool,
-    /// Interrupt latch (g42 DFF).
-    pub(super) interrupt_latch: InterruptLatch,
     /// Set when the CPU transitions to the Fetch phase. The executor
     /// reads this to detect instruction boundaries for EI delay and
     /// step_instruction().
     pub(super) boundary_flag: bool,
     /// Whether an interrupt is currently pending (IF & IE != 0).
-    /// Updated every dot by `update_interrupt_state`. Used by the CPU
-    /// state machine for the HALT bug check.
+    /// Combinational input to the g42 DFF; also consumed directly by the
+    /// HALT bug check.
     pub(super) interrupt_pending: bool,
-    /// g42 DFF output: latched interrupt-pending state for HALT wakeup.
-    /// Sampled from `interrupt_pending` (IF & IE != 0) at dot 1 of every
-    /// M-cycle. Only consulted by `mcycle_halted` — running-mode dispatch
-    /// in `mcycle_fetch` uses the existing `interrupt_latch` / `take_ready()`
-    /// path without gating.
-    pub(super) g42_interrupt_pending: bool,
-    /// Snapshot of `g42_interrupt_pending` from the PREVIOUS M-cycle boundary.
-    /// When true at the point of wakeup detection, the g42→g43→g49 pipeline
-    /// has already propagated during the idle M-cycle, so the wakeup NOP can
-    /// be skipped and ISR dispatch proceeds immediately.
-    pub(super) g42_was_pending: bool,
-    /// g42 DFF mid-M-cycle snapshot: whether `interrupt_pending` was true
-    /// at dot 1 of the current M-cycle. When true at the next M-cycle
-    /// boundary, the g42->g43->g49 cascade has had >= 3 CLK9 edges to
-    /// propagate, so the wakeup NOP can be skipped (fast path).
-    ///
-    /// Reset to `false` at each M-cycle boundary. Set from
-    /// `interrupt_pending` at dot 1 (the first non-boundary dot after
-    /// the boundary). Not updated on dots 2-3.
-    pub(super) g42_mid_mcycle: bool,
-    /// Set when the wakeup NOP Read[PC] has been emitted and the next
-    /// `mcycle_halted` call should dispatch to ISR. Models the hardware's
-    /// extra M-cycle between HALT wakeup detection and ISR dispatch.
-    pub(super) halt_isr_dispatch_pending: bool,
+    /// g42 (yoii) flip-flop. CLK9-cadence; captures `interrupt_pending`
+    /// once per M-cycle on the master-clock rising edge. Drives the HALT
+    /// release chain (g42 → g43 → g49) and produces the per-source
+    /// HALT-wake timing differential (timer vs PPU IFs).
+    pub(super) g42: Dff<bool>,
+    /// int_entry (zacw) flip-flop for the running-CPU dispatch-ready
+    /// chain. Captures `interrupt_pending` once per M-cycle on the
+    /// master-clock rising edge — single DFF stage between IF assertion
+    /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
+    pub(super) int_entry: Dff<bool>,
 }
 
 impl Cpu {
@@ -215,11 +146,9 @@ impl Cpu {
                 Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
             },
 
-            interrupt_master_enable: InterruptMasterEnable::Disabled,
-            ei_delay: None,
+            ime: Dff::new(InterruptMasterEnable::Disabled),
             halt_state: HaltState::Running,
             halt_bug: false,
-            halt_wakeup_pending: false,
 
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
@@ -235,14 +164,11 @@ impl Cpu {
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
-            interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true, // Start at an instruction boundary
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
-            halt_isr_dispatch_pending: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
@@ -261,11 +187,9 @@ impl Cpu {
             pc: 0x0000,
             instruction_pc: 0x0000,
             flags: Flags::empty(),
-            interrupt_master_enable: InterruptMasterEnable::Disabled,
-            ei_delay: None,
+            ime: Dff::new(InterruptMasterEnable::Disabled),
             halt_state: HaltState::Running,
             halt_bug: false,
-            halt_wakeup_pending: false,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
@@ -280,14 +204,11 @@ impl Cpu {
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
-            interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
-            halt_isr_dispatch_pending: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
@@ -310,23 +231,18 @@ impl Cpu {
             pc: snap.pc,
             instruction_pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
-            interrupt_master_enable: if snap.ime {
+            ime: Dff::new(if snap.ime {
                 InterruptMasterEnable::Enabled
             } else {
                 InterruptMasterEnable::Disabled
-            },
-            ei_delay: match snap.ei_delay {
-                1 => Some(EiDelay::Pending),
-                2 => Some(EiDelay::Fired),
-                _ => None,
-            },
+            }),
+            // int_entry_gate is transient (set only during EI/DI's
             halt_state: match snap.halt_state {
                 1 => HaltState::Halting,
                 2 => HaltState::Halted,
                 _ => HaltState::Running,
             },
             halt_bug: snap.halt_bug,
-            halt_wakeup_pending: false,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
@@ -341,14 +257,11 @@ impl Cpu {
             scratch: 0,
             last_dot: BusDot::ZERO,
             pending_vector_resolve: false,
-            interrupt_latch: InterruptLatch::Empty,
             boundary_flag: true,
 
             interrupt_pending: false,
-            g42_interrupt_pending: false,
-            g42_was_pending: false,
-            g42_mid_mcycle: false,
-            halt_isr_dispatch_pending: false,
+            g42: Dff::new(false),
+            int_entry: Dff::new(false),
         }
     }
 
@@ -412,7 +325,7 @@ impl Cpu {
     }
 
     pub fn interrupts_enabled(&self) -> bool {
-        self.interrupt_master_enable != InterruptMasterEnable::Disabled
+        self.ime.output() != InterruptMasterEnable::Disabled
     }
 
     /// Continuous instruction M-cycle counter. 0 = fetch M-cycle,

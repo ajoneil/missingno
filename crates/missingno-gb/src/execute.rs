@@ -2,9 +2,9 @@ use super::{
     BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedPpuWrite,
     cpu::mcycle::DotAction,
     interrupts::Interrupt,
+    is_ppu_register,
     memory::Bus,
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
-    ppu_write_visibility_dot,
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -161,39 +161,27 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At M-cycle boundaries, the g42 DFF latches interrupt state from
-    /// the previous M-cycle BEFORE the PPU's rising phase fires new IF
-    /// bits. Then the PPU rise and interrupt capture run, updating
-    /// interrupt_pending for the NEXT g42 latch. Finally, `next_dot`
-    /// transitions the CPU, where dispatch checks gate on the just-
-    /// latched g42 value.
+    /// At each M-cycle boundary, `g42` (yoii) captures `interrupt_pending`,
+    /// driving the HALT-release chain (g42 → ykua → halt↓). The running-
+    /// CPU `int_entry` (zacw) DFF is captured inside `commit()` at retire
+    /// edges using `int_take`, not externally.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: g42 latch, then PPU + interrupt capture, BEFORE CPU transition ──
+        // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
+            self.cpu.tick_g42(); // samples pre-edge interrupt_pending
+
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
 
-            // Timer ticks once per M-cycle (BOGA). On hardware, BOGA fires
-            // at the same phase A edge as the ring counter. Place the timer
-            // tick at the very start of the M-cycle boundary, before g42.
-            // Overflow sets g151_pending; the interrupt is drained on the
-            // next CLK9 rising edge via take_pending_interrupt().
+            // Timer ticks once per M-cycle (BOGA).
             self.timers.mcycle();
 
-            // g42 DFF: latch IF & IE from the PREVIOUS M-cycle boundary.
-            // On hardware, the DFF captures its input before the current
-            // edge's combinational logic (PPU mode transitions, IF assertion)
-            // propagates. At this point, interrupt_pending still holds the
-            // value from the previous M-cycle's update_interrupt_state.
-            self.cpu.g42_was_pending = self.cpu.g42_interrupt_pending;
-            self.cpu.g42_interrupt_pending = self.cpu.interrupt_pending;
-
-            // PPU rising phase at the M-cycle boundary (dot 0).
-            let ppu_result = self.ppu.rise();
+            // PPU master-clock rising edge at the M-cycle boundary (dot 0).
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -232,16 +220,14 @@ impl GameBoy {
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
-        // decode chain begins propagating. We look ahead to the
-        // M-cycle's bus action and record the write so it can be
-        // applied at the hardware-correct visibility dot.
+        // decode chain begins propagating. The write is applied at
+        // dot 2 rise (CUPA rises at phase E per §4.3, spanning 1.498
+        // dots through phase H of dot 3).
         if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
-            let visible_at = ppu_write_visibility_dot(address);
-            if visible_at < 4 {
+            if is_ppu_register(address) {
                 self.staged_ppu_write = Some(StagedPpuWrite {
                     address,
                     value,
-                    visible_at,
                     applied: false,
                 });
             }
@@ -262,33 +248,28 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
-            // Apply staged PPU write at dot 2 (visibility_dot == 2).
-            // On hardware, the write pulse settles through address decode
-            // and the register DFF captures. Combinational readers (LCDC,
-            // SCX, BGP, OBP, STAT) see the new value from this point.
+            // Apply staged PPU write at BusDot 2 rise (phase E). On
+            // hardware, CUPA rises at dot 2 of the M-cycle coincident
+            // with an alet rising edge, gating the PPU register latches
+            // transparent. The latch stays transparent across dots 2-3
+            // (CUPA pulse ~1.498 dots wide) — combinational PPU logic
+            // sees the new value from phase E onward. Alet-clocked DFFs
+            // (which capture on ALET rising = our fall()) see the new
+            // value in THIS dot's fall().
             if dot.as_u8() == 2 {
-                let apply_dot2 = self
-                    .staged_ppu_write
-                    .as_ref()
-                    .is_some_and(|s| s.visible_at == 2);
-                if apply_dot2 {
-                    let staged = self.staged_ppu_write.as_ref().unwrap();
-                    let (addr, val) = (staged.address, staged.value);
-                    if self.drive_ppu_bus(addr, val) {
-                        self.interrupts.request(Interrupt::VideoStatus);
+                if let Some(staged) = self.staged_ppu_write.as_ref() {
+                    if !staged.applied {
+                        let (addr, val) = (staged.address, staged.value);
+                        if self.drive_ppu_bus(addr, val) {
+                            self.interrupts.request(Interrupt::VideoStatus);
+                        }
+                        self.staged_ppu_write.as_mut().unwrap().applied = true;
                     }
-                    self.staged_ppu_write.as_mut().unwrap().applied = true;
                 }
             }
 
-            // Snapshot LY==LYC comparison state before PPU rise.
-            // ROPO latches LYC comparison at TALU rising edge during
-            // ppu.rise(). If the comparison transitions to match,
-            // this is a TALU-cascade-driven interrupt.
-            let lyc_was_matched = self.ppu.ly_eq_lyc();
-
-            // PPU rising phase for non-boundary dots.
-            let ppu_result = self.ppu.rise();
+            // PPU master-clock rising edge for non-boundary dots.
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -305,104 +286,26 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // g42 mid-M-cycle cascade propagation: when VBlank or LYC
-            // fires from the TALU cascade during PPU rise, g42 samples
-            // IF&IE. If the new interrupt makes IF&IE non-zero, g42
-            // captures it. On hardware, the cascade needs ~3 CLK9 edges
-            // to propagate. Our emulator's divider alignment may place
-            // these events at a different dot than hardware, so we
-            // accept any non-boundary dot and let mcycle_halted use it
-            // as the fast-path signal.
-            //
-            // Only VBlank and LYC (TALU-cascade-driven) qualify; HBlank
-            // and timer arrive through different paths and are excluded.
-            // The g42 DFF gates on IF&IE, not just IF — the interrupt
-            // source must also be in IE.
-            // VBlank fires from the TALU cascade. g42 captures IF&IE.
-            // The VBlank event can trigger either the VBlank interrupt
-            // (IF bit 0, if IE.vblank) or the STAT interrupt (IF bit 1,
-            // if IE.stat and STAT VBlank mode flag set). Either makes
-            // IF&IE non-zero, so g42 goes high for either path.
-            if ppu_result.request_vblank
-                && (self.interrupts.enabled(Interrupt::VideoBetweenFrames)
-                    || (stat_edge && self.interrupts.enabled(Interrupt::VideoStatus)))
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-            if !lyc_was_matched
-                && self.ppu.ly_eq_lyc()
-                && stat_edge
-                && self.interrupts.enabled(Interrupt::VideoStatus)
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-            // HBlank (mode 0) STAT edge: the ALET-settle cascade
-            // (VOGA→XYMU→TARU→STAT→IF→g42) can propagate within the
-            // same M-cycle if the edge fires early enough. On hardware,
-            // g42 needs ~3 CLK9 edges (1.5 dots) to settle. Edges at
-            // dots 0–1 have enough remaining time; dots 2–3 do not.
-            // Only relevant during HALT — running instructions use the
-            // DFF-latched g42 pipeline which correctly excludes this.
-            if stat_edge
-                && self.cpu.is_halted()
-                && self.interrupts.enabled(Interrupt::VideoStatus)
-                && self.ppu.mode() == ppu::rendering::Mode::HorizontalBlank
-                && self.current_dot.as_u8() <= 1
-            {
-                self.cpu.g42_mid_mcycle = true;
-            }
-
-            // Capture interrupt state for non-boundary dots.
+            // Capture interrupt state for non-boundary dots. g42 ticks
+            // in the matching fall(), capturing this dot's interrupt_pending
+            // for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // ALET settle: VOGA captures WODU_old, XYMU clears.
-        // On hardware, ALET falls at F->G before BUKE opens at G-H.
-        // Both M-cycle boundary and non-boundary paths converge here.
-        self.ppu.settle_alet();
+        // VOGA capture (HBlank) happens in the PPU-clock-rise phase via
+        // HblankPipeline::capture_voga() — confirmed by dmg-sim: VOGA is
+        // clocked by ALET rising (= master-clock falling = PPU clock
+        // rise). The mode() function uses `xymu && !wodu` to predict
+        // HBlank state for CPU STAT reads, so settle_alet is not needed.
+        // G4.2 confirmed WODU doesn't depend on XYMU, making the
+        // prediction reliable.
 
-        // SUKO is combinational — recheck STAT edge after XYMU may have changed.
-        let settle_stat_edge = self.ppu.check_stat_edge();
-        if settle_stat_edge {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        // settle_alet can fire hblank STAT after mcycle_halted/update_interrupt_state
-        // already ran. On hardware, the ALET-settle cascade (VOGA->XYMU->TARU->STAT)
-        // propagates within the same M-cycle, reaching g42. Re-capture interrupt
-        // state and handle HALT wakeup for the late interrupt.
-        if settle_stat_edge {
-            let triggered = self.interrupts.triggered();
-            self.cpu.update_interrupt_state(triggered);
-
-            if is_mcycle_boundary {
-                // mcycle_halted already ran and missed this interrupt.
-                // The current idle Read[PC] serves as the wakeup NOP.
-                self.cpu.retry_halt_wakeup();
-            } else {
-                // Non-boundary: signal g42 mid-M-cycle propagation so
-                // mcycle_halted takes the fast path at the next boundary.
-                if self.cpu.is_halted() && self.interrupts.enabled(Interrupt::VideoStatus) {
-                    self.cpu.g42_mid_mcycle = true;
-                }
-            }
-        }
-
-        // CPU data latch: capture bus value on the rising edge, after
-        // PPU rise and ALET settle so the read sees the current PPU mode
-        // (for OAM/VRAM blocking). The timer tick is on the falling edge,
-        // so reads naturally see the pre-increment counter value.
-        if let DotAction::Read { address } = &self.current_dot_action {
-            if (0xFE00..=0xFEFF).contains(address) {
-                *pending_oam_bug = Some(OamBugKind::Read);
-            }
-            self.last_read_value = self.cpu_read(*address);
-        }
-
-        // g151: CLK9-clocked DFF delays timer overflow → IF by 1 dot.
-        // Drain at every rising edge so that overflow detected at fall()
-        // is visible to update_interrupt_state in the next fall().
+        // Drain timer overflow → IF.timer at every rising edge so overflow
+        // detected in fall() is visible to update_interrupt_state in the
+        // next fall(). Hardware delays TIMA overflow → IF bit 2 by one
+        // M-cycle (the reload cycle) via the nydu/moba clk_1mhz DFF
+        // chain — modeled as a one-tick handoff here.
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
         }
@@ -429,28 +332,36 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // Apply staged PPU write at dot 3 fall (visibility_dot == 3).
-        // SCY's consumer sits behind one pipeline stage, so the write
-        // becomes visible one dot later than the baseline.
-        let apply_dot3 = dot.as_u8() == 3
-            && self
-                .staged_ppu_write
-                .as_ref()
-                .is_some_and(|s| s.visible_at == 3 && !s.applied);
-        if apply_dot3 {
-            let staged = self.staged_ppu_write.as_ref().unwrap();
-            let (addr, val) = (staged.address, staged.value);
-            if self.drive_ppu_bus(addr, val) {
-                self.interrupts.request(Interrupt::VideoStatus);
+        // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
+        // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
+        let video_result = self
+            .ppu
+            .on_master_clock_fall(is_mcycle_boundary);
+
+        // CPU data latch: capture bus value after PPU's master-clock
+        // fall updates land. Hardware reads are combinational (spec
+        // §4.6): the CPU samples the current DFF state via SM83-
+        // internal data_phase. PPU DFF transitions on the same master-
+        // clock cycle's TALU-rising edge (MYTA fire, ROPO capture) are
+        // visible to the CPU read because they settle before the CPU's
+        // data-phase latches. Placing the read after on_master_clock_fall
+        // matches that ordering.
+        if let DotAction::Read { address } = &self.current_dot_action {
+            if (0xFE00..=0xFEFF).contains(address) {
+                *pending_oam_bug = Some(OamBugKind::Read);
             }
-            self.staged_ppu_write.as_mut().unwrap().applied = true;
+            self.last_read_value = self.cpu_read(*address);
         }
 
-        // PPU falling phase: fetcher, DFF8/DFF9, LCD-off.
-        let video_result = self.ppu.fall(is_mcycle_boundary, &self.vram_bus.vram);
+        // VBlank IF: the divider chain now runs in fall(), so POPU
+        // (VBlank) transitions happen here, not in rise().
+        if video_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
 
         // SUKO is combinational — check for STAT edge after every phase.
-        if self.ppu.check_stat_edge() {
+        let stat_edge = self.ppu.check_stat_edge();
+        if stat_edge {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
@@ -474,6 +385,15 @@ impl GameBoy {
                 }
                 self.write_byte(address, value);
             }
+        }
+
+        // Capture interrupt state AFTER bus writes so IF updates from a CPU
+        // write to 0xFF0F (or STAT edges from PPU register writes) are
+        // visible to update_interrupt_state on the same fall. g42 ticks on
+        // the next rise to sample interrupt_pending into the DFF output.
+        {
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
         }
 
         if is_mcycle_boundary {

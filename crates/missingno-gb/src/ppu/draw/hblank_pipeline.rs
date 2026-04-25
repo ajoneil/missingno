@@ -1,11 +1,21 @@
+//! Hblank pipeline — the Mode 3→0 termination path.
+//!
+//! Signal naming follows the project's PPU timing spec. Netlist gate
+//! names (XYMU, VOGA, WEGO, TOFU, etc. from the dmgcpu netlist,
+//! msinger/dmg-schematics) appear in doc comments for traceability.
+//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §3.2 and §7.2
+//! for the hardware reference; see
+//! `receipts/ppu-overhaul/spec-conventions.md` for the conventions.
+
 /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
 ///
 /// Models the hardware path that terminates Mode 3 rendering. WODU
 /// fires combinationally when the pixel counter reaches 167 and no
-/// sprite is matching. VOGA (DFF17, ALET falling) captures WODU,
+/// sprite is matching. VOGA (DFF17, ALET rising) captures WODU,
 /// producing WEGO which clears the XYMU rendering latch.
 ///
-/// Hardware clock: VOGA is DFF17 on ALET (falling, depth 5).
+/// Hardware clock: VOGA is DFF17 on ALET (rising; same-dot capture,
+/// Question C).
 /// WODU is combinational: AND2(XUGU, !FEPO). WODU is purely a
 /// function of the pixel counter decode and sprite match — it does
 /// not depend on XYMU. During HBlank, WODU stays high (PX frozen
@@ -14,93 +24,116 @@
 ///
 /// XYMU is a NOR latch cleared by WEGO = OR2(VID_RST, VOGA).
 ///
+/// **Polarity note**: spec XYMU = 0 during Mode 3 (active-low "not
+/// rendering"). The emulator's `rendering_active: bool` is `true` during
+/// Mode 3 — semantic polarity, opposite sign from the spec's XYMU.
+/// Set by AVAP (Mode 2→3), cleared by WEGO.
+///
 /// Race pair data (mode3-race-pairs.md):
 ///   VOGA: depth 7, diff 13 -- WODU_old at depth 0 (registered, earliest)
 ///   XYMU: depth 1 from VOGA, fan-out 25
 pub(in crate::ppu) struct HblankPipeline {
-    /// XYMU rendering latch (page 21). SET by AVAP (Mode 2→3),
-    /// CLEAR by WEGO = OR2(VID_RST, VOGA).
-    xymu: bool,
-    /// VOGA DFF17: captures WODU on ALET falling edge (half-cycle
-    /// delay). Feeds WEGO. Reset by TADY (line reset).
+    /// Rendering-mode latch. XYMU (nor_latch) — hardware uses active-low.
+    ///
+    /// `true` when Mode 3 rendering is active (opposite polarity from
+    /// spec XYMU). NOR-latch async-set by WEGO, async-reset by AVAP.
+    /// Clear is combinational — XYMU responds to WEGO rising without
+    /// a clock.
+    rendering_active: bool,
+    /// STAT-readout mirror of `rendering_active`. Captured at the start
+    /// of each PPU-clock-fall from the pre-fall internal value, so
+    /// `Ppu::mode()` sees the pre-transition value across the AVAP
+    /// integer dot — matching GateBoy's gbtrace adapter sampling phase.
+    /// Not a hardware DFF; this models the CPU's T-cycle STAT sampling
+    /// window, which observes XYMU before AVAP↑ sets it within the
+    /// AVAP integer dot. Only read by `Ppu::mode()` via
+    /// `rendering_active_stat()`; all pipeline consumers (was_rendering
+    /// snapshot, VRAM/OAM lock) continue to read internal
+    /// `rendering_active`.
+    rendering_active_stat: bool,
+    /// HBLANK capture DFF. VOGA (dffr, captures WODU on ALET rising edge).
+    ///
+    /// Only clocked element in the Mode 3→0 chain. Feeds WEGO
+    /// combinationally. Reset by TADY (line reset chain).
     voga: bool,
-    /// FEPO captured at start of falling phase. Feeds wodu() and
-    /// TYFA computation. Latched because FEPO changes mid-fall but
-    /// WODU needs the value from the start of the falling phase.
+    /// Sprite X priority aggregate, latched at start of falling phase.
+    /// FEPO = OR2(FOVE, FEFY).
+    ///
+    /// Collapses the 16-cell SACU-clocked DFFSR chain that carries
+    /// per-sprite match state through the pixel pipe on hardware:
+    /// the chain's sole consumer-visible effect is a 1-dot FEPO→WODU
+    /// delay, modelled here by a single latch — `Rendering::fepo()`
+    /// recomputes the combinational match; `latch_fepo()` captures
+    /// it for the next dot's `wodu()`.
     fepo: bool,
-    /// Whether XYMU was true before settle_alet() cleared it.
-    /// fall() needs this to gate mode3_falling() — on the dot
-    /// VOGA fires, XYMU clears in settle_alet but mode3_falling
-    /// still needs to run for the final fetcher/TYFA work.
-    xymu_before_settle: bool,
 }
 
 impl HblankPipeline {
     pub(in crate::ppu) fn new() -> Self {
         Self {
-            xymu: false,
+            rendering_active: false,
+            rendering_active_stat: false,
             voga: false,
             fepo: false,
-            xymu_before_settle: false,
         }
     }
 
-    /// WODU: combinational hblank gate. AND2(XUGU, !FEPO).
-    /// On hardware, WODU is purely combinational — it does not
-    /// depend on XYMU. TARU (STAT mode 0) reads WODU directly.
-    pub(in crate::ppu) fn wodu(&self, xugu: bool) -> bool {
-        xugu && !self.fepo
+    /// WODU: combinational hblank gate. Hardware chain:
+    ///
+    ///   WODU = AND2(XENA, XANO)
+    ///   XENA = NOT(FEPO)   — "no sprite match"
+    ///   XANO = NOT(XUGU)   — "PX at terminal count 167"
+    ///   XUGU = NAND5(SYBE, SAVY, TUKY, XEHO, XODU)  — PX=167 decode
+    ///
+    /// Collapsed cascade: `FEPO, XUGU → XENA, XANO → WODU`.
+    ///
+    /// The emulator collapses the XENA and XANO inverters into their
+    /// consumers. `!self.fepo` is the XENA term (inverted inline from
+    /// the `fepo` field rather than storing XENA separately). The
+    /// `xano` parameter is `PixelCounter::terminal()`'s
+    /// positive-at-PX=167 output — which matches XANO's polarity
+    /// (NOT of netlist XUGU's active-low NAND5).
+    ///
+    /// So `xano && !self.fepo` = XANO AND XENA = WODU, matching the
+    /// AND2(XENA, XANO) netlist definition. WODU is purely
+    /// combinational on hardware — it does not depend on XYMU. TARU
+    /// (STAT mode 0) reads WODU directly.
+    pub(in crate::ppu) fn wodu(&self, xano: bool) -> bool {
+        xano && !self.fepo
     }
 
-    /// ALET falling edge: VOGA captures WODU, WEGO clears XYMU.
+    /// WEGO: OR2(TOFU, VOGA). Combinational — no clock. Drives XYMU's
+    /// NOR-latch set input.
     ///
-    /// On hardware, ALET falls at the boundary between sub-phases (e.g.
-    /// F->G), before the CPU's BUKE window opens. This method models
-    /// just the DFF capture and its combinational consequences.
-    ///
-    /// Called from the executor between PPU rise and CPU bus read, so
-    /// the CPU sees post-XYMU state. The remaining fall() work
-    /// (fetcher, cascade, TYFA) runs later in the falling phase.
-    pub(in crate::ppu) fn settle_alet(&mut self, xugu: bool) {
-        // Capture XYMU state before any clearing — fall() uses this to
-        // gate mode3_falling() on the transition dot.
-        self.xymu_before_settle = self.xymu;
-
-        // WODU is purely combinational (no XYMU dependency), so it's
-        // valid at any point during the dot.
-        let wodu_now = self.wodu(xugu);
-
-        // VOGA DFF17 captures WODU on ALET falling. On hardware this is
-        // the same dot WODU fires (half-cycle delay, not full-dot).
-        let voga_will_fire = self.voga || wodu_now;
-
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU. Apply early.
-        if voga_will_fire {
-            self.xymu = false;
-        }
+    /// TOFU (video reset path; NOT(XAPO)) is not first-class in the
+    /// emulator — VID_RST is handled via pipeline reset and scanner
+    /// clears on LCD-off, so during active rendering WEGO reduces to
+    /// VOGA.
+    pub(in crate::ppu) fn wego(&self) -> bool {
+        self.voga
     }
 
-    /// Falling edge (ALET clock): VOGA captures WODU, WEGO clears XYMU.
-    ///
-    /// settle_alet() has already cleared XYMU for the CPU's benefit and
-    /// set xymu_before_settle. This method does the full VOGA/wodu
-    /// computation — the XYMU clear is idempotent.
+    /// VOGA (DFF17) captures WODU on PPU clock rise (ALET rising).
+    /// WEGO = OR2(TOFU, VOGA) then fires combinationally; XYMU's
+    /// NOR-latch async-sets, clearing rendering_active within the same
+    /// master-clock edge — matching the chain's hardware structure
+    /// where only VOGA is clocked, WEGO and XYMU's set path being
+    /// combinational.
     ///
     /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
-    pub(in crate::ppu) fn fall(&mut self, xugu: bool) -> bool {
+    pub(in crate::ppu) fn capture_voga(&mut self, xano: bool) -> bool {
         // WODU is purely combinational — no XYMU dependency, so always valid.
-        let wodu_now = self.wodu(xugu);
+        let wodu_now = self.wodu(xano);
 
-        // VOGA DFF17 captures CURRENT dot's WODU (half-cycle delay).
-        // On hardware, WODU's inputs are valid before ALET falls.
+        // VOGA DFF captures CURRENT dot's WODU on this ALET rising edge.
         if wodu_now {
             self.voga = true;
         }
 
-        // WEGO = OR2(VID_RST, VOGA) clears XYMU (idempotent if
-        // settle_alet already cleared it).
-        if self.voga {
-            self.xymu = false;
+        // WEGO fires combinationally from VOGA; XYMU NOR-latch
+        // async-sets, clearing the rendering latch.
+        if self.wego() {
+            self.rendering_active = false;
         }
 
         wodu_now
@@ -112,21 +145,28 @@ impl HblankPipeline {
         self.fepo = fepo;
     }
 
-    /// AVAP: Mode 2→3 transition, set XYMU.
-    pub(in crate::ppu) fn set_xymu(&mut self) {
-        self.xymu = true;
+    /// AVAP: Mode 2→3 transition. Sets the rendering-mode latch (XYMU set).
+    pub(in crate::ppu) fn begin_rendering(&mut self) {
+        self.rendering_active = true;
     }
 
-    pub(in crate::ppu) fn xymu(&self) -> bool {
-        self.xymu
+    /// Rendering-mode latch (XYMU). True during Mode 3.
+    pub(in crate::ppu) fn rendering_active(&self) -> bool {
+        self.rendering_active
     }
 
-    /// Whether XYMU was true before settle_alet() ran this dot.
-    /// Used by rendering.fall() to gate mode3_falling() — on the
-    /// dot VOGA fires, XYMU is already cleared but the final
-    /// mode3 falling work still needs to run.
-    pub(in crate::ppu) fn xymu_before_settle(&self) -> bool {
-        self.xymu_before_settle
+    /// STAT-readout mirror of XYMU (see `rendering_active_stat` field).
+    /// Lags the internal `rendering_active` by one PPU-clock-fall. Read
+    /// only by `Ppu::mode()` for the T-cycle STAT sampling window.
+    pub(in crate::ppu) fn rendering_active_stat(&self) -> bool {
+        self.rendering_active_stat
+    }
+
+    /// Capture the pre-fall `rendering_active` into the STAT-readout
+    /// mirror. Called at the start of every PPU-clock-fall, before any
+    /// writer touches `self.rendering_active` in that fall.
+    pub(in crate::ppu) fn capture_rendering_stat(&mut self) {
+        self.rendering_active_stat = self.rendering_active;
     }
 
     pub(in crate::ppu) fn voga(&self) -> bool {
@@ -134,9 +174,9 @@ impl HblankPipeline {
     }
 
     pub(in crate::ppu) fn reset(&mut self) {
-        self.xymu = false;
+        self.rendering_active = false;
+        self.rendering_active_stat = false;
         self.voga = false;
         self.fepo = false;
-        self.xymu_before_settle = false;
     }
 }

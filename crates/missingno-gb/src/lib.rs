@@ -35,39 +35,38 @@ pub enum ClockPhase {
     Low,
 }
 
-/// A PPU register write staged at dot 0, waiting for its
-/// hardware-correct visibility dot.
+/// A PPU register write staged at dot 0, applied at dot 2 rise.
+///
+/// On hardware, all PPU registers share the `cupa` write strobe.
+/// CUPA rises at dot 2 of the M-cycle (phase E, coincident with an
+/// alet rising edge) and stays high for 1.498 dots through dot 3.
+/// While CUPA is high, the register latch is transparent and
+/// combinational PPU logic sees the new value. The emulator stages
+/// the write at dot 0 (when the CPU places the address on the bus)
+/// and applies it at dot 2 rise (before ppu.on_master_clock_rise())
+/// to model CUPA's rising position.
 struct StagedPpuWrite {
     address: u16,
     value: u8,
-    /// The dot at which this write becomes visible to the PPU.
-    /// Computed from the register's propagation class at staging time.
-    visible_at: u8, // 2, 3, or 4 (4 = next M-cycle)
     /// Whether the write has been applied to the PPU.
     applied: bool,
 }
 
-/// The dot within the write M-cycle at which this PPU register write
-/// becomes visible. Encodes the propagation depth from the register
-/// DFF to its first consumer.
-fn ppu_write_visibility_dot(address: u16) -> u8 {
-    match address {
-        // Baseline: combinational read, no pipeline stages
-        0xFF40 => 3, // LCDC — dot 2 on hardware, compensating errors elsewhere
-        0xFF41 => 4, // STAT — write glitch needs post-ppu.fall() timing — dot 2 on hardware, temporarily at 3
-        0xFF43 => 3, // SCX — dot 2 on hardware, compensating errors elsewhere
-        0xFF47 => 3, // BGP — dot 2 on hardware, needs DFF8 transparency model
-        0xFF48 => 3, // OBP0 — dot 2 on hardware, needs DFF8 transparency model
-        0xFF49 => 3, // OBP1 — dot 2 on hardware, needs DFF8 transparency model
-        // +1 dot: one pipeline stage between DFF and consumer
-        0xFF42 => 3, // SCY
-        // +2 dots: two pipeline stages (next M-cycle)
-        0xFF4A => 4, // WY
-        0xFF4B => 4, // WX
-        0xFF45 => 4, // LYC
-        // Non-PPU or read-only
-        _ => 4,
-    }
+/// Whether this address is a PPU register that should be staged.
+fn is_ppu_register(address: u16) -> bool {
+    matches!(
+        address,
+        0xFF40  // LCDC
+        | 0xFF41  // STAT
+        | 0xFF42  // SCY
+        | 0xFF43  // SCX
+        | 0xFF47  // BGP
+        | 0xFF48  // OBP0
+        | 0xFF49  // OBP1
+        | 0xFF4A  // WY
+        | 0xFF4B  // WX
+        | 0xFF45  // LYC
+    )
 }
 
 impl ClockPhase {

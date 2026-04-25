@@ -1,6 +1,29 @@
+//! Timing in this module is measured in **dots**. One dot is one
+//! full `ck1_ck2` cycle (one master clock period), driven by the
+//! `ck1_ck2` → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU
+//! clock (ALET) cascade.
+//!
+//! "PPU clock" is the subsystem-idiomatic name for the 4 MHz main
+//! clock distributed across the PPU's per-dot DFFs; ALET is its
+//! gate name in the netlist. DFFs clocked by ALET capture on one
+//! edge of the PPU clock; DFFs clocked by its complement MYVO
+//! capture on the other. Subsystem-level dispatcher methods use
+//! PPU-clock vocabulary (`on_ppu_clock_rise` / `on_ppu_clock_fall`);
+//! gate-level signal names (ALET, MYVO) appear where cross-
+//! referencing spec sections or explaining hardware derivations
+//! (e.g., LEBO = NAND(ALET, MOCE)).
+//!
+//! Vocabulary equivalences: 1 dot = 1 T-cycle = 2 atal half-cycles.
+//! "Dot" is primary in PPU code; "atal half-cycle" and "T-cycle"
+//! appear in definitional contexts and where comments bridge to
+//! CPU-subsystem timing (register-write strobes, M-cycle phasing).
+
 use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
+use dividers::Dividers;
+use line_counter::{LineCounter, LineCounterX, LineCounterY};
+use line_end_pipeline::LineEndPipeline;
 use memory::{Oam, OamAddress, Vram};
 use registers::BackgroundViewportPosition;
 use rendering::Rendering;
@@ -13,7 +36,8 @@ pub use rendering::{
     PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
 };
-pub use video_control::{InterruptFlags, VideoControl};
+pub use stat_interrupt::{InterruptFlags, StatInterrupt};
+pub use video_control::VideoControl;
 
 /// A pixel pushed to the LCD — the PPU's primary output signal.
 /// One pixel per SEMU clock edge during Mode 3.
@@ -39,13 +63,17 @@ pub struct PpuTickResult {
 }
 
 mod dff;
+mod dividers;
 mod draw;
+mod line_counter;
+mod line_end_pipeline;
 pub mod memory;
 mod oam_corruption;
 pub mod registers;
 pub mod rendering;
 mod scan;
 pub mod screen;
+pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
 
@@ -77,6 +105,13 @@ pub struct Ppu {
     /// Frame counter for gbtrace output. Incremented each time a
     /// completed frame is extracted from the rendering pipeline.
     pub frame_number: u16,
+    /// Deferred LCD-on initialization. On hardware, writing LCDC bit 7
+    /// high makes VID_RST deassert at phase G (dot 3 rise), not
+    /// immediately. When LCDC bit 7 transitions 0→1, this is set to 2
+    /// (dots remaining). Each rise() decrements it; at 0 the PPU
+    /// initializes. This models the propagation delay from LCDC through
+    /// the XOPO→XODO→VID_RST chain to the XOTA falling edge at G→H.
+    lcd_on_countdown: u8,
 }
 
 impl Ppu {
@@ -97,34 +132,48 @@ impl Ppu {
                 palettes: Palettes::default(),
             },
             // Post-boot PPU state: internal line 153, LX=98, VBlank.
+            // Hardware divider state at DMG post-boot handoff: WUVU=0,
+            // VENA=1, TALU=1 (= VENA.Q). The boot ROM has cycled the
+            // dividers past their initial ramp, so TALU is already high
+            // at the first cartridge instruction.
             // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
-            // WUVU/VENA phase: TALU rises at dot 1 (phase C), matching hardware.
             video: VideoControl {
-                dot_position: 98,
-                dot_divider: false,
-                mcycle_divider: false,
-                ly: 153,
-                lyc: 0,
-                ly_comparison_pending: false,
-                ly_comparison_latched: false,
-                ly_comparison_stat_visible: false,
-                // The first bit is unused, but is set at boot time
-                stat_flags: InterruptFlags::DUMMY,
-                stat_line_was_high: false,
-                delayed_line_end: false,
-                line_end_pending: false,
-                line_end_detected: false,
-                line_end_active: false,
-                frame_end_reset: true,
-                myta_suppress_new_match: false,
-                vblank: true,
-                popu_holdover: false,
+                dividers: Dividers {
+                    half_mcycle: false,
+                    mcycle: true,
+                },
+                lines: LineCounter {
+                    x: LineCounterX {
+                        value: 98,
+                        line_end_detected: false,
+                        line_end_active: false,
+                    },
+                    y: LineCounterY {
+                        value: 153,
+                        vblank: true,
+                        popu_holdover: false,
+                        frame_end_reset: true,
+                    },
+                },
+                stat: StatInterrupt {
+                    lyc: 0,
+                    comparison_pending: false,
+                    comparison_latched: false,
+                    // The first bit is unused, but is set at boot time
+                    enables: InterruptFlags::DUMMY,
+                    line_was_high: false,
+                },
+                line_end: LineEndPipeline {
+                    delayed_line_end: false,
+                    line_end_pending: false,
+                },
             },
             oam: Oam::default(),
             // Pipeline persists through VBlank — video.ly=153 means
             // popu is true, so pipeline ticking is gated off.
             pixel_pipeline: Some(Rendering::new()),
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 
@@ -146,33 +195,44 @@ impl Ppu {
                 palettes: Palettes::default(),
             },
             video: VideoControl {
-                dot_position: 0,
-                dot_divider: false,
-                mcycle_divider: false,
-                ly: 0,
-                lyc: 0,
-                ly_comparison_pending: false,
-                ly_comparison_latched: true,
-                ly_comparison_stat_visible: true,
-                stat_flags: InterruptFlags::empty(),
-                stat_line_was_high: false,
-                delayed_line_end: false,
-                line_end_pending: false,
-                line_end_detected: false,
-                line_end_active: false,
-                frame_end_reset: false,
-                myta_suppress_new_match: false,
-                vblank: false,
-                popu_holdover: false,
+                dividers: Dividers {
+                    half_mcycle: false,
+                    mcycle: false,
+                },
+                lines: LineCounter {
+                    x: LineCounterX {
+                        value: 0,
+                        line_end_detected: false,
+                        line_end_active: false,
+                    },
+                    y: LineCounterY {
+                        value: 0,
+                        vblank: false,
+                        popu_holdover: false,
+                        frame_end_reset: false,
+                    },
+                },
+                stat: StatInterrupt {
+                    lyc: 0,
+                    comparison_pending: false,
+                    comparison_latched: true,
+                    enables: InterruptFlags::empty(),
+                    line_was_high: false,
+                },
+                line_end: LineEndPipeline {
+                    delayed_line_end: false,
+                    line_end_pending: false,
+                },
             },
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 
     pub fn lx(&self) -> u8 {
-        self.video.dot_position
+        self.video.dot_position()
     }
 
     /// Current OAM scan counter entry (0-39). Returns None when not rendering.
@@ -188,31 +248,46 @@ impl Ppu {
                     Some(_) => self.mode() as u8,
                     None => 0,
                 };
-                let line_compare = if self.video.ly_eq_lyc_stat() {
+                let line_compare = if self.video.stat.ly_eq_lyc_stat() {
                     0b00000100
                 } else {
                     0
                 };
-                0x80 | (self.video.stat_flags.bits() & 0b01111000) | line_compare | mode
+                0x80 | (self.video.stat.enables().bits() & 0b01111000) | line_compare | mode
             }
             Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
             Register::BackgroundViewportX => self.registers.background_viewport.x.output(),
             Register::WindowY => self.registers.window.y,
             Register::WindowX => self.registers.window.x_plus_7.output(),
             Register::CurrentScanline => self.video.ly(),
-            Register::InterruptOnScanline => self.video.lyc,
+            Register::InterruptOnScanline => self.video.stat.lyc(),
             Register::BackgroundPalette => self.registers.palettes.background.output(),
             Register::Sprite0Palette => self.registers.palettes.sprite0.output(),
             Register::Sprite1Palette => self.registers.palettes.sprite1.output(),
         }
     }
 
-    /// Write a value directly to the register backing store.
+    /// Apply a register write to its backing store.
+    ///
+    /// Per-register dispatch; the backing store's own semantics govern
+    /// whether the new value is visible immediately or after a staging
+    /// tick:
+    ///
+    /// - **Palette registers (BGP, OBP0, OBP1)**: `DffLatch::write`
+    ///   — sets pending; new value visible after the next
+    ///   `tick_palette_latches` (§4.7 dlatch_ee + CUPA staging).
+    /// - **Viewport / WindowX / control_latch**: `DffLatch::write_immediate`
+    ///   — updates the latch output directly (DFF9 register read is
+    ///   combinational).
+    /// - **STAT (FF41)**: runs the DMG write-glitch (briefly sets all
+    ///   enable bits high, then writes the final value); returns true
+    ///   if any STAT rising edge was produced.
+    /// - **LY**: ignored on DMG.
     ///
     /// Returns true if the write triggered a STAT interrupt request
-    /// (DMG STAT write quirk: writing to FF41 briefly sets all enable
-    /// bits high, which can produce a rising edge on the STAT line).
-    fn write_register_immediate(&mut self, register: &Register, value: u8) -> bool {
+    /// (DMG STAT write quirk produces a glitch edge when enable bits
+    /// transition).
+    fn apply_register_write(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
                 self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
@@ -220,16 +295,17 @@ impl Ppu {
             Register::Status => {
                 // DMG STAT write quirk: briefly set all enable bits high.
                 // If any condition is active, this produces a rising edge.
-                self.video.stat_flags = InterruptFlags::all();
+                // Glitch orchestration stays on Ppu per PW.2; StatInterrupt
+                // provides primitives (set_enables / write_stat_bits /
+                // detect_line_edge).
+                self.video.stat.set_enables(InterruptFlags::all());
                 let glitch_line = self.stat_line_active();
-                let glitch_edge = glitch_line && !self.video.stat_line_was_high;
-                self.video.stat_line_was_high = glitch_line;
+                let glitch_edge = self.video.stat.detect_line_edge(glitch_line);
 
                 // Now apply the real value.
-                self.video.stat_flags = InterruptFlags::from_bits_truncate(value);
+                self.video.stat.write_stat_bits(value);
                 let final_line = self.stat_line_active();
-                let final_edge = final_line && !self.video.stat_line_was_high;
-                self.video.stat_line_was_high = final_line;
+                let final_edge = self.video.stat.detect_line_edge(final_line);
 
                 return glitch_edge || final_edge;
             }
@@ -242,8 +318,7 @@ impl Ppu {
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
             Register::InterruptOnScanline => {
-                self.video.lyc = value;
-                self.video.update_ly_comparison();
+                self.video.write_lyc(value);
             }
             Register::BackgroundPalette => self.registers.palettes.background.write(value),
             Register::Sprite0Palette => self.registers.palettes.sprite0.write(value),
@@ -255,12 +330,14 @@ impl Ppu {
 
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
-    /// On hardware, VID_RST deasserts at G→H (XOTA falling). All
-    /// dividers start at qp=0 (async reset). We initialize wuvu=false
-    /// to model this reset state. The first rise() call will toggle
-    /// WUVU 0→1 (phase A), and the second rise() call will toggle
-    /// WUVU 1→0 (phase C), triggering the first TALU rise and LX
-    /// increment. This gives LX=0 the correct 3-half-phase duration.
+    /// VID_RST deasserts at XOTA rising (= master clock falls = our
+    /// fall()). All dividers async-reset to Q=0. Hardware's divider
+    /// cascade then ramps: WUVU toggles first (~½ dot later), then
+    /// VENA (~1½ dots later), then TALU (~1½ dots later, tracking
+    /// VENA). Integer-dot model: no tick_dot on the init fall itself
+    /// (see on_master_clock_fall). TALU first rises at phase H of
+    /// the init M-cycle, placing steady-state TALU transitions at
+    /// phases D and H of each subsequent M-cycle.
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
@@ -278,7 +355,8 @@ impl Ppu {
         // Sync the STAT edge detector: the STAT line and its edge detector
         // reach their new steady state simultaneously when VID_RST deasserts.
         // No false edge on the first evaluation.
-        self.video.stat_line_was_high = self.stat_line_active();
+        let stat_line = self.stat_line_active();
+        self.video.stat.set_line_was_high(stat_line);
     }
 
     pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
@@ -286,22 +364,30 @@ impl Ppu {
 
         match register {
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
-                // Palette DFF8 registers settle combinationally within a single
-                // dot (~10 gates), well before CLKPIPE fires (~16 gates). No
-                // deferred latch needed — always write immediately.
-                self.write_register_immediate(&register, value)
+                // Palette registers use DFF8 staging inside DffLatch —
+                // `apply_register_write` calls `DffLatch::write` (sets
+                // pending), and `tick_palette_latches` applies
+                // pending → output on the next PPU clock fall. This
+                // models §4.7's dlatch_ee + CUPA transparency → next-
+                // SACU-rising visibility window. No orchestration
+                // branch here (unlike WindowX's Mode-3-dependent
+                // staging); DffLatch handles the staging uniformly.
+                self.apply_register_write(&register, value)
             }
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
-                self.write_register_immediate(&register, value);
+                self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // VID_RST deasserts when bit 7 transitions 0→1.
+                // VID_RST deasserts at XOTA falling = our fall().
+                // The write fires at BusDot 1 rise. VID_RST deasserts
+                // at the next xota falling edge = BusDot 1 fall. Set
+                // countdown=1 so the init fires in the next fall().
                 if !was_enabled && self.registers.control.video_enabled() {
-                    self.initialize_lcd_on();
+                    self.lcd_on_countdown = 1;
                 }
                 false
             }
@@ -309,20 +395,20 @@ impl Ppu {
                 // SCY, SCX use DFF9 cells identical to LCDC on hardware.
                 // The fetcher reads them combinationally — no propagation delay
                 // needed. Always write immediately, matching LCDC behavior.
-                self.write_register_immediate(&register, value)
+                self.apply_register_write(&register, value)
             }
             Register::WindowX => {
                 if is_drawing {
                     self.registers.window.x_plus_7.write(value);
                     false
                 } else {
-                    self.write_register_immediate(&register, value)
+                    self.apply_register_write(&register, value)
                 }
             }
             _ => {
                 // Remaining DFF9 registers: no propagation delay, atomic
                 // latch at the write point (G→H boundary).
-                self.write_register_immediate(&register, value)
+                self.apply_register_write(&register, value)
             }
         }
     }
@@ -344,19 +430,32 @@ impl Ppu {
     /// No priority logic — each bit is an independent OR of its input signals.
     /// During the POPU+BESU overlap at the 153->0 boundary, this produces
     /// mode 3 (both bits set) instead of the old priority-based mode 1.
+    ///
+    /// XYMU and BESU inputs are read from the STAT-readout mirrors
+    /// (`rendering_active_stat`, `besu_stat`), which lag the internal
+    /// NOR-latch state by one PPU-clock-fall. This models the CPU's
+    /// T-cycle STAT sampling phase — GateBoy's adapter samples where
+    /// BESU/XYMU's pre-transition values are still on the bus during
+    /// the AVAP integer dot, so Mode 2's observable duration is 80
+    /// dots. The NOR-gate formula is unchanged; only the inputs'
+    /// observation window shifts.
     pub fn mode(&self) -> rendering::Mode {
         let rendering = match &self.pixel_pipeline {
             Some(r) => r,
             None => return Mode::VerticalBlank,
         };
-        // XYMU settles before the CPU reads STAT (ALET falls at F->G
-        // before BUKE opens at G-H). Our settle_alet() models this.
-        // WODU is purely combinational (AND2(XUGU, !FEPO)). When WODU
-        // fires (PX=167), XYMU will clear on the next ALET edge. The
-        // combination xymu && !wodu gives the settled rendering state.
-        let xymu = rendering.xymu() && !rendering.wodu();
-        let bit0 = xymu || self.video.vblank;
-        let bit1 = xymu || rendering.is_scanning();
+        // Hardware (schematic page 21): mode bits are independent NOR gates.
+        //   bit 0 = XYMU OR POPU (rendering OR vblank)
+        //   bit 1 = ACYL OR XYMU (scanning OR rendering)
+        //
+        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). Only VOGA is
+        // clocked (ALET rising DFF capture); WEGO and XYMU's set path
+        // are combinational. In the emulator, VOGA capture and the
+        // WEGO→XYMU chain all fire within the same master-clock edge
+        // (capture_voga() clears rendering_active when VOGA is set).
+        let rendering_active = rendering.rendering_active_stat();
+        let bit0 = rendering_active || self.video.vblank();
+        let bit1 = rendering_active || rendering.is_scanning_stat();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
             (false, true) => Mode::VerticalBlank,
@@ -406,14 +505,20 @@ impl Ppu {
 
     /// Whether the latched LY==LYC comparison is currently true (ROPO output).
     pub fn ly_eq_lyc(&self) -> bool {
-        self.video.ly_eq_lyc()
+        self.video.stat.ly_eq_lyc()
+    }
+
+    /// LALU edge-detection state (STAT line previous value). Exposed for
+    /// gbtrace snapshot capture.
+    pub fn stat_line_was_high(&self) -> bool {
+        self.video.stat.line_was_high()
     }
 
     pub fn is_rendering(&self) -> bool {
         match &self.pixel_pipeline {
-            // Hardware: XYMU is the rendering gate (mode 3 active).
+            // Hardware: XYMU is the rendering gate (Mode 3 active).
             // During VBlank, XYMU is always low — no POPU guard needed.
-            Some(r) => r.xymu(),
+            Some(r) => r.rendering_active(),
             _ => false,
         }
     }
@@ -444,43 +549,45 @@ impl Ppu {
         // (true for 1 rising-phase window), VOGA latches on the falling
         // edge and stays true through HBlank. Together they cover the
         // full HBlank period.
-        (self
-            .video
-            .stat_flags
-            .contains(InterruptFlags::HORIZONTAL_BLANK)
+        let enables = self.video.stat.enables();
+        (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
             && !popu
             && (rendering.voga() || rendering.wodu()))
-            || (self
-                .video
-                .stat_flags
-                .contains(InterruptFlags::VERTICAL_BLANK)
-                && popu)
-            || (self.video.stat_flags.contains(InterruptFlags::OAM_SCAN)
-                && (mode2_active || vblank_line_144))
-            || (self
-                .video
-                .stat_flags
-                .contains(InterruptFlags::CURRENT_LINE_COMPARE)
-                && self.video.ly_eq_lyc())
+            || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
+            || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
+            || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
+                && self.video.stat.ly_eq_lyc())
     }
 
-    /// Rising half-phase: master clock rises → alet falls → myvo rises.
+    /// Master clock rising edge — one of the two edges of `ck1_ck2`
+    /// that bound a single dot. The master clock is the DMG's 4.194304
+    /// MHz crystal oscillator input; all on-chip clocks derive from it.
     ///
-    /// Clock mapping (master clock → PPU clocks):
-    ///   Master rises → alet falls, myvo rises. LEBO fires (BG fetch
-    ///     counter), PORY captures (myvo-clocked). CLKPIPE fires (SACU
-    ///     rising edge, depth 63.8 ge). Pixel shift and output.
-    ///   Master falls → alet rises, myvo falls. NYKA/PYGO/VOGA capture
-    ///     (alet-clocked). Sprite fetch counter advances (SABE).
+    /// Clock mapping on this edge: PPU clock **rises** (ALET rises in-
+    /// phase with ck1_ck2 — see spec §1.1/§1.2). ALET-clocked DFFs
+    /// capture here: NYKA, LYZU, PYGO (cascade), RENE, DOBA, NOPA, VOGA.
+    /// Sprite fetch counter advances on SABE (opposite edge from BG
+    /// fetcher's LEBO).
     ///
-    /// XOTA divider chain toggle, scanline boundary handling, pixel
-    /// output pipeline, VBlank IF, and LYC comparison.
-    pub fn rise(&mut self) -> PpuTickResult {
+    /// The complementary edge (`on_master_clock_fall`) handles the XOTA
+    /// divider chain toggle (XOTA rises when ck1_ck2 falls, toggling
+    /// WUVU/VENA/TALU), CATU pipeline, MYVO-clocked DFFs (PORY), SACU
+    /// pixel shift, scanline boundary handling, VBlank IF, and LYC.
+    ///
+    /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU clock (ALET).
+    pub fn on_master_clock_rise(&mut self, vram: &Vram) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
             request_vblank: false,
         };
+
+        // lcd_on_countdown is processed in on_master_clock_fall() — the
+        // divider chain (WUVU) is clocked by XOTA rising = ck1_ck2
+        // falling, and VID_RST deasserts one XOTA edge before that.
+        if self.lcd_on_countdown > 0 {
+            return result;
+        }
 
         if !self.control().video_enabled() {
             return result;
@@ -490,96 +597,123 @@ impl Ppu {
             return result;
         }
 
-        // Save POPU state before divider chain updates it.
-        let popu_was = self.video.vblank;
+        // Divider chain (WUVU/VENA/TALU) and CATU now run in
+        // on_master_clock_fall() — confirmed by dmg-sim: XOTA rises when
+        // master clock falls, and WUVU/XUPY/CATU all toggle on XOTA rising.
 
-        // XOTA rising edge: toggle WUVU (dot-rate clock).
-        self.video.tick_dot();
-
-        // VENA/TALU cascade: only fires when WUVU falls.
-        let mut scanline_boundary = false;
-        if self.video.dot_divider_fell() {
-            let talu_was = self.video.tick_mcycle_divider();
-
-            if talu_was && !self.video.mcycle_divider {
-                // TALU falling edge: RUTU fire, LY increment.
-                scanline_boundary = self.video.tick_talu_fall();
-                // PALY is combinational — recompute after any LY change
-                // so the next ROPO latch (TALU rising) sees the fresh value.
-                self.video.update_ly_comparison();
-                // RUPO NOR latch: PAGO immediately clears "match" when
-                // comparison goes false. Exclude frame wraps (MYTA async
-                // reset has different propagation characteristics).
-                if scanline_boundary && !self.video.popu_holdover {
-                    self.video.clear_stat_visible_if_no_match();
-                }
-            }
-
-            if !talu_was && self.video.mcycle_divider {
-                // TALU rising edge: LX increment, SANU detect, ROPO latch.
-                self.video.tick_talu_rise();
-                self.video.latch_ly_comparison();
-                self.video.latch_stat_visible();
-            }
-        }
-
-        if scanline_boundary {
-            // Scanline boundary — RUTU fired, LY incremented. LX was
-            // reset to 0 in tick_talu_fall().
-            if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                let ly = self.video.ly();
-                if ly == screen::NUM_SCANLINES {
-                    // Line 144: frame complete, enter VBlank.
-                    // Increment frame counter here (VSYNC start) to match
-                    // GateBoy's MEDA_VSYNC_OUTn rising edge timing.
-                    self.frame_number = self.frame_number.wrapping_add(1);
-                    result.new_frame = true;
-                } else if self.video.ly == 0 {
-                    // Line 0: VBlank → Active Display. Reset for new frame.
-                    rendering.reset_frame();
-                } else if self.video.ly() < 144 {
-                    // Lines 1-143: per-scanline reset.
-                    rendering.reset_scanline(ly);
-                }
-            }
-        }
-
-        // CATU DFF pipeline — runs every dot regardless of VBlank.
-        // On hardware, CATU evaluates every XUPY cycle independent of POPU.
-        // This allows CATU to fire at the 153->0 frame boundary while POPU
-        // is still high, setting BESU before vblank clears.
+        // ALET rises in-phase with ck1_ck2 (§1.1/§1.2: ATAL → AZOF →
+        // ZAXY → ZEME → ALET is an even number of inversions from
+        // ck1_ck2, so ALET rising aligns with master-clock rising at
+        // 16.3 ge buffer delay). ALET-clocked DFFs capture here: NYKA,
+        // PYGO (cascade), VOGA (hblank), LYZU. Also XUPY-derived logic
+        // read at this edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            rendering.tick_catu(&self.video);
-        }
-
-        // Pixel output, scanner, SACU, pipe shift. On hardware these
-        // circuits are gated by XYMU (mode 3) and BESU (scanning), not
-        // POPU. During VBlank, XYMU and BESU are both low, so
-        // rendering.rise() is effectively a no-op.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.rise(&self.registers, &self.video, &self.oam);
-        }
-
-        // POPU rising edge → VYPU → LOPE: VBlank IF fires when POPU
-        // transitions from low to high. POPU latches at NYPE rising edge,
-        // so this detects the combinational cascade within one tick.
-        if self.video.vblank && !popu_was && self.pixel_pipeline.is_some() {
-            result.request_vblank = true;
+            result.pixel = rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         result
     }
 
-    /// Falling half-phase: master clock falls → alet rises → myvo falls.
+    /// Master clock falling edge — the complementary edge to
+    /// `on_master_clock_rise`. Together they bound one dot = one full
+    /// cycle of `ck1_ck2`.
     ///
-    /// Fetcher pipeline (VRAM reads, cascade DFFs, TYFA), DFF8/DFF9
-    /// latches, LCD-off handling.
-    pub fn fall(&mut self, is_mcycle: bool, vram: &Vram) -> PpuTickResult {
+    /// Clock mapping on this edge: PPU clock **falls** (ALET falls in-
+    /// phase with ck1_ck2). XOTA rises (XOTA = NOT(ck1_ck2), so XOTA
+    /// rises when ck1_ck2 falls), toggling the divider chain
+    /// (WUVU/VENA/TALU); XUPY transitions, clocking the OAM-scan
+    /// subsystem (CATU, BYBA, CENO). MYVO-clocked DFFs (PORY) capture
+    /// here; SACU fires (delayed via the VYBO/TYFA/SEGU chain) and
+    /// drives the pixel shift / output.
+    ///
+    /// Also: DFF8/DFF9 register latches, scanline-boundary handling,
+    /// and LCD-off state management.
+    pub fn on_master_clock_fall(&mut self, is_mcycle: bool) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
             request_vblank: false,
         };
+
+        // Deferred LCD-on: VID_RST deasserts at XOTA rising = our
+        // fall(). On the init fall, the subsequent tick_dot (below)
+        // represents WUVU's first toggle — landing roughly half a
+        // dot after VID_RST deassertion, tracking hardware's divider
+        // ramp-up. The divider cascade then produces TALU's first
+        // rise at the NEXT M-cycle's dot 3 fall, establishing the
+        // steady-state alignment where TALU rises at phase H and
+        // falls at phase D of each M-cycle.
+        if self.lcd_on_countdown > 0 {
+            self.lcd_on_countdown -= 1;
+            if self.lcd_on_countdown == 0 {
+                self.initialize_lcd_on();
+                // Fall through — tick_dot runs in the block below
+            } else {
+                return result;
+            }
+        }
+
+        // XOTA rising edge (= master clock falls = our fall()): toggle
+        // WUVU, cascade VENA/TALU, handle scanline boundaries. Confirmed
+        // by dmg-sim gate-level simulation.
+        if self.control().video_enabled() && self.pixel_pipeline.is_some() {
+            let popu_was = self.video.vblank();
+
+            self.video.tick_dot();
+
+            let mut scanline_boundary = false;
+            if self.video.dividers.half_mcycle_fell() {
+                let talu_was = self.video.dividers.tick_mcycle();
+                let talu_now = self.video.dividers.mcycle();
+
+                if talu_was && !talu_now {
+                    scanline_boundary = self.video.on_lx_counter_clock_fall();
+                    self.video.update_ly_comparison();
+                }
+
+                if !talu_was && talu_now {
+                    self.video.on_lx_counter_clock_rise();
+                    // MYTA may have fired via NYPE falling (inside the
+                    // rise dispatch), flipping LY's register-smoothed
+                    // value. Recompute PALY here so the ROPO capture
+                    // below sees fresh `pending`. Matches hardware's
+                    // combinational PALY tracking LY changes, captured
+                    // by ROPO at TALU rising.
+                    self.video.update_ly_comparison();
+                    self.video.stat.latch_comparison();
+                }
+            }
+
+            if scanline_boundary {
+                if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                    let ly = self.video.ly();
+                    if ly == screen::NUM_SCANLINES {
+                        self.frame_number = self.frame_number.wrapping_add(1);
+                        result.new_frame = true;
+                    } else if self.video.ly_hardware() == 0 {
+                        rendering.reset_frame();
+                    } else if self.video.ly() < 144 {
+                        rendering.reset_scanline(ly);
+                    }
+                }
+            }
+
+            // CATU DFF pipeline — clocked by XUPY = NOT(WUVU), which
+            // transitions when WUVU toggles (same XOTA edge = this fall).
+            // `tick_rutu` runs after `tick_catu` so the CATU reader sees
+            // the pre-promotion RUTU value, and the scanline-boundary
+            // write promoted by `tick_rutu` is only visible on the next
+            // XUPY rising edge.
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                rendering.tick_catu(&self.video);
+                rendering.tick_rutu();
+            }
+
+            // POPU rising edge → VYPU → LOPE: VBlank IF.
+            if self.video.vblank() && !popu_was {
+                result.request_vblank = true;
+            }
+        }
 
         if self.control().video_enabled() {
             // Resolve DFF8/DFF9 latches BEFORE the pipeline reads them.
@@ -588,20 +722,16 @@ impl Ppu {
             // transfers to output here, so the pipeline sees a 1-dot
             // delay — matching hardware's reg_new → reg_old copy at the
             // tick boundary followed by combinational read of reg_old.
-            let palette_changed = self.registers.tick_palette_latches();
+            self.registers.tick_palette_latches();
             self.registers.tick_register_latches();
 
-            // Fetcher advance, cascade DFFs (NYKA/PORY/PYGO), TYFA.
+            // ALET falls in-phase with ck1_ck2 falling. MYVO-clocked DFFs
+            // capture here (PORY), SACU fires (delayed via TYFA), pixel
+            // output advances, pixel counter / fine counter increment.
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel = rendering.fall(
-                    &self.registers,
-                    &self.video,
-                    &self.oam,
-                    vram,
-                    palette_changed,
-                );
+                result.pixel = rendering.on_ppu_clock_fall(&self.registers, &self.video, &self.oam);
             }
 
             // STAT edge detection moved to check_stat_edge() — called
@@ -622,26 +752,13 @@ impl Ppu {
             // M-cycle to match.
             self.video.vid_rst();
 
-            // ly_comparison_latched is intentionally NOT updated — comparison clock
-            // stops when the PPU is off, freezing the last result.
+            // stat.comparison_latched is intentionally NOT updated —
+            // comparison clock stops when the PPU is off, freezing the
+            // last result.
             return result;
         }
 
         result
-    }
-
-    /// Settle ALET-clocked DFFs (VOGA/XYMU) before CPU bus read.
-    /// On hardware, ALET falls at F->G before BUKE opens at G-H --
-    /// this models that ordering so the CPU sees post-XYMU state.
-    pub fn settle_alet(&mut self) {
-        if !self.control().video_enabled() {
-            return;
-        }
-        // During VBlank, XYMU is already low and AVAP never fires,
-        // so settle_alet() is a no-op — no POPU guard needed.
-        if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            rendering.settle_alet();
-        }
     }
 
     /// Detect a rising edge on the STAT interrupt line (SUKO).
@@ -660,9 +777,7 @@ impl Ppu {
             return false;
         }
         let stat_line_high = self.stat_line_active();
-        let edge = stat_line_high && !self.video.stat_line_was_high;
-        self.video.stat_line_was_high = stat_line_high;
-        edge
+        self.video.stat.detect_line_edge(stat_line_high)
     }
 
     pub fn palettes(&self) -> &Palettes {
@@ -675,7 +790,7 @@ impl Ppu {
 
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         match &self.pixel_pipeline {
-            Some(rendering) if !self.video.vblank => Some(rendering.pipeline_state(&self.video)),
+            Some(rendering) if !self.video.vblank() => Some(rendering.pipeline_state(&self.video)),
             _ => None, // VBlank or LCD off: no pipeline to snapshot.
         }
     }
@@ -702,27 +817,37 @@ impl Ppu {
     pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
         let lcd_on = control.video_enabled();
-        let stat_flags = InterruptFlags::from_bits_truncate(snap.stat);
+        let enables = InterruptFlags::from_bits_truncate(snap.stat);
 
         let video = VideoControl {
-            dot_position: snap.dot_position,
-            dot_divider: false,
-            mcycle_divider: false,
-            ly: snap.ly,
-            lyc: snap.lyc,
-            ly_comparison_pending: snap.ly == snap.lyc,
-            ly_comparison_latched: snap.ly == snap.lyc,
-            ly_comparison_stat_visible: snap.ly == snap.lyc,
-            stat_flags,
-            stat_line_was_high: snap.stat_line_was_high,
-            delayed_line_end: false,
-            line_end_pending: false,
-            line_end_detected: false,
-            line_end_active: false,
-            frame_end_reset: false,
-            myta_suppress_new_match: false,
-            vblank: snap.ly >= 144,
-            popu_holdover: false,
+            dividers: Dividers {
+                half_mcycle: false,
+                mcycle: false,
+            },
+            lines: LineCounter {
+                x: LineCounterX {
+                    value: snap.dot_position,
+                    line_end_detected: false,
+                    line_end_active: false,
+                },
+                y: LineCounterY {
+                    value: snap.ly,
+                    vblank: snap.ly >= 144,
+                    popu_holdover: false,
+                    frame_end_reset: false,
+                },
+            },
+            stat: StatInterrupt {
+                lyc: snap.lyc,
+                comparison_pending: snap.ly == snap.lyc,
+                comparison_latched: snap.ly == snap.lyc,
+                enables,
+                line_was_high: snap.stat_line_was_high,
+            },
+            line_end: LineEndPipeline {
+                delayed_line_end: false,
+                line_end_pending: false,
+            },
         };
 
         let registers = PipelineRegisters {
@@ -749,6 +874,7 @@ impl Ppu {
             video,
             oam,
             frame_number: 0,
+            lcd_on_countdown: 0,
         }
     }
 }
