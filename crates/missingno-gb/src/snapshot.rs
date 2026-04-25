@@ -13,7 +13,7 @@ use gbtrace::snapshot::{
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
-use crate::cpu::{EiDelay, HaltState};
+use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
 use crate::{ClockPhase, GameBoy};
 
@@ -85,11 +85,12 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
             HaltState::Halting => 1,
             HaltState::Halted => 2,
         },
-        ei_delay: match cpu.ei_delay {
-            None => 0,
-            Some(EiDelay::Pending) => 1,
-            Some(EiDelay::Fired) => 2,
-        },
+        // Legacy gbtrace ei_delay field. The emulator no longer models
+        // EI as a multi-stage pipeline (spec §13.7: IME enables within
+        // EI's own M-cycle; the "1-instruction delay" is in the
+        // int_entry chain via int_entry_gate, not in IME). Snapshot
+        // export emits 0 (no pending EI delay state to capture).
+        ei_delay: 0,
         halt_bug: cpu.halt_bug,
     }
 }

@@ -31,25 +31,6 @@ pub enum HaltState {
     Halted,
 }
 
-/// Models the EI instruction's one-instruction delay DFF pipeline.
-///
-/// On hardware, EI sets an intermediate RS latch in the sequencer.
-/// That latch propagates through a DFF chain (clocked by CLK9) before
-/// reaching the IME flip-flop, introducing a one-instruction delay.
-/// This enum represents the pipeline stages visible at instruction
-/// boundaries.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum EiDelay {
-    /// EI was executed this instruction. Will advance to Fired at this
-    /// instruction's completion boundary. IME is not yet promoted.
-    Pending,
-
-    /// EI's delay has advanced one stage. IME will be promoted to
-    /// Enabled at this instruction's completion boundary (i.e., the
-    /// instruction after EI).
-    Fired,
-}
-
 /// Selected-interrupt latch consumed at the dispatch check.
 ///
 /// Tracks which interrupt the priority encoder selected from `IF & IE`
@@ -103,17 +84,21 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    /// IME flip-flop. On hardware, captures new value on CLK9↑ (retire
-    /// edge for DI/EI). `output()` reads pre-edge Q until `tick()` fires;
-    /// pending writes queued via `write()` are invisible to combinational
-    /// consumers (int_take) until the edge. Step 2 of the commit overhaul
-    /// preserves synchronous-mutation semantics via `write_immediate`;
-    /// step 8 introduces the pre/post-edge distinction inside `commit()`.
+    /// IME flip-flop (zivv). Captures `zoxc = NAND(zrsy, ime_state)` on
+    /// `exec_phase_n` rising — once per M-cycle, mid-M-cycle. Per spec
+    /// §13.7, EI/DI write IME via `write_immediate`: the underlying
+    /// SR-latch chain (zjje, zrsy) is combinational, and the IME DFF
+    /// captures within the same M-cycle as the EI/DI opcode. The
+    /// "1-instruction delay" lives in `int_entry_gate` below, not here.
     pub ime: Dff<InterruptMasterEnable>,
-    /// EI delay pipeline — models the DFF cascade between EI's
-    /// decode signal and the IME flip-flop. Advances one stage per
-    /// instruction completion in `advance_ei_delay()`.
-    pub ei_delay: Option<EiDelay>,
+    /// Combinational gate against int_entry capture during EI/DI's
+    /// data_phase. Per spec §13.7.5, the int_entry set chain
+    /// (zaij/zkog) is gated against EI/DI in data_phase, blocking
+    /// same-M-cycle dispatch capture — this is the source of EI's
+    /// "1-instruction delay". Set by EI/DI's apply; cleared at end of
+    /// the same commit so the next M-cycle's int_entry can capture
+    /// normally.
+    pub(super) int_entry_gate: bool,
     pub halt_state: HaltState,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
@@ -197,7 +182,7 @@ impl Cpu {
             },
 
             ime: Dff::new(InterruptMasterEnable::Disabled),
-            ei_delay: None,
+            int_entry_gate: false,
             halt_state: HaltState::Running,
             halt_bug: false,
 
@@ -240,7 +225,7 @@ impl Cpu {
             instruction_pc: 0x0000,
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),
-            ei_delay: None,
+            int_entry_gate: false,
             halt_state: HaltState::Running,
             halt_bug: false,
             phase: CpuPhase::Fetch,
@@ -290,11 +275,10 @@ impl Cpu {
             } else {
                 InterruptMasterEnable::Disabled
             }),
-            ei_delay: match snap.ei_delay {
-                1 => Some(EiDelay::Pending),
-                2 => Some(EiDelay::Fired),
-                _ => None,
-            },
+            // int_entry_gate is transient (set only during EI/DI's
+            // commit). Snapshot's legacy ei_delay field doesn't map
+            // to it cleanly; default to false on reload.
+            int_entry_gate: false,
             halt_state: match snap.halt_state {
                 1 => HaltState::Halting,
                 2 => HaltState::Halted,

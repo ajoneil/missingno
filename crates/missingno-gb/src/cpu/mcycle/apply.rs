@@ -1,5 +1,5 @@
 use super::super::{
-    Cpu, EiDelay, HaltState, InterruptMasterEnable,
+    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
@@ -172,21 +172,34 @@ impl Cpu {
                 cpu.pc = target;
             }
             Commit::JumpReturnEnableInterrupts { target } => {
+                // RETI: ime_state set by zbpp during M3 (spec §13.7),
+                // IME DFF captures within RETI's M-cycles. By RETI's
+                // terminal retire, ime_n is stable Enabled. NO
+                // int_entry_gate — RETI isn't EI/DI, the int_entry
+                // chain isn't gated.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = target;
                 cpu.pc = target;
             }
 
             Commit::DisableInterrupts => {
+                // DI: zwuu combinationally clears ime_state during DI's
+                // data_phase; IME DFF captures Disabled at exec_phase↓
+                // mid-DI's-M-cycle. The same int_entry-chain gate that
+                // EI uses also fires for DI — blocks dispatch capture
+                // during DI's M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
-                cpu.ei_delay = None;
+                cpu.int_entry_gate = true;
             }
             Commit::EnableInterrupts => {
-                if cpu.ime.output() != InterruptMasterEnable::Enabled
-                    && cpu.ei_delay.is_none()
-                {
-                    cpu.ei_delay = Some(EiDelay::Pending);
-                }
+                // EI: zbpp sets ime_state via zjje SR latch combinationally;
+                // IME DFF captures Enabled at exec_phase↓ mid-EI's-M-cycle.
+                // int_entry-chain gate (zaij/zkog against EI/DI's
+                // data_phase) blocks dispatch capture during EI's own
+                // M-cycle — this is the source of the "1-instruction
+                // delay".
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+                cpu.int_entry_gate = true;
             }
 
             Commit::EnterHalt | Commit::EnterStop => {
