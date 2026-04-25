@@ -505,7 +505,9 @@ impl Cpu {
             && self.g42.output()
             && self.ime.output() == InterruptMasterEnable::Enabled
         {
-            self.ime.write_immediate(InterruptMasterEnable::Disabled);
+            // Wake-detect M-cycle: g42/ykua drop halt combinationally and arm
+            // the dispatch FSM. M1 (Internal{pc}, IME clear via zacw) begins
+            // on the next M-cycle boundary inside mcycle_isr step 0.
             self.halt_state = HaltState::Running;
 
             let pc = self.pc;
@@ -520,7 +522,9 @@ impl Cpu {
                 step: 0,
             };
             self.pending_vector_resolve = false;
-            return self.mcycle_isr(0);
+            return Some(BusAction::Read {
+                address: self.bus_counter,
+            });
         }
 
         // ── IME=0 wakeup ──
@@ -839,7 +843,9 @@ impl Cpu {
         }
     }
 
-    /// ISR dispatch: 3 post-fetch M-cycles.
+    /// ISR dispatch: 5 M-cycles. Step 0 = M1 (IME clear + Internal{pc});
+    /// steps 1-3 do internal/push high/push low; step 4 routes to vector
+    /// fetch via mcycle_fetch.
     fn mcycle_isr(&mut self, _read_value: u8) -> Option<BusAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
@@ -855,10 +861,13 @@ impl Cpu {
         *step += 1;
 
         match current_step {
-            // M0: IDU PC- — on hardware this undoes the wakeup NOP's PC
+            // M1: IDU PC- — on hardware this undoes the wakeup NOP's PC
             // increment. The emulator skips both the increment and decrement
-            // for the same net effect.
-            0 => Some(BusAction::Internal { address: self.pc }),
+            // for the same net effect. IME clears at the M1 boundary (zacw).
+            0 => {
+                self.ime.write_immediate(InterruptMasterEnable::Disabled);
+                Some(BusAction::Internal { address: self.pc })
+            }
             1 => Some(BusAction::InternalOamBug { address: sp }),
             2 => {
                 let addr = sp.wrapping_sub(1);
@@ -970,8 +979,8 @@ impl Cpu {
             // int_entry rising → dispatch M1 starts at this M-cycle
             // boundary. IME gate is already in int_take (int_entry's
             // source). Override halt_state — EI;HALT never enters the
-            // halt RS-latch state on hardware.
-            self.ime.write_immediate(InterruptMasterEnable::Disabled);
+            // halt RS-latch state on hardware. IME clear (zacw) happens
+            // inside mcycle_isr step 0.
             self.halt_state = HaltState::Running;
             let pc = self.pc;
             let pc_hi = (pc >> 8) as u8;
@@ -985,9 +994,7 @@ impl Cpu {
             };
             self.exec_step = 0;
             self.pending_vector_resolve = false;
-            return self
-                .mcycle_isr(0)
-                .expect("mcycle_isr M1 must return Some");
+            return self.mcycle_isr(0).expect("mcycle_isr M1 must return Some");
         }
 
         match next_phase {
