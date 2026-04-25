@@ -392,6 +392,12 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
+        // M-cycle-end CLK9↑ same-edge int_entry (zacw) capture. commit()
+        // ran in this dot's rise() and stashed pending_int_entry_* flags
+        // for capture once the same dot's master-clock fall has settled
+        // IF. tick_int_entry() is a no-op on non-retire falls.
+        self.cpu.tick_int_entry();
+
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle.
             let counter = self.timers.internal_counter();
