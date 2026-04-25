@@ -172,20 +172,13 @@ impl Cpu {
                 cpu.pc = target;
             }
             Commit::JumpReturnEnableInterrupts { target } => {
-                // ime.write() queues pending; commit()'s ime.tick() captures
-                // at the retire edge, after int_take has been snapshotted
-                // from pre-edge Q.
-                cpu.ime.write(InterruptMasterEnable::Enabled);
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = target;
                 cpu.pc = target;
             }
 
             Commit::DisableInterrupts => {
-                // ime.write() queues pending; the int_take snapshot at the
-                // top of commit() reads pre-edge Q (Enabled), so DI retiring
-                // with IF pending dispatches on the same edge that commits
-                // its own IME clear (hardware §13.4 parallel capture).
-                cpu.ime.write(InterruptMasterEnable::Disabled);
+                cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
                 cpu.ei_delay = None;
             }
             Commit::EnableInterrupts => {
@@ -436,12 +429,7 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
-                // RETI: queue pending IME. commit() (called from Phase::Pop's
-                // terminal step) snapshots int_take before this ime.tick
-                // fires, so dispatch at RETI's retire sees pre-RETI IME
-                // (Disabled) — matching hardware (one-instruction delay
-                // before the re-enabled IME becomes dispatch-effective).
-                cpu.ime.write(InterruptMasterEnable::Enabled);
+                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;
             }

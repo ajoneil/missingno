@@ -439,10 +439,32 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Dispatch decision lives inside commit() — the retire-edge
-            // hook that snapshots int_take from pre-apply IME. The
-            // previous instruction's commit() has already decided whether
-            // to enter ISR; this step 1 just processes the fetched opcode.
+            // Check for interrupt dispatch. int_entry (zacw) is the
+            // running-CPU dispatch-ready DFF — a single master-clock
+            // DFF stage between `interrupt_pending` and the dispatch
+            // gate (dmg-sim zacw_inst.d = zfex; zfex is combinational
+            // from int_pending).
+            if self.int_entry.output() && self.interrupt_latch.take_ready().is_some() {
+                // Interrupt detected — enter ISR dispatch.
+                // PC stays at pre-fetch value (not incremented).
+                self.ime.write_immediate(InterruptMasterEnable::Disabled);
+                self.ei_delay = None;
+
+                let pc = self.pc;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.pending_vector_resolve = false;
+                return self.mcycle_isr(0);
+            }
 
             // Normal opcode consumption — set PC from the fetch address.
             // On hardware, reg.pc = bus_addr + 1 at this execute step.
@@ -462,14 +484,11 @@ impl Cpu {
 
             let needed = operand_count(opcode);
             if needed == 0 {
-                // No operands — retire immediately. decode_retire produces
-                // the Commit and Phase; commit() is the single site that
-                // snapshots int_take (pre-apply IME), runs apply_commit,
-                // and ticks the retire-edge DFFs.
+                // No operands — decode immediately
                 let bytes = [opcode, 0, 0];
-                let (instruction, phase, commit) = self.decode_retire(bytes, 1);
-                self.instruction = instruction;
-                Some(self.commit(commit, phase))
+                self.decode_and_transition(bytes, 1);
+                self.exec_step = 0;
+                self.mcycle_execute(0)
             } else {
                 // Need operand bytes — enter Execute with Operands phase
                 self.phase = CpuPhase::Execute {
@@ -624,9 +643,12 @@ impl Cpu {
                     }
                     let b = *bytes;
                     let n = *bytes_read;
-                    let (instruction, phase, commit) = self.decode_retire(b, n);
-                    self.instruction = instruction;
-                    return (Some(self.commit(commit, phase)), false);
+                    self.decode_and_transition(b, n);
+                    if let CpuPhase::Execute { step, .. } = &mut self.phase {
+                        *step = 0;
+                    }
+                    let action = self.mcycle_execute(0);
+                    return (action, false);
                 }
 
                 // Non-last operand: issue bus_read for next byte.
@@ -897,14 +919,14 @@ impl Cpu {
     }
 
     /// Transition from fetch to execution phase after all bytes are read.
-    /// Pure decode — returns the decoded Instruction with its Phase and
-    /// retire-edge Commit. Does not mutate CPU state; commit() consumes
-    /// the result and owns all mutation.
-    fn decode_retire(&mut self, bytes: [u8; 3], bytes_read: u8) -> (Instruction, Phase, Commit) {
+    fn decode_and_transition(&mut self, bytes: [u8; 3], bytes_read: u8) {
         let mut iter = bytes[..bytes_read as usize].iter().copied();
         let instruction = Instruction::decode(&mut iter).unwrap();
 
         let (phase, commit) = match &instruction {
+            // Direct-apply arms — single-M-cycle instructions whose mutation
+            // is expressed entirely as a Commit variant. build_* arms below
+            // still use Phase-only returns in step 6a; step 6b converts each.
             Instruction::Interrupt(InterruptInstruction::Await) => {
                 (Phase::Empty, Commit::EnterHalt)
             }
@@ -920,6 +942,8 @@ impl Cpu {
                 (Phase::Empty, Commit::DisableInterrupts)
             }
 
+            // Transitional — build_* arms still apply mutations inline and
+            // return Phase only. Step 6b converts each to (Phase, Commit).
             Instruction::Load(load) => Self::build_load(self, load),
             Instruction::Arithmetic(arith) => Self::build_arithmetic(self, arith),
             Instruction::Bitwise(bw) => Self::build_bitwise(self, bw),
@@ -929,102 +953,67 @@ impl Cpu {
             Instruction::Stack(s) => Self::build_stack(self, s),
         };
 
-        (instruction, phase, commit)
-    }
-
-    /// Combinational int_take: int_pending & ime_n & at_instruction_boundary.
-    /// The boundary signal is implicit — this is only read from commit(),
-    /// which fires at retire edges.
-    fn int_take(&self) -> bool {
-        self.interrupt_pending && self.ime.output() == InterruptMasterEnable::Enabled
-    }
-
-    /// Retire edge — end-of-instruction CLK9↑. Models the parallel DFF
-    /// captures at this edge: register file, IME, ei_delay chain,
-    /// int_entry (zacw). All reads pre-edge state; the int_take snapshot
-    /// at the top ensures DI/EI mutations queued by apply_commit are
-    /// invisible to the dispatch decision until ime.tick() fires below.
-    ///
-    /// Replaces enter_fetch's role as the instruction-boundary hook.
-    /// Consolidates the dispatch-check (previously at top-of-step-1 in
-    /// mcycle_fetch) into a single site driven by the just-ticked
-    /// int_entry DFF — matching hardware where the sequencer transitions
-    /// on int_entry.q rising, not on a secondary gate.
-    pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
-        // ── Snapshot int_take from pre-edge state ──
-        // Reads ime.output() — pending DI/EI writes from apply_commit
-        // below are queued only, invisible until ime.tick() fires.
-        let int_take = self.int_take();
-
-        // ── Retire-time mutations (register file, IME-pending, halt) ──
         Self::apply_commit(self, commit);
+        self.instruction = instruction;
+        self.phase = CpuPhase::Execute { phase, step: 0 };
+    }
 
-        // ── Parallel retire-edge DFF ticks ──
-        // ime captures any pending value queued by apply_commit (DI, EI,
-        // RETI). int_entry captures the int_take snapshot taken above.
-        // Order between the two ticks doesn't matter — neither reads the
-        // other.
-        self.ime.tick();
-        self.int_entry.write(int_take);
-        self.int_entry.tick();
-
-        // ── Retire-edge side effects ──
-        // HALT bug check (EI;HALT interaction), EI delay chain shift,
-        // pending jump-target commit, PC sync, boundary flag.
-        self.check_halt_bug();
-        self.advance_ei_delay();
-        if let Some(target) = self.pending_jump_target.take() {
-            self.bus_counter = target;
-        }
-        self.pc = self.bus_counter;
-        self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
-
-        // ── Dispatch decision ──
-        // int_entry.output() reflects the just-captured int_take —
-        // hardware fires the ISR sequence on int_entry.q rising.
-        // interrupt_latch is IME-gated by update_interrupt_state (decoupled
-        // in step 9; for now that coupling still provides the gate).
-        if self.int_entry.output()
-            && let Some(_interrupt) = self.interrupt_latch.take_ready()
-        {
-            // Dispatch M1 clears IME. No DFF capture semantics here —
-            // this is the ISR sequence's first cycle, not a retiring
-            // instruction's edge.
-            self.ime.write_immediate(InterruptMasterEnable::Disabled);
-            self.ei_delay = None;
-            let pc = self.pc;
-            let pc_hi = (pc >> 8) as u8;
-            let pc_lo = (pc & 0xff) as u8;
-            let sp = self.stack_pointer;
-            self.phase = CpuPhase::InterruptDispatch {
-                sp,
-                pc_hi,
-                pc_lo,
-                step: 0,
-            };
-            self.exec_step = 0;
-            self.pending_vector_resolve = false;
-            return self
-                .mcycle_isr(0)
-                .expect("mcycle_isr M1 must return Some");
-        }
-
-        // ── No dispatch: transition to next phase ──
+    /// Retire edge — commit the instruction's effects and transition to
+    /// the next phase.
+    ///
+    /// Step 5 structure: applies `commit` via `apply_commit`, then
+    /// delegates to `enter_fetch` (for Phase::Empty) or kicks off
+    /// `mcycle_execute` (for non-Empty phases). Step 8 moves int_take
+    /// snapshot, `ime.tick()`, int_entry `write`/`tick`, and the
+    /// dispatch-check into this method, replacing the current external
+    /// `tick_dispatch_ready` + top-of-step-1 dispatch gate.
+    #[allow(dead_code)]
+    pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
+        Self::apply_commit(self, commit);
         match next_phase {
-            Phase::Empty => {
-                self.phase = CpuPhase::Fetch;
-                self.exec_step = 0;
-                self.op_state = 0;
-                self.mcycle_fetch(0).expect("fetch step 0 must return Some")
-            }
+            Phase::Empty => self.enter_fetch(),
             phase => {
                 self.phase = CpuPhase::Execute { phase, step: 0 };
                 self.exec_step = 0;
                 self.mcycle_execute(0)
-                    .expect("mcycle_execute must return Some")
+                    .expect("execute phase must return Some")
             }
         }
+    }
+
+    /// Transition to the Fetch phase, run instruction-boundary side
+    /// effects (HALT bug check, EI delay advance), signal the boundary,
+    /// and chain into the first fetch M-cycle.
+    fn enter_fetch(&mut self) -> BusAction {
+        self.phase = CpuPhase::Fetch;
+        self.exec_step = 0;
+        self.op_state = 0;
+
+        // Run HALT bug check and EI delay advance at the instruction
+        // boundary, INSIDE the CPU, so the timing is exact regardless
+        // of when the executor detects the boundary.
+        self.check_halt_bug();
+        self.advance_ei_delay();
+
+        // If a jump target is pending (from CondJump's internal M-cycle),
+        // apply it now so bus_counter is correct at the instruction boundary.
+        if let Some(target) = self.pending_jump_target.take() {
+            self.bus_counter = target;
+        }
+
+        // Always sync pc with bus_counter at the instruction boundary.
+        // After JP cc (not taken), pc may be stale (one byte short of
+        // bus_counter) because the JP operand fetch uses bus_pass, not
+        // bus_read. If an ISR fires at the next fetch, it reads self.pc
+        // for the return address — which must be correct.
+        self.pc = self.bus_counter;
+
+        self.boundary_flag = true;
+        self.instruction_pc = self.bus_counter;
+
+        // Chain into the first fetch M-cycle. If check_halt_bug
+        // transitioned to Halting/Halted, mcycle_fetch will handle it.
+        self.mcycle_fetch(0).expect("fetch step 0 must return Some")
     }
 
     /// HALT bug: if HALT was just executed with IME=0 and an interrupt
