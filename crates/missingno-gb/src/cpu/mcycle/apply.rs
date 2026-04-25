@@ -172,34 +172,23 @@ impl Cpu {
                 cpu.pc = target;
             }
             Commit::JumpReturnEnableInterrupts { target } => {
-                // RETI: ime_state set by zbpp during M3 (spec §13.7),
-                // IME DFF captures within RETI's M-cycles. By RETI's
-                // terminal retire, ime_n is stable Enabled. NO
-                // int_entry_gate — RETI isn't EI/DI, the int_entry
-                // chain isn't gated.
+                // RETI: zbpp sets ime_state during M3, IME captures within
+                // the multi-M-cycle pop. RETI is not in the int_entry
+                // chain's EI/DI gate.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = target;
                 cpu.pc = target;
             }
 
             Commit::DisableInterrupts => {
-                // DI: zwuu combinationally clears ime_state during DI's
-                // data_phase; IME DFF captures Disabled at exec_phase↓
-                // mid-DI's-M-cycle. The same int_entry-chain gate that
-                // EI uses also fires for DI — blocks dispatch capture
-                // during DI's M-cycle.
+                // DI: zwuu clears ime_state combinationally; IME DFF
+                // captures Disabled mid-M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
-                cpu.int_entry_gate = true;
             }
             Commit::EnableInterrupts => {
-                // EI: zbpp sets ime_state via zjje SR latch combinationally;
-                // IME DFF captures Enabled at exec_phase↓ mid-EI's-M-cycle.
-                // int_entry-chain gate (zaij/zkog against EI/DI's
-                // data_phase) blocks dispatch capture during EI's own
-                // M-cycle — this is the source of the "1-instruction
-                // delay".
+                // EI: zbpp sets ime_state via the zjje SR latch; IME DFF
+                // captures Enabled mid-M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
-                cpu.int_entry_gate = true;
             }
 
             Commit::EnterHalt | Commit::EnterStop => {
@@ -442,6 +431,10 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
+                // RETI's terminal pop: zbpp set ime_state during M3, IME
+                // is stable Enabled by this edge. Not in EI/DI's
+                // int_entry-chain gate, so dispatch can fire on the
+                // following retire if int_pending=1.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;

@@ -1,5 +1,5 @@
 use super::{
-    Cpu, HaltState, InterruptLatch, InterruptMasterEnable,
+    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
@@ -439,11 +439,10 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Dispatch decision lives inside commit() — the retire-edge
-            // hook that snapshots int_take from pre-apply IME (spec
-            // §13.7). The previous instruction's commit() has already
-            // decided whether to enter ISR; this step 1 just processes
-            // the fetched opcode.
+            // Dispatch decision lives inside commit() at the retiring
+            // instruction's edge. The previous instruction's commit has
+            // already decided whether to enter ISR; this step 1 just
+            // processes the fetched opcode.
 
             // Normal opcode consumption — set PC from the fetch address.
             // On hardware, reg.pc = bus_addr + 1 at this execute step.
@@ -498,19 +497,15 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
 
         // ── IME=1 wakeup ──
-        // Dispatch gate matches running-CPU dispatch: int_entry (zacw) is
-        // a single master-clock DFF stage between IF assertion and ISR
-        // M1 entry, captured in parallel with g42 on the same CLK9↑ that
-        // sees `interrupt_pending` with setup margin. g42 drives the
-        // combinational HALT release chain (g42 → g43 → g49 → halt↓);
-        // int_entry gates dispatch. Both sample `interrupt_pending`
-        // independently — no shift-register ordering between them.
+        // HALT-wake chain: g42.q↑ → ykua → halt↓ → sequencer wakes →
+        // int_take → int_entry. With IME=1, int_take is satisfied and
+        // dispatch fires. Vector is resolved later by
+        // `pending_vector_resolve` at ISR M3→M4.
         if self.interrupt_pending
-            && self.int_entry.output()
-            && self.interrupt_latch.take_ready().is_some()
+            && self.g42.output()
+            && self.ime.output() == InterruptMasterEnable::Enabled
         {
             self.ime.write_immediate(InterruptMasterEnable::Disabled);
-            self.int_entry_gate = false;
             self.halt_state = HaltState::Running;
 
             let pc = self.pc;
@@ -894,12 +889,9 @@ impl Cpu {
         }
     }
 
-    /// Combinational `int_take`: int_pending & ime_n & at_instruction_boundary
-    /// (spec §13.2/§13.6). Boundary is implicit — only called from commit().
-    /// Reads `ime.output()` so EI/DI's `write_immediate` from this commit's
-    /// apply WOULD be visible; the int_entry_gate flag separately blocks
-    /// capture during EI/DI's own M-cycle (spec §13.7.5 — int_entry chain
-    /// gated against EI/DI data_phase).
+    /// Combinational `int_take` — drives the `int_entry` (zacw) capture
+    /// at retire edges. The instruction-boundary input is implicit: this
+    /// is only called from `commit()`, which only runs at retires.
     fn int_take(&self) -> bool {
         self.interrupt_pending && self.ime.output() == InterruptMasterEnable::Enabled
     }
@@ -940,41 +932,33 @@ impl Cpu {
         (instruction, phase, commit)
     }
 
-    /// Retire edge — end-of-instruction CLK9↑. Per spec §13.7, EI/DI's
-    /// IME enable/disable commits within their own M-cycle (write_immediate
-    /// in apply_commit), and the "1-instruction delay" lives in the
-    /// `int_entry_gate` — set by EI/DI's apply, blocking int_entry capture
-    /// in the same commit.
+    /// Retire edge — the end-of-instruction CLK9↑ where the register
+    /// file, IME, and `int_entry` (zacw) all capture.
     ///
-    /// Order:
-    ///   1. Snapshot int_take (combinational — reads pre-apply ime.output()).
-    ///   2. apply_commit — EI/DI mutate IME via write_immediate; multi-cycle
-    ///      retires (RETI etc.) already mutated inline before this call.
-    ///   3. ime.tick — no-op for the EI/DI/RETI paths since they use
-    ///      write_immediate, but kept for symmetry / future DFF-pending
-    ///      semantics.
-    ///   4. int_entry capture: gated by int_entry_gate (EI/DI in data_phase
-    ///      blocks capture per spec §13.7.5). Gate cleared after.
-    ///   5. Side effects: HALT-bug check, pending jump-target commit,
-    ///      pc sync, boundary signal.
-    ///   6. Dispatch decision: int_entry.output() && interrupt_latch.take_ready().
-    ///      Dispatch entry overrides any halt_state=Halting from HALT's apply
-    ///      (spec §13.7.4 — EI;HALT never enters halt RS-latch).
+    /// Sequence:
+    ///   1. Derive int_entry-chain gate from the Commit variant
+    ///      (EI/DI block; zaij/zkog gate against their data_phase).
+    ///   2. apply_commit — register / flag / IME mutations.
+    ///   3. Read int_take post-apply (DI's IME-clear is visible here,
+    ///      naturally suppressing dispatch in DI's own M-cycle).
+    ///   4. int_entry capture, gated by step 1's flag.
+    ///   5. enter_fetch-style side effects (HALT-bug check, pending
+    ///      jump target, pc sync, boundary).
+    ///   6. Dispatch decision on the just-captured int_entry.q. Entry
+    ///      forces halt_state=Running (EI;HALT never enters halt).
     pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
-        Self::apply_commit(self, commit);
-        self.ime.tick();
+        let int_entry_gated =
+            matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
 
-        // int_take read POST-apply. Per spec §13.7: IME DFF captures at
-        // exec_phase↓ mid-M-cycle, before int_take evaluates at sub-phase
-        // H. So DI's IME-clear is visible to int_take in DI's own M-cycle
-        // (int_take=false → no dispatch). EI's IME-set is also visible,
-        // but the int_entry chain is gated against EI/DI's data_phase
-        // (int_entry_gate flag captures this).
+        Self::apply_commit(self, commit);
+
+        // int_take read post-apply: DI's IME-clear is visible here, so
+        // int_take=false naturally and dispatch can't fire in DI's own
+        // M-cycle. EI's IME-set is also visible, but the int_entry-chain
+        // gate above blocks capture anyway.
         let int_take = self.int_take();
-        let int_entry_value = !self.int_entry_gate && int_take;
-        self.int_entry.write(int_entry_value);
+        self.int_entry.write(!int_entry_gated && int_take);
         self.int_entry.tick();
-        self.int_entry_gate = false;
 
         self.check_halt_bug();
         if let Some(target) = self.pending_jump_target.take() {
@@ -984,11 +968,11 @@ impl Cpu {
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
 
-        if self.int_entry.output()
-            && let Some(_interrupt) = self.interrupt_latch.take_ready()
-        {
-            // Dispatch M1 starts at this M-cycle boundary. Override
-            // halt_state in case HALT's apply set it (spec §13.7.4).
+        if self.int_entry.output() {
+            // int_entry rising → dispatch M1 starts at this M-cycle
+            // boundary. IME gate is already in int_take (int_entry's
+            // source). Override halt_state — EI;HALT never enters the
+            // halt RS-latch state on hardware.
             self.ime.write_immediate(InterruptMasterEnable::Disabled);
             self.halt_state = HaltState::Running;
             let pc = self.pc;
@@ -1026,10 +1010,8 @@ impl Cpu {
 
     /// HALT bug: HALT decoded with IME=0 and a pending IF resumes
     /// immediately and fails to increment PC on the next opcode fetch.
-    /// Per spec §13.7.4, this path is upstream of the EI delay chain;
-    /// EI;HALT (with IF pending) does NOT exercise the bug because EI
-    /// enables IME within EI's own M-cycle (before HALT decodes), so
-    /// HALT sees IME=Enabled.
+    /// EI;HALT does not exercise this path — EI's IME-set commits before
+    /// HALT decodes, so HALT sees IME=Enabled.
     fn check_halt_bug(&mut self) {
         if !matches!(self.halt_state, HaltState::Halted | HaltState::Halting)
             || !self.interrupt_pending
@@ -1075,39 +1057,23 @@ impl Cpu {
         }
     }
 
-    /// Update the interrupt latch based on externally-provided trigger state.
-    /// Called every dot by the executor after both phases have ticked.
+    /// Update `interrupt_pending` from the priority-encoded `IF & IE`.
+    /// Combinational on hardware (not IME-gated — the IME gate sits in
+    /// `int_take`). The vector itself is resolved later via
+    /// `pending_vector_resolve` reading `interrupts.triggered()` at the
+    /// ISR's M3→M4 push.
     pub fn update_interrupt_state(
         &mut self,
         triggered: Option<super::super::interrupts::Interrupt>,
     ) {
         self.interrupt_pending = triggered.is_some();
-
-        self.interrupt_latch = match self.ime.output() {
-            InterruptMasterEnable::Enabled => match triggered {
-                Some(interrupt) => InterruptLatch::Ready(interrupt),
-                None => InterruptLatch::Empty,
-            },
-            InterruptMasterEnable::Disabled => InterruptLatch::Empty,
-        };
     }
 
-    /// Clock g42 (yoii) — CLK9-cadence DFF, captures interrupt_pending
-    /// once per M-cycle on the master-clock rising edge. Drives the HALT
-    /// release chain (g42 → g43 → g49).
+    /// Clock g42 (yoii) on its CLK9 capture edge. g42 drives the HALT
+    /// release chain (g42 → ykua → halt RS-latch reset).
     pub fn tick_g42(&mut self) {
         self.g42.write(self.interrupt_pending);
         self.g42.tick();
-    }
-
-    /// Clock int_entry (zacw) — captures `interrupt_pending` directly
-    /// (not `g42.output()`). Hardware cell: `zacw_inst.d = zfex`
-    /// (dmg-sim sm83.sv). `int_take` is combinational from `int_pending`
-    /// with IME/boundary gating, so int_entry is a single master-clock
-    /// DFF stage between IF assertion and ISR M1 entry.
-    pub fn tick_dispatch_ready(&mut self) {
-        self.int_entry.write(self.interrupt_pending);
-        self.int_entry.tick();
     }
 }
 

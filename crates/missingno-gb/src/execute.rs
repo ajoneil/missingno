@@ -161,27 +161,18 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At each M-cycle boundary, two interrupt-chain DFFs capture at
-    /// the CLK9 rising edge in parallel: `g42` (drives the HALT release
-    /// chain) and `dispatch_ready` / `int_entry` (gates ISR dispatch —
-    /// both running-CPU and HALT IME=1). Both sample `interrupt_pending`
-    /// independently. IFs asserted later in the rise miss this
-    /// boundary's CLK9↑ setup window and are captured at the next.
+    /// At each M-cycle boundary, `g42` (yoii) captures `interrupt_pending`,
+    /// driving the HALT-release chain (g42 → ykua → halt↓). The running-
+    /// CPU `int_entry` (zacw) DFF is captured inside `commit()` at retire
+    /// edges using `int_take`, not externally.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: interrupt-chain DFF captures, then PPU
-        //    + interrupt updates ──
+        // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
-            // Two interrupt-chain DFFs capture at the CLK9 rising edge.
-            // Both sample `interrupt_pending`, which has been
-            // combinationally stable since the previous edge's fall()
-            // `update_interrupt_state`. They are independent — no
-            // ordering constraint between them.
             self.cpu.tick_g42(); // samples pre-edge interrupt_pending
-            self.cpu.tick_dispatch_ready(); // samples pre-edge interrupt_pending
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -312,9 +303,9 @@ impl GameBoy {
 
         // Drain timer overflow → IF.timer at every rising edge so overflow
         // detected in fall() is visible to update_interrupt_state in the
-        // next fall(). Per spec §12.4, hardware delays TIMA overflow → IF
-        // bit 2 by one M-cycle (the reload cycle) via the nydu/moba
-        // clk_1mhz DFF chain — modeled as a one-tick handoff here.
+        // next fall(). Hardware delays TIMA overflow → IF bit 2 by one
+        // M-cycle (the reload cycle) via the nydu/moba clk_1mhz DFF
+        // chain — modeled as a one-tick handoff here.
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
         }

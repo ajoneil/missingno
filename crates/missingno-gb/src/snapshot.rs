@@ -85,11 +85,10 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
             HaltState::Halting => 1,
             HaltState::Halted => 2,
         },
-        // Legacy gbtrace ei_delay field. The emulator no longer models
-        // EI as a multi-stage pipeline (spec §13.7: IME enables within
-        // EI's own M-cycle; the "1-instruction delay" is in the
-        // int_entry chain via int_entry_gate, not in IME). Snapshot
-        // export emits 0 (no pending EI delay state to capture).
+        // Legacy gbtrace field. The emulator no longer models EI as a
+        // multi-stage pipeline — IME enables synchronously inside EI's
+        // commit, and the "1-instruction delay" lives in the int_entry
+        // chain. No persistent EI-delay state to capture here.
         ei_delay: 0,
         halt_bug: cpu.halt_bug,
     }

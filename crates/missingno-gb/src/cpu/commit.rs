@@ -73,10 +73,14 @@ pub(super) enum Commit {
     JumpReturnEnableInterrupts { target: u16 },
 
     // ── Interrupt control ──
-    /// DI — IME DFF ← Disabled; ei_delay RS-latch cleared.
+    /// DI — IME DFF (zivv) ← Disabled. Hardware: zwuu clears the
+    /// ime_state SR latch combinationally during DI's data_phase. The
+    /// int_entry chain (zaij/zkog) is gated this M-cycle.
     DisableInterrupts,
-    /// EI — sets ei_delay RS-latch (→ Pending), which the EI delay DFF
-    /// chain will shift in subsequent retire edges.
+    /// EI — IME DFF (zivv) ← Enabled. Hardware: zbpp sets the ime_state
+    /// SR latch combinationally during EI's data_phase. The int_entry
+    /// chain (zaij/zkog) is gated this M-cycle — source of the
+    /// "1-instruction delay" before dispatch.
     EnableInterrupts,
 
     // ── Halt / stop / low-power entry ──
