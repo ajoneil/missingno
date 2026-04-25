@@ -498,8 +498,8 @@ impl Cpu {
 
         // ── IME=1 wakeup ──
         // HALT-wake chain: g42.q↑ → ykua → halt↓ → sequencer wakes →
-        // int_take → int_entry. With IME=1, int_take is satisfied and
-        // dispatch fires. Vector is resolved later by
+        // int_take → int_entry. With IME=1 the int_take chain captures
+        // and drives dispatch. Vector resolves later via
         // `pending_vector_resolve` at ISR M3→M4.
         if self.interrupt_pending
             && self.g42.output()
@@ -524,10 +524,8 @@ impl Cpu {
         }
 
         // ── IME=0 wakeup ──
-        // Halt release is combinational on g42.q↑. This M-cycle is the
-        // halt-release M-cycle — it completes as a normal idle Read.
-        // The fetch M-cycle begins at the next BOGA edge, where the
-        // phase dispatcher will route to mcycle_fetch.
+        // Halt release on g42.q↑ via ykua/halt↓. With IME=0 there's no
+        // dispatch; the CPU just resumes fetching.
         if self.interrupt_pending
             && self.g42.output()
             && self.ime.output() == InterruptMasterEnable::Disabled
