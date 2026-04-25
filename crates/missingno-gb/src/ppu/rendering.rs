@@ -395,7 +395,7 @@ impl Rendering {
         self.vram_locked()
     }
 
-    /// PPU clock rise (master-clock fall; gate: ALET rising): setup
+    /// Master-clock rising edge (= ALET rising per spec §1.1/§1.2): setup
     /// phase dispatcher.
     ///
     /// ALET-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
@@ -403,8 +403,8 @@ impl Rendering {
     /// NOR latches (POKY), combinational signals (TYFA bridge), fine
     /// scroll match (PUXA), and window WX match (PYCO).
     ///
-    /// XUPY derives from WUVU, which is clocked by XOTA rising.
-    /// The XOTA divider toggle runs in the preceding PPU-clock-fall
+    /// XUPY derives from WUVU, which is clocked by XOTA rising. The
+    /// XOTA divider toggle runs in the preceding master-clock-falling
     /// phase, so video.xupy() reflects the post-toggle state here.
     pub(super) fn on_ppu_clock_rise(
         &mut self,
@@ -468,16 +468,16 @@ impl Rendering {
         self.scan.tick_rutu();
     }
 
-    /// PPU clock fall (master-clock rise; gate: ALET falling): output
-    /// phase dispatcher.
+    /// Master-clock falling edge (= ALET falling per spec §1.1/§1.2):
+    /// output phase dispatcher.
     ///
     /// MYVO-clocked DFFs capture here: PORY (cascade). BG fetch counter
-    /// advances (LEBO fires on the PPU-clock-fall edge — LEBO =
-    /// NAND(ALET, MOCE)). CLKPIPE fires (SACU rising edge, late in the
-    /// dot). Handles BYBA capture, AVAP evaluation, pixel counter
-    /// increment, fine counter increment, pipe shift, sprite X matching,
-    /// and pixel output. CATU pipeline is advanced separately by
-    /// `tick_catu()` (unconditional).
+    /// advances (LEBO fires on this edge — LEBO = NAND(ALET, MOCE)).
+    /// CLKPIPE fires (SACU rising edge per spec §6.4: SACU rising = ALET
+    /// falling, delayed by the VYBO/TYFA/SEGU chain). Handles BYBA
+    /// capture, AVAP evaluation, pixel counter increment, fine counter
+    /// increment, pipe shift, sprite X matching, and pixel output. CATU
+    /// pipeline is advanced separately by `tick_catu()` (unconditional).
     pub(super) fn on_ppu_clock_fall(
         &mut self,
         regs: &PipelineRegisters,
@@ -584,11 +584,11 @@ impl Rendering {
         self.reset_scanline(0);
     }
 
-    /// Mode 3 processing on the PPU-clock-rise phase (master clock
-    /// falls; gate: ALET rising).
+    /// Mode 3 processing on the master-clock rising edge (= ALET rising
+    /// per spec §1.1/§1.2).
     ///
     /// Fetcher VRAM reads (counter doesn't increment here — LEBO fires
-    /// on PPU clock fall only), cascade DFFs (NYKA, PYGO), NOR latches
+    /// on the falling edge only), cascade DFFs (NYKA, PYGO), NOR latches
     /// (POKY), combinational signals (TYFA), sprite fetch counter
     /// advance (SABE), and fine scroll match (PUXA) fire on this edge.
     fn mode3_falling(

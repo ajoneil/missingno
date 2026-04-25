@@ -301,13 +301,12 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // VOGA capture (HBlank) happens in the PPU-clock-rise phase via
-        // HblankPipeline::capture_voga() — confirmed by dmg-sim: VOGA is
-        // clocked by ALET rising (= master-clock falling = PPU clock
-        // rise). The mode() function uses `xymu && !wodu` to predict
-        // HBlank state for CPU STAT reads, so settle_alet is not needed.
-        // G4.2 confirmed WODU doesn't depend on XYMU, making the
-        // prediction reliable.
+        // VOGA capture (HBlank) happens on the master-clock rising edge via
+        // HblankPipeline::capture_voga(): VOGA is ALET-clocked, and per spec
+        // §1.1/§1.2 ALET rises in-phase with ck1_ck2 (master-clock rising).
+        // The mode() function uses `xymu && !wodu` to predict HBlank state
+        // for CPU STAT reads, so settle_alet is not needed. G4.2 confirmed
+        // WODU doesn't depend on XYMU, making the prediction reliable.
 
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
