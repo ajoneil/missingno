@@ -128,12 +128,12 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: internal line 153, LX=98, VBlank.
+            // Post-boot PPU state: scanline 0, LX=98, Mode 0 HBlank
+            // (deep in scanline 0's Mode 0, 15 M-cycles before LINE_END).
             // Hardware divider state at DMG post-boot handoff: WUVU=0,
             // VENA=1, TALU=1 (= VENA.Q). The boot ROM has cycled the
             // dividers past their initial ramp, so TALU is already high
             // at the first cartridge instruction.
-            // ly() returns 0 (MYTA early reset), matching DMG post-boot LY=0.
             video: VideoControl {
                 dividers: Dividers {
                     half_mcycle: false,
@@ -146,10 +146,10 @@ impl Ppu {
                         line_end_active: false,
                     },
                     y: LineCounterY {
-                        value: 153,
-                        vblank: true,
+                        value: 0,
+                        vblank: false,
                         popu_holdover: false,
-                        frame_end_reset: true,
+                        frame_end_reset: false,
                     },
                 },
                 stat: StatInterrupt {
@@ -166,9 +166,7 @@ impl Ppu {
                 },
             },
             oam: Oam::default(),
-            // Pipeline persists through VBlank — video.ly=153 means
-            // popu is true, so pipeline ticking is gated off.
-            pixel_pipeline: Some(Rendering::new()),
+            pixel_pipeline: Some(Rendering::post_boot()),
             frame_number: 0,
             pending_lcd_on_init: false,
         }
