@@ -105,13 +105,13 @@ pub struct Ppu {
     /// Frame counter for gbtrace output. Incremented each time a
     /// completed frame is extracted from the rendering pipeline.
     pub frame_number: u16,
-    /// Deferred LCD-on initialization. On hardware, writing LCDC bit 7
-    /// high makes VID_RST deassert at phase G (dot 3 rise), not
-    /// immediately. When LCDC bit 7 transitions 0→1, this is set to 2
-    /// (dots remaining). Each rise() decrements it; at 0 the PPU
-    /// initializes. This models the propagation delay from LCDC through
-    /// the XOPO→XODO→VID_RST chain to the XOTA falling edge at G→H.
-    lcd_on_countdown: u8,
+    /// Within-fall transient: set true at the LCDC.7 0→1 instant by
+    /// `apply_register_write`, consumed at the top of the matching
+    /// `on_master_clock_fall` to run `initialize_lcd_on`. CUPA↑ → XODO↓
+    /// is a combinational ~896 ps path on hardware (well within one
+    /// dot), so the matching divider/scanner reset must land in the
+    /// same fall as the staged write apply, not the next dot.
+    pending_lcd_on_init: bool,
 }
 
 impl Ppu {
@@ -173,7 +173,7 @@ impl Ppu {
             // popu is true, so pipeline ticking is gated off.
             pixel_pipeline: Some(Rendering::new()),
             frame_number: 0,
-            lcd_on_countdown: 0,
+            pending_lcd_on_init: false,
         }
     }
 
@@ -227,7 +227,7 @@ impl Ppu {
             oam: Oam::default(),
             pixel_pipeline: None, // LCD off at power-on
             frame_number: 0,
-            lcd_on_countdown: 0,
+            pending_lcd_on_init: false,
         }
     }
 
@@ -382,12 +382,13 @@ impl Ppu {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // VID_RST deasserts at XOTA falling = our fall().
-                // The write fires at BusDot 1 rise. VID_RST deasserts
-                // at the next xota falling edge = BusDot 1 fall. Set
-                // countdown=1 so the init fires in the next fall().
+                // VID_RST (XODO) deasserts ~896 ps after CUPA↑ —
+                // combinational, well within one dot. Schedule the
+                // matching divider / scanner reset for the next master-
+                // clock fall (the same fall in which this staged write
+                // is being applied at dot-2 rise).
                 if !was_enabled && self.registers.control.video_enabled() {
-                    self.lcd_on_countdown = 1;
+                    self.pending_lcd_on_init = true;
                 }
                 false
             }
@@ -582,13 +583,6 @@ impl Ppu {
             request_vblank: false,
         };
 
-        // lcd_on_countdown is processed in on_master_clock_fall() — the
-        // divider chain (WUVU) is clocked by XOTA rising = ck1_ck2
-        // falling, and VID_RST deasserts one XOTA edge before that.
-        if self.lcd_on_countdown > 0 {
-            return result;
-        }
-
         if !self.control().video_enabled() {
             return result;
         }
@@ -608,7 +602,8 @@ impl Ppu {
         // PYGO (cascade), VOGA (hblank), LYZU. Also XUPY-derived logic
         // read at this edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
+            result.pixel =
+                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
         }
 
         result
@@ -635,22 +630,13 @@ impl Ppu {
             request_vblank: false,
         };
 
-        // Deferred LCD-on: VID_RST deasserts at XOTA rising = our
-        // fall(). On the init fall, the subsequent tick_dot (below)
-        // represents WUVU's first toggle — landing roughly half a
-        // dot after VID_RST deassertion, tracking hardware's divider
-        // ramp-up. The divider cascade then produces TALU's first
-        // rise at the NEXT M-cycle's dot 3 fall, establishing the
-        // steady-state alignment where TALU rises at phase H and
-        // falls at phase D of each M-cycle.
-        if self.lcd_on_countdown > 0 {
-            self.lcd_on_countdown -= 1;
-            if self.lcd_on_countdown == 0 {
-                self.initialize_lcd_on();
-                // Fall through — tick_dot runs in the block below
-            } else {
-                return result;
-            }
+        // On the LCDC.7 0→1 fall, run the VID_RST-deassert mutations
+        // (divider clear, scanner reset, pixel pipeline create). The
+        // subsequent tick_dot in this fall represents WUVU's first
+        // toggle, tracking hardware's divider ramp-up.
+        if self.pending_lcd_on_init {
+            self.initialize_lcd_on();
+            self.pending_lcd_on_init = false;
         }
 
         // XOTA rising edge (= master clock falls = our fall()): toggle
@@ -874,7 +860,7 @@ impl Ppu {
             video,
             oam,
             frame_number: 0,
-            lcd_on_countdown: 0,
+            pending_lcd_on_init: false,
         }
     }
 }
