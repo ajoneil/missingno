@@ -843,9 +843,27 @@ impl Cpu {
         }
     }
 
-    /// ISR dispatch: 5 M-cycles. Step 0 = M1 (IME clear + Internal{pc});
-    /// steps 1-3 do internal/push high/push low; step 4 routes to vector
-    /// fetch via mcycle_fetch.
+    /// ISR dispatch: 5 held M-cycles spanning steps 0..=4.
+    ///
+    /// - Steps 0..=3 each return their own BusAction directly,
+    ///   held for one M-cycle by next_dot's bus-output loop.
+    /// - Step 4 transitions to Fetch via commit(NoOperation,
+    ///   Phase::Empty); the chained mcycle_fetch(0) returns
+    ///   Read{vector} as step 4's held M-cycle (M5 vector fetch).
+    ///   The handler's first opcode then decodes via the standard
+    ///   fetch/execute overlap on the next M-cycle.
+    ///
+    /// Hardware mapping (gb-ctr §6.7 RST n p129):
+    ///   step 0 → M1 internal (Internal{pc})
+    ///   step 1 → M2 internal (InternalOamBug{sp})
+    ///   step 2 → M3 push pc_hi (Write{sp-1, pc_hi})
+    ///   step 3 → M4 push pc_lo (Write{sp-2, pc_lo}, vector resolved here)
+    ///   step 4 → M5 vector fetch (Read{vector} via commit chain)
+    ///
+    /// IME (zacw downstream) is cleared at the acceptance edge in
+    /// tick_int_entry, one M-cycle before step 0 runs. The
+    /// write_immediate(Disabled) inside step 0's arm is a defensive
+    /// no-op: by the time step 0 runs, IME is already Disabled.
     fn mcycle_isr(&mut self, _read_value: u8) -> Option<BusAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
@@ -1001,8 +1019,13 @@ impl Cpu {
     /// `commit()`'s register write-back. Split from `commit()` so the
     /// zacw input sees IF *after* the same dot's PPU fall has settled
     /// it (e.g. HBlank STAT IF on the boundary dot). If the capture
-    /// fires, replace the speculative next-M-cycle BusAction prepared
-    /// by `commit()` with the ISR M1 BusAction.
+    /// fires, set up CpuPhase::InterruptDispatch with step=0 and clear
+    /// IME inline. The speculative next-fetch BusAction prepared by
+    /// commit() continues to hold the bus for this current M-cycle —
+    /// it is harmless because the executor is mid-M-cycle and the
+    /// dispatch's first held BusAction (mcycle_isr step 0 =
+    /// Internal{pc}) is emitted at the next M-cycle boundary by the
+    /// natural next_mcycle path.
     pub fn tick_int_entry(&mut self) {
         if !self.pending_int_entry_capture {
             return;
@@ -1017,12 +1040,15 @@ impl Cpu {
         self.pending_int_entry_gate = false;
 
         if self.int_entry.output() {
-            // int_entry rising → dispatch M1 starts at the next
-            // M-cycle boundary. IME gate is already in int_take
-            // (int_entry's source). Override halt_state — EI;HALT
-            // never enters the halt RS-latch state on hardware. IME
-            // clear (zacw) happens inside mcycle_isr step 0.
+            // int_entry rising → dispatch M1 starts at the next M-cycle
+            // boundary. IME (zacw downstream) clears at this acceptance
+            // edge — modelled inline because mcycle_isr's step 0 runs one
+            // M-cycle later via the natural next_mcycle dispatch, and IME
+            // must be Disabled before then to gate any further int_take
+            // checks. Override halt_state — EI;HALT never enters the halt
+            // RS-latch state on hardware.
             self.halt_state = HaltState::Running;
+            self.ime.write_immediate(InterruptMasterEnable::Disabled);
             let pc = self.pc;
             let pc_hi = (pc >> 8) as u8;
             let pc_lo = (pc & 0xff) as u8;
@@ -1035,8 +1061,14 @@ impl Cpu {
             };
             self.exec_step = 0;
             self.pending_vector_resolve = false;
-            let action = self.mcycle_isr(0).expect("mcycle_isr M1 must return Some");
-            self.current_action = Some(action);
+            // Note: do NOT call mcycle_isr(0) here, and do NOT overwrite
+            // self.current_action. The current M-cycle (the retire whose
+            // commit() ran in this dot's rise()) continues holding its
+            // speculative next-fetch BusAction. At the next M-cycle
+            // boundary, next_mcycle will see CpuPhase::InterruptDispatch
+            // and call mcycle_isr(read_value) at step=0, which produces
+            // the held Internal{pc} BusAction for dispatch's M1 — the
+            // M-cycle that today is incorrectly skipped.
         }
     }
 
