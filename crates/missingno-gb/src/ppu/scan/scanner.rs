@@ -37,12 +37,9 @@ pub(in crate::ppu) struct SpriteScanner {
     /// blocks CATU). Set to true by enable_catu() after the first scanline
     /// completes. Persists across scanline resets.
     catu_enabled: bool,
-    /// True on the LCD-on first scanline, until the first XUPY rising edge
-    /// has been processed. Models the post-XODO↓ first-divider-tick cascade
-    /// (WUVU/VENA/TALU/XUPY ramp from 0 with sub-dot phase offsets): the
-    /// first XUPY rising edge fires sub-dot earlier than the steady-state
-    /// cadence would suggest, which collapses to a 1-dot shift in the
-    /// integer-dot model. Cleared once consumed.
+    /// Set by `start_scanning` to fold the post-XODO↓ first-XUPY phase
+    /// offset (WUVU/VENA/TALU/XUPY divider ramp) onto the same fall.
+    /// Consumed by the first `advance_scan` after start.
     first_line_xupy_shortcut: bool,
     /// CATU_LINE_ENDp DFF17: clocked by XUPY rising, D = ABOV_LINE_ENDp.
     /// Single-stage: boundary sets `rutu` → next XUPY rise CATU fires.
@@ -106,12 +103,8 @@ impl SpriteScanner {
     /// deassertion releases the scan counter and comparison logic
     /// simultaneously — there is no separate CATU "start scanning" event
     /// on the first line. The counter is already at 0 from async reset.
-    ///
-    /// The first XUPY rising edge after XODO↓ fires ~0.493 dots later
-    /// (WUVU/VENA/TALU/XUPY divider ramp) — sub-dot, but in the integer-
-    /// dot frame this collapses to "first XUPY rises on the init fall
-    /// itself, not the next dot's fall". The `first_line_xupy_shortcut`
-    /// flag carries that compression to the first `advance_scan` call.
+    /// Arms `first_line_xupy_shortcut` to absorb the divider ramp's
+    /// sub-dot first-XUPY phase offset.
     pub(in crate::ppu) fn start_scanning(&mut self) {
         self.scanning = true;
         self.first_line_xupy_shortcut = true;
@@ -286,10 +279,8 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // First post-XODO↓ XUPY rising edge: model the divider ramp's
-        // sub-dot phase offset by treating the first advance_scan after
-        // start_scanning as if XUPY had risen, regardless of the actual
-        // input. Consumed once.
+        // First post-XODO↓ tick: divider-ramp shortcut absorbs the
+        // sub-dot first-XUPY phase offset.
         let xupy_rising = xupy_rising || self.first_line_xupy_shortcut;
         self.first_line_xupy_shortcut = false;
 
@@ -350,10 +341,8 @@ impl SpriteScanner {
         self.scan_done_prev = false;
         self.avap_pending = false;
         self.catu = false;
-        // The shortcut should already have been consumed by the first
-        // advance_scan after start_scanning; clear defensively so the
-        // invariant "only true on LCD-on first line, before first XUPY
-        // rise" stays tight.
+        // Defensive: the shortcut is consumed on the first advance_scan
+        // after start, so it should already be false here.
         self.first_line_xupy_shortcut = false;
         // RUTU_LINE_ENDp fires at the scanline boundary. Writing
         // `rutu_pending` (not `rutu`) keeps the latch input separate

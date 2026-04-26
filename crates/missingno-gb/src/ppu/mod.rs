@@ -105,12 +105,9 @@ pub struct Ppu {
     /// Frame counter for gbtrace output. Incremented each time a
     /// completed frame is extracted from the rendering pipeline.
     pub frame_number: u16,
-    /// Within-fall transient: set true at the LCDC.7 0→1 instant by
-    /// `apply_register_write`, consumed at the top of the matching
-    /// `on_master_clock_fall` to run `initialize_lcd_on`. CUPA↑ → XODO↓
-    /// is a combinational ~896 ps path on hardware (well within one
-    /// dot), so the matching divider/scanner reset must land in the
-    /// same fall as the staged write apply, not the next dot.
+    /// CUPA↑ → XODO↓ scheduling. Set on LCDC.7 0→1 in the staged-write
+    /// apply (dot-2 rise); consumed in the same fall to run
+    /// `initialize_lcd_on`.
     pending_lcd_on_init: bool,
 }
 
@@ -382,11 +379,8 @@ impl Ppu {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // VID_RST (XODO) deasserts ~896 ps after CUPA↑ —
-                // combinational, well within one dot. Schedule the
-                // matching divider / scanner reset for the next master-
-                // clock fall (the same fall in which this staged write
-                // is being applied at dot-2 rise).
+                // CUPA↑ → XODO↓ is combinational; schedule the matching
+                // divider / scanner reset for this fall.
                 if !was_enabled && self.registers.control.video_enabled() {
                     self.pending_lcd_on_init = true;
                 }
@@ -630,10 +624,8 @@ impl Ppu {
             request_vblank: false,
         };
 
-        // On the LCDC.7 0→1 fall, run the VID_RST-deassert mutations
-        // (divider clear, scanner reset, pixel pipeline create). The
-        // subsequent tick_dot in this fall represents WUVU's first
-        // toggle, tracking hardware's divider ramp-up.
+        // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's
+        // first toggle.
         if self.pending_lcd_on_init {
             self.initialize_lcd_on();
             self.pending_lcd_on_init = false;
