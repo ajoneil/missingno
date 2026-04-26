@@ -99,6 +99,27 @@ impl SpriteScanner {
         }
     }
 
+    /// Boot-ROM-handoff scanner state (spec §11.1): scan counter at
+    /// terminal value 39 with GAVA frozen. Other latches stay at their
+    /// power-on defaults (BESU=0, AVAP=0).
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            counter: ScanCounter::post_boot(),
+            scanning: false,
+            besu: false,
+            besu_stat: false,
+            catu_enabled: false,
+            first_line_xupy_shortcut: false,
+            catu: false,
+            rutu_pending: false,
+            rutu: false,
+            scan_done_flag: false,
+            scan_done_prev: false,
+            avap_pending: false,
+            sprites: SpriteStore::new(),
+        }
+    }
+
     /// Set scanning active for LCD-on initialization. On hardware, VID_RST
     /// deassertion releases the scan counter and comparison logic
     /// simultaneously — there is no separate CATU "start scanning" event

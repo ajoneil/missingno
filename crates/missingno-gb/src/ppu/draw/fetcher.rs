@@ -72,6 +72,23 @@ impl TileFetcher {
         }
     }
 
+    /// Boot-ROM-handoff fetcher state (spec §11.1): BG fetch counter at
+    /// terminal value 5 (LAXU=1, MESU=0, NYVA=1) with MOCE holding LEBO
+    /// frozen. Tile-data and tile-index latches remain at 0 — §11.1
+    /// classifies them as boot-ROM-residual, not observable on LD0/LD1
+    /// after any subsequent LCDC.7 cycle.
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            fetch_counter: 5,
+            window_tile_x: 0,
+            tile_index: 0,
+            tile_data_low: 0,
+            tile_data_high: 0,
+            fetching_window: false,
+            vram_address: 0,
+        }
+    }
+
     /// Reset fetcher state for a new scanline. Only resets the counter
     /// and window tracking -- tile_data_low/tile_data_high (tile_temp)
     /// are NOT reset, matching hardware where these latches persist
