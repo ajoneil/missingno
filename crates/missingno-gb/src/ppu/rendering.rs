@@ -185,6 +185,27 @@ impl Rendering {
         }
     }
 
+    /// Boot-ROM-handoff rendering state (spec §11.1): scan counter at
+    /// terminal 39 (frozen) and BG fetch counter at terminal 5 (frozen).
+    /// All other blocks share `Rendering::new()`'s power-on defaults.
+    pub(super) fn post_boot() -> Self {
+        Rendering {
+            hblank: HblankPipeline::new(),
+            scan: SpriteScanner::post_boot(),
+            bg_shifter: BgShifter::new(),
+            obj_shifter: ObjShifter::new(),
+            fetcher: TileFetcher::post_boot(),
+            cascade: FetchCascade::new(),
+            fine_scroll: FineScroll::new(),
+            window: WindowControl::new(),
+            tyfa: false,
+            pixel_counter: PixelCounter::new(),
+            lcd: LcdControl::new(),
+            sprite_state: SpriteState::Idle,
+            sprite_trigger: SpriteTrigger::new(),
+        }
+    }
+
     /// Pre-set scanning active for LCD-on. Models VID_RST deassertion
     /// releasing the scan counter simultaneously with the rest of the
     /// pipeline.

@@ -90,6 +90,16 @@ impl ScanCounter {
         }
     }
 
+    /// Boot-ROM-handoff state (spec §11.1 / §11.2): GAVA-driven counter
+    /// sits at terminal value 39 with the FETO feedback holding the OR
+    /// gate output high (frozen=true).
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            entry: 39,
+            frozen: true,
+        }
+    }
+
     /// Reset the scan counter to 0 (ANOM_LINE_RST). Called at scanline
     /// boundaries — the counter is never destroyed, just reset.
     pub(in crate::ppu) fn reset(&mut self) {
