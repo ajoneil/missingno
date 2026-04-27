@@ -31,7 +31,7 @@ impl Timers {
     /// the next BOGA edge fires on the dot the boot ROM would have produced.
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x6AF1,
+            internal_counter: 0x6AF2,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
