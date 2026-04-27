@@ -49,9 +49,15 @@ impl VideoControl {
 
     // ── Clock pass-throughs (Stage 3) ─────────────────────────
 
-    /// TALU = VENA.Q — 1 MHz LX counter clock. Pass-through to Dividers.
+    /// TALU = NOT(VENA.Q) — 1 MHz LX counter clock. Pass-through to
+    /// Dividers.
     pub fn talu(&self) -> bool {
         self.dividers.talu()
+    }
+
+    /// SONO — RUTU capture clock (= VENA phase). Pass-through to Dividers.
+    pub fn sono(&self) -> bool {
+        self.dividers.sono()
     }
 
     /// XUPY — scan-counter / OAM-pipeline clock. Pass-through to Dividers.

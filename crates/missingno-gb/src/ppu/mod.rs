@@ -131,9 +131,8 @@ impl Ppu {
             // Post-boot PPU state: scanline 0, LX=98, Mode 0 HBlank
             // (deep in scanline 0's Mode 0, 15 M-cycles before LINE_END).
             // Hardware divider state at DMG post-boot handoff: WUVU=0,
-            // VENA=1, TALU=1 (= VENA.Q). The boot ROM has cycled the
-            // dividers past their initial ramp, so TALU is already high
-            // at the first cartridge instruction.
+            // VENA=1, TALU=0 (= NOT(VENA)). The boot ROM has cycled the
+            // dividers past their initial ramp.
             video: VideoControl {
                 dividers: Dividers {
                     half_mcycle: false,
@@ -314,13 +313,11 @@ impl Ppu {
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
     /// VID_RST deasserts at XOTA rising (= master clock falls = our
-    /// fall()). All dividers async-reset to Q=0. Hardware's divider
-    /// cascade then ramps: WUVU toggles first (~½ dot later), then
-    /// VENA (~1½ dots later), then TALU (~1½ dots later, tracking
-    /// VENA). Integer-dot model: no tick_dot on the init fall itself
-    /// (see on_master_clock_fall). TALU first rises at phase H of
-    /// the init M-cycle, placing steady-state TALU transitions at
-    /// phases D and H of each subsequent M-cycle.
+    /// fall()). All dividers async-reset to Q=0; with VENA=0, TALU
+    /// (= NOT(VENA)) is held high. Hardware's divider cascade then
+    /// ramps: WUVU toggles first, then VENA. The first RUTU-capturing
+    /// edge after vid_rst is VENA's first rise (= SONO rising = TALU
+    /// falling).
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
@@ -627,24 +624,26 @@ impl Ppu {
 
             let mut scanline_boundary = false;
             if self.video.dividers.half_mcycle_fell() {
-                let talu_was = self.video.dividers.tick_mcycle();
-                let talu_now = self.video.dividers.mcycle();
+                let vena_was = self.video.dividers.tick_mcycle();
+                let vena_now = self.video.dividers.mcycle();
 
-                if talu_was && !talu_now {
+                if !vena_was && vena_now {
+                    // VENA rising = SONO rising = TALU falling. RUTU
+                    // captures SANU on SONO rising; PALY recomputes
+                    // against the freshly-advanced LY and ROPO latches
+                    // it.
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
+                    self.video.stat.latch_comparison();
                 }
 
-                if !talu_was && talu_now {
+                if vena_was && !vena_now {
+                    // VENA falling = TALU rising = LX counter clock
+                    // rising edge. NYPE captures and LX advances; PALY
+                    // recomputes against any LY change driven through
+                    // the rise dispatch.
                     self.video.on_lx_counter_clock_rise();
-                    // MYTA may have fired via NYPE falling (inside the
-                    // rise dispatch), flipping LY's register-smoothed
-                    // value. Recompute PALY here so the ROPO capture
-                    // below sees fresh `pending`. Matches hardware's
-                    // combinational PALY tracking LY changes, captured
-                    // by ROPO at TALU rising.
                     self.video.update_ly_comparison();
-                    self.video.stat.latch_comparison();
                 }
             }
 

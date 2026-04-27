@@ -4,23 +4,25 @@
 //! = half an M-cycle (= 2 MHz at the 4.194 MHz dot rate).
 //!
 //! VENA (`mcycle`): dffr toggling on WUVU.~Q rising (= WUVU.Q falling);
-//! Q period = 4 dots = 1 M-cycle (= 1 MHz). TALU = NOT(VENA.Q_n) = VENA.Q
-//! per §1.2; the emulator stores VENA.Q directly as `mcycle`, so
-//! `talu() == mcycle()`.
+//! Q period = 4 dots = 1 M-cycle (= 1 MHz). The emulator stores VENA.Q
+//! directly as `mcycle`. TALU is the inverter on VENA's Q output
+//! (TALU = NOT(VENA.Q)) and is exposed via `talu()`. SONO equals VENA
+//! phase (SONO rising = VENA rising = TALU falling) and is exposed via
+//! `sono()`.
 //!
 //! Naming: both fields anchor to the M-cycle as the meaningful subsystem
 //! unit. WUVU is "halfway to M-cycle" (half-period); VENA produces the
 //! M-cycle cadence directly. Dot is the PPU's primary time unit per
 //! alignment-log subsystem-vocabulary primacy.
 //!
-//! Hardware reference: spec §1.2 clock tree reference block; netlist
-//! `wuvu_inst` / `vena_inst` / `talu_inst` / `xupy_inst` in
+//! Hardware reference: netlist `wuvu_inst` / `vena_inst` / `talu_inst` /
+//! `sono_inst` / `xupy_inst` in
 //! `receipts/resources/dmg-sim/dmg_cpu_b/dmg_cpu_b.sv`.
 
 pub struct Dividers {
     /// WUVU.Q — 2-dot period (half M-cycle).
     pub(in crate::ppu) half_mcycle: bool,
-    /// VENA.Q — 4-dot period (1 M-cycle). TALU = VENA.Q.
+    /// VENA.Q — 4-dot period (1 M-cycle).
     pub(in crate::ppu) mcycle: bool,
 }
 
@@ -37,9 +39,9 @@ impl Dividers {
         !self.half_mcycle
     }
 
-    /// Toggle mcycle (VENA). Returns the previous mcycle value (i.e.,
-    /// TALU's previous state) so the caller can detect TALU edges.
-    /// Caller gates this with `half_mcycle_fell()`.
+    /// Toggle mcycle (VENA). Returns the previous VENA.Q value so the
+    /// caller can detect VENA edges (and derive TALU edges as their
+    /// inverse). Caller gates this with `half_mcycle_fell()`.
     pub(in crate::ppu) fn tick_mcycle(&mut self) -> bool {
         let was = self.mcycle;
         self.mcycle = !self.mcycle;
@@ -50,10 +52,14 @@ impl Dividers {
         self.mcycle
     }
 
-    /// TALU = VENA.Q — 1 MHz LX counter clock per §1.2. Synonym for
-    /// `mcycle()` exposed under the TALU gate name for hardware-reference
-    /// sites.
+    /// TALU (not_x4) = NOT(VENA.Q) — 1 MHz LX counter clock.
     pub(in crate::ppu) fn talu(&self) -> bool {
+        !self.mcycle
+    }
+
+    /// SONO = VENA phase — clocks RUTU's capture of SANU on its rising
+    /// edge.
+    pub(in crate::ppu) fn sono(&self) -> bool {
         self.mcycle
     }
 
@@ -70,7 +76,8 @@ impl Dividers {
         !self.half_mcycle
     }
 
-    /// VID_RST: dividers reset to 0 (Q=0 for both DFFs).
+    /// VID_RST: dividers reset to 0 (Q=0 for both DFFs). With VENA.Q=0,
+    /// TALU = NOT(VENA) is held at 1 until VENA's first rise.
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.half_mcycle = false;
         self.mcycle = false;
