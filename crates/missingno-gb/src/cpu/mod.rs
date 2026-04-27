@@ -1,6 +1,6 @@
 use dff::Dff;
 use flags::{Flag, Flags};
-use mcycle::{BusDot, CpuPhase};
+use mcycle::{BusAction, BusDot, CpuPhase, Phase};
 use registers::{Register8, Register16};
 
 pub mod commit;
@@ -161,16 +161,30 @@ impl Cpu {
             halt_state: HaltState::Running,
             halt_bug: false,
 
-            phase: CpuPhase::Fetch,
+            // The skip-boot CPU enters mid-WriteOp: the boot ROM's
+            // terminating LDH (0xFF50), A is still draining its WriteOp
+            // M-cycle when the IDU has already advanced bus_counter to
+            // 0x0100. Pre-load the persistent state machine fields with
+            // the in-flight WriteOp residual so next_dot drains it
+            // through its remaining dots (Idle, Idle, Write{0xFF50,0x01})
+            // before chaining into the first cartridge fetch.
+            phase: CpuPhase::Execute {
+                phase: Phase::WriteOp {
+                    address: 0xFF50,
+                    value: 0x01,
+                    hl_post: 0,
+                },
+                step: 1,
+            },
             instruction: instructions::Instruction::NoOperation,
-            dot: BusDot::ZERO,
-            mcycle_active: false,
-            current_action: None,
+            dot: BusDot::ONE,
+            mcycle_active: true,
+            current_action: Some(BusAction::Write {
+                address: 0xFF50,
+                value: 0x01,
+            }),
             exec_step: 0,
-            // Initialized to MAX so the first wrapping_add(1) in
-            // next_dot() wraps to 0 for the first fetch M-cycle.
-            // enter_fetch() resets to 0 at each instruction boundary.
-            op_state: u8::MAX,
+            op_state: 2,
             pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,

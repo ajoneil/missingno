@@ -136,6 +136,20 @@ impl LineCounterX {
 }
 
 impl LineCounterY {
+    /// Boot-ROM-handoff LY counter state (spec §11.1 / §2.2): LY-internal
+    /// at terminal 153 with MYTA latched (LAMA reset still applied), POPU
+    /// latched from the LY=144 NYPE rising edge. The `value_register()`
+    /// accessor smooths register-LY to 0 via the `frame_end_reset` short-
+    /// circuit, matching the §11.1 "LY | 0" register row.
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            value: 153,
+            vblank: true,
+            popu_holdover: false,
+            frame_end_reset: true,
+        }
+    }
+
     /// LY ripple counter advance or 153→0 wrap. On wrap the MYTA-held
     /// window clears (frame_end_reset=false) and POPU goes low. Returns
     /// true if the wrap occurred.

@@ -78,6 +78,20 @@ impl HblankPipeline {
         }
     }
 
+    /// Boot-ROM-handoff hblank state (spec §3.2 / §11.1): VOGA persists
+    /// from the prior scanline's Mode 3 WODU capture — it is a `dffr`
+    /// only reset by TADY, which next fires at LX=113 (15 M-cycles after
+    /// handoff). All other latches are at their power-on defaults
+    /// (XYMU cleared, FEPO=0 with the sprite store empty).
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            rendering_active: false,
+            rendering_active_stat: false,
+            voga: true,
+            fepo: false,
+        }
+    }
+
     /// WODU: combinational hblank gate. Hardware chain:
     ///
     ///   WODU = AND2(XENA, XANO)

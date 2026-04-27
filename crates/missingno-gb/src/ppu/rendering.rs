@@ -185,12 +185,16 @@ impl Rendering {
         }
     }
 
-    /// Boot-ROM-handoff rendering state (spec §11.1): scan counter at
-    /// terminal 39 (frozen) and BG fetch counter at terminal 5 (frozen).
-    /// All other blocks share `Rendering::new()`'s power-on defaults.
+    /// Boot-ROM-handoff rendering state (spec §11.1): hblank pipeline
+    /// carries VOGA latched from prior Mode 3 (§3.2); scan counter at
+    /// terminal 39 (frozen) with BYBA/DOBA latched and `catu_enabled`
+    /// released; BG fetch counter at terminal 5 (frozen); pixel counter
+    /// at terminal 167 residual; LCD push counter at the prior line's
+    /// 160-pixel terminal value with scanline=143. All other blocks
+    /// share `Rendering::new()`'s power-on defaults.
     pub(super) fn post_boot() -> Self {
         Rendering {
-            hblank: HblankPipeline::new(),
+            hblank: HblankPipeline::post_boot(),
             scan: SpriteScanner::post_boot(),
             bg_shifter: BgShifter::new(),
             obj_shifter: ObjShifter::new(),
@@ -199,8 +203,8 @@ impl Rendering {
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
             tyfa: false,
-            pixel_counter: PixelCounter::new(),
-            lcd: LcdControl::new(),
+            pixel_counter: PixelCounter::post_boot(),
+            lcd: LcdControl::post_boot(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
         }
