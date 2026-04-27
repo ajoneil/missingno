@@ -488,53 +488,25 @@ impl Cpu {
 
     /// Halted phase: one HALT idle M-cycle.
     ///
-    /// Each call is exactly one M-cycle. Dispatches to ISR when g42 has
-    /// captured an unmasked IF (IME=1) or signals wakeup (IME=0).
+    /// Each call is exactly one M-cycle. Halt release is gated by g42.q
+    /// alone (g43 OAI21 collapse: `NOT((yolu OR g42.q) AND reset_n)`);
+    /// the ISR-vs-Fetch decision is deferred to the same dot's
+    /// master-clock fall via `pending_halt_wake_dispatch`, where
+    /// `tick_int_entry` reads the post-fall `int_take` view.
     fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
 
-        // ── IME=1 wakeup ──
-        // HALT-wake chain: g42.q↑ → ykua → halt↓ → sequencer wakes →
-        // int_take → int_entry. With IME=1 the int_take chain captures
-        // and drives dispatch. Vector resolves later via
-        // `pending_vector_resolve` at ISR M3→M4.
-        if self.interrupt_pending
-            && self.g42.output()
-            && self.ime.output() == InterruptMasterEnable::Enabled
-        {
-            // Wake-detect M-cycle: g42/ykua drop halt combinationally and arm
-            // the dispatch FSM. M1 (Internal{pc}, IME clear via zacw) begins
-            // on the next M-cycle boundary inside mcycle_isr step 0.
+        // ── Halt release ──
+        // Per spec §13.2, g43 has no `int_pending` or `IME` input — the
+        // halt-release condition reduces to `g42.output()`. Drop halt
+        // unconditionally on g42↑; defer the ISR-vs-Fetch choice to the
+        // matching fall via `pending_halt_wake_dispatch`.
+        if self.g42.output() {
             self.halt_state = HaltState::Running;
-
-            let pc = self.pc;
-            let pc_hi = (pc >> 8) as u8;
-            let pc_lo = (pc & 0xff) as u8;
-            let sp = self.stack_pointer;
-
-            self.phase = CpuPhase::InterruptDispatch {
-                sp,
-                pc_hi,
-                pc_lo,
-                step: 0,
-            };
-            self.pending_vector_resolve = false;
-            return Some(BusAction::Read {
-                address: self.bus_counter,
-            });
-        }
-
-        // ── IME=0 wakeup ──
-        // Halt release on g42.q↑ via ykua/halt↓. With IME=0 there's no
-        // dispatch; the CPU just resumes fetching.
-        if self.interrupt_pending
-            && self.g42.output()
-            && self.ime.output() == InterruptMasterEnable::Disabled
-        {
-            self.halt_state = HaltState::Running;
+            self.pending_halt_wake_dispatch = true;
             self.phase = CpuPhase::Fetch;
             self.exec_step = 0;
             return Some(BusAction::Read {
@@ -1014,61 +986,99 @@ impl Cpu {
         }
     }
 
-    /// Capture the `int_entry` (zacw) DFF at the retire dot's
-    /// master-clock falling edge — the same physical CLK9↑ as
-    /// `commit()`'s register write-back. Split from `commit()` so the
-    /// zacw input sees IF *after* the same dot's PPU fall has settled
-    /// it (e.g. HBlank STAT IF on the boundary dot). If the capture
-    /// fires, set up CpuPhase::InterruptDispatch with step=0 and clear
-    /// IME inline. The speculative next-fetch BusAction prepared by
-    /// commit() continues to hold the bus for this current M-cycle —
-    /// it is harmless because the executor is mid-M-cycle and the
-    /// dispatch's first held BusAction (mcycle_isr step 0 =
-    /// Internal{pc}) is emitted at the next M-cycle boundary by the
-    /// natural next_mcycle path.
+    /// Capture the `int_entry` (zacw) DFF at the matching dot's
+    /// master-clock falling edge — the same physical CLK9↑ as the rise
+    /// that stashed the pending flag. Two retire-edge-style sources
+    /// feed this stage:
+    ///
+    /// - `pending_int_entry_capture` (running CPU): set by `commit()` at
+    ///   the retire dot's rise; carries the EI/DI gate decision in
+    ///   `pending_int_entry_gate`. The speculative next-fetch BusAction
+    ///   prepared by `commit()` continues to hold the bus.
+    /// - `pending_halt_wake_dispatch` (HALT exit): set by
+    ///   `mcycle_halted` at the wake dot's rise after g42.q↑ collapses
+    ///   the g43 halt-release chain; the speculative `CpuPhase::Fetch`
+    ///   set there may be overwritten here with `InterruptDispatch`.
+    ///
+    /// Both paths read the post-fall `int_take` view so same-dot WODU↑
+    /// (e.g. HBlank STAT IF on the boundary dot) is visible. If
+    /// dispatch fires, set up `CpuPhase::InterruptDispatch` with
+    /// step=0 and clear IME inline. The dispatch's first held
+    /// BusAction (mcycle_isr step 0 = `Internal{pc}`) is emitted at
+    /// the next M-cycle boundary by the natural next_mcycle path.
     pub fn tick_int_entry(&mut self) {
-        if !self.pending_int_entry_capture {
+        if !self.pending_int_entry_capture && !self.pending_halt_wake_dispatch {
             return;
         }
 
-        let int_take = self.int_take();
-        self.int_entry
-            .write(!self.pending_int_entry_gate && int_take);
-        self.int_entry.tick();
+        if self.pending_int_entry_capture {
+            let int_take = self.int_take();
+            self.int_entry
+                .write(!self.pending_int_entry_gate && int_take);
+            self.int_entry.tick();
 
-        self.pending_int_entry_capture = false;
-        self.pending_int_entry_gate = false;
+            self.pending_int_entry_capture = false;
+            self.pending_int_entry_gate = false;
 
-        if self.int_entry.output() {
-            // int_entry rising → dispatch M1 starts at the next M-cycle
-            // boundary. IME (zacw downstream) clears at this acceptance
-            // edge — modelled inline because mcycle_isr's step 0 runs one
-            // M-cycle later via the natural next_mcycle dispatch, and IME
-            // must be Disabled before then to gate any further int_take
-            // checks. Override halt_state — EI;HALT never enters the halt
-            // RS-latch state on hardware.
-            self.halt_state = HaltState::Running;
-            self.ime.write_immediate(InterruptMasterEnable::Disabled);
-            let pc = self.pc;
-            let pc_hi = (pc >> 8) as u8;
-            let pc_lo = (pc & 0xff) as u8;
-            let sp = self.stack_pointer;
-            self.phase = CpuPhase::InterruptDispatch {
-                sp,
-                pc_hi,
-                pc_lo,
-                step: 0,
-            };
-            self.exec_step = 0;
-            self.pending_vector_resolve = false;
-            // Note: do NOT call mcycle_isr(0) here, and do NOT overwrite
-            // self.current_action. The current M-cycle (the retire whose
-            // commit() ran in this dot's rise()) continues holding its
-            // speculative next-fetch BusAction. At the next M-cycle
-            // boundary, next_mcycle will see CpuPhase::InterruptDispatch
-            // and call mcycle_isr(read_value) at step=0, which produces
-            // the held Internal{pc} BusAction for dispatch's M1 — the
-            // M-cycle that today is incorrectly skipped.
+            if self.int_entry.output() {
+                // int_entry rising → dispatch M1 starts at the next M-cycle
+                // boundary. IME (zacw downstream) clears at this acceptance
+                // edge — modelled inline because mcycle_isr's step 0 runs one
+                // M-cycle later via the natural next_mcycle dispatch, and IME
+                // must be Disabled before then to gate any further int_take
+                // checks. Override halt_state — EI;HALT never enters the halt
+                // RS-latch state on hardware.
+                self.halt_state = HaltState::Running;
+                self.ime.write_immediate(InterruptMasterEnable::Disabled);
+                let pc = self.pc;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.pending_vector_resolve = false;
+                // Note: do NOT call mcycle_isr(0) here, and do NOT overwrite
+                // self.current_action. The current M-cycle (the retire whose
+                // commit() ran in this dot's rise()) continues holding its
+                // speculative next-fetch BusAction. At the next M-cycle
+                // boundary, next_mcycle will see CpuPhase::InterruptDispatch
+                // and call mcycle_isr(read_value) at step=0, which produces
+                // the held Internal{pc} BusAction for dispatch's M1 — the
+                // M-cycle that today is incorrectly skipped.
+            }
+        }
+
+        if self.pending_halt_wake_dispatch {
+            self.pending_halt_wake_dispatch = false;
+            if self.int_take() {
+                // HALT-wake dispatch: halt has already dropped at the
+                // matching rise inside mcycle_halted. Rewrite the
+                // speculative `CpuPhase::Fetch` to `InterruptDispatch`
+                // and clear IME — same downstream stage as the
+                // running-CPU dispatch above. The speculative
+                // BusAction::Read held by mcycle_halted continues to
+                // hold the bus for this M-cycle; mcycle_isr step 0
+                // produces the `Internal{pc}` BusAction at the next
+                // M-cycle boundary via the natural next_mcycle path.
+                self.ime.write_immediate(InterruptMasterEnable::Disabled);
+                let pc = self.pc;
+                let pc_hi = (pc >> 8) as u8;
+                let pc_lo = (pc & 0xff) as u8;
+                let sp = self.stack_pointer;
+                self.phase = CpuPhase::InterruptDispatch {
+                    sp,
+                    pc_hi,
+                    pc_lo,
+                    step: 0,
+                };
+                self.exec_step = 0;
+                self.pending_vector_resolve = false;
+            }
         }
     }
 
