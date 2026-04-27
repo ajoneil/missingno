@@ -59,6 +59,22 @@ pub struct StatInterrupt {
 }
 
 impl StatInterrupt {
+    /// Boot-ROM-handoff STAT/LYC state (spec §11.1 / §8.6): the
+    /// PALY=(LY==LYC) comparator has been combinationally true for many
+    /// TALU cycles with LY-register=0 (MYTA-smoothed) and LYC=0, and ROPO
+    /// has been capturing PALY=1 on every TALU rising edge. `enables`
+    /// preserves the FF41 bit-7 DUMMY pull-up so `read_register` returns
+    /// 0x80 with no other enables set.
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self {
+            lyc: 0,
+            comparison_pending: true,
+            comparison_latched: true,
+            enables: InterruptFlags::DUMMY,
+            line_was_high: false,
+        }
+    }
+
     /// PALY combinational comparator recompute. Called at LX counter clock
     /// fall and on CPU writes to LYC. Computes `pending = (ly == lyc)`.
     pub(in crate::ppu) fn update_comparison(&mut self, ly: u8) {

@@ -75,6 +75,22 @@ impl LcdControl {
         }
     }
 
+    /// Boot-ROM-handoff LCD control state (spec §11.1): leftover counter
+    /// values from the prior frame's last visible scanline (LY=143). The
+    /// 160 visible pixels were pushed through TOBA before WODU fired and
+    /// nothing resets `lcd_push_count` / `scanline` during VBlank — they
+    /// persist until the next active-line `reset_scanline()` call clears
+    /// them via `LcdControl::reset()`.
+    pub(in crate::ppu) fn post_boot() -> Self {
+        LcdControl {
+            wusa: false,
+            pova: false,
+            lcd_push_count: 160,
+            scanline: 143,
+            data_latch: PaletteIndex(0),
+        }
+    }
+
     /// PPU clock fall (master-clock rise; gate: ALET falling): XAJO/WUSA
     /// set, TOBA pixel output, data latch update. Dispatcher for the
     /// SACU-driven pixel-output concerns on this edge — multiple
@@ -140,7 +156,11 @@ impl LcdControl {
     /// dispatch shape.
     ///
     /// Returns the pixel pushed to the LCD on the WODU dot (if any).
-    pub(in crate::ppu) fn on_ppu_clock_rise(&mut self, voga: bool, wodu: bool) -> Option<PixelOutput> {
+    pub(in crate::ppu) fn on_ppu_clock_rise(
+        &mut self,
+        voga: bool,
+        wodu: bool,
+    ) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
         // The final pixel push happens on the WODU dot, before VOGA
         // captures on the same falling phase.

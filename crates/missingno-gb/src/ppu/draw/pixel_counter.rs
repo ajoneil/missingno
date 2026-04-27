@@ -26,6 +26,15 @@ impl PixelCounter {
         Self(0)
     }
 
+    /// Boot-ROM-handoff PX counter state (spec §11.1): residual terminal
+    /// count 167 from the prior Mode 3's last SACU edge. WODU/VOGA/WEGO
+    /// fired and froze SACU; TADY (the only reset path) does not fire
+    /// again until LX=113 (15 M-cycles after handoff), so PX sits where
+    /// the last tick stopped it.
+    pub(in crate::ppu) fn post_boot() -> Self {
+        Self(167)
+    }
+
     /// Advance by one pixel. Callers gate on SACU (pixel-clock rising edge).
     pub(in crate::ppu) fn advance(&mut self) {
         self.0 += 1;

@@ -145,21 +145,9 @@ impl Ppu {
                         line_end_detected: false,
                         line_end_active: false,
                     },
-                    y: LineCounterY {
-                        value: 0,
-                        vblank: false,
-                        popu_holdover: false,
-                        frame_end_reset: false,
-                    },
+                    y: LineCounterY::post_boot(),
                 },
-                stat: StatInterrupt {
-                    lyc: 0,
-                    comparison_pending: false,
-                    comparison_latched: false,
-                    // The first bit is unused, but is set at boot time
-                    enables: InterruptFlags::DUMMY,
-                    line_was_high: false,
-                },
+                stat: StatInterrupt::post_boot(),
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
                     line_end_pending: false,
