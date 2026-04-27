@@ -133,6 +133,13 @@ pub struct Cpu {
     /// capture using the IF settled by that same dot's master-clock
     /// fall. Cleared by `tick_int_entry()`.
     pub(super) pending_int_entry_capture: bool,
+    /// Carries the HALT-wake-rise dispatch-readiness decision across to
+    /// the same dot's master-clock fall, where the post-fall int_take
+    /// view determines ISR-vs-Fetch. Mirrors `pending_int_entry_capture`
+    /// but for the HALT-wake exit path: g42.q↑ at the boundary rise
+    /// drops halt combinationally; the int_entry (zacw) capture that
+    /// chooses ISR vs running-CPU continuation reads int_take post-fall.
+    pub(super) pending_halt_wake_dispatch: bool,
 }
 
 impl Cpu {
@@ -196,6 +203,7 @@ impl Cpu {
             int_entry: Dff::new(false),
             pending_int_entry_gate: false,
             pending_int_entry_capture: false,
+            pending_halt_wake_dispatch: false,
         }
     }
 
@@ -238,6 +246,7 @@ impl Cpu {
             int_entry: Dff::new(false),
             pending_int_entry_gate: false,
             pending_int_entry_capture: false,
+            pending_halt_wake_dispatch: false,
         }
     }
 
@@ -293,6 +302,7 @@ impl Cpu {
             int_entry: Dff::new(false),
             pending_int_entry_gate: false,
             pending_int_entry_capture: false,
+            pending_halt_wake_dispatch: false,
         }
     }
 
