@@ -23,13 +23,15 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter matching DMG post-boot DIV.
-    /// GateBoy's fastboot sets the counter to 0xEAF2 (T-cycle model),
-    /// then runs 4 alignment phases which include one BOGA edge,
-    /// incrementing to 0xEAF3. Our M-cycle model equivalent is 0x2AF3.
+    /// Post-boot state: internal counter matching the un-drained boot-ROM
+    /// hand-off at the moment the boot ROM's terminating LDH (0xFF50), A
+    /// is still mid-WriteOp. The DIV-visible high byte is 0xAB
+    /// (`0x6AF1 >> 6` = `0x1AB`, low 8 bits = `0xAB`), unchanged from the
+    /// previous `0x2AF2` derivation — only the internal phase shifts so
+    /// the next BOGA edge fires on the dot the boot ROM would have produced.
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x2AF2,
+            internal_counter: 0x6AF1,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
