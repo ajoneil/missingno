@@ -439,10 +439,10 @@ impl Cpu {
                 return self.mcycle_halted(0);
             }
 
-            // Dispatch decision lives inside commit() at the retiring
-            // instruction's edge. The previous instruction's commit has
-            // already decided whether to enter ISR; this step 1 just
-            // processes the fetched opcode.
+            // Dispatch decision lives inside retire_edge() at the
+            // retiring instruction's CLK9↑ — int_entry.q gates whether
+            // the next M-cycle is dispatch's M1 or a speculative fetch.
+            // By the time this step 1 runs, that decision has landed.
 
             // Normal opcode consumption — set PC from the fetch address.
             // On hardware, reg.pc = bus_addr + 1 at this execute step.
@@ -463,12 +463,12 @@ impl Cpu {
             let needed = operand_count(opcode);
             if needed == 0 {
                 // No operands — retire immediately. decode_retire
-                // produces the Phase + Commit; commit() owns the apply,
-                // ime/int_entry tick, and dispatch decision.
+                // produces the Phase + Commit; retire_edge owns the
+                // apply, int_entry capture, and dispatch decision.
                 let bytes = [opcode, 0, 0];
                 let (instruction, phase, commit) = self.decode_retire(bytes, 1);
                 self.instruction = instruction;
-                Some(self.commit(commit, phase))
+                Some(self.retire_edge(commit, phase))
             } else {
                 // Need operand bytes — enter Execute with Operands phase
                 self.phase = CpuPhase::Execute {
@@ -490,9 +490,9 @@ impl Cpu {
     ///
     /// Each call is exactly one M-cycle. Halt release is gated by g42.q
     /// alone (g43 OAI21 collapse: `NOT((yolu OR g42.q) AND reset_n)`);
-    /// the ISR-vs-Fetch decision is deferred to the same dot's
-    /// master-clock fall via `pending_halt_wake_dispatch`, where
-    /// `tick_int_entry` reads the post-fall `int_take` view.
+    /// the ISR-vs-Fetch decision is deferred to the boundary CLK9↑ via
+    /// `pending_halt_wake_dispatch`, where `halt_wake_edge` chooses
+    /// dispatch vs running fetch.
     fn mcycle_halted(&mut self, _read_value: u8) -> Option<BusAction> {
         // ── Boundary housekeeping ──
         self.exec_step = 0;
@@ -593,7 +593,7 @@ impl Cpu {
                     let n = *bytes_read;
                     let (instruction, phase, commit) = self.decode_retire(b, n);
                     self.instruction = instruction;
-                    return (Some(self.commit(commit, phase)), false);
+                    return (Some(self.retire_edge(commit, phase)), false);
                 }
 
                 // Non-last operand: issue bus_read for next byte.
@@ -602,13 +602,19 @@ impl Cpu {
                 (Some(BusAction::Read { address: *pc }), true)
             }
 
-            Phase::Empty => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+            Phase::Empty => (
+                Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                false,
+            ),
 
             Phase::ReadOp { address, action } => match current_step {
                 0 => (Some(BusAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, read_value);
-                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
+                    (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    )
                 }
             },
 
@@ -626,7 +632,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
 
@@ -648,7 +657,10 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                _ => (
+                    Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                    false,
+                ),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -668,7 +680,10 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
 
@@ -676,13 +691,19 @@ impl Cpu {
                 if current_step < *count {
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
+                    (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    )
                 }
             }
 
             Phase::InternalOamBug { address } => match current_step {
                 0 => (Some(BusAction::InternalOamBug { address: *address }), true),
-                _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                _ => (
+                    Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                    false,
+                ),
             },
 
             Phase::Pop { sp, action } => {
@@ -705,10 +726,16 @@ impl Cpu {
                         if has_trailing {
                             (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
-                            (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
+                            (
+                                Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                                false,
+                            )
                         }
                     }
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
 
@@ -738,7 +765,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
 
@@ -752,13 +782,19 @@ impl Cpu {
                     self.pending_jump_target = Some(*target);
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (Some(self.commit(Commit::NoOperation, Phase::Empty)), false)
+                    (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    )
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (Some(self.commit(Commit::NoOperation, Phase::Empty)), false);
+                    return (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    );
                 }
                 let sp = *sp;
                 match current_step {
@@ -785,7 +821,10 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
 
@@ -794,7 +833,10 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(BusAction::Internal { address: self.pc }), true),
-                    1 if !taken => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    1 if !taken => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                     1 => (Some(BusAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = read_value;
@@ -809,7 +851,10 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
                         (Some(BusAction::Internal { address: self.pc }), true)
                     }
-                    _ => (Some(self.commit(Commit::NoOperation, Phase::Empty)), false),
+                    _ => (
+                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        false,
+                    ),
                 }
             }
         }
@@ -819,7 +864,7 @@ impl Cpu {
     ///
     /// - Steps 0..=3 each return their own BusAction directly,
     ///   held for one M-cycle by next_dot's bus-output loop.
-    /// - Step 4 transitions to Fetch via commit(NoOperation,
+    /// - Step 4 transitions to Fetch via retire_edge(NoOperation,
     ///   Phase::Empty); the chained mcycle_fetch(0) returns
     ///   Read{vector} as step 4's held M-cycle (M5 vector fetch).
     ///   The handler's first opcode then decodes via the standard
@@ -830,12 +875,13 @@ impl Cpu {
     ///   step 1 → M2 internal (InternalOamBug{sp})
     ///   step 2 → M3 push pc_hi (Write{sp-1, pc_hi})
     ///   step 3 → M4 push pc_lo (Write{sp-2, pc_lo}, vector resolved here)
-    ///   step 4 → M5 vector fetch (Read{vector} via commit chain)
+    ///   step 4 → M5 vector fetch (Read{vector} via retire_edge chain)
     ///
-    /// IME (zacw downstream) is cleared at the acceptance edge in
-    /// tick_int_entry, one M-cycle before step 0 runs. The
-    /// write_immediate(Disabled) inside step 0's arm is a defensive
-    /// no-op: by the time step 0 runs, IME is already Disabled.
+    /// IME (zacw downstream) is cleared on the dispatching CLK9↑ inside
+    /// step 0's `write_immediate(Disabled)`. retire_edge tail-calls
+    /// mcycle_isr(0) for the running-CPU dispatch entry, and
+    /// halt_wake_edge writes IME directly before producing the same
+    /// step-0 effect for the HALT-wake path.
     fn mcycle_isr(&mut self, _read_value: u8) -> Option<BusAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
@@ -880,23 +926,24 @@ impl Cpu {
             }
             4 => {
                 // ISR complete — transition to Fetch at the vector address.
-                Some(self.commit(Commit::NoOperation, Phase::Empty))
+                Some(self.retire_edge(Commit::NoOperation, Phase::Empty))
             }
             _ => unreachable!(),
         }
     }
 
     /// Combinational `int_take` — drives the `int_entry` (zacw) capture
-    /// at retire edges. The instruction-boundary input is implicit: this
-    /// is only called from `commit()`, which only runs at retires.
+    /// at retire edges and the HALT-wake landing. The instruction-
+    /// boundary input is implicit: this is only called from `retire_edge`
+    /// and `halt_wake_edge`, which only run at retire / halt-wake CLK9↑s.
     fn int_take(&self) -> bool {
         self.interrupt_pending && self.ime.output() == InterruptMasterEnable::Enabled
     }
 
     /// Pure decode — returns the decoded Instruction with its Phase and
-    /// retire-edge Commit. Does not mutate IME/dispatch state. commit()
-    /// owns those mutations so int_take's snapshot and the int_entry_gate
-    /// stay coherent.
+    /// retire-edge Commit. Does not mutate IME/dispatch state.
+    /// `retire_edge` owns those mutations so `int_take`'s snapshot and
+    /// the EI/DI int_entry-chain gate stay coherent.
     fn decode_retire(&mut self, bytes: [u8; 3], bytes_read: u8) -> (Instruction, Phase, Commit) {
         let mut iter = bytes[..bytes_read as usize].iter().copied();
         let instruction = Instruction::decode(&mut iter).unwrap();
@@ -929,156 +976,133 @@ impl Cpu {
         (instruction, phase, commit)
     }
 
-    /// Retire edge — the end-of-instruction CLK9↑ where the register
-    /// file, IME, and `int_entry` (zacw) all capture on hardware.
+    /// Retire edge — the dispatching CLK9↑ where `int_entry` (zacw),
+    /// the register-file / IME write-back DFFs, and the sequencer's
+    /// next-M-cycle BusAction all resolve on the same edge.
     ///
-    /// On hardware these are separate DFFs all clocked by the same
-    /// CLK9↑. The register-file / IME write-back happens here at
-    /// retire-rise; the `int_entry` (zacw) capture is deferred to
-    /// `tick_int_entry()` at the same dot's master-clock fall, after
-    /// the PPU fall has settled IF for this dot. The split is required
-    /// because IF can change between rise and fall of the retire dot
-    /// (e.g. HBlank STAT IF asserts on the master-clock falling edge
-    /// of the retire dot in the SCX=1 case), and the zacw DFF must
-    /// see that post-fall IF view at its CLK9↑ capture.
+    /// On hardware zacw, the register-file write-back DFFs and the
+    /// IME DFF share this capture edge; the data inputs to the
+    /// write-back DFFs and the sequencer's BusAction selector are
+    /// combinational functions of the freshly-captured `int_entry.q`.
+    /// When `int_entry.q` resolves true the in-flight retire is
+    /// suppressed and the next M-cycle is dispatch's M1; when false the
+    /// retire's mutations land and the sequencer chains into a
+    /// speculative fetch / execute.
+    ///
+    /// Sample `int_take` *before* `apply_commit` runs so RETI's IME
+    /// write does not pollute its own dispatch-eligibility check —
+    /// hardware reads the pre-edge IME view for `int_take` regardless
+    /// of where the retiring instruction's IME write lands.
     ///
     /// Sequence:
-    ///   1. Derive int_entry-chain gate from the Commit variant
-    ///      (EI/DI block; zaij/zkog gate against their data_phase).
-    ///   2. apply_commit — register / flag / IME mutations.
-    ///   3. Stash gate + capture-pending flags for the matching fall.
-    ///   4. enter_fetch-style side effects (HALT-bug check, pending
-    ///      jump target, pc sync, boundary).
-    ///   5. Speculatively prepare the next M-cycle's BusAction as if
-    ///      no dispatch will fire. `tick_int_entry()` may overwrite
-    ///      `self.current_action` with the ISR M1 BusAction at the
-    ///      matching fall if dispatch does fire.
-    pub(super) fn commit(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
+    ///   1. Derive zaij/zkog gate from the Commit variant (EI/DI block).
+    ///   2. Sample `int_take` (pre-`apply_commit` IME view).
+    ///   3. Capture `int_entry` (zacw): `D = !gate AND int_take`.
+    ///   4. Branch on `int_entry.q`:
+    ///      - dispatch arm: drop halt, set
+    ///        `CpuPhase::InterruptDispatch{step:0}`, tail-call
+    ///        `mcycle_isr(0)` (which clears IME and emits the M1
+    ///        Internal{pc} BusAction).
+    ///      - fetch arm: `apply_commit`, HALT-bug check, jump-target
+    ///        consume, pc sync, boundary, then chain `mcycle_fetch(0)` /
+    ///        `mcycle_execute(0)` for the speculative next M-cycle.
+    pub(super) fn retire_edge(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
         let int_entry_gated =
             matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
 
-        Self::apply_commit(self, commit);
+        // Sample int_take BEFORE apply_commit so RETI's own IME write
+        // (in apply_commit) does not pollute the pre-edge IME view.
+        let int_take = self.int_take();
+        self.int_entry.write(!int_entry_gated && int_take);
+        self.int_entry.tick();
 
-        self.pending_int_entry_gate = int_entry_gated;
-        self.pending_int_entry_capture = true;
-
-        self.check_halt_bug();
-        if let Some(target) = self.pending_jump_target.take() {
-            self.bus_counter = target;
-        }
-        self.pc = self.bus_counter;
-        self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
-
-        match next_phase {
-            Phase::Empty => {
-                self.phase = CpuPhase::Fetch;
-                self.exec_step = 0;
-                self.op_state = 0;
-                self.mcycle_fetch(0).expect("fetch step 0 must return Some")
+        if self.int_entry.output() {
+            // Dispatch arm — write-back is suppressed; the sequencer
+            // hands `mcycle_isr(0)` the dispatching CLK9↑.
+            self.halt_state = HaltState::Running;
+            let pc = self.pc;
+            let pc_hi = (pc >> 8) as u8;
+            let pc_lo = (pc & 0xff) as u8;
+            let sp = self.stack_pointer;
+            self.phase = CpuPhase::InterruptDispatch {
+                sp,
+                pc_hi,
+                pc_lo,
+                step: 0,
+            };
+            self.exec_step = 0;
+            self.pending_vector_resolve = false;
+            self.boundary_flag = true;
+            self.instruction_pc = pc;
+            // Tail-call mcycle_isr(0): clears IME and emits Internal{pc}
+            // as M-cycle Y+1's held BusAction (dispatch's M1).
+            self.mcycle_isr(0)
+                .expect("mcycle_isr step 0 must return Some")
+        } else {
+            // Fetch arm — apply the in-flight retire's write-back and
+            // chain into the speculative next M-cycle.
+            Self::apply_commit(self, commit);
+            self.check_halt_bug();
+            if let Some(target) = self.pending_jump_target.take() {
+                self.bus_counter = target;
             }
-            phase => {
-                self.phase = CpuPhase::Execute { phase, step: 0 };
-                self.exec_step = 0;
-                self.mcycle_execute(0)
-                    .expect("mcycle_execute must return Some")
+            self.pc = self.bus_counter;
+            self.boundary_flag = true;
+            self.instruction_pc = self.bus_counter;
+
+            match next_phase {
+                Phase::Empty => {
+                    self.phase = CpuPhase::Fetch;
+                    self.exec_step = 0;
+                    self.op_state = 0;
+                    self.mcycle_fetch(0).expect("fetch step 0 must return Some")
+                }
+                phase => {
+                    self.phase = CpuPhase::Execute { phase, step: 0 };
+                    self.exec_step = 0;
+                    self.mcycle_execute(0)
+                        .expect("mcycle_execute must return Some")
+                }
             }
         }
     }
 
-    /// Capture the `int_entry` (zacw) DFF at the matching dot's
-    /// master-clock falling edge — the same physical CLK9↑ as the rise
-    /// that stashed the pending flag. Two retire-edge-style sources
-    /// feed this stage:
+    /// HALT-wake landing edge — the boundary CLK9↑ where `mcycle_halted`
+    /// just emitted the speculative wake fetch (`BusAction::Read{pc}`)
+    /// and set `pending_halt_wake_dispatch`. Reads `int_take`; on a
+    /// dispatching wake, rewrites `phase` to `InterruptDispatch{step:1}`,
+    /// replaces the in-progress M-cycle's `current_action` with
+    /// dispatch's M1 (`Internal{pc}`), and clears IME.
     ///
-    /// - `pending_int_entry_capture` (running CPU): set by `commit()` at
-    ///   the retire dot's rise; carries the EI/DI gate decision in
-    ///   `pending_int_entry_gate`. The speculative next-fetch BusAction
-    ///   prepared by `commit()` continues to hold the bus.
-    /// - `pending_halt_wake_dispatch` (HALT exit): set by
-    ///   `mcycle_halted` at the wake dot's rise after g42.q↑ collapses
-    ///   the g43 halt-release chain; the speculative `CpuPhase::Fetch`
-    ///   set there may be overwritten here with `InterruptDispatch`.
-    ///
-    /// Both paths read the post-fall `int_take` view so same-dot WODU↑
-    /// (e.g. HBlank STAT IF on the boundary dot) is visible. If
-    /// dispatch fires, set up `CpuPhase::InterruptDispatch` with
-    /// step=0 and clear IME inline. The dispatch's first held
-    /// BusAction (mcycle_isr step 0 = `Internal{pc}`) is emitted at
-    /// the next M-cycle boundary by the natural next_mcycle path.
-    pub fn tick_int_entry(&mut self) {
-        if !self.pending_int_entry_capture && !self.pending_halt_wake_dispatch {
+    /// HALT release is gated by g42 (not zacw), so this edge does NOT
+    /// capture `int_entry`. Step 1 is used (rather than step 0 + a
+    /// tail-call to `mcycle_isr(0)`) because the wake M-cycle's
+    /// BusAction has already been emitted by `mcycle_halted` and is
+    /// being replaced in place; the next `next_mcycle` call advances
+    /// directly into step 1's `InternalOamBug{sp}`.
+    pub fn halt_wake_edge(&mut self) {
+        if !self.pending_halt_wake_dispatch {
             return;
         }
+        self.pending_halt_wake_dispatch = false;
 
-        if self.pending_int_entry_capture {
-            let int_take = self.int_take();
-            self.int_entry
-                .write(!self.pending_int_entry_gate && int_take);
-            self.int_entry.tick();
-
-            self.pending_int_entry_capture = false;
-            self.pending_int_entry_gate = false;
-
-            if self.int_entry.output() {
-                // int_entry rising → dispatch M1 starts at the next M-cycle
-                // boundary. IME (zacw downstream) clears at this acceptance
-                // edge — modelled inline because mcycle_isr's step 0 runs one
-                // M-cycle later via the natural next_mcycle dispatch, and IME
-                // must be Disabled before then to gate any further int_take
-                // checks. Override halt_state — EI;HALT never enters the halt
-                // RS-latch state on hardware.
-                self.halt_state = HaltState::Running;
-                self.ime.write_immediate(InterruptMasterEnable::Disabled);
-                let pc = self.pc;
-                let pc_hi = (pc >> 8) as u8;
-                let pc_lo = (pc & 0xff) as u8;
-                let sp = self.stack_pointer;
-                self.phase = CpuPhase::InterruptDispatch {
-                    sp,
-                    pc_hi,
-                    pc_lo,
-                    step: 0,
-                };
-                self.exec_step = 0;
-                self.pending_vector_resolve = false;
-                // Note: do NOT call mcycle_isr(0) here, and do NOT overwrite
-                // self.current_action. The current M-cycle (the retire whose
-                // commit() ran in this dot's rise()) continues holding its
-                // speculative next-fetch BusAction. At the next M-cycle
-                // boundary, next_mcycle will see CpuPhase::InterruptDispatch
-                // and call mcycle_isr(read_value) at step=0, which produces
-                // the held Internal{pc} BusAction for dispatch's M1 — the
-                // M-cycle that today is incorrectly skipped.
-            }
-        }
-
-        if self.pending_halt_wake_dispatch {
-            self.pending_halt_wake_dispatch = false;
-            if self.int_take() {
-                // HALT-wake dispatch: halt has already dropped at the
-                // matching rise inside mcycle_halted. Rewrite the
-                // speculative `CpuPhase::Fetch` to `InterruptDispatch`
-                // and clear IME — same downstream stage as the
-                // running-CPU dispatch above. The speculative
-                // BusAction::Read held by mcycle_halted continues to
-                // hold the bus for this M-cycle; mcycle_isr step 0
-                // produces the `Internal{pc}` BusAction at the next
-                // M-cycle boundary via the natural next_mcycle path.
-                self.ime.write_immediate(InterruptMasterEnable::Disabled);
-                let pc = self.pc;
-                let pc_hi = (pc >> 8) as u8;
-                let pc_lo = (pc & 0xff) as u8;
-                let sp = self.stack_pointer;
-                self.phase = CpuPhase::InterruptDispatch {
-                    sp,
-                    pc_hi,
-                    pc_lo,
-                    step: 0,
-                };
-                self.exec_step = 0;
-                self.pending_vector_resolve = false;
-            }
+        if self.int_take() {
+            let pc = self.pc;
+            let pc_hi = (pc >> 8) as u8;
+            let pc_lo = (pc & 0xff) as u8;
+            let sp = self.stack_pointer;
+            self.phase = CpuPhase::InterruptDispatch {
+                sp,
+                pc_hi,
+                pc_lo,
+                step: 1,
+            };
+            self.exec_step = 0;
+            self.pending_vector_resolve = false;
+            self.boundary_flag = true;
+            self.instruction_pc = pc;
+            self.ime.write_immediate(InterruptMasterEnable::Disabled);
+            self.current_action = Some(BusAction::Internal { address: pc });
         }
     }
 

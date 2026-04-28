@@ -121,24 +121,18 @@ pub struct Cpu {
     /// chain. Captures `interrupt_pending` once per M-cycle on the
     /// master-clock rising edge — single DFF stage between IF assertion
     /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
+    /// Captured inside `retire_edge` on the dispatching CLK9↑; its
+    /// freshly-resolved `q` combinationally selects between the
+    /// register-file write-back path and the dispatch path on the same
+    /// edge.
     pub(super) int_entry: Dff<bool>,
-    /// Carries the retire-rise int_entry-chain gate decision (set by
-    /// `commit()` when the retiring Commit is EnableInterrupts /
-    /// DisableInterrupts) across to the same-dot fall, where the zacw
-    /// DFF actually captures.
-    pub(super) pending_int_entry_gate: bool,
-    /// Carries the retire-rise dispatch-readiness state. Set by
-    /// `commit()` when a retire ran; the executor then calls
-    /// `tick_int_entry()` at the matching fall to perform the zacw
-    /// capture using the IF settled by that same dot's master-clock
-    /// fall. Cleared by `tick_int_entry()`.
-    pub(super) pending_int_entry_capture: bool,
-    /// Carries the HALT-wake-rise dispatch-readiness decision across to
-    /// the same dot's master-clock fall, where the post-fall int_take
-    /// view determines ISR-vs-Fetch. Mirrors `pending_int_entry_capture`
-    /// but for the HALT-wake exit path: g42.q↑ at the boundary rise
-    /// drops halt combinationally; the int_entry (zacw) capture that
-    /// chooses ISR vs running-CPU continuation reads int_take post-fall.
+    /// Carries the HALT-wake-rise dispatch-readiness decision from the
+    /// wake M-cycle's boundary rise (`mcycle_halted` setting it once g42.q
+    /// has captured `interrupt_pending`) to the next boundary rise where
+    /// `halt_wake_edge` chooses ISR vs running-CPU continuation. The
+    /// HALT-wake path uses g42 (not zacw) for halt release, so a single
+    /// carrier flag still models the two-edge handoff between halt drop
+    /// and dispatch decision.
     pub(super) pending_halt_wake_dispatch: bool,
 }
 
@@ -201,8 +195,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_int_entry_gate: false,
-            pending_int_entry_capture: false,
             pending_halt_wake_dispatch: false,
         }
     }
@@ -244,8 +236,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_int_entry_gate: false,
-            pending_int_entry_capture: false,
             pending_halt_wake_dispatch: false,
         }
     }
@@ -274,7 +264,6 @@ impl Cpu {
             } else {
                 InterruptMasterEnable::Disabled
             }),
-            // int_entry_gate is transient (set only during EI/DI's
             halt_state: match snap.halt_state {
                 1 => HaltState::Halting,
                 2 => HaltState::Halted,
@@ -300,8 +289,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_int_entry_gate: false,
-            pending_int_entry_capture: false,
             pending_halt_wake_dispatch: false,
         }
     }

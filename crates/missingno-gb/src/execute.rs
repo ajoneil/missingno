@@ -162,9 +162,13 @@ impl GameBoy {
     /// tick timer and PPU, fire OAM bugs.
     ///
     /// At each M-cycle boundary, `g42` (yoii) captures `interrupt_pending`,
-    /// driving the HALT-release chain (g42 → ykua → halt↓). The running-
-    /// CPU `int_entry` (zacw) DFF is captured inside `commit()` at retire
-    /// edges using `int_take`, not externally.
+    /// driving the HALT-release chain (g42 → ykua → halt↓). The
+    /// dispatching CLK9↑ — where zacw and the write-back DFFs share the
+    /// same capture edge — happens inside `retire_edge()`, called via
+    /// `next_mcycle` → `mcycle_*`; the sequencer combinationally selects
+    /// fetch vs dispatch from `int_entry.q` on that same edge. The
+    /// HALT-wake landing (`halt_wake_edge`) runs at the boundary CLK9↑
+    /// after `mcycle_halted` emitted the speculative wake fetch.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
@@ -212,6 +216,15 @@ impl GameBoy {
         // ── CPU dot advance ──
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
+
+        // HALT-wake landing: at the boundary CLK9↑ where mcycle_halted
+        // just emitted the speculative wake fetch (Read{pc}) and set
+        // pending_halt_wake_dispatch, choose dispatch vs running-fetch
+        // based on int_take. On dispatch, halt_wake_edge replaces the
+        // wake M-cycle's BusAction with mcycle_isr step 0's Internal{pc}.
+        if is_mcycle_boundary {
+            self.cpu.halt_wake_edge();
+        }
 
         // IE push bug: check after each M-cycle transition.
         if self.cpu.take_pending_vector_resolve() {
@@ -391,12 +404,6 @@ impl GameBoy {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
-
-        // M-cycle-end CLK9↑ same-edge int_entry (zacw) capture. commit()
-        // ran in this dot's rise() and stashed pending_int_entry_* flags
-        // for capture once the same dot's master-clock fall has settled
-        // IF. tick_int_entry() is a no-op on non-retire falls.
-        self.cpu.tick_int_entry();
 
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle.
