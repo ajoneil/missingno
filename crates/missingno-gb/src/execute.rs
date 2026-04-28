@@ -162,9 +162,14 @@ impl GameBoy {
     /// tick timer and PPU, fire OAM bugs.
     ///
     /// At each M-cycle boundary, `g42` (yoii) captures `interrupt_pending`,
-    /// driving the HALT-release chain (g42 → ykua → halt↓). The running-
-    /// CPU `int_entry` (zacw) DFF is captured inside `commit()` at retire
-    /// edges using `int_take`, not externally.
+    /// driving the HALT-release chain (g42 → ykua → halt↓). The
+    /// dispatching CLK9↑ — where zacw and the write-back DFFs share the
+    /// same capture edge — happens inside `retire_edge()`, called via
+    /// `next_mcycle` → `mcycle_*`; the sequencer combinationally selects
+    /// fetch vs dispatch from `int_entry.q` on that same edge. On the
+    /// HALT-wake path, `tick_int_entry` captures int_entry on the closing
+    /// CLK9↑ of `Halted(WakeIntake)` so the next M-cycle's selector
+    /// resolves dispatch vs fetch from the freshly-captured `int_entry.q`.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
@@ -173,6 +178,7 @@ impl GameBoy {
         // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
             self.cpu.tick_g42(); // samples pre-edge interrupt_pending
+            self.cpu.tick_int_entry(); // gated on Halted(WakeIntake)
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -391,12 +397,6 @@ impl GameBoy {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
-
-        // M-cycle-end CLK9↑ same-edge int_entry (zacw) capture. commit()
-        // ran in this dot's rise() and stashed pending_int_entry_* flags
-        // for capture once the same dot's master-clock fall has settled
-        // IF. tick_int_entry() is a no-op on non-retire falls.
-        self.cpu.tick_int_entry();
 
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle.
