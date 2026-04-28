@@ -166,9 +166,10 @@ impl GameBoy {
     /// dispatching CLK9↑ — where zacw and the write-back DFFs share the
     /// same capture edge — happens inside `retire_edge()`, called via
     /// `next_mcycle` → `mcycle_*`; the sequencer combinationally selects
-    /// fetch vs dispatch from `int_entry.q` on that same edge. The
-    /// HALT-wake landing (`halt_wake_edge`) runs at the boundary CLK9↑
-    /// after `mcycle_halted` emitted the speculative wake fetch.
+    /// fetch vs dispatch from `int_entry.q` on that same edge. On the
+    /// HALT-wake path, `tick_int_entry` captures int_entry on the closing
+    /// CLK9↑ of `Halted(WakeIntake)` so the next M-cycle's selector
+    /// resolves dispatch vs fetch from the freshly-captured `int_entry.q`.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
@@ -177,6 +178,7 @@ impl GameBoy {
         // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
             self.cpu.tick_g42(); // samples pre-edge interrupt_pending
+            self.cpu.tick_int_entry(); // gated on Halted(WakeIntake)
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -216,15 +218,6 @@ impl GameBoy {
         // ── CPU dot advance ──
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
-
-        // HALT-wake landing: at the boundary CLK9↑ where mcycle_halted
-        // just emitted the speculative wake fetch (Read{pc}) and set
-        // pending_halt_wake_dispatch, choose dispatch vs running-fetch
-        // based on int_take. On dispatch, halt_wake_edge replaces the
-        // wake M-cycle's BusAction with mcycle_isr step 0's Internal{pc}.
-        if is_mcycle_boundary {
-            self.cpu.halt_wake_edge();
-        }
 
         // IE push bug: check after each M-cycle transition.
         if self.cpu.take_pending_vector_resolve() {

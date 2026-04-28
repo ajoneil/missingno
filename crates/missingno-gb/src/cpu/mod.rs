@@ -126,14 +126,6 @@ pub struct Cpu {
     /// register-file write-back path and the dispatch path on the same
     /// edge.
     pub(super) int_entry: Dff<bool>,
-    /// Carries the HALT-wake-rise dispatch-readiness decision from the
-    /// wake M-cycle's boundary rise (`mcycle_halted` setting it once g42.q
-    /// has captured `interrupt_pending`) to the next boundary rise where
-    /// `halt_wake_edge` chooses ISR vs running-CPU continuation. The
-    /// HALT-wake path uses g42 (not zacw) for halt release, so a single
-    /// carrier flag still models the two-edge handoff between halt drop
-    /// and dispatch decision.
-    pub(super) pending_halt_wake_dispatch: bool,
 }
 
 impl Cpu {
@@ -195,7 +187,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_halt_wake_dispatch: false,
         }
     }
 
@@ -236,7 +227,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_halt_wake_dispatch: false,
         }
     }
 
@@ -289,7 +279,6 @@ impl Cpu {
             interrupt_pending: false,
             g42: Dff::new(false),
             int_entry: Dff::new(false),
-            pending_halt_wake_dispatch: false,
         }
     }
 
