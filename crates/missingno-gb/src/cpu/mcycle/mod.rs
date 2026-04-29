@@ -1064,8 +1064,15 @@ impl Cpu {
         self.int_entry.write(!int_entry_gated && int_take);
         self.int_entry.tick();
 
+        Self::apply_commit(self, commit);
+        self.check_halt_bug();
+        if let Some(target) = self.pending_jump_target.take() {
+            self.bus_counter = target;
+        }
+        self.pc = self.bus_counter;
+        self.instruction_pc = self.bus_counter;
+
         if self.int_entry.output() {
-            // Dispatch arm — write-back is suppressed.
             self.halt_state = HaltState::Running;
             let pc = self.pc;
             let pc_hi = (pc >> 8) as u8;
@@ -1081,20 +1088,6 @@ impl Cpu {
             self.pending_vector_resolve = false;
             self.instruction_pc = pc;
         } else {
-            // Fetch arm — apply the in-flight retire's write-back.
-            Self::apply_commit(self, commit);
-            self.check_halt_bug();
-            if let Some(target) = self.pending_jump_target.take() {
-                self.bus_counter = target;
-            }
-            self.pc = self.bus_counter;
-            self.instruction_pc = self.bus_counter;
-
-            // Resolve the next phase. EnterHalt (apply_commit set
-            // halt_state = Halting, surviving any check_halt_bug
-            // override) lands directly in Halted(Spin) — no dummy
-            // fetch M-cycle on hardware (halted M-cycles are
-            // Internal{...}, not Read{pc}).
             self.phase = match next_phase {
                 Phase::Empty if self.halt_state == HaltState::Halting => {
                     self.halt_state = HaltState::Halted;
