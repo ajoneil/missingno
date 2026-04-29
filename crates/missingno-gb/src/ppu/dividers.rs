@@ -76,10 +76,13 @@ impl Dividers {
         !self.half_mcycle
     }
 
-    /// VID_RST: dividers reset to 0 (Q=0 for both DFFs). With VENA.Q=0,
-    /// TALU = NOT(VENA) is held at 1 until VENA's first rise.
+    /// VID_RST: dividers reset to their hardware reset states. WUVU.Q=0,
+    /// VENA.Q=1. With VENA.Q=1, TALU = NOT(VENA) is held at 0 until VENA's
+    /// first fall — which produces the first TALU↑ at +1.494 dots after
+    /// XODO↓ (matching spec §4.5 / §10.9). This is the LX-incrementing
+    /// edge that scanline 0 starts counting from.
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.half_mcycle = false;
-        self.mcycle = false;
+        self.mcycle = true;
     }
 }
