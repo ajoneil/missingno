@@ -352,15 +352,16 @@ impl Cpu {
         self.op_state
     }
 
-    /// Ring counter state (AFUR<<3|ALEF<<2|APUK<<1|ADYK<<0), matching
-    /// GateBoy's encoding. The trace captures after both sub-phases of
-    /// each dot, so we report the state at the even sub-phase (B,D,F,H).
+    /// AFUR/ALEF/APUK/ADYK ring counter state (AFUR<<3|ALEF<<2|APUK<<1|ADYK<<0),
+    /// matching GateBoy's encoding. Reports the post-fall settled DFF state at
+    /// the after-fall sampling instant, so the value matches what GateBoy's
+    /// adapter emits at the same physical edge.
     pub fn mcycle_phase(&self) -> u8 {
         match self.last_dot.as_u8() {
-            0 => 0x0C, // sub-phase B: AFUR=1 ALEF=1 APUK=0 ADYK=0
-            1 => 0x0F, // sub-phase D: AFUR=1 ALEF=1 APUK=1 ADYK=1
-            2 => 0x03, // sub-phase F: AFUR=0 ALEF=0 APUK=1 ADYK=1
-            3 => 0x00, // sub-phase H: AFUR=0 ALEF=0 APUK=0 ADYK=0
+            0 => 0x0E, // AFUR=1 ALEF=1 APUK=1 ADYK=0
+            1 => 0x07, // AFUR=0 ALEF=1 APUK=1 ADYK=1
+            2 => 0x01, // AFUR=0 ALEF=0 APUK=0 ADYK=1
+            3 => 0x08, // AFUR=1 ALEF=0 APUK=0 ADYK=0
             _ => unreachable!(),
         }
     }
