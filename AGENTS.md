@@ -104,6 +104,21 @@ cargo fmt                                    # Format
 - **Flag spec gaps, don't paper over them**: When the PPU timing model spec (`receipts/ppu-overhaul/reference/ppu-timing-model-spec.md`) doesn't cover a behaviour but a dmg-sim run could provide the measurement, raise it with the user so the spec can be extended. Do not fall back to emulator source or hand-wave the answer.
 - **Future cores**: These principles apply to any emulation core added to the project, not just Game Boy.
 
+## Investigation hygiene
+
+- **Spec gaps are work for the user, not a reason to pivot.** When a `/research` receipt returns `Confidence: spec-gap` with a concrete dmg-sim measurement target (named signals, named ROM, sub-dot offsets), surface the measurement request to the user and ask them to run it. Do not silently pivot to a different problem — the user actively wants the spec extended, and routing around gaps means working with incomplete data on every downstream decision.
+- **Prior investigation receipts are background, not authority.** The `receipts/investigations/` archive is a record of past attempts and decisions. Constants, file:line citations, and structural claims in old receipts go stale fast — missingno's PPU/CPU subsystems are refactored frequently. Use prior receipts to understand *what was tried and why*, not to import specific facts. Verify any concrete code claim against the current source before relying on it. When briefing a `/research` subagent, frame prior receipts as "background, may be stale" and ask for current-code verification rather than citation.
+
+## Code Style (committed code in `crates/`)
+
+These rules apply to all committed Rust code — production code, tests, and doc-comments. They override generic "explain everything" instincts.
+
+- **Comments are sparse.** Default to no comment. Add one only when WHY is non-obvious — a hidden constraint, a subtle invariant, a workaround. Don't explain WHAT the code does; well-named identifiers do that. One short line max; never multi-paragraph docstrings or multi-line block comments.
+- **Reference hardware via gate names, not spec § numbers.** When a comment ties code to hardware, name the gate (`NYXU`, `RYDY`, `CATU`) and what it does in one phrase. **Never write `§6.12` or `spec §X.Y` in committed code** — the spec gets renumbered, the concordance moves, and stale section refs rot. Spec section numbers belong in the spec, in the gate concordance, and in receipts — not in `crates/`.
+- **No narration of verification outcomes.** Don't write comments like "this matches GateBoy", "fixes test X", "per the April 24 investigation". Those belong in commit messages and PR descriptions, which decay with code less destructively than rotting comments do.
+- **No `// added for …` / `// removed because …` provenance comments.** Git blame answers those questions.
+- **When dispatching `/design` or `/implement`** to subagents that will write committed code, repeat these rules in the prompt. Skill subagents do not inherit conversational memory; they only see the prompt and AGENTS.md/CLAUDE.md. Do not include spec-section references in the prompt — if the subagent sees `§6.12` in the brief, it will paste it into doc-comments.
+
 ## Architecture
 
 The project is a Cargo workspace with crates under `crates/`:
