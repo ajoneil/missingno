@@ -568,6 +568,24 @@ impl Rendering {
             // SACU increments it, which happens in mode3_pixel_pipeline).
             let rydy_before_pory = self.window.rydy();
             let pixel_counter_before_sacu = self.pixel_counter.value();
+
+            // MOSU↑ arming runs before mode3_advance_fetcher so the
+            // counter=0 falling VRAM read sees fetching_window=true and
+            // AMUV/VEVY select the window tilemap. NYXU async-reset is
+            // applied here; LEBO advance still fires within this dot
+            // because was_rendering is true and the counter is reset to
+            // 0 by reset_for_window before the rising edge increments.
+            let pygo = self.cascade.pygo();
+            self.window.check_trigger_arming(
+                &mut self.fetcher,
+                &mut self.cascade,
+                &mut self.fine_scroll,
+                pixel_counter_before_sacu,
+                pygo,
+                regs,
+                video,
+            );
+
             if was_rendering {
                 self.mode3_advance_fetcher(regs);
             }
@@ -811,7 +829,7 @@ impl Rendering {
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
-        video: &VideoControl,
+        _video: &VideoControl,
         rydy_before_pory: bool,
         pixel_counter_before_sacu: u8,
     ) -> Option<PixelOutput> {
@@ -885,15 +903,12 @@ impl Rendering {
         self.window.apply_xofo(regs.control.window_enabled());
 
         let pygo = self.cascade.pygo();
-        self.window.check_trigger(
+        self.window.check_trigger_reactivation(
             rydy_before_pory,
-            &mut self.fetcher,
-            &mut self.cascade,
-            &mut self.fine_scroll,
+            &self.fetcher,
             pixel_counter_before_sacu,
             pygo,
             regs,
-            video,
         );
 
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
