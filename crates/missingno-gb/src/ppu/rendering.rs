@@ -687,14 +687,12 @@ impl Rendering {
         // TEKY: combinational sprite fetch request.
         //
         // Hardware: TEKY = AND4(FEPO, TUKU, LYRY, !TAKA), where TUKU =
-        // NOT(RYDY) via the SYLO/TOMU/TUKU triple-inversion (§6.12
-        // window-condition fanout). Emulator collapses TUKU to
-        // !window.rydy() at this call site.
+        // NOT(RYDY) collapses the SYLO/TOMU/TUKU triple-inversion.
         //
-        // Emulator's extra POKY term substitutes for the hardware
-        // LYRY-kill chain during Mode-3 startup (kill settles sub-edge;
-        // below half-dot resolution). POKY=1 steady-state matches the
-        // netlist for the rest of Mode 3.
+        // This emulator ANDs POKY in as a fifth term — a divergence from
+        // the netlist. POKY is the terminal stage of the AVAP→SACU startup
+        // cascade and on hardware gates CLKPIPE (via TYFA), not the sprite
+        // trigger. Whether this extra gate matches hardware is unverified.
         let lyry_for_teky = lyry && self.cascade.poky();
         let teky = fepo && !self.window.rydy() && lyry_for_teky && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.capture_sobu(teky);
