@@ -86,11 +86,6 @@ pub struct Cpu {
     current_action: Option<mcycle::BusAction>,
     /// Step counter for Fetch/Halted phases (tracks M-cycle sub-steps).
     pub(super) exec_step: u8,
-    /// Continuous M-cycle counter within the current instruction.
-    /// 0 = fetch M-cycle, 1 = first execute M-cycle, etc.
-    /// Incremented by next_mcycle(), reset by enter_fetch().
-    /// Matches the hardware op_state sequencer.
-    pub(super) op_state: u8,
     /// Pending jump target address. Set by CondJump's internal M-cycle,
     /// consumed by the next enter_fetch() to issue the fetch Read from
     /// the target instead of bus_counter. On hardware, the PC
@@ -177,7 +172,6 @@ impl Cpu {
                 value: 0x01,
             }),
             exec_step: 0,
-            op_state: 2,
             pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
@@ -214,10 +208,6 @@ impl Cpu {
             mcycle_active: false,
             current_action: None,
             exec_step: 0,
-            // Initialized to MAX so the first wrapping_add(1) in
-            // next_dot() wraps to 0 for the first fetch M-cycle.
-            // enter_fetch() resets to 0 at each instruction boundary.
-            op_state: u8::MAX,
             pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
@@ -266,10 +256,6 @@ impl Cpu {
             mcycle_active: false,
             current_action: None,
             exec_step: 0,
-            // Initialized to MAX so the first wrapping_add(1) in
-            // next_dot() wraps to 0 for the first fetch M-cycle.
-            // enter_fetch() resets to 0 at each instruction boundary.
-            op_state: u8::MAX,
             pending_jump_target: None,
             scratch: 0,
             last_dot: BusDot::ZERO,
@@ -345,11 +331,22 @@ impl Cpu {
         self.ime.output() != InterruptMasterEnable::Disabled
     }
 
-    /// Continuous instruction M-cycle counter. 0 = fetch M-cycle,
-    /// 1 = first execute M-cycle, 2 = second, etc. Matches GateBoy's
-    /// op_state hardware sequencer.
+    /// Per-instruction (or dispatch) M-cycle index, matching GateBoy's
+    /// hardware sequencer state. Resets to 0 at instruction boundaries.
+    /// 0 = fetch M-cycle, 1 = first post-fetch M-cycle, ... For interrupt
+    /// dispatch the 5 M-cycles report 0, 1, 2, 3, 4 (M0 = the fetch
+    /// M-cycle the dispatch overlaps with). For halt the index is 0.
     pub fn op_state(&self) -> u8 {
-        self.op_state
+        // Computed from the current phase + step. Both Execute and
+        // InterruptDispatch's `step` fields are post-incremented inside
+        // mcycle_execute / mcycle_isr, so by the after-fall sample point
+        // they hold the M-cycle index of the *current* M-cycle.
+        match &self.phase {
+            mcycle::CpuPhase::Fetch => 0,
+            mcycle::CpuPhase::Execute { step, .. } => *step as u8,
+            mcycle::CpuPhase::InterruptDispatch { step, .. } => *step as u8,
+            mcycle::CpuPhase::Halted(_) => 0,
+        }
     }
 
     /// AFUR/ALEF/APUK/ADYK ring counter state (AFUR<<3|ALEF<<2|APUK<<1|ADYK<<0),
