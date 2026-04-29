@@ -147,21 +147,19 @@ impl WindowControl {
         }
     }
 
-    /// Check if the window should start rendering at the current pixel
-    /// position. Also detects window reactivation zero pixel conditions
-    /// when the window is already active.
+    /// MOSU↑ arming: NUKO match → PYCO → NUNU → PYNU set → MOSU pulse →
+    /// NYXU async-reset of the BG fetch counter and the
+    /// NYKA/PORY/PYGO/POKY cascade. Runs BEFORE the fetcher's
+    /// falling-edge VRAM read so AMUV/VEVY tri-states see
+    /// `fetching_window=true` on the counter=0 tile-index read.
     ///
     /// On hardware, the NUKO comparator reads pix_count DFF Q-outputs
     /// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
     /// match on ROCO, which derives from TYFA and requires POKY (modeled
     /// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
     /// value (from `RisingPhaseInputs`) to model this correctly.
-    ///
-    /// `rydy_snapshot` is the phase-boundary snapshot (state_old) used
-    /// for the reactivation check.
-    pub(in crate::ppu) fn check_trigger(
+    pub(in crate::ppu) fn check_trigger_arming(
         &mut self,
-        rydy_snapshot: bool,
         fetcher: &mut TileFetcher,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
@@ -200,17 +198,8 @@ impl WindowControl {
             return;
         }
 
-        // Window already active -- check for reactivation zero pixel (DMG only).
-        // The hardware condition is GetTile T1 (first tick). Our WX check
-        // runs in mode3_rising after advance_rising, so the fetcher has been
-        // ticked once since reset: counter=1 on the first dot. We check
-        // counter < 2 to catch this first-dot state.
-        // Reactivation requires the initial window fetch to have completed
-        // (RYDY=0), modeling hardware's !window_is_being_fetched.
+        // Window already active — reactivation handled post-pipeline.
         if fetcher.fetching_window {
-            if !rydy_snapshot && fetcher.fetch_counter < 2 {
-                self.window_zero_pixel = true;
-            }
             return;
         }
 
@@ -233,6 +222,37 @@ impl WindowControl {
         // tile fetch completes before the pixel clock can resume.
         cascade.reset_window();
         self.window_rendered = true;
+    }
+
+    /// DMG window reactivation zero-pixel quirk. Runs AFTER the pixel
+    /// pipeline so it inspects post-fetch state. When WX re-matches
+    /// while the window is already rendering and the fetcher is still
+    /// in its first two counter steps with RYDY clear, the next pixel
+    /// outputs bg_color=0 without popping the BG shifter.
+    pub(in crate::ppu) fn check_trigger_reactivation(
+        &mut self,
+        rydy_snapshot: bool,
+        fetcher: &TileFetcher,
+        pixel_counter: u8,
+        pygo: bool,
+        regs: &PipelineRegisters,
+    ) {
+        if !regs.control.window_enabled() {
+            return;
+        }
+        if !self.wy_matched {
+            return;
+        }
+        if pixel_counter != regs.window.x_plus_7.output() {
+            return;
+        }
+        if !pygo {
+            return;
+        }
+
+        if fetcher.fetching_window && !rydy_snapshot && fetcher.fetch_counter < 2 {
+            self.window_zero_pixel = true;
+        }
     }
 
     /// Reset for a new frame. Zeroes the window line counter (WLY),
