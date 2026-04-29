@@ -523,14 +523,8 @@ impl Ppu {
         // LX=0 of line 144 (the first M-cycle where POPU is high).
         let vblank_line_144 = popu && self.video.ly() == 144 && self.video.line_end_active();
 
-        // TARU = AND(WODU-or-VOGA, NOT(VBlank)). WODU is combinational
-        // (true for 1 rising-phase window), VOGA latches on the falling
-        // edge and stays true through HBlank. Together they cover the
-        // full HBlank period.
         let enables = self.video.stat.enables();
-        (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !popu
-            && (rendering.voga() || rendering.wodu()))
+        (enables.contains(InterruptFlags::HORIZONTAL_BLANK) && !popu && rendering.wodu())
             || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
             || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
             || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)

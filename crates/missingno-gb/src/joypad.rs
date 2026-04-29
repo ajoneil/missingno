@@ -99,6 +99,13 @@ impl Joypad {
         self.read_dpad = value & Self::READ_DPAD == 0;
     }
 
+    /// The four input lines P10-P13 (low nibble of JOYP). Each bit is
+    /// 0 when a selected button on that line is pressed. The Joypad IF
+    /// (ULAK) clocks on any 1→0 transition of these lines.
+    pub fn input_lines(&self) -> u8 {
+        self.read_register() & 0x0F
+    }
+
     pub fn press_button(&mut self, button: Button) {
         if !self.pressed_buttons.contains(&button) {
             self.pressed_buttons.push(button);

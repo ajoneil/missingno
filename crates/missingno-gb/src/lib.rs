@@ -284,7 +284,11 @@ impl GameBoy {
     }
 
     pub fn press_button(&mut self, button: Button) {
+        let before = self.joypad.input_lines();
         self.joypad.press_button(button);
+        if before & !self.joypad.input_lines() != 0 {
+            self.interrupts.request(interrupts::Interrupt::Joypad);
+        }
     }
 
     pub fn release_button(&mut self, button: Button) {

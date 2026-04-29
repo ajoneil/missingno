@@ -223,13 +223,7 @@ impl Rendering {
         self.hblank.rendering_active()
     }
 
-    /// ACYL signal: OAM scanning active (BESU-driven).
-    /// Used by Ppu::mode() for independent NOR-gate mode bit computation.
-    pub(super) fn is_scanning(&self) -> bool {
-        self.scan.besu()
-    }
-
-    /// STAT-readout mirror of `is_scanning`. Lags the internal BESU by
+    /// STAT-readout mirror of BESU (OAM scanning active). Lags the internal BESU by
     /// one PPU-clock-fall so the AVAP integer dot observes the
     /// pre-transition scanning value (matches GateBoy's T-cycle STAT
     /// sampling phase). Read only by `Ppu::mode()`.
@@ -252,11 +246,6 @@ impl Rendering {
     pub(super) fn capture_stat_mirrors(&mut self) {
         self.scan.capture_besu_stat();
         self.hblank.capture_rendering_stat();
-    }
-
-    /// VOGA latch: true from the dot WODU fires through the rest of HBlank.
-    pub(super) fn voga(&self) -> bool {
-        self.hblank.voga()
     }
 
     /// WODU: combinational hblank gate. AND2(XUGU, !FEPO).

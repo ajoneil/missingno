@@ -1054,6 +1054,11 @@ impl Cpu {
     /// Halting) resolves to `Halted(Spin)` here, NOT via a dummy
     /// fetch in mcycle_fetch.
     pub(super) fn retire_edge(&mut self, commit: Commit, next_phase: Phase) -> BusAction {
+        // RETI is intentionally NOT gated: zbpp sets ime_state during
+        // RETI's M3, so by this retire edge IME has been Enabled for
+        // multiple M-cycles and int_take legitimately sees the new
+        // IME view. EI/DI write IME inside their own single M-cycle —
+        // without the gate they would dispatch on their own retire.
         let int_entry_gated =
             matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
 

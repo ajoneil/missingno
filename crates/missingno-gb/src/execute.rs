@@ -389,17 +389,11 @@ impl GameBoy {
             }
         }
 
-        // Capture interrupt state AFTER bus writes so IF updates from a CPU
-        // write to 0xFF0F (or STAT edges from PPU register writes) are
-        // visible to update_interrupt_state on the same fall. g42 ticks on
-        // the next rise to sample interrupt_pending into the DFF output.
-        {
-            let triggered = self.interrupts.triggered();
-            self.cpu.update_interrupt_state(triggered);
-        }
-
         if is_mcycle_boundary {
-            // Serial ticks once per M-cycle.
+            // Serial ticks once per M-cycle. Run before update_interrupt_state
+            // so a serial-complete IF is visible to the same-fall capture and
+            // the next rise's g42 sees it — keeping serial in the mid-M-cycle
+            // source class alongside VBlank/STAT.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
                 self.interrupts.request(interrupt);
@@ -441,6 +435,15 @@ impl GameBoy {
             self.external.tick_decay();
 
             self.audio.mcycle(self.timers.internal_counter());
+        }
+
+        // Capture interrupt state AFTER bus writes and M-cycle subsystems so
+        // IF updates from a CPU write to 0xFF0F, STAT edges from PPU register
+        // writes, and serial completion are all visible on the same fall.
+        // g42 ticks on the next rise to sample interrupt_pending into the DFF.
+        {
+            let triggered = self.interrupts.triggered();
+            self.cpu.update_interrupt_state(triggered);
         }
 
         self.clock_phase = ClockPhase::Low;

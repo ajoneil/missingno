@@ -556,7 +556,11 @@ impl GameBoy {
                 if let Some(sgb) = &mut self.sgb {
                     sgb.write_joypad(value);
                 }
+                let before = self.joypad.input_lines();
                 self.joypad.write_register(value);
+                if before & !self.joypad.input_lines() != 0 {
+                    self.interrupts.request(interrupts::Interrupt::Joypad);
+                }
             }
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.data = value,
