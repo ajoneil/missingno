@@ -356,6 +356,13 @@ fn is_infinite_loop(gb: &GameBoy) -> bool {
     if gb.read(pc) == 0x18 && gb.read(pc.wrapping_add(1)) == 0xFE {
         return true;
     }
+    // mooneye quit_inline: LD B,B; JR -2.
+    if gb.read(pc) == 0x40
+        && gb.read(pc.wrapping_add(1)) == 0x18
+        && gb.read(pc.wrapping_add(2)) == 0xFE
+    {
+        return true;
+    }
 
     if gb.cpu().halt_state != missingno_gb::cpu::HaltState::Running {
         // Permanent halt: IE register is empty, so no interrupt can ever wake
