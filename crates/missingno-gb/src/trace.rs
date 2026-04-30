@@ -4,13 +4,54 @@ use std::path::Path;
 use gbtrace::format::SnapshotType;
 use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::write::GbtraceWriter;
-use gbtrace::header::TraceHeader;
+use gbtrace::header::{ExtensionField, TraceHeader};
 use gbtrace::profile::{FieldType, field_nullable, field_type};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::GameBoy;
 use crate::ppu::PpuTraceSnapshot;
+
+// ---------------------------------------------------------------------------
+// Extension fields — emulator-internal debugging state
+// ---------------------------------------------------------------------------
+//
+// missingno declares a set of extension fields that adapters / profiles can
+// opt into via `[fields.extensions] missingno = ["..."]` in profile TOML.
+// Each entry below pairs the wire name (used in profile + trace header)
+// with: (FieldType, ExtensionEmitter, description).
+//
+// Adding a new extension field:
+//   1. Add the row here with type + Emitter variant + description.
+//   2. Add the matching `Emitter::Ext*` variant + capture branch below.
+//   3. Add the accessor on `Cpu` if needed.
+//
+// Extension fields don't go through the standard `is_known_field` catalogue
+// — they're declared in the trace header at create time and resolved by
+// readers via `TraceHeader::resolve_field_type`.
+
+struct ExtensionDef {
+    name: &'static str,
+    field_type: FieldType,
+    description: &'static str,
+}
+
+static EXTENSION_DEFS: &[ExtensionDef] = &[
+    ExtensionDef {
+        name: "pending_vector_resolve",
+        field_type: FieldType::Bool,
+        description: "IE push bug flag — set during dispatch M3 vector resolution",
+    },
+    ExtensionDef {
+        name: "halt_bug",
+        field_type: FieldType::Bool,
+        description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
+    },
+];
+
+fn find_extension(name: &str) -> Option<&'static ExtensionDef> {
+    EXTENSION_DEFS.iter().find(|d| d.name == name)
+}
 
 /// Pre-resolved emitter — determines how to read a field value at capture time.
 enum Emitter {
@@ -34,6 +75,10 @@ enum Emitter {
     IrqPending,
     DispatchActive,
     IrqLatched,
+    // Extension fields — emulator-internal debug state declared via
+    // [fields.extensions.missingno] in the profile. See EXTENSION_DEFS.
+    ExtPendingVectorResolve,
+    ExtHaltBug,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
     // Memory read (profile [fields.memory])
@@ -194,6 +239,9 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         "irq_pending" => Emitter::IrqPending,
         "dispatch_active" => Emitter::DispatchActive,
         "irq_latched" => Emitter::IrqLatched,
+        // Extension fields
+        "pending_vector_resolve" => Emitter::ExtPendingVectorResolve,
+        "halt_bug" => Emitter::ExtHaltBug,
         // APU internal
         "ch1_active" => Emitter::Ch1Active,
         "ch1_freq_cnt" => Emitter::Ch1FreqCnt,
@@ -293,6 +341,37 @@ impl Tracer {
 
         let trigger = profile.trigger.clone();
 
+        // Merge profile.extensions["missingno"] into the field list and
+        // declare each extension's type metadata in the header. Unknown
+        // extension names (not in EXTENSION_DEFS) are an error — better
+        // to fail at create time than silently emit zeros.
+        let mut all_fields = profile.fields.clone();
+        let mut extension_fields = BTreeMap::new();
+        if let Some(ext_names) = profile.extensions.get("missingno") {
+            for name in ext_names {
+                let def = find_extension(name).ok_or_else(|| {
+                    gbtrace::Error::Profile(format!(
+                        "unknown missingno extension field '{name}' (not in EXTENSION_DEFS)"
+                    ))
+                })?;
+                if all_fields.iter().any(|f| f == name) {
+                    return Err(gbtrace::Error::Profile(format!(
+                        "extension field '{name}' duplicates a built-in field"
+                    )));
+                }
+                extension_fields.insert(
+                    name.clone(),
+                    ExtensionField {
+                        field_type: def.field_type,
+                        nullable: false,
+                        description: Some(def.description.into()),
+                        source: Some("missingno".into()),
+                    },
+                );
+                all_fields.push(name.clone());
+            }
+        }
+
         let header = TraceHeader {
             _header: true,
             format_version: "0.1.0".into(),
@@ -302,8 +381,9 @@ impl Tracer {
             model: "DMG-B".into(),
             boot_rom,
             profile: profile.name.clone(),
-            fields: profile.fields.clone(),
+            fields: all_fields,
             trigger: profile.trigger.clone(),
+            extension_fields,
             notes: String::new(),
         };
 
@@ -311,10 +391,10 @@ impl Tracer {
         let writer = GbtraceWriter::create(path, &header, &groups)?;
 
         // Resolve all fields to emitters at creation time
-        let mut emitters = Vec::with_capacity(profile.fields.len());
+        let mut emitters = Vec::with_capacity(header.fields.len());
         let mut needs_ppu_snapshot = false;
 
-        for (col, field) in profile.fields.iter().enumerate() {
+        for (col, field) in header.fields.iter().enumerate() {
             let emitter = resolve_emitter(field, &profile.memory);
             if matches!(emitter, Emitter::PpuInternal(_) | Emitter::PpuPixX) {
                 needs_ppu_snapshot = true;
@@ -401,6 +481,11 @@ impl Tracer {
                 Emitter::IrqPending => w.set_bool(col, gb.cpu().irq_pending()),
                 Emitter::DispatchActive => w.set_bool(col, gb.cpu().dispatch_active()),
                 Emitter::IrqLatched => w.set_bool(col, gb.cpu().irq_latched()),
+                // Extension fields
+                Emitter::ExtPendingVectorResolve => {
+                    w.set_bool(col, gb.cpu().pending_vector_resolve_flag())
+                }
+                Emitter::ExtHaltBug => w.set_bool(col, gb.cpu().halt_bug_flag()),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
                     w.set_u8(col, gb.peek(*addr));

@@ -394,6 +394,22 @@ impl Cpu {
         self.irq_latched.output()
     }
 
+    /// IE push bug flag — set during dispatch M3 vector resolution
+    /// (the spec's "vector resolved between M-cycles 3 and 4" window
+    /// where a write to IE from the pushed PC's high byte can change
+    /// which vector is dispatched). Exposed as a gbtrace extension
+    /// field for emulator-internal debugging.
+    pub fn pending_vector_resolve_flag(&self) -> bool {
+        self.pending_vector_resolve
+    }
+
+    /// HALT bug flag — set when HALT decoded with IME=0 and an
+    /// interrupt already pending. Causes the next opcode fetch to read
+    /// the byte twice. Exposed as a gbtrace extension field.
+    pub fn halt_bug_flag(&self) -> bool {
+        self.halt_bug
+    }
+
     /// Whether the CPU is currently halted.
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted
