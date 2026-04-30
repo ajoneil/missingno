@@ -1,6 +1,6 @@
 use core::fmt;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CarryFlag {
     Complement,
     Set,
