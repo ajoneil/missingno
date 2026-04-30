@@ -1,6 +1,6 @@
 use crate::common;
 
-const TIMEOUT_FRAMES: u32 = 10; // DEBUG
+const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
 
 fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {
     run_mooneye_screen_test_with_timeout(rom_path, reference_path, TIMEOUT_FRAMES);
