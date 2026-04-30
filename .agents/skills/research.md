@@ -94,6 +94,10 @@ If the PPU timing model spec (`receipts/ppu-overhaul/reference/ppu-timing-model-
 - Sets `Confidence: spec-gap` in the report
 - Lists any partial information you did find from lower-priority sources, clearly attributed
 
+**Before reporting `Confidence: spec-gap`, check `receipts/ppu-overhaul/spec-gaps/` for an existing doc covering this scenario.** Many gaps have already been raised and resolved out-of-band by the user (often via FST measurement that corroborates the spec's plain reading). If a doc exists with `Status: RESOLVED`, read it and either (a) cite the resolution and answer the caller's question from it, or (b) explain why this scenario isn't covered by the resolution. Don't generate a fresh `Confidence: spec-gap` when the answer is already on disk. Also check `receipts/ppu-overhaul/measurements/` for an existing FST extract for the test ROM in question.
+
+Similarly: **before claiming the spec contradicts an apparent measurement**, read the named spec section directly (not just adjacent paragraphs cited by another receipt) — §X.Y often has a sentence that pre-empts the apparent contradiction (e.g. "this case is covered analytically by §Z's invariance"). Subagent-cited spec line-numbers can elide the surrounding qualifiers; the dispatcher will rely on your verbatim quote.
+
 The caller decides whether to ask the user to run dmg-sim and update the spec, or to accept the partial answer.
 
 ### Quality over quantity
