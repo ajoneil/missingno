@@ -902,13 +902,13 @@ impl Cpu {
                             (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
                             (
-                                Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                                Some(self.enter_fetch_overlap(Commit::NoOperation)),
                                 false,
                             )
                         }
                     }
                     _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                 }
@@ -941,7 +941,7 @@ impl Cpu {
                         )
                     }
                     _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                 }
