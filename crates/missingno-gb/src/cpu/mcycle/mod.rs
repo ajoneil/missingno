@@ -1113,8 +1113,8 @@ impl Cpu {
                 })
             }
             4 => {
-                // ISR complete — transition to Fetch at the vector address.
-                Some(self.retire_edge(Commit::NoOperation, Phase::Empty))
+                // ISR complete — trailing fetch overlap reads the handler's first opcode.
+                Some(self.enter_fetch_overlap(Commit::NoOperation))
             }
             _ => unreachable!(),
         }
