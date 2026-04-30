@@ -374,6 +374,27 @@ impl Cpu {
         }
     }
 
+    /// `irq_pending` (PPU spec §13.2): combinational `(IF & IE) != 0`
+    /// across the 5 active IRQ bits. The level-sensitive input to both
+    /// the running-CPU dispatch chain and the `irq_latched` (g42) DFF.
+    pub fn irq_pending(&self) -> bool {
+        self.interrupt_pending
+    }
+
+    /// `dispatch_active` (PPU spec §13.2; cell `zacw`): captured running-CPU
+    /// dispatch decision DFF q. When true, the 5-M-cycle dispatch sequence
+    /// is in progress.
+    pub fn dispatch_active(&self) -> bool {
+        self.int_entry.output()
+    }
+
+    /// `irq_latched` (PPU spec §13.2; cell `yoii`, dmgcpu name `g42`):
+    /// CLK9-cadence captured `(IF & IE) != 0`. Drives the HALT-release
+    /// chain.
+    pub fn irq_latched(&self) -> bool {
+        self.g42.output()
+    }
+
     /// Whether the CPU is currently halted.
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted

@@ -30,6 +30,10 @@ enum Emitter {
     CpuOpState,
     CpuMcyclePhase,
     CpuHalted,
+    // CPU interrupt-dispatch DFFs (PPU spec §13.2)
+    IrqPending,
+    DispatchActive,
+    IrqLatched,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
     // Memory read (profile [fields.memory])
@@ -186,6 +190,10 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         "op_state" => Emitter::CpuOpState,
         "mcycle_phase" => Emitter::CpuMcyclePhase,
         "halted" => Emitter::CpuHalted,
+        // CPU interrupt-dispatch DFFs (PPU spec §13.2)
+        "irq_pending" => Emitter::IrqPending,
+        "dispatch_active" => Emitter::DispatchActive,
+        "irq_latched" => Emitter::IrqLatched,
         // APU internal
         "ch1_active" => Emitter::Ch1Active,
         "ch1_freq_cnt" => Emitter::Ch1FreqCnt,
@@ -389,6 +397,10 @@ impl Tracer {
                 Emitter::CpuOpState => w.set_u8(col, gb.cpu().op_state()),
                 Emitter::CpuMcyclePhase => w.set_u8(col, gb.cpu().mcycle_phase()),
                 Emitter::CpuHalted => w.set_bool(col, gb.cpu().is_halted()),
+                // CPU interrupt-dispatch DFFs (PPU spec §13.2)
+                Emitter::IrqPending => w.set_bool(col, gb.cpu().irq_pending()),
+                Emitter::DispatchActive => w.set_bool(col, gb.cpu().dispatch_active()),
+                Emitter::IrqLatched => w.set_bool(col, gb.cpu().irq_latched()),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
                     w.set_u8(col, gb.peek(*addr));
