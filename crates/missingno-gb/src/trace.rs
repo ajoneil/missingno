@@ -47,6 +47,46 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
         field_type: FieldType::Bool,
         description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
     },
+    ExtensionDef {
+        name: "ppu_wuvu",
+        field_type: FieldType::Bool,
+        description: "WUVU.Q — 2-dot half-mcycle divider",
+    },
+    ExtensionDef {
+        name: "ppu_vena",
+        field_type: FieldType::Bool,
+        description: "VENA.Q — 4-dot mcycle divider",
+    },
+    ExtensionDef {
+        name: "ppu_xupy",
+        field_type: FieldType::Bool,
+        description: "XUPY = NOT(WUVU.Q) — scan/OAM clock",
+    },
+    ExtensionDef {
+        name: "ppu_lx",
+        field_type: FieldType::UInt8,
+        description: "LX counter (0..113), M-cycle position on current line",
+    },
+    ExtensionDef {
+        name: "ppu_avap",
+        field_type: FieldType::Bool,
+        description: "AVAP fired this dot — Mode 2→3 transition pending",
+    },
+    ExtensionDef {
+        name: "ppu_besu",
+        field_type: FieldType::Bool,
+        description: "BESU — OAM scanning latch (drives ACYL)",
+    },
+    ExtensionDef {
+        name: "ppu_wodu",
+        field_type: FieldType::Bool,
+        description: "WODU = AND2(XUGU, !FEPO) — HBlank STAT contributor",
+    },
+    ExtensionDef {
+        name: "ppu_stat_line",
+        field_type: FieldType::Bool,
+        description: "LALU.q level — aggregated STAT-line input to SUKO edge detector",
+    },
 ];
 
 fn find_extension(name: &str) -> Option<&'static ExtensionDef> {
@@ -79,6 +119,14 @@ enum Emitter {
     // [fields.extensions.missingno] in the profile. See EXTENSION_DEFS.
     ExtPendingVectorResolve,
     ExtHaltBug,
+    ExtPpuWuvu,
+    ExtPpuVena,
+    ExtPpuXupy,
+    ExtPpuLx,
+    ExtPpuAvap,
+    ExtPpuBesu,
+    ExtPpuWodu,
+    ExtPpuStatLine,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
     // Memory read (profile [fields.memory])
@@ -242,6 +290,14 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         // Extension fields
         "pending_vector_resolve" => Emitter::ExtPendingVectorResolve,
         "halt_bug" => Emitter::ExtHaltBug,
+        "ppu_wuvu" => Emitter::ExtPpuWuvu,
+        "ppu_vena" => Emitter::ExtPpuVena,
+        "ppu_xupy" => Emitter::ExtPpuXupy,
+        "ppu_lx" => Emitter::ExtPpuLx,
+        "ppu_avap" => Emitter::ExtPpuAvap,
+        "ppu_besu" => Emitter::ExtPpuBesu,
+        "ppu_wodu" => Emitter::ExtPpuWodu,
+        "ppu_stat_line" => Emitter::ExtPpuStatLine,
         // APU internal
         "ch1_active" => Emitter::Ch1Active,
         "ch1_freq_cnt" => Emitter::Ch1FreqCnt,
@@ -486,6 +542,14 @@ impl Tracer {
                     w.set_bool(col, gb.cpu().pending_vector_resolve_flag())
                 }
                 Emitter::ExtHaltBug => w.set_bool(col, gb.cpu().halt_bug_flag()),
+                Emitter::ExtPpuWuvu => w.set_bool(col, gb.ppu().wuvu()),
+                Emitter::ExtPpuVena => w.set_bool(col, gb.ppu().vena()),
+                Emitter::ExtPpuXupy => w.set_bool(col, gb.ppu().xupy()),
+                Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
+                Emitter::ExtPpuAvap => w.set_bool(col, gb.ppu().avap()),
+                Emitter::ExtPpuBesu => w.set_bool(col, gb.ppu().besu()),
+                Emitter::ExtPpuWodu => w.set_bool(col, gb.ppu().wodu()),
+                Emitter::ExtPpuStatLine => w.set_bool(col, gb.ppu().stat_line()),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
                     w.set_u8(col, gb.peek(*addr));

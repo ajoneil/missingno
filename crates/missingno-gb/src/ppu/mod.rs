@@ -501,6 +501,43 @@ impl Ppu {
         }
     }
 
+    pub fn wuvu(&self) -> bool {
+        self.video.dividers.half_mcycle
+    }
+
+    pub fn vena(&self) -> bool {
+        self.video.dividers.mcycle()
+    }
+
+    pub fn xupy(&self) -> bool {
+        self.video.dividers.xupy()
+    }
+
+    pub fn besu(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|r| r.scan_besu())
+            .unwrap_or(false)
+    }
+
+    pub fn avap(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|r| r.scan_avap())
+            .unwrap_or(false)
+    }
+
+    pub fn wodu(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|r| r.wodu())
+            .unwrap_or(false)
+    }
+
+    pub fn stat_line(&self) -> bool {
+        self.stat_line_active()
+    }
+
     fn stat_line_active(&self) -> bool {
         let rendering = match &self.pixel_pipeline {
             Some(r) => r,

@@ -149,11 +149,15 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     let gbtrace_root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../receipts/resources/gbtrace");
     // Search for the profile in several locations:
+    // 0. tests/accuracy/profiles/<name>.toml (missingno-local; wins over gbtrace fallbacks)
     // 1. profiles/<name>.toml (standard profiles)
     // 2. test-suites/<name>/profile.toml (test-suite-specific)
     // 3. docs/tests/<name>/<name>.toml (legacy location)
     let profile_path = {
         let candidates = [
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/accuracy/profiles")
+                .join(format!("{profile_name}.toml")),
             gbtrace_root
                 .join("profiles")
                 .join(format!("{profile_name}.toml")),
