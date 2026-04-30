@@ -960,8 +960,12 @@ impl Cpu {
                     self.pending_jump_target = Some(*target);
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
+                    if let Some(target) = self.pending_jump_target.take() {
+                        self.bus_counter = target;
+                        self.pc = target;
+                    }
                     (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     )
                 }
