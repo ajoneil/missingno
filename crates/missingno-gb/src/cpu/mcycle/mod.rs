@@ -670,6 +670,9 @@ impl Cpu {
                     let n = *bytes_read;
                     let (instruction, phase, commit) = self.decode_retire(b, n);
                     self.instruction = instruction;
+                    if matches!(phase, Phase::Empty) {
+                        return (Some(self.enter_fetch_overlap(commit)), false);
+                    }
                     return (Some(self.retire_edge(commit, phase)), false);
                 }
 
