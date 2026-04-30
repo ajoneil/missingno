@@ -1,5 +1,5 @@
-use super::instructions::bit_shift::{Carry, Direction};
 use super::instructions::CarryFlag;
+use super::instructions::bit_shift::{Carry, Direction};
 use super::mcycle::AluOp;
 use super::registers::{Register8, Register16};
 
@@ -17,6 +17,7 @@ use super::registers::{Register8, Register16};
 /// the shape matches (e.g., `LD r,[HL]` final step emits `Commit::LoadR8`
 /// just as `LD r,d8` does).
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(super) enum Commit {
     // ── No register/flag change ──
     /// Retire edge with no architectural mutation. NOP, not-taken
@@ -29,24 +30,50 @@ pub(super) enum Commit {
     Invalid,
 
     // ── 8-bit register writes ──
-    LoadR8 { reg: Register8, value: u8 },
-    IncR8 { reg: Register8 },
-    DecR8 { reg: Register8 },
-    AluA { op: AluOp, value: u8 },
+    LoadR8 {
+        reg: Register8,
+        value: u8,
+    },
+    IncR8 {
+        reg: Register8,
+    },
+    DecR8 {
+        reg: Register8,
+    },
+    AluA {
+        op: AluOp,
+        value: u8,
+    },
 
     // ── 16-bit register writes ──
-    LoadR16 { reg: Register16, value: u16 },
-    Inc16 { reg: Register16 },
-    Dec16 { reg: Register16 },
-    AddHl { source: Register16 },
-    AddSpOffset { offset: i8 },
-    LdHlSpOffset { offset: i8 },
+    LoadR16 {
+        reg: Register16,
+        value: u16,
+    },
+    Inc16 {
+        reg: Register16,
+    },
+    Dec16 {
+        reg: Register16,
+    },
+    AddHl {
+        source: Register16,
+    },
+    AddSpOffset {
+        offset: i8,
+    },
+    LdHlSpOffset {
+        offset: i8,
+    },
 
     // ── Flags / accumulator bit ops ──
     Daa,
     CarryFlag(CarryFlag),
     ComplementA,
-    RotateAccumulator { direction: Direction, carry: Carry },
+    RotateAccumulator {
+        direction: Direction,
+        carry: Carry,
+    },
 
     // ── CB-prefixed register ops ──
     RotateReg {
@@ -58,19 +85,36 @@ pub(super) enum Commit {
         reg: Register8,
         direction: Direction,
     },
-    ShiftRightLogical { reg: Register8 },
-    SwapReg { reg: Register8 },
-    BitTest { bit: u8, reg: Register8 },
-    BitSet { bit: u8, reg: Register8 },
-    BitReset { bit: u8, reg: Register8 },
+    ShiftRightLogical {
+        reg: Register8,
+    },
+    SwapReg {
+        reg: Register8,
+    },
+    BitTest {
+        bit: u8,
+        reg: Register8,
+    },
+    BitSet {
+        bit: u8,
+        reg: Register8,
+    },
+    BitReset {
+        bit: u8,
+        reg: Register8,
+    },
 
     // ── Control flow (bus_counter writes) ──
     /// JP HL / JP nn (taken) / JR (taken) / RET — PC and bus_counter set
     /// to target.
-    JumpAbsolute { target: u16 },
+    JumpAbsolute {
+        target: u16,
+    },
     /// RETI — JumpAbsolute plus IME DFF ← Enabled, captured in parallel
     /// with the PC write on the same retire edge.
-    JumpReturnEnableInterrupts { target: u16 },
+    JumpReturnEnableInterrupts {
+        target: u16,
+    },
 
     // ── Interrupt control ──
     /// DI — IME DFF (zivv) ← Disabled. Hardware: zwuu clears the
