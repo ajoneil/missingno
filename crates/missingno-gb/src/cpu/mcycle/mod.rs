@@ -680,7 +680,7 @@ impl Cpu {
             }
 
             Phase::Empty => (
-                Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                Some(self.enter_fetch_overlap(Commit::NoOperation)),
                 false,
             ),
 
@@ -1234,6 +1234,22 @@ impl Cpu {
         // the oracle pattern.
         self.next_mcycle(0)
             .expect("next_mcycle must return Some after retire_edge")
+    }
+
+    /// Enter the trailing fetch-overlap M-cycle for the current
+    /// instruction. Caller must have set `bus_counter` to the address
+    /// the trailing fetch should read; for taken branches/calls this
+    /// means moving the jump target into `bus_counter` before calling.
+    /// Returns the `Read{bus_counter}` BusAction for FetchOverlap step 0.
+    fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
+        self.phase = CpuPhase::Execute {
+            phase: Phase::FetchOverlap { commit },
+            step: 0,
+        };
+        self.exec_step = 0;
+        BusAction::Read {
+            address: self.bus_counter,
+        }
     }
 
     /// HALT bug: HALT decoded with IME=0 and a pending IF resumes
