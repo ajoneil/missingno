@@ -974,7 +974,7 @@ impl Cpu {
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
                     return (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     );
                 }
@@ -1003,10 +1003,16 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
-                        false,
-                    ),
+                    _ => {
+                        if let Some(target) = self.pending_jump_target.take() {
+                            self.bus_counter = target;
+                            self.pc = target;
+                        }
+                        (
+                            Some(self.enter_fetch_overlap(Commit::NoOperation)),
+                            false,
+                        )
+                    }
                 }
             }
 
@@ -1016,7 +1022,7 @@ impl Cpu {
                 match current_step {
                     0 => (Some(BusAction::Internal { address: self.pc }), true),
                     1 if !taken => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                     1 => (Some(BusAction::Read { address: sp }), true),
@@ -1034,7 +1040,7 @@ impl Cpu {
                         (Some(BusAction::Internal { address: self.pc }), true)
                     }
                     _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                 }
