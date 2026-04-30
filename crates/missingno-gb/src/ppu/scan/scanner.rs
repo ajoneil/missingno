@@ -143,6 +143,13 @@ impl SpriteScanner {
         self.besu
     }
 
+    /// AVAP latched on this dot — pending Mode 2→3 transition reaction.
+    /// True between `advance_scan` (PPU clock rise) and `apply_pending_avap`
+    /// (PPU clock fall) within the same dot.
+    pub(in crate::ppu) fn avap_pending(&self) -> bool {
+        self.avap_pending
+    }
+
     /// STAT-readout mirror of BESU (see `besu_stat` field). Lags the
     /// internal `besu` by one PPU-clock-fall. Read only by
     /// `Ppu::mode()` for the T-cycle STAT sampling window.

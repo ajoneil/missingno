@@ -287,6 +287,14 @@ impl Rendering {
         self.scan.scan_counter_entry()
     }
 
+    pub(super) fn scan_besu(&self) -> bool {
+        self.scan.besu()
+    }
+
+    pub(super) fn scan_avap(&self) -> bool {
+        self.scan.avap_pending()
+    }
+
     /// Snapshot of the sprite store for debugging.
     pub(super) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
         let sprites = &self.scan.sprites_ref();

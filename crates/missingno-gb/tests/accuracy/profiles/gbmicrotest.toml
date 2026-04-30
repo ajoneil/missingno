@@ -1,0 +1,22 @@
+[profile]
+name = "gbmicrotest"
+description = "Full dump for gbmicrotest cycle-accuracy tests (missingno-side; adds internal-state extensions)."
+trigger = "tcycle"
+
+[fields]
+cpu = "registers"
+ppu = "all"
+timer = true
+interrupt = true
+serial = true
+
+[fields.memory]
+test_result = "FF80"
+test_expect = "FF81"
+test_pass   = "FF82"
+
+[fields.extensions]
+missingno = [
+  "ppu_wuvu", "ppu_vena", "ppu_xupy", "ppu_lx",
+  "ppu_avap", "ppu_besu", "ppu_wodu", "ppu_stat_line",
+]
