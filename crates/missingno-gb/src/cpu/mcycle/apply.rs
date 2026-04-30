@@ -172,8 +172,8 @@ impl Cpu {
                 cpu.pc = target;
             }
             Commit::JumpReturnEnableInterrupts { target } => {
-                // RETI: zbpp sets ime_state during M3, IME captures within
-                // the multi-M-cycle pop. RETI is not in the int_entry
+                // RETI: zbpp sets ime_pending during M3, IME captures within
+                // the multi-M-cycle pop. RETI is not in the dispatch_active
                 // chain's EI/DI gate.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = target;
@@ -181,12 +181,12 @@ impl Cpu {
             }
 
             Commit::DisableInterrupts => {
-                // DI: zwuu clears ime_state combinationally; IME DFF
+                // DI: zwuu clears ime_pending combinationally; IME DFF
                 // captures Disabled mid-M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
             }
             Commit::EnableInterrupts => {
-                // EI: zbpp sets ime_state via the zjje SR latch; IME DFF
+                // EI: zbpp sets ime_pending via the zjje SR latch; IME DFF
                 // captures Enabled mid-M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
             }
@@ -431,10 +431,10 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
-                // RETI's terminal pop: zbpp set ime_state during M3, IME
+                // RETI's terminal pop: zbpp set ime_pending during M3, IME
                 // is stable Enabled by this edge. Not in EI/DI's
-                // int_entry-chain gate, so dispatch can fire on the
-                // following retire if int_pending=1.
+                // dispatch_active-chain gate, so dispatch can fire on the
+                // following retire if irq_pending=1.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;

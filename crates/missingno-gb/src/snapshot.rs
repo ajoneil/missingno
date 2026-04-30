@@ -87,7 +87,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         },
         // Legacy gbtrace field. The emulator no longer models EI as a
         // multi-stage pipeline — IME enables synchronously inside EI's
-        // commit, and the "1-instruction delay" lives in the int_entry
+        // commit, and the "1-instruction delay" lives in the dispatch_active
         // chain. No persistent EI-delay state to capture here.
         ei_delay: 0,
         halt_bug: cpu.halt_bug,

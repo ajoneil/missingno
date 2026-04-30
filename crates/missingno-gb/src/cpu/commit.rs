@@ -9,8 +9,8 @@ use super::registers::{Register8, Register16};
 ///
 /// Produced by `decode` for single-M-cycle instructions (Phase::Empty arms)
 /// or by the terminal step of a multi-M-cycle Phase; consumed by
-/// `Cpu::commit`, which reads pre-edge state (via `ime.output()` for int_take)
-/// before dispatching the variant-specific mutation.
+/// `Cpu::commit`, which reads pre-edge state (via `ime.output()` for
+/// `dispatch_trigger`) before dispatching the variant-specific mutation.
 ///
 /// Each variant corresponds to a specific DFF-capture pattern. Variants for
 /// multi-M-cycle terminal-step commits reuse single-M-cycle variants where
@@ -74,13 +74,13 @@ pub(super) enum Commit {
 
     // ── Interrupt control ──
     /// DI — IME DFF (zivv) ← Disabled. Hardware: zwuu clears the
-    /// ime_state SR latch combinationally during DI's data_phase. The
-    /// int_entry chain (zaij/zkog) is gated this M-cycle.
+    /// ime_pending (zjje) SR latch combinationally during DI's data_phase.
+    /// The dispatch_active chain (zaij/zkog) is gated this M-cycle.
     DisableInterrupts,
-    /// EI — IME DFF (zivv) ← Enabled. Hardware: zbpp sets the ime_state
-    /// SR latch combinationally during EI's data_phase. The int_entry
-    /// chain (zaij/zkog) is gated this M-cycle — source of the
-    /// "1-instruction delay" before dispatch.
+    /// EI — IME DFF (zivv) ← Enabled. Hardware: zbpp sets the ime_pending
+    /// (zjje) SR latch combinationally during EI's data_phase. The
+    /// dispatch_active chain (zaij/zkog) is gated this M-cycle — source
+    /// of the "1-instruction delay" before dispatch.
     EnableInterrupts,
 
     // ── Halt / stop / low-power entry ──

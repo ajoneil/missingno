@@ -17,7 +17,8 @@ pub enum InterruptMasterEnable {
 }
 
 /// CPU execution state w.r.t. the HALT instruction. Halt-release fires
-/// combinationally via g43 → g49 once g42 captures `(IF & IE) != 0`.
+/// combinationally via g43 → g49 once irq_latched (yoii) captures
+/// `(IF & IE) != 0`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -63,7 +64,7 @@ pub struct Cpu {
     /// their commit; the underlying SR-latch chain (zjje, zrsy) is
     /// combinational, so by the retire edge the IME DFF has already
     /// captured the new value. The "1-instruction delay" sits in the
-    /// int_entry chain (zaij/zkog gated against EI/DI data_phase),
+    /// dispatch_active chain (zaij/zkog gated against EI/DI data_phase),
     /// not here.
     pub ime: Dff<InterruptMasterEnable>,
     pub halt_state: HaltState,
@@ -104,23 +105,23 @@ pub struct Cpu {
     /// step_instruction().
     pub(super) boundary_flag: bool,
     /// Whether an interrupt is currently pending (IF & IE != 0).
-    /// Combinational input to the g42 DFF; also consumed directly by the
-    /// HALT bug check.
-    pub(super) interrupt_pending: bool,
-    /// g42 (yoii) flip-flop. CLK9-cadence; captures `interrupt_pending`
+    /// Combinational input to the irq_latched (yoii) DFF; also consumed
+    /// directly by the HALT bug check.
+    pub(super) irq_pending: bool,
+    /// irq_latched (yoii) flip-flop. CLK9-cadence; captures `irq_pending`
     /// once per M-cycle on the master-clock rising edge. Drives the HALT
-    /// release chain (g42 → g43 → g49) and produces the per-source
+    /// release chain (yoii → g43 → g49) and produces the per-source
     /// HALT-wake timing differential (timer vs PPU IFs).
-    pub(super) g42: Dff<bool>,
-    /// int_entry (zacw) flip-flop for the running-CPU dispatch-ready
-    /// chain. Captures `interrupt_pending` once per M-cycle on the
+    pub(super) irq_latched: Dff<bool>,
+    /// dispatch_active (zacw) flip-flop for the running-CPU dispatch-ready
+    /// chain. Captures `irq_pending` once per M-cycle on the
     /// master-clock rising edge — single DFF stage between IF assertion
     /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
     /// Captured inside `retire_edge` on the dispatching CLK9↑; its
     /// freshly-resolved `q` combinationally selects between the
     /// register-file write-back path and the dispatch path on the same
     /// edge.
-    pub(super) int_entry: Dff<bool>,
+    pub(super) dispatch_active: Dff<bool>,
 }
 
 impl Cpu {
@@ -178,9 +179,9 @@ impl Cpu {
             pending_vector_resolve: false,
             boundary_flag: true, // Start at an instruction boundary
 
-            interrupt_pending: false,
-            g42: Dff::new(false),
-            int_entry: Dff::new(false),
+            irq_pending: false,
+            irq_latched: Dff::new(false),
+            dispatch_active: Dff::new(false),
         }
     }
 
@@ -214,9 +215,9 @@ impl Cpu {
             pending_vector_resolve: false,
             boundary_flag: true,
 
-            interrupt_pending: false,
-            g42: Dff::new(false),
-            int_entry: Dff::new(false),
+            irq_pending: false,
+            irq_latched: Dff::new(false),
+            dispatch_active: Dff::new(false),
         }
     }
 
@@ -262,9 +263,9 @@ impl Cpu {
             pending_vector_resolve: false,
             boundary_flag: true,
 
-            interrupt_pending: false,
-            g42: Dff::new(false),
-            int_entry: Dff::new(false),
+            irq_pending: false,
+            irq_latched: Dff::new(false),
+            dispatch_active: Dff::new(false),
         }
     }
 
@@ -374,25 +375,23 @@ impl Cpu {
         }
     }
 
-    /// `irq_pending` (PPU spec §13.2): combinational `(IF & IE) != 0`
-    /// across the 5 active IRQ bits. The level-sensitive input to both
-    /// the running-CPU dispatch chain and the `irq_latched` (g42) DFF.
+    /// Combinational `(IF & IE) != 0` across the 5 active IRQ bits.
+    /// Level-sensitive input to both the running-CPU dispatch chain and
+    /// the `irq_latched` (yoii) DFF.
     pub fn irq_pending(&self) -> bool {
-        self.interrupt_pending
+        self.irq_pending
     }
 
-    /// `dispatch_active` (PPU spec §13.2; cell `zacw`): captured running-CPU
-    /// dispatch decision DFF q. When true, the 5-M-cycle dispatch sequence
-    /// is in progress.
+    /// Captured running-CPU dispatch decision (zacw) DFF q. When true,
+    /// the 5-M-cycle dispatch sequence is in progress.
     pub fn dispatch_active(&self) -> bool {
-        self.int_entry.output()
+        self.dispatch_active.output()
     }
 
-    /// `irq_latched` (PPU spec §13.2; cell `yoii`, dmgcpu name `g42`):
-    /// CLK9-cadence captured `(IF & IE) != 0`. Drives the HALT-release
-    /// chain.
+    /// CLK9-cadence captured `(IF & IE) != 0` (yoii). Drives the
+    /// HALT-release chain.
     pub fn irq_latched(&self) -> bool {
-        self.g42.output()
+        self.irq_latched.output()
     }
 
     /// Whether the CPU is currently halted.

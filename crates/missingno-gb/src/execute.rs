@@ -161,24 +161,25 @@ impl GameBoy {
     /// Rising edge: advance CPU state machine, capture bus reads,
     /// tick timer and PPU, fire OAM bugs.
     ///
-    /// At each M-cycle boundary, `g42` (yoii) captures `interrupt_pending`,
-    /// driving the HALT-release chain (g42 → ykua → halt↓). The
-    /// dispatching CLK9↑ — where zacw and the write-back DFFs share the
-    /// same capture edge — happens inside `retire_edge()`, called via
-    /// `next_mcycle` → `mcycle_*`; the sequencer combinationally selects
-    /// fetch vs dispatch from `int_entry.q` on that same edge. On the
-    /// HALT-wake path, `tick_int_entry` captures int_entry on the closing
-    /// CLK9↑ of `Halted(WakeIntake)` so the next M-cycle's selector
-    /// resolves dispatch vs fetch from the freshly-captured `int_entry.q`.
+    /// At each M-cycle boundary, `irq_latched` (yoii) captures
+    /// `irq_pending`, driving the HALT-release chain (yoii → ykua →
+    /// halt↓). The dispatching CLK9↑ — where zacw and the write-back
+    /// DFFs share the same capture edge — happens inside `retire_edge()`,
+    /// called via `next_mcycle` → `mcycle_*`; the sequencer combinationally
+    /// selects fetch vs dispatch from `dispatch_active.q` on that same
+    /// edge. On the HALT-wake path, `tick_dispatch_active` captures
+    /// dispatch_active on the closing CLK9↑ of `Halted(WakeIntake)` so
+    /// the next M-cycle's selector resolves dispatch vs fetch from the
+    /// freshly-captured `dispatch_active.q`.
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = !self.cpu.mcycle_active;
 
-        // ── M-cycle boundary: g42 capture, then PPU + interrupt updates ──
+        // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
-            self.cpu.tick_g42(); // samples pre-edge interrupt_pending
-            self.cpu.tick_int_entry(); // gated on Halted(WakeIntake)
+            self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
+            self.cpu.tick_dispatch_active(); // gated on Halted(WakeIntake)
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -300,8 +301,8 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Capture interrupt state for non-boundary dots. g42 ticks
-            // in the matching fall(), capturing this dot's interrupt_pending
+            // Capture interrupt state for non-boundary dots. irq_latched
+            // ticks in the matching fall(), capturing this dot's irq_pending
             // for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
@@ -392,8 +393,8 @@ impl GameBoy {
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle. Run before update_interrupt_state
             // so a serial-complete IF is visible to the same-fall capture and
-            // the next rise's g42 sees it — keeping serial in the mid-M-cycle
-            // source class alongside VBlank/STAT.
+            // the next rise's irq_latched sees it — keeping serial in the
+            // mid-M-cycle source class alongside VBlank/STAT.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
                 self.interrupts.request(interrupt);
@@ -440,7 +441,7 @@ impl GameBoy {
         // Capture interrupt state AFTER bus writes and M-cycle subsystems so
         // IF updates from a CPU write to 0xFF0F, STAT edges from PPU register
         // writes, and serial completion are all visible on the same fall.
-        // g42 ticks on the next rise to sample interrupt_pending into the DFF.
+        // irq_latched ticks on the next rise to sample irq_pending into the DFF.
         {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
