@@ -352,8 +352,12 @@ pub fn run_until_undefined_opcode(run: &mut TestRun, timeout_frames: u32) -> boo
 /// Check if the CPU is stuck in a known completion loop.
 fn is_infinite_loop(gb: &GameBoy) -> bool {
     let pc = gb.cpu().bus_counter;
-    // JR -2 (0x18 0xFE) — standard completion loop
+    // JR -2 (0x18 0xFE) self-loop. PC may be sampled at the opcode
+    // byte or at the offset byte mid-fetch; check both.
     if gb.read(pc) == 0x18 && gb.read(pc.wrapping_add(1)) == 0xFE {
+        return true;
+    }
+    if gb.read(pc.wrapping_sub(1)) == 0x18 && gb.read(pc) == 0xFE {
         return true;
     }
     // mooneye quit_inline: LD B,B; JR -2.

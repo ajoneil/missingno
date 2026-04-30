@@ -787,7 +787,7 @@ impl Cpu {
                 _ => {
                     Self::apply_read_action(self, action, read_value);
                     (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     )
                 }
@@ -808,7 +808,7 @@ impl Cpu {
                         )
                     }
                     _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                 }
@@ -833,7 +833,7 @@ impl Cpu {
                     )
                 }
                 _ => (
-                    Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
                     false,
                 ),
             },
@@ -856,7 +856,7 @@ impl Cpu {
                         true,
                     ),
                     _ => (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     ),
                 }
@@ -867,7 +867,7 @@ impl Cpu {
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
                     (
-                        Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
                         false,
                     )
                 }
@@ -876,7 +876,7 @@ impl Cpu {
             Phase::InternalOamBug { address } => match current_step {
                 0 => (Some(BusAction::InternalOamBug { address: *address }), true),
                 _ => (
-                    Some(self.retire_edge(Commit::NoOperation, Phase::Empty)),
+                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
                     false,
                 ),
             },
@@ -1242,11 +1242,14 @@ impl Cpu {
     /// means moving the jump target into `bus_counter` before calling.
     /// Returns the `Read{bus_counter}` BusAction for FetchOverlap step 0.
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
+        // Step 0's work (emit Read) is performed inline by the returned
+        // BusAction; advance step so the next mcycle_execute lands at
+        // the FetchOverlap close branch.
         self.phase = CpuPhase::Execute {
             phase: Phase::FetchOverlap { commit },
-            step: 0,
+            step: 1,
         };
-        self.exec_step = 0;
+        self.exec_step = 1;
         BusAction::Read {
             address: self.bus_counter,
         }
