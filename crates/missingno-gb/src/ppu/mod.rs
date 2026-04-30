@@ -623,19 +623,21 @@ impl Ppu {
 
                 if !vena_was && vena_now {
                     // VENA rising = SONO rising = TALU falling. RUTU
-                    // captures SANU on SONO rising; PALY recomputes
-                    // against the freshly-advanced LY and ROPO latches
-                    // it.
+                    // captures SANU on SONO rising; LY advances/wraps
+                    // on the RUTU pulse.
                     scanline_boundary = self.video.on_lx_counter_clock_fall();
                     self.video.update_ly_comparison();
-                    self.video.stat.latch_comparison();
                 }
 
                 if vena_was && !vena_now {
-                    // VENA falling = TALU rising = LX counter clock
-                    // rising edge. NYPE captures and LX advances; PALY
-                    // recomputes against any LY change driven through
-                    // the rise dispatch.
+                    // VENA falling = TALU rising. ROPO captures PALY
+                    // before MYTA fires — at LY=153 the MYTA→LAMA→LY
+                    // DFF reset race favours ROPO (4-stage capture vs
+                    // 6-stage MYTA propagation per spec §8.7), so it
+                    // captures pre-reset PALY=(153==LYC). Then NYPE
+                    // captures (POPU/MYTA) and LX advances.
+                    self.video.update_ly_comparison();
+                    self.video.stat.latch_comparison();
                     self.video.on_lx_counter_clock_rise();
                     self.video.update_ly_comparison();
                 }
