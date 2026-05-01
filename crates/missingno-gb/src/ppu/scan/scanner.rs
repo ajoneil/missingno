@@ -4,7 +4,7 @@
 //! netlist, msinger/dmg-schematics) appear in doc comments for
 //! traceability to the hardware signal chain.
 
-use crate::ppu::{PipelineRegisters, memory::Oam};
+use crate::ppu::{memory::Oam, PipelineRegisters};
 
 use super::oam_scan::{ScanCounter, SpriteStore};
 
@@ -37,10 +37,6 @@ pub(in crate::ppu) struct SpriteScanner {
     /// blocks CATU). Set to true by enable_catu() after the first scanline
     /// completes. Persists across scanline resets.
     catu_enabled: bool,
-    /// Set by `start_scanning` to fold the post-XODO↓ first-XUPY phase
-    /// offset (WUVU/VENA/TALU/XUPY divider ramp) onto the same fall.
-    /// Consumed by the first `advance_scan` after start.
-    first_line_xupy_shortcut: bool,
     /// CATU_LINE_ENDp DFF17: clocked by XUPY rising, D = ABOV_LINE_ENDp.
     /// Single-stage: boundary sets `rutu` → next XUPY rise CATU fires.
     catu: bool,
@@ -88,7 +84,6 @@ impl SpriteScanner {
             besu: false,
             besu_stat: false,
             catu_enabled: false,
-            first_line_xupy_shortcut: false,
             catu: false,
             rutu_pending: false,
             rutu: false,
@@ -111,7 +106,6 @@ impl SpriteScanner {
             besu: false,
             besu_stat: false,
             catu_enabled: true,
-            first_line_xupy_shortcut: false,
             catu: false,
             rutu_pending: false,
             rutu: false,
@@ -126,11 +120,8 @@ impl SpriteScanner {
     /// deassertion releases the scan counter and comparison logic
     /// simultaneously — there is no separate CATU "start scanning" event
     /// on the first line. The counter is already at 0 from async reset.
-    /// Arms `first_line_xupy_shortcut` to absorb the divider ramp's
-    /// sub-dot first-XUPY phase offset.
     pub(in crate::ppu) fn start_scanning(&mut self) {
         self.scanning = true;
-        self.first_line_xupy_shortcut = true;
     }
 
     /// Whether the scan machinery is currently active.
@@ -309,11 +300,6 @@ impl SpriteScanner {
         regs: &PipelineRegisters,
         oam: &Oam,
     ) {
-        // First post-XODO↓ tick: divider-ramp shortcut absorbs the
-        // sub-dot first-XUPY phase offset.
-        let xupy_rising = xupy_rising || self.first_line_xupy_shortcut;
-        self.first_line_xupy_shortcut = false;
-
         // OAM comparison. One XUPY after CATU's same-edge capture+reset,
         // the counter ticks 0 → 1 below; subsequent edges walk 1..39.
         if self.scanning && xupy_rising {
@@ -371,9 +357,6 @@ impl SpriteScanner {
         self.scan_done_prev = false;
         self.avap_pending = false;
         self.catu = false;
-        // Defensive: the shortcut is consumed on the first advance_scan
-        // after start, so it should already be false here.
-        self.first_line_xupy_shortcut = false;
         // RUTU_LINE_ENDp fires at the scanline boundary. Writing
         // `rutu_pending` (not `rutu`) keeps the latch input separate
         // from its output, so `tick_catu` at this fall reads the

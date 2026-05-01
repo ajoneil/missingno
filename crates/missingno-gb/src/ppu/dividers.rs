@@ -63,17 +63,13 @@ impl Dividers {
         self.mcycle
     }
 
-    /// XUPY = complement of WUVU's stored state (`half_mcycle`). XUPY is
-    /// the scan-counter / OAM-pipeline clock per §1.2/§1.3; consumers
+    /// XUPY = NOT(wuvu_n) = WUVU.Q (per spec §4.5). XUPY is the
+    /// scan-counter / OAM-pipeline clock per §1.2/§1.3; consumers
     /// read it as the signal whose rising edge captures BYBA, CATU, etc.
-    ///
-    /// Polarity convention: the emulator's `half_mcycle` models WUVU's
-    /// stored state in an internally-consistent convention; `xupy()`
-    /// returns its complement. See commit `1cc599c` for the polarity
-    /// fix that established the current convention. Gate name XUPY is
-    /// preserved at external-reference sites.
+    /// XUPY tracks WUVU.Q in phase: at XODO↓, WUVU.Q=0 and XUPY=0;
+    /// first XUPY↑ coincides with first WUVU.Q↑.
     pub(in crate::ppu) fn xupy(&self) -> bool {
-        !self.half_mcycle
+        self.half_mcycle
     }
 
     /// VID_RST: dividers reset to their hardware reset states. WUVU.Q=0,
