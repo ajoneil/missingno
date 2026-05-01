@@ -1,12 +1,12 @@
 use super::super::{
-    Cpu,
     commit::Commit,
     flags::Flags,
     instructions::{
-        Address, Arithmetic, Arithmetic8, Arithmetic16, BitFlag, BitShift, Bitwise, Jump, Load,
-        Source8, Source16, Stack, Target8, Target16, jump,
+        jump, Address, Arithmetic, Arithmetic16, Arithmetic8, BitFlag, BitShift, Bitwise, Jump,
+        Load, Source16, Source8, Stack, Target16, Target8,
     },
     registers::Register16,
+    Cpu,
 };
 use super::{AluOp, Phase, PopAction, ReadAction, RmwOp};
 
@@ -160,9 +160,7 @@ impl Cpu {
         match arith {
             Arithmetic::Arithmetic8(a8) => match a8 {
                 Arithmetic8::Increment(target) => match target {
-                    Target8::Register(reg) => {
-                        (Phase::Empty, Commit::IncR8 { reg: *reg })
-                    }
+                    Target8::Register(reg) => (Phase::Empty, Commit::IncR8 { reg: *reg }),
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         (
@@ -175,9 +173,7 @@ impl Cpu {
                     }
                 },
                 Arithmetic8::Decrement(target) => match target {
-                    Target8::Register(reg) => {
-                        (Phase::Empty, Commit::DecR8 { reg: *reg })
-                    }
+                    Target8::Register(reg) => (Phase::Empty, Commit::DecR8 { reg: *reg }),
                     Target8::Memory(address) => {
                         let addr = Self::resolve_address(cpu, address);
                         (
@@ -215,18 +211,12 @@ impl Cpu {
                     // shows the OLD address on the bus).
                     let old = cpu.get_register16(*reg);
                     cpu.set_register16(*reg, old.wrapping_add(1));
-                    (
-                        Phase::InternalOamBug { address: old },
-                        Commit::NoOperation,
-                    )
+                    (Phase::InternalOamBug { address: old }, Commit::NoOperation)
                 }
                 Arithmetic16::Decrement(reg) => {
                     let old = cpu.get_register16(*reg);
                     cpu.set_register16(*reg, old.wrapping_sub(1));
-                    (
-                        Phase::InternalOamBug { address: old },
-                        Commit::NoOperation,
-                    )
+                    (Phase::InternalOamBug { address: old }, Commit::NoOperation)
                 }
                 Arithmetic16::AddHl(reg) => {
                     // Decode-edge HL + flags write (multi-cycle).
@@ -248,9 +238,7 @@ impl Cpu {
 
     fn build_alu_source(cpu: &mut Cpu, source: &Source8, op: AluOp) -> (Phase, Commit) {
         match source {
-            Source8::Constant(val) => {
-                (Phase::Empty, Commit::AluA { op, value: *val })
-            }
+            Source8::Constant(val) => (Phase::Empty, Commit::AluA { op, value: *val }),
             Source8::Register(reg) => {
                 let value = cpu.get_register8(*reg);
                 (Phase::Empty, Commit::AluA { op, value })
@@ -326,10 +314,7 @@ impl Cpu {
                 }
             },
             BitShift::ShiftRightLogical(target) => match target {
-                Target8::Register(reg) => (
-                    Phase::Empty,
-                    Commit::ShiftRightLogical { reg: *reg },
-                ),
+                Target8::Register(reg) => (Phase::Empty, Commit::ShiftRightLogical { reg: *reg }),
                 Target8::Memory(address) => {
                     let addr = Self::resolve_address(cpu, address);
                     (
@@ -427,14 +412,16 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
-                    // JP HL: no internal M-cycle. bus_counter redirects
-                    // to HL at retire; pc updates naturally when the
-                    // next fetch step 1 fires.
+                    // JP HL: no internal M-cycle. The bus address driver
+                    // mux selects HL combinationally on IR for the next
+                    // fetch cell — modelled by writing bus_counter at
+                    // decode time so the trailing FetchOverlap's Read
+                    // uses HL.
                     if taken {
-                        (Phase::Empty, Commit::JumpAbsolute { target: address })
-                    } else {
-                        (Phase::Empty, Commit::NoOperation)
+                        cpu.bus_counter = address;
+                        cpu.pc = cpu.bus_counter;
                     }
+                    (Phase::Empty, Commit::NoOperation)
                 } else if is_relative && taken {
                     // JR taken: decode-edge bus_counter + pc write
                     // (multi-cycle — Phase::InternalOamBug shows target

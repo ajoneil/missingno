@@ -1,10 +1,10 @@
 use super::super::{
-    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
     flags::Flags,
     instructions::bit_shift::{Carry, Direction},
     instructions::CarryFlag,
     registers::Register16,
+    Cpu, HaltState, InterruptMasterEnable,
 };
 use super::{AluOp, PopAction, ReadAction, RmwOp};
 
@@ -107,7 +107,11 @@ impl Cpu {
                 };
                 cpu.a = new_value;
             }
-            Commit::RotateReg { reg, direction, carry } => {
+            Commit::RotateReg {
+                reg,
+                direction,
+                carry,
+            } => {
                 let val = cpu.get_register8(reg);
                 let (new_value, new_carry) = Self::rotate(cpu, val, &direction, &carry);
                 cpu.flags.set(Flags::ZERO, new_value == 0);
@@ -165,19 +169,6 @@ impl Cpu {
             Commit::BitReset { bit, reg } => {
                 let val = cpu.get_register8(reg);
                 cpu.set_register8(reg, val & !(1 << bit));
-            }
-
-            Commit::JumpAbsolute { target } => {
-                cpu.bus_counter = target;
-                cpu.pc = target;
-            }
-            Commit::JumpReturnEnableInterrupts { target } => {
-                // RETI: zbpp sets ime_pending during M3, IME captures within
-                // the multi-M-cycle pop. RETI is not in the dispatch_active
-                // chain's EI/DI gate.
-                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
-                cpu.bus_counter = target;
-                cpu.pc = target;
             }
 
             Commit::DisableInterrupts => {

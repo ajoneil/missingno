@@ -1,10 +1,10 @@
 use super::{
-    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
+    instructions::bit_shift::{Carry, Direction},
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
-    instructions::bit_shift::{Carry, Direction},
-    registers::{Register8, Register16},
+    registers::{Register16, Register8},
+    Cpu, HaltState, InterruptMasterEnable,
 };
 
 mod apply;
@@ -253,11 +253,14 @@ pub(crate) enum Phase {
     },
 
     /// Trailing fetch-overlap M-cycle: drives the next instruction's
-    /// M1 fetch read on the bus. Retire work (apply_commit, dispatch
-    /// capture, phase routing) lands at the OPENING edge — performed
-    /// by enter_fetch_overlap before this M-cycle starts. The closing
-    /// edge decodes the next opcode and transitions.
-    FetchOverlap,
+    /// M1 fetch read on the bus. The carried `commit` is the in-flight
+    /// instruction's writeback — applied at the CLOSING edge so the
+    /// register-file DFFs capture on the same master-clock edge that
+    /// `zacw` (dispatch_active) captures on. Phase-changers (EnterHalt
+    /// / EnterStop / Invalid) never land here: `enter_fetch_overlap`
+    /// peels them off at OPEN so halt/lockup routing fires before the
+    /// next cell.
+    FetchOverlap { commit: Commit },
 
     /// No post-fetch M-cycles (NOP, LD r,r, ALU A,r, HALT, STOP, etc.).
     Empty,
@@ -674,14 +677,20 @@ impl Cpu {
             }
 
             Phase::Empty => {
-                unreachable!("Phase::Empty routes through enter_fetch_overlap; never enters Execute")
+                unreachable!(
+                    "Phase::Empty routes through enter_fetch_overlap; never enters Execute"
+                )
             }
 
-            Phase::FetchOverlap => {
+            Phase::FetchOverlap { commit } => {
                 debug_assert!(
                     current_step == 1,
                     "FetchOverlap step 0 is performed inline by enter_fetch_overlap"
                 );
+
+                let carried = std::mem::replace(commit, Commit::NoOperation);
+                Self::apply_commit(self, carried);
+
                 let opcode = read_value;
                 let fetch_addr = match &self.current_action {
                     Some(BusAction::Read { address }) => *address,
@@ -729,10 +738,7 @@ impl Cpu {
                 0 => (Some(BusAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, read_value);
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             },
 
@@ -750,10 +756,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -775,10 +778,7 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (
-                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                    false,
-                ),
+                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -798,10 +798,7 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -809,19 +806,13 @@ impl Cpu {
                 if current_step < *count {
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
 
             Phase::InternalOamBug { address } => match current_step {
                 0 => (Some(BusAction::InternalOamBug { address: *address }), true),
-                _ => (
-                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                    false,
-                ),
+                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
             },
 
             Phase::Pop { sp, action } => {
@@ -844,16 +835,10 @@ impl Cpu {
                         if has_trailing {
                             (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
-                            (
-                                Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                                false,
-                            )
+                            (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                         }
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -883,10 +868,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -904,19 +886,13 @@ impl Cpu {
                         self.bus_counter = target;
                         self.pc = target;
                     }
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    );
+                    return (Some(self.enter_fetch_overlap(Commit::NoOperation)), false);
                 }
                 let sp = *sp;
                 match current_step {
@@ -948,10 +924,7 @@ impl Cpu {
                             self.bus_counter = target;
                             self.pc = target;
                         }
-                        (
-                            Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                            false,
-                        )
+                        (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                     }
                 }
             }
@@ -961,10 +934,7 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(BusAction::Internal { address: self.pc }), true),
-                    1 if !taken => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                     1 => (Some(BusAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = read_value;
@@ -979,10 +949,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
                         (Some(BusAction::Internal { address: self.pc }), true)
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
         }
@@ -1105,13 +1072,12 @@ impl Cpu {
         (instruction, phase, commit)
     }
 
-    /// Enter the trailing fetch-overlap M-cycle. Performs all retire
-    /// work at the opening edge: dispatch_active capture, apply_commit,
-    /// halt routing, pc/bus_counter mutation, boundary flag. Then
-    /// transitions to FetchOverlap step=1 (close handles next-opcode
-    /// decode). Returns the BusAction for the FetchOverlap M-cycle —
-    /// either `Read{bus_counter}` for normal retires or routes to
-    /// InterruptDispatch / Halted(Spin) for dispatch / halt-entry.
+    /// Enter the trailing fetch-overlap M-cycle at the opening edge.
+    /// Captures `zacw` (dispatch_active), routes early to dispatch /
+    /// halt when needed. Phase-changers (EnterHalt/EnterStop/Invalid)
+    /// apply here so halt routing sees them; late-writeback commits
+    /// are carried on `Phase::FetchOverlap { commit }` and applied at
+    /// the closing edge alongside the next opcode capture.
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
         let dispatch_active_gated =
             matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
@@ -1120,8 +1086,15 @@ impl Cpu {
             .write(!dispatch_active_gated && trigger);
         self.dispatch_active.tick();
 
-        Self::apply_commit(self, commit);
-        self.check_halt_bug();
+        let deferred = match commit {
+            Commit::EnterHalt | Commit::EnterStop | Commit::Invalid => {
+                Self::apply_commit(self, commit);
+                self.check_halt_bug();
+                Commit::NoOperation
+            }
+            other => other,
+        };
+
         if let Some(target) = self.pending_jump_target.take() {
             self.bus_counter = target;
         }
@@ -1156,7 +1129,7 @@ impl Cpu {
         }
 
         self.phase = CpuPhase::Execute {
-            phase: Phase::FetchOverlap,
+            phase: Phase::FetchOverlap { commit: deferred },
             step: 1,
         };
         self.exec_step = 1;
