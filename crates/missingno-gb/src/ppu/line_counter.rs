@@ -200,7 +200,11 @@ impl LineCounterY {
     /// path drives LAMA low, making LY read as 0 while the internal
     /// counter is still 153. Two-level vocabulary partition per §2.7.
     pub(in crate::ppu) fn value_register(&self) -> u8 {
-        if self.frame_end_reset { 0 } else { self.value }
+        if self.frame_end_reset {
+            0
+        } else {
+            self.value
+        }
     }
 
     pub(in crate::ppu) fn popu_active(&self) -> bool {

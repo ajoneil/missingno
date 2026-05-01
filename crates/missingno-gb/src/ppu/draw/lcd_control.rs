@@ -6,8 +6,8 @@
 //! data latch rotation, and WODU-dot final-pixel push — so they are
 //! signal-named rather than work-semantic.
 
-use crate::ppu::PixelOutput;
 use crate::ppu::types::palette::PaletteIndex;
+use crate::ppu::PixelOutput;
 
 /// LCD clock gating + LCD data pin latch.
 ///

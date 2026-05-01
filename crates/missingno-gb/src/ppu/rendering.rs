@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
+    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;

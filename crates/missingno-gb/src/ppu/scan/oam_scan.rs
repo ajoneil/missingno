@@ -1,6 +1,6 @@
 // --- Sprite store and OAM scanner ---
 
-use crate::ppu::{PipelineRegisters, memory::Oam};
+use crate::ppu::{memory::Oam, PipelineRegisters};
 
 use crate::ppu::types::sprites::SpriteId;
 

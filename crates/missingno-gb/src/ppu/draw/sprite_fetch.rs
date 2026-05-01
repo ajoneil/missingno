@@ -1,8 +1,8 @@
 // --- Sprite fetch ---
 
 use crate::ppu::{
-    PipelineRegisters,
     memory::{Oam, Vram},
+    PipelineRegisters,
 };
 
 use super::super::scan::oam_scan::SpriteStoreEntry;

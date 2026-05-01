@@ -1,6 +1,6 @@
 // --- Background tile fetcher ---
 
-use crate::ppu::{PipelineRegisters, VideoControl, memory::Vram};
+use crate::ppu::{memory::Vram, PipelineRegisters, VideoControl};
 
 use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;

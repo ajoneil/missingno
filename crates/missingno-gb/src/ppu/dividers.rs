@@ -52,15 +52,17 @@ impl Dividers {
         self.mcycle
     }
 
-    /// TALU (not_x4) = NOT(VENA.Q) — 1 MHz LX counter clock.
+    /// TALU = NOT(vena_n) = VENA.Q (per spec §4.5) — 1 MHz LX counter
+    /// clock. TALU tracks VENA.Q in phase: at XODO↓, VENA.Q=0 and
+    /// TALU=0; first TALU↑ coincides with first VENA.Q↑.
     pub(in crate::ppu) fn talu(&self) -> bool {
-        !self.mcycle
+        self.mcycle
     }
 
-    /// SONO = VENA phase — clocks RUTU's capture of SANU on its rising
-    /// edge.
+    /// SONO = NOT(TALU) = NOT(VENA.Q) (per spec §4.5). Clocks RUTU's
+    /// capture of SANU on its rising edge.
     pub(in crate::ppu) fn sono(&self) -> bool {
-        self.mcycle
+        !self.mcycle
     }
 
     /// XUPY = NOT(wuvu_n) = WUVU.Q (per spec §4.5). XUPY is the
@@ -72,13 +74,12 @@ impl Dividers {
         self.half_mcycle
     }
 
-    /// VID_RST: dividers reset to their hardware reset states. WUVU.Q=0,
-    /// VENA.Q=1. With VENA.Q=1, TALU = NOT(VENA) is held at 0 until VENA's
-    /// first fall — which produces the first TALU↑ at +1.494 dots after
-    /// XODO↓ (matching spec §4.5 / §10.9). This is the LX-incrementing
-    /// edge that scanline 0 starts counting from.
+    /// VID_RST: dividers reset to their hardware reset states (spec §4.5):
+    /// WUVU.Q=0, VENA.Q=0, with TALU = VENA.Q = 0. The first TALU↑
+    /// coincides with the first VENA.Q↑ at +1.494 dots after XODO↓ — the
+    /// LX-incrementing edge that scanline 0 starts counting from.
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.half_mcycle = false;
-        self.mcycle = true;
+        self.mcycle = false;
     }
 }

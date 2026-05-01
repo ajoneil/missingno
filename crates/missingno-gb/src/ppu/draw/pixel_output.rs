@@ -19,8 +19,8 @@
 // edge), so the next TOBA captures post-merge sprite data.
 
 use crate::ppu::{
-    PipelineRegisters,
     types::palette::{PaletteIndex, PaletteMap},
+    PipelineRegisters,
 };
 
 use super::shifters::{BgShifter, ObjShifter};
