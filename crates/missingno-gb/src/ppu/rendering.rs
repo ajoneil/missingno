@@ -291,10 +291,6 @@ impl Rendering {
         self.scan.besu()
     }
 
-    pub(super) fn scan_avap(&self) -> bool {
-        self.scan.avap_pending()
-    }
-
     /// Snapshot of the sprite store for debugging.
     pub(super) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
         let sprites = &self.scan.sprites_ref();
@@ -435,18 +431,10 @@ impl Rendering {
         oam: &Oam,
         vram: &Vram,
     ) -> Option<PixelOutput> {
-        // XUPY rising edge detection: the XOTA divider toggle (in the
-        // preceding PPU-clock-fall phase) ran before this, so xupy()==true
-        // means WUVU just went low→high.
-        let xupy_rising = video.xupy();
-
-        // Sprite scanner advance: counter tick, BYBA/DOBA capture,
-        // AVAP evaluation (BYBA/DOBA-combinational, fires here).
-        // AVAP reaction (XYMU set, fetcher load_into, BESU/scanning
-        // clear) is deferred to the following PPU-clock-fall phase so
-        // Mode 3 init co-occurs with AVAP's rising edge, which follows
-        // BYBA's XUPY-rising capture at the PPU-clock-fall boundary.
-        self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
+        // Scanner advance (BYBA capture, AVAP detection + reaction)
+        // moved to on_ppu_clock_fall — BYBA is XUPY-clocked and
+        // captures on alet falling, opposite edge to alet-clocked
+        // DFFs (NYKA, DOBA).
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
@@ -505,9 +493,8 @@ impl Rendering {
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
+        xupy_rising: bool,
     ) -> Option<PixelOutput> {
-        let xupy_rising = video.xupy();
-
         // STAT-readout mirrors capture the pre-fall values of BESU and
         // XYMU. `Ppu::mode()` reads the mirrors so the CPU's T-cycle
         // STAT sampling window observes the pre-AVAP values across the
@@ -518,23 +505,18 @@ impl Rendering {
 
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
         // the fetcher advance so the first LAXU toggle occurs on the
-        // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay (§6.5.1,
-        // Q.A). The natural rise→rise gap plays the role previously
-        // filled by the nyxu_reset_active hold.
+        // NEXT rise — matching hardware's 1-dot AVAP→LAXU delay. The
+        // natural rise→rise gap plays the role previously filled by
+        // the nyxu_reset_active hold.
         let was_rendering = self.hblank.rendering_active();
 
-        // Scanner consumes avap_pending from the preceding advance_scan(),
-        // clearing scanning/besu when AVAP fires.
-        let scan = self
-            .scan
-            .apply_pending_avap(xupy_rising, video.ly(), regs, oam);
-
-        // AVAP reaction: BYBA captures on XUPY rising, which follows
-        // ALET falling in the divider chain (= PPU clock fall = this
-        // method's edge). AVAP propagates combinationally from the
-        // BYBA/DOBA/BALU scan-done detector. XYMU set, fetcher preload,
-        // and window WX init fire here so Mode 3 init aligns with
-        // hardware's AVAP-rising edge.
+        // Scanner advance: counter tick + BYBA capture + AVAP detection +
+        // reaction all co-locate on this XUPY-rising fall. BYBA is
+        // XUPY-clocked and captures on alet falling (= this edge);
+        // AVAP propagates combinationally from BYBA/DOBA, and XYMU set,
+        // fetcher preload, and window WX init fire here so Mode 3 init
+        // aligns with hardware's AVAP-rising edge.
+        let scan = self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
         if scan.avap {
             self.hblank.begin_rendering();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());

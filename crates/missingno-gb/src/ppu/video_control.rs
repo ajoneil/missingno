@@ -126,10 +126,12 @@ impl VideoControl {
     // ── Per-dot tick ─────────────────────────────────────────
 
     /// XOTA rising edge: toggle WUVU (via Dividers) and clear POPU
-    /// holdover (§2.2). Called every dot.
-    pub fn tick_dot(&mut self) {
-        self.dividers.tick_dot();
+    /// holdover (§2.2). Called every dot. Returns the previous WUVU.Q
+    /// value so the caller can detect XUPY rising (WUVU 0→1).
+    pub fn tick_dot(&mut self) -> bool {
+        let wuvu_was = self.dividers.tick_dot();
         self.lines.y.clear_popu_holdover();
+        wuvu_was
     }
 
     // ── LX counter clock edges ───────────────────────────────

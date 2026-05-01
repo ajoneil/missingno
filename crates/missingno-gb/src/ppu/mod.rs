@@ -520,13 +520,6 @@ impl Ppu {
             .unwrap_or(false)
     }
 
-    pub fn avap(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .map(|r| r.scan_avap())
-            .unwrap_or(false)
-    }
-
     pub fn wodu(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
@@ -648,10 +641,17 @@ impl Ppu {
         // XOTA rising edge (= master clock falls = our fall()): toggle
         // WUVU, cascade VENA/TALU, handle scanline boundaries. Confirmed
         // by dmg-sim gate-level simulation.
+        // tick_dot toggles WUVU on every fall when the LCD is on; the
+        // returned previous WUVU.Q value determines the XUPY edge for
+        // this fall (XUPY = WUVU.Q, so WUVU 0→1 = XUPY rising).
+        let xupy_rising = if self.control().video_enabled() && self.pixel_pipeline.is_some() {
+            !self.video.tick_dot()
+        } else {
+            false
+        };
+
         if self.control().video_enabled() && self.pixel_pipeline.is_some() {
             let popu_was = self.video.vblank();
-
-            self.video.tick_dot();
 
             let mut scanline_boundary = false;
             if self.video.dividers.half_mcycle_fell() {
@@ -727,7 +727,12 @@ impl Ppu {
             // Gated by XYMU/BESU on hardware, not POPU. During VBlank,
             // XYMU and BESU are low, making this effectively a no-op.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                result.pixel = rendering.on_ppu_clock_fall(&self.registers, &self.video, &self.oam);
+                result.pixel = rendering.on_ppu_clock_fall(
+                    &self.registers,
+                    &self.video,
+                    &self.oam,
+                    xupy_rising,
+                );
             }
 
             // STAT edge detection moved to check_stat_edge() — called

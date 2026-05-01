@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use gbtrace::format::SnapshotType;
 use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::write::GbtraceWriter;
+use gbtrace::format::SnapshotType;
 use gbtrace::header::{ExtensionField, TraceHeader};
-use gbtrace::profile::{FieldType, field_nullable, field_type};
+use gbtrace::profile::{field_nullable, field_type, FieldType};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use crate::GameBoy;
 use crate::ppu::PpuTraceSnapshot;
+use crate::GameBoy;
 
 // ---------------------------------------------------------------------------
 // Extension fields — emulator-internal debugging state
@@ -45,7 +45,8 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
     ExtensionDef {
         name: "halt_bug",
         field_type: FieldType::Bool,
-        description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
+        description:
+            "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
     },
     ExtensionDef {
         name: "ppu_wuvu",
@@ -546,7 +547,9 @@ impl Tracer {
                 Emitter::ExtPpuVena => w.set_bool(col, gb.ppu().vena()),
                 Emitter::ExtPpuXupy => w.set_bool(col, gb.ppu().xupy()),
                 Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
-                Emitter::ExtPpuAvap => w.set_bool(col, gb.ppu().avap()),
+                // AVAP is a one-edge combinational pulse, not a stable
+                // level — not meaningfully sampleable per-dot.
+                Emitter::ExtPpuAvap => {}
                 Emitter::ExtPpuBesu => w.set_bool(col, gb.ppu().besu()),
                 Emitter::ExtPpuWodu => w.set_bool(col, gb.ppu().wodu()),
                 Emitter::ExtPpuStatLine => w.set_bool(col, gb.ppu().stat_line()),

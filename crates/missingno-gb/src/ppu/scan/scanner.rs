@@ -61,10 +61,6 @@ pub(in crate::ppu) struct SpriteScanner {
     /// Forms the rising-edge detector with `scan_done_flag` that
     /// produces AVAP.
     scan_done_prev: bool,
-    /// AVAP result from fall(), consumed by rise(). On hardware AVAP
-    /// is combinational (valid as soon as BYBA/DOBA settle in advance_scan()),
-    /// but the rendering pipeline reacts in apply_pending_avap().
-    avap_pending: bool,
     /// Ten-entry sprite register file (page 30). Populated during Mode 2,
     /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
@@ -89,7 +85,6 @@ impl SpriteScanner {
             rutu: false,
             scan_done_flag: false,
             scan_done_prev: false,
-            avap_pending: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -111,7 +106,6 @@ impl SpriteScanner {
             rutu: false,
             scan_done_flag: true,
             scan_done_prev: true,
-            avap_pending: false,
             sprites: SpriteStore::new(),
         }
     }
@@ -132,13 +126,6 @@ impl SpriteScanner {
     /// BESU scanning latch — drives ACYL for STAT mode and OAM bus locking.
     pub(in crate::ppu) fn besu(&self) -> bool {
         self.besu
-    }
-
-    /// AVAP latched on this dot — pending Mode 2→3 transition reaction.
-    /// True between `advance_scan` (PPU clock rise) and `apply_pending_avap`
-    /// (PPU clock fall) within the same dot.
-    pub(in crate::ppu) fn avap_pending(&self) -> bool {
-        self.avap_pending
     }
 
     /// STAT-readout mirror of BESU (see `besu_stat` field). Lags the
@@ -208,31 +195,6 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
-    /// Consume AVAP detection from the preceding `advance_scan()`; clear
-    /// scanning/besu when AVAP fires. Called on the PPU-clock-fall phase
-    /// (master-clock rise; gate: ALET falling), co-located with the
-    /// rendering-side XYMU set.
-    ///
-    /// AVAP was evaluated combinationally when BYBA/DOBA settled. BYBA
-    /// captures on XUPY rising, which in the WUVU/XOTA divider chain
-    /// transitions shortly after PPU-clock-fall — both AVAP's rising
-    /// edge and the BESU clear land here.
-    pub(in crate::ppu) fn apply_pending_avap(
-        &mut self,
-        _xupy_rising: bool,
-        _ly: u8,
-        _regs: &PipelineRegisters,
-        _oam: &Oam,
-    ) -> ScanSignals {
-        let avap = self.avap_pending;
-        self.avap_pending = false;
-        if avap {
-            self.scanning = false;
-            self.besu = false;
-        }
-        ScanSignals { avap }
-    }
-
     /// Advance the CATU DFF — runs every dot regardless of VBlank.
     ///
     /// On the XUPY rising edge where RUTU is asserted (scanline
@@ -299,15 +261,22 @@ impl SpriteScanner {
         ly: u8,
         regs: &PipelineRegisters,
         oam: &Oam,
-    ) {
+    ) -> ScanSignals {
+        if !xupy_rising {
+            return ScanSignals { avap: false };
+        }
+
         // OAM comparison. One XUPY after CATU's same-edge capture+reset,
         // the counter ticks 0 → 1 below; subsequent edges walk 1..39.
-        if self.scanning && xupy_rising {
+        if self.scanning {
             self.counter
                 .compare_and_store(ly, &mut self.sprites, regs, oam);
         }
 
-        // DOBA captures OLD BYBA (ALET clock arrives after XUPY).
+        // DOBA captures OLD BYBA on this same XUPY edge — the
+        // half-cycle separation (BYBA on alet falling, DOBA on alet
+        // rising) is captured combinationally here: DOBA reads the
+        // pre-update BYBA before BYBA captures FETO below.
         self.scan_done_prev = self.scan_done_flag;
 
         // BYBA captures FETO sampled from the *pre-tick* counter.
@@ -319,24 +288,20 @@ impl SpriteScanner {
         // XUPY rising edge that ticks the counter to 39 captures
         // FETO(38) = 0; the next XUPY rising edge captures
         // FETO(39) = 1.
-        if xupy_rising {
-            self.scan_done_flag = self.counter.scan_done();
-        }
+        self.scan_done_flag = self.counter.scan_done();
 
-        if xupy_rising {
-            self.counter.tick_clock();
-        }
+        self.counter.tick_clock();
 
         // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
-        // Detection fires here in advance_scan() (when BYBA captures and DOBA settles).
-        // The scanning/besu clear is deferred to the next rise(), where
-        // it co-locates with the rendering-side AVAP reaction — matching
-        // hardware where XYMU set and BESU clear both occur at the alet
-        // falling edge that follows BYBA's XUPY-rising capture.
-        let avap = self.scan_done_flag && !self.scan_done_prev;
-        if avap && self.scanning {
-            self.avap_pending = true;
+        // Detection AND reaction (XYMU set, BESU clear) co-locate on
+        // this XUPY-rising fall — matching hardware where AVAP rises
+        // and Mode 3 init fire on the same alet-falling edge.
+        let avap = self.scan_done_flag && !self.scan_done_prev && self.scanning;
+        if avap {
+            self.scanning = false;
+            self.besu = false;
         }
+        ScanSignals { avap }
     }
 
     /// Reset at scanline boundary. Writes the RUTU latch's pending input;
@@ -355,7 +320,6 @@ impl SpriteScanner {
         // But we reset them for cleanliness.
         self.scan_done_flag = false;
         self.scan_done_prev = false;
-        self.avap_pending = false;
         self.catu = false;
         // RUTU_LINE_ENDp fires at the scanline boundary. Writing
         // `rutu_pending` (not `rutu`) keeps the latch input separate

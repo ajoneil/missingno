@@ -27,9 +27,14 @@ pub struct Dividers {
 }
 
 impl Dividers {
-    /// Advance on XOTA rising (once per dot). Toggles WUVU.
-    pub(in crate::ppu) fn tick_dot(&mut self) {
+    /// Advance on XOTA rising (once per dot). Toggles WUVU. Returns
+    /// the previous WUVU.Q value so the caller can detect the XUPY
+    /// rising edge: XUPY = WUVU.Q, so XUPY rises when WUVU goes 0→1
+    /// (i.e., this returns false and the new `xupy()` returns true).
+    pub(in crate::ppu) fn tick_dot(&mut self) -> bool {
+        let was = self.half_mcycle;
         self.half_mcycle = !self.half_mcycle;
+        was
     }
 
     /// Whether WUVU.Q is currently low — equivalent to "WUVU just fell"
