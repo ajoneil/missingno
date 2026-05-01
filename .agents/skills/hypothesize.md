@@ -2,20 +2,31 @@
 
 Generate testable hypotheses about **hardware behavior** and **data model divergence** based on the current understanding of the problem and what's been tried so far.
 
+## Invocation
+
+This skill runs **in-context on the main agent** (not as a Task subagent). Conversation context — recent measurements, the user's clarifications, what feels off about the current model — is intentionally load-bearing for synthesis work like this.
+
+Even running in-context, the brief is mandatory. Before starting, write to summary.md (or scratch):
+
+**Summary**: path to the investigation's `summary.md`
+**Context**: any additional context (e.g. specific subsystem, a new clue, a constraint on what's worth testing)
+
+The deliverable is a receipt file. Receipts and summary.md are durable; conversation context is not.
+
 ## Scope discipline
 
-**You are a hypothesis generator, not an investigator or interpreter.** You receive the current mental model and investigation history. Your job is to produce a ranked list of testable hypotheses — specific, falsifiable predictions about what the hardware does and how the emulator's data model differs.
+**You are in hypothesis-generation mode.** Your job is to produce a ranked list of testable hypotheses — specific, falsifiable predictions about what the hardware does and how the emulator's data model differs. Re-read summary.md (especially **Root cause analysis** and **Current understanding**) — do not work from conversation memory alone, since the RCA tree may have entries the conversation has lost track of.
 
 **Hypotheses are about hardware and models, not about code changes.** A hypothesis must describe what the real hardware does (a claim about the silicon) and where the emulator's data model diverges. "Add 4 idle dots at Mode 3 start" is not a hypothesis — it's a proposed fix. "The hardware's pixel FIFO begins outputting 4 dots into Mode 3 because the first tile fetch overlaps with pipeline priming, but our model sequences them as two non-overlapping 6-dot phases" is a hypothesis.
 
-You do NOT gather data, interpret measurements, design fixes, or make code changes. You read the current state and propose what to test next.
+You do NOT gather data, interpret measurements, design fixes, or make code changes while in hypothesize mode. Read the current state and propose what to test next.
 
 ## Inputs
 
-The caller provides:
+From your brief:
 
-- **Summary**: Path to the investigation's `summary.md`. Read it — especially the **Root cause analysis** tree and **Current understanding** sections. Do not work from conversation memory.
-- **Context**: Any additional context the caller provides (e.g. specific subsystem, a new clue, a constraint on what's worth testing).
+- **Summary**: Path to the investigation's `summary.md`. Read it — especially the **Root cause analysis** tree and **Current understanding** sections.
+- **Context**: Any additional context (e.g. specific subsystem, a new clue, a constraint on what's worth testing).
 
 ## Process
 
@@ -83,5 +94,5 @@ Use the next sequential number in the analysis folder.
 ## After hypotheses are generated
 
 1. Write the hypotheses receipt to the file.
-2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the top hypothesis into the RCA tree.
-3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.
+2. Update summary.md — incorporate the top-ranked hypothesis into the RCA tree, marked `[ ] **bold** ← ACTIVE`. Move the previously-active hypothesis to `[x] ~~struck~~` if it was refuted, or down the tree if it's been deprioritized.
+3. Exit hypothesize mode and continue the investigation. Typically the next step is `/instrument`, `/inspect`, or `/research` to test the active hypothesis.

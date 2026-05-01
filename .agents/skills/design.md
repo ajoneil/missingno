@@ -2,13 +2,26 @@
 
 Design a solution that aligns with the project's architectural requirements.
 
+## Invocation
+
+This skill runs **in-context on the main agent** (not as a Task subagent). Conversation context — your prior reasoning, the user's clarifications, mid-flight course corrections — is intentionally load-bearing for synthesis work like this.
+
+Even running in-context, the brief is mandatory. Before starting design work, write to summary.md (or scratch, if standalone):
+
+**Question**: one sentence — what specifically needs to change
+**Context**: file paths, research receipts, investigation summary path, the established root cause
+
+Writing the brief forces you to confirm you have validated understanding. If you can't write a clean brief, you're not ready to design — go back to `/research` or `/inspect` first.
+
+The deliverable is a receipt file. Receipts and summary.md are durable; conversation context is not.
+
 ## Scope discipline
 
-**You are an architect, not an implementer or investigator.** Your report must follow the format defined below. You produce a design — the caller implements it. If you catch yourself writing code changes, diffs, or implementation details beyond what's needed to communicate the design — stop, pull back to the structural level.
+**You are an architect, not an implementer or investigator.** Your report must follow the format defined below. The design report is the deliverable; subsequent implementation is a separate skill. If you catch yourself writing code changes, diffs, or implementation details beyond what's needed to communicate the design — stop, pull back to the structural level.
 
-The caller sent you a Question (what needs to change) and Context (files, research docs, investigation summary). Design a solution that answers the Question. Do not implement it. Do not diagnose the problem further — the caller has already done that.
+Design a solution that answers the Question from your brief. Do not implement it. Do not diagnose the problem further — the brief assumes diagnosis is complete.
 
-**Design from the brief, not from exploration.** The caller gives you a Question (what to change), Context (file paths, research docs, summary), and — critically — a clear statement of the problem and the intended fix direction. Your job is to translate that into a concrete structural design. You should not need to understand the problem more deeply than the brief explains it.
+**Design from the brief, not from exploration.** The Question (what to change), Context (file paths, research docs, summary), and a clear statement of the problem and the intended fix direction are your inputs. Your job is to translate that into a concrete structural design. You should not need to understand the problem more deeply than the brief explains it.
 
 **Do not investigate.** The caller has already established the root cause, validated hypotheses, and resolved knowledge gaps. If the brief says "start pixel output 4 dots earlier," design exactly that — do not re-derive why 4 is the right number, trace execution to verify the claim, or explore alternative approaches. Trust the brief.
 
@@ -19,9 +32,9 @@ Specifically:
 - **No extended reasoning about root cause.** If you're writing more than 2-3 sentences about WHY the problem occurs (as opposed to WHAT the solution is), you're diagnosing, not designing.
 - **Minimal source reading.** Read only the files and functions you need to modify. Do not read the entire codebase to "understand the context" — the brief provides the context. If the brief says to change `shift_pixel_out` in `ppu.rs`, read that function and its immediate callers, not the entire PPU.
 
-**If the context is insufficient**, write a short receipt explaining what's missing and what the caller needs to establish before re-invoking design. This is not a failure — it's the correct response when the investigation hasn't yet produced enough validated understanding to support a design.
+**If the brief is insufficient**, write a short receipt explaining what's missing and stop designing — go back to investigation. This is not a failure — it's the correct response when the investigation hasn't yet produced enough validated understanding to support a design.
 
-**Reasoning is a symptom of missing information.** If you find yourself reasoning through how the hardware works, weighing alternative interpretations of research, working out timing arithmetic, or debating tradeoffs between approaches — stop. You do not have enough information to design. The brief should make the design obvious; if it doesn't, the caller needs to do more research or measurement first. Write the insufficient-context receipt listing the specific questions that need answers, and return to the caller. Do not push through ambiguity by thinking harder — that produces designs built on guesses.
+**Reasoning is a symptom of missing information.** If you find yourself reasoning through how the hardware works, weighing alternative interpretations of research, working out timing arithmetic, or debating tradeoffs between approaches — stop. You do not have enough information to design. The brief should make the design obvious; if it doesn't, you need to do more research or measurement first. Write the insufficient-context receipt listing the specific questions that need answers, and exit design mode. Do not push through ambiguity by thinking harder — that produces designs built on guesses.
 
 ## Before you start
 
@@ -67,14 +80,14 @@ Before finalizing, check each element of your design against these questions:
 
 ## Output
 
-Write the design to a receipt file. The location depends on context:
+Write the design to a receipt file. The location depends on the situation:
 
-**When called from an investigation:** Write to the investigation's designs folder:
+**Inside an investigation:** Write to the investigation's designs folder:
 ```
 receipts/investigations/<session>/designs/<short-name>.md
 ```
 
-**When called standalone:** Write to the designs receipt folder:
+**Standalone:** Write to the designs receipt folder:
 ```
 receipts/designs/<YYYY-MM-DD-HHMM>-<short-name>.md
 ```
@@ -129,5 +142,5 @@ tested first.>
 ## After design is complete
 
 1. Write the design report to the receipt file.
-2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the design.
-3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.
+2. Update summary.md to point at the new design receipt with a one-line description.
+3. Exit design mode and continue the investigation. Typically the next step is `/implement`, but if designing surfaced a missing fact, go back to `/research` or `/inspect` first.

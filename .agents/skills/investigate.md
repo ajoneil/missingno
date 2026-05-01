@@ -12,20 +12,26 @@ The investigate skill is a **pure dispatcher**. It decides which subroutine to i
 - Read receipts, skill files, and summary.md
 
 ### What gets delegated (always)
-| Need | Delegate to |
-|------|-------------|
-| External info (docs, specs, URLs, other projects) | `/research` |
-| Runtime observation (values, state, timing) | `/inspect` or `/compare-traces` |
-| Code instrumentation (logging, eprintln) | `/instrument` |
-| Interpreting data or measurements | `/analyze` |
-| Generating testable hypotheses | `/hypothesize` |
-| Planning code changes | `/design` |
-| Making code changes | `/implement` |
-| Reading source code (this project or others) | `/research` or `/inspect` |
+| Need | Skill | Mode |
+|------|-------|------|
+| External info (docs, specs, URLs, other projects) | `/research` | subagent |
+| Runtime observation (values, state, timing) | `/inspect` or `/compare-traces` | subagent |
+| Code instrumentation (logging, eprintln) | `/instrument` | subagent |
+| Interpreting data or measurements | `/analyze` | subagent |
+| Reading source code (this project or others) | `/research` or `/inspect` | subagent |
+| Generating testable hypotheses | `/hypothesize` | in-context |
+| Planning code changes | `/design` | in-context |
+| Making code changes | `/implement` | in-context |
+
+**Subagent skills** are fact-finding tasks that produce large diagnostic outputs (logs, source reads, measurement data) — running them as Task subagents keeps that noise out of main context.
+
+**In-context skills** are synthesis tasks where conversation continuity is load-bearing — the design rationale, the user's clarifications, what was just tried. They run on the main agent under their own scope discipline.
+
+Both flavors produce a receipt as their durable deliverable; both require a Question/Context brief written into summary.md before invocation.
 
 ### Critical rules
 1. **summary.md before and after every dispatch.** If context compacted right now, could you continue from summary.md alone?
-2. **Skills are subroutine calls, not stopping points.** After a skill returns, immediately read the receipt, update summary.md, and continue in the same turn.
+2. **Skills are subroutine calls, not stopping points.** After a subagent returns or an in-context skill exits, immediately read the receipt, update summary.md, and continue in the same turn.
 3. **Never trace behavior in your head.** If you need a value, state, or timing — observe it via `/inspect`. Questions requiring cycle-counting are `/inspect` questions, not `/research` questions.
 4. **Never build on unverified changes.** Run verification after every code change before stacking more changes.
 5. **Hardware is the source of truth.** Research targets hardware behavior, not emulator implementations. Frame all questions as "what does the hardware do?" not "what does emulator X do?"
@@ -34,11 +40,15 @@ The investigate skill is a **pure dispatcher**. It decides which subroutine to i
 
 ## Dispatch mechanism
 
-**All skills run as Task subagents** (`subagent_type: "general-purpose"`). The investigate skill never uses the Skill tool. Every skill — research, analyze, hypothesize, design, implement, instrument, inspect — produces a receipt file as its deliverable. The intermediate work (file reads, reasoning, code exploration, test output) is disposable once the receipt is written. Running skills as subagents keeps that intermediate work out of the main context window.
+Skills come in two flavors. Both produce a receipt file as the durable deliverable; both require a Question/Context brief in summary.md before invocation.
 
-Task subagents operate in the same working directory. Code changes made by implement persist. Logging added and removed by instrument persists. Debugger sessions launched by inspect run and complete within the subagent.
+### Subagent skills — `/research`, `/analyze`, `/instrument`, `/inspect`, `/compare-traces`
 
-### To dispatch any skill:
+These run as Task subagents (`subagent_type: "general-purpose"`). They produce large diagnostic outputs (file reads, source exploration, measurement data, test output) that would pollute the main context. Running them as subagents keeps that noise on disk in the receipt and out of conversation memory.
+
+Subagents operate in the same working directory. Logging added and removed by instrument persists. Debugger sessions launched by inspect run and complete within the subagent.
+
+To dispatch a subagent skill:
 
 1. Update summary.md with what you're invoking and why.
 2. Read the skill file from `.agents/skills/<skill>.md`.
@@ -50,7 +60,18 @@ Task subagents operate in the same working directory. Code changes made by imple
 5. Update summary.md with the findings.
 6. Continue the investigation.
 
-No return context block is needed. No re-reading of the investigate skill file is needed after a subagent returns — the main context was not displaced.
+### In-context skills — `/hypothesize`, `/design`, `/implement`
+
+These run on the main agent. They are synthesis tasks where conversation continuity (your reasoning, the user's clarifications, mid-flight course corrections) is load-bearing. A subagent has to reconstitute that from a brief; the main agent already has it.
+
+To invoke an in-context skill:
+
+1. Update summary.md with what you're invoking and why, including the brief (Question/Context, or Design/Context for `/implement`).
+2. Read the skill file from `.agents/skills/<skill>.md`. Switch into that skill's mode and follow its scope discipline strictly — exit `/investigate` mode for the duration.
+3. Produce the receipt at the path the skill specifies. The skill's "After ... is complete" section explains what to do at the end.
+4. On exit, read your own receipt back if needed (it survives compaction; conversation memory does not), update summary.md, and resume the investigation.
+
+The in-context skill files contain scope-discipline rules (e.g. "do not investigate while designing", "do not design while implementing"). These rules are critical — the main agent must follow them as strictly as a subagent would, and the only thing keeping you honest is re-reading the skill file at invocation.
 
 ## Periodic self-check
 

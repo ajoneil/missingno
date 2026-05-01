@@ -2,9 +2,20 @@
 
 Apply a design to the codebase — make the code changes, verify them, and report the result.
 
+## Invocation
+
+This skill runs **in-context on the main agent** (not as a Task subagent). Conversation context — the design rationale, prior failed attempts, the user's clarifications — is intentionally load-bearing.
+
+Even running in-context, the brief is mandatory. Before starting, write to summary.md (or scratch):
+
+**Design**: path to the design receipt file — this is your specification
+**Context**: investigation summary.md path (if applicable), any caller-provided notes
+
+Build/test output is the main source of context noise. Capture it to log files (the verification steps below already do this) and reference by path rather than dumping into context. Receipts and summary.md are durable; conversation context is not.
+
 ## Scope discipline
 
-**You are an implementer, not a designer or investigator.** You receive a design receipt that specifies what to change and where. Your job is to:
+**You are in implementer mode, not designer or investigator mode.** Your job is to:
 
 1. Read and understand the design.
 2. Read the code that needs to change.
@@ -16,14 +27,14 @@ You do NOT redesign the solution, investigate root causes, hypothesize about pro
 
 **Implement exactly what the design says.** If the design says "add a constant `FOO = 4`", add that constant. Do not second-guess the value, rename it, or add additional constants "for completeness". If the design says to change a formula, change exactly that formula — do not refactor surrounding code, add comments to unchanged lines, or "improve" adjacent logic.
 
-**Do not design while implementing.** If you catch yourself writing sentences like "actually, it would be better to..." or "we also need to handle..." or "while we're here, let's also..." — stop. You are designing, not implementing. Make the changes the design specifies, verify them, and report. If the design is incomplete, that's a finding to report, not a gap to fill.
+**Do not design while implementing.** If you catch yourself writing sentences like "actually, it would be better to..." or "we also need to handle..." or "while we're here, let's also..." — stop. You are in implementer mode, not designer mode. Make the changes the design specifies, verify them, and report. If the design is incomplete, that's a finding to report, not a gap to fill.
 
 ## Inputs
 
-The caller provides:
+From your brief:
 
 - **Design**: Path to the design receipt file. Read it — this is your specification.
-- **Context**: Path to the investigation's `summary.md` (if called from an investigation). Read it for background, but implement only what the design says.
+- **Context**: Path to the investigation's `summary.md` (if applicable). Read it for background, but implement only what the design says.
 
 ## Process
 
@@ -78,9 +89,9 @@ Compare the test results against the baseline (from `summary.md`):
 - **Partial success**: Some targeted tests pass but not all, or some regressions appeared. Report exactly which tests changed status.
 - **Failure**: Targeted tests still fail, or new regressions appeared. Report the failure count and which tests regressed.
 
-**Do not interpret why a failure occurred.** Report the test results — which tests pass, which fail, how that compares to baseline. The caller will decide whether to invoke `/analyze`, `/hypothesize`, or `/design` based on the results.
+**Do not interpret why a failure occurred.** Report the test results — which tests pass, which fail, how that compares to baseline. After exiting implement mode, decide whether to invoke `/analyze`, `/hypothesize`, or `/design` based on the results.
 
-**Do not debug.** If tests fail, report the failure and stop. Do not launch the headless debugger, set breakpoints, inspect PPU/CPU state, step through instructions, or use any `/inspect`-style observation to diagnose the failure. Do not trace behavior through the code to figure out what went wrong. Debugging is the caller's responsibility — the implement skill makes changes, runs verification, and reports results.
+**Do not debug while in implement mode.** If tests fail, report the failure and exit. Do not launch the headless debugger, set breakpoints, inspect PPU/CPU state, step through instructions, or use any `/inspect`-style observation to diagnose the failure. Do not trace behavior through the code to figure out what went wrong. Debugging happens after implement mode exits — the implement skill makes changes, runs verification, and reports results.
 
 ### 6. Clean up
 
@@ -181,10 +192,10 @@ Sometimes the design makes assumptions about the code structure that turn out to
 
 1. **Do not improvise.** Do not guess what the design "meant" and implement something different.
 2. **Make the minimal adaptation** if the mismatch is trivial (e.g., the design says `field_name` but the code uses `field_name_`). Document the adaptation in "Issues encountered".
-3. **Stop and report** if the mismatch is structural (e.g., the design assumes a state machine that doesn't exist, or a method that takes different parameters). The caller needs to re-invoke `/design` with updated information.
+3. **Stop and report** if the mismatch is structural (e.g., the design assumes a state machine that doesn't exist, or a method that takes different parameters). Re-invoke `/design` with updated information.
 
 ## After implementation is complete
 
 1. Write the implementation report to the receipt file.
-2. **Do not update `summary.md`.** The caller owns summary.md and will incorporate the result.
-3. **Stop.** Your job is done. The caller reads the receipt file and decides what to do next.
+2. Update summary.md with the implementation receipt path, the branch name, and the result (success / partial / failure with test counts).
+3. Exit implement mode and continue the investigation. On success, typically the investigation moves to the next problem or wraps up. On failure, the next step is `/analyze` (interpret the regression) or going back to `/research` / `/inspect` to fill the gap that the failure exposed.

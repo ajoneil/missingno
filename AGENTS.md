@@ -10,9 +10,9 @@ These are the top-level rules governing how skills interact. They survive contex
 
 2. **Hardware is the source of truth.** The goal is always to understand what the real hardware does and model that behavior. Prioritize hardware documentation, decaps, test measurements, and direct hardware observations over any emulator implementation. Other emulators (SameBoy, Gambatte, GateBoy, etc.) are reference material — useful for confirming hardware behavior, but never the primary source and never a model to copy. The question is always "what does the hardware do?" not "what does emulator X do?"
 
-3. **Skills are subroutine calls — never stopping points.** When a skill subagent returns, the caller MUST immediately read the receipt, update `summary.md`, and continue the investigation in the same turn. Never end your turn after receiving a skill report. Skill dispatches are function calls, not async tasks you wait on.
+3. **Skills are subroutine calls — never stopping points.** When a subagent skill returns, or an in-context skill exits, the caller MUST immediately read the receipt, update `summary.md`, and continue the investigation in the same turn. Never end your turn after a skill produces its receipt. Skill invocations are function calls, not async tasks you wait on.
 
-4. **summary.md is the single source of truth for investigation state.** Update it before every skill dispatch and after every skill return — no exceptions. If context were compacted right now, `summary.md` alone must tell you exactly where you are and what to do next. Only the `/investigate` skill writes to `summary.md`.
+4. **summary.md is the single source of truth for investigation state.** Update it before every skill dispatch and after every skill return — no exceptions. If context were compacted right now, `summary.md` alone must tell you exactly where you are and what to do next. summary.md is owned by the `/investigate` dispatcher, not by skills — when an in-context skill exits, you exit its mode first and then update summary.md as the dispatcher.
 
 5. **Use available data before generating new data.** Before instrumenting code or running the debugger, check whether the question can be answered with existing resources. Primary references in order:
    1. **PPU timing model spec** (`receipts/ppu-overhaul/reference/ppu-timing-model-spec.md`) — gate-level hardware behaviour collated from dmg-sim measurements, netlist analysis, and propagation-delay analysis. This is the canonical hardware reference for the PPU. If the spec doesn't answer the question but a dmg-sim run would, **flag the gap to the user** so the spec can be updated — do not silently substitute emulator source or fall back to lower-priority references.
@@ -40,7 +40,13 @@ The conversation context is volatile — it will be compacted unpredictably. Tre
 
 ### Skill invocation protocol
 
-Skills invoke other skills as subroutines via Task subagents. The caller owns interpretation and decision-making; the callee owns fact-finding and measurement.
+Skills invoke other skills as subroutines. There are two execution flavors:
+
+**Subagent skills** — `/research`, `/analyze`, `/instrument`, `/inspect`, `/compare-traces`. These are fact-finding tasks that produce large diagnostic outputs (file reads, source exploration, measurement data, test output). They run as Task subagents (`subagent_type: "general-purpose"`) so that intermediate work stays out of the main context window. Each subagent receives its skill file in the Task prompt, writes a receipt file, and stops. It does NOT inherit the caller's context or hypotheses.
+
+**In-context skills** — `/hypothesize`, `/design`, `/implement`. These are synthesis tasks where conversation continuity (prior reasoning, the user's clarifications, mid-flight course corrections) is load-bearing. They run on the main agent. Before invoking, re-read the skill file from `.agents/skills/<skill>.md` to load its scope discipline, then switch into that mode for the duration. The scope-discipline rules are critical — the main agent must follow them as strictly as a subagent would, since the only thing keeping you honest is the skill file itself.
+
+For both flavors, the caller owns interpretation and decision-making across skill boundaries; the callee owns its scoped task. Only `/investigate` makes decisions about what to do next — all other skills produce a receipt and exit. Both flavors require the same Question/Context brief in summary.md before invocation.
 
 #### Request format (caller → callee)
 
@@ -52,13 +58,13 @@ Skills invoke other skills as subroutines via Task subagents. The caller owns in
 
 Do NOT include: caller's hypotheses, diagnostic output from prior steps, reasoning about what the answer means, or multiple unrelated questions.
 
+For subagent skills the brief goes into the Task prompt. For in-context skills the brief still goes in summary.md (or scratch) — writing it forces the same clarity even though no subagent reads it.
+
 #### Report format (callee → caller)
 
 Reports must contain only facts and measurements — no interpretation, recommendations, or analysis. Research reports use: Findings / Sources / Confidence / See also. Instrument reports use: Test result / Measurements / Raw data / Also observed. If a sentence starts with "This means..." or "The fix should be..." — delete it.
 
-#### Subroutine discipline
-
-Each skill subagent receives its skill file in the Task prompt, writes a receipt file, and stops. It does NOT inherit the caller's context or hypotheses. Only `/investigate` makes decisions about what to do next — all other skills report output and stop.
+In-context skills produce their own format per the skill file (designs use State model / Changes by file / etc.; hypotheses use the ranked list format; implementations use the Changes / Verification / Result format). The "facts only" discipline still applies — interpretation belongs in summary.md, not in the skill receipt.
 
 ## Workflow Discipline
 
@@ -120,7 +126,7 @@ These rules apply to all committed Rust code — production code, tests, and doc
 - **Reference hardware via gate names, not spec § numbers.** When a comment ties code to hardware, name the gate (`NYXU`, `RYDY`, `CATU`) and what it does in one phrase. **Never write `§6.12` or `spec §X.Y` in committed code** — the spec gets renumbered, the concordance moves, and stale section refs rot. Spec section numbers belong in the spec, in the gate concordance, and in receipts — not in `crates/`.
 - **No narration of verification outcomes.** Don't write comments like "this matches GateBoy", "fixes test X", "per the April 24 investigation". Those belong in commit messages and PR descriptions, which decay with code less destructively than rotting comments do.
 - **No `// added for …` / `// removed because …` provenance comments.** Git blame answers those questions.
-- **When dispatching `/design` or `/implement`** to subagents that will write committed code, repeat these rules in the prompt. Skill subagents do not inherit conversational memory; they only see the prompt and AGENTS.md/CLAUDE.md. Do not include spec-section references in the prompt — if the subagent sees `§6.12` in the brief, it will paste it into doc-comments.
+- **When invoking `/design` or `/implement`**, these skills run in-context on the main agent — meaning your conversation memory IS the brief, and the rules above need to actively bind your output. Do not paste spec-section references into the brief — if you write `§6.12` while in design/implement mode, you will paste it into doc-comments. Re-read this Code Style section when entering implement mode if you've drifted.
 
 ## Architecture
 
