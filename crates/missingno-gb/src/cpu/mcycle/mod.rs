@@ -717,6 +717,31 @@ impl Cpu {
                 }
                 self.instruction_pc = self.bus_counter;
 
+                // dispatch_active.q captured HIGH at this M-cycle's
+                // closing CLK9↑ when zaij asserted during the M-cycle's
+                // dot 3 eval — i.e. ctl_fetch was high (FetchOverlap is
+                // the m6 / m7 fetch state in netlist terms). For
+                // no-overlap classes (LDH (n),A's m6, indirect read into A,
+                // multi-byte push terminals) this is the FIRST opportunity
+                // for zaij to fire after the IF rise; dispatch must start
+                // here even though the fetched opcode just landed in IR.
+                // Per the netlist: dispatch's M5 vector fetch overwrites
+                // IR, so the prefetched-then-discarded opcode is harmless.
+                if self.dispatch.dispatch_active() {
+                    let pc = self.pc;
+                    self.phase = CpuPhase::InterruptDispatch {
+                        sp: self.stack_pointer,
+                        pc_hi: (pc >> 8) as u8,
+                        pc_lo: (pc & 0xff) as u8,
+                        step: 0,
+                    };
+                    self.exec_step = 0;
+                    self.pending_vector_resolve = false;
+                    self.boundary_flag = true;
+                    self.instruction_pc = pc;
+                    return (self.next_mcycle(0), false);
+                }
+
                 let needed = operand_count(opcode);
                 if needed == 0 {
                     let bytes = [opcode, 0, 0];
