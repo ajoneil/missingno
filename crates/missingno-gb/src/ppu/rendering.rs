@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
-    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -550,12 +550,14 @@ impl Rendering {
 
             // MOSU↑ arming runs before mode3_advance_fetcher so the
             // counter=0 falling VRAM read sees fetching_window=true and
-            // AMUV/VEVY select the window tilemap. NYXU async-reset is
-            // applied here; LEBO advance still fires within this dot
-            // because was_rendering is true and the counter is reset to
-            // 0 by reset_for_window before the rising edge increments.
+            // AMUV/VEVY select the window tilemap. When MOSU↑ fires,
+            // mode3_advance_fetcher is gated out for this dot — mirrors
+            // AVAP's `was_rendering` gate. NYXU's reset hold keeps the
+            // fetcher counter at 0 through the next ALET edge so the
+            // first falling-edge VRAM read fires at counter=0 (window
+            // tile-index) before the counter=2/4 data reads use it.
             let pygo = self.cascade.pygo();
-            self.window.check_trigger_arming(
+            let mosu_fired = self.window.check_trigger_arming(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
@@ -565,7 +567,7 @@ impl Rendering {
                 video,
             );
 
-            if was_rendering {
+            if was_rendering && !mosu_fired {
                 self.mode3_advance_fetcher(regs);
             }
             self.mode3_pixel_pipeline(regs, video, rydy_before_pory, pixel_counter_before_sacu)
@@ -775,21 +777,15 @@ impl Rendering {
             ));
         }
 
-        // TAVE one-shot preload: AND4(rendering, !POKY, NYKA, PORY).
-        // Fires on the same rising phase that PORY goes high, because NYKA
-        // was already latched on the preceding falling edge. The !PYGO guard
-        // models !POKY -- PYGO is captured below (after TAVE), so
-        // !self.pygo is still true at TAVE time. Once PYGO fires,
-        // !self.pygo permanently disables TAVE, matching hardware where
-        // POKY disables SUVU/TAVE.
-        if self.cascade.nyka() && self.cascade.pory() && !self.cascade.pygo() {
+        // TAVE one-shot preload: TAVE = NOT(SUVU); SUVU = NAND4(NYKA,
+        // PORY, ROMO, mode3) where ROMO = NOT(POKY). Fires during the
+        // cascade walk after NYKA and PORY have risen but before POKY
+        // has captured PYGO via the NOR-latch.
+        if self.cascade.nyka() && self.cascade.pory() && !self.cascade.poky() {
             self.fetcher.load_into(&mut self.bg_shifter);
             // TAVE → TEVO → PASO: reset fine counter. On hardware, TEVO
             // drives PASO which resets the fine counter on every pipe load
-            // (TAVE, SEKO, SUZU). The SUZU path already has this reset
-            // (line above); SEKO has it in the pixel pipeline section. TAVE
-            // was missing it, causing the first tile after the preload to
-            // be 7 pixels instead of 8.
+            // (TAVE, SEKO, SUZU).
             self.fine_scroll.reset_counter();
         }
     }
