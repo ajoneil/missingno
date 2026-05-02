@@ -268,12 +268,13 @@ impl GameBoy {
         let xogs = (data_phase && ctl_fetch) || halt;
         let ime_enabled =
             self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        let ei_di = self.cpu.ei_di_in_flight();
         self.cpu
             .dispatch
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
         self.cpu
             .dispatch
-            .step_zkog(ime_enabled, data_phase, xogs, halt, false, false, false);
+            .step_zkog(ime_enabled, data_phase, xogs, halt, ei_di, false, false);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
