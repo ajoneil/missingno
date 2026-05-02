@@ -268,7 +268,8 @@ impl GameBoy {
         // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI in flight).
         // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
         // fetch M-cycles' data-phase, blocking dispatch during memory
-        // ops (Read/Write/Operands).
+        // ops (Read/Write/Operands). HALT-wake doesn't fire zkog
+        // because data_phase is held LOW throughout HALT.
         let halt = self.cpu.is_halted();
         let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
         let write_phase = !halt && dot.index() == 3;
@@ -282,7 +283,7 @@ impl GameBoy {
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
         self.cpu
             .dispatch
-            .step_zkog(ime_enabled, data_phase, write_phase, xogs, halt, ei_di);
+            .step_zkog(ime_enabled, data_phase, write_phase, xogs, ei_di);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address

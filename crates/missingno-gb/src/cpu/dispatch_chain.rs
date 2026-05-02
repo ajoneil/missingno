@@ -12,6 +12,14 @@
 //! xogs (instruction-boundary): (data_phase ∧ ctl_fetch ∧ ¬cb_prefix) ∨ halt.
 //! Asserted across the data-phase of any instruction-fetch M-cycle, plus
 //! continuously during halt.
+//!
+//! zloz (hold-chain SR latch, S = AND3(xogs, zkdu, zojz), holds
+//! dispatch_active.q HIGH through dispatch M2-M5 after zkog resets at
+//! ctl_int_entry_m6) is NOT modelled. The emulator only reads
+//! dispatch_active at instruction boundaries (enter_fetch_overlap +
+//! HaltPhase::WakeIntake), so the in-dispatch hold has no observable
+//! effect — the InterruptDispatch CpuPhase ticks through steps 0..4
+//! independently of dispatch_active.q.
 
 use crate::cpu::dff::Dff;
 use crate::interrupts::{Interrupt, InterruptFlags};
@@ -29,9 +37,8 @@ pub(crate) struct DispatchChain {
     /// instruction's eval phase, reset by ctl_int_entry_m6 / sys_reset.
     /// Once set, holds through to zacw's capture edge.
     zkog: bool,
-    /// zloz SR-latch — NMI dispatch path. Always false on DMG (no NMI).
-    zloz: bool,
-    /// zacw DFF on master clock (CLK9). Captures zfex = OR(zkog, zloz).
+    /// zacw DFF on master clock (CLK9). Captures zfex = zkog (zloz hold
+    /// not modelled — see file header).
     /// q rising starts the 5-M-cycle dispatch sequence (§13.3).
     zacw: Dff<bool>,
 }
@@ -42,7 +49,6 @@ impl DispatchChain {
             irq_latch: InterruptFlags::empty(),
             data_phase_n: true,
             zkog: false,
-            zloz: false,
             zacw: Dff::new(false),
         }
     }
@@ -71,22 +77,29 @@ impl DispatchChain {
         write_phase && !self.irq_latch.is_empty()
     }
 
-    /// Update the SR-latch set chains each dot:
+    /// Post-latch IF & IE — read at HaltPhase::WakeIntake to decide
+    /// dispatch-vs-spurious-wake without going through zaij/zkog (which
+    /// can't fire during HALT because data_phase is held LOW per §13.5).
+    pub(crate) fn latched(&self) -> InterruptFlags {
+        self.irq_latch
+    }
+
+    /// Update the zkog SR-latch set chain each dot.
     ///   zkog: S = zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI
     ///         in flight). Reset path is `clear_dispatch()` (driven by
     ///         ctl_int_entry_m6 at the vector-resolve point).
-    ///   zloz: S = AND3(xogs, zkdu, zojz). The zkdu/zojz signals aren't
-    ///         in the spec, but the AND3 fires during HALT (xogs HIGH
-    ///         continuously while halted) when ime ∧ irq pending —
-    ///         providing the HALT-wake dispatch path that bypasses
-    ///         zaij's data_phase + write_phase requirement.
+    ///
+    /// The HALT-wake dispatch path is handled at the sequencer level
+    /// (HaltPhase::WakeIntake reads ime + latched IRQ directly), not
+    /// through zkog — during HALT, data_phase is held LOW per §13.5,
+    /// so zaij's data_phase requirement blocks zkog from setting until
+    /// the CPU phase ring restarts after halt drops.
     pub(crate) fn step_zkog(
         &mut self,
         ime_enabled: bool,
         data_phase: bool,
         write_phase: bool,
         xogs: bool,
-        halt: bool,
         ei_di_in_flight: bool,
     ) {
         let int_take = self.int_take(write_phase);
@@ -94,21 +107,12 @@ impl DispatchChain {
         if zaij {
             self.zkog = true;
         }
-        // HALT-wake path (zloz set chain): xogs is HIGH during HALT,
-        // and IF rises propagate combinationally through the
-        // transparent latch. Bypasses int_take's write_phase gate —
-        // the HALT-wake chain doesn't go through the precharged-evaluate
-        // priority bus.
-        let zloz_set = halt && ime_enabled && !self.irq_latch.is_empty();
-        if zloz_set {
-            self.zloz = true;
-        }
     }
 
-    /// Clock zacw on CLK9↑ (M-cycle boundary rise). Captures zfex.
+    /// Clock zacw on CLK9↑ (M-cycle boundary rise). Captures zfex = zkog
+    /// (zloz hold-chain not modelled — see file header).
     pub(crate) fn tick_zacw(&mut self) {
-        let zfex = self.zkog || self.zloz;
-        self.zacw.write(zfex);
+        self.zacw.write(self.zkog);
         self.zacw.tick();
     }
 
@@ -130,12 +134,9 @@ impl DispatchChain {
         None
     }
 
-    /// Reset both zkog and zloz SR-latches at ctl_int_entry_m6 — fires
-    /// when the ISR commits to dispatch. Per netlist:
-    ///   zkog R_n = NOR(ctl_int_entry_m6, sys_reset)
-    ///   zloz R_n = AOI21(nmi_entry, ctl_int_entry_m6, sys_reset)
+    /// Reset zkog at ctl_int_entry_m6 — fires when the ISR commits to
+    /// dispatch. Per netlist: zkog R_n = NOR(ctl_int_entry_m6, sys_reset).
     pub(crate) fn clear_dispatch(&mut self) {
         self.zkog = false;
-        self.zloz = false;
     }
 }

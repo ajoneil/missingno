@@ -449,10 +449,19 @@ impl Cpu {
             }
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
-                if self.dispatch.dispatch_active() {
-                    // zkog/zloz reset happens at ctl_int_entry_m6
-                    // (M3→M4 vector resolve) — driven by
-                    // pending_vector_resolve in execute.rs.
+                // Halt drops combinationally via ykua → halt RS-latch reset
+                // when irq_latched.q rises (§13.2 / §13.5). After halt drops,
+                // the running-CPU dispatch chain fires zkog → zacw at the
+                // first eval phase if IME=1 and an IRQ is pending. We model
+                // that combined effect by checking IME + pending IRQ here
+                // — the zaij chain can't fire DURING HALT because
+                // data_phase is held LOW (§13.5).
+                let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
+                if irq_pending_for_dispatch {
+                    // zkog reset happens at ctl_int_entry_m6 (M3→M4
+                    // vector resolve) — driven by pending_vector_resolve
+                    // in execute.rs.
 
                     // Dispatch arm — drop halt, hand the next M-cycle
                     // to `mcycle_isr(0)` (M1 body: IME clear,
