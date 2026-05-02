@@ -173,13 +173,17 @@ impl Cpu {
 
             Commit::DisableInterrupts => {
                 // DI: zwuu clears ime_pending combinationally; IME DFF
-                // captures Disabled mid-M-cycle.
+                // captures Disabled mid-M-cycle. ctl_op_di_or_ei drives
+                // the zzom block on zaij for the rest of this M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
+                cpu.dispatch.mark_ei_di_decoded();
             }
             Commit::EnableInterrupts => {
                 // EI: zbpp sets ime_pending via the zjje SR latch; IME DFF
-                // captures Enabled mid-M-cycle.
+                // captures Enabled mid-M-cycle. ctl_op_di_or_ei drives the
+                // zzom block on zaij for the rest of this M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+                cpu.dispatch.mark_ei_di_decoded();
             }
 
             Commit::EnterHalt | Commit::EnterStop => {

@@ -374,6 +374,10 @@ impl Cpu {
         // The CPU always chains into the next M-cycle (enter_fetch chains
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
+            // Clear ctl_op_di_or_ei before this M-cycle's body runs.
+            // FetchOverlap step 1's apply_commit will re-mark it if the
+            // commit being applied is EI/DI.
+            self.dispatch.enter_mcycle();
             // Save the previous M-cycle's bus address before replacing.
             // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
@@ -709,26 +713,20 @@ impl Cpu {
                     Some(BusAction::Read { address }) => *address,
                     _ => self.bus_counter,
                 };
-                if self.halt_bug {
-                    self.halt_bug = false;
-                } else {
-                    self.bus_counter = fetch_addr.wrapping_add(1);
-                    self.pc = self.bus_counter;
-                }
-                self.instruction_pc = self.bus_counter;
 
                 // dispatch_active.q captured HIGH at this M-cycle's
                 // closing CLK9↑ when zaij asserted during the M-cycle's
                 // dot 3 eval — i.e. ctl_fetch was high (FetchOverlap is
-                // the m6 / m7 fetch state in netlist terms). For
-                // no-overlap classes (LDH (n),A's m6, indirect read into A,
-                // multi-byte push terminals) this is the FIRST opportunity
-                // for zaij to fire after the IF rise; dispatch must start
-                // here even though the fetched opcode just landed in IR.
+                // the m6 / m7 fetch state in netlist terms). The dispatch
+                // saves PC = fetch_addr (the address of the just-fetched
+                // opcode = address of the next instruction), so RETI
+                // resumes at the prefetched-then-discarded instruction.
                 // Per the netlist: dispatch's M5 vector fetch overwrites
-                // IR, so the prefetched-then-discarded opcode is harmless.
+                // IR, and the PC DFF captures the same fetch_addr at this
+                // edge (no PC++ to fetch_addr+1 since dispatch's M1 is
+                // internal — the would-be PC commit is overridden).
                 if self.dispatch.dispatch_active() {
-                    let pc = self.pc;
+                    let pc = fetch_addr;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
                         pc_hi: (pc >> 8) as u8,
@@ -739,8 +737,18 @@ impl Cpu {
                     self.pending_vector_resolve = false;
                     self.boundary_flag = true;
                     self.instruction_pc = pc;
+                    self.pc = pc;
+                    self.bus_counter = pc;
                     return (self.next_mcycle(0), false);
                 }
+
+                if self.halt_bug {
+                    self.halt_bug = false;
+                } else {
+                    self.bus_counter = fetch_addr.wrapping_add(1);
+                    self.pc = self.bus_counter;
+                }
+                self.instruction_pc = self.bus_counter;
 
                 let needed = operand_count(opcode);
                 if needed == 0 {

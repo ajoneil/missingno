@@ -33,6 +33,12 @@ pub(crate) struct DispatchChain {
     /// True = transparent (irq_latch tracks IE & IF live);
     /// false = held (irq_latch frozen at the value at last close).
     data_phase_n: bool,
+    /// `ctl_op_di_or_ei` — combinational, HIGH during the M-cycle that
+    /// decoded EI/DI. Drives the zzom block on zaij (§13.7): zzom =
+    /// NAND(opcode3_n_buf3, ctl_op_di_or_ei). Set by `mark_ei_di_decoded`
+    /// when FetchOverlap step 1 applies an EI/DI commit; cleared by
+    /// `enter_mcycle` at the next M-cycle boundary.
+    ctl_op_di_or_ei: bool,
     /// zkog SR-latch — set by zaij rising during the in-flight
     /// instruction's eval phase, reset by ctl_int_entry_m6 / sys_reset.
     /// Once set, holds through to zacw's capture edge.
@@ -48,9 +54,23 @@ impl DispatchChain {
         Self {
             irq_latch: InterruptFlags::empty(),
             data_phase_n: true,
+            ctl_op_di_or_ei: false,
             zkog: false,
             zacw: Dff::new(false),
         }
+    }
+
+    /// Called at the start of each M-cycle (entry to next_mcycle).
+    /// Clears the M-cycle-scoped `ctl_op_di_or_ei` so the zzom block
+    /// only applies to the M-cycle that decoded EI/DI.
+    pub(crate) fn enter_mcycle(&mut self) {
+        self.ctl_op_di_or_ei = false;
+    }
+
+    /// Called from FetchOverlap step 1 when applying an EI or DI commit.
+    /// Asserts `ctl_op_di_or_ei` for the rest of the current M-cycle.
+    pub(crate) fn mark_ei_di_decoded(&mut self) {
+        self.ctl_op_di_or_ei = true;
     }
 
     /// Drive data_phase_n from the CPU phase ring. Called every dot.
@@ -100,10 +120,10 @@ impl DispatchChain {
         data_phase: bool,
         write_phase: bool,
         xogs: bool,
-        ei_di_in_flight: bool,
     ) {
         let int_take = self.int_take(write_phase);
-        let zaij = ime_enabled && data_phase && int_take && xogs && !ei_di_in_flight;
+        let zaij =
+            ime_enabled && data_phase && int_take && xogs && !self.ctl_op_di_or_ei;
         if zaij {
             self.zkog = true;
         }

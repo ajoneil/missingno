@@ -265,7 +265,9 @@ impl GameBoy {
         }
 
         // step_zkog drives zaij combinational + zkog SR-latch update.
-        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI in flight).
+        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ zzom — where zzom's
+        // EI/DI block is owned by DispatchChain (set via mark_ei_di_decoded
+        // when apply_commit fires for EI/DI; cleared at next M-cycle).
         // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
         // fetch M-cycles' data-phase, blocking dispatch during memory
         // ops (Read/Write/Operands). HALT-wake doesn't fire zkog
@@ -277,13 +279,12 @@ impl GameBoy {
         let xogs = (data_phase && ctl_fetch) || halt;
         let ime_enabled =
             self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
-        let ei_di = self.cpu.ei_di_in_flight();
         self.cpu
             .dispatch
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
         self.cpu
             .dispatch
-            .step_zkog(ime_enabled, data_phase, write_phase, xogs, ei_di);
+            .step_zkog(ime_enabled, data_phase, write_phase, xogs);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address

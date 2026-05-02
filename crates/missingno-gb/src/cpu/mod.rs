@@ -116,8 +116,9 @@ pub struct Cpu {
     pub(super) irq_latched: Dff<bool>,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw DFF.
-    /// Owns the data_phase_n latch and the dispatch_active (zacw)
-    /// capture; consumers read `dispatch.dispatch_active()`.
+    /// Owns the data_phase_n latch, the zzom EI/DI block, and the
+    /// dispatch_active (zacw) capture; consumers read
+    /// `dispatch.dispatch_active()`.
     pub(super) dispatch: dispatch_chain::DispatchChain,
 }
 
@@ -428,23 +429,6 @@ impl Cpu {
         )
     }
 
-    /// Whether the in-flight FetchOverlap is carrying an EI or DI commit.
-    /// Drives the zzom term in the dispatch chain — blocks zaij from
-    /// setting zkog during EI/DI's own M-cycle (their effect on IME is
-    /// applied at the closing CLK9↑, so dispatch can't fire on that
-    /// edge).
-    pub fn ei_di_in_flight(&self) -> bool {
-        use commit::Commit;
-        matches!(
-            self.phase,
-            CpuPhase::Execute {
-                phase: Phase::FetchOverlap {
-                    commit: Commit::EnableInterrupts | Commit::DisableInterrupts,
-                },
-                ..
-            }
-        )
-    }
 
     /// The pending bus write for the current M-cycle, if any.
     /// On hardware, the CPU places the address on the bus at phase A
