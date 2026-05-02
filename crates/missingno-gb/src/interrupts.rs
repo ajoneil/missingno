@@ -85,6 +85,18 @@ impl Registers {
         }
     }
 
+    /// Reconstruct from snapshot state. Latch initialised transparent so
+    /// `latched` mirrors `requested`; the next M-cycle boundary
+    /// resnapshots from the live `data_phase` regardless.
+    pub fn from_state(enabled: InterruptFlags, requested: InterruptFlags) -> Self {
+        Self {
+            enabled,
+            requested,
+            latched: requested,
+            latch_transparent: true,
+        }
+    }
+
     pub fn enabled(&self, interrupt: Interrupt) -> bool {
         self.enabled.contains(interrupt.into())
     }
