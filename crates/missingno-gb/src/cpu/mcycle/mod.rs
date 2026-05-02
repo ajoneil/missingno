@@ -1033,7 +1033,8 @@ impl Cpu {
     /// `retire_edge` and `tick_dispatch_active`, which only run at
     /// retire / `Halted(WakeIntake)` closing CLK9↑s.
     fn dispatch_trigger(&self) -> bool {
-        self.irq_pending && self.ime.output() == InterruptMasterEnable::Enabled
+        self.irq_pending_at_boundary
+            && self.ime.output() == InterruptMasterEnable::Enabled
     }
 
     /// Pure decode — returns the decoded Instruction with its Phase and
@@ -1202,6 +1203,16 @@ impl Cpu {
     pub fn tick_irq_latched(&mut self) {
         self.irq_latched.write(self.irq_pending);
         self.irq_latched.tick();
+    }
+
+    /// Snapshot pre-edge `irq_pending` for the zacw DFF setup-window
+    /// model. Called at the M-cycle boundary rise BEFORE this rise's
+    /// `update_interrupt_state`, so the snapshot holds the prior fall's
+    /// value (= pre-edge per DFF setup semantics). Read by
+    /// `dispatch_trigger`, which feeds the running-CPU `dispatch_active`
+    /// (zacw) capture inside `enter_fetch_overlap`.
+    pub fn capture_irq_pending_at_boundary(&mut self) {
+        self.irq_pending_at_boundary = self.irq_pending;
     }
 
     /// Clock dispatch_active (zacw) for the HALT-wake landing. Gated by

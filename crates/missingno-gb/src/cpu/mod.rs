@@ -108,6 +108,12 @@ pub struct Cpu {
     /// Combinational input to the irq_latched (yoii) DFF; also consumed
     /// directly by the HALT bug check.
     pub(super) irq_pending: bool,
+    /// Pre-edge `irq_pending` snapshot, captured at the M-cycle boundary
+    /// rise alongside yoii. Models the zacw DFF setup-window: zacw
+    /// captures the pre-edge value of dispatch_trigger (combinational
+    /// from irq_pending+ime), not the post-edge value after this rise's
+    /// IRQ-source updates take effect.
+    pub(super) irq_pending_at_boundary: bool,
     /// irq_latched (yoii) flip-flop. CLK9-cadence; captures `irq_pending`
     /// once per M-cycle on the master-clock rising edge. Drives the HALT
     /// release chain (yoii → g43 → g49) and produces the per-source
@@ -180,6 +186,7 @@ impl Cpu {
             boundary_flag: true, // Start at an instruction boundary
 
             irq_pending: false,
+            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
             dispatch_active: Dff::new(false),
         }
@@ -216,6 +223,7 @@ impl Cpu {
             boundary_flag: true,
 
             irq_pending: false,
+            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
             dispatch_active: Dff::new(false),
         }
@@ -264,6 +272,7 @@ impl Cpu {
             boundary_flag: true,
 
             irq_pending: false,
+            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
             dispatch_active: Dff::new(false),
         }

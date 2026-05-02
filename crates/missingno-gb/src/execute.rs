@@ -184,6 +184,11 @@ impl GameBoy {
             // resolved post-latch IF (= triggered/irq_pending source).
             self.interrupts.open_latch();
 
+            // zacw DFF setup-window: snapshot irq_pending now (pre-edge),
+            // before this rise's update_interrupt_state overwrites it.
+            // dispatch_trigger reads the snapshot.
+            self.cpu.capture_irq_pending_at_boundary();
+
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
             self.cpu.tick_dispatch_active(); // gated on Halted(WakeIntake)
 
