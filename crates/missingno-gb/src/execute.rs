@@ -248,7 +248,12 @@ impl GameBoy {
         // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
         // M-cycle still set `requested` but do not propagate to `latched`
         // until the next open_latch at the M-cycle boundary.
-        if dot.index() == 2 {
+        //
+        // Skipped during HALT: the CPU phase ring (baly/buty) is frozen,
+        // so `data_phase` is held LOW and the latch stays transparent.
+        // IF rises propagate combinationally to irq_pending throughout
+        // the halted period.
+        if dot.index() == 2 && !self.cpu.is_halted() {
             self.interrupts.close_latch();
         }
 
