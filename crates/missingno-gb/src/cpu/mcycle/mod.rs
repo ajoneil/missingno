@@ -750,6 +750,15 @@ impl Cpu {
                 }
                 self.instruction_pc = self.bus_counter;
 
+                // ctl_op_di_or_ei is combinational from IR (= the
+                // just-decoded opcode). Detect EI (0xFB) / DI (0xF3) here
+                // so the zzom block on zaij is asserted for the rest of
+                // THIS M-cycle (where IR holds the EI/DI opcode in
+                // hardware terms = post-decode in our Stage 9 v2 layout).
+                if matches!(opcode, 0xF3 | 0xFB) {
+                    self.dispatch.mark_ei_di_decoded();
+                }
+
                 let needed = operand_count(opcode);
                 if needed == 0 {
                     let bytes = [opcode, 0, 0];

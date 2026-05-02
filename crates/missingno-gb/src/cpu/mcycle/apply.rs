@@ -173,24 +173,18 @@ impl Cpu {
 
             Commit::DisableInterrupts => {
                 // DI: zwuu clears ime_pending combinationally; IME DFF
-                // captures Disabled mid-M-cycle. mark_ei_di_decoded
-                // asserts ctl_op_di_or_ei for the zzom block: in our
-                // Stage 9 v2 layout, the carried commit propagates one
-                // M-cycle later than hardware's IR latch, so applying the
-                // block here covers spec's "next-instruction's M-cycle"
-                // window — matching the boundary where zaij would
-                // otherwise fire stale (with IME still Enabled before
-                // this commit).
+                // captures Disabled mid-M-cycle. The ctl_op_di_or_ei
+                // assertion (zzom block) is owned by FetchOverlap step 1
+                // body at decode time — when IR holds DI = our model's
+                // current M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
-                cpu.dispatch.mark_ei_di_decoded();
             }
             Commit::EnableInterrupts => {
                 // EI: zbpp sets ime_pending via the zjje SR latch; IME DFF
-                // captures Enabled mid-M-cycle. No mark_ei_di_decoded:
-                // before this commit fires, IME=Disabled blocked zaij;
-                // after, the carried commit propagation handles the
-                // one-instruction delay. Adding the block here would
-                // delay dispatch one M-cycle past hardware (mooneye::ei_timing).
+                // captures Enabled mid-M-cycle. The ctl_op_di_or_ei
+                // assertion (zzom block) is owned by FetchOverlap step 1
+                // body at decode time — when IR holds EI = our model's
+                // current M-cycle.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
             }
 
