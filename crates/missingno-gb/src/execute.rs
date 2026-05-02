@@ -178,19 +178,21 @@ impl GameBoy {
 
         // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
-            // data_phase_n↑ just before the new M-cycle's CLK9↑: the per-bit
-            // irq_latch_inst<i> enabled D-latch reopens and re-snapshots IF.
-            // Must run before tick_irq_latched so yoii captures the freshly
-            // resolved post-latch IF (= triggered/irq_pending source).
-            self.interrupts.open_latch();
+            // data_phase_n↑ just before the new M-cycle's CLK9↑: the
+            // per-bit irq_latch_inst<i> enabled D-latch reopens and
+            // re-snapshots IF. Must run before tick_irq_latched so yoii
+            // captures the freshly settled post-latch IF.
+            self.cpu
+                .dispatch
+                .set_data_phase_n(true);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
 
-            // zacw DFF setup-window: snapshot irq_pending now (pre-edge),
-            // before this rise's update_interrupt_state overwrites it.
-            // dispatch_trigger reads the snapshot.
-            self.cpu.capture_irq_pending_at_boundary();
+            // zacw captures zfex on this CLK9↑.
+            self.cpu.dispatch.tick_zacw();
 
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
-            self.cpu.tick_dispatch_active(); // gated on Halted(WakeIntake)
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -246,16 +248,32 @@ impl GameBoy {
 
         // data_phase_n↓ at the dot 1→2 boundary closes the per-bit
         // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
-        // M-cycle still set `requested` but do not propagate to `latched`
-        // until the next open_latch at the M-cycle boundary.
+        // M-cycle still set `requested` but do not propagate to the
+        // latch until the next data_phase_n↑ at the M-cycle boundary.
         //
         // Skipped during HALT: the CPU phase ring (baly/buty) is frozen,
-        // so `data_phase` is held LOW and the latch stays transparent.
-        // IF rises propagate combinationally to irq_pending throughout
-        // the halted period.
+        // data_phase is held LOW, and the latch stays transparent.
         if dot.index() == 2 && !self.cpu.is_halted() {
-            self.interrupts.close_latch();
+            self.cpu.dispatch.set_data_phase_n(false);
         }
+
+        // step_zkog drives zaij combinational + zkog SR-latch update.
+        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI in flight).
+        // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
+        // fetch M-cycles' data-phase, blocking dispatch during memory
+        // ops (Read/Write/Operands).
+        let halt = self.cpu.is_halted();
+        let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
+        let ctl_fetch = self.cpu.is_fetch_phase();
+        let xogs = (data_phase && ctl_fetch) || halt;
+        let ime_enabled =
+            self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        self.cpu
+            .dispatch
+            .update_latch(self.interrupts.enabled, self.interrupts.requested);
+        self.cpu
+            .dispatch
+            .step_zkog(ime_enabled, data_phase, xogs, false, false, false);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address

@@ -5,6 +5,7 @@ use registers::{Register8, Register16};
 
 pub mod commit;
 pub mod dff;
+pub mod dispatch_chain;
 pub mod flags;
 pub mod instructions;
 pub mod mcycle;
@@ -108,26 +109,16 @@ pub struct Cpu {
     /// Combinational input to the irq_latched (yoii) DFF; also consumed
     /// directly by the HALT bug check.
     pub(super) irq_pending: bool,
-    /// Pre-edge `irq_pending` snapshot, captured at the M-cycle boundary
-    /// rise alongside yoii. Models the zacw DFF setup-window: zacw
-    /// captures the pre-edge value of dispatch_trigger (combinational
-    /// from irq_pending+ime), not the post-edge value after this rise's
-    /// IRQ-source updates take effect.
-    pub(super) irq_pending_at_boundary: bool,
     /// irq_latched (yoii) flip-flop. CLK9-cadence; captures `irq_pending`
     /// once per M-cycle on the master-clock rising edge. Drives the HALT
     /// release chain (yoii → g43 → g49) and produces the per-source
     /// HALT-wake timing differential (timer vs PPU IFs).
     pub(super) irq_latched: Dff<bool>,
-    /// dispatch_active (zacw) flip-flop for the running-CPU dispatch-ready
-    /// chain. Captures `irq_pending` once per M-cycle on the
-    /// master-clock rising edge — single DFF stage between IF assertion
-    /// and ISR M1 entry. Hardware cell: dmg-sim `zacw_inst.d = zfex`.
-    /// Captured inside `retire_edge` on the dispatching CLK9↑; its
-    /// freshly-resolved `q` combinationally selects between the
-    /// register-file write-back path and the dispatch path on the same
-    /// edge.
-    pub(super) dispatch_active: Dff<bool>,
+    /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
+    /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw DFF.
+    /// Owns the data_phase_n latch and the dispatch_active (zacw)
+    /// capture; consumers read `dispatch.dispatch_active()`.
+    pub(super) dispatch: dispatch_chain::DispatchChain,
 }
 
 impl Cpu {
@@ -186,9 +177,8 @@ impl Cpu {
             boundary_flag: true, // Start at an instruction boundary
 
             irq_pending: false,
-            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
-            dispatch_active: Dff::new(false),
+            dispatch: dispatch_chain::DispatchChain::new(),
         }
     }
 
@@ -223,9 +213,8 @@ impl Cpu {
             boundary_flag: true,
 
             irq_pending: false,
-            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
-            dispatch_active: Dff::new(false),
+            dispatch: dispatch_chain::DispatchChain::new(),
         }
     }
 
@@ -272,9 +261,8 @@ impl Cpu {
             boundary_flag: true,
 
             irq_pending: false,
-            irq_pending_at_boundary: false,
             irq_latched: Dff::new(false),
-            dispatch_active: Dff::new(false),
+            dispatch: dispatch_chain::DispatchChain::new(),
         }
     }
 
@@ -394,7 +382,7 @@ impl Cpu {
     /// Captured running-CPU dispatch decision (zacw) DFF q. When true,
     /// the 5-M-cycle dispatch sequence is in progress.
     pub fn dispatch_active(&self) -> bool {
-        self.dispatch_active.output()
+        self.dispatch.dispatch_active()
     }
 
     /// CLK9-cadence captured `(IF & IE) != 0` (yoii). Drives the
@@ -422,6 +410,22 @@ impl Cpu {
     /// Whether the CPU is currently halted.
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted
+    }
+
+    /// Whether the CPU is in a fetch M-cycle (the bus is reading the
+    /// next opcode). Drives ctl_fetch in the dispatch chain's xogs
+    /// gate. True for CpuPhase::Fetch (M1 opcode fetch) and for
+    /// Phase::FetchOverlap (the trailing fetch-overlap M-cycle that
+    /// reads the next instruction's opcode while finishing the current).
+    pub fn is_fetch_phase(&self) -> bool {
+        matches!(
+            self.phase,
+            CpuPhase::Fetch
+                | CpuPhase::Execute {
+                    phase: Phase::FetchOverlap { .. },
+                    ..
+                }
+        )
     }
 
     /// The pending bus write for the current M-cycle, if any.

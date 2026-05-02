@@ -449,7 +449,12 @@ impl Cpu {
             }
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
-                if self.dispatch_active.output() {
+                if self.dispatch.dispatch_active() {
+                    // ctl_int_entry_m6 fires as dispatch arms — resets
+                    // zkog SR-latch so the chain doesn't re-fire next
+                    // CLK9↑.
+                    self.dispatch.clear_dispatch();
+
                     // Dispatch arm — drop halt, hand the next M-cycle
                     // to `mcycle_isr(0)` (M1 body: IME clear,
                     // Internal{pc}). Same selector entry as the
@@ -1027,16 +1032,6 @@ impl Cpu {
         }
     }
 
-    /// Combinational `dispatch_trigger` — drives the `dispatch_active`
-    /// (zacw) capture at retire edges and the HALT-wake landing. The
-    /// instruction-boundary input is implicit: this is only called from
-    /// `retire_edge` and `tick_dispatch_active`, which only run at
-    /// retire / `Halted(WakeIntake)` closing CLK9↑s.
-    fn dispatch_trigger(&self) -> bool {
-        self.irq_pending_at_boundary
-            && self.ime.output() == InterruptMasterEnable::Enabled
-    }
-
     /// Pure decode — returns the decoded Instruction with its Phase and
     /// retire-edge Commit. Does not mutate IME/dispatch state.
     /// `retire_edge` owns those mutations so `dispatch_trigger`'s snapshot
@@ -1080,12 +1075,10 @@ impl Cpu {
     /// are carried on `Phase::FetchOverlap { commit }` and applied at
     /// the closing edge alongside the next opcode capture.
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
-        let dispatch_active_gated =
-            matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
-        let trigger = self.dispatch_trigger();
-        self.dispatch_active
-            .write(!dispatch_active_gated && trigger);
-        self.dispatch_active.tick();
+        // dispatch_active (zacw) is now captured per-dot from execute.rs
+        // via cpu.dispatch.tick_zacw(). EI/DI gating is handled by the
+        // zaij chain (zzom term), not inline here.
+        let _ = commit;
 
         let deferred = match commit {
             Commit::EnterHalt | Commit::EnterStop | Commit::Invalid => {
@@ -1103,7 +1096,11 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
         self.boundary_flag = true;
 
-        if self.dispatch_active.output() {
+        if self.dispatch.dispatch_active() {
+            // ctl_int_entry_m6 fires as dispatch arms — resets zkog
+            // SR-latch so the chain doesn't re-fire on the next CLK9↑.
+            self.dispatch.clear_dispatch();
+
             self.halt_state = HaltState::Running;
             let pc = self.pc;
             self.phase = CpuPhase::InterruptDispatch {
@@ -1205,32 +1202,4 @@ impl Cpu {
         self.irq_latched.tick();
     }
 
-    /// Snapshot pre-edge `irq_pending` for the zacw DFF setup-window
-    /// model. Called at the M-cycle boundary rise BEFORE this rise's
-    /// `update_interrupt_state`, so the snapshot holds the prior fall's
-    /// value (= pre-edge per DFF setup semantics). Read by
-    /// `dispatch_trigger`, which feeds the running-CPU `dispatch_active`
-    /// (zacw) capture inside `enter_fetch_overlap`.
-    pub fn capture_irq_pending_at_boundary(&mut self) {
-        self.irq_pending_at_boundary = self.irq_pending;
-    }
-
-    /// Clock dispatch_active (zacw) for the HALT-wake landing. Gated by
-    /// `phase == Halted(WakeIntake)` — this is the M-cycle whose
-    /// closing CLK9↑ captures `dispatch_trigger` for the dispatch decision
-    /// resolved by the next M-cycle's selector. No EI/DI in flight on
-    /// the HALT-wake path, so the zaij/zkog gate collapses to 0 and
-    /// `D = dispatch_trigger`.
-    ///
-    /// Running-CPU dispatch captures dispatch_active inside `retire_edge`
-    /// (in-flight retire's CLK9↑); the two write sites never overlap
-    /// — `retire_edge` only runs at retires (mid-`mcycle_fetch`/-
-    /// `mcycle_execute`), `tick_dispatch_active`'s gated branch only fires
-    /// at the M-cycle boundary when in `Halted(WakeIntake)`.
-    pub fn tick_dispatch_active(&mut self) {
-        if matches!(self.phase, CpuPhase::Halted(HaltPhase::WakeIntake)) {
-            self.dispatch_active.write(self.dispatch_trigger());
-            self.dispatch_active.tick();
-        }
-    }
 }

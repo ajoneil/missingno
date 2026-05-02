@@ -66,13 +66,6 @@ impl Interrupt {
 pub struct Registers {
     pub enabled: InterruptFlags,
     pub requested: InterruptFlags,
-    /// Output of the per-bit `irq_latch_inst<i>` enabled D-latch.
-    /// Drives `triggered()` and the dispatch chain. Transparent during
-    /// CPU dots 0-1 (data_phase_n=HIGH); held during dots 2-3.
-    latched: InterruptFlags,
-    /// Latch enable mirror. True = transparent (latched tracks requested);
-    /// false = held (latched frozen at the value it had when close_latch fired).
-    latch_transparent: bool,
 }
 
 impl Registers {
@@ -80,20 +73,6 @@ impl Registers {
         Self {
             enabled: InterruptFlags::empty(),
             requested: InterruptFlags::VIDEO_BETWEEN_FRAMES,
-            latched: InterruptFlags::VIDEO_BETWEEN_FRAMES,
-            latch_transparent: true,
-        }
-    }
-
-    /// Reconstruct from snapshot state. Latch initialised transparent so
-    /// `latched` mirrors `requested`; the next M-cycle boundary
-    /// resnapshots from the live `data_phase` regardless.
-    pub fn from_state(enabled: InterruptFlags, requested: InterruptFlags) -> Self {
-        Self {
-            enabled,
-            requested,
-            latched: requested,
-            latch_transparent: true,
         }
     }
 
@@ -107,7 +86,7 @@ impl Registers {
 
     pub fn triggered(&self) -> Option<Interrupt> {
         for interrupt in Interrupt::priority_order() {
-            if self.enabled(*interrupt) && self.latched.contains((*interrupt).into()) {
+            if self.enabled(*interrupt) && self.requested(*interrupt) {
                 return Some(*interrupt);
             }
         }
@@ -117,28 +96,9 @@ impl Registers {
 
     pub fn request(&mut self, interrupt: Interrupt) {
         self.requested.insert(interrupt.into());
-        if self.latch_transparent {
-            self.latched.insert(interrupt.into());
-        }
     }
 
     pub fn clear(&mut self, interrupt: Interrupt) {
         self.requested.remove(interrupt.into());
-        if self.latch_transparent {
-            self.latched.remove(interrupt.into());
-        }
-    }
-
-    /// data_phase_n↑ at the dot 3→0 M-cycle boundary. Latch becomes
-    /// transparent and re-snapshots `requested`.
-    pub fn open_latch(&mut self) {
-        self.latch_transparent = true;
-        self.latched = self.requested;
-    }
-
-    /// data_phase_n↓ at the dot 1→2 boundary. Latch holds at its current
-    /// value (= `requested` at this instant, since the latch was transparent).
-    pub fn close_latch(&mut self) {
-        self.latch_transparent = false;
     }
 }

@@ -358,10 +358,10 @@ impl GameBoy {
             serial: crate::serial_transfer::Registers::from_snapshot(&snap.serial),
             link: Box::new(crate::serial_transfer::Disconnected::new()),
             joypad: crate::joypad::Joypad::new(),
-            interrupts: crate::interrupts::Registers::from_state(
-                InterruptFlags::from_bits_retain(snap.cpu.ie),
-                InterruptFlags::from_bits_retain(snap.cpu.if_),
-            ),
+            interrupts: crate::interrupts::Registers {
+                enabled: InterruptFlags::from_bits_retain(snap.cpu.ie),
+                requested: InterruptFlags::from_bits_retain(snap.cpu.if_),
+            },
             vram_bus: VramBus {
                 vram: find_region(0x8000)
                     .map(Vram::from_bytes)
