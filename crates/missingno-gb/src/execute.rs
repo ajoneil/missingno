@@ -178,6 +178,12 @@ impl GameBoy {
 
         // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
+            // data_phase_n↑ just before the new M-cycle's CLK9↑: the per-bit
+            // irq_latch_inst<i> enabled D-latch reopens and re-snapshots IF.
+            // Must run before tick_irq_latched so yoii captures the freshly
+            // resolved post-latch IF (= triggered/irq_pending source).
+            self.interrupts.open_latch();
+
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
             self.cpu.tick_dispatch_active(); // gated on Halted(WakeIntake)
 
@@ -232,6 +238,14 @@ impl GameBoy {
 
         let dot = self.cpu.dot_for_execute();
         self.current_dot = dot;
+
+        // data_phase_n↓ at the dot 1→2 boundary closes the per-bit
+        // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
+        // M-cycle still set `requested` but do not propagate to `latched`
+        // until the next open_latch at the M-cycle boundary.
+        if dot.index() == 2 {
+            self.interrupts.close_latch();
+        }
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
