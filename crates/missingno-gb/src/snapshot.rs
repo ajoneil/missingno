@@ -359,8 +359,8 @@ impl GameBoy {
             link: Box::new(crate::serial_transfer::Disconnected::new()),
             joypad: crate::joypad::Joypad::new(),
             interrupts: crate::interrupts::Registers {
-                requested: InterruptFlags::from_bits_retain(snap.cpu.if_),
                 enabled: InterruptFlags::from_bits_retain(snap.cpu.ie),
+                requested: InterruptFlags::from_bits_retain(snap.cpu.if_),
             },
             vram_bus: VramBus {
                 vram: find_region(0x8000)

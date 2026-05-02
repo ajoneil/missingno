@@ -178,8 +178,21 @@ impl GameBoy {
 
         // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
+            // data_phase_n↑ just before the new M-cycle's CLK9↑: the
+            // per-bit irq_latch_inst<i> enabled D-latch reopens and
+            // re-snapshots IF. Must run before tick_irq_latched so yoii
+            // captures the freshly settled post-latch IF.
+            self.cpu
+                .dispatch
+                .set_data_phase_n(true);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
+
+            // zacw captures zfex on this CLK9↑.
+            self.cpu.dispatch.tick_zacw();
+
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
-            self.cpu.tick_dispatch_active(); // gated on Halted(WakeIntake)
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
@@ -220,18 +233,58 @@ impl GameBoy {
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
 
-        // IE push bug: check after each M-cycle transition.
+        // IE push bug + ctl_int_entry_m6: vector-resolve fires between
+        // ISR M3 and M4. Clears zkog/zloz (per netlist R_n =
+        // NOR(ctl_int_entry_m6, sys_reset)) and the dispatched IF bit
+        // (per netlist inta[i] = AND(ctl_int_entry_m6, irq_latch_gated_q_n[i])).
         if self.cpu.take_pending_vector_resolve() {
-            if let Some(interrupt) = self.interrupts.triggered() {
+            // Read the post-latch priority chain output (matches the
+            // hardware vector resolve which reads irq_latch_gated, not
+            // raw IF).
+            if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
                 self.cpu.bus_counter = interrupt.vector();
             } else {
                 self.cpu.bus_counter = 0x0000;
             }
+            self.cpu.dispatch.clear_dispatch();
         }
 
         let dot = self.cpu.dot_for_execute();
         self.current_dot = dot;
+
+        // data_phase_n↓ at the dot 1→2 boundary closes the per-bit
+        // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
+        // M-cycle still set `requested` but do not propagate to the
+        // latch until the next data_phase_n↑ at the M-cycle boundary.
+        //
+        // Skipped during HALT: the CPU phase ring (baly/buty) is frozen,
+        // data_phase is held LOW, and the latch stays transparent.
+        if dot.index() == 2 && !self.cpu.is_halted() {
+            self.cpu.dispatch.set_data_phase_n(false);
+        }
+
+        // step_zkog drives zaij combinational + zkog SR-latch update.
+        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ zzom — where zzom's
+        // EI/DI block is owned by DispatchChain (set via mark_ei_di_decoded
+        // when apply_commit fires for EI/DI; cleared at next M-cycle).
+        // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
+        // fetch M-cycles' data-phase, blocking dispatch during memory
+        // ops (Read/Write/Operands). HALT-wake doesn't fire zkog
+        // because data_phase is held LOW throughout HALT.
+        let halt = self.cpu.is_halted();
+        let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
+        let write_phase = !halt && dot.index() == 3;
+        let ctl_fetch = self.cpu.is_fetch_phase();
+        let xogs = (data_phase && ctl_fetch) || halt;
+        let ime_enabled =
+            self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        self.cpu
+            .dispatch
+            .update_latch(self.interrupts.enabled, self.interrupts.requested);
+        self.cpu
+            .dispatch
+            .step_zkog(ime_enabled, data_phase, write_phase, xogs);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
@@ -306,6 +359,9 @@ impl GameBoy {
             // for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
         // VOGA capture (HBlank) happens on the master-clock rising edge via
@@ -445,6 +501,9 @@ impl GameBoy {
         {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
         self.clock_phase = ClockPhase::Low;

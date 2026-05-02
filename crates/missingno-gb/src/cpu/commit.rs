@@ -1,7 +1,7 @@
-use super::instructions::CarryFlag;
 use super::instructions::bit_shift::{Carry, Direction};
+use super::instructions::CarryFlag;
 use super::mcycle::AluOp;
-use super::registers::{Register8, Register16};
+use super::registers::{Register16, Register8};
 
 /// The retire-edge mutation an instruction produces at the end-of-instruction
 /// CLK9↑ — the specific set of DFF captures (register file, IME, halt state)
@@ -102,18 +102,6 @@ pub(super) enum Commit {
     BitReset {
         bit: u8,
         reg: Register8,
-    },
-
-    // ── Control flow (bus_counter writes) ──
-    /// JP HL / JP nn (taken) / JR (taken) / RET — PC and bus_counter set
-    /// to target.
-    JumpAbsolute {
-        target: u16,
-    },
-    /// RETI — JumpAbsolute plus IME DFF ← Enabled, captured in parallel
-    /// with the PC write on the same retire edge.
-    JumpReturnEnableInterrupts {
-        target: u16,
     },
 
     // ── Interrupt control ──

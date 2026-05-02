@@ -1,10 +1,10 @@
 use super::{
-    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
+    instructions::bit_shift::{Carry, Direction},
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
-    instructions::bit_shift::{Carry, Direction},
-    registers::{Register8, Register16},
+    registers::{Register16, Register8},
+    Cpu, HaltState, InterruptMasterEnable,
 };
 
 mod apply;
@@ -253,11 +253,14 @@ pub(crate) enum Phase {
     },
 
     /// Trailing fetch-overlap M-cycle: drives the next instruction's
-    /// M1 fetch read on the bus. Retire work (apply_commit, dispatch
-    /// capture, phase routing) lands at the OPENING edge — performed
-    /// by enter_fetch_overlap before this M-cycle starts. The closing
-    /// edge decodes the next opcode and transitions.
-    FetchOverlap,
+    /// M1 fetch read on the bus. The carried `commit` is the in-flight
+    /// instruction's writeback — applied at the CLOSING edge so the
+    /// register-file DFFs capture on the same master-clock edge that
+    /// `zacw` (dispatch_active) captures on. Phase-changers (EnterHalt
+    /// / EnterStop / Invalid) never land here: `enter_fetch_overlap`
+    /// peels them off at OPEN so halt/lockup routing fires before the
+    /// next cell.
+    FetchOverlap { commit: Commit },
 
     /// No post-fetch M-cycles (NOP, LD r,r, ALU A,r, HALT, STOP, etc.).
     Empty,
@@ -371,6 +374,10 @@ impl Cpu {
         // The CPU always chains into the next M-cycle (enter_fetch chains
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
+            // Clear ctl_op_di_or_ei before this M-cycle's body runs.
+            // FetchOverlap step 1's apply_commit will re-mark it if the
+            // commit being applied is EI/DI.
+            self.dispatch.enter_mcycle();
             // Save the previous M-cycle's bus address before replacing.
             // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
@@ -446,7 +453,20 @@ impl Cpu {
             }
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
-                if self.dispatch_active.output() {
+                // Halt drops combinationally via ykua → halt RS-latch reset
+                // when irq_latched.q rises (§13.2 / §13.5). After halt drops,
+                // the running-CPU dispatch chain fires zkog → zacw at the
+                // first eval phase if IME=1 and an IRQ is pending. We model
+                // that combined effect by checking IME + pending IRQ here
+                // — the zaij chain can't fire DURING HALT because
+                // data_phase is held LOW (§13.5).
+                let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
+                if irq_pending_for_dispatch {
+                    // zkog reset happens at ctl_int_entry_m6 (M3→M4
+                    // vector resolve) — driven by pending_vector_resolve
+                    // in execute.rs.
+
                     // Dispatch arm — drop halt, hand the next M-cycle
                     // to `mcycle_isr(0)` (M1 body: IME clear,
                     // Internal{pc}). Same selector entry as the
@@ -674,19 +694,54 @@ impl Cpu {
             }
 
             Phase::Empty => {
-                unreachable!("Phase::Empty routes through enter_fetch_overlap; never enters Execute")
+                unreachable!(
+                    "Phase::Empty routes through enter_fetch_overlap; never enters Execute"
+                )
             }
 
-            Phase::FetchOverlap => {
+            Phase::FetchOverlap { commit } => {
                 debug_assert!(
                     current_step == 1,
                     "FetchOverlap step 0 is performed inline by enter_fetch_overlap"
                 );
+
+                let carried = std::mem::replace(commit, Commit::NoOperation);
+                Self::apply_commit(self, carried);
+
                 let opcode = read_value;
                 let fetch_addr = match &self.current_action {
                     Some(BusAction::Read { address }) => *address,
                     _ => self.bus_counter,
                 };
+
+                // dispatch_active.q captured HIGH at this M-cycle's
+                // closing CLK9↑ when zaij asserted during the M-cycle's
+                // dot 3 eval — i.e. ctl_fetch was high (FetchOverlap is
+                // the m6 / m7 fetch state in netlist terms). The dispatch
+                // saves PC = fetch_addr (the address of the just-fetched
+                // opcode = address of the next instruction), so RETI
+                // resumes at the prefetched-then-discarded instruction.
+                // Per the netlist: dispatch's M5 vector fetch overwrites
+                // IR, and the PC DFF captures the same fetch_addr at this
+                // edge (no PC++ to fetch_addr+1 since dispatch's M1 is
+                // internal — the would-be PC commit is overridden).
+                if self.dispatch.dispatch_active() {
+                    let pc = fetch_addr;
+                    self.phase = CpuPhase::InterruptDispatch {
+                        sp: self.stack_pointer,
+                        pc_hi: (pc >> 8) as u8,
+                        pc_lo: (pc & 0xff) as u8,
+                        step: 0,
+                    };
+                    self.exec_step = 0;
+                    self.pending_vector_resolve = false;
+                    self.boundary_flag = true;
+                    self.instruction_pc = pc;
+                    self.pc = pc;
+                    self.bus_counter = pc;
+                    return (self.next_mcycle(0), false);
+                }
+
                 if self.halt_bug {
                     self.halt_bug = false;
                 } else {
@@ -694,6 +749,15 @@ impl Cpu {
                     self.pc = self.bus_counter;
                 }
                 self.instruction_pc = self.bus_counter;
+
+                // ctl_op_di_or_ei is combinational from IR (= the
+                // just-decoded opcode). Detect EI (0xFB) / DI (0xF3) here
+                // so the zzom block on zaij is asserted for the rest of
+                // THIS M-cycle (where IR holds the EI/DI opcode in
+                // hardware terms = post-decode in our Stage 9 v2 layout).
+                if matches!(opcode, 0xF3 | 0xFB) {
+                    self.dispatch.mark_ei_di_decoded();
+                }
 
                 let needed = operand_count(opcode);
                 if needed == 0 {
@@ -729,10 +793,7 @@ impl Cpu {
                 0 => (Some(BusAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, read_value);
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             },
 
@@ -750,10 +811,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -775,10 +833,7 @@ impl Cpu {
                         true,
                     )
                 }
-                _ => (
-                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                    false,
-                ),
+                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
             },
 
             Phase::Write16 { address, lo, hi } => {
@@ -798,10 +853,7 @@ impl Cpu {
                         }),
                         true,
                     ),
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -809,19 +861,13 @@ impl Cpu {
                 if current_step < *count {
                     (Some(BusAction::Internal { address: self.pc }), true)
                 } else {
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
 
             Phase::InternalOamBug { address } => match current_step {
                 0 => (Some(BusAction::InternalOamBug { address: *address }), true),
-                _ => (
-                    Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                    false,
-                ),
+                _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
             },
 
             Phase::Pop { sp, action } => {
@@ -844,16 +890,10 @@ impl Cpu {
                         if has_trailing {
                             (Some(BusAction::Internal { address: self.pc }), true)
                         } else {
-                            (
-                                Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                                false,
-                            )
+                            (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                         }
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -883,10 +923,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 
@@ -904,19 +941,13 @@ impl Cpu {
                         self.bus_counter = target;
                         self.pc = target;
                     }
-                    (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    )
+                    (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
 
             Phase::CondCall { taken, sp, hi, lo } => {
                 if !*taken {
-                    return (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    );
+                    return (Some(self.enter_fetch_overlap(Commit::NoOperation)), false);
                 }
                 let sp = *sp;
                 match current_step {
@@ -948,10 +979,7 @@ impl Cpu {
                             self.bus_counter = target;
                             self.pc = target;
                         }
-                        (
-                            Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                            false,
-                        )
+                        (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                     }
                 }
             }
@@ -961,10 +989,7 @@ impl Cpu {
                 let taken = *taken;
                 match current_step {
                     0 => (Some(BusAction::Internal { address: self.pc }), true),
-                    1 if !taken => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                     1 => (Some(BusAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = read_value;
@@ -979,10 +1004,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
                         (Some(BusAction::Internal { address: self.pc }), true)
                     }
-                    _ => (
-                        Some(self.enter_fetch_overlap(Commit::NoOperation)),
-                        false,
-                    ),
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
         }
@@ -1060,15 +1082,6 @@ impl Cpu {
         }
     }
 
-    /// Combinational `dispatch_trigger` — drives the `dispatch_active`
-    /// (zacw) capture at retire edges and the HALT-wake landing. The
-    /// instruction-boundary input is implicit: this is only called from
-    /// `retire_edge` and `tick_dispatch_active`, which only run at
-    /// retire / `Halted(WakeIntake)` closing CLK9↑s.
-    fn dispatch_trigger(&self) -> bool {
-        self.irq_pending && self.ime.output() == InterruptMasterEnable::Enabled
-    }
-
     /// Pure decode — returns the decoded Instruction with its Phase and
     /// retire-edge Commit. Does not mutate IME/dispatch state.
     /// `retire_edge` owns those mutations so `dispatch_trigger`'s snapshot
@@ -1105,23 +1118,27 @@ impl Cpu {
         (instruction, phase, commit)
     }
 
-    /// Enter the trailing fetch-overlap M-cycle. Performs all retire
-    /// work at the opening edge: dispatch_active capture, apply_commit,
-    /// halt routing, pc/bus_counter mutation, boundary flag. Then
-    /// transitions to FetchOverlap step=1 (close handles next-opcode
-    /// decode). Returns the BusAction for the FetchOverlap M-cycle —
-    /// either `Read{bus_counter}` for normal retires or routes to
-    /// InterruptDispatch / Halted(Spin) for dispatch / halt-entry.
+    /// Enter the trailing fetch-overlap M-cycle at the opening edge.
+    /// Captures `zacw` (dispatch_active), routes early to dispatch /
+    /// halt when needed. Phase-changers (EnterHalt/EnterStop/Invalid)
+    /// apply here so halt routing sees them; late-writeback commits
+    /// are carried on `Phase::FetchOverlap { commit }` and applied at
+    /// the closing edge alongside the next opcode capture.
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
-        let dispatch_active_gated =
-            matches!(commit, Commit::EnableInterrupts | Commit::DisableInterrupts);
-        let trigger = self.dispatch_trigger();
-        self.dispatch_active
-            .write(!dispatch_active_gated && trigger);
-        self.dispatch_active.tick();
+        // dispatch_active (zacw) is now captured per-dot from execute.rs
+        // via cpu.dispatch.tick_zacw(). EI/DI gating is handled by the
+        // zaij chain (zzom term), not inline here.
+        let _ = commit;
 
-        Self::apply_commit(self, commit);
-        self.check_halt_bug();
+        let deferred = match commit {
+            Commit::EnterHalt | Commit::EnterStop | Commit::Invalid => {
+                Self::apply_commit(self, commit);
+                self.check_halt_bug();
+                Commit::NoOperation
+            }
+            other => other,
+        };
+
         if let Some(target) = self.pending_jump_target.take() {
             self.bus_counter = target;
         }
@@ -1129,7 +1146,11 @@ impl Cpu {
         self.instruction_pc = self.bus_counter;
         self.boundary_flag = true;
 
-        if self.dispatch_active.output() {
+        if self.dispatch.dispatch_active() {
+            // zkog/zloz reset happens at ctl_int_entry_m6
+            // (M3→M4 vector resolve) — driven by
+            // pending_vector_resolve in execute.rs.
+
             self.halt_state = HaltState::Running;
             let pc = self.pc;
             self.phase = CpuPhase::InterruptDispatch {
@@ -1156,7 +1177,7 @@ impl Cpu {
         }
 
         self.phase = CpuPhase::Execute {
-            phase: Phase::FetchOverlap,
+            phase: Phase::FetchOverlap { commit: deferred },
             step: 1,
         };
         self.exec_step = 1;
@@ -1231,22 +1252,4 @@ impl Cpu {
         self.irq_latched.tick();
     }
 
-    /// Clock dispatch_active (zacw) for the HALT-wake landing. Gated by
-    /// `phase == Halted(WakeIntake)` — this is the M-cycle whose
-    /// closing CLK9↑ captures `dispatch_trigger` for the dispatch decision
-    /// resolved by the next M-cycle's selector. No EI/DI in flight on
-    /// the HALT-wake path, so the zaij/zkog gate collapses to 0 and
-    /// `D = dispatch_trigger`.
-    ///
-    /// Running-CPU dispatch captures dispatch_active inside `retire_edge`
-    /// (in-flight retire's CLK9↑); the two write sites never overlap
-    /// — `retire_edge` only runs at retires (mid-`mcycle_fetch`/-
-    /// `mcycle_execute`), `tick_dispatch_active`'s gated branch only fires
-    /// at the M-cycle boundary when in `Halted(WakeIntake)`.
-    pub fn tick_dispatch_active(&mut self) {
-        if matches!(self.phase, CpuPhase::Halted(HaltPhase::WakeIntake)) {
-            self.dispatch_active.write(self.dispatch_trigger());
-            self.dispatch_active.tick();
-        }
-    }
 }
