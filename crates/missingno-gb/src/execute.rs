@@ -273,7 +273,7 @@ impl GameBoy {
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
         self.cpu
             .dispatch
-            .step_zkog(ime_enabled, data_phase, xogs, false, false, false);
+            .step_zkog(ime_enabled, data_phase, xogs, halt, false, false, false);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
@@ -348,6 +348,9 @@ impl GameBoy {
             // for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
         // VOGA capture (HBlank) happens on the master-clock rising edge via
@@ -487,6 +490,9 @@ impl GameBoy {
         {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
         self.clock_phase = ClockPhase::Low;

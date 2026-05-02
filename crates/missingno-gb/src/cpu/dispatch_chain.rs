@@ -75,14 +75,21 @@ impl DispatchChain {
         !self.irq_latch.is_empty()
     }
 
-    /// zaij combinational compute + zkog SR-latch update. Called every
-    /// dot. zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI in flight).
-    /// zkog: S = zaij, R_n = NOR(ctl_int_entry_m6, sys_reset).
+    /// Set zfex.D inputs each dot. Drives:
+    ///   zkog: SR-latch set by zaij = ime ∧ data_phase ∧ int_take ∧
+    ///         xogs ∧ ¬(EI/DI in flight); reset by ctl_int_entry_m6 ∨
+    ///         sys_reset.
+    ///   zloz: SR-latch set by AND3(xogs, zkdu, zojz). The exact zkdu /
+    ///         zojz semantics aren't in the spec, but the AND3 fires
+    ///         during HALT (xogs ∨ halt term) when ime ∧ int_take —
+    ///         providing the HALT-wake dispatch path that bypasses
+    ///         zaij's data_phase requirement.
     pub(crate) fn step_zkog(
         &mut self,
         ime_enabled: bool,
         data_phase: bool,
         xogs: bool,
+        halt: bool,
         ei_di_in_flight: bool,
         ctl_int_entry_m6: bool,
         sys_reset: bool,
@@ -92,8 +99,16 @@ impl DispatchChain {
         if zaij {
             self.zkog = true;
         }
+        // HALT-wake path (zloz set chain): xogs is HIGH during HALT,
+        // and IF rises propagate combinationally through the
+        // transparent latch. zloz lets dispatch arm at the next CLK9↑.
+        let zloz_set = halt && ime_enabled && self.int_take();
+        if zloz_set {
+            self.zloz = true;
+        }
         if ctl_int_entry_m6 || sys_reset {
             self.zkog = false;
+            self.zloz = false;
         }
     }
 
@@ -122,9 +137,12 @@ impl DispatchChain {
         None
     }
 
-    /// Clear zkog (SR-latch reset) at ctl_int_entry_m6 fire — when the
-    /// ISR vector resolves and the dispatch sequence completes.
+    /// Reset both zkog and zloz SR-latches at ctl_int_entry_m6 — fires
+    /// when the ISR commits to dispatch. Per netlist:
+    ///   zkog R_n = NOR(ctl_int_entry_m6, sys_reset)
+    ///   zloz R_n = AOI21(nmi_entry, ctl_int_entry_m6, sys_reset)
     pub(crate) fn clear_dispatch(&mut self) {
         self.zkog = false;
+        self.zloz = false;
     }
 }
