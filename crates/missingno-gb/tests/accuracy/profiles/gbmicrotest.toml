@@ -18,5 +18,5 @@ test_pass   = "FF82"
 [fields.extensions]
 missingno = [
   "ppu_wuvu", "ppu_vena", "ppu_xupy", "ppu_lx",
-  "ppu_avap", "ppu_besu", "ppu_wodu", "ppu_stat_line",
+  "ppu_besu", "ppu_wodu", "ppu_stat_line",
 ]
