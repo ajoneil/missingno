@@ -450,10 +450,9 @@ impl Cpu {
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 if self.dispatch.dispatch_active() {
-                    // ctl_int_entry_m6 fires as dispatch arms — resets
-                    // zkog SR-latch so the chain doesn't re-fire next
-                    // CLK9↑.
-                    self.dispatch.clear_dispatch();
+                    // zkog/zloz reset happens at ctl_int_entry_m6
+                    // (M3→M4 vector resolve) — driven by
+                    // pending_vector_resolve in execute.rs.
 
                     // Dispatch arm — drop halt, hand the next M-cycle
                     // to `mcycle_isr(0)` (M1 body: IME clear,
@@ -1097,9 +1096,9 @@ impl Cpu {
         self.boundary_flag = true;
 
         if self.dispatch.dispatch_active() {
-            // ctl_int_entry_m6 fires as dispatch arms — resets zkog
-            // SR-latch so the chain doesn't re-fire on the next CLK9↑.
-            self.dispatch.clear_dispatch();
+            // zkog/zloz reset happens at ctl_int_entry_m6
+            // (M3→M4 vector resolve) — driven by
+            // pending_vector_resolve in execute.rs.
 
             self.halt_state = HaltState::Running;
             let pc = self.pc;

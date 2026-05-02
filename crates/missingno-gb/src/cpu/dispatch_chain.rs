@@ -47,11 +47,6 @@ impl DispatchChain {
         }
     }
 
-    /// Boot-ROM-handoff state: latch transparent, dispatch idle.
-    pub(crate) fn from_snapshot() -> Self {
-        Self::new()
-    }
-
     /// Drive data_phase_n from the CPU phase ring. Called every dot.
     /// When transparent (true), irq_latch tracks live IE & IF; when held
     /// (false), irq_latch stays frozen.
@@ -68,47 +63,45 @@ impl DispatchChain {
         }
     }
 
-    /// Combinational int_take = OR of irq_latch bits. Per netlist:
-    /// int_take = NOT(irq_prio_nand_a_y) where irq_prio_nand_a_y is the
-    /// distributed wired-NAND output of the priority chain.
-    pub(crate) fn int_take(&self) -> bool {
-        !self.irq_latch.is_empty()
+    /// IRQ-pending priority output (= NOT(irq_prio_nand_a_y) when the
+    /// priority chain has evaluated). The wired-NAND bus is precharged
+    /// HIGH while write_phase=0, so int_take is gated false outside
+    /// the eval phase.
+    pub(crate) fn int_take(&self, write_phase: bool) -> bool {
+        write_phase && !self.irq_latch.is_empty()
     }
 
-    /// Set zfex.D inputs each dot. Drives:
-    ///   zkog: SR-latch set by zaij = ime ∧ data_phase ∧ int_take ∧
-    ///         xogs ∧ ¬(EI/DI in flight); reset by ctl_int_entry_m6 ∨
-    ///         sys_reset.
-    ///   zloz: SR-latch set by AND3(xogs, zkdu, zojz). The exact zkdu /
-    ///         zojz semantics aren't in the spec, but the AND3 fires
-    ///         during HALT (xogs ∨ halt term) when ime ∧ int_take —
+    /// Update the SR-latch set chains each dot:
+    ///   zkog: S = zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI
+    ///         in flight). Reset path is `clear_dispatch()` (driven by
+    ///         ctl_int_entry_m6 at the vector-resolve point).
+    ///   zloz: S = AND3(xogs, zkdu, zojz). The zkdu/zojz signals aren't
+    ///         in the spec, but the AND3 fires during HALT (xogs HIGH
+    ///         continuously while halted) when ime ∧ irq pending —
     ///         providing the HALT-wake dispatch path that bypasses
-    ///         zaij's data_phase requirement.
+    ///         zaij's data_phase + write_phase requirement.
     pub(crate) fn step_zkog(
         &mut self,
         ime_enabled: bool,
         data_phase: bool,
+        write_phase: bool,
         xogs: bool,
         halt: bool,
         ei_di_in_flight: bool,
-        ctl_int_entry_m6: bool,
-        sys_reset: bool,
     ) {
-        let zaij =
-            ime_enabled && data_phase && self.int_take() && xogs && !ei_di_in_flight;
+        let int_take = self.int_take(write_phase);
+        let zaij = ime_enabled && data_phase && int_take && xogs && !ei_di_in_flight;
         if zaij {
             self.zkog = true;
         }
         // HALT-wake path (zloz set chain): xogs is HIGH during HALT,
         // and IF rises propagate combinationally through the
-        // transparent latch. zloz lets dispatch arm at the next CLK9↑.
-        let zloz_set = halt && ime_enabled && self.int_take();
+        // transparent latch. Bypasses int_take's write_phase gate —
+        // the HALT-wake chain doesn't go through the precharged-evaluate
+        // priority bus.
+        let zloz_set = halt && ime_enabled && !self.irq_latch.is_empty();
         if zloz_set {
             self.zloz = true;
-        }
-        if ctl_int_entry_m6 || sys_reset {
-            self.zkog = false;
-            self.zloz = false;
         }
     }
 

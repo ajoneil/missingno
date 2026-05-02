@@ -233,14 +233,21 @@ impl GameBoy {
         let dot_action = self.cpu.next_dot(self.last_read_value);
         self.current_dot_action = dot_action;
 
-        // IE push bug: check after each M-cycle transition.
+        // IE push bug + ctl_int_entry_m6: vector-resolve fires between
+        // ISR M3 and M4. Clears zkog/zloz (per netlist R_n =
+        // NOR(ctl_int_entry_m6, sys_reset)) and the dispatched IF bit
+        // (per netlist inta[i] = AND(ctl_int_entry_m6, irq_latch_gated_q_n[i])).
         if self.cpu.take_pending_vector_resolve() {
-            if let Some(interrupt) = self.interrupts.triggered() {
+            // Read the post-latch priority chain output (matches the
+            // hardware vector resolve which reads irq_latch_gated, not
+            // raw IF).
+            if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
                 self.cpu.bus_counter = interrupt.vector();
             } else {
                 self.cpu.bus_counter = 0x0000;
             }
+            self.cpu.dispatch.clear_dispatch();
         }
 
         let dot = self.cpu.dot_for_execute();
@@ -264,6 +271,7 @@ impl GameBoy {
         // ops (Read/Write/Operands).
         let halt = self.cpu.is_halted();
         let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
+        let write_phase = !halt && dot.index() == 3;
         let ctl_fetch = self.cpu.is_fetch_phase();
         let xogs = (data_phase && ctl_fetch) || halt;
         let ime_enabled =
@@ -274,7 +282,7 @@ impl GameBoy {
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
         self.cpu
             .dispatch
-            .step_zkog(ime_enabled, data_phase, xogs, halt, ei_di, false, false);
+            .step_zkog(ime_enabled, data_phase, write_phase, xogs, halt, ei_di);
 
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
