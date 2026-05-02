@@ -106,34 +106,30 @@ impl FetchCascade {
     }
 
     /// Advance the ALET-rising-clocked stages (PPU-clock-rise phase):
-    /// NYKA captures LYRY, PYGO captures PORY, POKY NOR latch fires
-    /// from PYGO.
+    /// NYKA captures LYRY, PYGO captures PORY, POKY NOR latch settles.
     ///
-    /// LYRY fires on the preceding PPU-clock-fall edge (fetcher counter
-    /// reaches 5 in advance_rising). NYKA captures live LYRY here — the
-    /// half-phase separation provides the 1 half-phase DFF delay.
+    /// NYKA and PYGO are dffr — true edge-triggered DFFs that track both
+    /// 0→1 and 1→0 transitions of their D inputs each ALET edge. POKY is
+    /// a NOR-latch (S=PYGO, R=mode3_n): set when PYGO=1, hold when both
+    /// inputs are 0 (= during Mode 3 with PYGO=0). Reset (R=1) outside
+    /// Mode 3 is handled by `reset()` at the scanline boundary.
     pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
-        // NYKA DFF17: captures live LYRY on falling edge (ALET clock).
-        if lyry && !self.nyka {
-            self.nyka = true;
-        }
+        // NYKA dffr: captures LYRY on ALET rise.
+        self.nyka = lyry;
 
-        // PYGO captures PORY on falling edge (ALET clock).
-        if self.pory && !self.pygo {
-            self.pygo = true;
-        }
+        // PYGO dffr: captures PORY on ALET rise.
+        self.pygo = self.pory;
 
-        // POKY NOR latch fires on falling, reading the just-updated PYGO.
-        if self.pygo && !self.poky {
+        // POKY nor_latch: S=PYGO sets the latch; S=R=0 holds.
+        if self.pygo {
             self.poky = true;
         }
     }
 
     /// PORY captures NYKA on MYVO rising (= PPU clock fall, master-clock rise).
     pub(in crate::ppu) fn capture_pory(&mut self) {
-        if self.nyka && !self.pory {
-            self.pory = true;
-        }
+        // PORY dffr: captures NYKA on MYVO rise.
+        self.pory = self.nyka;
     }
 
     /// Scanline reset: clear all DFFs.

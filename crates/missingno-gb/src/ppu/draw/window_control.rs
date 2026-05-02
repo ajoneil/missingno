@@ -167,17 +167,17 @@ impl WindowControl {
         pygo: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
-    ) {
+    ) -> bool {
         // SARY/REJO: sample WY==LY latch. Now handled by sample_wy_match()
         // which runs every dot in all modes; call here is redundant but
         // harmless (idempotent latch).
         self.sample_wy_match(regs, video);
 
         if !regs.control.window_enabled() {
-            return;
+            return false;
         }
         if !self.wy_matched {
-            return;
+            return false;
         }
 
         // Detect mid-scanline WX changes to clear the trigger suppression latch.
@@ -187,7 +187,7 @@ impl WindowControl {
         }
 
         if pixel_counter != regs.window.x_plus_7.output() {
-            return;
+            return false;
         }
 
         // PYGO gate: PYCO is clocked by ROCO (derived from TYFA), which
@@ -195,17 +195,17 @@ impl WindowControl {
         // and PYCO cannot capture the NUKO match. This prevents WX=0 from
         // triggering before the initial BG fetch completes.
         if !pygo {
-            return;
+            return false;
         }
 
         // Window already active — reactivation handled post-pipeline.
         if fetcher.fetching_window {
-            return;
+            return false;
         }
 
         // WX already matched this line — suppress the comparator.
         if self.wx_triggered {
-            return;
+            return false;
         }
 
         // Window trigger: reset fine scroll, restart fetcher, and reset
@@ -222,6 +222,7 @@ impl WindowControl {
         // tile fetch completes before the pixel clock can resume.
         cascade.reset_window();
         self.window_rendered = true;
+        true
     }
 
     /// DMG window reactivation zero-pixel quirk. Runs AFTER the pixel
