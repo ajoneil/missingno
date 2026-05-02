@@ -42,7 +42,7 @@ The conversation context is volatile — it will be compacted unpredictably. Tre
 
 Skills invoke other skills as subroutines. There are two execution flavors:
 
-**Subagent skills** — `/research`, `/analyze`, `/instrument`, `/inspect`, `/compare-traces`. These are fact-finding tasks that produce large diagnostic outputs (file reads, source exploration, measurement data, test output). They run as Task subagents (`subagent_type: "general-purpose"`) so that intermediate work stays out of the main context window. Each subagent receives its skill file in the Task prompt, writes a receipt file, and stops. It does NOT inherit the caller's context or hypotheses.
+**Subagent skills** — `/research`, `/analyze`, `/instrument`, `/inspect`, `/compare-traces`, `/test-report`. These are fact-finding tasks that produce large diagnostic outputs (file reads, source exploration, measurement data, test output). They run as Task subagents (`subagent_type: "general-purpose"`) so that intermediate work stays out of the main context window. Each subagent receives its skill file in the Task prompt, writes a receipt file, and stops. It does NOT inherit the caller's context or hypotheses.
 
 **In-context skills** — `/hypothesize`, `/design`, `/implement`. These are synthesis tasks where conversation continuity (prior reasoning, the user's clarifications, mid-flight course corrections) is load-bearing. They run on the main agent. Before invoking, re-read the skill file from `.agents/skills/<skill>.md` to load its scope discipline, then switch into that mode for the duration. The scope-discipline rules are critical — the main agent must follow them as strictly as a subagent would, since the only thing keeping you honest is the skill file itself.
 

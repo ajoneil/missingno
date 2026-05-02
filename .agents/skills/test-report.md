@@ -2,6 +2,18 @@
 
 Generate a comprehensive test failure report: run the test suite, cross-reference against gbtrace manifests for other emulators' pass/fail status, and categorise failures by root cause cluster and difficulty.
 
+## Invocation
+
+This skill runs as a **Task subagent** (`subagent_type: "general-purpose"`). The test suite output, raw failure list, and manifest cross-referencing produce a large amount of intermediate data that must stay out of the caller's context window. The subagent receives this skill file in the Task prompt, runs the workflow below, writes the report to `receipts/test-reports/`, and returns only the receipt path plus a short summary (pass/fail/ignored counts and a one-line per category).
+
+The caller is responsible for reading the receipt and deciding what to do next — the subagent does not interpret results or recommend fixes.
+
+## Scope discipline
+
+**You are a fact-finder, not a problem-solver.** Run the suite, classify failures against manifest data, cluster by shared symptoms, and write the report. Do not propose fixes, design changes, or open a separate investigation — interpretation and triage belong to the caller.
+
+If the test suite produces unexpected output (build failure, panic before any test runs, missing manifest), capture what happened in the report and stop. Do not pivot to debugging.
+
 ## Workflow
 
 ### 1. Capture baseline
