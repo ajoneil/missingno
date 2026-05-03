@@ -412,22 +412,11 @@ impl GameBoy {
             self.last_read_value = self.cpu_read(*address);
         }
 
-        // VBlank IF: the divider chain now runs in fall(), so POPU
-        // (VBlank) transitions happen here, not in rise().
-        if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-
-        // SUKO is combinational — check for STAT edge after every phase.
-        let stat_edge = self.ppu.check_stat_edge();
-        if stat_edge {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        let (ns, pixel) = self.apply_ppu_result(&video_result);
-        new_screen |= ns;
-
-        // Bus writes on the falling edge.
+        // Bus writes on the falling edge. The cpu_wr window closes
+        // before mid-M-cycle source clocks rise (POPU, SUKO), so a
+        // FF0F-write-clear pulse on lyta/movu/etc. (the IF dffsr r_n
+        // inputs) releases before the source-clock capture — rise
+        // wins same-dot. Apply CPU writes first, then IF mutations.
         match &self.current_dot_action {
             DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
             DotAction::Write { address, value } => {
@@ -445,6 +434,21 @@ impl GameBoy {
                 self.write_byte(address, value);
             }
         }
+
+        // VBlank IF: the divider chain now runs in fall(), so POPU
+        // (VBlank) transitions happen here, not in rise().
+        if video_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+
+        // SUKO is combinational — check for STAT edge after every phase.
+        let stat_edge = self.ppu.check_stat_edge();
+        if stat_edge {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        let (ns, pixel) = self.apply_ppu_result(&video_result);
+        new_screen |= ns;
 
         if is_mcycle_boundary {
             // Serial ticks once per M-cycle. Run before update_interrupt_state
