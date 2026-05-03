@@ -174,7 +174,7 @@ impl GameBoy {
     fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
-        let is_mcycle_boundary = !self.cpu.mcycle_active;
+        let is_mcycle_boundary = self.cpu.consume_boundary_pending();
 
         // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {

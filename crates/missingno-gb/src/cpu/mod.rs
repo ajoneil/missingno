@@ -1,6 +1,7 @@
+use commit::Commit;
 use dff::Dff;
 use flags::{Flag, Flags};
-use mcycle::{BusDot, CpuPhase, Phase};
+use mcycle::{BusAction, BusDot, CpuPhase, Phase};
 use registers::{Register8, Register16};
 
 pub mod commit;
@@ -84,6 +85,15 @@ pub struct Cpu {
     pub(super) dot: BusDot,
     /// Whether we have a pending M-cycle.
     pub(super) mcycle_active: bool,
+    /// Whether the next rise() should fire the M-cycle-boundary block
+    /// (timers.mcycle, tick_zacw, tick_irq_latched, boundary PPU rise,
+    /// dispatch capture). Decoupled from mcycle_active to let the
+    /// skip-boot constructor encode "M-cycle in flight, but the opening
+    /// CLK9↑'s boundary work has already fired in the boot ROM's domain"
+    /// — the post-CLK9↑ state hardware is in at PC=0x0100. In normal
+    /// execution, this mirrors !mcycle_active (one boundary per
+    /// M-cycle).
+    pub(super) boundary_pending: bool,
     /// The BusAction for the current M-cycle.
     current_action: Option<mcycle::BusAction>,
     /// Step counter for Fetch/Halted phases (tracks M-cycle sub-steps).
@@ -148,20 +158,31 @@ impl Cpu {
             halt_state: HaltState::Running,
             halt_bug: false,
 
-            // Skip-boot anchor: the boot ROM's LDH (0xFF50), A has
-            // fully retired (FF50 write committed, ExternalBus::new
-            // already defaulted boot_rom_mapped=false in skip-boot
-            // mode); simulator t=0 is the M-cycle boundary CLK9↑ that
-            // opens the cartridge instruction's m1 fetch (the same
-            // physical M-cycle as LDH's post-body fetch under SM83
-            // fetch overlap). At this edge cpu_port_a transitions to
-            // 0x0100 and reg_pc holds 0x0100; no WriteOp residual is
-            // needed.
-            phase: CpuPhase::Fetch,
+            // Skip-boot anchor: simulator t=0 is the post-rise of
+            // the M-cycle boundary CLK9↑ that opens LDH (0xFF50),A's
+            // post-body fetch (= cartridge instruction m1 under SM83
+            // fetch overlap). The ring counter captured the new
+            // M-cycle's state on the edge; reg_pc holds 0x0100 and
+            // cpu_port_a is driving 0x0100 combinationally; LDH's
+            // FF50 write retired in the prior m2 cycle. The in-flight
+            // M-cycle is the FetchOverlap carrying NoOperation; the
+            // staged Read emits Idle for dots 0-2 and the cartridge
+            // byte read at dot 3 = boga. boundary_pending is false:
+            // the opening CLK9↑'s boundary work fired in the boot
+            // ROM's domain, before simulator t=0 — the dispatch
+            // chain DFFs, timers, and PPU init already reflect the
+            // post-edge state.
+            phase: CpuPhase::Execute {
+                phase: Phase::FetchOverlap {
+                    commit: Commit::NoOperation,
+                },
+                step: 1,
+            },
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
-            mcycle_active: false,
-            current_action: None,
+            mcycle_active: true,
+            boundary_pending: false,
+            current_action: Some(BusAction::Read { address: 0x0100 }),
             exec_step: 0,
             pending_jump_target: None,
             scratch: 0,
@@ -197,6 +218,7 @@ impl Cpu {
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
             mcycle_active: false,
+            boundary_pending: true,
             current_action: None,
             exec_step: 0,
             pending_jump_target: None,
@@ -245,6 +267,7 @@ impl Cpu {
             instruction: instructions::Instruction::NoOperation,
             dot: BusDot::ZERO,
             mcycle_active: false,
+            boundary_pending: true,
             current_action: None,
             exec_step: 0,
             pending_jump_target: None,
@@ -382,6 +405,15 @@ impl Cpu {
     /// HALT-release chain.
     pub fn irq_latched(&self) -> bool {
         self.irq_latched.output()
+    }
+
+    /// Consume `boundary_pending` — return its current value and clear
+    /// it to false. Called by the executor at the start of each rise()
+    /// to decide whether the M-cycle-boundary block fires this edge.
+    pub(super) fn consume_boundary_pending(&mut self) -> bool {
+        let pending = self.boundary_pending;
+        self.boundary_pending = false;
+        pending
     }
 
     /// IE push bug flag — set during dispatch M3 vector resolution

@@ -427,6 +427,7 @@ impl Cpu {
 
         if dot.boga() {
             self.mcycle_active = false;
+            self.boundary_pending = true;
         }
 
         result
