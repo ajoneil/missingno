@@ -10,9 +10,13 @@ use super::fine_scroll::FineScroll;
 ///
 /// Per-dot `check_trigger` collapses the hardware WX-match capture
 /// pipeline (NUKO → PYCO → NUNU → PYNU → NUNY → PUKU → RYDY) into a
-/// single evaluation gated on PYGO; the PYCO/NUNU half-cycle pipeline
-/// latency collapses to one dot via the RisingPhaseInputs snapshot.
-/// Observation-equivalent at half-dot resolution.
+/// single evaluation gated on POKY (sticky-on after the startup
+/// cascade per spec §6.12 line 1548 — ROCO derives from TYFA which
+/// requires POKY=1). The collapse fires the trigger on the dot
+/// NUKO matches; on hardware MOSU↑ propagates several dots later
+/// through the multi-edge pipeline, but at the consumer boundary
+/// (window-mode active, fetcher restart) the collapsed model
+/// reproduces the observable behaviour.
 ///
 /// The window-hit signal (RYDY) drives two consumer chains in
 /// `rendering.rs`: it blocks sprite triggers (hardware TUKU input to
@@ -155,8 +159,12 @@ impl WindowControl {
     ///
     /// On hardware, the NUKO comparator reads pix_count DFF Q-outputs
     /// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
-    /// match on ROCO, which derives from TYFA and requires POKY (modeled
-    /// as `pygo`). The `pixel_counter` parameter must be the pre-SACU
+    /// match on ROCO; per spec §6.12 line 1548, ROCO derives from TYFA
+    /// and requires POKY=1. POKY is the sticky NOR-latch that goes high
+    /// after the §6.5.1 startup cascade completes — using it here lets
+    /// the trigger fire on every NUKO match dot once startup is done,
+    /// matching the spec sweep table (`MOSU↑ ≈ 7.161 + 1.024 × WX` dots
+    /// from AVAP). The `pixel_counter` parameter must be the pre-SACU
     /// value (from `RisingPhaseInputs`) to model this correctly.
     pub(in crate::ppu) fn check_trigger_arming(
         &mut self,
@@ -164,7 +172,7 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
-        pygo: bool,
+        poky: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> bool {
@@ -190,11 +198,11 @@ impl WindowControl {
             return false;
         }
 
-        // PYGO gate: PYCO is clocked by ROCO (derived from TYFA), which
-        // requires POKY (pygo) to be set. Without POKY, ROCO has no edges
-        // and PYCO cannot capture the NUKO match. This prevents WX=0 from
-        // triggering before the initial BG fetch completes.
-        if !pygo {
+        // POKY gate: PYCO is clocked by ROCO (derived from TYFA), which
+        // requires POKY=1. POKY is sticky-on after startup, so this
+        // gate blocks pre-startup matches (WX=0 case) but doesn't drop
+        // out during the rest of mode 3 — matching spec §6.12.
+        if !poky {
             return false;
         }
 
@@ -235,7 +243,7 @@ impl WindowControl {
         rydy_snapshot: bool,
         fetcher: &TileFetcher,
         pixel_counter: u8,
-        pygo: bool,
+        poky: bool,
         regs: &PipelineRegisters,
     ) {
         if !regs.control.window_enabled() {
@@ -247,7 +255,7 @@ impl WindowControl {
         if pixel_counter != regs.window.x_plus_7.output() {
             return;
         }
-        if !pygo {
+        if !poky {
             return;
         }
 
