@@ -71,6 +71,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.5" date="2026-05-03">
+      <description>
+        <ul>
+          <li>Read and write physical Game Boy cartridges with a GBxCart RW: ROM dumping, flash writing with CFI detection, and save sync</li>
+          <li>Built-in homebrew browser with search, cover art, and one-click download from Homebrew Hub</li>
+          <li>In-game screenshot capture with gallery, palette selection, and PNG export</li>
+          <li>Debugger UI overhaul</li>
+          <li>Snappier library with background activity loading and a unified game detail header</li>
+          <li>Continued accuracy work on the PPU and CPU</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.4" date="2026-04-04">
       <description>
         <ul>
