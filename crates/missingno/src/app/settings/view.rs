@@ -13,7 +13,7 @@ use crate::app::{
     ui::{
         buttons, containers, horizontal_rule,
         icons::{self, Icon},
-        palette::MUTED,
+        palette::{MUTED, YELLOW},
         sizes::{l, m, s},
         text as app_text,
     },
@@ -359,9 +359,26 @@ fn general_section(settings: &super::Settings) -> Element<'_, app::Message> {
     let mut directories = column![].spacing(s());
 
     for (i, dir) in settings.rom_directories.iter().enumerate() {
+        let path_str = dir.to_string_lossy().to_string();
+        let path_view: Element<'_, app::Message> = if dir.exists() {
+            text(path_str).into()
+        } else {
+            column![
+                row![
+                    icons::m_colored(Icon::Warning, YELLOW),
+                    text(path_str).color(YELLOW),
+                ]
+                .spacing(s())
+                .align_y(Center),
+                app_text::detail("Folder not found").color(MUTED),
+            ]
+            .spacing(2)
+            .into()
+        };
+
         directories = directories.push(
             row![
-                text(dir.to_string_lossy().to_string()).width(Fill),
+                container(path_view).width(Fill),
                 buttons::danger(icons::m(Icon::Close))
                     .on_press(Message::RemoveRomDirectory(i).into()),
             ]

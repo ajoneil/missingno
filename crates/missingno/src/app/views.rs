@@ -76,12 +76,17 @@ impl App {
             ) => self.flash_cartridge_view(flash_state),
             _ => {
                 let page_content = self.page_content();
-                column![
+                let mut col = column![
                     self.action_bar.view(self),
                     horizontal_rule(),
-                    container(page_content).center(Fill)
-                ]
-                .into()
+                    container(page_content).center(Fill),
+                ];
+                if matches!(self.screen, Screen::Library { .. })
+                    && let Some(bar) = self.missing_rom_dirs_bar()
+                {
+                    col = col.push(bar);
+                }
+                col.into()
             }
         };
 
@@ -752,6 +757,46 @@ impl App {
 
     fn empty_detail_view(&self) -> Element<'_, Message> {
         self.library_view()
+    }
+
+    fn missing_rom_dirs_bar(&self) -> Option<Element<'static, Message>> {
+        let count = self
+            .settings
+            .rom_directories
+            .iter()
+            .filter(|dir| !dir.exists())
+            .count();
+        if count == 0 {
+            return None;
+        }
+
+        let msg = if count == 1 {
+            "1 ROM folder is unavailable".to_string()
+        } else {
+            format!("{count} ROM folders are unavailable")
+        };
+
+        Some(
+            mouse_area(
+                container(
+                    row![
+                        icons::m_colored(Icon::Warning, iced::Color::WHITE),
+                        iced_text(msg).color(iced::Color::WHITE),
+                    ]
+                    .spacing(s())
+                    .align_y(Center),
+                )
+                .padding(m())
+                .width(Fill)
+                .style(|_: &iced::Theme| container::Style {
+                    background: Some(iced::Color::from_rgb(0.5, 0.15, 0.15).into()),
+                    ..Default::default()
+                }),
+            )
+            .on_press(Message::ShowSettings)
+            .interaction(mouse::Interaction::Pointer)
+            .into(),
+        )
     }
 
     fn emulator_view(&self, fullscreen: bool) -> Element<'_, Message> {
