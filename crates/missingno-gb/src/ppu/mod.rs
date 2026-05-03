@@ -694,17 +694,6 @@ impl Ppu {
                 }
             }
 
-            // CATU DFF pipeline — clocked by XUPY = NOT(WUVU), which
-            // transitions when WUVU toggles (same XOTA edge = this fall).
-            // `tick_rutu` runs after `tick_catu` so the CATU reader sees
-            // the pre-promotion RUTU value, and the scanline-boundary
-            // write promoted by `tick_rutu` is only visible on the next
-            // XUPY rising edge.
-            if let Some(rendering) = self.pixel_pipeline.as_mut() {
-                rendering.tick_catu(&self.video);
-                rendering.tick_rutu();
-            }
-
             // POPU rising edge → VYPU → LOPE: VBlank IF.
             if self.video.vblank() && !popu_was {
                 result.request_vblank = true;
@@ -733,6 +722,25 @@ impl Ppu {
                     &self.oam,
                     xupy_rising,
                 );
+            }
+
+            // CATU DFF pipeline runs AFTER on_ppu_clock_fall so that
+            // advance_scan reads pre-tick_catu state. On the +1 fall
+            // of a scanline boundary, advance_scan sees scanning=false
+            // (still false from the prior scanline's AVAP) and does
+            // not tick the counter; tick_catu then captures CATU,
+            // sets scanning=true and counter=0. The next XUPY-rising
+            // fall's advance_scan ticks counter 0→1 — matching spec
+            // §7.4's "1 XUPY cycle between CATU capture and the first
+            // counter tick."
+            //
+            // tick_rutu runs after tick_catu so the CATU reader sees
+            // the pre-promotion RUTU value; the scanline-boundary
+            // write promoted by tick_rutu is only visible on the next
+            // XUPY rising edge.
+            if let Some(rendering) = self.pixel_pipeline.as_mut() {
+                rendering.tick_catu(&self.video);
+                rendering.tick_rutu();
             }
 
             // STAT edge detection moved to check_stat_edge() — called

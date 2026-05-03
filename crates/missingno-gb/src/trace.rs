@@ -69,11 +69,6 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
         description: "LX counter (0..113), M-cycle position on current line",
     },
     ExtensionDef {
-        name: "ppu_avap",
-        field_type: FieldType::Bool,
-        description: "AVAP fired this dot — Mode 2→3 transition pending",
-    },
-    ExtensionDef {
         name: "ppu_besu",
         field_type: FieldType::Bool,
         description: "BESU — OAM scanning latch (drives ACYL)",
@@ -124,7 +119,6 @@ enum Emitter {
     ExtPpuVena,
     ExtPpuXupy,
     ExtPpuLx,
-    ExtPpuAvap,
     ExtPpuBesu,
     ExtPpuWodu,
     ExtPpuStatLine,
@@ -295,7 +289,6 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         "ppu_vena" => Emitter::ExtPpuVena,
         "ppu_xupy" => Emitter::ExtPpuXupy,
         "ppu_lx" => Emitter::ExtPpuLx,
-        "ppu_avap" => Emitter::ExtPpuAvap,
         "ppu_besu" => Emitter::ExtPpuBesu,
         "ppu_wodu" => Emitter::ExtPpuWodu,
         "ppu_stat_line" => Emitter::ExtPpuStatLine,
@@ -547,9 +540,6 @@ impl Tracer {
                 Emitter::ExtPpuVena => w.set_bool(col, gb.ppu().vena()),
                 Emitter::ExtPpuXupy => w.set_bool(col, gb.ppu().xupy()),
                 Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
-                // AVAP is a one-edge combinational pulse, not a stable
-                // level — not meaningfully sampleable per-dot.
-                Emitter::ExtPpuAvap => {}
                 Emitter::ExtPpuBesu => w.set_bool(col, gb.ppu().besu()),
                 Emitter::ExtPpuWodu => w.set_bool(col, gb.ppu().wodu()),
                 Emitter::ExtPpuStatLine => w.set_bool(col, gb.ppu().stat_line()),
