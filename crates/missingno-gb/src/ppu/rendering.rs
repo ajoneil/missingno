@@ -556,13 +556,13 @@ impl Rendering {
             // fetcher counter at 0 through the next ALET edge so the
             // first falling-edge VRAM read fires at counter=0 (window
             // tile-index) before the counter=2/4 data reads use it.
-            let pygo = self.cascade.pygo();
+            let poky = self.cascade.poky();
             let mosu_fired = self.window.check_trigger_arming(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
                 pixel_counter_before_sacu,
-                pygo,
+                poky,
                 regs,
                 video,
             );
@@ -877,12 +877,12 @@ impl Rendering {
 
         self.window.apply_xofo(regs.control.window_enabled());
 
-        let pygo = self.cascade.pygo();
+        let poky = self.cascade.poky();
         self.window.check_trigger_reactivation(
             rydy_before_pory,
             &self.fetcher,
             pixel_counter_before_sacu,
-            pygo,
+            poky,
             regs,
         );
 
