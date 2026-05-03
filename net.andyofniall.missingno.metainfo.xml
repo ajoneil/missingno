@@ -34,20 +34,28 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/game-details.png</image>
-      <caption>Game details with activity log and save management</caption>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/game-details.png</image>
+      <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.4/screenshots/debugger.png</image>
-      <caption>The integrated debugger showing CPU state, disassembly, and VRAM</caption>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/homebrew.png</image>
+      <caption>Browse and download homebrew games from Homebrew Hub</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/cartridge.png</image>
+      <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/debugger.png</image>
+      <caption>The integrated debugger showing CPU state, disassembly, and sprites</caption>
     </screenshot>
   </screenshots>
 
