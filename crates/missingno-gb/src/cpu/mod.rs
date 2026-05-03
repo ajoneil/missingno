@@ -1,6 +1,6 @@
 use dff::Dff;
 use flags::{Flag, Flags};
-use mcycle::{BusAction, BusDot, CpuPhase, Phase};
+use mcycle::{BusDot, CpuPhase, Phase};
 use registers::{Register8, Register16};
 
 pub mod commit;
@@ -148,28 +148,20 @@ impl Cpu {
             halt_state: HaltState::Running,
             halt_bug: false,
 
-            // The skip-boot CPU enters mid-WriteOp: the boot ROM's
-            // terminating LDH (0xFF50), A is still draining its WriteOp
-            // M-cycle when the IDU has already advanced bus_counter to
-            // 0x0100. Pre-load the persistent state machine fields with
-            // the in-flight WriteOp residual so next_dot drains it
-            // through its remaining dots (Idle, Idle, Write{0xFF50,0x01})
-            // before chaining into the first cartridge fetch.
-            phase: CpuPhase::Execute {
-                phase: Phase::WriteOp {
-                    address: 0xFF50,
-                    value: 0x01,
-                    hl_post: 0,
-                },
-                step: 1,
-            },
+            // Skip-boot anchor: the boot ROM's LDH (0xFF50), A has
+            // fully retired (FF50 write committed, ExternalBus::new
+            // already defaulted boot_rom_mapped=false in skip-boot
+            // mode); simulator t=0 is the M-cycle boundary CLK9↑ that
+            // opens the cartridge instruction's m1 fetch (the same
+            // physical M-cycle as LDH's post-body fetch under SM83
+            // fetch overlap). At this edge cpu_port_a transitions to
+            // 0x0100 and reg_pc holds 0x0100; no WriteOp residual is
+            // needed.
+            phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
-            dot: BusDot::ONE,
-            mcycle_active: true,
-            current_action: Some(BusAction::Write {
-                address: 0xFF50,
-                value: 0x01,
-            }),
+            dot: BusDot::ZERO,
+            mcycle_active: false,
+            current_action: None,
             exec_step: 0,
             pending_jump_target: None,
             scratch: 0,
