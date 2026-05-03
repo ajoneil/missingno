@@ -1,9 +1,9 @@
 // Pixel mux: combines BG and OBJ shift register outputs into a single
 // colour index, applies sprite priority, and maps through the active
 // palette. Hardware chain: BG plane gates via LCDC.0 (VYXE) at RAJY /
-// TADE (§6.15); sprite priority MUX via RYFU / XULA / WOXA / NULY
-// (§6.10); palette lookup via AO2222 combiners MOKA / NURA / WUFU
-// combined in PATY (OR3); final pad drivers RAVO (LD1) and REMY (LD0).
+// TADE; sprite priority MUX via RYFU / XULA / WOXA / NULY; palette
+// lookup via AO2222 combiners MOKA / NURA / WUFU combined in PATY
+// (OR3); final pad drivers RAVO (LD1) and REMY (LD0).
 //
 // LCD data pin lag (REMY/RAVO qp_ext_old model): the LCD data pins
 // update combinationally from the pipe MSBs but the LCD captures the

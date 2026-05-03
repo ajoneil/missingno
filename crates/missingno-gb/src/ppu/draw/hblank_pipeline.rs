@@ -3,9 +3,6 @@
 //! Signal naming follows the project's PPU timing spec. Netlist gate
 //! names (XYMU, VOGA, WEGO, TOFU, etc. from the dmgcpu netlist,
 //! msinger/dmg-schematics) appear in doc comments for traceability.
-//! See `receipts/ppu-overhaul/ppu-timing-model-spec.md` §3.2 and §7.2
-//! for the hardware reference; see
-//! `receipts/ppu-overhaul/spec-conventions.md` for the conventions.
 
 /// Hblank pipeline: FEPO → WODU → VOGA → WEGO → clears XYMU.
 ///
@@ -78,7 +75,7 @@ impl HblankPipeline {
         }
     }
 
-    /// Boot-ROM-handoff hblank state (spec §3.2 / §11.1): VOGA persists
+    /// Boot-ROM-handoff hblank state: VOGA persists
     /// from the prior scanline's Mode 3 WODU capture — it is a `dffr`
     /// only reset by TADY, which next fires at LX=113 (15 M-cycles after
     /// handoff). All other latches are at their power-on defaults

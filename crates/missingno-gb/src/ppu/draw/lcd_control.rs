@@ -22,10 +22,9 @@ use crate::ppu::PixelOutput;
 /// is responsible for building whatever representation it needs.
 ///
 /// Inputs: SACU (pixel clock edge), pixel data (from the pixel mux),
-/// POVA (fine-scroll-match, from §6.2's FineScroll), WEGO
-/// (OR2(VID_RST, VOGA)), PX value (from PixelCounter, §6.3, used for
-/// the WUSA XAJO gate). Outputs: TOBA (gated LCD clock, returned
-/// from edge methods).
+/// POVA (fine-scroll-match, from FineScroll), WEGO (OR2(VID_RST, VOGA)),
+/// PX value (from PixelCounter, used for the WUSA XAJO gate).
+/// Outputs: TOBA (gated LCD clock, returned from edge methods).
 ///
 /// Hardware chain: WUSA `nor_latch` gates TOBA = AND2(WUSA, SACU).
 /// SEMU = OR2(TOBA, POVA) would be the cp_pad pixel-clock source on
@@ -75,7 +74,7 @@ impl LcdControl {
         }
     }
 
-    /// Boot-ROM-handoff LCD control state (spec §11.1): leftover counter
+    /// Boot-ROM-handoff LCD control state: leftover counter
     /// values from the prior frame's last visible scanline (LY=143). The
     /// 160 visible pixels were pushed through TOBA before WODU fired and
     /// nothing resets `lcd_push_count` / `scanline` during VBlank — they

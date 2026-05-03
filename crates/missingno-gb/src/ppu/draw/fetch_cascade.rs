@@ -27,18 +27,18 @@
 /// - `pory()` → RYDY clear
 /// - `nyka()` + `pory()` → TAVE preload
 ///
-/// # §6.1 collapsed cascade signals (not modelled as explicit state here)
+/// # Collapsed cascade signals (not modelled as explicit state here)
 ///
-/// The spec's §6.1 BG fetch counter subsystem includes several downstream
-/// signals feeding TEVO (the NYXU reset trigger for the per-tile fetch
+/// The BG fetch counter subsystem includes several downstream signals
+/// feeding TEVO (the NYXU reset trigger for the per-tile fetch
 /// boundary). This module models NYKA / PORY / PYGO / POKY directly; the
-/// following §6.1 signals are collapsed or behaviourally derived elsewhere:
+/// following signals are collapsed or behaviourally derived elsewhere:
 ///
 /// - Drain-detector path: `PANY → RYFA → RENE → SEKO → TEVO`.
 ///   RYFA (dffr, SEGU-clocked) captures PANY = NOR2(ROZE, wxy_match).
 ///   RENE (dffr, ALET-clocked) captures RYFA. SEKO = NOR2(RENE, RYFA)
-///   goes high when both drain to 0 (the spec's 8-dot tile-cycle 2-dot
-///   hold period, per §6.1 "SEKO drain-detector waveform"). Emulator
+///   goes high when both drain to 0 (an 8-dot tile-cycle 2-dot
+///   hold period — the SEKO drain-detector waveform). Emulator
 ///   fires SEKO behaviourally via the `fine_scroll.count == 7`
 ///   condition in `rendering.rs::mode3_pixel_pipeline` — fires on the
 ///   dot that completes an 8-pixel shift cycle, which matches the
@@ -56,24 +56,24 @@
 ///   NOT(SUVU). Emulator's TAVE one-shot in `rendering.rs` fires from
 ///   `NYKA && PORY && !PYGO` — `!PYGO` substitutes for `ROMO = !POKY`
 ///   using PYGO as the POKY precursor during the startup window.
-/// - Counter-bit sample: `LAXU → LYZU → MYSO → NYDY` (§6.6 temp-latch
+/// - Counter-bit sample: `LAXU → LYZU → MYSO → NYDY` (temp-latch
 ///   enable). LYZU (dffr, ALET-clocked) samples LAXU; its only consumer
 ///   is `MYSO = NOR3(mode3_n, LAXE, LYZU)` where `LAXE = NOT(LAXU)`,
 ///   making MYSO a LAXU rising-edge detector (fires for the half-dot
-///   window between LAXU↑ and LYZU catching up). MYSO feeds §6.6's
+///   window between LAXU↑ and LYZU catching up). MYSO feeds the
 ///   `NYDY = NAND3(NOFU, MESU, MYSO)` temp-latch enable decode,
 ///   gating the LUNA/LOMA pulse that captures the low-byte VRAM
 ///   read at fetch counter = 3. Emulator collapses the temp-latch
 ///   chain by reading VRAM directly into `fetcher.tile_data_low` /
 ///   `tile_data_high` at counter 2 / 4 falling edges — observation-
 ///   equivalent at the parallel-load consumer boundary for the
-///   clean-ROM case (mid-fetch LCDC writes fall under §6.14's
-///   already-flagged ambiguity territory).
+///   clean-ROM case (mid-fetch LCDC writes fall under the LCDC-write
+///   ambiguity territory).
 ///
-/// # Honest-abstraction synthesis (§6.1 emulator-alignment arc, 2026-04-21)
+/// # Honest-abstraction synthesis (emulator-alignment arc, 2026-04-21)
 ///
 /// All four collapsed paths above were verified observation-equivalent
-/// at their named consumer boundaries during the §6.1 emulator-alignment
+/// at their named consumer boundaries during the emulator-alignment
 /// step. The collapsed-vs-modelled split preserves hardware fidelity at
 /// the observable boundaries (TEVO firing dot, BG shifter parallel-load
 /// content, window-trigger timing) while abstracting internals that

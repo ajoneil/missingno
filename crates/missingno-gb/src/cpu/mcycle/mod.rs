@@ -454,12 +454,12 @@ impl Cpu {
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 // Halt drops combinationally via ykua → halt RS-latch reset
-                // when irq_latched.q rises (§13.2 / §13.5). After halt drops,
-                // the running-CPU dispatch chain fires zkog → zacw at the
-                // first eval phase if IME=1 and an IRQ is pending. We model
-                // that combined effect by checking IME + pending IRQ here
-                // — the zaij chain can't fire DURING HALT because
-                // data_phase is held LOW (§13.5).
+                // when irq_latched.q rises. After halt drops, the running-CPU
+                // dispatch chain fires zkog → zacw at the first eval phase
+                // if IME=1 and an IRQ is pending. We model that combined
+                // effect by checking IME + pending IRQ here — the zaij
+                // chain can't fire DURING HALT because data_phase is
+                // held LOW.
                 let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
                 let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
                 if irq_pending_for_dispatch {
@@ -1020,7 +1020,7 @@ impl Cpu {
     ///   The handler's first opcode then decodes via the standard
     ///   fetch/execute overlap on the next M-cycle.
     ///
-    /// Hardware mapping (gb-ctr §6.7 RST n p129):
+    /// Hardware mapping (gb-ctr RST n p129):
     ///   step 0 → M1 internal (Internal{pc})
     ///   step 1 → M2 internal (InternalOamBug{sp})
     ///   step 2 → M3 push pc_hi (Write{sp-1, pc_hi})

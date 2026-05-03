@@ -11,8 +11,8 @@ use super::fine_scroll::FineScroll;
 /// Per-dot `check_trigger` collapses the hardware WX-match capture
 /// pipeline (NUKO → PYCO → NUNU → PYNU → NUNY → PUKU → RYDY) into a
 /// single evaluation gated on POKY (sticky-on after the startup
-/// cascade per spec §6.12 line 1548 — ROCO derives from TYFA which
-/// requires POKY=1). The collapse fires the trigger on the dot
+/// cascade — ROCO derives from TYFA which requires POKY=1). The
+/// collapse fires the trigger on the dot
 /// NUKO matches; on hardware MOSU↑ propagates several dots later
 /// through the multi-edge pipeline, but at the consumer boundary
 /// (window-mode active, fetcher restart) the collapsed model
@@ -159,13 +159,13 @@ impl WindowControl {
     ///
     /// On hardware, the NUKO comparator reads pix_count DFF Q-outputs
     /// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
-    /// match on ROCO; per spec §6.12 line 1548, ROCO derives from TYFA
-    /// and requires POKY=1. POKY is the sticky NOR-latch that goes high
-    /// after the §6.5.1 startup cascade completes — using it here lets
-    /// the trigger fire on every NUKO match dot once startup is done,
-    /// matching the spec sweep table (`MOSU↑ ≈ 7.161 + 1.024 × WX` dots
-    /// from AVAP). The `pixel_counter` parameter must be the pre-SACU
-    /// value (from `RisingPhaseInputs`) to model this correctly.
+    /// match on ROCO; ROCO derives from TYFA and requires POKY=1. POKY
+    /// is the sticky NOR-latch that goes high after the startup cascade
+    /// completes — using it here lets the trigger fire on every NUKO
+    /// match dot once startup is done, matching the sweep table
+    /// (`MOSU↑ ≈ 7.161 + 1.024 × WX` dots from AVAP). The
+    /// `pixel_counter` parameter must be the pre-SACU value (from
+    /// `RisingPhaseInputs`) to model this correctly.
     pub(in crate::ppu) fn check_trigger_arming(
         &mut self,
         fetcher: &mut TileFetcher,
@@ -201,7 +201,7 @@ impl WindowControl {
         // POKY gate: PYCO is clocked by ROCO (derived from TYFA), which
         // requires POKY=1. POKY is sticky-on after startup, so this
         // gate blocks pre-startup matches (WX=0 case) but doesn't drop
-        // out during the rest of mode 3 — matching spec §6.12.
+        // out during the rest of mode 3.
         if !poky {
             return false;
         }

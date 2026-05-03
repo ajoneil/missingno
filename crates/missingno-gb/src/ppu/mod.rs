@@ -128,11 +128,12 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: scanline 0, LX=98, Mode 0 HBlank
-            // (deep in scanline 0's Mode 0, 15 M-cycles before LINE_END).
-            // Hardware divider state at DMG post-boot handoff: WUVU=0,
-            // VENA=1, TALU=0 (= NOT(VENA)). The boot ROM has cycled the
-            // dividers past their initial ramp.
+            // Post-boot PPU state: scanline 0, LX=98 (deep in HBlank
+            // dot-position, 15 M-cycles before LINE_END). Hardware
+            // divider state at DMG post-boot handoff: WUVU.q=0,
+            // VENA.q=1, TALU=1 (= VENA.q), XUPY=0 (= WUVU.q). The
+            // boot ROM has cycled the dividers past their initial
+            // ramp.
             video: VideoControl {
                 dividers: Dividers {
                     half_mcycle: false,
@@ -257,7 +258,7 @@ impl Ppu {
     ///
     /// - **Palette registers (BGP, OBP0, OBP1)**: `DffLatch::write`
     ///   — sets pending; new value visible after the next
-    ///   `tick_palette_latches` (§4.7 dlatch_ee + CUPA staging).
+    ///   `tick_palette_latches` (dlatch_ee + CUPA staging).
     /// - **Viewport / WindowX / control_latch**: `DffLatch::write_immediate`
     ///   — updates the latch output directly (DFF9 register read is
     ///   combinational).
@@ -313,11 +314,11 @@ impl Ppu {
     /// Initialize the PPU when LCDC bit 7 transitions from 0 to 1.
     ///
     /// VID_RST deasserts at XOTA rising (= master clock falls = our
-    /// fall()). All dividers async-reset to Q=0; with VENA=0, TALU
-    /// (= NOT(VENA)) is held high. Hardware's divider cascade then
-    /// ramps: WUVU toggles first, then VENA. The first RUTU-capturing
-    /// edge after vid_rst is VENA's first rise (= SONO rising = TALU
-    /// falling).
+    /// fall()). All toggle-DFF dividers async-reset to q=0; with
+    /// VENA.q=0, TALU (= VENA.q) is also 0. Hardware's divider
+    /// cascade then ramps: WUVU toggles first, then VENA. The first
+    /// RUTU-capturing edge after vid_rst is VENA's first rise
+    /// (= SONO rising = TALU falling).
     fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
         // ROPO is NOT reset by VID_RST — the DFF retains its last value.
@@ -348,7 +349,7 @@ impl Ppu {
                 // `apply_register_write` calls `DffLatch::write` (sets
                 // pending), and `tick_palette_latches` applies
                 // pending → output on the next PPU clock fall. This
-                // models §4.7's dlatch_ee + CUPA transparency → next-
+                // models the dlatch_ee + CUPA transparency → next-
                 // SACU-rising visibility window. No orchestration
                 // branch here (unlike WindowX's Mode-3-dependent
                 // staging); DffLatch handles the staging uniformly.
@@ -566,8 +567,8 @@ impl Ppu {
     /// MHz crystal oscillator input; all on-chip clocks derive from it.
     ///
     /// Clock mapping on this edge: PPU clock **rises** (ALET rises in-
-    /// phase with ck1_ck2 — see spec §1.1/§1.2). ALET-clocked DFFs
-    /// capture here: NYKA, LYZU, PYGO (cascade), RENE, DOBA, NOPA, VOGA.
+    /// phase with ck1_ck2). ALET-clocked DFFs capture here: NYKA, LYZU,
+    /// PYGO (cascade), RENE, DOBA, NOPA, VOGA.
     /// Sprite fetch counter advances on SABE (opposite edge from BG
     /// fetcher's LEBO).
     ///
@@ -596,12 +597,12 @@ impl Ppu {
         // on_master_clock_fall() — confirmed by dmg-sim: XOTA rises when
         // master clock falls, and WUVU/XUPY/CATU all toggle on XOTA rising.
 
-        // ALET rises in-phase with ck1_ck2 (§1.1/§1.2: ATAL → AZOF →
-        // ZAXY → ZEME → ALET is an even number of inversions from
-        // ck1_ck2, so ALET rising aligns with master-clock rising at
-        // 16.3 ge buffer delay). ALET-clocked DFFs capture here: NYKA,
-        // PYGO (cascade), VOGA (hblank), LYZU. Also XUPY-derived logic
-        // read at this edge.
+        // ALET rises in-phase with ck1_ck2 (ATAL → AZOF → ZAXY → ZEME
+        // → ALET is an even number of inversions from ck1_ck2, so ALET
+        // rising aligns with master-clock rising at 16.3 ge buffer
+        // delay). ALET-clocked DFFs capture here: NYKA, PYGO (cascade),
+        // VOGA (hblank), LYZU. Also XUPY-derived logic read at this
+        // edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel =
                 rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
@@ -662,9 +663,9 @@ impl Ppu {
                     // VENA rising = TALU rising. ROPO captures PALY
                     // before MYTA fires — at LY=153 the MYTA→LAMA→LY
                     // DFF reset race favours ROPO (4-stage capture vs
-                    // 6-stage MYTA propagation per spec §8.7), so it
-                    // captures pre-reset PALY=(153==LYC). Then NYPE
-                    // captures (POPU/MYTA) and LX advances.
+                    // 6-stage MYTA propagation), so it captures
+                    // pre-reset PALY=(153==LYC). Then NYPE captures
+                    // (POPU/MYTA) and LX advances.
                     self.video.update_ly_comparison();
                     self.video.stat.latch_comparison();
                     self.video.on_lx_counter_clock_rise();
@@ -730,9 +731,9 @@ impl Ppu {
             // (still false from the prior scanline's AVAP) and does
             // not tick the counter; tick_catu then captures CATU,
             // sets scanning=true and counter=0. The next XUPY-rising
-            // fall's advance_scan ticks counter 0→1 — matching spec
-            // §7.4's "1 XUPY cycle between CATU capture and the first
-            // counter tick."
+            // fall's advance_scan ticks counter 0→1 — matching the
+            // "1 XUPY cycle between CATU capture and the first counter
+            // tick" rule.
             //
             // tick_rutu runs after tick_catu so the CATU reader sees
             // the pre-promotion RUTU value; the scanline-boundary

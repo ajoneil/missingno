@@ -1,4 +1,4 @@
-//! §1.2 clock dividers — WUVU and VENA toggle cascade.
+//! Clock dividers — WUVU and VENA toggle cascade.
 //!
 //! WUVU (`half_mcycle`): dffr toggling on XOTA rising; Q period = 2 dots
 //! = half an M-cycle (= 2 MHz at the 4.194 MHz dot rate).
@@ -57,29 +57,29 @@ impl Dividers {
         self.mcycle
     }
 
-    /// TALU = NOT(vena_n) = VENA.Q (per spec §4.5) — 1 MHz LX counter
-    /// clock. TALU tracks VENA.Q in phase: at XODO↓, VENA.Q=0 and
-    /// TALU=0; first TALU↑ coincides with first VENA.Q↑.
+    /// TALU = NOT(vena_n) = VENA.Q — 1 MHz LX counter clock. TALU
+    /// tracks VENA.Q in phase: at XODO↓, VENA.Q=0 and TALU=0; first
+    /// TALU↑ coincides with first VENA.Q↑.
     pub(in crate::ppu) fn talu(&self) -> bool {
         self.mcycle
     }
 
-    /// SONO = NOT(TALU) = NOT(VENA.Q) (per spec §4.5). Clocks RUTU's
-    /// capture of SANU on its rising edge.
+    /// SONO = NOT(TALU) = NOT(VENA.Q). Clocks RUTU's capture of SANU
+    /// on its rising edge.
     pub(in crate::ppu) fn sono(&self) -> bool {
         !self.mcycle
     }
 
-    /// XUPY = NOT(wuvu_n) = WUVU.Q (per spec §4.5). XUPY is the
-    /// scan-counter / OAM-pipeline clock per §1.2/§1.3; consumers
-    /// read it as the signal whose rising edge captures BYBA, CATU, etc.
+    /// XUPY = NOT(wuvu_n) = WUVU.Q. XUPY is the scan-counter /
+    /// OAM-pipeline clock; consumers read it as the signal whose
+    /// rising edge captures BYBA, CATU, etc.
     /// XUPY tracks WUVU.Q in phase: at XODO↓, WUVU.Q=0 and XUPY=0;
     /// first XUPY↑ coincides with first WUVU.Q↑.
     pub(in crate::ppu) fn xupy(&self) -> bool {
         self.half_mcycle
     }
 
-    /// VID_RST: dividers reset to their hardware reset states (spec §4.5):
+    /// VID_RST: dividers reset to their hardware reset states:
     /// WUVU.Q=0, VENA.Q=0, with TALU = VENA.Q = 0. The first TALU↑
     /// coincides with the first VENA.Q↑ at +1.494 dots after XODO↓ — the
     /// LX-incrementing edge that scanline 0 starts counting from.

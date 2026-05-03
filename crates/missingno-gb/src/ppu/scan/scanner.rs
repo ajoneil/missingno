@@ -89,7 +89,7 @@ impl SpriteScanner {
         }
     }
 
-    /// Boot-ROM-handoff scanner state (spec §11.1): scan counter at
+    /// Boot-ROM-handoff scanner state: scan counter at
     /// terminal value 39 with GAVA frozen. BYBA/DOBA latched to 1 from
     /// FETO=1 over many XUPY cycles; `catu_enabled` released after the
     /// boot ROM's first post-LCD-on scanline. Other latches stay at

@@ -121,9 +121,9 @@ pub(in crate::ppu) struct FineScroll {
     ///    consumer observes the missing edge — but the behaviour is
     ///    absent, not equivalent.
     ///
-    /// Both divergences reach `cp_pad` / SEMU / rypo territory
-    /// (primary-§ in the LCD output pipeline). Resolution belongs to
-    /// the LCD-output alignment work, not the fine-scroll subsystem.
+    /// Both divergences reach `cp_pad` / SEMU / rypo territory in the
+    /// LCD output pipeline. Resolution belongs to the LCD-output
+    /// alignment work, not the fine-scroll subsystem.
     /// Flagged here as an honest-abstraction boundary, not a claim of
     /// equivalence.
     nyze: bool,

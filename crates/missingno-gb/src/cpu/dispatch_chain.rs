@@ -34,7 +34,7 @@ pub(crate) struct DispatchChain {
     /// false = held (irq_latch frozen at the value at last close).
     data_phase_n: bool,
     /// `ctl_op_di_or_ei` — combinational, HIGH during the M-cycle that
-    /// decoded EI/DI. Drives the zzom block on zaij (§13.7): zzom =
+    /// decoded EI/DI. Drives the zzom block on zaij: zzom =
     /// NAND(opcode3_n_buf3, ctl_op_di_or_ei). Set by `mark_ei_di_decoded`
     /// when FetchOverlap step 1 applies an EI/DI commit; cleared by
     /// `enter_mcycle` at the next M-cycle boundary.
@@ -45,7 +45,7 @@ pub(crate) struct DispatchChain {
     zkog: bool,
     /// zacw DFF on master clock (CLK9). Captures zfex = zkog (zloz hold
     /// not modelled — see file header).
-    /// q rising starts the 5-M-cycle dispatch sequence (§13.3).
+    /// q rising starts the 5-M-cycle dispatch sequence.
     zacw: Dff<bool>,
 }
 
@@ -99,7 +99,7 @@ impl DispatchChain {
 
     /// Post-latch IF & IE — read at HaltPhase::WakeIntake to decide
     /// dispatch-vs-spurious-wake without going through zaij/zkog (which
-    /// can't fire during HALT because data_phase is held LOW per §13.5).
+    /// can't fire during HALT because data_phase is held LOW).
     pub(crate) fn latched(&self) -> InterruptFlags {
         self.irq_latch
     }
@@ -111,9 +111,9 @@ impl DispatchChain {
     ///
     /// The HALT-wake dispatch path is handled at the sequencer level
     /// (HaltPhase::WakeIntake reads ime + latched IRQ directly), not
-    /// through zkog — during HALT, data_phase is held LOW per §13.5,
-    /// so zaij's data_phase requirement blocks zkog from setting until
-    /// the CPU phase ring restarts after halt drops.
+    /// through zkog — during HALT, data_phase is held LOW, so zaij's
+    /// data_phase requirement blocks zkog from setting until the CPU
+    /// phase ring restarts after halt drops.
     pub(crate) fn step_zkog(
         &mut self,
         ime_enabled: bool,

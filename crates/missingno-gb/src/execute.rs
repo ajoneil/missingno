@@ -289,8 +289,8 @@ impl GameBoy {
         // Stage PPU register writes at dot 0. On hardware, the CPU
         // places the address on the bus at phase A and the address
         // decode chain begins propagating. The write is applied at
-        // dot 2 rise (CUPA rises at phase E per §4.3, spanning 1.498
-        // dots through phase H of dot 3).
+        // dot 2 rise (CUPA rises at phase E, spanning 1.498 dots
+        // through phase H of dot 3).
         if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
             if is_ppu_register(address) {
                 self.staged_ppu_write = Some(StagedPpuWrite {
@@ -365,11 +365,11 @@ impl GameBoy {
         }
 
         // VOGA capture (HBlank) happens on the master-clock rising edge via
-        // HblankPipeline::capture_voga(): VOGA is ALET-clocked, and per spec
-        // §1.1/§1.2 ALET rises in-phase with ck1_ck2 (master-clock rising).
-        // The mode() function uses `xymu && !wodu` to predict HBlank state
-        // for CPU STAT reads, so settle_alet is not needed. G4.2 confirmed
-        // WODU doesn't depend on XYMU, making the prediction reliable.
+        // HblankPipeline::capture_voga(): VOGA is ALET-clocked, and ALET
+        // rises in-phase with ck1_ck2 (master-clock rising). The mode()
+        // function uses `xymu && !wodu` to predict HBlank state for CPU
+        // STAT reads, so settle_alet is not needed. G4.2 confirmed WODU
+        // doesn't depend on XYMU, making the prediction reliable.
 
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
@@ -398,10 +398,10 @@ impl GameBoy {
         let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary);
 
         // CPU data latch: capture bus value after PPU's master-clock
-        // fall updates land. Hardware reads are combinational (spec
-        // §4.6): the CPU samples the current DFF state via SM83-
-        // internal data_phase. PPU DFF transitions on the same master-
-        // clock cycle's TALU-rising edge (MYTA fire, ROPO capture) are
+        // fall updates land. Hardware reads are combinational: the
+        // CPU samples the current DFF state via SM83-internal
+        // data_phase. PPU DFF transitions on the same master-clock
+        // cycle's TALU-rising edge (MYTA fire, ROPO capture) are
         // visible to the CPU read because they settle before the CPU's
         // data-phase latches. Placing the read after on_master_clock_fall
         // matches that ordering.

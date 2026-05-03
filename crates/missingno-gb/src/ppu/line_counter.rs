@@ -1,15 +1,13 @@
-//! §2.1 + §2.2 line counters composed per hardware cascade.
+//! Line counters composed per hardware cascade.
 //!
-//! `LineCounter` composes `LineCounterX` (§2.1 scanline dot position; LX
-//! 7-bit ripple clocked by TALU) and `LineCounterY` (§2.2 scanline index;
+//! `LineCounter` composes `LineCounterX` (scanline dot position; LX
+//! 7-bit ripple clocked by TALU) and `LineCounterY` (scanline index;
 //! LY 8-bit ripple clocked by RUTU when X completes a line). The cascade
 //! matches hardware: LX's RUTU pulse clocks LY; no other coupling.
 //!
 //! Two-level LY vocabulary: `y.value` is the hardware-internal counter
 //! (0-153); `y.value_register()` is the CPU-visible $FF44 value (MYTA-
 //! smoothed to 0 during the frame-end transition).
-//!
-//! Hardware reference: spec §2.1 (LX), §2.2 (LY/POPU/MYTA).
 
 use crate::ppu::line_end_pipeline::NypeEdge;
 
@@ -136,11 +134,11 @@ impl LineCounterX {
 }
 
 impl LineCounterY {
-    /// Boot-ROM-handoff LY counter state (spec §11.1 / §2.2): LY-internal
-    /// at terminal 153 with MYTA latched (LAMA reset still applied), POPU
-    /// latched from the LY=144 NYPE rising edge. The `value_register()`
-    /// accessor smooths register-LY to 0 via the `frame_end_reset` short-
-    /// circuit, matching the §11.1 "LY | 0" register row.
+    /// Boot-ROM-handoff LY counter state: LY-internal at terminal 153
+    /// with MYTA latched (LAMA reset still applied), POPU latched from
+    /// the LY=144 NYPE rising edge. The `value_register()` accessor
+    /// smooths register-LY to 0 via the `frame_end_reset` short-circuit,
+    /// matching the post-boot "LY | 0" register row.
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             value: 153,
@@ -198,7 +196,7 @@ impl LineCounterY {
 
     /// CPU-visible LY value for $FF44. On line 153, MYTA's async-reset
     /// path drives LAMA low, making LY read as 0 while the internal
-    /// counter is still 153. Two-level vocabulary partition per §2.7.
+    /// counter is still 153.
     pub(in crate::ppu) fn value_register(&self) -> u8 {
         if self.frame_end_reset {
             0

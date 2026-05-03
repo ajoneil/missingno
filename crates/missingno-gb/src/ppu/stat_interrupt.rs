@@ -59,7 +59,7 @@ pub struct StatInterrupt {
 }
 
 impl StatInterrupt {
-    /// Boot-ROM-handoff STAT/LYC state (spec §11.1 / §8.6): the
+    /// Boot-ROM-handoff STAT/LYC state: the
     /// PALY=(LY==LYC) comparator has been combinationally true for many
     /// TALU cycles with LY-register=0 (MYTA-smoothed) and LYC=0, and ROPO
     /// has been capturing PALY=1 on every TALU rising edge. `enables`

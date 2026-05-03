@@ -90,7 +90,7 @@ impl ScanCounter {
         }
     }
 
-    /// Boot-ROM-handoff state (spec §11.1 / §11.2): GAVA-driven counter
+    /// Boot-ROM-handoff state: GAVA-driven counter
     /// sits at terminal value 39 with the FETO feedback holding the OR
     /// gate output high (frozen=true).
     pub(in crate::ppu) fn post_boot() -> Self {

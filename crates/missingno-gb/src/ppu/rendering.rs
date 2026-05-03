@@ -153,8 +153,8 @@ pub struct Rendering {
     /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
     /// Computed in mode3_falling, consumed in mode3_rising.
     tyfa: bool,
-    /// Pixel X position counter (PX; spec §6.3). Advances on SACU; feeds
-    /// WODU via `terminal()` for the Mode 3→0 transition.
+    /// Pixel X position counter (PX). Advances on SACU; feeds WODU
+    /// via `terminal()` for the Mode 3→0 transition.
     pixel_counter: PixelCounter,
     /// LCD Control block (die page 24): LCD clock gating (WUSA),
     /// POVA trigger, LCD shift register, data latch.
@@ -185,13 +185,13 @@ impl Rendering {
         }
     }
 
-    /// Boot-ROM-handoff rendering state (spec §11.1): hblank pipeline
-    /// carries VOGA latched from prior Mode 3 (§3.2); scan counter at
-    /// terminal 39 (frozen) with BYBA/DOBA latched and `catu_enabled`
-    /// released; BG fetch counter at terminal 5 (frozen); pixel counter
-    /// at terminal 167 residual; LCD push counter at the prior line's
-    /// 160-pixel terminal value with scanline=143. All other blocks
-    /// share `Rendering::new()`'s power-on defaults.
+    /// Boot-ROM-handoff rendering state: hblank pipeline carries VOGA
+    /// latched from prior Mode 3; scan counter at terminal 39 (frozen)
+    /// with BYBA/DOBA latched and `catu_enabled` released; BG fetch
+    /// counter at terminal 5 (frozen); pixel counter at terminal 167
+    /// residual; LCD push counter at the prior line's 160-pixel terminal
+    /// value with scanline=143. All other blocks share `Rendering::new()`'s
+    /// power-on defaults.
     pub(super) fn post_boot() -> Self {
         Rendering {
             hblank: HblankPipeline::post_boot(),
@@ -413,8 +413,7 @@ impl Rendering {
         self.vram_locked()
     }
 
-    /// Master-clock rising edge (= ALET rising per spec §1.1/§1.2): setup
-    /// phase dispatcher.
+    /// Master-clock rising edge (= ALET rising): setup phase dispatcher.
     ///
     /// ALET-clocked DFFs capture here: NYKA, PYGO (cascade), VOGA
     /// (hblank). Also handles XUPY-derived logic (DOBA, scan-counter),
@@ -478,13 +477,13 @@ impl Rendering {
         self.scan.tick_rutu();
     }
 
-    /// Master-clock falling edge (= ALET falling per spec §1.1/§1.2):
-    /// output phase dispatcher.
+    /// Master-clock falling edge (= ALET falling): output phase
+    /// dispatcher.
     ///
     /// MYVO-clocked DFFs capture here: PORY (cascade). BG fetch counter
     /// advances (LEBO fires on this edge — LEBO = NAND(ALET, MOCE)).
-    /// CLKPIPE fires (SACU rising edge per spec §6.4: SACU rising = ALET
-    /// falling, delayed by the VYBO/TYFA/SEGU chain). Handles BYBA
+    /// CLKPIPE fires (SACU rising edge: SACU rising = ALET falling,
+    /// delayed by the VYBO/TYFA/SEGU chain). Handles BYBA
     /// capture, AVAP evaluation, pixel counter increment, fine counter
     /// increment, pipe shift, sprite X matching, and pixel output. CATU
     /// pipeline is advanced separately by `tick_catu()` (unconditional).
@@ -608,8 +607,7 @@ impl Rendering {
         self.reset_scanline(0);
     }
 
-    /// Mode 3 processing on the master-clock rising edge (= ALET rising
-    /// per spec §1.1/§1.2).
+    /// Mode 3 processing on the master-clock rising edge (= ALET rising).
     ///
     /// Fetcher VRAM reads (counter doesn't increment here — LEBO fires
     /// on the falling edge only), cascade DFFs (NYKA, PYGO), NOR latches
@@ -700,8 +698,8 @@ impl Rendering {
 
         // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
         // SOCY = NOT(RYDY) via the SYLO/TOMU/SOCY triple-inversion
-        // (§6.12 window-condition fanout — same SYLO/TOMU stages as
-        // TUKU above; only the final inverter differs). Emulator
+        // (window-condition fanout — same SYLO/TOMU stages as TUKU
+        // above; only the final inverter differs). Emulator
         // collapses SOCY to !window.rydy() at this call site.
         // VYBO = NOR3(FEPO_old, WODU_old, MYVO).
         //
