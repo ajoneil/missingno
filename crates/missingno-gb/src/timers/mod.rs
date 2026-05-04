@@ -23,15 +23,15 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter matching the un-drained boot-ROM
-    /// hand-off at the moment the boot ROM's terminating LDH (0xFF50), A
-    /// is still mid-WriteOp. The DIV-visible high byte is 0xAB
-    /// (`0x6AF1 >> 6` = `0x1AB`, low 8 bits = `0xAB`), unchanged from the
-    /// previous `0x2AF2` derivation — only the internal phase shifts so
-    /// the next BOGA edge fires on the dot the boot ROM would have produced.
+    /// Post-boot state: internal counter at the post-§11.1-anchor value
+    /// (= post-CLK9↑ of the M-cycle boundary that opens LDH (0xFF50),A's
+    /// post-body fetch cycle, equivalently the cartridge instruction's m1
+    /// fetch under SM83 fetch overlap). The boot ROM's prior CLK9↑ already
+    /// advanced reg_div16 to this value; simulator t=0 is the moment AFTER
+    /// that advance. DIV reads 0xAB (`(0x6AF3 >> 6) & 0xFF` = `0xAB`).
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x6AF2,
+            internal_counter: 0x6AF3,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
