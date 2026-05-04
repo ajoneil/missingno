@@ -23,13 +23,12 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter matches what real DMG boot
-    /// ROM produces at first PC=$0100 detection (`0x6AF2`, DIV reads
-    /// 0xAB). The skip-boot constructors across CPU/PPU/Timer are
-    /// calibrated to the boot-ROM-equivalent state.
+    /// Post-boot state at the M-cycle boundary CLK9↑ that opens the
+    /// M-cycle fetching PC=$0100. `internal_counter = 0x6AF3` is the
+    /// post-CLK9↑ value (DIV reads 0xAB).
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x6AF2,
+            internal_counter: 0x6AF3,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
