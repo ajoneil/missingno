@@ -5,7 +5,6 @@ use super::{
     is_ppu_register,
     memory::Bus,
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
-    read_uses_bus_capture,
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -310,14 +309,8 @@ impl GameBoy {
         // CPU latches the bus at end of M-cycle. The driver-output
         // settling window extends past the latch, so peripheral
         // state changes after dot 2 do not propagate to the bus
-        // in time — captured here, applied at dot 2. Gated by an
-        // address allowlist (read_uses_bus_capture); non-opt-in
-        // reads fall through to the original cpu_read at fall() of
-        // dot 3 below.
-        if is_mcycle_boundary
-            && let Some(address) = self.cpu.pending_bus_read()
-            && read_uses_bus_capture(address)
-        {
+        // in time — captured here, applied at dot 2.
+        if is_mcycle_boundary && let Some(address) = self.cpu.pending_bus_read() {
             self.staged_bus_read = Some(StagedBusRead {
                 address,
                 applied: false,
@@ -441,13 +434,19 @@ impl GameBoy {
 
         // CPU data latch: at data_phase_n↑ (~end of M-cycle, dot 3.995),
         // the SM83 captures cpu_port_d into its internal data register.
-        // For opt-in addresses (per read_uses_bus_capture), the bus
-        // value was set at dot 2 above when the peripheral's tri-state
-        // driver enabled — capture from cpu_bus.data here and fire
-        // commit_bus_read for the side effects (bus-latch drive,
-        // trace recording) at the same timing the original single-
-        // stage cpu_read had. Non-opt-in addresses use the original
-        // single-stage cpu_read here, preserving baseline behavior.
+        // The bus value was set at dot 2 (above) when the peripheral's
+        // tri-state driver enabled — capture from cpu_bus.data here and
+        // fire commit_bus_read for the side effects (bus-latch drive,
+        // trace recording) at the same timing the original single-stage
+        // cpu_read had.
+        //
+        // Bootstrap fallback: post-boot CPU initialisation has
+        // mcycle_active=true but boundary_pending=false (the opening
+        // CLK9↑ for the in-flight M-cycle fired in the boot ROM's
+        // domain, before simulator t=0). The staging block is skipped
+        // for that first M-cycle; cpu_read at the latch dot serves the
+        // bootstrap read. Subsequent M-cycles always have
+        // staged_bus_read.applied=true at the latch.
         if let DotAction::Read { address } = &self.current_dot_action {
             let address = *address;
             if (0xFE00..=0xFEFF).contains(&address) {
