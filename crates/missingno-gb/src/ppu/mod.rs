@@ -413,14 +413,12 @@ impl Ppu {
     /// During the POPU+BESU overlap at the 153->0 boundary, this produces
     /// mode 3 (both bits set) instead of the old priority-based mode 1.
     ///
-    /// XYMU and BESU inputs are read from the STAT-readout mirrors
-    /// (`rendering_active_stat`, `besu_stat`), which lag the internal
-    /// NOR-latch state by one PPU-clock-fall. This models the CPU's
-    /// T-cycle STAT sampling phase — GateBoy's adapter samples where
-    /// BESU/XYMU's pre-transition values are still on the bus during
-    /// the AVAP integer dot, so Mode 2's observable duration is 80
-    /// dots. The NOR-gate formula is unchanged; only the inputs'
-    /// observation window shifts.
+    /// Returns the live combinational mode bits. CPU STAT reads use this
+    /// via the `cpu_port_d` bus model (`crates/missingno-gb/src/lib.rs`
+    /// `read_uses_bus_capture`), which captures at dot 2 of the read
+    /// M-cycle to match hardware's bus-driver settling timing. No
+    /// stale-window mirror is needed — the bus model handles the CPU
+    /// sample-edge timing directly.
     pub fn mode(&self) -> rendering::Mode {
         let rendering = match &self.pixel_pipeline {
             Some(r) => r,
@@ -429,15 +427,9 @@ impl Ppu {
         // Hardware (schematic page 21): mode bits are independent NOR gates.
         //   bit 0 = XYMU OR POPU (rendering OR vblank)
         //   bit 1 = ACYL OR XYMU (scanning OR rendering)
-        //
-        // XYMU is cleared by WEGO = OR2(VID_RST, VOGA). Only VOGA is
-        // clocked (ALET rising DFF capture); WEGO and XYMU's set path
-        // are combinational. In the emulator, VOGA capture and the
-        // WEGO→XYMU chain all fire within the same master-clock edge
-        // (capture_voga() clears rendering_active when VOGA is set).
-        let rendering_active = rendering.rendering_active_stat();
+        let rendering_active = rendering.rendering_active();
         let bit0 = rendering_active || self.video.vblank();
-        let bit1 = rendering_active || rendering.is_scanning_stat();
+        let bit1 = rendering_active || rendering.scan_besu();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
             (false, true) => Mode::VerticalBlank,
