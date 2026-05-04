@@ -181,6 +181,19 @@ impl GameBoy {
             None
         };
 
+        // Mirror the CPU's pending bus read at construction time so the
+        // dot-2 capture has a target for the in-flight M-cycle. Skip-boot
+        // anchors at the post-rise of the M-cycle that opens the cartridge
+        // m1 fetch (Cpu::new(): Read{0x0100}); the boundary work fired in
+        // the boot ROM's domain before t=0, so the staging block in rise()
+        // doesn't fire for that first M-cycle.
+        let staged_bus_read =
+            cpu.pending_bus_read()
+                .map(|address| StagedBusRead {
+                    address,
+                    applied: false,
+                });
+
         let mut gb = GameBoy {
             cpu,
             screen: Screen::default(),
@@ -214,7 +227,7 @@ impl GameBoy {
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
             staged_ppu_write: None,
-            staged_bus_read: None,
+            staged_bus_read,
             cpu_bus: CpuBus::new(),
         };
         if !has_boot_rom {
@@ -269,7 +282,13 @@ impl GameBoy {
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
         self.staged_ppu_write = None;
-        self.staged_bus_read = None;
+        self.staged_bus_read =
+            self.cpu
+                .pending_bus_read()
+                .map(|address| StagedBusRead {
+                    address,
+                    applied: false,
+                });
         self.cpu_bus = CpuBus::new();
     }
 

@@ -439,25 +439,13 @@ impl GameBoy {
         // fire commit_bus_read for the side effects (bus-latch drive,
         // trace recording) at the same timing the original single-stage
         // cpu_read had.
-        //
-        // Bootstrap fallback: post-boot CPU initialisation has
-        // mcycle_active=true but boundary_pending=false (the opening
-        // CLK9↑ for the in-flight M-cycle fired in the boot ROM's
-        // domain, before simulator t=0). The staging block is skipped
-        // for that first M-cycle; cpu_read at the latch dot serves the
-        // bootstrap read. Subsequent M-cycles always have
-        // staged_bus_read.applied=true at the latch.
         if let DotAction::Read { address } = &self.current_dot_action {
             let address = *address;
             if (0xFE00..=0xFEFF).contains(&address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
-            if self.staged_bus_read.as_ref().is_some_and(|s| s.applied) {
-                self.last_read_value = self.cpu_bus.data;
-                self.commit_bus_read(address, self.cpu_bus.data);
-            } else {
-                self.last_read_value = self.cpu_read(address);
-            }
+            self.last_read_value = self.cpu_bus.data;
+            self.commit_bus_read(address, self.cpu_bus.data);
         }
 
         // Bus writes on the falling edge. The cpu_wr window closes
