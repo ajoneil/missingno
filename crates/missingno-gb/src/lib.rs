@@ -114,9 +114,17 @@ fn is_ppu_register(address: u16) -> bool {
 pub(crate) fn read_uses_bus_capture(address: u16) -> bool {
     matches!(
         address,
-        0xFF41 // STAT
+        0xFF40 // LCDC
+        | 0xFF41 // STAT
+        | 0xFF42 // SCY
+        | 0xFF43 // SCX
         | 0xFF44 // LY
         | 0xFF45 // LYC
+        | 0xFF47 // BGP
+        | 0xFF48 // OBP0
+        | 0xFF49 // OBP1
+        | 0xFF4A // WY
+        | 0xFF4B // WX
     )
 }
 
