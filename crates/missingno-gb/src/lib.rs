@@ -116,6 +116,7 @@ pub(crate) fn read_uses_bus_capture(address: u16) -> bool {
         address,
         0xFF41 // STAT
         | 0xFF44 // LY
+        | 0xFF45 // LYC
     )
 }
 
