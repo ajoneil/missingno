@@ -5,6 +5,7 @@ use super::{
     is_ppu_register,
     memory::Bus,
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
+    read_uses_bus_capture,
 };
 
 /// Whether the OAM bug corruption uses the read or write formula.
@@ -309,8 +310,14 @@ impl GameBoy {
         // CPU latches the bus at end of M-cycle. The driver-output
         // settling window extends past the latch, so peripheral
         // state changes after dot 2 do not propagate to the bus
-        // in time — captured here, applied at dot 2.
-        if is_mcycle_boundary && let Some(address) = self.cpu.pending_bus_read() {
+        // in time — captured here, applied at dot 2. Gated by an
+        // address allowlist (read_uses_bus_capture); non-opt-in
+        // reads fall through to the original cpu_read at fall() of
+        // dot 3 below.
+        if is_mcycle_boundary
+            && let Some(address) = self.cpu.pending_bus_read()
+            && read_uses_bus_capture(address)
+        {
             self.staged_bus_read = Some(StagedBusRead {
                 address,
                 applied: false,
@@ -434,25 +441,24 @@ impl GameBoy {
 
         // CPU data latch: at data_phase_n↑ (~end of M-cycle, dot 3.995),
         // the SM83 captures cpu_port_d into its internal data register.
-        // The bus value was set at dot 2 (above) when the addressed
-        // peripheral's tri-state driver enabled. Same-M-cycle peripheral
-        // state changes that fired at dot 2.5 (master-clock fall of
-        // dot 2) update the underlying DFFs but do not propagate to
-        // cpu_port_d in time for the latch — the bit-flux window
-        // extends past data_phase_n↑.
-        //
-        // Bus latch drives + trace recording fire here (not at dot 2)
-        // to preserve the side-effect timing the original cpu_read had
-        // — emulator subsystems downstream (DMA bus arbitration, trace
-        // adapters) are synchronized to side effects landing at the
-        // CPU's data-latch dot.
+        // For opt-in addresses (per read_uses_bus_capture), the bus
+        // value was set at dot 2 above when the peripheral's tri-state
+        // driver enabled — capture from cpu_bus.data here and fire
+        // commit_bus_read for the side effects (bus-latch drive,
+        // trace recording) at the same timing the original single-
+        // stage cpu_read had. Non-opt-in addresses use the original
+        // single-stage cpu_read here, preserving baseline behavior.
         if let DotAction::Read { address } = &self.current_dot_action {
             let address = *address;
             if (0xFE00..=0xFEFF).contains(&address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
-            self.last_read_value = self.cpu_bus.data;
-            self.commit_bus_read(address, self.cpu_bus.data);
+            if self.staged_bus_read.as_ref().is_some_and(|s| s.applied) {
+                self.last_read_value = self.cpu_bus.data;
+                self.commit_bus_read(address, self.cpu_bus.data);
+            } else {
+                self.last_read_value = self.cpu_read(address);
+            }
         }
 
         // Bus writes on the falling edge. The cpu_wr window closes

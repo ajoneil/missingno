@@ -105,6 +105,16 @@ fn is_ppu_register(address: u16) -> bool {
     )
 }
 
+/// Whether reads of this address use the dot-2 bus capture (modelling
+/// the NOT_IF1 / NOT_IF0 driver settling window per the dmg-sim FST in
+/// `receipts/ppu-overhaul/measurements/mode-transition-vs-cpu-data-phase-sample/`).
+/// Other peripheral reads use the original `cpu_read` at fall() of
+/// dot 3 until each is verified to need (and benefit from) dot-2
+/// capture — extend this allowlist piecewise.
+pub(crate) fn read_uses_bus_capture(address: u16) -> bool {
+    matches!(address, 0xFF41) // STAT
+}
+
 impl ClockPhase {
     pub fn next(self) -> ClockPhase {
         match self {
