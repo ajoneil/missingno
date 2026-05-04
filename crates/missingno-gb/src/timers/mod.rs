@@ -23,15 +23,13 @@ pub struct Timers {
 }
 
 impl Timers {
-    /// Post-boot state: internal counter at the post-§11.1-anchor value
-    /// (= post-CLK9↑ of the M-cycle boundary that opens LDH (0xFF50),A's
-    /// post-body fetch cycle, equivalently the cartridge instruction's m1
-    /// fetch under SM83 fetch overlap). The boot ROM's prior CLK9↑ already
-    /// advanced reg_div16 to this value; simulator t=0 is the moment AFTER
-    /// that advance. DIV reads 0xAB (`(0x6AF3 >> 6) & 0xFF` = `0xAB`).
+    /// Post-boot state: internal counter matches what real DMG boot
+    /// ROM produces at first PC=$0100 detection (`0x6AF2`, DIV reads
+    /// 0xAB). The skip-boot constructors across CPU/PPU/Timer are
+    /// calibrated to the boot-ROM-equivalent state.
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x6AF3,
+            internal_counter: 0x6AF2,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),

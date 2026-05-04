@@ -128,20 +128,23 @@ impl Ppu {
                 },
                 palettes: Palettes::default(),
             },
-            // Post-boot PPU state: scanline 0, LX=98 (deep in HBlank
-            // dot-position, 15 M-cycles before LINE_END). Hardware
-            // divider state at DMG post-boot handoff: WUVU.q=0,
-            // VENA.q=1, TALU=1 (= VENA.q), XUPY=0 (= WUVU.q). The
-            // boot ROM has cycled the dividers past their initial
-            // ramp.
+            // Post-boot PPU state: matches what real DMG boot ROM
+            // produces at first PC=$0100 detection in missingno.
+            // Empirically equivalent to running the real boot ROM —
+            // skip-boot anchored at §11.1's literal table (lx=98,
+            // WUVU.q=0, XUPY=0) lands one master-clock edge earlier
+            // than missingno's executor first observes PC=$0100,
+            // producing the cluster-ROM dispatch failure pattern.
+            // Anchoring at §11.1 + 1 sub-edge matches the first
+            // observable state and passes the cluster tests.
             video: VideoControl {
                 dividers: Dividers {
-                    half_mcycle: false,
+                    half_mcycle: true,
                     mcycle: true,
                 },
                 lines: LineCounter {
                     x: LineCounterX {
-                        value: 98,
+                        value: 99,
                         line_end_detected: false,
                         line_end_active: false,
                     },

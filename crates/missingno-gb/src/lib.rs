@@ -169,11 +169,7 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             last_read_value: 0,
             bus_trace: None,
-            clock_phase: if has_boot_rom {
-                ClockPhase::Low
-            } else {
-                ClockPhase::High
-            },
+            clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
             staged_ppu_write: None,
@@ -226,11 +222,7 @@ impl GameBoy {
             self.init_post_boot_vram();
         }
         self.bus_trace = None;
-        self.clock_phase = if has_boot_rom {
-            ClockPhase::Low
-        } else {
-            ClockPhase::High
-        };
+        self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
         self.staged_ppu_write = None;
