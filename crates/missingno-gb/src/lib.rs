@@ -112,7 +112,11 @@ fn is_ppu_register(address: u16) -> bool {
 /// dot 3 until each is verified to need (and benefit from) dot-2
 /// capture — extend this allowlist piecewise.
 pub(crate) fn read_uses_bus_capture(address: u16) -> bool {
-    matches!(address, 0xFF41) // STAT
+    matches!(
+        address,
+        0xFF41 // STAT
+        | 0xFF44 // LY
+    )
 }
 
 impl ClockPhase {
