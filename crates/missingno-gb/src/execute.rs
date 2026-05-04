@@ -1,5 +1,5 @@
 use super::{
-    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedPpuWrite,
+    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedBusRead, StagedPpuWrite,
     cpu::mcycle::DotAction,
     interrupts::Interrupt,
     is_ppu_register,
@@ -196,6 +196,8 @@ impl GameBoy {
 
             // Clear any staged PPU write from the previous M-cycle.
             self.staged_ppu_write = None;
+            // Clear any staged bus read from the previous M-cycle.
+            self.staged_bus_read = None;
 
             // Timer ticks once per M-cycle (BOGA).
             self.timers.mcycle();
@@ -301,6 +303,20 @@ impl GameBoy {
             }
         }
 
+        // Stage CPU bus reads at dot 0. On hardware, the addressed
+        // peripheral's tri-state driver (`tobe`/`wafu`) enables at
+        // dot 2.005 and pulls cpu_port_d to the source value; the
+        // CPU latches the bus at end of M-cycle. The driver-output
+        // settling window extends past the latch, so peripheral
+        // state changes after dot 2 do not propagate to the bus
+        // in time — captured here, applied at dot 2.
+        if is_mcycle_boundary && let Some(address) = self.cpu.pending_bus_read() {
+            self.staged_bus_read = Some(StagedBusRead {
+                address,
+                applied: false,
+            });
+        }
+
         // BOWA (dot 0): record OAM bug from address in the upcoming action.
         if dot.bowa()
             && let DotAction::InternalOamBug { address } = &self.current_dot_action
@@ -393,23 +409,50 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
+        // Apply staged bus read at dot 2, BEFORE on_master_clock_fall.
+        // Hardware: tobe↑/wafu↑ at dot 2.005 enables the tri-state
+        // driver; the bus settles to the addressed peripheral's
+        // current state by dot 2.085, before any dot-2 master-clock-
+        // falling-edge transitions (AVAP↑, BESU.q↑, etc.) perturb
+        // the source. Capturing here matches the bus-driver-stable
+        // window — the value-only `read()` is side-effect-free; bus
+        // latch drives and trace recording happen at the BUKE dot
+        // below (preserves the side-effect timing the pre-split
+        // `cpu_read` had).
+        if dot.as_u8() == 2
+            && let Some(staged) = self.staged_bus_read.as_ref()
+            && !staged.applied
+        {
+            let address = staged.address;
+            self.cpu_bus.data = self.read(address);
+            self.staged_bus_read.as_mut().unwrap().applied = true;
+        }
+
         // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
         // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary);
 
-        // CPU data latch: capture bus value after PPU's master-clock
-        // fall updates land. Hardware reads are combinational: the
-        // CPU samples the current DFF state via SM83-internal
-        // data_phase. PPU DFF transitions on the same master-clock
-        // cycle's TALU-rising edge (MYTA fire, ROPO capture) are
-        // visible to the CPU read because they settle before the CPU's
-        // data-phase latches. Placing the read after on_master_clock_fall
-        // matches that ordering.
+        // CPU data latch: at data_phase_n↑ (~end of M-cycle, dot 3.995),
+        // the SM83 captures cpu_port_d into its internal data register.
+        // The bus value was set at dot 2 (above) when the addressed
+        // peripheral's tri-state driver enabled. Same-M-cycle peripheral
+        // state changes that fired at dot 2.5 (master-clock fall of
+        // dot 2) update the underlying DFFs but do not propagate to
+        // cpu_port_d in time for the latch — the bit-flux window
+        // extends past data_phase_n↑.
+        //
+        // Bus latch drives + trace recording fire here (not at dot 2)
+        // to preserve the side-effect timing the original cpu_read had
+        // — emulator subsystems downstream (DMA bus arbitration, trace
+        // adapters) are synchronized to side effects landing at the
+        // CPU's data-latch dot.
         if let DotAction::Read { address } = &self.current_dot_action {
-            if (0xFE00..=0xFEFF).contains(address) {
+            let address = *address;
+            if (0xFE00..=0xFEFF).contains(&address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
-            self.last_read_value = self.cpu_read(*address);
+            self.last_read_value = self.cpu_bus.data;
+            self.commit_bus_read(address, self.cpu_bus.data);
         }
 
         // Bus writes on the falling edge. The cpu_wr window closes

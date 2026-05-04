@@ -463,4 +463,15 @@ impl Cpu {
             _ => None,
         }
     }
+
+    /// The pending bus read address for the current M-cycle, if any.
+    /// On hardware, the CPU places the address on the bus at phase A;
+    /// the addressed peripheral's tri-state driver enables at dot 2
+    /// (`tobe`/`wafu` rising) and drives the bus.
+    pub fn pending_bus_read(&self) -> Option<u16> {
+        match &self.current_action {
+            Some(mcycle::BusAction::Read { address }) => Some(*address),
+            _ => None,
+        }
+    }
 }

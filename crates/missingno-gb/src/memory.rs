@@ -363,6 +363,31 @@ impl GameBoy {
         value
     }
 
+    /// Apply the side effects of a CPU bus read whose value was already
+    /// captured into `cpu_bus.data` at the dot the bus driver enabled
+    /// (dot 2 of the read M-cycle). Drives the appropriate physical bus
+    /// latch and records the read in the trace, mirroring the timing
+    /// the side effects had under the pre-split single-stage `cpu_read`
+    /// path. Called at the CPU's data-latch dot (dot 3, BUKE).
+    pub fn commit_bus_read(&mut self, address: u16, value: u8) {
+        if let Some(trace) = &mut self.bus_trace {
+            trace.push(BusAccess {
+                address,
+                value,
+                kind: BusAccessKind::Read,
+            });
+        }
+        match Bus::of(address) {
+            Some(Bus::External) => {
+                self.external.drive(value);
+            }
+            Some(Bus::Vram) => {
+                self.vram_bus.drive(value);
+            }
+            None => {}
+        }
+    }
+
     /// Read a byte without side effects.
     ///
     /// Returns the same value as [`cpu_read`] but does NOT update the

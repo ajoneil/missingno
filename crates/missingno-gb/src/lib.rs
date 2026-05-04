@@ -52,6 +52,42 @@ struct StagedPpuWrite {
     applied: bool,
 }
 
+/// A CPU bus read staged at the M-cycle boundary, applied at dot 2
+/// (matching `tobe`/`wafu` rising at hardware's dot 2.005). The
+/// addressed peripheral's tri-state driver enables at this dot, the
+/// bus settles to its source value, and the CPU latches at end of
+/// M-cycle. Same-M-cycle peripheral state changes that fire after
+/// dot 2 do not propagate to `cpu_port_d` in time for the latch.
+struct StagedBusRead {
+    address: u16,
+    /// Whether the bus has been driven for this read.
+    applied: bool,
+}
+
+/// The SoC's shared CPU data bus (`cpu_port_d[7:0]`).
+///
+/// On hardware, a real wire driven by whichever peripheral's tri-state
+/// driver is enabled (PPU registers via `tobe`/`wafu`, work RAM, OAM,
+/// VRAM, cartridge, IF/IE, etc.). The CPU latches the bus at
+/// `data_phase_n↑` (dot 3.995 of the read M-cycle).
+///
+/// Driver outputs settle within ~80 ns of the driver enabling at
+/// dot 2.005. Subsequent same-M-cycle source-state transitions
+/// experience ~340 ns of bus-voltage flux that extends past the
+/// CPU's latch edge — the CPU therefore captures the value the
+/// driver was stably driving at dot 2.085.
+pub struct CpuBus {
+    /// Value currently on `cpu_port_d[7:0]`. Updated at dot 2 of each
+    /// CPU read M-cycle; latched by the CPU at end of M-cycle.
+    pub data: u8,
+}
+
+impl CpuBus {
+    fn new() -> Self {
+        Self { data: 0xFF }
+    }
+}
+
 /// Whether this address is a PPU register that should be staged.
 fn is_ppu_register(address: u16) -> bool {
     matches!(
@@ -123,6 +159,11 @@ pub struct GameBoy {
     /// A PPU register write staged at dot 0, waiting for its
     /// hardware-correct visibility dot.
     staged_ppu_write: Option<StagedPpuWrite>,
+    /// A CPU bus read staged at the M-cycle boundary, applied at
+    /// dot 2 to drive the value onto `cpu_bus`.
+    staged_bus_read: Option<StagedBusRead>,
+    /// Shared CPU data bus state.
+    cpu_bus: CpuBus,
 }
 
 impl GameBoy {
@@ -173,6 +214,8 @@ impl GameBoy {
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
             staged_ppu_write: None,
+            staged_bus_read: None,
+            cpu_bus: CpuBus::new(),
         };
         if !has_boot_rom {
             gb.init_post_boot_vram();
@@ -226,6 +269,8 @@ impl GameBoy {
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
         self.staged_ppu_write = None;
+        self.staged_bus_read = None;
+        self.cpu_bus = CpuBus::new();
     }
 
     pub fn cartridge(&self) -> &Cartridge {
