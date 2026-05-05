@@ -151,7 +151,7 @@ pub struct Rendering {
     /// window line counter, window zero pixel.
     window: WindowControl,
     /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
-    /// Computed in mode3_falling, consumed in mode3_rising.
+    /// Computed in mode3_rising, consumed in mode3_pixel_pipeline.
     tyfa: bool,
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
@@ -427,7 +427,7 @@ impl Rendering {
         let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
 
         if was_rendering {
-            self.mode3_falling(regs, video, oam, vram);
+            self.mode3_rising(regs, video, oam, vram);
         }
 
         pixel
@@ -580,7 +580,7 @@ impl Rendering {
     /// on the falling edge only), cascade DFFs (NYKA, PYGO), NOR latches
     /// (POKY), combinational signals (TYFA), sprite fetch counter
     /// advance (SABE), and fine scroll match (PUXA) fire on this edge.
-    fn mode3_falling(
+    fn mode3_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -693,9 +693,9 @@ impl Rendering {
             .compare_falling(regs.background_viewport.x.output());
     }
 
-    /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
+    /// Mode 3 fetcher-DFF advance (MYVO-clocked domain).
     ///
-    /// Runs first within on_ppu_clock_fall(), before the pixel pipeline.
+    /// Runs first within `on_ppu_clock_fall()`, before the pixel pipeline.
     /// MYVO-clocked DFFs capture here: SUDA (sprite trigger), PORY
     /// (cascade), BG fetch counter (LEBO). NOR latch responses (RYDY
     /// clear via PORY) and the TAVE one-shot preload also fire here.
@@ -755,9 +755,9 @@ impl Rendering {
         }
     }
 
-    /// Rising edge Mode 3 — pixel pipeline (CLKPIPE / SACU domain).
+    /// Mode 3 pixel pipeline (CLKPIPE / SACU domain).
     ///
-    /// Runs second within on_ppu_clock_fall(), after fetcher DFFs have settled.
+    /// Runs second within `on_ppu_clock_fall()`, after fetcher DFFs have settled.
     /// SACU (the pixel clock) fires at depth 63.8 ge — significantly later
     /// than the MYVO-clocked DFFs. This method evaluates against the
     /// settled fetcher state from `mode3_advance_fetcher`.
@@ -765,7 +765,7 @@ impl Rendering {
     /// Handles: TYFA consumption, PUXA/POVA fine scroll match, pixel
     /// shift registers, SEKO tile reload, LCD output, fine scroll
     /// counter, and NUKO window trigger. Sprite fetch advance now
-    /// happens in mode3_falling (SABE clock, PPU-clock-rise edge).
+    /// happens in mode3_rising (SABE clock, PPU-clock-rise edge).
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
@@ -793,11 +793,11 @@ impl Rendering {
             false
         };
 
-        // Sprite fetch counter now advances in mode3_falling (SABE clock,
-        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline is frozen.
-        // After sprite fetch completes in falling, TAKA clears and FEPO is
-        // recomputed, so TYFA correctly enables the pixel clock on the next
-        // rising edge.
+        // Sprite fetch counter advances in mode3_rising (SABE clock,
+        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline
+        // is frozen. After sprite fetch completes, TAKA clears and FEPO
+        // is recomputed, so TYFA correctly enables the pixel clock on
+        // the next rising edge.
 
         if !self.sprite_trigger.taka() {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
