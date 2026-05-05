@@ -14,12 +14,15 @@
 ///   RYCE = AND2(!SUDA, SOBU) — one-shot pulse at SOBU rise, clears
 ///   when SUDA captures
 ///   TAKA = nand_latch, set via SECA (RYCE-derived), cleared via
-///   VEKU (WUTY-derived); output freezes SACU for 6 dots via VYBO
+///   VEKU = NOR2(WUTY, TAVE); output freezes SACU for 6 dots via VYBO
 ///   halt path
 ///
 /// SOWO = NOT(TAKA) is the local feedback inverter that blocks TEKY
 /// re-trigger while a fetch is active — handled by the `!taka()`
 /// term at TEKY's emulator call site.
+///
+/// SOBU and SUDA have no reset (r_n tied high via vypo); TAKA carries
+/// over across scanline boundaries until VEKU clears it.
 ///
 /// Consumers:
 ///   - `taka()` → gates SACU via TYFA suppression
@@ -30,7 +33,7 @@ pub(in crate::ppu) struct SpriteTrigger {
     /// SUDA: captures SOBU on LAPE rising (= ALET falling).
     suda: bool,
     /// TAKA NAND latch: sprite fetch running. Set by RYCE (= AND2
-    /// of SOBU, !SUDA — one-shot); cleared by WUTY (fetch done).
+    /// of SOBU, !SUDA — one-shot); cleared by VEKU = NOR2(WUTY, TAVE).
     taka: bool,
 }
 
@@ -61,15 +64,9 @@ impl SpriteTrigger {
         self.suda = self.sobu;
     }
 
-    /// Clear TAKA when sprite fetch completes (VEKU).
+    /// Clear TAKA via VEKU = NOR2(WUTY, TAVE). Called from both arms:
+    /// WUTY (sprite-fetch-done) and TAVE (cascade-startup carry-over clear).
     pub(in crate::ppu) fn clear_taka(&mut self) {
-        self.taka = false;
-    }
-
-    /// Reset all state at scanline boundary.
-    pub(in crate::ppu) fn reset(&mut self) {
-        self.sobu = false;
-        self.suda = false;
         self.taka = false;
     }
 

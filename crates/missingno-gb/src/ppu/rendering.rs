@@ -565,7 +565,9 @@ impl Rendering {
         self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
-        self.sprite_trigger.reset();
+        // SOBU/SUDA are free-running DFFs (no reset); TAKA carries over
+        // and is cleared by VEKU = NOR2(WUTY, TAVE) during the next
+        // scanline's startup pipeline.
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -748,6 +750,9 @@ impl Rendering {
             // drives PASO which resets the fine counter on every pipe load
             // (TAVE, SEKO, SUZU).
             self.fine_scroll.reset_counter();
+            // TAVE arm of VEKU = NOR2(WUTY, TAVE): clears TAKA carry-over
+            // from the prior scanline so the sprite trigger can re-arm.
+            self.sprite_trigger.clear_taka();
         }
     }
 
