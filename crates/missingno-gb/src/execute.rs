@@ -14,6 +14,22 @@ pub(super) enum OamBugKind {
     Write,
 }
 
+/// Per-address mask of bits whose `cpu_port_d` driver settles fast enough
+/// to propagate within-M-cycle PPU transitions to the CPU's `data_phase`
+/// latch. Bits set in the mask are taken from a live read at BUKE; bits
+/// unset are taken from the dot-2 snapshot held in `cpu_bus.data` (the
+/// `dmg_not_if1` slow-driver-flux model).
+///
+/// STAT bit 2 (LYC=LY) propagates via `sego` on transparent RUPO and
+/// settles before `data_phase_n↑`; STAT bits 0/1 (mode) propagate via
+/// `teby`/`wuga` and remain in flux through the M-cycle end.
+fn fast_bit_mask(address: u16) -> u8 {
+    match address {
+        0xFF41 => 0b0000_0100,
+        _ => 0,
+    }
+}
+
 /// Result of executing one instruction.
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
@@ -446,8 +462,16 @@ impl GameBoy {
             if (0xFE00..=0xFEFF).contains(&address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
-            self.last_read_value = self.cpu_bus.data;
-            self.commit_bus_read(address, self.cpu_bus.data);
+            let snapshot = self.cpu_bus.data;
+            let mask = fast_bit_mask(address);
+            let assembled = if mask == 0 {
+                snapshot
+            } else {
+                let live = self.read(address);
+                (snapshot & !mask) | (live & mask)
+            };
+            self.last_read_value = assembled;
+            self.commit_bus_read(address, assembled);
         }
 
         // Bus writes on the falling edge. The cpu_wr window closes
