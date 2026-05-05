@@ -1,6 +1,109 @@
 use crate::common;
+use missingno_gb::GameBoy;
 
 const TIMEOUT_FRAMES: u32 = 7200; // 120 seconds at ~60fps
+
+// Decodes the wilbertpol mooneye fork's `Runtime-State` ramsection — `regs_save`
+// (actual values), `regs_flags` (bit-per-assertion), `regs_assert` (expected values).
+// Layout is: 8 + 1 + 8 = 17 bytes at WRAM slot 2 base. Base is wlalink's convention
+// for unpositioned ramsections, not a source-pinned address.
+const RECORD_BASE: u16 = 0xC000;
+const RECORD_LEN: u16 = 17;
+
+#[derive(Clone, Copy)]
+enum AssertReg {
+    A,
+    F,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+}
+
+impl AssertReg {
+    const ITER: [AssertReg; 8] = [
+        AssertReg::A,
+        AssertReg::F,
+        AssertReg::B,
+        AssertReg::C,
+        AssertReg::D,
+        AssertReg::E,
+        AssertReg::H,
+        AssertReg::L,
+    ];
+
+    fn flag_bit(self) -> u8 {
+        match self {
+            AssertReg::A => 0,
+            AssertReg::F => 1,
+            AssertReg::B => 2,
+            AssertReg::C => 3,
+            AssertReg::D => 4,
+            AssertReg::E => 5,
+            AssertReg::H => 6,
+            AssertReg::L => 7,
+        }
+    }
+
+    // Byte offset within `reg_dump`. Order is `f, a, c, b, e, d, l, h`, matching
+    // `push hl; push de; push bc; push af` from `regs_save + 8` (low to high).
+    fn dump_offset(self) -> usize {
+        match self {
+            AssertReg::F => 0,
+            AssertReg::A => 1,
+            AssertReg::C => 2,
+            AssertReg::B => 3,
+            AssertReg::E => 4,
+            AssertReg::D => 5,
+            AssertReg::L => 6,
+            AssertReg::H => 7,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            AssertReg::A => "a",
+            AssertReg::F => "f",
+            AssertReg::B => "b",
+            AssertReg::C => "c",
+            AssertReg::D => "d",
+            AssertReg::E => "e",
+            AssertReg::H => "h",
+            AssertReg::L => "l",
+        }
+    }
+}
+
+struct FailedAssertion {
+    reg: AssertReg,
+    expected: u8,
+    actual: u8,
+}
+
+fn decode_assertion_record(gb: &GameBoy) -> (u8, Vec<FailedAssertion>) {
+    let bytes = gb.peek_range(RECORD_BASE, RECORD_LEN);
+    let save = &bytes[0..8];
+    let flags = bytes[8];
+    let assert = &bytes[9..17];
+
+    let mut failed = Vec::new();
+    for reg in AssertReg::ITER {
+        if flags & (1 << reg.flag_bit()) == 0 {
+            continue;
+        }
+        let off = reg.dump_offset();
+        if save[off] != assert[off] {
+            failed.push(FailedAssertion {
+                reg,
+                expected: assert[off],
+                actual: save[off],
+            });
+        }
+    }
+    (flags, failed)
+}
 
 fn run_wilbertpol_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
@@ -11,39 +114,33 @@ fn run_wilbertpol_test(rom_path: &str) {
         "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
     );
     let cpu = run.gb.cpu();
-    if !common::check_mooneye_pass(cpu) {
-        let all_same =
-            cpu.b == cpu.c && cpu.c == cpu.d && cpu.d == cpu.e && cpu.e == cpu.h && cpu.h == cpu.l;
-        if all_same && cpu.b != 0 {
-            panic!(
-                "Mooneye-wilbertpol test {rom_path} failed (all registers = 0x{:02X}, \
-                 uniform failure — sub-test number unknown)",
-                cpu.b,
-            );
-        }
-
-        let fib = [
-            (cpu.b, 3, "B"),
-            (cpu.c, 5, "C"),
-            (cpu.d, 8, "D"),
-            (cpu.e, 13, "E"),
-            (cpu.h, 21, "H"),
-            (cpu.l, 34, "L"),
-        ];
-        let passed = fib
-            .iter()
-            .take_while(|(val, expected, _)| val == expected)
-            .count();
-        let failed_reg = if passed < 6 { fib[passed].2 } else { "?" };
-        let failed_val = if passed < 6 { fib[passed].0 } else { 0 };
-        panic!(
-            "Mooneye-wilbertpol test {rom_path} failed at sub-test {} \
-             (register {failed_reg}=0x{failed_val:02X}, expected {}). Registers: {}",
-            passed + 1,
-            if passed < 6 { fib[passed].1 } else { 0 },
-            common::format_registers(cpu),
-        );
+    if common::check_mooneye_pass(cpu) {
+        return;
     }
+
+    let (flags, failed) = decode_assertion_record(&run.gb);
+    if !failed.is_empty() {
+        let mut msg = format!(
+            "Mooneye-wilbertpol test {rom_path} failed: {} assertion(s)",
+            failed.len()
+        );
+        for f in &failed {
+            msg.push_str(&format!(
+                "\n  assert_{}: expected 0x{:02X}, got 0x{:02X}",
+                f.reg.label(),
+                f.expected,
+                f.actual,
+            ));
+        }
+        panic!("{msg}");
+    }
+
+    panic!(
+        "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
+         (regs_flags=0x{flags:02X}; either no asserts were registered, or all set asserts matched). \
+         Post-halt registers: A=0x{:02X} B=0x{:02X} C=0x{:02X} D=0x{:02X} E=0x{:02X} H=0x{:02X} L=0x{:02X}",
+        cpu.a, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l,
+    );
 }
 
 macro_rules! wilbertpol_test {
