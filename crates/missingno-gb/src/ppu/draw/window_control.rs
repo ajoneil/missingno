@@ -1,4 +1,4 @@
-use crate::ppu::{PipelineRegisters, VideoControl};
+use crate::ppu::{NorLatch, PipelineRegisters, VideoControl};
 
 use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
@@ -31,12 +31,14 @@ pub(in crate::ppu) struct WindowControl {
     /// at the WX-match dot; CLEAR by PORY rising during the BG fetch
     /// cascade restart (`clear_rydy_on_pory`).
     ///
-    /// 1-dot delay: `check_trigger` sets this at the end of
-    /// mode3_rising, AFTER the RisingPhaseInputs snapshot. The
-    /// snapshot on the NEXT dot sees the new value, giving 1-dot
-    /// NUKO-to-TYFA latency that mirrors hardware's PYCO/NUNU
-    /// capture cadence.
-    rydy: bool,
+    /// SOCY = NOT(RYDY) is consumed by TYFA via the rise-side
+    /// snapshot in `Rendering::mode3_rising`, NOT combinationally at
+    /// the SACU sample site. The 1-dot snapshot lag relative to
+    /// `check_trigger_arming` (which sets RYDY later in the same
+    /// fall) models hardware's sub-dot propagation delay: the
+    /// in-flight pre-window pixel SACU fires on the MOSU↑ dot before
+    /// RYDY's effect propagates through the SYLO/TOMU/SOCY chain.
+    rydy: NorLatch,
     /// Window-armed latch (hardware PYNU `nor_latch`). Set by the
     /// WX-match pulse — hardware path NUKO → PYCO → NUNU → PYNU.s,
     /// collapsed in the emulator to per-dot `check_trigger`. Reset by
@@ -83,7 +85,7 @@ pub(in crate::ppu) struct WindowControl {
 impl WindowControl {
     pub(in crate::ppu) fn new() -> Self {
         WindowControl {
-            rydy: false,
+            rydy: NorLatch::new(false),
             wx_triggered: false,
             window_rendered: false,
             last_wx_value: 0xFF,
@@ -143,8 +145,8 @@ impl WindowControl {
     /// Returns true if RYDY transitioned 1→0 (SUZU fires), signaling
     /// the caller to load window tile data and reset the fine counter.
     pub(in crate::ppu) fn clear_rydy_on_pory(&mut self, pory: bool) -> bool {
-        if pory && self.rydy {
-            self.rydy = false;
+        if pory && self.rydy.output() {
+            self.rydy.clear();
             true
         } else {
             false
@@ -223,7 +225,7 @@ impl WindowControl {
         // freezes), and SUZU/TEVO later overwrites with window tile data.
         self.wx_triggered = true;
         fine_scroll.reset_for_window();
-        self.rydy = true;
+        self.rydy.set();
         fetcher.reset_for_window();
         // NAFY: window mode trigger always resets NYKA and PORY, forcing the
         // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
@@ -277,7 +279,7 @@ impl WindowControl {
         if self.window_rendered {
             self.window_line_counter += 1;
         }
-        self.rydy = false;
+        self.rydy.clear();
         self.window_rendered = false;
         self.window_zero_pixel = false;
         self.wx_triggered = false;
@@ -288,7 +290,7 @@ impl WindowControl {
     // --- Accessors ---
 
     pub(in crate::ppu) fn rydy(&self) -> bool {
-        self.rydy
+        self.rydy.output()
     }
 
     pub(in crate::ppu) fn wx_triggered(&self) -> bool {

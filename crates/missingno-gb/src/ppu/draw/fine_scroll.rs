@@ -185,11 +185,16 @@ impl FineScroll {
         pova
     }
 
-    /// Reset for window trigger — counter resets, gating clears
-    /// (window has no fine scroll).
+    /// Reset for window trigger — counter resets only. ROXY is left
+    /// in its prior state (one-shot per line; MOSU is not on
+    /// hardware's ROXY-clear path). `pohu` is also left untouched: it
+    /// was set on this dot's rise by `compare_falling` from the
+    /// pre-MOSU count, and `capture_rising` later in this same fall
+    /// reads that value to decide whether the AVAP-startup match has
+    /// fired POVA. At SCX=0 with WX=0, that pre-MOSU `pohu = (count=0
+    /// == SCX&7=0) = true` is what lets the in-flight pre-window SACU
+    /// fire on the MOSU↑ dot.
     pub(in crate::ppu) fn reset_for_window(&mut self) {
         self.count = 0;
-        self.roxy = Roxy::Done;
-        self.pohu = false;
     }
 }

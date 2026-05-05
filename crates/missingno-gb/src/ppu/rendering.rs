@@ -150,8 +150,14 @@ pub struct Rendering {
     /// Window control block (die page 27): RYDY latch, WX comparator,
     /// window line counter, window zero pixel.
     window: WindowControl,
-    /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
-    /// Computed in mode3_falling, consumed in mode3_rising.
+    /// TYFA (pixel clock enable): `!FEPO && !WODU && !RYDY && POKY`,
+    /// snapshotted at end of `mode3_rising` and consumed in
+    /// `mode3_pixel_pipeline`. The 1-dot snapshot lag relative to
+    /// `WindowControl::check_trigger_arming` (which sets RYDY on
+    /// fall) models hardware's propagation delay between SACU's
+    /// rising edge and RYDY's downstream effect on TYFA via SOCY:
+    /// the in-flight pre-window pixel SACU fires on the MOSU↑ dot
+    /// before RYDY's effect propagates.
     tyfa: bool,
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
@@ -427,7 +433,7 @@ impl Rendering {
         let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
 
         if was_rendering {
-            self.mode3_falling(regs, video, oam, vram);
+            self.mode3_rising(regs, video, oam, vram);
         }
 
         pixel
@@ -580,7 +586,7 @@ impl Rendering {
     /// on the falling edge only), cascade DFFs (NYKA, PYGO), NOR latches
     /// (POKY), combinational signals (TYFA), sprite fetch counter
     /// advance (SABE), and fine scroll match (PUXA) fire on this edge.
-    fn mode3_falling(
+    fn mode3_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -663,27 +669,17 @@ impl Rendering {
         // Latch FEPO for next dot's wodu() evaluation.
         self.hblank.latch_fepo(fepo);
 
-        // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
-        // SOCY = NOT(RYDY) via the SYLO/TOMU/SOCY triple-inversion
-        // (window-condition fanout — same SYLO/TOMU stages as TUKU
-        // above; only the final inverter differs). Emulator
-        // collapses SOCY to !window.rydy() at this call site.
-        // VYBO = NOR3(FEPO_old, WODU_old, MYVO).
-        //
-        // LogicBoy uses `state_old.pix_count != 167` instead of `!WODU_old`.
-        // At this point (falling, after rising incremented), pixel_counter
-        // holds the post-increment value — which will be `state_old` on the
-        // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
-        // the WODU storage path that caused pix_count to overshoot to 168.
-        //
-        // MYVO (sprite-fetch within-dot clock) appears in VYBO's hardware
-        // decomposition but not in this formula: the emulator evaluates
-        // SACU once per rising phase, which carries one SACU capture event
-        // per master-clock edge — matching the semantic MYVO gates on
-        // hardware without modelling its within-dot toggling waveform.
-        let tyfa =
+        // TYFA = AND3(SOCY, POKY, VYBO). Snapshotted on master-clock
+        // rise and consumed in mode3_pixel_pipeline on master-clock
+        // fall. SOCY = !RYDY; the snapshot's pre-RYDY-set value lets
+        // the in-flight pre-window SACU fire on the MOSU↑ dot before
+        // WindowControl::check_trigger_arming sets RYDY later that
+        // fall — modelling hardware's sub-dot propagation delay
+        // between SACU and RYDY's effect via SOCY. VYBO = NOR3(
+        // FEPO_old, WODU_old, MYVO); the !pixel_counter.terminal()
+        // factor encodes !WODU_old.
+        self.tyfa =
             !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
-        self.tyfa = tyfa;
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -693,9 +689,9 @@ impl Rendering {
             .compare_falling(regs.background_viewport.x.output());
     }
 
-    /// Rising edge Mode 3 — fetcher DFF advance (myvo-clocked domain).
+    /// Mode 3 fetcher-DFF advance (MYVO-clocked domain).
     ///
-    /// Runs first within on_ppu_clock_fall(), before the pixel pipeline.
+    /// Runs first within `on_ppu_clock_fall()`, before the pixel pipeline.
     /// MYVO-clocked DFFs capture here: SUDA (sprite trigger), PORY
     /// (cascade), BG fetch counter (LEBO). NOR latch responses (RYDY
     /// clear via PORY) and the TAVE one-shot preload also fire here.
@@ -755,9 +751,9 @@ impl Rendering {
         }
     }
 
-    /// Rising edge Mode 3 — pixel pipeline (CLKPIPE / SACU domain).
+    /// Mode 3 pixel pipeline (CLKPIPE / SACU domain).
     ///
-    /// Runs second within on_ppu_clock_fall(), after fetcher DFFs have settled.
+    /// Runs second within `on_ppu_clock_fall()`, after fetcher DFFs have settled.
     /// SACU (the pixel clock) fires at depth 63.8 ge — significantly later
     /// than the MYVO-clocked DFFs. This method evaluates against the
     /// settled fetcher state from `mode3_advance_fetcher`.
@@ -765,7 +761,7 @@ impl Rendering {
     /// Handles: TYFA consumption, PUXA/POVA fine scroll match, pixel
     /// shift registers, SEKO tile reload, LCD output, fine scroll
     /// counter, and NUKO window trigger. Sprite fetch advance now
-    /// happens in mode3_falling (SABE clock, PPU-clock-rise edge).
+    /// happens in mode3_rising (SABE clock, PPU-clock-rise edge).
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
@@ -775,9 +771,11 @@ impl Rendering {
     ) -> Option<PixelOutput> {
         let mut pixel_out: Option<PixelOutput> = None;
 
-        // Consume TYFA from falling phase. On the first rising phase
-        // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
-        // (pixel clock not yet enabled).
+        // Consume TYFA from the rise-side snapshot. The snapshot
+        // captures RYDY's pre-MOSU-set value, so the in-flight
+        // pre-window SACU fires on the MOSU↑ dot before RYDY's
+        // effect propagates (matching hardware's sub-dot SACU/SOCY
+        // race).
         let tyfa = self.tyfa;
         self.tyfa = false;
 
@@ -793,11 +791,11 @@ impl Rendering {
             false
         };
 
-        // Sprite fetch counter now advances in mode3_falling (SABE clock,
-        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline is frozen.
-        // After sprite fetch completes in falling, TAKA clears and FEPO is
-        // recomputed, so TYFA correctly enables the pixel clock on the next
-        // rising edge.
+        // Sprite fetch counter advances in mode3_rising (SABE clock,
+        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline
+        // is frozen. After sprite fetch completes, TAKA clears and FEPO
+        // is recomputed, so TYFA correctly enables the pixel clock on
+        // the next rising edge.
 
         if !self.sprite_trigger.taka() {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
