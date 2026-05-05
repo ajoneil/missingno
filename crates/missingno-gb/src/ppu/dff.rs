@@ -56,3 +56,36 @@ impl DffLatch {
         self.pending = None;
     }
 }
+
+/// A combinational NOR-latch cell.
+///
+/// On hardware, a NOR-latch is a cross-coupled NOR pair whose output
+/// settles immediately when its set/reset inputs change — there is no
+/// capture-edge gating. `set()` and `clear()` apply immediately;
+/// `output()` always returns the most recent value.
+///
+/// Use this for hardware NOR-latches such as RYDY (window-hit), PYNU
+/// (window-armed), REJO (WY-match), XYMU (rendering-mode), and WUSA
+/// (LCD clock gate). Use `DffLatch` for hardware DFFs that capture on
+/// a clock edge.
+pub struct NorLatch {
+    output: bool,
+}
+
+impl NorLatch {
+    pub(super) fn new(initial: bool) -> Self {
+        Self { output: initial }
+    }
+
+    pub fn output(&self) -> bool {
+        self.output
+    }
+
+    pub(super) fn set(&mut self) {
+        self.output = true;
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.output = false;
+    }
+}
