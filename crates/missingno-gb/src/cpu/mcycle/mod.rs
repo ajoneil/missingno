@@ -1121,24 +1121,18 @@ impl Cpu {
 
     /// Enter the trailing fetch-overlap M-cycle at the opening edge.
     /// Captures `zacw` (dispatch_active), routes early to dispatch /
-    /// halt when needed. Phase-changers (EnterHalt/EnterStop/Invalid)
-    /// apply here so halt routing sees them; late-writeback commits
-    /// are carried on `Phase::FetchOverlap { commit }` and applied at
-    /// the closing edge alongside the next opcode capture.
+    /// halt when needed. All commits apply inline here so the new
+    /// register/flag values are visible at the start of the M-cycle
+    /// that fetches the next opcode (gb-ctr's M3/M1 column).
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
-        // dispatch_active (zacw) is now captured per-dot from execute.rs
-        // via cpu.dispatch.tick_zacw(). EI/DI gating is handled by the
-        // zaij chain (zzom term), not inline here.
-        let _ = commit;
-
-        let deferred = match commit {
+        match commit {
             Commit::EnterHalt | Commit::EnterStop | Commit::Invalid => {
                 Self::apply_commit(self, commit);
                 self.check_halt_bug();
-                Commit::NoOperation
             }
-            other => other,
-        };
+            other => Self::apply_commit(self, other),
+        }
+        let deferred = Commit::NoOperation;
 
         if let Some(target) = self.pending_jump_target.take() {
             self.bus_counter = target;
@@ -1252,5 +1246,4 @@ impl Cpu {
         self.irq_latched.write(self.irq_pending);
         self.irq_latched.tick();
     }
-
 }
