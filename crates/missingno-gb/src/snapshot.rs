@@ -378,7 +378,7 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
-            staged_ppu_write: None,
+            staged_bus_write: None,
             staged_bus_read: None,
             cpu_bus: crate::CpuBus::new(),
         }

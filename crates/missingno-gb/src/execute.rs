@@ -1,8 +1,7 @@
 use super::{
-    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedBusRead, StagedPpuWrite,
+    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedBusRead, StagedBusWrite,
     cpu::mcycle::DotAction,
     interrupts::Interrupt,
-    is_ppu_register,
     memory::Bus,
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
 };
@@ -194,9 +193,8 @@ impl GameBoy {
 
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
 
-            // Clear any staged PPU write from the previous M-cycle.
-            self.staged_ppu_write = None;
-            // Clear any staged bus read from the previous M-cycle.
+            // Clear any staged bus write/read from the previous M-cycle.
+            self.staged_bus_write = None;
             self.staged_bus_read = None;
 
             // Timer ticks once per M-cycle (BOGA).
@@ -288,19 +286,19 @@ impl GameBoy {
             .dispatch
             .step_zkog(ime_enabled, data_phase, write_phase, xogs);
 
-        // Stage PPU register writes at dot 0. On hardware, the CPU
-        // places the address on the bus at phase A and the address
-        // decode chain begins propagating. The write is applied at
-        // dot 2 rise (CUPA rises at phase E, spanning 1.498 dots
-        // through phase H of dot 3).
-        if is_mcycle_boundary && let Some((address, value)) = self.cpu.pending_bus_write() {
-            if is_ppu_register(address) {
-                self.staged_ppu_write = Some(StagedPpuWrite {
-                    address,
-                    value,
-                    applied: false,
-                });
-            }
+        // Stage CPU bus writes at dot 0. On hardware, the CPU places
+        // the address on the bus at phase A and asserts cpu_wr; CUPA
+        // rises at dot 2 (phase E), spanning 1.498 dots through dot 3
+        // (CUPA falling). PPU register latches are transparent during
+        // CUPA-high and capture at CUPA-falling. The emulator drives
+        // cpu_bus.data at dot 2 rise (CUPA-rising equivalent); PPU
+        // registers apply via drive_ppu_bus at the same dot, memory
+        // commits via write_byte at fall() of dot 3.
+        if is_mcycle_boundary && let Some((address, _value)) = self.cpu.pending_bus_write() {
+            self.staged_bus_write = Some(StagedBusWrite {
+                address,
+                applied: false,
+            });
         }
 
         // Stage CPU bus reads at dot 0. On hardware, the addressed
@@ -332,24 +330,28 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
-            // Apply staged PPU write at BusDot 2 rise (phase E). On
-            // hardware, CUPA rises at dot 2 of the M-cycle coincident
-            // with an alet rising edge, gating the PPU register latches
-            // transparent. The latch stays transparent across dots 2-3
-            // (CUPA pulse ~1.498 dots wide) — combinational PPU logic
-            // sees the new value from phase E onward. Alet-clocked DFFs
-            // (which capture on ALET rising = our fall()) see the new
-            // value in THIS dot's fall().
-            if dot.as_u8() == 2 {
-                if let Some(staged) = self.staged_ppu_write.as_ref() {
-                    if !staged.applied {
-                        let (addr, val) = (staged.address, staged.value);
-                        if self.drive_ppu_bus(addr, val) {
-                            self.interrupts.request(Interrupt::VideoStatus);
-                        }
-                        self.staged_ppu_write.as_mut().unwrap().applied = true;
-                    }
+            // Apply staged bus write at BusDot 2 rise (phase E). On
+            // hardware, CUPA rises at dot 2 coincident with alet rising
+            // and gates the PPU register latches transparent across
+            // dots 2-3 (CUPA pulse ~1.498 dots wide). The CPU drives
+            // cpu_port_d at this dot; consumers latch from it at their
+            // sub-phase event (PPU regs combinationally during CUPA-
+            // high, memory at fall() of dot 3 / CUPA-falling).
+            if dot.as_u8() == 2
+                && let Some(staged) = self.staged_bus_write.as_ref()
+                && !staged.applied
+            {
+                let address = staged.address;
+                let value = self
+                    .cpu
+                    .pending_bus_write()
+                    .map(|(_, v)| v)
+                    .expect("staged_bus_write requires pending_bus_write to be Some during the M-cycle");
+                self.cpu_bus.data = value;
+                if self.drive_ppu_bus(address, self.cpu_bus.data) {
+                    self.interrupts.request(Interrupt::VideoStatus);
                 }
+                self.staged_bus_write.as_mut().unwrap().applied = true;
             }
 
             // PPU master-clock rising edge for non-boundary dots.
@@ -455,19 +457,17 @@ impl GameBoy {
         // wins same-dot. Apply CPU writes first, then IF mutations.
         match &self.current_dot_action {
             DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
-            DotAction::Write { address, value } => {
+            DotAction::Write { address, value: _ } => {
                 let address = *address;
-                let value = *value;
                 if (0xFE00..=0xFEFF).contains(&address) {
                     *pending_oam_bug = Some(OamBugKind::Write);
                 }
-                // Skip drive_ppu_bus if the staged write mechanism already
-                // applied this write at the correct visibility dot.
-                let already_applied = self.staged_ppu_write.as_ref().is_some_and(|s| s.applied);
-                if !already_applied && self.drive_ppu_bus(address, value) {
-                    self.interrupts.request(Interrupt::VideoStatus);
-                }
-                self.write_byte(address, value);
+                // drive_ppu_bus already fired at dot 2 for PPU registers
+                // (CUPA-rising visibility); for non-PPU addresses it's a
+                // no-op. Memory commits here at fall() of dot 3 (CUPA-
+                // falling / M-cycle boundary equivalent), reading the
+                // CPU-driven value from cpu_bus.data.
+                self.write_byte(address, self.cpu_bus.data);
             }
         }
 

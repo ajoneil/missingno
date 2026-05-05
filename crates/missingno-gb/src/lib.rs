@@ -35,20 +35,17 @@ pub enum ClockPhase {
     Low,
 }
 
-/// A PPU register write staged at dot 0, applied at dot 2 rise.
-///
-/// On hardware, all PPU registers share the `cupa` write strobe.
-/// CUPA rises at dot 2 of the M-cycle (phase E, coincident with an
-/// alet rising edge) and stays high for 1.498 dots through dot 3.
-/// While CUPA is high, the register latch is transparent and
-/// combinational PPU logic sees the new value. The emulator stages
-/// the write at dot 0 (when the CPU places the address on the bus)
-/// and applies it at dot 2 rise (before ppu.on_master_clock_rise())
-/// to model CUPA's rising position.
-struct StagedPpuWrite {
+/// A CPU bus write staged at the M-cycle boundary, applied at dot 2
+/// of the write M-cycle. The CPU drives `cpu_port_d` at dot 2 (CUPA-
+/// rising on the PPU side, `cpu_wr` asserted on the SM83 side); PPU
+/// register latches are transparent during dots 2-3 and capture at
+/// CUPA-falling (end of dot 3). Memory consumers commit at end-of-
+/// M-cycle (fall of dot 3) via `write_byte`. The write VALUE lives
+/// in `cpu_bus.data` — symmetric with `StagedBusRead` where the
+/// value is also in `cpu_bus.data` (driven by the peripheral).
+struct StagedBusWrite {
     address: u16,
-    value: u8,
-    /// Whether the write has been applied to the PPU.
+    /// Whether the bus has been driven for this write.
     applied: bool,
 }
 
@@ -86,23 +83,6 @@ impl CpuBus {
     fn new() -> Self {
         Self { data: 0xFF }
     }
-}
-
-/// Whether this address is a PPU register that should be staged.
-fn is_ppu_register(address: u16) -> bool {
-    matches!(
-        address,
-        0xFF40  // LCDC
-        | 0xFF41  // STAT
-        | 0xFF42  // SCY
-        | 0xFF43  // SCX
-        | 0xFF47  // BGP
-        | 0xFF48  // OBP0
-        | 0xFF49  // OBP1
-        | 0xFF4A  // WY
-        | 0xFF4B  // WX
-        | 0xFF45  // LYC
-    )
 }
 
 impl ClockPhase {
@@ -156,9 +136,10 @@ pub struct GameBoy {
     current_dot_action: DotAction,
     /// Dot position for the current dot, set on Rising and consumed during Falling.
     current_dot: BusDot,
-    /// A PPU register write staged at dot 0, waiting for its
-    /// hardware-correct visibility dot.
-    staged_ppu_write: Option<StagedPpuWrite>,
+    /// A CPU bus write staged at the M-cycle boundary, applied at
+    /// dot 2 to drive `cpu_bus.data` with the write value (CUPA-
+    /// rising / `cpu_wr` asserted equivalent).
+    staged_bus_write: Option<StagedBusWrite>,
     /// A CPU bus read staged at the M-cycle boundary, applied at
     /// dot 2 to drive the value onto `cpu_bus`.
     staged_bus_read: Option<StagedBusRead>,
@@ -181,18 +162,20 @@ impl GameBoy {
             None
         };
 
-        // Mirror the CPU's pending bus read at construction time so the
-        // dot-2 capture has a target for the in-flight M-cycle. Skip-boot
-        // anchors at the post-rise of the M-cycle that opens the cartridge
-        // m1 fetch (Cpu::new(): Read{0x0100}); the boundary work fired in
-        // the boot ROM's domain before t=0, so the staging block in rise()
-        // doesn't fire for that first M-cycle.
-        let staged_bus_read =
-            cpu.pending_bus_read()
-                .map(|address| StagedBusRead {
-                    address,
-                    applied: false,
-                });
+        // Mirror the CPU's pending bus read/write at construction time so
+        // the dot-2 staging has a target for the in-flight M-cycle. Skip-
+        // boot anchors at the post-rise of the M-cycle that opens the
+        // cartridge m1 fetch (Cpu::new(): Read{0x0100}); the boundary
+        // work fired in the boot ROM's domain before t=0, so the staging
+        // block in rise() doesn't fire for that first M-cycle.
+        let staged_bus_read = cpu.pending_bus_read().map(|address| StagedBusRead {
+            address,
+            applied: false,
+        });
+        let staged_bus_write = cpu.pending_bus_write().map(|(address, _value)| StagedBusWrite {
+            address,
+            applied: false,
+        });
 
         let mut gb = GameBoy {
             cpu,
@@ -226,7 +209,7 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
-            staged_ppu_write: None,
+            staged_bus_write,
             staged_bus_read,
             cpu_bus: CpuBus::new(),
         };
@@ -281,14 +264,20 @@ impl GameBoy {
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
-        self.staged_ppu_write = None;
-        self.staged_bus_read =
+        self.staged_bus_write =
             self.cpu
-                .pending_bus_read()
-                .map(|address| StagedBusRead {
+                .pending_bus_write()
+                .map(|(address, _value)| StagedBusWrite {
                     address,
                     applied: false,
                 });
+        self.staged_bus_read = self
+            .cpu
+            .pending_bus_read()
+            .map(|address| StagedBusRead {
+                address,
+                applied: false,
+            });
         self.cpu_bus = CpuBus::new();
     }
 
