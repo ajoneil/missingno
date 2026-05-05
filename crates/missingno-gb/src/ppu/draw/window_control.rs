@@ -31,10 +31,13 @@ pub(in crate::ppu) struct WindowControl {
     /// at the WX-match dot; CLEAR by PORY rising during the BG fetch
     /// cascade restart (`clear_rydy_on_pory`).
     ///
-    /// Read combinationally by the SACU consumer in
-    /// `Rendering::mode3_pixel_pipeline` so a same-dot RYDY rise gates
-    /// the pixel pump immediately (matching hardware's
-    /// SOCY = NOT(RYDY) combinational path).
+    /// SOCY = NOT(RYDY) is consumed by TYFA via the rise-side
+    /// snapshot in `Rendering::mode3_rising`, NOT combinationally at
+    /// the SACU sample site. The 1-dot snapshot lag relative to
+    /// `check_trigger_arming` (which sets RYDY later in the same
+    /// fall) models hardware's sub-dot propagation delay: the
+    /// in-flight pre-window pixel SACU fires on the MOSU↑ dot before
+    /// RYDY's effect propagates through the SYLO/TOMU/SOCY chain.
     rydy: NorLatch,
     /// Window-armed latch (hardware PYNU `nor_latch`). Set by the
     /// WX-match pulse — hardware path NUKO → PYCO → NUNU → PYNU.s,
