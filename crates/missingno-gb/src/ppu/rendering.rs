@@ -150,9 +150,11 @@ pub struct Rendering {
     /// Window control block (die page 27): RYDY latch, WX comparator,
     /// window line counter, window zero pixel.
     window: WindowControl,
-    /// TYFA (pixel clock enable): AND(!FEPO, !WODU, !RYDY, POKY).
-    /// Computed in mode3_rising, consumed in mode3_pixel_pipeline.
-    tyfa: bool,
+    /// TYFA's slow factors snapshotted at end of `mode3_rising`:
+    /// `!FEPO && !WODU && POKY`. The RYDY factor (SOCY = NOT(RYDY))
+    /// is read combinationally at the SACU sample site so a same-dot
+    /// RYDY rise from MOSU↑ gates the pixel pump immediately.
+    pre_window_tyfa: bool,
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
     pixel_counter: PixelCounter,
@@ -177,7 +179,7 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            tyfa: false,
+            pre_window_tyfa: false,
             pixel_counter: PixelCounter::new(),
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
@@ -202,7 +204,7 @@ impl Rendering {
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
             window: WindowControl::new(),
-            tyfa: false,
+            pre_window_tyfa: false,
             pixel_counter: PixelCounter::post_boot(),
             lcd: LcdControl::post_boot(),
             sprite_state: SpriteState::Idle,
@@ -555,7 +557,7 @@ impl Rendering {
         self.fine_scroll = FineScroll::new();
         self.window.reset_scanline();
 
-        self.tyfa = false;
+        self.pre_window_tyfa = false;
         self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
@@ -663,27 +665,13 @@ impl Rendering {
         // Latch FEPO for next dot's wodu() evaluation.
         self.hblank.latch_fepo(fepo);
 
-        // TYFA = AND3(SOCY, POKY, VYBO). Bridge to rising phase for SACU.
-        // SOCY = NOT(RYDY) via the SYLO/TOMU/SOCY triple-inversion
-        // (window-condition fanout — same SYLO/TOMU stages as TUKU
-        // above; only the final inverter differs). Emulator
-        // collapses SOCY to !window.rydy() at this call site.
-        // VYBO = NOR3(FEPO_old, WODU_old, MYVO).
-        //
-        // LogicBoy uses `state_old.pix_count != 167` instead of `!WODU_old`.
-        // At this point (falling, after rising incremented), pixel_counter
-        // holds the post-increment value — which will be `state_old` on the
-        // NEXT dot when TYFA is consumed. This avoids a one-dot delay through
-        // the WODU storage path that caused pix_count to overshoot to 168.
-        //
-        // MYVO (sprite-fetch within-dot clock) appears in VYBO's hardware
-        // decomposition but not in this formula: the emulator evaluates
-        // SACU once per rising phase, which carries one SACU capture event
-        // per master-clock edge — matching the semantic MYVO gates on
-        // hardware without modelling its within-dot toggling waveform.
-        let tyfa =
-            !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
-        self.tyfa = tyfa;
+        // TYFA = AND3(SOCY, POKY, VYBO). Snapshot the slow-changing
+        // factors here; the SACU consumer adds the SOCY = !RYDY factor
+        // combinationally at the use site so a same-dot RYDY rise gates
+        // the pixel pump immediately. VYBO = NOR3(FEPO_old, WODU_old,
+        // MYVO); the !pixel_counter.terminal() factor encodes !WODU_old
+        // (post-increment pixel_counter is the next dot's state_old).
+        self.pre_window_tyfa = !fepo && !self.pixel_counter.terminal() && self.cascade.poky();
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
@@ -775,11 +763,12 @@ impl Rendering {
     ) -> Option<PixelOutput> {
         let mut pixel_out: Option<PixelOutput> = None;
 
-        // Consume TYFA from falling phase. On the first rising phase
-        // after AVAP (Mode 2→3), no falling has run yet — TYFA is false
-        // (pixel clock not yet enabled).
-        let tyfa = self.tyfa;
-        self.tyfa = false;
+        // Combine the slow-factor snapshot with the same-dot RYDY read.
+        // SOCY = NOT(RYDY) is combinational on hardware, so a MOSU↑-driven
+        // RYDY rise this dot must gate SACU off without waiting for the
+        // next snapshot.
+        let tyfa = self.pre_window_tyfa && !self.window.rydy();
+        self.pre_window_tyfa = false;
 
         // PUXA capture: ROXO fires when TYFA is active. TYFA is
         // combinational (AND3(SOCY, POKY, VYBO)), but POKY only updates

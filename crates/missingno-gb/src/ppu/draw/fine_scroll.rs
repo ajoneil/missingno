@@ -185,11 +185,14 @@ impl FineScroll {
         pova
     }
 
-    /// Reset for window trigger — counter resets, gating clears
-    /// (window has no fine scroll).
+    /// Reset for window trigger — counter resets and the SCX-match
+    /// comparator is re-armed. ROXY is left in whatever state it was
+    /// in: still `Gating` if the AVAP-startup match hadn't yet fired
+    /// POVA (e.g. WX=0 with SCX>0, where MOSU↑ at +7.161 dots beats
+    /// first SACU at +7+(SCX&7) dots), or `Done` if it had — MOSU is
+    /// not on hardware's ROXY-clear path.
     pub(in crate::ppu) fn reset_for_window(&mut self) {
         self.count = 0;
-        self.roxy = Roxy::Done;
         self.pohu = false;
     }
 }

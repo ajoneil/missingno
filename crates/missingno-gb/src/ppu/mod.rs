@@ -30,7 +30,7 @@ use rendering::Rendering;
 use types::control::{Control, ControlFlags};
 use types::palette::Palettes;
 
-pub use dff::DffLatch;
+pub use dff::{DffLatch, NorLatch};
 pub use registers::{PipelineRegisters, Window};
 pub use rendering::{
     PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
