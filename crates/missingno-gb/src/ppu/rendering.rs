@@ -565,7 +565,11 @@ impl Rendering {
         self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
-        self.sprite_trigger.reset();
+        // ATEJ arm of SECA = NOR3(RYCE, ROSY, ATEJ): the line-end
+        // pulse re-asserts TAKA at every scanline boundary. SOBU/SUDA
+        // are free-running DFFs (no reset). TAKA's next clear is by
+        // VEKU's TAVE arm at AVAP+5.998 in the startup pipeline.
+        self.sprite_trigger.set_taka();
         // BYBA, DOBA, and WUVU are handled by scan.reset() above.
         // WUVU free-runs (no reset) — lives on VideoControl.
     }
@@ -603,21 +607,21 @@ impl Rendering {
         // reg_old.LYRY on ALET (falling edge).
         let lyry = self.fetcher.lyry();
 
-        // BG fetcher pauses during sprite fetch. On hardware, TAKA gates
-        // the fetcher counter via LEBO — tfetch stays idle (5) throughout
-        // sprite fetch, as confirmed by GateBoy traces showing
-        // tfetch_state=05 for the entire duration of sfetch_state cycling.
-        if !self.sprite_trigger.taka() {
-            self.fetcher.advance_falling(
-                self.pixel_counter.value(),
-                self.window.window_line_counter(),
-                regs,
-                video,
-                vram,
-            );
+        // BG fetcher and cascade DFFs continue to advance during sprite
+        // fetch — only SACU/CLKPIPE freezes (gated separately via TYFA
+        // suppression). The counter saturates at 5 (LYRY=1, MOCE=0
+        // freezes LEBO) which produces the observable "tfetch=5
+        // throughout sprite fetch" behaviour without an explicit !taka()
+        // gate here.
+        self.fetcher.advance_falling(
+            self.pixel_counter.value(),
+            self.window.window_line_counter(),
+            regs,
+            video,
+            vram,
+        );
 
-            self.cascade.advance_cascade(lyry);
-        }
+        self.cascade.advance_cascade(lyry);
 
         // Sprite fetch counter advance (SABE clock). On hardware, SABE =
         // NAND2(LAPE, TAME) fires when ALET rises (= master clock fall =
@@ -705,11 +709,10 @@ impl Rendering {
         self.sprite_trigger.capture_suda();
 
         // BG fetcher rising-edge advance: counter increment (LEBO clock).
-        // Paused during sprite fetch (TAKA gates fetcher counter).
-        if !self.sprite_trigger.taka() {
-            self.fetcher.advance_rising();
-            self.cascade.capture_pory();
-        }
+        // The counter saturates at 5 (advance_rising is a no-op there)
+        // so during sprite fetch it stays at 5 without an explicit gate.
+        self.fetcher.advance_rising();
+        self.cascade.capture_pory();
 
         // PORY clears RYDY: on hardware, PORY is a reset input to the
         // RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
@@ -748,6 +751,9 @@ impl Rendering {
             // drives PASO which resets the fine counter on every pipe load
             // (TAVE, SEKO, SUZU).
             self.fine_scroll.reset_counter();
+            // TAVE arm of VEKU = NOR2(WUTY, TAVE): clears TAKA carry-over
+            // from the prior scanline so the sprite trigger can re-arm.
+            self.sprite_trigger.clear_taka();
         }
     }
 
