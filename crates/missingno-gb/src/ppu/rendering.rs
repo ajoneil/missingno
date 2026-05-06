@@ -385,13 +385,14 @@ impl Rendering {
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
-        // On DMG, reads and writes are gated identically.
-        self.oam_locked()
+        // WYJA write-enable: AJUJ = NOR3(dma_run, mode2, mode3).
+        // mode2 takes BESU.Q directly (not the catu_pending pre-stage).
+        self.scan.besu() || self.hblank.rendering_active()
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
-        // On DMG, reads and writes are gated identically.
-        self.vram_locked()
+        // SERE/XEDU tri-state enables gate VRAM writes on mode3 only.
+        self.hblank.rendering_active()
     }
 
     /// Master-clock rising edge (= ALET rising): setup phase dispatcher.
