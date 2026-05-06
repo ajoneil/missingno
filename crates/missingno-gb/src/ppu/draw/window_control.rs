@@ -1,84 +1,67 @@
-use crate::ppu::{NorLatch, PipelineRegisters, VideoControl};
+use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, VideoControl};
 
 use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
 
-/// Window control: window-hit latch, WX/WY match comparators + frame
-/// latch, window-armed latch, window-line counter, DMG zero-pixel
-/// reactivation flag.
+/// Window control: §6.12 WX-match capture pipeline modelled as explicit
+/// DFFs (PYCO → NUNU → PYNU → NOPA), the RYDY/PUKU NOR-latch, the
+/// WY-match frame latch (REJO), and the WAZY/VYNO window-line ripple
+/// counter clocked by `wy_clk = NOT(PYNU)`.
 ///
-/// Per-dot `check_trigger` collapses the hardware WX-match capture
-/// pipeline (NUKO → PYCO → NUNU → PYNU → NUNY → PUKU → RYDY) into a
-/// single evaluation gated on POKY (sticky-on after the startup
-/// cascade — ROCO derives from TYFA which requires POKY=1). The
-/// collapse fires the trigger on the dot
-/// NUKO matches; on hardware MOSU↑ propagates several dots later
-/// through the multi-edge pipeline, but at the consumer boundary
-/// (window-mode active, fetcher restart) the collapsed model
-/// reproduces the observable behaviour.
+/// The pipeline turns combinational `NUKO = (pix_count == WX)` into the
+/// MOSU↑ pulse that drives NYXU (BG fetch counter reset). NOPA captures
+/// PYNU on ALET rising; NOPA_n then gates NUNY = AND2(PYNU, NOPA_n) low
+/// for the rest of mode 3, so a second activation per scanline requires
+/// PYNU to fall (via XOFO clear when LCDC.5↓ or ATEJ↑) and re-rise on a
+/// fresh NUKO match (typically following a CPU WX rewrite).
 ///
-/// The window-hit signal (RYDY) drives two consumer chains in
-/// `rendering.rs`: it blocks sprite triggers (hardware TUKU input to
-/// TEKY's AND4) and halts the pixel clock (hardware SOCY input to
-/// TYFA's AND3). Hardware reaches both sites via triple-inversion of
-/// RYDY through SYLO/TOMU/{TUKU,SOCY}; the emulator collapses each
-/// chain to one negation at the consumer call site.
+/// RYDY consumers (sprite-trigger block via TUKU; CLKPIPE halt via SOCY;
+/// SUZU window-restart via SOVY) read `rydy()`. The collapsed
+/// triple-inversion through SYLO/TOMU is folded into one negation at
+/// each consumer call site in `rendering.rs`.
 pub(in crate::ppu) struct WindowControl {
-    /// Window-hit signal (hardware RYDY `nor_latch`). When high, the
-    /// pixel clock halts and sprite triggers are blocked until the
-    /// window's startup tile fetch completes. SET by `check_trigger`
-    /// at the WX-match dot; CLEAR by PORY rising during the BG fetch
-    /// cascade restart (`clear_rydy_on_pory`).
-    ///
-    /// SOCY = NOT(RYDY) is consumed by TYFA via the rise-side
-    /// snapshot in `Rendering::mode3_rising`, NOT combinationally at
-    /// the SACU sample site. The 1-dot snapshot lag relative to
-    /// `check_trigger_arming` (which sets RYDY later in the same
-    /// fall) models hardware's sub-dot propagation delay: the
-    /// in-flight pre-window pixel SACU fires on the MOSU↑ dot before
-    /// RYDY's effect propagates through the SYLO/TOMU/SOCY chain.
+    /// Window-hit signal (hardware RYDY `nor3` with PUKU feedback).
+    /// Set when NUNY rises (PUKU drops, RYDY rises). Cleared by PORY
+    /// rising during the BG fetch cascade restart.
     rydy: NorLatch,
-    /// Window-armed latch (hardware PYNU `nor_latch`). Set by the
-    /// WX-match pulse — hardware path NUKO → PYCO → NUNU → PYNU.s,
-    /// collapsed in the emulator to per-dot `check_trigger`. Reset by
-    /// `apply_xofo` when LCDC.5 (WIN_EN) goes low — hardware path
-    /// XOFO = NAND3(LCDC.5, NOT(atej), ppu_reset_n) → PYNU.r.
-    ///
-    /// Mid-scanline WX register changes clear this flag to allow
-    /// re-evaluation with a new WX value (compensates for the
-    /// collapsed PYCO/NUNU pipeline that on hardware would naturally
-    /// re-fire on the new NUKO match).
-    wx_triggered: bool,
+    /// PYCO `dffr`. Captures NUKO on ROCO rising — TYFA-derived clock
+    /// gated by POKY=1. Naturally falls when NUKO drops (which happens
+    /// when PX moves past WX, or on a CPU WX rewrite that moves the
+    /// match point past PX).
+    pyco: DffLatch,
+    /// NUNU `dffr`. Captures PYCO on MEHE rising (= ALET falling =
+    /// master-clock rising). One half-dot after PYCO captures.
+    nunu: DffLatch,
+    /// PYNU `nor_latch`. Set by NUNU rising edge; reset by XOFO
+    /// (NAND3(LCDC.5, NOT(atej), ppu_reset_n)) going high — i.e.,
+    /// LCDC.5 transitioning low, ATEJ asserting, or PPU reset.
+    pynu: NorLatch,
+    /// NOPA `dffr`. Captures PYNU on ALET rising (= master-clock
+    /// falling). NOPA_n drives NUNY's AND2 low gate.
+    nopa: DffLatch,
+    /// Previous-dot NUNU.q for set-edge detection on PYNU.
+    prev_nunu_q: bool,
+    /// Previous-dot PYNU.q for fall-edge detection on WAZY/VYNO.
+    prev_pynu_q: bool,
+    /// Previous-dot NUNY for MOSU rising-edge detection.
+    prev_nuny: bool,
     /// Whether the window has rendered at least one pixel on the
-    /// current line — used to gate WAZY (window-line-counter) advance
-    /// at the scanline boundary.
+    /// current line — drives the WAZY-equivalent end-of-mode-3 flag.
     window_rendered: bool,
-    /// Previous-dot WX register value, used to detect mid-scanline WX
-    /// changes that should clear `wx_triggered` for re-evaluation.
-    last_wx_value: u8,
     /// Cached WX register value for the WX comparator (hardware NUKO
     /// reads the WX register's DFF8 slave output, which lags the
-    /// master by one ALET edge). Updated unconditionally at the end
-    /// of every mode3_rising from the live register output;
-    /// `check_trigger` reads this instead of the live register,
-    /// providing the 1-dot lag on mid-scanline WX writes.
+    /// master by one ALET edge).
     nuko_wx: u8,
-    /// Window internal line counter (hardware WAZY). Advances at the
-    /// scanline boundary when the window rendered on the line.
-    /// Consumed by the fetcher for the window tilemap address.
+    /// Window internal line counter (hardware WAZY → VYNO ripple).
+    /// Clocked by `wy_clk = NOT(PYNU)` rising — i.e., increments on
+    /// every PYNU 1→0 transition during rendering.
     window_line_counter: u8,
-    /// WY-match frame latch (hardware REJO `nor_latch`). Set when
-    /// LY==WY is first observed in the frame (sampled every TALU
-    /// edge via SARY); reset only at VBlank (REPU). Once set, stays
-    /// set for the remainder of the frame — a mid-scanline WY change
-    /// cannot retroactively arm or disarm the window.
+    /// WY-match frame latch (hardware REJO `nor_latch`).
     wy_matched: bool,
-    /// Window reactivation zero pixel (DMG-specific quirk; not in
-    /// spec reference block). Set when WX re-matches while the
-    /// window is already active with specific fetcher/FIFO
-    /// conditions; causes the next pixel output to use bg_color=0
-    /// without popping the BG shifter (OBJ shifter pops normally).
+    /// Window reactivation zero pixel (DMG-specific quirk; spec §6.12
+    /// declares this out-of-scope, so it stays as a separate flag
+    /// driven by `check_trigger_reactivation`).
     window_zero_pixel: bool,
 }
 
@@ -86,9 +69,14 @@ impl WindowControl {
     pub(in crate::ppu) fn new() -> Self {
         WindowControl {
             rydy: NorLatch::new(false),
-            wx_triggered: false,
+            pyco: DffLatch::new(0),
+            nunu: DffLatch::new(0),
+            pynu: NorLatch::new(false),
+            nopa: DffLatch::new(0),
+            prev_nunu_q: false,
+            prev_pynu_q: false,
+            prev_nuny: false,
             window_rendered: false,
-            last_wx_value: 0xFF,
             nuko_wx: 0xFF,
             window_line_counter: 0,
             wy_matched: false,
@@ -101,17 +89,12 @@ impl WindowControl {
         self.nuko_wx = wx;
     }
 
-    /// Update NUKO's WX input from the live DFF8 output. Called
-    /// unconditionally at the end of every mode3_rising so the cache
-    /// tracks the DFF output even during sprite fetch.
+    /// Update NUKO's WX input from the live DFF8 output.
     pub(in crate::ppu) fn update_nuko_wx(&mut self, wx: u8) {
         self.nuko_wx = wx;
     }
 
-    /// Sample the REJO NOR latch (WY==LY match). On hardware, SARY
-    /// samples ROGE on every TALU edge — this runs every dot in all
-    /// modes, not just mode 3. The latch is idempotent: once set, it
-    /// stays set until VBlank.
+    /// Sample the REJO NOR latch (WY==LY match). Idempotent.
     pub(in crate::ppu) fn sample_wy_match(
         &mut self,
         regs: &PipelineRegisters,
@@ -122,28 +105,8 @@ impl WindowControl {
         }
     }
 
-    /// Model the XOFO combinational gate. XOFO = nand3(WIN_EN,
-    /// LINE_RSTn, VID_RSTn). When WIN_EN is low, XOFO goes high and
-    /// resets PYNU (wx_triggered). If PYNU was high (window was
-    /// active), the falling edge clocks WAZY (window line counter
-    /// increments). Called every dot during mode 3.
-    pub(in crate::ppu) fn apply_xofo(&mut self, window_enabled: bool) {
-        if !window_enabled {
-            if self.wx_triggered {
-                self.window_line_counter += 1;
-                self.window_rendered = false;
-            }
-            self.wx_triggered = false;
-        }
-    }
-
-    /// PORY clears RYDY: on hardware, PORY is a reset input to the
-    /// RYDY NOR latch (NOR3(PUKU, PORY, VID_RST)). When PORY goes
-    /// high while RYDY is set, RYDY clears — producing the SUZU
-    /// falling-edge signal (AND2(!RYDY_new, SOVY)).
-    ///
-    /// Returns true if RYDY transitioned 1→0 (SUZU fires), signaling
-    /// the caller to load window tile data and reset the fine counter.
+    /// PORY clears RYDY: NOR3 reset path. Returns true if RYDY
+    /// transitioned 1→0 (SUZU fires, signaling SUZU/TEVO load-window).
     pub(in crate::ppu) fn clear_rydy_on_pory(&mut self, pory: bool) -> bool {
         if pory && self.rydy.output() {
             self.rydy.clear();
@@ -153,22 +116,45 @@ impl WindowControl {
         }
     }
 
-    /// MOSU↑ arming: NUKO match → PYCO → NUNU → PYNU set → MOSU pulse →
-    /// NYXU async-reset of the BG fetch counter and the
-    /// NYKA/PORY/PYGO/POKY cascade. Runs BEFORE the fetcher's
-    /// falling-edge VRAM read so AMUV/VEVY tri-states see
-    /// `fetching_window=true` on the counter=0 tile-index read.
+    /// Compute combinational NUKO (PX==WX decode).
+    fn compute_nuko(&self, pixel_counter: u8, regs: &PipelineRegisters) -> bool {
+        regs.control.window_enabled()
+            && self.wy_matched
+            && pixel_counter == self.nuko_wx
+    }
+
+    /// Compute combinational XOFO. NAND3(LCDC.5, NOT(atej), ppu_reset_n);
+    /// during rendering atej=0 and ppu_reset_n=1, so XOFO simplifies to
+    /// NOT(LCDC.5).
+    fn compute_xofo(&self, regs: &PipelineRegisters) -> bool {
+        !regs.control.window_enabled()
+    }
+
+    /// Tick the §6.12 capture pipeline and evaluate NUNY/MOSU.
+    /// Called once per dot at the master-clock-falling phase (the same
+    /// edge `check_trigger_arming` previously fired on). Returns
+    /// `true` if MOSU rises this dot — caller fires the NYXU restart
+    /// side-effects (fetcher reset, fine-scroll reset, cascade reset,
+    /// RYDY set).
     ///
-    /// On hardware, the NUKO comparator reads pix_count DFF Q-outputs
-    /// combinationally (pre-SACU value). The PYCO DFF captures the NUKO
-    /// match on ROCO; ROCO derives from TYFA and requires POKY=1. POKY
-    /// is the sticky NOR-latch that goes high after the startup cascade
-    /// completes — using it here lets the trigger fire on every NUKO
-    /// match dot once startup is done, matching the sweep table
-    /// (`MOSU↑ ≈ 7.161 + 1.024 × WX` dots from AVAP). The
-    /// `pixel_counter` parameter must be the pre-SACU value (from
-    /// `RisingPhaseInputs`) to model this correctly.
-    pub(in crate::ppu) fn check_trigger_arming(
+    /// Pipeline order within one fall edge:
+    /// 1. NOPA captures the prior-fall PYNU (so the pre-set PYNU value
+    ///    is observed; this is what allows multi-fire — after XOFO
+    ///    clears PYNU, NOPA captures the cleared value and releases
+    ///    NOPA_n).
+    /// 2. PYCO captures NUKO (gated on POKY=1 via the ROCO clock
+    ///    enable). Naturally drops to 0 when NUKO drops.
+    /// 3. NUNU captures PYCO. Half-dot offset elided in this single-
+    ///    edge model; same integer-dot result.
+    /// 4. Apply XOFO to PYNU's reset (clear if XOFO asserted this dot).
+    /// 5. NUNU↑ → PYNU.s pulse: detect rising edge; if XOFO didn't
+    ///    just clear, set PYNU.
+    /// 6. NUNY = AND2(PYNU.q, NOPA_n). On NUNY rising edge, MOSU↑.
+    /// 7. Detect PYNU↓ (1→0 across this dot) → wy_clk rises → WAZY
+    ///    increments window_line_counter. (Per spec §6.12 resolved gap:
+    ///    one increment per PYNU↓; happens at LCDC.5↓ during render or
+    ///    end-of-mode-3 ATEJ↑.)
+    pub(in crate::ppu) fn tick_pipeline(
         &mut self,
         fetcher: &mut TileFetcher,
         cascade: &mut FetchCascade,
@@ -178,68 +164,73 @@ impl WindowControl {
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> bool {
-        // SARY/REJO: sample WY==LY latch. Now handled by sample_wy_match()
-        // which runs every dot in all modes; call here is redundant but
-        // harmless (idempotent latch).
         self.sample_wy_match(regs, video);
 
-        if !regs.control.window_enabled() {
-            return false;
-        }
-        if !self.wy_matched {
-            return false;
+        let nuko = self.compute_nuko(pixel_counter, regs);
+        let xofo = self.compute_xofo(regs);
+
+        // Save prior-dot values for edge detection.
+        let prev_pynu_q = self.pynu.output();
+        let prev_nunu_q = self.prev_nunu_q;
+
+        // Step 1: NOPA captures prior-fall PYNU.
+        self.nopa.write(if prev_pynu_q { 1 } else { 0 });
+        self.nopa.tick();
+
+        // Step 2: PYCO captures NUKO (gated by POKY = ROCO enable).
+        // ROCO requires POKY=1; without POKY, the clock doesn't fire
+        // and PYCO holds. We model this as: when POKY=0, don't tick
+        // PYCO (it holds whatever value it last captured — which for
+        // pre-startup is 0 since the cell powers up cleared).
+        if poky {
+            self.pyco.write(if nuko { 1 } else { 0 });
+            self.pyco.tick();
         }
 
-        // Detect mid-scanline WX changes to clear the trigger suppression latch.
-        if self.nuko_wx != self.last_wx_value {
-            self.wx_triggered = false;
-            self.last_wx_value = self.nuko_wx;
+        // Step 3: NUNU captures PYCO.
+        self.nunu.write(self.pyco.output());
+        self.nunu.tick();
+
+        // Step 4: Apply XOFO to PYNU's reset.
+        if xofo {
+            self.pynu.clear();
         }
 
-        if pixel_counter != regs.window.x_plus_7.output() {
-            return false;
+        // Step 5: NUNU↑ → PYNU.s (only if XOFO is not asserting reset).
+        let nunu_rising = self.nunu.output() != 0 && prev_nunu_q == false;
+        if nunu_rising && !xofo {
+            self.pynu.set();
         }
 
-        // POKY gate: PYCO is clocked by ROCO (derived from TYFA), which
-        // requires POKY=1. POKY is sticky-on after startup, so this
-        // gate blocks pre-startup matches (WX=0 case) but doesn't drop
-        // out during the rest of mode 3.
-        if !poky {
-            return false;
+        // Step 6: NUNY = AND2(PYNU, NOPA_n). MOSU rising-edge detection.
+        let nuny = self.pynu.output() && self.nopa.output() == 0;
+        let mosu_rising = nuny && !self.prev_nuny;
+
+        // Step 7: PYNU↓ → wy_clk rising → WAZY increment.
+        let pynu_falling = prev_pynu_q && !self.pynu.output();
+        if pynu_falling && self.window_rendered {
+            self.window_line_counter = self.window_line_counter.wrapping_add(1);
+            self.window_rendered = false;
         }
 
-        // Window already active — reactivation handled post-pipeline.
-        if fetcher.fetching_window {
-            return false;
+        // Update edge-detection state for next dot.
+        self.prev_nunu_q = self.nunu.output() != 0;
+        self.prev_nuny = nuny;
+
+        // Side-effects on MOSU↑ (NYXU restart cascade).
+        if mosu_rising {
+            fine_scroll.reset_for_window();
+            self.rydy.set();
+            fetcher.reset_for_window();
+            cascade.reset_window();
+            self.window_rendered = true;
         }
 
-        // WX already matched this line — suppress the comparator.
-        if self.wx_triggered {
-            return false;
-        }
-
-        // Window trigger: reset fine scroll, restart fetcher, and reset
-        // cascade DFFs so a new startup fetch begins. The BG/OBJ shifters
-        // are NOT cleared — hardware doesn't clear them. MOSU loads stale
-        // tile_temp into the BG pipe (never visible since the pixel clock
-        // freezes), and SUZU/TEVO later overwrites with window tile data.
-        self.wx_triggered = true;
-        fine_scroll.reset_for_window();
-        self.rydy.set();
-        fetcher.reset_for_window();
-        // NAFY: window mode trigger always resets NYKA and PORY, forcing the
-        // startup cascade (NYKA→PORY→PYGO) to re-propagate after the window
-        // tile fetch completes before the pixel clock can resume.
-        cascade.reset_window();
-        self.window_rendered = true;
-        true
+        mosu_rising
     }
 
-    /// DMG window reactivation zero-pixel quirk. Runs AFTER the pixel
-    /// pipeline so it inspects post-fetch state. When WX re-matches
-    /// while the window is already rendering and the fetcher is still
-    /// in its first two counter steps with RYDY clear, the next pixel
-    /// outputs bg_color=0 without popping the BG shifter.
+    /// DMG window reactivation zero-pixel quirk. Out-of-scope for
+    /// §6.12 per resolved spec gap; fetcher-stage interaction.
     pub(in crate::ppu) fn check_trigger_reactivation(
         &mut self,
         rydy_snapshot: bool,
@@ -266,24 +257,41 @@ impl WindowControl {
         }
     }
 
-    /// Reset for a new frame. Zeroes the window line counter (WLY),
-    /// which accumulates across scanlines but resets at frame start.
+    /// Reset for a new frame.
     pub(in crate::ppu) fn reset_frame(&mut self) {
         self.window_line_counter = 0;
         self.window_rendered = false;
         self.wy_matched = false;
     }
 
-    /// Reset per-scanline state.
+    /// Reset per-scanline state. PYCO/NUNU/PYNU/NOPA persist across
+    /// scanline boundaries on hardware (mode-3-bound clocking but no
+    /// per-scanline reset path). The end-of-mode-3 ATEJ↑ asserts XOFO
+    /// which clears PYNU and triggers the wy_clk rising edge that
+    /// increments WAZY — that increment now happens via the PYNU↓
+    /// edge-detect in tick_pipeline, so reset_scanline no longer
+    /// directly bumps the counter.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
-        if self.window_rendered {
-            self.window_line_counter += 1;
-        }
         self.rydy.clear();
-        self.window_rendered = false;
         self.window_zero_pixel = false;
-        self.wx_triggered = false;
-        self.last_wx_value = 0xFF;
+        // Force PYNU↓ if it was high at scanline end (models ATEJ↑
+        // asserting XOFO at end-of-mode-3 for tests that don't have
+        // an explicit LCDC.5 toggle). The increment fires via the
+        // edge-detect on the next tick if window was rendered.
+        if self.pynu.output() && self.window_rendered {
+            self.window_line_counter = self.window_line_counter.wrapping_add(1);
+            self.window_rendered = false;
+        }
+        self.pynu.clear();
+        self.pyco.write(0);
+        self.pyco.tick();
+        self.nunu.write(0);
+        self.nunu.tick();
+        self.nopa.write(0);
+        self.nopa.tick();
+        self.prev_nunu_q = false;
+        self.prev_pynu_q = false;
+        self.prev_nuny = false;
         self.nuko_wx = 0xFF;
     }
 
@@ -294,7 +302,7 @@ impl WindowControl {
     }
 
     pub(in crate::ppu) fn wx_triggered(&self) -> bool {
-        self.wx_triggered
+        self.pynu.output()
     }
 
     pub(in crate::ppu) fn window_rendered(&self) -> bool {
@@ -309,8 +317,6 @@ impl WindowControl {
         &mut self.window_zero_pixel
     }
 
-    /// Consume the window zero pixel flag (set to false). Used during
-    /// pre-visible TYFA cycles when TOBA doesn't fire.
     pub(in crate::ppu) fn consume_window_zero_pixel(&mut self) {
         self.window_zero_pixel = false;
     }
