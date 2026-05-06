@@ -23,9 +23,15 @@ pub(super) enum OamBugKind {
 /// STAT bit 2 (LYC=LY) propagates via `sego` on transparent RUPO and
 /// settles before `data_phase_n↑`; STAT bits 0/1 (mode) propagate via
 /// `teby`/`wuga` and remain in flux through the M-cycle end.
+///
+/// LY ($FF44) drives `cpu_port_d` via `wafu` (`dmg_not_if0`, single
+/// inverter — no companion-driver tran). The MYTA→LAMA→LY-DFF cascade
+/// settles within tens of ps after MYTA's TALU rise, well before
+/// `data_phase_n↑` — no settling-window pathology.
 fn fast_bit_mask(address: u16) -> u8 {
     match address {
         0xFF41 => 0b0000_0100,
+        0xFF44 => 0xFF,
         _ => 0,
     }
 }
