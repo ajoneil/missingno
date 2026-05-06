@@ -517,6 +517,29 @@ impl GameBoy {
     }
 
     pub fn write_byte(&mut self, address: u16, value: u8) {
+        // Default path: evaluate OAM/VRAM lock live. CPU bus writes
+        // commit via write_byte_with_snapshot_lock with a captured
+        // CUPA-rising snapshot AND'd with the commit-time live lock;
+        // this entry point exists for non-CPU writes (debugger, tests)
+        // where M-cycle-quantization is moot.
+        self.write_byte_with_snapshot_lock(address, value, None);
+    }
+
+    /// CPU bus write commit. The `locked_at_snapshot` parameter is the
+    /// OAM/VRAM lock state captured at CUPA-rising (dot 2 of the write
+    /// M-cycle). Combined with the commit-time live lock via AND: the
+    /// write is blocked only if the lock asserted across the entire
+    /// CUPA strobe window. Models the M-cycle-quantized write lock per
+    /// spec §4.9 — mid-M-cycle mode transitions don't single-handedly
+    /// block an in-flight write whose strobe started in a non-locked
+    /// mode. `None` = non-OAM/VRAM address or non-CPU write path; the
+    /// lock evaluation falls back to live-only.
+    pub fn write_byte_with_snapshot_lock(
+        &mut self,
+        address: u16,
+        value: u8,
+        locked_at_snapshot: Option<bool>,
+    ) {
         if let Some(trace) = &mut self.bus_trace {
             trace.push(BusAccess {
                 address,
@@ -538,14 +561,26 @@ impl GameBoy {
 
         // PPU mode-based memory gating for writes.
         // The bus latch is NOT updated — the write was blocked.
+        // Block only if locked at BOTH snapshot (CUPA-rising) AND live
+        // (commit time): the M-cycle-quantized lock per spec §4.9.
         match address {
             0xFE00..=0xFE9F => {
-                if self.ppu.oam_write_locked() {
+                let locked_now = self.ppu.oam_write_locked();
+                let blocked = match locked_at_snapshot {
+                    Some(snap) => snap && locked_now,
+                    None => locked_now,
+                };
+                if blocked {
                     return;
                 }
             }
             0x8000..=0x9FFF => {
-                if self.ppu.vram_write_locked() {
+                let locked_now = self.ppu.vram_write_locked();
+                let blocked = match locked_at_snapshot {
+                    Some(snap) => snap && locked_now,
+                    None => locked_now,
+                };
+                if blocked {
                     return;
                 }
             }

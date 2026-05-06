@@ -336,6 +336,7 @@ impl GameBoy {
             self.staged_bus_write = Some(StagedBusWrite {
                 address,
                 applied: false,
+                locked_at_snapshot: None,
             });
         }
 
@@ -389,7 +390,19 @@ impl GameBoy {
                 if self.drive_ppu_bus(address, self.cpu_bus.data) {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
-                self.staged_bus_write.as_mut().unwrap().applied = true;
+                // Capture OAM/VRAM lock at CUPA-rising (dot 2), the
+                // start of the write strobe. Combined with the commit-
+                // time lock state via AND in `write_byte_with_lock` —
+                // block only when locked across the entire CUPA window
+                // (M-cycle-quantized lock per spec §4.9).
+                let locked_at_snapshot = match address {
+                    0xFE00..=0xFE9F => Some(self.ppu.oam_write_locked()),
+                    0x8000..=0x9FFF => Some(self.ppu.vram_write_locked()),
+                    _ => None,
+                };
+                let staged = self.staged_bus_write.as_mut().unwrap();
+                staged.applied = true;
+                staged.locked_at_snapshot = locked_at_snapshot;
             }
 
             // PPU master-clock rising edge for non-boundary dots.
@@ -516,7 +529,15 @@ impl GameBoy {
                 // no-op. Memory commits here at fall() of dot 3 (CUPA-
                 // falling / M-cycle boundary equivalent), reading the
                 // CPU-driven value from cpu_bus.data.
-                self.write_byte(address, self.cpu_bus.data);
+                let locked_at_snapshot = self
+                    .staged_bus_write
+                    .as_ref()
+                    .and_then(|s| s.locked_at_snapshot);
+                self.write_byte_with_snapshot_lock(
+                    address,
+                    self.cpu_bus.data,
+                    locked_at_snapshot,
+                );
             }
         }
 

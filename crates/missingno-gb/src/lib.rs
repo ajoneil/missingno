@@ -47,6 +47,11 @@ struct StagedBusWrite {
     address: u16,
     /// Whether the bus has been driven for this write.
     applied: bool,
+    /// OAM/VRAM lock state captured at CUPA-rising (dot 2). Combined
+    /// with the commit-time lock state via AND at write commit, modelling
+    /// the M-cycle-quantized lock per spec §4.9: block only if locked
+    /// across the entire CUPA strobe window. None = non-OAM/VRAM address.
+    locked_at_snapshot: Option<bool>,
 }
 
 /// A CPU bus read staged at the M-cycle boundary, applied at dot 2
@@ -175,6 +180,7 @@ impl GameBoy {
         let staged_bus_write = cpu.pending_bus_write().map(|(address, _value)| StagedBusWrite {
             address,
             applied: false,
+            locked_at_snapshot: None,
         });
 
         let mut gb = GameBoy {
@@ -270,6 +276,7 @@ impl GameBoy {
                 .map(|(address, _value)| StagedBusWrite {
                     address,
                     applied: false,
+                    locked_at_snapshot: None,
                 });
         self.staged_bus_read = self
             .cpu
