@@ -1,8 +1,8 @@
 // --- Sprite fetch ---
 
 use crate::ppu::{
-    memory::{Oam, Vram},
     PipelineRegisters,
+    memory::{Oam, Vram},
 };
 
 use super::super::scan::oam_scan::SpriteStoreEntry;
@@ -100,10 +100,10 @@ impl SpriteFetch {
             self.entry.line_offset
         };
 
-        let (final_block, final_idx, final_y) = if flipped_y < 8 {
-            (block_id, mapped_idx, flipped_y)
-        } else {
-            (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
+        let (final_block, final_idx, final_y) = match regs.control.sprite_size() {
+            SpriteSize::Single => (block_id, mapped_idx, flipped_y & 0x07),
+            SpriteSize::Double if flipped_y < 8 => (block_id, mapped_idx, flipped_y),
+            SpriteSize::Double => (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8),
         };
 
         let block = vram.tile_block(final_block);
@@ -119,17 +119,21 @@ impl SpriteFetch {
         vram: &Vram,
     ) -> bool {
         match self.fetch_counter {
-            3 => {
-                // Tile data low VRAM read.
+            2 => {
+                // Tile data low: address drive. SRAM response at next dot;
+                // emulator captures the byte using LCDC live at this dot.
                 self.tile_data_low = self.read_tile_data(regs, oam, vram, false);
             }
-            5 => {
-                // Tile data high VRAM read. Fetch complete.
+            4 => {
+                // Tile data high: address drive. Same.
                 self.tile_data_high = self.read_tile_data(regs, oam, vram, true);
+            }
+            5 => {
+                // WUTY fires; fetch complete. Bytes already captured at 2/4.
                 return true;
             }
             _ => {
-                // GetTile wait (0, 1) and data wait (2, 4): no VRAM action.
+                // GetTile wait (0, 1) and inter-stage dots (3): no VRAM action.
             }
         }
         self.fetch_counter += 1;
