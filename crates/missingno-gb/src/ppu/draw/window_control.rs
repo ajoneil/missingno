@@ -118,9 +118,7 @@ impl WindowControl {
 
     /// Compute combinational NUKO (PX==WX decode).
     fn compute_nuko(&self, pixel_counter: u8, regs: &PipelineRegisters) -> bool {
-        regs.control.window_enabled()
-            && self.wy_matched
-            && pixel_counter == self.nuko_wx
+        regs.control.window_enabled() && self.wy_matched && pixel_counter == self.nuko_wx
     }
 
     /// Compute combinational XOFO. NAND3(LCDC.5, NOT(atej), ppu_reset_n);
@@ -142,8 +140,13 @@ impl WindowControl {
     ///    is observed; this is what allows multi-fire — after XOFO
     ///    clears PYNU, NOPA captures the cleared value and releases
     ///    NOPA_n).
-    /// 2. PYCO captures NUKO (gated on POKY=1 via the ROCO clock
-    ///    enable). Naturally drops to 0 when NUKO drops.
+    /// 2. PYCO captures NUKO. Gated on the ROCO clock — ROCO derives
+    ///    from TYFA (= AND3(POKY, SOCY, VYBO)), so any TYFA halt
+    ///    freezes ROCO. We model the two halts that affect this test
+    ///    matrix: POKY (data not ready) and TAKA (sprite fetch active,
+    ///    which sets FEPO=1 → VYBO=0 → TYFA=0). The SOCY/RYDY halt
+    ///    leaves NUKO stable so re-capturing the same value is
+    ///    harmless. Naturally drops to 0 when NUKO drops.
     /// 3. NUNU captures PYCO. Half-dot offset elided in this single-
     ///    edge model; same integer-dot result.
     /// 4. Apply XOFO to PYNU's reset (clear if XOFO asserted this dot).
@@ -161,6 +164,7 @@ impl WindowControl {
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
         poky: bool,
+        taka: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> bool {
@@ -177,12 +181,14 @@ impl WindowControl {
         self.nopa.write(if prev_pynu_q { 1 } else { 0 });
         self.nopa.tick();
 
-        // Step 2: PYCO captures NUKO (gated by POKY = ROCO enable).
-        // ROCO requires POKY=1; without POKY, the clock doesn't fire
-        // and PYCO holds. We model this as: when POKY=0, don't tick
-        // PYCO (it holds whatever value it last captured — which for
-        // pre-startup is 0 since the cell powers up cleared).
-        if poky {
+        // Step 2: PYCO captures NUKO. ROCO derives from TYFA, so any
+        // TYFA halt freezes the clock and PYCO holds. Two halts matter
+        // for the WX-match cascade: POKY=0 (data not ready) and TAKA=1
+        // (sprite fetch active — FEPO=1 → VYBO=0 → TYFA=0). When
+        // sprite_x_plus_8 ≤ WX, TAKA fires at PX==sprite_x and freezes
+        // ROCO before PYCO can capture the WX match; the cascade fires
+        // ~6 dots later when TAKA clears.
+        if poky && !taka {
             self.pyco.write(if nuko { 1 } else { 0 });
             self.pyco.tick();
         }

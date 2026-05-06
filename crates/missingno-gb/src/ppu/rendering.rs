@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
+    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -530,12 +530,14 @@ impl Rendering {
             // first falling-edge VRAM read fires at counter=0 (window
             // tile-index) before the counter=2/4 data reads use it.
             let poky = self.cascade.poky();
+            let taka = self.sprite_trigger.taka();
             let mosu_fired = self.window.tick_pipeline(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
                 pixel_counter_before_sacu,
                 poky,
+                taka,
                 regs,
                 video,
             );
