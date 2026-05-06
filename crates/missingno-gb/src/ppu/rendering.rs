@@ -530,7 +530,7 @@ impl Rendering {
             // first falling-edge VRAM read fires at counter=0 (window
             // tile-index) before the counter=2/4 data reads use it.
             let poky = self.cascade.poky();
-            let mosu_fired = self.window.check_trigger_arming(
+            let mosu_fired = self.window.tick_pipeline(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
@@ -844,8 +844,6 @@ impl Rendering {
                 self.fine_scroll.reset_counter();
             }
         }
-
-        self.window.apply_xofo(regs.control.window_enabled());
 
         let poky = self.cascade.poky();
         self.window.check_trigger_reactivation(
