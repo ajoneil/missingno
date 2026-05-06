@@ -1,8 +1,8 @@
 // --- Sprite fetch ---
 
 use crate::ppu::{
-    memory::{Oam, Vram},
     PipelineRegisters,
+    memory::{Oam, Vram},
 };
 
 use super::super::scan::oam_scan::SpriteStoreEntry;
@@ -100,10 +100,10 @@ impl SpriteFetch {
             self.entry.line_offset
         };
 
-        let (final_block, final_idx, final_y) = if flipped_y < 8 {
-            (block_id, mapped_idx, flipped_y)
-        } else {
-            (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8)
+        let (final_block, final_idx, final_y) = match regs.control.sprite_size() {
+            SpriteSize::Single => (block_id, mapped_idx, flipped_y & 0x07),
+            SpriteSize::Double if flipped_y < 8 => (block_id, mapped_idx, flipped_y),
+            SpriteSize::Double => (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8),
         };
 
         let block = vram.tile_block(final_block);
