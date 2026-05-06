@@ -30,8 +30,24 @@ pub(super) enum OamBugKind {
 /// `data_phase_n↑` — no settling-window pathology.
 fn fast_bit_mask(address: u16) -> u8 {
     match address {
-        0xFF41 => 0b0000_0100,
         0xFF44 => 0xFF,
+        _ => 0,
+    }
+}
+
+/// Per-address mask of bits that resolve via the `x`-window logic
+/// (snapshot AND live = "0 wins ties", modelling dmg-sim's analog
+/// resolution of NOT_IF1 driver bus-flux during a mid-M-cycle bit
+/// transition).
+///
+/// STAT bit 2 (LYC=LY) transitions on TALU rising via ROPO; if the
+/// transition lands within the read M-cycle's bus-driver flux window
+/// (per spec §10.5.1 / §10.5.2), `cpu_port_d` shows the bit in `x`-state
+/// at `data_phase_n↑`, resolving to the lower-pull value (= 0).
+/// Conservatively: bit = snapshot AND live → 0 if either is 0.
+fn and_bit_mask(address: u16) -> u8 {
+    match address {
+        0xFF41 => 0b0000_0100,
         _ => 0,
     }
 }
@@ -470,11 +486,14 @@ impl GameBoy {
             }
             let snapshot = self.cpu_bus.data;
             let mask = fast_bit_mask(address);
-            let assembled = if mask == 0 {
+            let and_mask = and_bit_mask(address);
+            let assembled = if mask == 0 && and_mask == 0 {
                 snapshot
             } else {
                 let live = self.read(address);
-                (snapshot & !mask) | (live & mask)
+                // Live bits, snapshot bits, AND'd bits (for bus-flux x-window).
+                let other_mask = !(mask | and_mask);
+                (snapshot & other_mask) | (live & mask) | (snapshot & live & and_mask)
             };
             self.last_read_value = assembled;
             self.commit_bus_read(address, assembled);
