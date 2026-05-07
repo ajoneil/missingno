@@ -59,10 +59,6 @@ pub(in crate::ppu) struct WindowControl {
     window_line_counter: u8,
     /// WY-match frame latch (hardware REJO `nor_latch`).
     wy_matched: bool,
-    /// Window reactivation zero pixel (DMG-specific quirk; spec §6.12
-    /// declares this out-of-scope, so it stays as a separate flag
-    /// driven by `check_trigger_reactivation`).
-    window_zero_pixel: bool,
 }
 
 impl WindowControl {
@@ -80,7 +76,6 @@ impl WindowControl {
             nuko_wx: 0xFF,
             window_line_counter: 0,
             wy_matched: false,
-            window_zero_pixel: false,
         }
     }
 
@@ -245,34 +240,6 @@ impl WindowControl {
         mosu_rising
     }
 
-    /// DMG window reactivation zero-pixel quirk. Out-of-scope for
-    /// §6.12 per resolved spec gap; fetcher-stage interaction.
-    pub(in crate::ppu) fn check_trigger_reactivation(
-        &mut self,
-        rydy_snapshot: bool,
-        fetcher: &TileFetcher,
-        pixel_counter: u8,
-        poky: bool,
-        regs: &PipelineRegisters,
-    ) {
-        if !regs.control.window_enabled() {
-            return;
-        }
-        if !self.wy_matched {
-            return;
-        }
-        if pixel_counter != regs.window.x_plus_7.output() {
-            return;
-        }
-        if !poky {
-            return;
-        }
-
-        if fetcher.fetching_window && !rydy_snapshot && fetcher.fetch_counter < 2 {
-            self.window_zero_pixel = true;
-        }
-    }
-
     /// Reset for a new frame.
     pub(in crate::ppu) fn reset_frame(&mut self) {
         self.window_line_counter = 0;
@@ -289,7 +256,6 @@ impl WindowControl {
     /// directly bumps the counter.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.rydy.clear();
-        self.window_zero_pixel = false;
         // Force PYNU↓ if it was high at scanline end (models ATEJ↑
         // asserting XOFO at end-of-mode-3 for tests that don't have
         // an explicit LCDC.5 toggle). The increment fires via the
@@ -327,13 +293,5 @@ impl WindowControl {
 
     pub(in crate::ppu) fn window_line_counter(&self) -> u8 {
         self.window_line_counter
-    }
-
-    pub(in crate::ppu) fn window_zero_pixel_mut(&mut self) -> &mut bool {
-        &mut self.window_zero_pixel
-    }
-
-    pub(in crate::ppu) fn consume_window_zero_pixel(&mut self) {
-        self.window_zero_pixel = false;
     }
 }

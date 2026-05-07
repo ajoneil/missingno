@@ -148,7 +148,7 @@ pub struct Rendering {
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
     /// Window control block (die page 27): RYDY latch, WX comparator,
-    /// window line counter, window zero pixel.
+    /// window line counter.
     window: WindowControl,
     /// TYFA (pixel clock enable): `!FEPO && !WODU && !RYDY && POKY`,
     /// snapshotted at end of `mode3_rising` and consumed in
@@ -655,7 +655,6 @@ impl Rendering {
                             &self.bg_shifter,
                             &self.obj_shifter,
                             self.lcd.data_latch_mut(),
-                            self.window.window_zero_pixel_mut(),
                             regs,
                         );
                         self.sprite_state = SpriteState::Idle;
@@ -750,7 +749,6 @@ impl Rendering {
             self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
-                self.window.window_zero_pixel_mut(),
                 regs,
             ));
         }
@@ -841,23 +839,15 @@ impl Rendering {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            let pixel = pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                self.window.window_zero_pixel_mut(),
-                regs,
-            );
+            let pixel =
+                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
             if sacu {
                 self.pixel_counter.advance();
             }
-            let (toba, pix) =
+            let (_toba, pix) =
                 self.lcd
                     .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
             pixel_out = pix;
-
-            if !toba && tyfa {
-                self.window.consume_window_zero_pixel();
-            }
 
             if tyfa {
                 self.fine_scroll.tick();
@@ -867,15 +857,6 @@ impl Rendering {
                 self.fine_scroll.reset_counter();
             }
         }
-
-        let poky = self.cascade.poky();
-        self.window.check_trigger_reactivation(
-            rydy_before_pory,
-            &self.fetcher,
-            pixel_counter_before_sacu,
-            poky,
-            regs,
-        );
 
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
 
