@@ -170,6 +170,14 @@ pub struct Rendering {
     /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
     /// See `sprite_trigger.rs` for clock domain and race pair documentation.
     sprite_trigger: SpriteTrigger,
+    /// PANY drain-detector slip carry-over. Set when NUKO=1 lands during
+    /// the dot where SEKO would fire (fine_scroll.count == 7), splitting
+    /// PANY's high pulse across the SEGU capture edge — RYFA captures
+    /// the second half, slipping the SEKO → TEVO → NYXU/wx_clk cascade
+    /// by 1 dot. The slipped fire happens on the next dot; both the BG
+    /// shifter parallel-load and the window-tile-X counter increment
+    /// land 1 dot late.
+    pany_slip_pending: bool,
 }
 
 impl Rendering {
@@ -188,6 +196,7 @@ impl Rendering {
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
+            pany_slip_pending: false,
         }
     }
 
@@ -213,6 +222,7 @@ impl Rendering {
             lcd: LcdControl::post_boot(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
+            pany_slip_pending: false,
         }
     }
 
@@ -565,6 +575,7 @@ impl Rendering {
         self.window.reset_scanline();
 
         self.tyfa = false;
+        self.pany_slip_pending = false;
         self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
@@ -814,7 +825,17 @@ impl Rendering {
                 self.obj_shifter.shift();
             }
 
-            let seko_fire = self.fine_scroll.count == 7 && !rydy_before_pory;
+            // PANY drain-detector slip: when NUKO=1 lands during the dot
+            // where SEKO would naturally fire, NUKO truncates PANY's
+            // high pulse; RYFA captures the second (later) half on the
+            // next SEGU edge, slipping the SEKO → TEVO → NYXU/wx_clk
+            // cascade by 1 dot. Both the BG-shifter parallel-load and
+            // the window-tile-X counter increment land 1 dot late.
+            let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
+            let nuko_now = self.window.nuko(pixel_counter_before_sacu, regs);
+            let pany_slip_now = proposed_seko && nuko_now;
+            let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
+            self.pany_slip_pending = pany_slip_now;
 
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);

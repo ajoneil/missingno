@@ -121,6 +121,16 @@ impl WindowControl {
         regs.control.window_enabled() && self.wy_matched && pixel_counter == self.nuko_wx
     }
 
+    /// Live NUKO read for consumers outside the §6.12 capture chain.
+    /// Hardware NUKO has two netlist consumers: PYCO (this module's
+    /// capture chain, gated on NOPA_n once the window is active) and
+    /// PANY (the §6.1 drain-detector input, `pany = NOR2(roze, wxy_match)`).
+    /// The PANY consumer is what produces the WX-rewrite cascade slip
+    /// when NUKO=1 lands inside PANY's tile-boundary high window.
+    pub(in crate::ppu) fn nuko(&self, pixel_counter: u8, regs: &PipelineRegisters) -> bool {
+        self.compute_nuko(pixel_counter, regs)
+    }
+
     /// Compute combinational XOFO. NAND3(LCDC.5, NOT(atej), ppu_reset_n);
     /// during rendering atej=0 and ppu_reset_n=1, so XOFO simplifies to
     /// NOT(LCDC.5).
