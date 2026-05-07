@@ -71,7 +71,7 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="26.5" date="2026-05-03">
+    <release version="26.5" date="2026-05-07">
       <description>
         <ul>
           <li>Read and write physical Game Boy cartridges with a GBxCart RW: ROM dumping, flash writing with CFI detection, and save sync</li>
