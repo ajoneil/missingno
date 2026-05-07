@@ -148,7 +148,7 @@ pub struct Rendering {
     /// clock for SCX & 7 dots at the start of each line.
     fine_scroll: FineScroll,
     /// Window control block (die page 27): RYDY latch, WX comparator,
-    /// window line counter, window zero pixel.
+    /// window line counter.
     window: WindowControl,
     /// TYFA (pixel clock enable): `!FEPO && !WODU && !RYDY && POKY`,
     /// snapshotted at end of `mode3_rising` and consumed in
@@ -170,6 +170,14 @@ pub struct Rendering {
     /// Sprite fetch trigger pipeline: TEKY → SOBU → SUDA → RYCE → TAKA.
     /// See `sprite_trigger.rs` for clock domain and race pair documentation.
     sprite_trigger: SpriteTrigger,
+    /// PANY drain-detector slip carry-over. Set when NUKO=1 lands during
+    /// the dot where SEKO would fire (fine_scroll.count == 7), splitting
+    /// PANY's high pulse across the SEGU capture edge — RYFA captures
+    /// the second half, slipping the SEKO → TEVO → NYXU/wx_clk cascade
+    /// by 1 dot. The slipped fire happens on the next dot; both the BG
+    /// shifter parallel-load and the window-tile-X counter increment
+    /// land 1 dot late.
+    pany_slip_pending: bool,
 }
 
 impl Rendering {
@@ -188,6 +196,7 @@ impl Rendering {
             lcd: LcdControl::new(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
+            pany_slip_pending: false,
         }
     }
 
@@ -213,6 +222,7 @@ impl Rendering {
             lcd: LcdControl::post_boot(),
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
+            pany_slip_pending: false,
         }
     }
 
@@ -565,6 +575,7 @@ impl Rendering {
         self.window.reset_scanline();
 
         self.tyfa = false;
+        self.pany_slip_pending = false;
         self.pixel_counter.reset();
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
@@ -644,7 +655,6 @@ impl Rendering {
                             &self.bg_shifter,
                             &self.obj_shifter,
                             self.lcd.data_latch_mut(),
-                            self.window.window_zero_pixel_mut(),
                             regs,
                         );
                         self.sprite_state = SpriteState::Idle;
@@ -739,7 +749,6 @@ impl Rendering {
             self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
                 &self.bg_shifter,
                 &self.obj_shifter,
-                self.window.window_zero_pixel_mut(),
                 regs,
             ));
         }
@@ -814,29 +823,31 @@ impl Rendering {
                 self.obj_shifter.shift();
             }
 
-            let seko_fire = self.fine_scroll.count == 7 && !rydy_before_pory;
+            // PANY drain-detector slip: when NUKO=1 lands during the dot
+            // where SEKO would naturally fire, NUKO truncates PANY's
+            // high pulse; RYFA captures the second (later) half on the
+            // next SEGU edge, slipping the SEKO → TEVO → NYXU/wx_clk
+            // cascade by 1 dot. Both the BG-shifter parallel-load and
+            // the window-tile-X counter increment land 1 dot late.
+            let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
+            let nuko_now = self.window.nuko(pixel_counter_before_sacu, regs);
+            let pany_slip_now = proposed_seko && nuko_now;
+            let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
+            self.pany_slip_pending = pany_slip_now;
 
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            let pixel = pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                self.window.window_zero_pixel_mut(),
-                regs,
-            );
+            let pixel =
+                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
             if sacu {
                 self.pixel_counter.advance();
             }
-            let (toba, pix) =
+            let (_toba, pix) =
                 self.lcd
                     .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
             pixel_out = pix;
-
-            if !toba && tyfa {
-                self.window.consume_window_zero_pixel();
-            }
 
             if tyfa {
                 self.fine_scroll.tick();
@@ -846,15 +857,6 @@ impl Rendering {
                 self.fine_scroll.reset_counter();
             }
         }
-
-        let poky = self.cascade.poky();
-        self.window.check_trigger_reactivation(
-            rydy_before_pory,
-            &self.fetcher,
-            pixel_counter_before_sacu,
-            poky,
-            regs,
-        );
 
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
 

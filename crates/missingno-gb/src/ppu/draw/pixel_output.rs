@@ -74,13 +74,9 @@ fn resolve_pixel(
 /// the lcd_data_latch and shifted in later when a TOBA edge fires
 /// (modeling the qp_ext_old lag on the final color output).
 ///
-/// Handles `window_zero_pixel`: when set, substitutes BG color 0
-/// without reading the BG shifter. The OBJ shifter is still read
-/// so sprite pixels mix against the zero background.
 pub(in crate::ppu) fn resolve_current_pixel(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
-    window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) -> PaletteIndex {
     let bgp = regs.palettes.background.output();
@@ -88,26 +84,6 @@ pub(in crate::ppu) fn resolve_current_pixel(
     let obp1 = regs.palettes.sprite1.output();
     let bg_window_enabled = regs.control.background_and_window_enabled();
     let sprites_enabled = regs.control.sprites_enabled();
-
-    if *window_zero_pixel {
-        *window_zero_pixel = false;
-        let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-        let bg_color: u8 = 0;
-
-        if sprites_enabled {
-            let spr_color = (spr_hi << 1) | spr_lo;
-            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(obp0)
-                } else {
-                    PaletteMap(obp1)
-                };
-                return sprite_palette.map(PaletteIndex(spr_color));
-            }
-        }
-
-        return PaletteMap(bgp).map(PaletteIndex(bg_color));
-    }
 
     let (bg_lo, bg_hi) = bg_shifter.read();
     let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
@@ -138,7 +114,6 @@ pub(in crate::ppu) fn sprite_overwrite_data_latch(
     bg_shifter: &BgShifter,
     obj_shifter: &ObjShifter,
     lcd_data_latch: &mut PaletteIndex,
-    window_zero_pixel: &mut bool,
     regs: &PipelineRegisters,
 ) {
     let bgp = regs.palettes.background.output();
@@ -147,30 +122,8 @@ pub(in crate::ppu) fn sprite_overwrite_data_latch(
     let bg_window_enabled = regs.control.background_and_window_enabled();
     let sprites_enabled = regs.control.sprites_enabled();
 
-    let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-
-    if *window_zero_pixel {
-        *window_zero_pixel = false;
-        let bg_color: u8 = 0;
-
-        if sprites_enabled {
-            let spr_color = (spr_hi << 1) | spr_lo;
-            if spr_color != 0 && (spr_pri == 0 || bg_color == 0) {
-                let sprite_palette = if spr_pal == 0 {
-                    PaletteMap(obp0)
-                } else {
-                    PaletteMap(obp1)
-                };
-                *lcd_data_latch = sprite_palette.map(PaletteIndex(spr_color));
-                return;
-            }
-        }
-
-        *lcd_data_latch = PaletteMap(bgp).map(PaletteIndex(bg_color));
-        return;
-    }
-
     let (bg_lo, bg_hi) = bg_shifter.read();
+    let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
     *lcd_data_latch = resolve_pixel(
         bg_lo,
         bg_hi,
