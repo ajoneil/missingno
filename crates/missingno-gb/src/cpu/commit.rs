@@ -1,7 +1,7 @@
-use super::instructions::bit_shift::{Carry, Direction};
 use super::instructions::CarryFlag;
+use super::instructions::bit_shift::{Carry, Direction};
 use super::mcycle::AluOp;
-use super::registers::{Register16, Register8};
+use super::registers::{Register8, Register16};
 
 /// The retire-edge mutation an instruction produces at the end-of-instruction
 /// CLK9↑ — the specific set of DFF captures (register file, IME, halt state)
@@ -105,14 +105,11 @@ pub(super) enum Commit {
     },
 
     // ── Interrupt control ──
-    /// DI — IME DFF (zivv) ← Disabled. Hardware: zwuu clears the
-    /// ime_pending (zjje) SR latch combinationally during DI's data_phase.
-    /// The dispatch_active chain (zaij/zkog) is gated this M-cycle.
+    /// DI — clears IME and ime_delay immediately.
     DisableInterrupts,
-    /// EI — IME DFF (zivv) ← Enabled. Hardware: zbpp sets the ime_pending
-    /// (zjje) SR latch combinationally during EI's data_phase. The
-    /// dispatch_active chain (zaij/zkog) is gated this M-cycle — source
-    /// of the "1-instruction delay" before dispatch.
+    /// EI — sets ime_delay only. The next M-cycle boundary copies
+    /// ime_delay → ime, which is the "1-instruction delay" before
+    /// dispatch can observe the enable.
     EnableInterrupts,
 
     // ── Halt / stop / low-power entry ──

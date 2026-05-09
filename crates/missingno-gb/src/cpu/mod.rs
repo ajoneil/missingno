@@ -62,13 +62,16 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    /// IME flip-flop (zivv). EI/DI mutate this synchronously inside
-    /// their commit; the underlying SR-latch chain (zjje, zrsy) is
-    /// combinational, so by the retire edge the IME DFF has already
-    /// captured the new value. The "1-instruction delay" sits in the
-    /// dispatch_active chain (zaij/zkog gated against EI/DI data_phase),
-    /// not here.
+    /// IME flip-flop. Promoted from `ime_delay` at every M-cycle
+    /// boundary; that one-stage staging is what produces EI's
+    /// 1-instruction delay (the boundary copy lands AFTER the M-cycle's
+    /// dispatch evaluation). DI clears both stages immediately; RETI
+    /// sets both immediately.
     pub ime: Dff<InterruptMasterEnable>,
+    /// One-stage shadow for IME. EI sets this to `true` (without
+    /// touching `ime`); the next M-cycle boundary copies it into `ime`,
+    /// which is when dispatch can first observe the enable.
+    pub ime_delay: bool,
     pub halt_state: HaltState,
     /// HALT bug: when HALT is executed with IME=0 and an interrupt is
     /// already pending, the CPU doesn't truly halt — it resumes
@@ -155,6 +158,7 @@ impl Cpu {
             },
 
             ime: Dff::new(InterruptMasterEnable::Disabled),
+            ime_delay: false,
             halt_state: HaltState::Running,
             halt_bug: false,
 
@@ -212,6 +216,7 @@ impl Cpu {
             instruction_pc: 0x0000,
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),
+            ime_delay: false,
             halt_state: HaltState::Running,
             halt_bug: false,
             phase: CpuPhase::Fetch,
@@ -257,6 +262,7 @@ impl Cpu {
             } else {
                 InterruptMasterEnable::Disabled
             }),
+            ime_delay: snap.ime,
             halt_state: match snap.halt_state {
                 1 => HaltState::Halting,
                 2 => HaltState::Halted,
@@ -452,7 +458,6 @@ impl Cpu {
                 }
         )
     }
-
 
     /// The pending bus write for the current M-cycle, if any.
     /// On hardware, the CPU places the address on the bus at phase A

@@ -1,10 +1,10 @@
 use super::super::{
+    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
     flags::Flags,
-    instructions::bit_shift::{Carry, Direction},
     instructions::CarryFlag,
+    instructions::bit_shift::{Carry, Direction},
     registers::Register16,
-    Cpu, HaltState, InterruptMasterEnable,
 };
 use super::{AluOp, PopAction, ReadAction, RmwOp};
 
@@ -172,20 +172,16 @@ impl Cpu {
             }
 
             Commit::DisableInterrupts => {
-                // DI: zwuu clears ime_pending combinationally; IME DFF
-                // captures Disabled mid-M-cycle. The ctl_op_di_or_ei
-                // assertion (zzom block) is owned by FetchOverlap step 1
-                // body at decode time — when IR holds DI = our model's
-                // current M-cycle.
+                // DI takes effect immediately — clear both stages.
                 cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
+                cpu.ime_delay = false;
             }
             Commit::EnableInterrupts => {
-                // EI: zbpp sets ime_pending via the zjje SR latch; IME DFF
-                // captures Enabled mid-M-cycle. The ctl_op_di_or_ei
-                // assertion (zzom block) is owned by FetchOverlap step 1
-                // body at decode time — when IR holds EI = our model's
-                // current M-cycle.
-                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+                // EI sets only the shadow stage. The next M-cycle
+                // boundary copies ime_delay → ime, which is when
+                // dispatch can first observe the enable — the
+                // 1-instruction delay falls out of that ordering.
+                cpu.ime_delay = true;
             }
 
             Commit::EnterHalt | Commit::EnterStop => {
@@ -428,11 +424,11 @@ impl Cpu {
                 cpu.pc = cpu.bus_counter;
             }
             PopAction::SetPcEnableInterrupts => {
-                // RETI's terminal pop: zbpp set ime_pending during M3, IME
-                // is stable Enabled by this edge. Not in EI/DI's
-                // dispatch_active-chain gate, so dispatch can fire on the
-                // following retire if irq_pending=1.
+                // RETI re-enables IME immediately (no delay, unlike EI).
+                // Both stages set so the next M-cycle boundary's
+                // ime ← ime_delay copy preserves Enabled.
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
+                cpu.ime_delay = true;
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;
             }

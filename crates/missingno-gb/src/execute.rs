@@ -219,9 +219,7 @@ impl GameBoy {
             // per-bit irq_latch_inst<i> enabled D-latch reopens and
             // re-snapshots IF. Must run before tick_irq_latched so yoii
             // captures the freshly settled post-latch IF.
-            self.cpu
-                .dispatch
-                .set_data_phase_n(true);
+            self.cpu.dispatch.set_data_phase_n(true);
             self.cpu
                 .dispatch
                 .update_latch(self.interrupts.enabled, self.interrupts.requested);
@@ -230,6 +228,16 @@ impl GameBoy {
             self.cpu.dispatch.tick_zacw();
 
             self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
+
+            // ime ← ime_delay: copies the EI shadow stage onto the IME
+            // DFF at the M-cycle boundary. EI's commit only set
+            // ime_delay; this copy is what makes the new IME visible to
+            // dispatch — one M-cycle after EI committed.
+            self.cpu.ime.write_immediate(if self.cpu.ime_delay {
+                crate::cpu::InterruptMasterEnable::Enabled
+            } else {
+                crate::cpu::InterruptMasterEnable::Disabled
+            });
 
             // Clear any staged bus write/read from the previous M-cycle.
             self.staged_bus_write = None;
@@ -303,20 +311,19 @@ impl GameBoy {
         }
 
         // step_zkog drives zaij combinational + zkog SR-latch update.
-        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ zzom — where zzom's
-        // EI/DI block is owned by DispatchChain (set via mark_ei_di_decoded
-        // when apply_commit fires for EI/DI; cleared at next M-cycle).
+        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs.
         // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
         // fetch M-cycles' data-phase, blocking dispatch during memory
         // ops (Read/Write/Operands). HALT-wake doesn't fire zkog
-        // because data_phase is held LOW throughout HALT.
+        // because data_phase is held LOW throughout HALT. The EI delay
+        // is owned by ime ↔ ime_delay (see is_mcycle_boundary above),
+        // not by an additional gate term here.
         let halt = self.cpu.is_halted();
         let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
         let write_phase = !halt && dot.index() == 3;
         let ctl_fetch = self.cpu.is_fetch_phase();
         let xogs = (data_phase && ctl_fetch) || halt;
-        let ime_enabled =
-            self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        let ime_enabled = self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
         self.cpu
             .dispatch
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
@@ -381,11 +388,9 @@ impl GameBoy {
                 && !staged.applied
             {
                 let address = staged.address;
-                let value = self
-                    .cpu
-                    .pending_bus_write()
-                    .map(|(_, v)| v)
-                    .expect("staged_bus_write requires pending_bus_write to be Some during the M-cycle");
+                let value = self.cpu.pending_bus_write().map(|(_, v)| v).expect(
+                    "staged_bus_write requires pending_bus_write to be Some during the M-cycle",
+                );
                 self.cpu_bus.data = value;
                 if self.drive_ppu_bus(address, self.cpu_bus.data) {
                     self.interrupts.request(Interrupt::VideoStatus);
@@ -533,11 +538,7 @@ impl GameBoy {
                     .staged_bus_write
                     .as_ref()
                     .and_then(|s| s.locked_at_snapshot);
-                self.write_byte_with_snapshot_lock(
-                    address,
-                    self.cpu_bus.data,
-                    locked_at_snapshot,
-                );
+                self.write_byte_with_snapshot_lock(address, self.cpu_bus.data, locked_at_snapshot);
             }
         }
 

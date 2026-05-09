@@ -1,25 +1,24 @@
 //! Running-CPU dispatch chain.
 //!
 //! Per-bit irq_latch_inst<i> (data_phase_n-gated D-latch) → irq_prio_bit<i>
-//! distributed-NOR priority chain → int_take buffer → zaij AND4 → zkog
-//! SR-latch → zfex OR2 → zacw master-clock DFF.
+//! distributed-NOR priority chain → int_take buffer → zaij AND → zkog
+//! SR-latch → zfex OR → zacw master-clock DFF.
+//!
+//! The EI/DI 1-instruction delay is NOT in this chain — it lives in the
+//! `Cpu.ime` ↔ `Cpu.ime_delay` two-stage promotion (see `cpu/mod.rs`).
+//! Dispatch reads `ime` directly via step_zkog's `ime_enabled` input.
 //!
 //! data_phase_n window:
 //!   HIGH (transparent) — dots 0-1 of running M-cycles, AND throughout
 //!     HALT (CPU phase ring frozen, data_phase held LOW).
 //!   LOW  (held)         — dots 2-3 of running M-cycles only.
 //!
-//! xogs (instruction-boundary): (data_phase ∧ ctl_fetch ∧ ¬cb_prefix) ∨ halt.
-//! Asserted across the data-phase of any instruction-fetch M-cycle, plus
-//! continuously during halt.
+//! xogs: (data_phase ∧ ctl_fetch) ∨ halt. Asserted across the data-phase
+//! of any instruction-fetch M-cycle, plus continuously during halt.
 //!
-//! zloz (hold-chain SR latch, S = AND3(xogs, zkdu, zojz), holds
-//! dispatch_active.q HIGH through dispatch M2-M5 after zkog resets at
-//! ctl_int_entry_m6) is NOT modelled. The emulator only reads
-//! dispatch_active at instruction boundaries (enter_fetch_overlap +
-//! HaltPhase::WakeIntake), so the in-dispatch hold has no observable
-//! effect — the InterruptDispatch CpuPhase ticks through steps 0..4
-//! independently of dispatch_active.q.
+//! zloz (hold-chain SR latch holding dispatch_active.q HIGH through
+//! dispatch M2-M5 after zkog resets at ctl_int_entry_m6) is NOT
+//! modelled — dispatch_active is only read at instruction boundaries.
 
 use crate::cpu::dff::Dff;
 use crate::interrupts::{Interrupt, InterruptFlags};
@@ -33,12 +32,6 @@ pub(crate) struct DispatchChain {
     /// True = transparent (irq_latch tracks IE & IF live);
     /// false = held (irq_latch frozen at the value at last close).
     data_phase_n: bool,
-    /// `ctl_op_di_or_ei` — combinational, HIGH during the M-cycle that
-    /// decoded EI/DI. Drives the zzom block on zaij: zzom =
-    /// NAND(opcode3_n_buf3, ctl_op_di_or_ei). Set by `mark_ei_di_decoded`
-    /// when FetchOverlap step 1 applies an EI/DI commit; cleared by
-    /// `enter_mcycle` at the next M-cycle boundary.
-    ctl_op_di_or_ei: bool,
     /// zkog SR-latch — set by zaij rising during the in-flight
     /// instruction's eval phase, reset by ctl_int_entry_m6 / sys_reset.
     /// Once set, holds through to zacw's capture edge.
@@ -54,23 +47,9 @@ impl DispatchChain {
         Self {
             irq_latch: InterruptFlags::empty(),
             data_phase_n: true,
-            ctl_op_di_or_ei: false,
             zkog: false,
             zacw: Dff::new(false),
         }
-    }
-
-    /// Called at the start of each M-cycle (entry to next_mcycle).
-    /// Clears the M-cycle-scoped `ctl_op_di_or_ei` so the zzom block
-    /// only applies to the M-cycle that decoded EI/DI.
-    pub(crate) fn enter_mcycle(&mut self) {
-        self.ctl_op_di_or_ei = false;
-    }
-
-    /// Called from FetchOverlap step 1 when applying an EI or DI commit.
-    /// Asserts `ctl_op_di_or_ei` for the rest of the current M-cycle.
-    pub(crate) fn mark_ei_di_decoded(&mut self) {
-        self.ctl_op_di_or_ei = true;
     }
 
     /// Drive data_phase_n from the CPU phase ring. Called every dot.
@@ -105,9 +84,13 @@ impl DispatchChain {
     }
 
     /// Update the zkog SR-latch set chain each dot.
-    ///   zkog: S = zaij = ime ∧ data_phase ∧ int_take ∧ xogs ∧ ¬(EI/DI
-    ///         in flight). Reset path is `clear_dispatch()` (driven by
-    ///         ctl_int_entry_m6 at the vector-resolve point).
+    ///   zkog: S = zaij = ime ∧ data_phase ∧ int_take ∧ xogs.
+    ///   Reset path is `clear_dispatch()` (driven by ctl_int_entry_m6 at
+    ///   the vector-resolve point).
+    ///
+    /// The EI/DI 1-instruction delay rides on the `Cpu.ime` ↔
+    /// `Cpu.ime_delay` two-stage (the caller passes the post-promotion
+    /// `ime` value into `ime_enabled`); no separate gate is needed here.
     ///
     /// The HALT-wake dispatch path is handled at the sequencer level
     /// (HaltPhase::WakeIntake reads ime + latched IRQ directly), not
@@ -122,8 +105,7 @@ impl DispatchChain {
         xogs: bool,
     ) {
         let int_take = self.int_take(write_phase);
-        let zaij =
-            ime_enabled && data_phase && int_take && xogs && !self.ctl_op_di_or_ei;
+        let zaij = ime_enabled && data_phase && int_take && xogs;
         if zaij {
             self.zkog = true;
         }

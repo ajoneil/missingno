@@ -1,10 +1,10 @@
 use super::{
+    Cpu, HaltState, InterruptMasterEnable,
     commit::Commit,
-    instructions::bit_shift::{Carry, Direction},
     instructions::Instruction,
     instructions::Interrupt as InterruptInstruction,
-    registers::{Register16, Register8},
-    Cpu, HaltState, InterruptMasterEnable,
+    instructions::bit_shift::{Carry, Direction},
+    registers::{Register8, Register16},
 };
 
 mod apply;
@@ -374,10 +374,6 @@ impl Cpu {
         // The CPU always chains into the next M-cycle (enter_fetch chains
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
-            // Clear ctl_op_di_or_ei before this M-cycle's body runs.
-            // FetchOverlap step 1's apply_commit will re-mark it if the
-            // commit being applied is EI/DI.
-            self.dispatch.enter_mcycle();
             // Save the previous M-cycle's bus address before replacing.
             // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
@@ -751,15 +747,6 @@ impl Cpu {
                 }
                 self.instruction_pc = self.bus_counter;
 
-                // ctl_op_di_or_ei is combinational from IR (= the
-                // just-decoded opcode). Detect EI (0xFB) / DI (0xF3) here
-                // so the zzom block on zaij is asserted for the rest of
-                // THIS M-cycle (where IR holds the EI/DI opcode in
-                // hardware terms = post-decode in our Stage 9 v2 layout).
-                if matches!(opcode, 0xF3 | 0xFB) {
-                    self.dispatch.mark_ei_di_decoded();
-                }
-
                 let needed = operand_count(opcode);
                 if needed == 0 {
                     let bytes = [opcode, 0, 0];
@@ -1051,8 +1038,11 @@ impl Cpu {
             // M1: IDU PC- — on hardware this undoes the wakeup NOP's PC
             // increment. The emulator skips both the increment and decrement
             // for the same net effect. IME clears at the M1 boundary (zacw).
+            // Both stages must clear so the boundary copy doesn't restore
+            // IME on the next M-cycle.
             0 => {
                 self.ime.write_immediate(InterruptMasterEnable::Disabled);
+                self.ime_delay = false;
                 Some(BusAction::Internal { address: self.pc })
             }
             1 => Some(BusAction::InternalOamBug { address: sp }),
