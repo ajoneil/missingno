@@ -330,32 +330,19 @@ pub(crate) enum CpuPhase {
     },
 }
 
-/// Halt-sequencer sub-states. Each variant is exactly one wall-clock
-/// M-cycle on hardware — they are distinct master-clock-period
-/// populations on the `irq_latched → ykua → halt↓ → sequencer-wake →
-/// dispatch_trigger` combinational chain between HALT retire and
-/// dispatch's M1.
+/// Halt-sequencer sub-states. During HALT, `mcyc` is parked at `m7` by
+/// the `set_mcyc7_n` force-path; halt release is combinational on
+/// `irq_latched.q↑` via `ykua → ynkw`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum HaltPhase {
-    /// Steady-state spin: halt RS-latch = 1, `irq_latched.q = 0`, no
-    /// setup pending. Closes on a CLK9↑ that captures `irq_latched`
-    /// from `irq_pending`. If captured true → next is `WakeIntake`.
-    /// If captured false but `irq_pending` is now asserted → next is
-    /// `SetupMiss` (irq_latched missed setup, will capture next edge).
-    /// If both false → stays `Spin`.
+    /// Steady-state spin. Boundary captures `irq_latched`; on
+    /// capture-true the next M-cycle is the m7-driven post-halt fetch
+    /// (Fetch on IME=0, WakeIntake on IME=1).
     Spin,
-    /// One extra M-cycle that exists because `irq_latched` missed its
-    /// setup window on the previous closing CLK9↑ — `irq_pending`
-    /// rose mid-M-cycle. This M-cycle gives `irq_latched` a comfortable
-    /// setup for the next CLK9↑; it then captures unconditionally and
-    /// the next M-cycle is `WakeIntake`.
+    /// One extra M-cycle so `irq_latched` captures on the next CLK9↑.
     SetupMiss,
-    /// The wake M-cycle: `irq_latched.q = 1`, `ykua → halt↓ →
-    /// sequencer-wake → dispatch_trigger` settles during this M-cycle,
-    /// and `dispatch_active` (zacw) captures `dispatch_trigger` on the
-    /// closing CLK9↑. Next M-cycle is dispatch's M1 if
-    /// `dispatch_active.q = 1`, otherwise a normal Fetch (IME=0 wake /
-    /// spurious wake).
+    /// IME=1 stand-in for the discarded m7 fetch plus the
+    /// `dispatch_active.q` (zacw) capture cycle.
     WakeIntake,
 }
 
@@ -441,7 +428,13 @@ impl Cpu {
             CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(read_value),
             CpuPhase::Halted(HaltPhase::Spin) => {
                 if self.irq_latched.output() {
-                    Some(self.mcycle_halted_wake_intake_entry())
+                    let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                    let dispatch_pending = ime_enabled && !self.dispatch.latched().is_empty();
+                    if dispatch_pending {
+                        Some(self.mcycle_halted_wake_intake_entry())
+                    } else {
+                        self.enter_post_halt_fetch(read_value)
+                    }
                 } else if self.irq_pending {
                     Some(self.mcycle_halted_setup_miss_entry())
                 } else {
@@ -450,24 +443,13 @@ impl Cpu {
             }
             CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
-                // Halt drops combinationally via ykua → halt RS-latch reset
-                // when irq_latched.q rises. After halt drops, the running-CPU
-                // dispatch chain fires zkog → zacw at the first eval phase
-                // if IME=1 and an IRQ is pending. We model that combined
-                // effect by checking IME + pending IRQ here — the zaij
-                // chain can't fire DURING HALT because data_phase is
-                // held LOW.
+                // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
+                // and routes the next M-cycle to dispatch M1. The IME=0
+                // fall-through stays defensive for the SetupMiss path; the
+                // primary IME=0 wake short-circuits at the Spin arm above.
                 let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
                 let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
                 if irq_pending_for_dispatch {
-                    // zkog reset happens at ctl_int_entry_m6 (M3→M4
-                    // vector resolve) — driven by pending_vector_resolve
-                    // in execute.rs.
-
-                    // Dispatch arm — drop halt, hand the next M-cycle
-                    // to `mcycle_isr(0)` (M1 body: IME clear,
-                    // Internal{pc}). Same selector entry as the
-                    // running-CPU dispatch path through retire_edge.
                     self.halt_state = HaltState::Running;
                     let pc = self.pc;
                     self.phase = CpuPhase::InterruptDispatch {
@@ -482,14 +464,7 @@ impl Cpu {
                     self.instruction_pc = pc;
                     self.mcycle_isr(0)
                 } else {
-                    // IME=0 wake / spurious wake — drop halt, fall
-                    // through to a normal fetch.
-                    self.halt_state = HaltState::Running;
-                    self.phase = CpuPhase::Fetch;
-                    self.exec_step = 0;
-                    self.boundary_flag = true;
-                    self.instruction_pc = self.bus_counter;
-                    self.mcycle_fetch(read_value)
+                    self.enter_post_halt_fetch(read_value)
                 }
             }
         }
@@ -589,10 +564,9 @@ impl Cpu {
         }
     }
 
-    /// Enter `Halted(WakeIntake)` — `irq_latched.q = 1`, the
-    /// `ykua → halt↓ → sequencer-wake → dispatch_trigger` chain settles
-    /// during this M-cycle. `dispatch_active` (zacw) captures
-    /// `dispatch_trigger` on the closing CLK9↑ via `tick_dispatch_active`.
+    /// Enter `Halted(WakeIntake)` — IME=1 stand-in for the wake M-cycle:
+    /// hardware's discarded m7 fetch plus the `dispatch_active.q` (zacw)
+    /// capture cycle, modelled as a single Internal M-cycle.
     fn mcycle_halted_wake_intake_entry(&mut self) -> BusAction {
         self.phase = CpuPhase::Halted(HaltPhase::WakeIntake);
         self.exec_step = 0;
@@ -601,6 +575,18 @@ impl Cpu {
         BusAction::Internal {
             address: self.bus_counter,
         }
+    }
+
+    /// Drop halt and start the post-halt opcode fetch on the IME=0 wake
+    /// path. With `mcyc = m7` parked through HALT, this M-cycle carries
+    /// the m7-driven post-body fetch from PC.
+    fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<BusAction> {
+        self.halt_state = HaltState::Running;
+        self.phase = CpuPhase::Fetch;
+        self.exec_step = 0;
+        self.boundary_flag = true;
+        self.instruction_pc = self.bus_counter;
+        self.mcycle_fetch(read_value)
     }
 
     /// Execute phase: operand reading and post-decode M-cycles.
