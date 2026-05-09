@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
-    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -162,8 +162,8 @@ pub struct Rendering {
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
     pixel_counter: PixelCounter,
-    /// LCD Control block (die page 24): LCD clock gating (WUSA),
-    /// POVA trigger, LCD shift register, data latch.
+    /// LCD Control block: LCD clock gating (WUSA), POVA trigger, and
+    /// pixel push to the LCD glass.
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
@@ -439,9 +439,14 @@ impl Rendering {
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
         let wodu = self.hblank.capture_voga(self.pixel_counter.terminal());
 
-        // lcd fall receives current-dot wodu for last_pixel (the final
-        // pixel push happens on the dot WODU fires, not one dot later).
-        let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
+        // WODU rise push emits screen_x=159 — captures the post-fall-shift
+        // shifter MSB at the WODU dot (the bg shifter has already shifted,
+        // gated by the NYXU-pulse-hold path).
+        let post_shift_pixel =
+            pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let pixel = self
+            .lcd
+            .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
 
         if was_rendering {
             self.mode3_rising(regs, video, oam, vram);
@@ -552,10 +557,26 @@ impl Rendering {
                 video,
             );
 
-            if was_rendering && !mosu_fired {
-                self.mode3_advance_fetcher(regs);
-            }
-            self.mode3_pixel_pipeline(regs, video, rydy_before_pory, pixel_counter_before_sacu)
+            // SUZU is one of TEVO's OR3 inputs (alongside SEKO and TAVE) and
+            // drives NYXU low — holding the BG shifter via LOZE on its dot.
+            // Surface whether SUZU fired in mode3_advance_fetcher so the
+            // BG-shift NYXU gate in mode3_pixel_pipeline can include it.
+            let suzu_fired = if was_rendering && !mosu_fired {
+                self.mode3_advance_fetcher()
+            } else {
+                false
+            };
+            // MOSU is also a direct NYXU input. When MOSU fires,
+            // mode3_advance_fetcher is skipped, but the MOSU pulse itself
+            // holds the BG shifter on this dot.
+            let advance_nyxu_pulse = mosu_fired || suzu_fired;
+            self.mode3_pixel_pipeline(
+                regs,
+                video,
+                rydy_before_pory,
+                advance_nyxu_pulse,
+                pixel_counter_before_sacu,
+            )
         } else {
             None
         }
@@ -649,14 +670,6 @@ impl Rendering {
                     let done = sf.advance(regs, oam, vram);
                     if done {
                         sf.merge_into(&mut self.obj_shifter, oam);
-                        // Data-pin pixel overwrite: REMY/RAVO update
-                        // combinationally after sprite merge.
-                        pixel_output::sprite_overwrite_data_latch(
-                            &self.bg_shifter,
-                            &self.obj_shifter,
-                            self.lcd.data_latch_mut(),
-                            regs,
-                        );
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_taka();
                         // Recompute FEPO: the sprite is now marked as fetched,
@@ -717,7 +730,7 @@ impl Rendering {
     /// CLKPIPE fires at depth 63.8 ge. Separating them models the
     /// hardware's actual signal domains: fetcher DFFs settle first, then
     /// the pixel pipeline evaluates against the settled state.
-    fn mode3_advance_fetcher(&mut self, regs: &PipelineRegisters) {
+    fn mode3_advance_fetcher(&mut self) -> bool {
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
         self.sprite_trigger.capture_suda();
 
@@ -737,20 +750,13 @@ impl Rendering {
         // the pre-clear RYDY value (captured on falling). SUZU fires for
         // exactly one half-cycle when RYDY transitions 1→0, triggering
         // TEVO (pipe load + fine counter reset).
-        if self.window.clear_rydy_on_pory(self.cascade.pory()) {
+        let suzu_fired = self.window.clear_rydy_on_pory(self.cascade.pory());
+        if suzu_fired {
             // SUZU → TEVO → NYXU: load window tile data into pipe.
             self.fetcher.load_into(&mut self.bg_shifter);
 
             // TEVO → PASO: reset fine counter.
             self.fine_scroll.reset_counter();
-
-            // REMY/RAVO combinational update: data pins reflect the
-            // newly loaded window tile data immediately.
-            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                regs,
-            ));
         }
 
         // TAVE one-shot preload: TAVE = NOT(SUVU); SUVU = NAND4(NYKA,
@@ -767,6 +773,8 @@ impl Rendering {
             // from the prior scanline so the sprite trigger can re-arm.
             self.sprite_trigger.clear_taka();
         }
+
+        suzu_fired
     }
 
     /// Mode 3 pixel pipeline (CLKPIPE / SACU domain).
@@ -785,6 +793,7 @@ impl Rendering {
         regs: &PipelineRegisters,
         _video: &VideoControl,
         rydy_before_pory: bool,
+        advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
     ) -> Option<PixelOutput> {
         let mut pixel_out: Option<PixelOutput> = None;
@@ -818,11 +827,6 @@ impl Rendering {
         if !self.sprite_trigger.taka() {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
-            if sacu {
-                self.bg_shifter.shift();
-                self.obj_shifter.shift();
-            }
-
             // PANY drain-detector slip: when NUKO=1 lands during the dot
             // where SEKO would naturally fire, NUKO truncates PANY's
             // high pulse; RYFA captures the second (later) half on the
@@ -835,12 +839,28 @@ impl Rendering {
             let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
             self.pany_slip_pending = pany_slip_now;
 
+            let pixel =
+                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            let pixel =
-                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+            // NYXU pulse holds the BG shifter via LOZE async set/reset;
+            // the concurrent SACU edge is overridden, so no shift fires
+            // on the pulse dot. NYXU = NOR3(MOSU, TEVO, AVAP); TEVO =
+            // OR3(SEKO, SUZU, TAVE). MOSU and SUZU fire in the fetcher-
+            // advance phase (advance_nyxu_pulse); SEKO fires here.
+            // TAVE/AVAP fire before the first SACU so don't reach this
+            // gate. The OBJ shifter is not LOZE-gated — uses sprite_onN
+            // / xefy parallel-load — so shifts on SACU normally.
+            let nyxu_pulse = seko_fire || advance_nyxu_pulse;
+            if sacu && !nyxu_pulse {
+                self.bg_shifter.shift();
+            }
+            if sacu {
+                self.obj_shifter.shift();
+            }
             if sacu {
                 self.pixel_counter.advance();
             }
