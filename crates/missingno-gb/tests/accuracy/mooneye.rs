@@ -139,13 +139,7 @@ mooneye_test!(oam_dma_start, "mooneye/acceptance/oam_dma_start.gb");
 mooneye_test!(oam_dma_timing, "mooneye/acceptance/oam_dma_timing.gb");
 mooneye_test!(pop_timing, "mooneye/acceptance/pop_timing.gb");
 mooneye_test!(push_timing, "mooneye/acceptance/push_timing.gb");
-// rapid_di_ei hangs after Stage 3 fetch-overlap migration — IRQ during
-// rapid DI/EI lands at PC=0x0038 RST loop. Re-enable post Stage 4+.
-#[ignore]
-#[test]
-fn rapid_di_ei() {
-    run_mooneye_test("mooneye/acceptance/rapid_di_ei.gb");
-}
+mooneye_test!(rapid_di_ei, "mooneye/acceptance/rapid_di_ei.gb");
 mooneye_test!(ret_cc_timing, "mooneye/acceptance/ret_cc_timing.gb");
 mooneye_test!(ret_timing, "mooneye/acceptance/ret_timing.gb");
 mooneye_test!(reti_intr_timing, "mooneye/acceptance/reti_intr_timing.gb");
