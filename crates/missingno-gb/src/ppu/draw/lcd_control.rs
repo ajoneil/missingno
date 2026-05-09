@@ -131,7 +131,7 @@ impl LcdControl {
             let out = PixelOutput {
                 x: self.lcd_push_count,
                 y: self.scanline,
-                shade: self.data_latch.0,
+                shade: pixel.0,
             };
             self.lcd_push_count += 1;
             Some(out)

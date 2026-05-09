@@ -818,11 +818,6 @@ impl Rendering {
         if !self.sprite_trigger.taka() {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
-            if sacu {
-                self.bg_shifter.shift();
-                self.obj_shifter.shift();
-            }
-
             // PANY drain-detector slip: when NUKO=1 lands during the dot
             // where SEKO would naturally fire, NUKO truncates PANY's
             // high pulse; RYFA captures the second (later) half on the
@@ -841,6 +836,10 @@ impl Rendering {
 
             let pixel =
                 pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+            if sacu {
+                self.bg_shifter.shift();
+                self.obj_shifter.shift();
+            }
             if sacu {
                 self.pixel_counter.advance();
             }
