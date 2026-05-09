@@ -439,9 +439,16 @@ impl Rendering {
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
         let wodu = self.hblank.capture_voga(self.pixel_counter.terminal());
 
-        // lcd fall receives current-dot wodu for last_pixel (the final
-        // pixel push happens on the dot WODU fires, not one dot later).
-        let pixel = self.lcd.on_ppu_clock_rise(self.hblank.voga(), wodu);
+        // WODU rise push emits screen_x=159 — matches hardware's "extra
+        // TOBA after WODU" (§6.15) which captures the post-fall-shift
+        // shifter MSB. Resolve at the rise here gives that post-shift
+        // value (the fall has already advanced the BG shifter, gated by
+        // NYXU pulse per iter-4).
+        let post_shift_pixel =
+            pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let pixel = self
+            .lcd
+            .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
 
         if was_rendering {
             self.mode3_rising(regs, video, oam, vram);
