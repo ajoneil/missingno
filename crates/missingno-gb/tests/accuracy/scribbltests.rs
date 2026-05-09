@@ -54,5 +54,5 @@ fn scxly() {
 #[test]
 fn statcount_auto() {
     // statcount_auto needs ~270 frames (~4.5 seconds emulated)
-    run_scribbltest("statcount_auto", 300);
+    run_scribbltest("statcount-auto", 300);
 }
