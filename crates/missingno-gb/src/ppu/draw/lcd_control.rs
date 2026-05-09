@@ -159,10 +159,12 @@ impl LcdControl {
         &mut self,
         voga: bool,
         wodu: bool,
+        post_shift_pixel: PaletteIndex,
     ) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
-        // The final pixel push happens on the WODU dot, before VOGA
-        // captures on the same falling phase.
+        // Emits screen_x=159 — per §6.15 hardware's "extra TOBA after WODU"
+        // captures the post-fall-shift shifter MSB at the WODU dot's late
+        // half. Caller resolves the post-shift state and passes it in.
         let pixel_out = if wodu
             && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
@@ -170,7 +172,7 @@ impl LcdControl {
             let out = PixelOutput {
                 x: self.lcd_push_count,
                 y: self.scanline,
-                shade: self.data_latch.0,
+                shade: post_shift_pixel.0,
             };
             self.lcd_push_count += 1;
             Some(out)
