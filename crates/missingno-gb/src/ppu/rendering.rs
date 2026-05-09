@@ -837,8 +837,14 @@ impl Rendering {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            if sacu {
+            // NYXU pulse (TEVO arm: SEKO → TEVO → NYXU) holds BG shifter
+            // via LOZE async set/reset (§6.6); concurrent SACU edge is
+            // overridden, no shift on the load dot. OBJ shifter is not
+            // LOZE-gated (§6.7) — shifts on SACU normally.
+            if sacu && !seko_fire {
                 self.bg_shifter.shift();
+            }
+            if sacu {
                 self.obj_shifter.shift();
             }
             if sacu {
