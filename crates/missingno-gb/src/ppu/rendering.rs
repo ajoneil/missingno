@@ -830,12 +830,13 @@ impl Rendering {
             let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
             self.pany_slip_pending = pany_slip_now;
 
+            let pixel =
+                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            let pixel =
-                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
             if sacu {
                 self.bg_shifter.shift();
                 self.obj_shifter.shift();
