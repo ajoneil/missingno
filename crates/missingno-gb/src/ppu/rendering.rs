@@ -830,14 +830,21 @@ impl Rendering {
             let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
             self.pany_slip_pending = pany_slip_now;
 
+            let pixel =
+                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+
             if seko_fire {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            let pixel =
-                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
-            if sacu {
+            // NYXU pulse (TEVO arm: SEKO → TEVO → NYXU) holds BG shifter
+            // via LOZE async set/reset (§6.6); concurrent SACU edge is
+            // overridden, no shift on the load dot. OBJ shifter is not
+            // LOZE-gated (§6.7) — shifts on SACU normally.
+            if sacu && !seko_fire {
                 self.bg_shifter.shift();
+            }
+            if sacu {
                 self.obj_shifter.shift();
             }
             if sacu {
