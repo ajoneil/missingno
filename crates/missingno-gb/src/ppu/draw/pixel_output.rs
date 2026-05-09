@@ -3,24 +3,14 @@
 // palette. Hardware chain: BG plane gates via LCDC.0 (VYXE) at RAJY /
 // TADE; sprite priority MUX via RYFU / XULA / WOXA / NULY; palette
 // lookup via AO2222 combiners MOKA / NURA / WUFU combined in PATY
-// (OR3); final pad drivers RAVO (LD1) and REMY (LD0).
-//
-// LCD data pin lag (REMY/RAVO qp_ext_old model): the LCD data pins
-// update combinationally from the pipe MSBs but the LCD captures the
-// previous half-cycle's value. Each TOBA edge shifts the PREVIOUS
-// dot's pixel into the LCD shift register, giving a 1-dot offset.
-// 159 TOBA edges (PX=9–167) output pixels for PX=8–166; the 160th
-// pixel (PX=167) is captured by the NOR latch at end-of-line. POVA
-// fires once per scanline's fine-scroll-match timing but its pixel
-// is shifted off by the 160 subsequent pushes (159 TOBA + 1 NOR
-// latch) — observation-equivalent to a collapsed single-push model.
-//
-// Sprite merge updates the lcd_data_latch combinationally (no SEMU
-// edge), so the next TOBA captures post-merge sprite data.
+// (OR3); final pad drivers RAVO (LD1) and REMY (LD0). The LCD glass
+// captures LD0/LD1 at each cp_pad rising edge — 159 TOBA-driven
+// edges during PX=9..167 plus one extra "post-shift" edge at WODU
+// emit the 160 visible pixels per scanline.
 
 use crate::ppu::{
-    types::palette::{PaletteIndex, PaletteMap},
     PipelineRegisters,
+    types::palette::{PaletteIndex, PaletteMap},
 };
 
 use super::shifters::{BgShifter, ObjShifter};
@@ -100,41 +90,4 @@ pub(in crate::ppu) fn resolve_current_pixel(
         bg_window_enabled,
         sprites_enabled,
     )
-}
-
-/// Data-pin pixel overwrite (sprite merge).
-///
-/// Called when sprite fetch completes and sprite data is merged into
-/// the pipe. No SEMU edge fires during sprite fetch (SACU frozen →
-/// TOBA=0), but the data pins (REMY/RAVO) update combinationally
-/// from the pipe MSBs — now containing merged sprite data. Updates
-/// the lcd_data_latch so the next TOBA edge captures the post-merge
-/// pixel instead of the pre-merge BG-only data.
-pub(in crate::ppu) fn sprite_overwrite_data_latch(
-    bg_shifter: &BgShifter,
-    obj_shifter: &ObjShifter,
-    lcd_data_latch: &mut PaletteIndex,
-    regs: &PipelineRegisters,
-) {
-    let bgp = regs.palettes.background.output();
-    let obp0 = regs.palettes.sprite0.output();
-    let obp1 = regs.palettes.sprite1.output();
-    let bg_window_enabled = regs.control.background_and_window_enabled();
-    let sprites_enabled = regs.control.sprites_enabled();
-
-    let (bg_lo, bg_hi) = bg_shifter.read();
-    let (spr_lo, spr_hi, spr_pal, spr_pri) = obj_shifter.read();
-    *lcd_data_latch = resolve_pixel(
-        bg_lo,
-        bg_hi,
-        spr_lo,
-        spr_hi,
-        spr_pal,
-        spr_pri,
-        bgp,
-        obp0,
-        obp1,
-        bg_window_enabled,
-        sprites_enabled,
-    );
 }

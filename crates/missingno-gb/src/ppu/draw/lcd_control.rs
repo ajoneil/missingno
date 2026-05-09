@@ -1,21 +1,20 @@
-//! LCD control: LCD clock gating and pixel data pin latch.
+//! LCD control: LCD clock gating and pixel push to the LCD glass.
 //!
 //! The two edge methods (`on_ppu_clock_fall` / `on_ppu_clock_rise`)
 //! dispatch multiple discrete concerns per edge — SACU-driven pixel
 //! counter advance, WUSA latch management, TOBA gated-clock generation,
-//! data latch rotation, and WODU-dot final-pixel push — so they are
-//! signal-named rather than work-semantic.
+//! and WODU-dot final-pixel push — so they are signal-named rather
+//! than work-semantic.
 
-use crate::ppu::types::palette::PaletteIndex;
 use crate::ppu::PixelOutput;
+use crate::ppu::types::palette::PaletteIndex;
 
-/// LCD clock gating + LCD data pin latch.
+/// LCD clock gating and pixel-push state.
 ///
-/// Owns the LCD clock gate (hardware WUSA `nor_latch`), a POVA
+/// Owns the LCD clock gate (hardware WUSA `nor_latch`) and a POVA
 /// fine-scroll-match trigger (consumed at the caller for LCD-clock
-/// generation), and the LCD data pin latch (hardware REMY/RAVO
-/// `qp_ext_old` model). The pixel X position counter (PX) lives in
-/// its own module (see `pixel_counter.rs`).
+/// generation). The pixel X position counter (PX) lives in its own
+/// module (see `pixel_counter.rs`).
 ///
 /// Pixel output is returned as a [`PixelOutput`] signal rather than
 /// written to an internal framebuffer — the caller (emulation loop)
@@ -54,13 +53,6 @@ pub(in crate::ppu) struct LcdControl {
     /// pixel output uses the correct Y even if LY has incremented by
     /// HBlank. Matches the old shift register's scanline field.
     scanline: u8,
-    /// LCD data pin latch (REMY/RAVO qp_ext_old model). On hardware,
-    /// the LCD data pins are combinational from the pipe MSBs, but the
-    /// LCD captures `qp_ext_old()` — the previous half-cycle's value.
-    /// This buffer holds the resolved pixel from the previous SACU edge.
-    /// TOBA shifts this buffered value to the LCD output, giving a
-    /// 1-dot lag: TOBA at PX=N outputs PX=(N-1)'s pixel.
-    data_latch: PaletteIndex,
 }
 
 impl LcdControl {
@@ -70,7 +62,6 @@ impl LcdControl {
             pova: false,
             lcd_push_count: 0,
             scanline: 0,
-            data_latch: PaletteIndex(0),
         }
     }
 
@@ -86,16 +77,19 @@ impl LcdControl {
             pova: false,
             lcd_push_count: 160,
             scanline: 143,
-            data_latch: PaletteIndex(0),
         }
     }
 
     /// PPU clock fall (master-clock rise; gate: ALET falling): XAJO/WUSA
-    /// set, TOBA pixel output, data latch update. Dispatcher for the
-    /// SACU-driven pixel-output concerns on this edge — multiple
-    /// unrelated effects at one edge. The caller advances `PixelCounter`
-    /// first and passes in the post-advance `px_value` so WUSA's XAJO
-    /// gate reads the current counter state.
+    /// set, TOBA pixel output. Dispatcher for the SACU-driven pixel-output
+    /// concerns on this edge. The caller advances `PixelCounter` first
+    /// and passes in the post-advance `px_value` so WUSA's XAJO gate
+    /// reads the current counter state.
+    ///
+    /// TOBA pushes the resolved pixel directly: TOBA fires once per
+    /// SACU edge while WUSA is open (PX=9 through WODU-dot's fall),
+    /// emitting screen_x=0..158. The WODU-dot rise emits screen_x=159
+    /// via `on_ppu_clock_rise` using the post-shift shifter MSB.
     ///
     /// Returns `(toba, pixel_out)` where `toba` is the gated LCD clock
     /// and `pixel_out` is the pixel pushed to the LCD (if any).
@@ -115,15 +109,6 @@ impl LcdControl {
         // TOBA = AND2(WUSA, SACU) — the gated LCD clock.
         let toba = self.wusa && sacu;
 
-        // LCD data pin lag: TOBA pushes the BUFFERED pixel (from the
-        // previous SACU edge) to the LCD. 1-dot offset: TOBA at
-        // PX=9 outputs PX=8's pixel, etc.
-        //
-        // On real hardware, TOBA fires one extra time after WODU
-        // (WUSA is cleared by VOGA on the same dot). The 159-stage
-        // shift register naturally absorbed this — the extra pixel
-        // pushed the first (junk) pixel off the end. With direct
-        // output we skip it: only the first 159 TOBA pixels are visible.
         let pixel_out = if toba
             && self.lcd_push_count < 159
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
@@ -139,10 +124,6 @@ impl LcdControl {
             None
         };
 
-        // Update the LCD data latch with the current pipe state.
-        self.data_latch = pixel;
-
-        // Store POVA.
         self.pova = pova;
 
         (toba, pixel_out)
@@ -150,9 +131,8 @@ impl LcdControl {
 
     /// PPU clock rise (master-clock fall; gate: ALET rising): WEGO =
     /// OR2(VID_RST, VOGA). When VOGA is set, clears WUSA. On the WODU
-    /// dot (last_pixel), pushes the final pixel to the LCD. Two discrete
-    /// concerns tied to the hblank transition — signal-named for the
-    /// dispatch shape.
+    /// dot, pushes the final visible pixel (screen_x=159) using the
+    /// post-fall-shift shifter MSB resolved by the caller.
     ///
     /// Returns the pixel pushed to the LCD on the WODU dot (if any).
     pub(in crate::ppu) fn on_ppu_clock_rise(
@@ -162,9 +142,8 @@ impl LcdControl {
         post_shift_pixel: PaletteIndex,
     ) -> Option<PixelOutput> {
         // WODU fires combinationally on the dot pixel_counter reaches 167.
-        // Emits screen_x=159 — per §6.15 hardware's "extra TOBA after WODU"
-        // captures the post-fall-shift shifter MSB at the WODU dot's late
-        // half. Caller resolves the post-shift state and passes it in.
+        // The 160th visible pixel comes from the shifter MSB at the dot's
+        // late half — read post-fall-shift by the caller and passed in.
         let pixel_out = if wodu
             && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
@@ -189,13 +168,6 @@ impl LcdControl {
         pixel_out
     }
 
-    /// Update the LCD data latch directly. Used for out-of-band
-    /// updates (SUZU/TEVO window tile load, sprite overwrite) that
-    /// happen outside the normal SACU-driven `rise()` path.
-    pub(in crate::ppu) fn set_data_latch(&mut self, pixel: PaletteIndex) {
-        self.data_latch = pixel;
-    }
-
     /// Reset per-scanline state.
     pub(in crate::ppu) fn reset(&mut self, scanline: u8) {
         debug_assert!(
@@ -207,7 +179,6 @@ impl LcdControl {
         self.pova = false;
         self.lcd_push_count = 0;
         self.scanline = scanline;
-        self.data_latch = PaletteIndex(0);
     }
 
     // --- Accessors ---
@@ -222,9 +193,5 @@ impl LcdControl {
 
     pub(in crate::ppu) fn lcd_x(&self) -> u8 {
         self.lcd_push_count
-    }
-
-    pub(in crate::ppu) fn data_latch_mut(&mut self) -> &mut PaletteIndex {
-        &mut self.data_latch
     }
 }

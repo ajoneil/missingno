@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
-    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -162,8 +162,8 @@ pub struct Rendering {
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
     pixel_counter: PixelCounter,
-    /// LCD Control block (die page 24): LCD clock gating (WUSA),
-    /// POVA trigger, LCD shift register, data latch.
+    /// LCD Control block: LCD clock gating (WUSA), POVA trigger, and
+    /// pixel push to the LCD glass.
     lcd: LcdControl,
     /// Sprite fetch lifecycle — Idle or Fetching.
     sprite_state: SpriteState,
@@ -439,11 +439,9 @@ impl Rendering {
         // WEGO clears XYMU. This is the primary Mode 3→0 path.
         let wodu = self.hblank.capture_voga(self.pixel_counter.terminal());
 
-        // WODU rise push emits screen_x=159 — matches hardware's "extra
-        // TOBA after WODU" (§6.15) which captures the post-fall-shift
-        // shifter MSB. Resolve at the rise here gives that post-shift
-        // value (the fall has already advanced the BG shifter, gated by
-        // NYXU pulse per iter-4).
+        // WODU rise push emits screen_x=159 — captures the post-fall-shift
+        // shifter MSB at the WODU dot (the bg shifter has already shifted,
+        // gated by the NYXU-pulse-hold path).
         let post_shift_pixel =
             pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
         let pixel = self
@@ -560,17 +558,17 @@ impl Rendering {
             );
 
             // SUZU is one of TEVO's OR3 inputs (alongside SEKO and TAVE) and
-            // therefore drives NYXU low — holding the BG shifter via LOZE on
-            // its dot. Surface whether SUZU fired in mode3_advance_fetcher so
-            // the BG-shift NYXU gate in mode3_pixel_pipeline can include it.
+            // drives NYXU low — holding the BG shifter via LOZE on its dot.
+            // Surface whether SUZU fired in mode3_advance_fetcher so the
+            // BG-shift NYXU gate in mode3_pixel_pipeline can include it.
             let suzu_fired = if was_rendering && !mosu_fired {
-                self.mode3_advance_fetcher(regs)
+                self.mode3_advance_fetcher()
             } else {
                 false
             };
-            // MOSU is also a direct NYXU input (§6.6 / §6.12). When MOSU
-            // fires, mode3_advance_fetcher is skipped, but the MOSU pulse
-            // itself holds the BG shifter on this dot.
+            // MOSU is also a direct NYXU input. When MOSU fires,
+            // mode3_advance_fetcher is skipped, but the MOSU pulse itself
+            // holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || suzu_fired;
             self.mode3_pixel_pipeline(
                 regs,
@@ -672,14 +670,6 @@ impl Rendering {
                     let done = sf.advance(regs, oam, vram);
                     if done {
                         sf.merge_into(&mut self.obj_shifter, oam);
-                        // Data-pin pixel overwrite: REMY/RAVO update
-                        // combinationally after sprite merge.
-                        pixel_output::sprite_overwrite_data_latch(
-                            &self.bg_shifter,
-                            &self.obj_shifter,
-                            self.lcd.data_latch_mut(),
-                            regs,
-                        );
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_taka();
                         // Recompute FEPO: the sprite is now marked as fetched,
@@ -740,7 +730,7 @@ impl Rendering {
     /// CLKPIPE fires at depth 63.8 ge. Separating them models the
     /// hardware's actual signal domains: fetcher DFFs settle first, then
     /// the pixel pipeline evaluates against the settled state.
-    fn mode3_advance_fetcher(&mut self, regs: &PipelineRegisters) -> bool {
+    fn mode3_advance_fetcher(&mut self) -> bool {
         // SUDA DFF: captures SOBU on LAPE rising edge (depth 6).
         self.sprite_trigger.capture_suda();
 
@@ -767,14 +757,6 @@ impl Rendering {
 
             // TEVO → PASO: reset fine counter.
             self.fine_scroll.reset_counter();
-
-            // REMY/RAVO combinational update: data pins reflect the
-            // newly loaded window tile data immediately.
-            self.lcd.set_data_latch(pixel_output::resolve_current_pixel(
-                &self.bg_shifter,
-                &self.obj_shifter,
-                regs,
-            ));
         }
 
         // TAVE one-shot preload: TAVE = NOT(SUVU); SUVU = NAND4(NYKA,
@@ -864,13 +846,14 @@ impl Rendering {
                 self.fetcher.load_into(&mut self.bg_shifter);
             }
 
-            // NYXU pulse holds BG shifter via LOZE async set/reset (§6.6);
-            // concurrent SACU edge is overridden, no shift on the pulse
-            // dot. NYXU = NOR3(MOSU, TEVO, AVAP); TEVO = OR3(SEKO, SUZU,
-            // TAVE). MOSU and SUZU fire in the fetcher-advance phase
-            // (advance_nyxu_pulse); SEKO fires here. TAVE/AVAP fire pre-
-            // first-SACU so don't reach this gate. OBJ shifter is not
-            // LOZE-gated (§6.7) — shifts on SACU normally.
+            // NYXU pulse holds the BG shifter via LOZE async set/reset;
+            // the concurrent SACU edge is overridden, so no shift fires
+            // on the pulse dot. NYXU = NOR3(MOSU, TEVO, AVAP); TEVO =
+            // OR3(SEKO, SUZU, TAVE). MOSU and SUZU fire in the fetcher-
+            // advance phase (advance_nyxu_pulse); SEKO fires here.
+            // TAVE/AVAP fire before the first SACU so don't reach this
+            // gate. The OBJ shifter is not LOZE-gated — uses sprite_onN
+            // / xefy parallel-load — so shifts on SACU normally.
             let nyxu_pulse = seko_fire || advance_nyxu_pulse;
             if sacu && !nyxu_pulse {
                 self.bg_shifter.shift();
