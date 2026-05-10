@@ -166,7 +166,12 @@ The Game Boy's master clock produces alternating edges. On hardware, each edge t
 
 **GateBoy conventions**: 8 sub-phases (A-H) per M-cycle, 2 per dot. `mcycle_phase` packs ring counter DFFs: 0x0C=B, 0x0F=D, 0x03=F, 0x00=H. `_evn` DFFs latch on EVEN edges; `_odd` on ODD. CPU register writes latch at DELTA_GH (first visible at phase H). See `receipts/research/` for phase mapping docs.
 
-**Common pitfalls**: (1) Never frame timing hypotheses as "move X before/after Y in rise/fall" — think about DFF capture edges and combinational read points. (2) Multi-stage pipeline fixes: if a fix has zero effect, check whether another pipeline stage compensates — both stages may need fixing together.
+**Common pitfalls**: (1) Never frame timing hypotheses as "move X before/after Y in rise/fall" — think about DFF capture edges and combinational read points. (2) Multi-stage pipeline fixes: if a fix has zero effect, check whether another pipeline stage compensates — both stages may need fixing together. (3) Never say "integer-dot model" / "integer-dot rounding" / "discrete-dot pipeline can't represent X" / "busdot=N" as if those were limits of the emulator. Rise + fall per dot IS half-dot resolution — every hardware edge has a corresponding emulator edge; there is no precision being lost. Frame divergences as "which edge captures what", never as "the dot count is off by N." (4) Spec sub-dot phases (e.g. "WODU↑ at dot 1.5150", "XYMU.q↑ at +0.481 dots") are *edge identifiers*, not fractional dot counts to round. Translate them to edge labels (rise of dot N, fall of dot N) before reasoning. A divergence stated as "rounded to the wrong integer dot" is almost always actually "fired on the wrong edge of the same dot, or on an adjacent edge of the next/prior dot."
+
+**Wrong → right framing examples**:
+- ✗ "Our integer-dot model collapses the sub-dot regimes" → ✓ "Our `capture_voga` evaluates WODU and captures VOGA on the same rise edge; hardware splits these across `fall(N)` (WODU rises) and `rise(N+1)` (VOGA captures)."
+- ✗ "Mode-3 ends 1 dot late due to integer-dot rounding" → ✓ "XYMU.q clears at `rise(N+1)` but hardware clears it at `rise(N)`; the missing edge is VOGA's same-dot ALET-rising capture."
+- ✗ "The dot-2 snapshot can't represent the bus-driver settling window" → ✓ "Our snapshot fires at `fall(busdot=2)`; the bus-driven mode bits transition between `rise(busdot=2)` (XYMU clear) and `fall(busdot=3)` (BUKE), so the right edge to sample on is the BUKE fall, not the dot-2 fall."
 
 ### Key Patterns
 
