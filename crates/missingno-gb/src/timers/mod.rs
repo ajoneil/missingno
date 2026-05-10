@@ -24,11 +24,14 @@ pub struct Timers {
 
 impl Timers {
     /// Post-boot state at the M-cycle boundary CLK9↑ that opens the
-    /// M-cycle fetching PC=$0100. `internal_counter = 0x6AF3` is the
-    /// post-CLK9↑ value (DIV reads 0xAB).
+    /// PC=$0100 fetch. dmg-sim-aligned: reg_div16=0xEAF3 (FF04=0xAB).
+    /// Real DMG (no harness gap) would read 0x6AF3 here. The two are
+    /// observationally indistinguishable by construction: bit 15
+    /// (UPOF) has no consumer outside reg_div16 — FF04 reads
+    /// bits[13:6], TAC selects bits 1/3/5/7, no other path reads UPOF.
     pub fn new() -> Self {
         Self {
-            internal_counter: 0x6AF3,
+            internal_counter: 0xEAF3,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
@@ -38,10 +41,18 @@ impl Timers {
         }
     }
 
-    /// Power-on state: everything zeroed, counter starts at 0.
+    /// Power-on state at the SM83's first M-cycle. dmg-sim-aligned:
+    /// 0x8001 reaches 0xEAF3 after the boot ROM's 5,860,082 M-cycles.
+    /// UKUP=1 from the standard first-tick toggle (D=~Q on the boundary
+    /// CLK9↑ that releases SM83); UPOF=1 reflects ~32,768 M-cycles of
+    /// divider free-run between `reset_div_n` deassert and `sys_reset`
+    /// deassert in dmg-sim's harness. Real DMG (simultaneous deassert)
+    /// would initialise to 0x0001 and reach 0x6AF3 at PC=0x0100 —
+    /// observationally indistinguishable by construction (UPOF has no
+    /// consumer outside reg_div16).
     pub fn power_on() -> Self {
         Self {
-            internal_counter: 0,
+            internal_counter: 0x8001,
             counter: 0,
             modulo: 0,
             control: Control(0xf8),
