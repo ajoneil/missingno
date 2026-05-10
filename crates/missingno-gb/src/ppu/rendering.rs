@@ -452,6 +452,17 @@ impl Rendering {
             self.mode3_rising(regs, video, oam, vram);
         }
 
+        // XYMU↑ (Mode 3 exit): mode3 = NOT(XYMU.q) falls, async-resetting
+        // the BG fetch cascade DFFs (NYKA/PORY via nafy outside-Mode-3
+        // steady-state; PYGO via r_n=mode3; POKY via NOR-latch R from
+        // LOBY=NOT(mode3)) and the fine-scroll counter (RYKU/ROGA/RUBU
+        // via PASO=NOR2(PAHA, TEVO) where PAHA=NOT(mode3)=1; ROXY held
+        // at 1/Gating by PAHA).
+        if was_rendering && !self.hblank.rendering_active() {
+            self.cascade.reset();
+            self.fine_scroll = FineScroll::new();
+        }
+
         pixel
     }
 

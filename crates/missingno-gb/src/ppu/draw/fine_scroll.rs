@@ -64,8 +64,11 @@ enum Roxy {
 ///   the consumer pattern (emulator only reads `pohu` while
 ///   `roxy == Roxy::Gating`).
 /// - ROZE counter self-stop collapsed into the `count < 7` tick guard.
-/// - PASO reset collapsed into `FineScroll::new()` at scanline reset
-///   and `reset_counter()` at TEVO / window-trigger events.
+/// - PASO reset modelled by `FineScroll::new()` reassignment in
+///   `Rendering::on_ppu_clock_rise` on the XYMU↑ edge — PASO =
+///   NOR2(PAHA, TEVO) goes low when PAHA=NOT(mode3)=1 outside Mode 3,
+///   async-resetting the counter to 0 and re-arming ROXY to Gating.
+///   Also reset at TEVO / window-trigger events via `reset_counter()`.
 /// - ROXY clear transition modelled as a one-shot state change
 ///   (`Roxy::Gating → Roxy::Done`) tracking hardware's NOR-latch set-
 ///   once-per-scanline semantics; re-arming only at next scanline via

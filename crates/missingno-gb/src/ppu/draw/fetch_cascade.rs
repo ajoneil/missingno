@@ -110,9 +110,10 @@ impl FetchCascade {
     ///
     /// NYKA and PYGO are dffr — true edge-triggered DFFs that track both
     /// 0→1 and 1→0 transitions of their D inputs each ALET edge. POKY is
-    /// a NOR-latch (S=PYGO, R=mode3_n): set when PYGO=1, hold when both
-    /// inputs are 0 (= during Mode 3 with PYGO=0). Reset (R=1) outside
-    /// Mode 3 is handled by `reset()` at the scanline boundary.
+    /// a NOR-latch (S=PYGO, R=LOBY where LOBY=NOT(mode3)): set when
+    /// PYGO=1, hold when both inputs are 0 (= during Mode 3 with
+    /// PYGO=0). Reset (R=LOBY=1) fires outside Mode 3 — applied by
+    /// `Rendering::on_ppu_clock_rise` on the XYMU↑ edge via `reset()`.
     pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
         // NYKA dffr: captures LYRY on ALET rise.
         self.nyka = lyry;
@@ -132,7 +133,11 @@ impl FetchCascade {
         self.pory = self.nyka;
     }
 
-    /// Scanline reset: clear all DFFs.
+    /// Mode 3 exit reset: clear all four cascade DFFs. Called on XYMU↑
+    /// (the `mode3` net falling) — PYGO via `r_n=mode3`, POKY via
+    /// NOR-latch's R input from LOBY=NOT(mode3), NYKA/PORY indirectly
+    /// via the `nafy` net's outside-Mode-3 steady-state. Also called
+    /// defensively at scanline reset (LCD off→on, line boundary).
     pub(in crate::ppu) fn reset(&mut self) {
         self.nyka = false;
         self.pory = false;
