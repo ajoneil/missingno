@@ -40,14 +40,15 @@ fn fast_bit_mask(address: u16) -> u8 {
 /// resolution of NOT_IF1 driver bus-flux during a mid-M-cycle bit
 /// transition).
 ///
-/// STAT bit 2 (LYC=LY) transitions on TALU rising via ROPO; if the
-/// transition lands within the read M-cycle's bus-driver flux window
-/// (per spec §10.5.1 / §10.5.2), `cpu_port_d` shows the bit in `x`-state
-/// at `data_phase_n↑`, resolving to the lower-pull value (= 0).
-/// Conservatively: bit = snapshot AND live → 0 if either is 0.
+/// STAT bit 2 (LYC=LY, ROPO/TALU-driven) and STAT bits 0/1 (mode bits,
+/// SADU/XATY-driven via AVAP / BESU / WODU cascades) all route through
+/// `dmg_not_if1` cells. When the underlying cascade fires mid-read-
+/// M-cycle the bus carries the bit in `x`-state at `data_phase_n↑` and
+/// resolves to the lower-pull value: bit = snapshot AND live → 0 if
+/// either is 0.
 fn and_bit_mask(address: u16) -> u8 {
     match address {
-        0xFF41 => 0b0000_0100,
+        0xFF41 => 0b0000_0111,
         _ => 0,
     }
 }
