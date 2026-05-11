@@ -19,7 +19,7 @@ fn run_age_register_test(rom_file: &str) {
              WRAM dump (TEST_RESULTS lives in WRAM0; cross-reference against EXPECTED_TEST_RESULTS \
              in the test .inc source):{}",
             common::format_registers(cpu),
-            common::format_wram_dump(&run.gb, 0xC000, 0x100),
+            common::format_wram_dump(&run.gb, 0xC000, 0x800),
         );
     }
 }
