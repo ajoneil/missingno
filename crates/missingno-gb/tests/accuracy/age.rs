@@ -1,6 +1,6 @@
 use crate::common;
 
-fn run_age_fibonacci_test(rom_file: &str) {
+fn run_age_register_test(rom_file: &str) {
     let rom_path = format!("age-test-roms/{rom_file}");
     let mut run = common::load_rom(&rom_path);
     // AGE tests use LD B,B (0x40) as exit condition
@@ -11,11 +11,17 @@ fn run_age_fibonacci_test(rom_file: &str) {
     );
 
     let cpu = run.gb.cpu();
-    assert!(
-        common::check_mooneye_pass(cpu),
-        "AGE test {rom_file} failed. Registers: {}",
-        common::format_registers(cpu),
-    );
+    if !common::check_mooneye_pass(cpu) {
+        panic!(
+            "AGE test {rom_file} failed.\n\
+             Registers: {} (B=0 is the fail signal; C/D/E/H/L are residue from the shared \
+             \"TEST FAILED!\" display path).\n\
+             WRAM dump (TEST_RESULTS lives in WRAM0; cross-reference against EXPECTED_TEST_RESULTS \
+             in the test .inc source):{}",
+            common::format_registers(cpu),
+            common::format_wram_dump(&run.gb, 0xC000, 0x100),
+        );
+    }
 }
 
 fn run_age_screenshot_test(rom_file: &str, reference_file: &str) {
@@ -52,64 +58,64 @@ fn run_age_screenshot_test(rom_file: &str, reference_file: &str) {
 // halt/ — HALT instruction behavior
 #[test]
 fn ei_halt() {
-    run_age_fibonacci_test("ei-halt-dmgC-cgbBCE.gb");
+    run_age_register_test("ei-halt-dmgC-cgbBCE.gb");
 }
 
 #[test]
 fn halt_m0_interrupt() {
-    run_age_fibonacci_test("halt-m0-interrupt-dmgC-cgbBCE.gb");
+    run_age_register_test("halt-m0-interrupt-dmgC-cgbBCE.gb");
 }
 
 #[test]
 fn halt_prefetch() {
-    run_age_fibonacci_test("halt-prefetch-dmgC-cgbBCE.gb");
+    run_age_register_test("halt-prefetch-dmgC-cgbBCE.gb");
 }
 
 // ly/ — LY register timing
 #[test]
 fn ly() {
-    run_age_fibonacci_test("ly-dmgC-cgbBC.gb");
+    run_age_register_test("ly-dmgC-cgbBC.gb");
 }
 
 // oam/ — OAM access timing
 #[test]
 fn oam_read() {
-    run_age_fibonacci_test("oam-read-dmgC-cgbBC.gb");
+    run_age_register_test("oam-read-dmgC-cgbBC.gb");
 }
 
 #[test]
 fn oam_write() {
-    run_age_fibonacci_test("oam-write-dmgC.gb");
+    run_age_register_test("oam-write-dmgC.gb");
 }
 
 // stat-interrupt/ — STAT interrupt timing
 #[test]
 fn stat_int() {
-    run_age_fibonacci_test("stat-int-dmgC-cgbBCE.gb");
+    run_age_register_test("stat-int-dmgC-cgbBCE.gb");
 }
 
 // stat-mode/ — STAT mode transitions
 #[test]
 fn stat_mode() {
-    run_age_fibonacci_test("stat-mode-dmgC-cgbBC.gb");
+    run_age_register_test("stat-mode-dmgC-cgbBC.gb");
 }
 
 // stat-mode-sprites/ — STAT mode with sprites
 #[test]
 fn stat_mode_sprites() {
-    run_age_fibonacci_test("stat-mode-sprites-dmgC-cgbBCE.gb");
+    run_age_register_test("stat-mode-sprites-dmgC-cgbBCE.gb");
 }
 
 // stat-mode-window/ — STAT mode with window
 #[test]
 fn stat_mode_window() {
-    run_age_fibonacci_test("stat-mode-window-dmgC.gb");
+    run_age_register_test("stat-mode-window-dmgC.gb");
 }
 
 // vram/ — VRAM access timing
 #[test]
 fn vram_read() {
-    run_age_fibonacci_test("vram-read-dmgC.gb");
+    run_age_register_test("vram-read-dmgC.gb");
 }
 
 // m3-bg-bgp/ — BGP register changes during mode 3 (screenshot)

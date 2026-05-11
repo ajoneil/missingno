@@ -407,6 +407,23 @@ pub fn format_registers(cpu: &Cpu) -> String {
     )
 }
 
+pub fn format_wram_dump(gb: &GameBoy, start: u16, len: u16) -> String {
+    let mut out = String::new();
+    let mut offset: u16 = 0;
+    while offset < len {
+        let row_addr = start.wrapping_add(offset);
+        out.push_str(&format!("\n  ${row_addr:04X}:"));
+        for i in 0..16 {
+            if offset + i >= len {
+                break;
+            }
+            out.push_str(&format!(" {:02X}", gb.read(row_addr.wrapping_add(i))));
+        }
+        offset = offset.wrapping_add(16);
+    }
+    out
+}
+
 /// Convert a Screen to a flat greyscale pixel buffer using dmg-acid2 reference palette:
 /// PaletteIndex 0 → 0xFF, 1 → 0xAA, 2 → 0x55, 3 → 0x00
 pub fn screen_to_greyscale(screen: &Screen) -> Vec<u8> {
