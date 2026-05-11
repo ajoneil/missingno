@@ -115,16 +115,30 @@ impl TileFetcher {
 
     /// BG tilemap coordinate computation.
     /// Applies SCX/SCY scroll offsets and wraps at 32-tile boundaries.
+    ///
+    /// The +1 on PX models the within-counter=0 SACU advance: the BG fetch
+    /// counter=0 stage spans one full LEBO period, and when ROXY is released
+    /// one SACU rising edge fires inside that period before the combinational
+    /// tilemap-address adder is sampled. While ROXY gates SACU (fine-scroll
+    /// discard at Mode-3 startup), the within-stage advance does not happen
+    /// and the +1 is suppressed via `sacu_active`. SCX is read at the same
+    /// edge regardless, leaving the SCX-adder propagation delay implicit.
     fn bg_tilemap_coords(
         &self,
         pixel_counter: u8,
+        sacu_active: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> (u8, u8) {
         let scx = regs.background_viewport.x.output();
         let scy = regs.background_viewport.y.output();
+        let effective_pix = if sacu_active {
+            pixel_counter.wrapping_add(1)
+        } else {
+            pixel_counter
+        };
         (
-            ((pixel_counter.wrapping_add(scx)) >> 3) & 31,
+            ((effective_pix.wrapping_add(scx)) >> 3) & 31,
             (video.ly().wrapping_add(scy) / 8) & 31,
         )
     }
@@ -143,6 +157,7 @@ impl TileFetcher {
     fn tile_index_address(
         &self,
         pixel_counter: u8,
+        sacu_active: bool,
         window_line_counter: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -150,7 +165,7 @@ impl TileFetcher {
         let (map_x, map_y) = if self.fetching_window {
             self.window_tilemap_coords(window_line_counter)
         } else {
-            self.bg_tilemap_coords(pixel_counter, regs, video)
+            self.bg_tilemap_coords(pixel_counter, sacu_active, regs, video)
         };
         let map_id = if self.fetching_window {
             regs.control.window_tile_map()
@@ -205,6 +220,7 @@ impl TileFetcher {
     pub(in crate::ppu) fn advance_falling(
         &mut self,
         pixel_counter: u8,
+        sacu_active: bool,
         window_line_counter: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -219,8 +235,13 @@ impl TileFetcher {
         match self.fetch_counter {
             0 => {
                 // Tilemap VRAM read.
-                self.vram_address =
-                    self.tile_index_address(pixel_counter, window_line_counter, regs, video);
+                self.vram_address = self.tile_index_address(
+                    pixel_counter,
+                    sacu_active,
+                    window_line_counter,
+                    regs,
+                    video,
+                );
                 self.tile_index = vram.read_byte(self.vram_address);
             }
             2 => {

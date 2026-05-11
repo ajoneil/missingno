@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
+    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -661,6 +661,7 @@ impl Rendering {
         // gate here.
         self.fetcher.advance_falling(
             self.pixel_counter.value(),
+            self.fine_scroll.pixel_clock_active(),
             self.window.window_line_counter(),
             regs,
             video,
