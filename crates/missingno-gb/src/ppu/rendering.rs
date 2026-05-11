@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
+    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -439,12 +439,15 @@ impl Rendering {
             return None;
         }
 
-        // Capture XYMU before capture_voga() may clear it via VOGA/WEGO.
+        // Capture XYMU before tick_voga_on_rise() may clear it via VOGA/WEGO.
         let was_rendering = self.hblank.rendering_active();
 
-        // Hblank pipeline: VOGA captures WODU on PPU clock rise (ALET rising).
-        // WEGO clears XYMU. This is the primary Mode 3→0 path.
-        let wodu = self.hblank.capture_voga(self.pixel_counter.terminal());
+        // Hblank pipeline: WODU was sampled on the prior fall (after
+        // PixelCounter::advance); VOGA.q captures here on ALET rising
+        // and WEGO clears XYMU combinationally. `wodu` reports whether
+        // VOGA just committed from pending — used by the LCD to push
+        // screen_x=159 once per scanline.
+        let wodu = self.hblank.tick_voga_on_rise();
 
         // WODU rise push emits screen_x=159 — captures the post-fall-shift
         // shifter MSB at the WODU dot (the bg shifter has already shifted,
@@ -889,6 +892,16 @@ impl Rendering {
             if sacu {
                 self.pixel_counter.advance();
             }
+
+            // WODU↑ is sampled on this fall — combinational on the
+            // post-advance XANO (pixel_counter.terminal()) and the
+            // rise-latched FEPO. The pend-and-tick split (mirrored
+            // from pend_begin_rendering/tick_pending_begin_rendering)
+            // captures VOGA.q on the next rise, restoring the ~0.479-dot
+            // WODU→VOGA DFF capture delay per spec §7.2.
+            self.hblank
+                .evaluate_wodu_on_fall(self.pixel_counter.terminal());
+
             let (_toba, pix) =
                 self.lcd
                     .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());

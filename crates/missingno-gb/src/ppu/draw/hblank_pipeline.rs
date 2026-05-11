@@ -42,6 +42,14 @@ pub(in crate::ppu) struct HblankPipeline {
     /// Only clocked element in the Mode 3→0 chain. Feeds WEGO
     /// combinationally. Reset by TADY (line reset chain).
     voga: bool,
+    /// VOGA's pending input: set on the master-clock fall when WODU
+    /// first rises (sub-dot 2.515 of the LDH M-cycle for sprite-class
+    /// scanlines, per spec §10.5.4). Committed to `voga` on the next
+    /// master-clock rise (= next ALET rising, sub-dot ≈ 3.0) by
+    /// `tick_voga_on_rise`, modelling the ~0.479-dot WODU→VOGA.q DFF
+    /// capture delay. Replaces the prior model that collapsed WODU
+    /// sample + VOGA capture + WEGO + XYMU clear onto a single rise.
+    voga_pending: bool,
     /// Sprite X priority aggregate, latched at start of falling phase.
     /// FEPO = OR2(FOVE, FEFY).
     ///
@@ -66,6 +74,7 @@ impl HblankPipeline {
         Self {
             rendering_active: false,
             voga: false,
+            voga_pending: false,
             fepo: false,
             pending_begin_rendering: false,
         }
@@ -80,6 +89,7 @@ impl HblankPipeline {
         Self {
             rendering_active: false,
             voga: true,
+            voga_pending: false,
             fepo: false,
             pending_begin_rendering: false,
         }
@@ -120,30 +130,49 @@ impl HblankPipeline {
         self.voga
     }
 
-    /// VOGA (DFF17) captures WODU on PPU clock rise (ALET rising).
-    /// WEGO = OR2(TOFU, VOGA) then fires combinationally; XYMU's
-    /// NOR-latch async-sets, clearing rendering_active within the same
-    /// master-clock edge — matching the chain's hardware structure
-    /// where only VOGA is clocked, WEGO and XYMU's set path being
-    /// combinational.
+    /// Evaluate WODU on the master-clock fall and pend VOGA when WODU
+    /// first rises. Called from `Rendering::on_ppu_clock_fall` after
+    /// `PixelCounter::advance` updates XANO. WODU↑ in hardware is at
+    /// sub-dot 2.515 of the LDH M-cycle for sprite-class scanlines
+    /// (§10.5.4); ALET rising at sub-dot ≈ 3.0 then captures VOGA.q.
+    /// In emulator edges that maps to: WODU↑ on fall of dot 2, VOGA.q↑
+    /// on rise of dot 3.
     ///
-    /// Returns wodu_current (live combinational value for STAT, LCD last_pixel).
-    pub(in crate::ppu) fn capture_voga(&mut self, xano: bool) -> bool {
-        // WODU is purely combinational — no XYMU dependency, so always valid.
+    /// `voga_pending` is set on the first WODU rise per scanline only —
+    /// once VOGA.q is set (or already pending), further fall-side WODU
+    /// observations during HBlank are no-ops (WODU stays high during
+    /// HBlank but VOGA is already captured).
+    ///
+    /// Returns the combinational WODU value at this fall edge.
+    pub(in crate::ppu) fn evaluate_wodu_on_fall(&mut self, xano: bool) -> bool {
         let wodu_now = self.wodu(xano);
-
-        // VOGA DFF captures CURRENT dot's WODU on this ALET rising edge.
-        if wodu_now {
-            self.voga = true;
+        if wodu_now && !self.voga && !self.voga_pending {
+            self.voga_pending = true;
         }
+        wodu_now
+    }
 
-        // WEGO fires combinationally from VOGA; XYMU NOR-latch
-        // async-sets, clearing the rendering latch.
+    /// Commit any pending VOGA capture on the master-clock rise and fire
+    /// the WEGO → XYMU.q clear cascade. Called from
+    /// `Rendering::on_ppu_clock_rise`. The pending flag is set by the
+    /// prior fall's `evaluate_wodu_on_fall`; ticking it here on the
+    /// next rise reproduces the ~0.479-dot WODU↑ → VOGA.q↑ DFF capture
+    /// delay (§7.2). WEGO fires combinationally from VOGA; XYMU's
+    /// NOR-latch async-sets, clearing rendering_active on the same edge.
+    ///
+    /// Returns `true` iff VOGA.q just committed from pending on this
+    /// rise — used by the LCD to push screen_x=159 (post-fall-shift
+    /// shifter MSB) once per scanline.
+    pub(in crate::ppu) fn tick_voga_on_rise(&mut self) -> bool {
+        let was_pending = self.voga_pending;
+        if self.voga_pending {
+            self.voga = true;
+            self.voga_pending = false;
+        }
         if self.wego() {
             self.rendering_active = false;
         }
-
-        wodu_now
+        was_pending
     }
 
     /// Latch FEPO for the next dot's wodu() evaluation. Called in
@@ -186,6 +215,7 @@ impl HblankPipeline {
     pub(in crate::ppu) fn reset(&mut self) {
         self.rendering_active = false;
         self.voga = false;
+        self.voga_pending = false;
         self.fepo = false;
     }
 }
