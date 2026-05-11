@@ -1,6 +1,6 @@
 // --- Background tile fetcher ---
 
-use crate::ppu::{memory::Vram, PipelineRegisters, VideoControl};
+use crate::ppu::{PipelineRegisters, VideoControl, memory::Vram};
 
 use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
@@ -23,7 +23,12 @@ pub(in crate::ppu) struct TileFetcher {
     tile_data_low: u8,
     /// Cached high byte of tile row from GetTileDataHigh step.
     tile_data_high: u8,
-    /// Whether we're fetching from the window tilemap.
+    /// Whether the in-flight fetch cycle is reading from the window
+    /// tilemap. Resampled from PYNU at counter=0 and held for the rest
+    /// of the cycle so `tile_index_address`, `tile_data_address`, and
+    /// the `load_into` window_tile_x increment all see the cycle-start
+    /// selection. Mirrors hardware AMUV/VEVY tri-state arbitration
+    /// reading PYNU live at the BAFY/WUKO arming stage.
     pub(in crate::ppu) fetching_window: bool,
     /// Last VRAM address used by the fetcher. Set at T2 when the address
     /// is computed and VRAM is read. Retained for debugger visibility.
@@ -222,6 +227,7 @@ impl TileFetcher {
         pixel_counter: u8,
         sacu_active: bool,
         window_line_counter: u8,
+        window_mode_active: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
         vram: &Vram,
@@ -234,6 +240,11 @@ impl TileFetcher {
         // contribution to the VRAM address (hardware enables deassert).
         match self.fetch_counter {
             0 => {
+                // BAFY/WUKO arming: latch the live window-mode (PYNU)
+                // for the cycle. Held through counter=1..5 so tile-data
+                // reads and the load_into window_tile_x increment see
+                // the cycle-start selection.
+                self.fetching_window = window_mode_active;
                 // Tilemap VRAM read.
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
@@ -288,9 +299,11 @@ impl TileFetcher {
     /// Reset the fetcher for a window trigger. NYXU fires: counter resets
     /// to 0. Unlike AVAP, this runs AFTER advance_rising on the same dot,
     /// so the next dot's advance_rising proceeds normally (0→1).
+    /// `fetching_window` is left to be resampled by the immediately-
+    /// following `advance_falling(counter=0)` on the MOSU↑ dot, where
+    /// PYNU is high.
     pub(in crate::ppu) fn reset_for_window(&mut self) {
         self.fetch_counter = 0;
         self.window_tile_x = 0;
-        self.fetching_window = true;
     }
 }

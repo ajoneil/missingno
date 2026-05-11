@@ -675,6 +675,7 @@ impl Rendering {
             self.pixel_counter.value(),
             self.fine_scroll.pixel_clock_active(),
             self.window.window_line_counter(),
+            self.window.wx_triggered(),
             regs,
             video,
             vram,
