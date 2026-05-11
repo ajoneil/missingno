@@ -306,6 +306,7 @@ impl GameBoy {
                 address,
                 applied: false,
                 locked_at_snapshot: None,
+                locked_at_mid: None,
             });
         }
 
@@ -447,6 +448,31 @@ impl GameBoy {
         // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary);
 
+        // Mid-CUPA sample for the staged OAM/VRAM write (spec §10.5.6
+        // AJUJ-glitch window). On hardware, the CPU's CUPA strobe is
+        // high throughout dots 2-3 of the write M-cycle; if AJUJ is
+        // briefly high at ANY edge during that window, the per-byte
+        // strobe asserts and the write lands. The discretized model
+        // samples lock state at 3 edges (snapshot at rise of dot 2,
+        // mid at fall of dot 2 just after AVAP processing, commit at
+        // fall of dot 3) and blocks only if locked at ALL three. AVAP
+        // detection fires inside `on_master_clock_fall` above; the
+        // begin_rendering deferral to next rise (hblank_pipeline.rs)
+        // makes `mode2=0 AND mode3=0` observable at this exact edge.
+        if dot.as_u8() == 2
+            && let Some(staged) = self.staged_bus_write.as_ref()
+            && staged.applied
+            && staged.locked_at_mid.is_none()
+        {
+            let address = staged.address;
+            let locked_at_mid = match address {
+                0xFE00..=0xFE9F => Some(self.ppu.oam_write_locked()),
+                0x8000..=0x9FFF => Some(self.ppu.vram_write_locked()),
+                _ => None,
+            };
+            self.staged_bus_write.as_mut().unwrap().locked_at_mid = locked_at_mid;
+        }
+
         // CPU data latch: at data_phase_n↑ (~end of M-cycle, dot 3.995),
         // the SM83 captures cpu_port_d into its internal data register.
         // The bus value was set at dot 2 (above) when the peripheral's
@@ -487,11 +513,17 @@ impl GameBoy {
                 // no-op. Memory commits here at fall() of dot 3 (CUPA-
                 // falling / M-cycle boundary equivalent), reading the
                 // CPU-driven value from cpu_bus.data.
-                let locked_at_snapshot = self
+                let (locked_at_snapshot, locked_at_mid) = self
                     .staged_bus_write
                     .as_ref()
-                    .and_then(|s| s.locked_at_snapshot);
-                self.write_byte_with_snapshot_lock(address, self.cpu_bus.data, locked_at_snapshot);
+                    .map(|s| (s.locked_at_snapshot, s.locked_at_mid))
+                    .unwrap_or((None, None));
+                self.write_byte_with_cupa_lock(
+                    address,
+                    self.cpu_bus.data,
+                    locked_at_snapshot,
+                    locked_at_mid,
+                );
             }
         }
 

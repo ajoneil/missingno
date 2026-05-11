@@ -52,6 +52,13 @@ pub(in crate::ppu) struct HblankPipeline {
     /// recomputes the combinational match; `latch_fepo()` captures
     /// it for the next dot's `wodu()`.
     fepo: bool,
+    /// XYMU set (mode3↑) deferred by one emulator edge after AVAP-fall.
+    /// Models the AJUJ-glitch window (spec §10.5.6): mode2 falls at AVAP-fall
+    /// (BESU clear), mode3 rises at the next master-clock rise via
+    /// `tick_pending_begin_rendering`. Between the two edges, mode2=0 AND
+    /// mode3=0 → the OAM-write enable AJUJ is briefly high, allowing OAM
+    /// writes whose CUPA strobe straddles the AVAP boundary to land.
+    pending_begin_rendering: bool,
 }
 
 impl HblankPipeline {
@@ -60,6 +67,7 @@ impl HblankPipeline {
             rendering_active: false,
             voga: false,
             fepo: false,
+            pending_begin_rendering: false,
         }
     }
 
@@ -73,6 +81,7 @@ impl HblankPipeline {
             rendering_active: false,
             voga: true,
             fepo: false,
+            pending_begin_rendering: false,
         }
     }
 
@@ -143,9 +152,26 @@ impl HblankPipeline {
         self.fepo = fepo;
     }
 
-    /// AVAP: Mode 2→3 transition. Sets the rendering-mode latch (XYMU set).
-    pub(in crate::ppu) fn begin_rendering(&mut self) {
-        self.rendering_active = true;
+    /// AVAP: Mode 2→3 transition. Marks XYMU.q clear (mode3↑) as pending —
+    /// it fires on the next master-clock rise via
+    /// `tick_pending_begin_rendering`. Models the §10.5.6 AJUJ-glitch window:
+    /// BESU.q clears at AVAP-fall (mode2↓), but mode3 net↑ is buffered to
+    /// +2,655 ps after AVAP↑ in hardware. In the emulator's half-dot edge
+    /// granularity, the deferral places mode3↑ on the next rise so the
+    /// discretized window `mode2=0 AND mode3=0` is representable — the
+    /// 2,100 ps AJUJ-high gap that gates OAM-write strobes during a
+    /// Mode 2→3 straddle.
+    pub(in crate::ppu) fn pend_begin_rendering(&mut self) {
+        self.pending_begin_rendering = true;
+    }
+
+    /// Fire any pending begin_rendering at this master-clock rise. Mirrors
+    /// hardware's mode3 net↑ at +2,655 ps after AVAP↑.
+    pub(in crate::ppu) fn tick_pending_begin_rendering(&mut self) {
+        if self.pending_begin_rendering {
+            self.rendering_active = true;
+            self.pending_begin_rendering = false;
+        }
     }
 
     /// Rendering-mode latch (XYMU). True during Mode 3.

@@ -47,11 +47,21 @@ struct StagedBusWrite {
     address: u16,
     /// Whether the bus has been driven for this write.
     applied: bool,
-    /// OAM/VRAM lock state captured at CUPA-rising (dot 2). Combined
-    /// with the commit-time lock state via AND at write commit, modelling
-    /// the M-cycle-quantized lock per spec §4.9: block only if locked
-    /// across the entire CUPA strobe window. None = non-OAM/VRAM address.
+    /// OAM/VRAM lock state at CUPA-rising (rise of dot 2 of the write
+    /// M-cycle). Captured separately from the mid-CUPA and commit
+    /// samples below — the three samples model the AJUJ-high window
+    /// (spec §10.5.6): a write lands if AJUJ is high at ANY edge during
+    /// the CUPA strobe, so block iff locked at ALL three samples.
+    /// None = non-OAM/VRAM address.
     locked_at_snapshot: Option<bool>,
+    /// OAM/VRAM lock state at the mid-CUPA edge (fall of dot 2 of the
+    /// write M-cycle). Catches the AJUJ-glitch window when AVAP fires
+    /// this fall: BESU clears immediately (mode2↓), begin_rendering
+    /// defers to the next rise (mode3↑), so this sample sees
+    /// `mode2=0 AND mode3=0` → unlocked. The write then lands at the
+    /// straddle even though both snap and commit see locked state.
+    /// None = non-OAM/VRAM address.
+    locked_at_mid: Option<bool>,
 }
 
 /// A CPU bus read staged at the M-cycle boundary, applied at dot 2
@@ -177,11 +187,14 @@ impl GameBoy {
             address,
             applied: false,
         });
-        let staged_bus_write = cpu.pending_bus_write().map(|(address, _value)| StagedBusWrite {
-            address,
-            applied: false,
-            locked_at_snapshot: None,
-        });
+        let staged_bus_write = cpu
+            .pending_bus_write()
+            .map(|(address, _value)| StagedBusWrite {
+                address,
+                applied: false,
+                locked_at_snapshot: None,
+                locked_at_mid: None,
+            });
 
         let mut gb = GameBoy {
             cpu,
@@ -277,14 +290,12 @@ impl GameBoy {
                     address,
                     applied: false,
                     locked_at_snapshot: None,
+                    locked_at_mid: None,
                 });
-        self.staged_bus_read = self
-            .cpu
-            .pending_bus_read()
-            .map(|address| StagedBusRead {
-                address,
-                applied: false,
-            });
+        self.staged_bus_read = self.cpu.pending_bus_read().map(|address| StagedBusRead {
+            address,
+            applied: false,
+        });
         self.cpu_bus = CpuBus::new();
     }
 

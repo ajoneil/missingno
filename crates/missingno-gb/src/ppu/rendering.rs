@@ -3,9 +3,9 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 use core::fmt;
 
 use crate::ppu::{
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
-    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -427,6 +427,13 @@ impl Rendering {
         // captures on alet falling, opposite edge to alet-clocked
         // DFFs (NYKA, DOBA).
 
+        // §10.5.6 AJUJ-glitch window: mode3↑ (XYMU.q clear) fires one
+        // emulator edge after AVAP-fall. This rise discharges any
+        // pending begin_rendering set on the prior AVAP-fall, mirroring
+        // hardware's +2,655 ps mode3 net↑ propagation delay relative
+        // to BESU.q↓ at +559 ps.
+        self.hblank.tick_pending_begin_rendering();
+
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
             return None;
@@ -517,7 +524,12 @@ impl Rendering {
         // aligns with hardware's AVAP-rising edge.
         let scan = self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
         if scan.avap {
-            self.hblank.begin_rendering();
+            // mode3↑ deferred to next master-clock rise per spec §10.5.6
+            // (AJUJ-glitch window: BESU.q↓ at +559 ps, mode3 net↑ at
+            // +2,655 ps after AVAP↑; the 2,100 ps gap is the OAM-write
+            // permit window). The fetcher/window init are not lock-
+            // decision-affecting and stay on the AVAP-fall edge.
+            self.hblank.pend_begin_rendering();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
             self.fetcher.load_into(&mut self.bg_shifter);
         }
