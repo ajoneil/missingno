@@ -432,6 +432,25 @@ impl GameBoy {
         self.read_mapped(MappedAddress::map(address))
     }
 
+    /// Read a byte applying DMA bus conflicts but bypassing the PPU
+    /// OAM/VRAM lock. Used by the CPU read snapshot at dot 2 — the
+    /// lock decision is deferred to the BUKE commit edge to model
+    /// hardware's `data_phase_n↑` latch timing (spec §4.6 + §13.6).
+    pub fn read_skip_ppu_lock(&self, address: u16) -> u8 {
+        if let Some(bus) = self.dma.is_active_on_bus() {
+            if (0xFE00..=0xFE9F).contains(&address) {
+                return 0xFF;
+            }
+            if Bus::of(address) == Some(bus) {
+                return match bus {
+                    Bus::External => self.external.latch(),
+                    Bus::Vram => self.vram_bus.latch(),
+                };
+            }
+        }
+        self.read_mapped(MappedAddress::map(address))
+    }
+
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {

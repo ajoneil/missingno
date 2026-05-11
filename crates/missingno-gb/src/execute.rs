@@ -468,22 +468,22 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // Apply staged bus read at dot 2, BEFORE on_master_clock_fall.
-        // Hardware: tobe↑/wafu↑ at dot 2.005 enables the tri-state
-        // driver; the bus settles to the addressed peripheral's
-        // current state by dot 2.085, before any dot-2 master-clock-
-        // falling-edge transitions (AVAP↑, BESU.q↑, etc.) perturb
-        // the source. Capturing here matches the bus-driver-stable
-        // window — the value-only `read()` is side-effect-free; bus
-        // latch drives and trace recording happen at the BUKE dot
-        // below (preserves the side-effect timing the pre-split
-        // `cpu_read` had).
+        // Apply staged bus read at dot 2. Hardware: tobe↑/wafu↑ at
+        // dot 2.005 enables the tri-state driver; the addressed
+        // peripheral starts driving the bus. The bus is then driven
+        // combinationally through to data_phase_n↑ at dot 3.995, when
+        // the CPU latches (spec §4.6, §13.6). The OAM/VRAM lock-signal
+        // state at the LATCH edge is what determines whether the bus
+        // floats high — that decision is deferred to the BUKE commit
+        // block below. Here we capture the address's underlying byte
+        // (bypassing the PPU OAM/VRAM lock guard); DMA bus redirection
+        // applies at this edge.
         if dot.as_u8() == 2
             && let Some(staged) = self.staged_bus_read.as_ref()
             && !staged.applied
         {
             let address = staged.address;
-            self.cpu_bus.data = self.read(address);
+            self.cpu_bus.data = self.read_skip_ppu_lock(address);
             self.staged_bus_read.as_mut().unwrap().applied = true;
         }
 
@@ -513,6 +513,18 @@ impl GameBoy {
                 // Live bits, snapshot bits, AND'd bits (for bus-flux x-window).
                 let other_mask = !(mask | and_mask);
                 (snapshot & other_mask) | (live & mask) | (snapshot & live & and_mask)
+            };
+            // OAM/VRAM lock: hardware latches at data_phase_n↑ (dot
+            // 3.995); the bus floats high if the lock-signal source
+            // (XYMU for VRAM, BESU/XYMU/catu_pending for OAM) is
+            // asserted at that edge. Evaluate live here rather than
+            // at the dot-2 snapshot so mid-M-cycle mode transitions
+            // are captured. DMA-active OAM reads already returned
+            // 0xFF in read_skip_ppu_lock at dot 2.
+            let assembled = match address {
+                0xFE00..=0xFE9F if self.ppu.oam_locked() => 0xFF,
+                0x8000..=0x9FFF if self.ppu.vram_locked() => 0xFF,
+                _ => assembled,
             };
             self.last_read_value = assembled;
             self.commit_bus_read(address, assembled);
