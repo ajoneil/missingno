@@ -50,16 +50,6 @@ pub(in crate::ppu) struct HblankPipeline {
     /// capture delay. Replaces the prior model that collapsed WODU
     /// sample + VOGA capture + WEGO + XYMU clear onto a single rise.
     voga_pending: bool,
-    /// Sprite X priority aggregate, latched at start of falling phase.
-    /// FEPO = OR2(FOVE, FEFY).
-    ///
-    /// Collapses the 16-cell SACU-clocked DFFSR chain that carries
-    /// per-sprite match state through the pixel pipe on hardware:
-    /// the chain's sole consumer-visible effect is a 1-dot FEPO→WODU
-    /// delay, modelled here by a single latch — `Rendering::fepo()`
-    /// recomputes the combinational match; `latch_fepo()` captures
-    /// it for the next dot's `wodu()`.
-    fepo: bool,
     /// XYMU set (mode3↑) deferred by one emulator edge after AVAP-fall.
     /// Models the AJUJ-glitch window (spec §10.5.6): mode2 falls at AVAP-fall
     /// (BESU clear), mode3 rises at the next master-clock rise via
@@ -75,7 +65,6 @@ impl HblankPipeline {
             rendering_active: false,
             voga: false,
             voga_pending: false,
-            fepo: false,
             pending_begin_rendering: false,
         }
     }
@@ -84,39 +73,29 @@ impl HblankPipeline {
     /// from the prior scanline's Mode 3 WODU capture — it is a `dffr`
     /// only reset by TADY, which next fires at LX=113 (15 M-cycles after
     /// handoff). All other latches are at their power-on defaults
-    /// (XYMU cleared, FEPO=0 with the sprite store empty).
+    /// (XYMU cleared; FEPO is combinational on the sprite store, which
+    /// is empty at handoff).
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             rendering_active: false,
             voga: true,
             voga_pending: false,
-            fepo: false,
             pending_begin_rendering: false,
         }
     }
 
-    /// WODU: combinational hblank gate. Hardware chain:
+    /// WODU: combinational hblank gate. Hardware chain (spec §8.2):
     ///
     ///   WODU = AND2(XENA, XANO)
     ///   XENA = NOT(FEPO)   — "no sprite match"
     ///   XANO = NOT(XUGU)   — "PX at terminal count 167"
     ///   XUGU = NAND5(SYBE, SAVY, TUKY, XEHO, XODU)  — PX=167 decode
     ///
-    /// Collapsed cascade: `FEPO, XUGU → XENA, XANO → WODU`.
-    ///
-    /// The emulator collapses the XENA and XANO inverters into their
-    /// consumers. `!self.fepo` is the XENA term (inverted inline from
-    /// the `fepo` field rather than storing XENA separately). The
-    /// `xano` parameter is `PixelCounter::terminal()`'s
-    /// positive-at-PX=167 output — which matches XANO's polarity
-    /// (NOT of netlist XUGU's active-low NAND5).
-    ///
-    /// So `xano && !self.fepo` = XANO AND XENA = WODU, matching the
-    /// AND2(XENA, XANO) netlist definition. WODU is purely
-    /// combinational on hardware — it does not depend on XYMU. TARU
-    /// (STAT mode 0) reads WODU directly.
-    pub(in crate::ppu) fn wodu(&self, xano: bool) -> bool {
-        xano && !self.fepo
+    /// Zero registered cells between FEPO and WODU on hardware — caller
+    /// passes the combinational FEPO value computed from the current
+    /// pixel_counter and scan store.
+    pub(in crate::ppu) fn wodu(xano: bool, fepo: bool) -> bool {
+        xano && !fepo
     }
 
     /// WEGO: OR2(TOFU, VOGA). Combinational — no clock. Drives XYMU's
@@ -143,9 +122,15 @@ impl HblankPipeline {
     /// observations during HBlank are no-ops (WODU stays high during
     /// HBlank but VOGA is already captured).
     ///
+    /// `fepo` is the combinational sprite-match aggregate at this fall
+    /// edge, computed by the caller from the current scan store and
+    /// pixel_counter. Hardware FEPO→WODU is purely combinational
+    /// (spec §8.2), so the value passed here must reflect the post-
+    /// advance pixel_counter — not a value latched from a prior dot.
+    ///
     /// Returns the combinational WODU value at this fall edge.
-    pub(in crate::ppu) fn evaluate_wodu_on_fall(&mut self, xano: bool) -> bool {
-        let wodu_now = self.wodu(xano);
+    pub(in crate::ppu) fn evaluate_wodu_on_fall(&mut self, xano: bool, fepo: bool) -> bool {
+        let wodu_now = Self::wodu(xano, fepo);
         if wodu_now && !self.voga && !self.voga_pending {
             self.voga_pending = true;
         }
@@ -173,12 +158,6 @@ impl HblankPipeline {
             self.rendering_active = false;
         }
         was_pending
-    }
-
-    /// Latch FEPO for the next dot's wodu() evaluation. Called in
-    /// mode3_falling after FEPO is evaluated but before it changes.
-    pub(in crate::ppu) fn latch_fepo(&mut self, fepo: bool) {
-        self.fepo = fepo;
     }
 
     /// AVAP: Mode 2→3 transition. Marks XYMU.q clear (mode3↑) as pending —
@@ -216,6 +195,5 @@ impl HblankPipeline {
         self.rendering_active = false;
         self.voga = false;
         self.voga_pending = false;
-        self.fepo = false;
     }
 }

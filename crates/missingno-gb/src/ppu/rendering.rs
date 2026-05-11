@@ -244,8 +244,8 @@ impl Rendering {
     /// depend on XYMU. During HBlank, WODU stays high (PX frozen
     /// at 167, FEPO=0), which is correct for CLKPIPE freeze and
     /// STAT mode readback.
-    pub(super) fn wodu(&self) -> bool {
-        self.hblank.wodu(self.pixel_counter.terminal())
+    pub(super) fn wodu(&self, sprites_enabled: bool) -> bool {
+        HblankPipeline::wodu(self.pixel_counter.terminal(), self.fepo(sprites_enabled))
     }
 
     /// Whether this is the LCD-enable first line (no prior scanline boundary).
@@ -659,8 +659,11 @@ impl Rendering {
         vram: &Vram,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
-        // (TYFA suppression) and is latched into hblank for next dot's wodu().
-        let mut fepo = self.fepo(regs);
+        // (TYFA suppression), TEKY (sprite-fetch trigger), and TYFA.
+        // Hardware FEPO→WODU is purely combinational (spec §8.2) — the
+        // post-pc.advance fall-side re-evaluation in mode3_pixel_pipeline
+        // feeds WODU directly, so no latch is needed for wodu().
+        let mut fepo = self.fepo(regs.control.sprites_enabled());
 
         // LYRY: combinational on fetch_counter (>= 5). The counter only
         // increments on rising (LEBO clock), so the value here reflects
@@ -705,7 +708,7 @@ impl Rendering {
                         // combinational — TYFA sees the updated value
                         // immediately, allowing CLKPIPE to resume on the
                         // next rising edge.
-                        fepo = self.fepo(regs);
+                        fepo = self.fepo(regs.control.sprites_enabled());
                     }
                 }
                 SpriteState::Idle => {}
@@ -723,9 +726,6 @@ impl Rendering {
             // Find and mark the matching sprite entry, start the fetch.
             self.start_sprite_fetch(regs);
         }
-
-        // Latch FEPO for next dot's wodu() evaluation.
-        self.hblank.latch_fepo(fepo);
 
         // TYFA = AND3(SOCY, POKY, VYBO). Snapshotted on master-clock
         // rise and consumed in mode3_pixel_pipeline on master-clock
@@ -895,12 +895,13 @@ impl Rendering {
 
             // WODU↑ is sampled on this fall — combinational on the
             // post-advance XANO (pixel_counter.terminal()) and the
-            // rise-latched FEPO. The pend-and-tick split (mirrored
-            // from pend_begin_rendering/tick_pending_begin_rendering)
-            // captures VOGA.q on the next rise, restoring the ~0.479-dot
-            // WODU→VOGA DFF capture delay per spec §7.2.
+            // post-advance FEPO (re-evaluated against the updated
+            // pixel_counter so OAM-X=167 sprites are visible to WODU on
+            // the same edge XANO becomes true, per spec §8.2's
+            // FEPO→WODU combinational path).
+            let wodu_fepo = self.fepo(regs.control.sprites_enabled());
             self.hblank
-                .evaluate_wodu_on_fall(self.pixel_counter.terminal());
+                .evaluate_wodu_on_fall(self.pixel_counter.terminal(), wodu_fepo);
 
             let (_toba, pix) =
                 self.lcd
@@ -937,8 +938,8 @@ impl Rendering {
     /// Feeds VYBO (CLKPIPE freeze), XENA (WODU hblank gate), TEKY
     /// (sprite-fetch trigger). Pixel-MUX XYLO counterpart:
     /// `draw::pixel_output::resolve_pixel`.
-    fn fepo(&self, regs: &PipelineRegisters) -> bool {
-        if !regs.control.sprites_enabled() {
+    fn fepo(&self, sprites_enabled: bool) -> bool {
+        if !sprites_enabled {
             return false; // AROR = AND(XYLO, AZEM). XYLO=0 forces AROR=0 → FEPO=0.
         }
 

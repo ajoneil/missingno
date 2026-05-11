@@ -517,9 +517,10 @@ impl Ppu {
     }
 
     pub fn wodu(&self) -> bool {
+        let sprites_enabled = self.control().sprites_enabled();
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.wodu())
+            .map(|r| r.wodu(sprites_enabled))
             .unwrap_or(false)
     }
 
@@ -550,7 +551,10 @@ impl Ppu {
         let vblank_line_144 = popu && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
-        (enables.contains(InterruptFlags::HORIZONTAL_BLANK) && !popu && rendering.wodu())
+        let sprites_enabled = self.registers.control.sprites_enabled();
+        (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
+            && !popu
+            && rendering.wodu(sprites_enabled))
             || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
             || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
             || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
