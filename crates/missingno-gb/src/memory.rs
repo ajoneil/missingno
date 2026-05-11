@@ -432,11 +432,13 @@ impl GameBoy {
         self.read_mapped(MappedAddress::map(address))
     }
 
-    /// Read a byte applying DMA bus conflicts but bypassing the PPU
-    /// OAM/VRAM lock. Used by the CPU read snapshot at dot 2 — the
-    /// lock decision is deferred to the BUKE commit edge to model
-    /// hardware's `data_phase_n↑` latch timing (spec §4.6 + §13.6).
-    pub fn read_skip_ppu_lock(&self, address: u16) -> u8 {
+    /// Value the addressed peripheral first drives onto the CPU bus
+    /// at the driver-enable edge (`tobe↑` / `wafu↑` at dot 2.005 of
+    /// the read M-cycle, per spec §4.6). DMA bus redirection happens
+    /// at this edge (bus-level routing); the OAM/VRAM lock is a
+    /// property of the driver's state at the LATCH edge and is
+    /// resolved in `bus_value_at_latch` below.
+    pub fn bus_value_at_drive_enable(&self, address: u16) -> u8 {
         if let Some(bus) = self.dma.is_active_on_bus() {
             if (0xFE00..=0xFE9F).contains(&address) {
                 return 0xFF;
@@ -449,6 +451,49 @@ impl GameBoy {
             }
         }
         self.read_mapped(MappedAddress::map(address))
+    }
+
+    /// Value the CPU latches from the bus at `data_phase_n↑` (dot
+    /// 3.995 of the read M-cycle, per spec §13.6). Resolves the
+    /// drive-enable snapshot against per-address mid-M-cycle flux:
+    /// OAM/VRAM lock (full-byte 0xFF override when the access-control
+    /// gates assert at the latch edge) and STAT/LY (per-bit merge
+    /// modelling NOT_IF1 / NOT_IF0 driver settling within the drive
+    /// window). Addresses with no flux pass the snapshot through.
+    pub fn bus_value_at_latch(&self, address: u16, snapshot: u8) -> u8 {
+        match address {
+            // OAM read lock (mode2 | mode3 | catu_pending via the
+            // AJON / ASAM / AZEM / BUZA access-control chain). When
+            // asserted, the on-chip OAM bus tri-states; the CPU latch
+            // sees the bus-default high (0xFF).
+            0xFE00..=0xFE9F if self.ppu.oam_locked() => 0xFF,
+
+            // VRAM read lock (mode3 via ROPY / XANE / XEDU / SERE).
+            // When asserted, the off-chip VRAM address/data pads
+            // tri-state; `md_pad[*]` floats to its pull-up (0xFF).
+            0x8000..=0x9FFF if self.ppu.vram_locked() => 0xFF,
+
+            // LY: entire byte fluxes via `wafu`-enabled NOT_IF0
+            // drivers when LAMA fires (MYTA-driven LY reset). The
+            // drive-enable snapshot can be stale by the latch edge,
+            // so re-read live (cascade settles within tens of ps,
+            // well before `data_phase_n↑`).
+            0xFF44 => self.read(address),
+
+            // STAT bits 0-2 (mode + LYC=LY) drive `cpu_port_d` via
+            // `dmg_not_if1` cells with a bus-flux x-window during
+            // mode-bit cascades (spec §10.5.x). Resolve to AND of
+            // snapshot and live ("0 wins ties" per dmg-sim's analog
+            // resolution). Bits 3-7 come from stable enable-DRLATCH
+            // outputs — pass the snapshot through.
+            0xFF41 => {
+                let live = self.read(address);
+                const X_WINDOW: u8 = 0b0000_0111;
+                (snapshot & !X_WINDOW) | (snapshot & live & X_WINDOW)
+            }
+
+            _ => snapshot,
+        }
     }
 
     /// Read a byte as the DMA controller would. Addresses not on either

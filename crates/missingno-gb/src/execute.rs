@@ -14,45 +14,6 @@ pub(super) enum OamBugKind {
     Write,
 }
 
-/// Per-address mask of bits whose `cpu_port_d` driver settles fast enough
-/// to propagate within-M-cycle PPU transitions to the CPU's `data_phase`
-/// latch. Bits set in the mask are taken from a live read at BUKE; bits
-/// unset are taken from the dot-2 snapshot held in `cpu_bus.data` (the
-/// `dmg_not_if1` slow-driver-flux model).
-///
-/// STAT bit 2 (LYC=LY) propagates via `sego` on transparent RUPO and
-/// settles before `data_phase_n↑`; STAT bits 0/1 (mode) propagate via
-/// `teby`/`wuga` and remain in flux through the M-cycle end.
-///
-/// LY ($FF44) drives `cpu_port_d` via `wafu` (`dmg_not_if0`, single
-/// inverter — no companion-driver tran). The MYTA→LAMA→LY-DFF cascade
-/// settles within tens of ps after MYTA's TALU rise, well before
-/// `data_phase_n↑` — no settling-window pathology.
-fn fast_bit_mask(address: u16) -> u8 {
-    match address {
-        0xFF44 => 0xFF,
-        _ => 0,
-    }
-}
-
-/// Per-address mask of bits that resolve via the `x`-window logic
-/// (snapshot AND live = "0 wins ties", modelling dmg-sim's analog
-/// resolution of NOT_IF1 driver bus-flux during a mid-M-cycle bit
-/// transition).
-///
-/// STAT bit 2 (LYC=LY, ROPO/TALU-driven) and STAT bits 0/1 (mode bits,
-/// SADU/XATY-driven via AVAP / BESU / WODU cascades) all route through
-/// `dmg_not_if1` cells. When the underlying cascade fires mid-read-
-/// M-cycle the bus carries the bit in `x`-state at `data_phase_n↑` and
-/// resolves to the lower-pull value: bit = snapshot AND live → 0 if
-/// either is 0.
-fn and_bit_mask(address: u16) -> u8 {
-    match address {
-        0xFF41 => 0b0000_0111,
-        _ => 0,
-    }
-}
-
 /// Result of executing one instruction.
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
@@ -468,22 +429,17 @@ impl GameBoy {
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
 
-        // Apply staged bus read at dot 2. Hardware: tobe↑/wafu↑ at
-        // dot 2.005 enables the tri-state driver; the addressed
-        // peripheral starts driving the bus. The bus is then driven
-        // combinationally through to data_phase_n↑ at dot 3.995, when
-        // the CPU latches (spec §4.6, §13.6). The OAM/VRAM lock-signal
-        // state at the LATCH edge is what determines whether the bus
-        // floats high — that decision is deferred to the BUKE commit
-        // block below. Here we capture the address's underlying byte
-        // (bypassing the PPU OAM/VRAM lock guard); DMA bus redirection
-        // applies at this edge.
+        // Driver-enable edge (`tobe↑` / `wafu↑` at dot 2.005, spec §4.6):
+        // the addressed peripheral opens its tri-state driver and starts
+        // putting its value on the bus. Any per-address mid-M-cycle flux
+        // (OAM/VRAM lock transitions, STAT/LY bit changes) propagates
+        // combinationally to the latch edge and is resolved there.
         if dot.as_u8() == 2
             && let Some(staged) = self.staged_bus_read.as_ref()
             && !staged.applied
         {
             let address = staged.address;
-            self.cpu_bus.data = self.read_skip_ppu_lock(address);
+            self.cpu_bus.data = self.bus_value_at_drive_enable(address);
             self.staged_bus_read.as_mut().unwrap().applied = true;
         }
 
@@ -503,31 +459,15 @@ impl GameBoy {
             if (0xFE00..=0xFEFF).contains(&address) {
                 *pending_oam_bug = Some(OamBugKind::Read);
             }
-            let snapshot = self.cpu_bus.data;
-            let mask = fast_bit_mask(address);
-            let and_mask = and_bit_mask(address);
-            let assembled = if mask == 0 && and_mask == 0 {
-                snapshot
-            } else {
-                let live = self.read(address);
-                // Live bits, snapshot bits, AND'd bits (for bus-flux x-window).
-                let other_mask = !(mask | and_mask);
-                (snapshot & other_mask) | (live & mask) | (snapshot & live & and_mask)
-            };
-            // OAM/VRAM lock: hardware latches at data_phase_n↑ (dot
-            // 3.995); the bus floats high if the lock-signal source
-            // (XYMU for VRAM, BESU/XYMU/catu_pending for OAM) is
-            // asserted at that edge. Evaluate live here rather than
-            // at the dot-2 snapshot so mid-M-cycle mode transitions
-            // are captured. DMA-active OAM reads already returned
-            // 0xFF in read_skip_ppu_lock at dot 2.
-            let assembled = match address {
-                0xFE00..=0xFE9F if self.ppu.oam_locked() => 0xFF,
-                0x8000..=0x9FFF if self.ppu.vram_locked() => 0xFF,
-                _ => assembled,
-            };
-            self.last_read_value = assembled;
-            self.commit_bus_read(address, assembled);
+            // Latch edge (`data_phase_n↑` at dot 3.995, spec §13.6):
+            // the CPU captures the bus into its internal data register.
+            // The final value resolves the drive-enable snapshot against
+            // any per-address mid-M-cycle flux — OAM/VRAM lock state at
+            // the latch edge, STAT/LY per-bit transitions during the
+            // drive window.
+            let value = self.bus_value_at_latch(address, self.cpu_bus.data);
+            self.last_read_value = value;
+            self.commit_bus_read(address, value);
         }
 
         // Bus writes on the falling edge. The cpu_wr window closes
