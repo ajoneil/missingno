@@ -62,9 +62,19 @@ impl DispatchChain {
     /// Recompute irq_latch from (IE ∧ IF) when transparent. Held values
     /// stay frozen — caller's IE/IF writes during the held window are not
     /// reflected until the next set_data_phase_n(true).
+    ///
+    /// Masked to valid IRQ bits (0-4); hardware has per-bit
+    /// `irq_latch_inst<i>` cells only for V/S/T/Serial/Joypad, with
+    /// no connection for bits 5-7. Writes to FF0F bits 5-7 don't
+    /// produce any pending state.
     pub(crate) fn update_latch(&mut self, ie: InterruptFlags, requested: InterruptFlags) {
         if self.data_phase_n {
-            self.irq_latch = ie & requested;
+            self.irq_latch = (ie & requested)
+                & (InterruptFlags::VIDEO_BETWEEN_FRAMES
+                    | InterruptFlags::VIDEO_STATUS
+                    | InterruptFlags::TIMER
+                    | InterruptFlags::SERIAL
+                    | InterruptFlags::JOYPAD);
         }
     }
 
