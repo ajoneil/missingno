@@ -1,5 +1,6 @@
 // --- Sprite fetch ---
 
+use crate::dma::OamBusOwner;
 use crate::ppu::{
     PipelineRegisters,
     memory::{Oam, Vram},
@@ -94,20 +95,33 @@ impl SpriteFetch {
         &mut self,
         regs: &PipelineRegisters,
         oam: &Oam,
+        oam_bus: OamBusOwner,
         vram: &Vram,
         high: bool,
     ) -> u8 {
-        let sprite = oam.sprite(SpriteId(self.entry.oam_index));
-        self.attributes = sprite.attributes;
+        let (tile, attributes) = match oam_bus {
+            OamBusOwner::Ppu => {
+                let sprite = oam.sprite(SpriteId(self.entry.oam_index));
+                (sprite.tile, sprite.attributes)
+            }
+            OamBusOwner::Dma(addr) => {
+                let aligned = addr & 0xFE;
+                (
+                    TileIndex(oam.oam_byte(aligned)),
+                    sprites::Attributes(oam.oam_byte(aligned | 0x01)),
+                )
+            }
+        };
+        self.attributes = attributes;
 
         let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
-            TileIndex(sprite.tile.0 & 0xFE)
+            TileIndex(tile.0 & 0xFE)
         } else {
-            sprite.tile
+            tile
         };
         let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
 
-        let flipped_y = if sprite.attributes.flip_y() {
+        let flipped_y = if attributes.flip_y() {
             (regs.control.sprite_size().height() as i16 - 1 - self.entry.line_offset as i16) as u8
         } else {
             self.entry.line_offset
@@ -129,17 +143,18 @@ impl SpriteFetch {
         &mut self,
         regs: &PipelineRegisters,
         oam: &Oam,
+        oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> bool {
         match self.fetch_counter {
             2 => {
                 // Tile data low: address drive. SRAM response at next dot;
                 // emulator captures the byte using LCDC live at this dot.
-                self.tile_data_low = self.read_tile_data(regs, oam, vram, false);
+                self.tile_data_low = self.read_tile_data(regs, oam, oam_bus, vram, false);
             }
             4 => {
                 // Tile data high: address drive. Same.
-                self.tile_data_high = self.read_tile_data(regs, oam, vram, true);
+                self.tile_data_high = self.read_tile_data(regs, oam, oam_bus, vram, true);
             }
             5 => {
                 // WUTY fires; fetch complete. Bytes already captured at 2/4.

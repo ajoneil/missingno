@@ -421,6 +421,7 @@ impl Rendering {
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
+        oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> Option<PixelOutput> {
         // Scanner advance (BYBA capture, AVAP detection + reaction)
@@ -460,7 +461,7 @@ impl Rendering {
             .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, vram);
+            self.mode3_rising(regs, video, oam, oam_bus, vram);
         }
 
         // XYMU↑ (Mode 3 exit): mode3 = NOT(XYMU.q) falls, async-resetting
@@ -660,6 +661,7 @@ impl Rendering {
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
+        oam_bus: OamBusOwner,
         vram: &Vram,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
@@ -702,7 +704,7 @@ impl Rendering {
         if self.sprite_trigger.taka() {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
-                    let done = sf.advance(regs, oam, vram);
+                    let done = sf.advance(regs, oam, oam_bus, vram);
                     if done {
                         sf.merge_into(&mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;

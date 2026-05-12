@@ -224,7 +224,8 @@ impl GameBoy {
             }
 
             // PPU master-clock rising edge at the M-cycle boundary (dot 0).
-            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
+            let oam_bus = self.dma.oam_bus_owner();
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }
@@ -383,7 +384,8 @@ impl GameBoy {
             }
 
             // PPU master-clock rising edge for non-boundary dots.
-            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram);
+            let oam_bus = self.dma.oam_bus_owner();
+            let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
                 self.interrupts.request(Interrupt::VideoBetweenFrames);
             }

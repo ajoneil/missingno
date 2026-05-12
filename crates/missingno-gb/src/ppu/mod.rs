@@ -578,7 +578,7 @@ impl Ppu {
     /// pixel shift, scanline boundary handling, VBlank IF, and LYC.
     ///
     /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU clock (ALET).
-    pub fn on_master_clock_rise(&mut self, vram: &Vram) -> PpuTickResult {
+    pub fn on_master_clock_rise(&mut self, vram: &Vram, oam_bus: OamBusOwner) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
@@ -605,7 +605,7 @@ impl Ppu {
         // edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel =
-                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, vram);
+                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, oam_bus, vram);
         }
 
         result
