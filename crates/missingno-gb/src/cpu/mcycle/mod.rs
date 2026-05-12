@@ -422,6 +422,59 @@ impl Cpu {
     /// `Halted(_)` arms model the halt sequencer's three sub-states; the
     /// running paths reuse the existing `mcycle_*` step machinery.
     fn next_mcycle(&mut self, read_value: u8) -> Option<BusAction> {
+        // M_h start halt-bug-vs-halt-state decision. Keys on
+        // yoii.q (= irq_latched.output() post-tick). yoii captured the
+        // pre-update_latch `dispatch.latched()` at this boundary, so
+        // for IF rises held by the per-bit latch through HALT body's
+        // data-phase, yoii sees the pre-release value and the halt
+        // RS-latch sets normally.
+        if self.halt_bug_check_pending {
+            self.halt_bug_check_pending = false;
+            if self.irq_latched.output() {
+                // Halt RS-latch can't set (ykua holds reset LOW).
+                self.halt_state = HaltState::Running;
+                let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                if ime_enabled {
+                    // HALT-IDU+1 suppression + dispatch's universal `-1`
+                    // step collapsed at the boundary: pc HALT+1 → HALT_addr.
+                    self.bus_counter = self.bus_counter.wrapping_sub(1);
+                    self.pc = self.bus_counter;
+                    if self.dispatch.dispatch_active() {
+                        let pc = self.pc;
+                        self.phase = CpuPhase::InterruptDispatch {
+                            sp: self.stack_pointer,
+                            pc_hi: (pc >> 8) as u8,
+                            pc_lo: (pc & 0xff) as u8,
+                            step: 0,
+                        };
+                        self.exec_step = 0;
+                        self.pending_vector_resolve = false;
+                        self.boundary_flag = true;
+                        self.instruction_pc = pc;
+                        return self.mcycle_isr(0);
+                    }
+                } else {
+                    // Pan Docs halt-bug: byte after HALT executes twice
+                    // via the existing halt_bug flag's PC++ suppression
+                    // at the next opcode fetch (handled by FetchOverlap
+                    // step 1 below).
+                    self.halt_bug = true;
+                }
+                // Phase is already Execute(FetchOverlap step 1) from
+                // enter_fetch_overlap's halt-entry branch; the M-cycle
+                // from this boundary onwards is the post-halt body
+                // read of HALT+1 (or HALT_addr after pc--).
+            } else {
+                // No IF pending at M_h start: halt RS-latch sets.
+                self.halt_rs_latched = true;
+                // Phase transitions from Execute(FetchOverlap) to
+                // Halted(Spin) — the read byte from this boundary is
+                // discarded; the CPU enters halt-state spin.
+                self.phase = CpuPhase::Halted(HaltPhase::Spin);
+                self.exec_step = 0;
+            }
+        }
+
         match &self.phase {
             CpuPhase::Fetch => self.mcycle_fetch(read_value),
             CpuPhase::Execute { .. } => self.mcycle_execute(read_value),
@@ -451,6 +504,7 @@ impl Cpu {
                 let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
                 if irq_pending_for_dispatch {
                     self.halt_state = HaltState::Running;
+                    self.halt_rs_latched = false;
                     let pc = self.pc;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
@@ -582,6 +636,7 @@ impl Cpu {
     /// the m7-driven post-body fetch from PC.
     fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<BusAction> {
         self.halt_state = HaltState::Running;
+        self.halt_rs_latched = false;
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
@@ -1101,13 +1156,7 @@ impl Cpu {
     /// register/flag values are visible at the start of the M-cycle
     /// that fetches the next opcode (gb-ctr's M3/M1 column).
     fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
-        match commit {
-            Commit::EnterHalt | Commit::EnterStop | Commit::Invalid => {
-                Self::apply_commit(self, commit);
-                self.check_halt_bug();
-            }
-            other => Self::apply_commit(self, other),
-        }
+        Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
         if let Some(target) = self.pending_jump_target.take() {
@@ -1123,6 +1172,7 @@ impl Cpu {
             // pending_vector_resolve in execute.rs.
 
             self.halt_state = HaltState::Running;
+            self.halt_rs_latched = false;
             let pc = self.pc;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
@@ -1139,12 +1189,21 @@ impl Cpu {
         }
 
         if self.halt_state == HaltState::Halting {
+            // Defer the halt-bug-vs-halt-state decision to M_h start
+            // (= the boundary at the END of HALT's body M-cycle =
+            // next_mcycle's entry on the following M-cycle). The HALT
+            // body M-cycle's bus activity is the overlap-fetch read at
+            // HALT+1 (same M-cycle structure as any overlap-capable
+            // body), shared with the post-halt-body M-cycle for the
+            // halt-bug path. `data_phase_n` pulses normally during it
+            // (halt_rs_latched stays false) so the per-bit irq_latch
+            // gates correctly against IF rises in non-data-phase.
             self.halt_state = HaltState::Halted;
-            self.phase = CpuPhase::Halted(HaltPhase::Spin);
-            self.exec_step = 0;
-            return self
-                .next_mcycle(0)
-                .expect("next_mcycle must return Some after halt entry");
+            self.halt_rs_latched = false;
+            self.halt_bug_check_pending = true;
+            // Fall through to the FetchOverlap step 1 setup below; the
+            // halt-bug-vs-halt-state branch fires at next_mcycle's
+            // entry on the following M-cycle (M_h start).
         }
 
         self.phase = CpuPhase::Execute {
@@ -1154,26 +1213,6 @@ impl Cpu {
         self.exec_step = 1;
         BusAction::Read {
             address: self.bus_counter,
-        }
-    }
-
-    /// HALT decoded with IF&IE != 0: CPU does not enter halt-state. Two
-    /// subcases by IME:
-    /// - IME=Disabled: classic halt-bug. The byte after HALT executes
-    ///   twice (next opcode fetch's PC++ is suppressed via `halt_bug`).
-    /// - IME=Enabled: PC is rolled back to the HALT byte so the
-    ///   immediately-following dispatch pushes HALT_byte (the value
-    ///   hardware-verified by AGE ei-halt-dmgC-cgbBCE on real DMG/CGB).
-    fn check_halt_bug(&mut self) {
-        if !matches!(self.halt_state, HaltState::Halted | HaltState::Halting) || !self.irq_pending {
-            return;
-        }
-        self.halt_state = HaltState::Running;
-        if self.ime.output() == InterruptMasterEnable::Disabled {
-            self.halt_bug = true;
-        } else {
-            self.bus_counter = self.bus_counter.wrapping_sub(1);
-            self.pc = self.bus_counter;
         }
     }
 
@@ -1222,10 +1261,13 @@ impl Cpu {
         self.irq_pending = triggered.is_some();
     }
 
-    /// Clock irq_latched (yoii) on its CLK9 capture edge. irq_latched
-    /// drives the HALT release chain (yoii → ykua → halt RS-latch reset).
+    /// Clock irq_latched (yoii) on its CLK9 capture edge. yoii's D
+    /// input is the post-data-phase-gated priority chain output —
+    /// modelled by `dispatch.latched()`, not raw `irq_pending`.
+    /// irq_latched drives the HALT release chain (yoii → ykua →
+    /// halt RS-latch reset).
     pub fn tick_irq_latched(&mut self) {
-        self.irq_latched.write(self.irq_pending);
+        self.irq_latched.write(!self.dispatch.latched().is_empty());
         self.irq_latched.tick();
     }
 }

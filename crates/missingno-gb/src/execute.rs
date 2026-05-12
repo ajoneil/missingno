@@ -177,10 +177,19 @@ impl GameBoy {
 
         // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
-            // data_phase_n↑ just before the new M-cycle's CLK9↑: the
-            // per-bit irq_latch_inst<i> enabled D-latch reopens and
-            // re-snapshots IF. Must run before tick_irq_latched so yoii
-            // captures the freshly settled post-latch IF.
+            // yoii (irq_latched) captures `dispatch.latched()` first —
+            // BEFORE this boundary's data_phase_n↑ + update_latch
+            // refreshes the per-bit irq_latch. Hardware: yoii's setup
+            // window precedes the data_phase_n↑ at -1,144 ps; for an
+            // IF source held by the per-bit latch through the prior
+            // M-cycle's data-phase, the held value's release lands
+            // AFTER yoii's capture window, so yoii captures the
+            // pre-release value.
+            self.cpu.tick_irq_latched();
+
+            // data_phase_n↑ at the new M-cycle's CLK9↑: the per-bit
+            // irq_latch_inst<i> enabled D-latch reopens and re-snapshots
+            // IF — visible to dispatch from this M-cycle onwards.
             self.cpu.dispatch.set_data_phase_n(true);
             self.cpu
                 .dispatch
@@ -188,8 +197,6 @@ impl GameBoy {
 
             // zacw captures zfex on this CLK9↑.
             self.cpu.dispatch.tick_zacw();
-
-            self.cpu.tick_irq_latched(); // samples pre-edge irq_pending
 
             // ime ← ime_delay: copies the EI shadow stage onto the IME
             // DFF at the M-cycle boundary. EI's commit only set
@@ -266,25 +273,27 @@ impl GameBoy {
         // M-cycle still set `requested` but do not propagate to the
         // latch until the next data_phase_n↑ at the M-cycle boundary.
         //
-        // Skipped during HALT: the CPU phase ring (baly/buty) is frozen,
-        // data_phase is held LOW, and the latch stays transparent.
-        if dot.index() == 2 && !self.cpu.is_halted() {
+        // Skipped only when the halt RS-latch is set (true halt-state
+        // spin): the CPU phase ring is frozen and data_phase is held
+        // LOW. HALT body M-cycle (halt_rs_latched=false) still pulses
+        // data_phase normally so the per-bit latch gates correctly
+        // against IF rises during HALT body's data-phase.
+        if dot.index() == 2 && !self.cpu.halt_rs_latched() {
             self.cpu.dispatch.set_data_phase_n(false);
         }
 
         // step_zkog drives zaij combinational + zkog SR-latch update.
         // zaij = ime ∧ data_phase ∧ int_take ∧ xogs.
-        // xogs = (data_phase ∧ ctl_fetch) ∨ halt — only fires during
-        // fetch M-cycles' data-phase, blocking dispatch during memory
-        // ops (Read/Write/Operands). HALT-wake doesn't fire zkog
-        // because data_phase is held LOW throughout HALT. The EI delay
-        // is owned by ime ↔ ime_delay (see is_mcycle_boundary above),
-        // not by an additional gate term here.
-        let halt = self.cpu.is_halted();
-        let data_phase = !halt && (dot.index() == 2 || dot.index() == 3);
-        let write_phase = !halt && dot.index() == 3;
-        let ctl_fetch = self.cpu.is_fetch_phase();
-        let xogs = (data_phase && ctl_fetch) || halt;
+        // HALT body M-cycle acts as a fetch cycle for xogs (ctl_op_halt
+        // overlap fetch is the next-instruction prefetch) — so zaij can
+        // fire during HALT body's data-phase, capturing zacw at M_h
+        // start for the immediate-dispatch path.
+        let halt_body = self.cpu.is_halted() && !self.cpu.halt_rs_latched();
+        let halt_spin = self.cpu.halt_rs_latched();
+        let data_phase = !halt_spin && (dot.index() == 2 || dot.index() == 3);
+        let write_phase = !halt_spin && dot.index() == 3;
+        let ctl_fetch = self.cpu.is_fetch_phase() || halt_body;
+        let xogs = (data_phase && ctl_fetch) || halt_spin;
         let ime_enabled = self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
         self.cpu
             .dispatch

@@ -118,14 +118,15 @@ pub struct Cpu {
     /// reads this to detect instruction boundaries for EI delay and
     /// step_instruction().
     pub(super) boundary_flag: bool,
-    /// Whether an interrupt is currently pending (IF & IE != 0).
-    /// Combinational input to the irq_latched (yoii) DFF; also consumed
-    /// directly by the HALT bug check.
+    /// Combinational `(IF & IE) != 0`. Retained as a coarse signal for
+    /// the gbtrace adapter; the dispatch chain and halt-bug detection
+    /// read the data-phase-gated `dispatch.latched()` instead.
     pub(super) irq_pending: bool,
-    /// irq_latched (yoii) flip-flop. CLK9-cadence; captures `irq_pending`
-    /// once per M-cycle on the master-clock rising edge. Drives the HALT
-    /// release chain (yoii → g43 → g49) and produces the per-source
-    /// HALT-wake timing differential (timer vs PPU IFs).
+    /// irq_latched (yoii) flip-flop. CLK9-cadence; captures the
+    /// post-data-phase-gated `dispatch.latched()` once per M-cycle on
+    /// the master-clock rising edge. Drives the HALT release chain
+    /// (yoii → ykua → ynkw) and produces the per-source HALT-wake
+    /// timing differential.
     pub(super) irq_latched: Dff<bool>,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw DFF.
@@ -133,6 +134,18 @@ pub struct Cpu {
     /// dispatch_active (zacw) capture; consumers read
     /// `dispatch.dispatch_active()`.
     pub(super) dispatch: dispatch_chain::DispatchChain,
+    /// True between HALT decode and the immediately-following M-cycle
+    /// boundary (M_h start), where the halt-bug-vs-halt-state decision
+    /// fires. Models the window from `ctl_op_halt_delayed` rising
+    /// (during HALT body) up through `yoii`/`ysbt`'s parallel capture
+    /// at M_h start CLK9↑.
+    pub(super) halt_bug_check_pending: bool,
+    /// True when the halt RS-latch (`ynkw`) is set. False during HALT
+    /// body M-cycle; true during halt-state spin. While true,
+    /// `data_phase` is held LOW per spec §13.5 — the `data_phase_n`
+    /// gate in `execute.rs` consults this flag to keep `irq_latch_inst<i>`
+    /// transparent throughout halt-state.
+    pub(super) halt_rs_latched: bool,
 }
 
 impl Cpu {
@@ -197,6 +210,8 @@ impl Cpu {
             irq_pending: false,
             irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
+            halt_bug_check_pending: false,
+            halt_rs_latched: false,
         }
     }
 
@@ -235,6 +250,8 @@ impl Cpu {
             irq_pending: false,
             irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
+            halt_bug_check_pending: false,
+            halt_rs_latched: false,
         }
     }
 
@@ -285,6 +302,8 @@ impl Cpu {
             irq_pending: false,
             irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
+            halt_bug_check_pending: false,
+            halt_rs_latched: false,
         }
     }
 
@@ -441,6 +460,14 @@ impl Cpu {
     /// Whether the CPU is currently halted.
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted
+    }
+
+    /// Whether the halt RS-latch (`ynkw`) is set. False during HALT
+    /// body M-cycle (before M_h start halt-bug-vs-halt-state decision);
+    /// true during halt-state spin. Drives the `data_phase_n` gate for
+    /// the per-bit `irq_latch_inst<i>` in halt-state.
+    pub fn halt_rs_latched(&self) -> bool {
+        self.halt_rs_latched
     }
 
     /// Whether the CPU is in a fetch M-cycle (the bus is reading the
