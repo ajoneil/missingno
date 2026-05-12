@@ -1157,17 +1157,23 @@ impl Cpu {
         }
     }
 
-    /// HALT bug: HALT decoded with IME=0 and a pending IF resumes
-    /// immediately and fails to increment PC on the next opcode fetch.
-    /// EI;HALT does not exercise this path — EI's IME-set commits before
-    /// HALT decodes, so HALT sees IME=Enabled.
+    /// HALT decoded with IF&IE != 0: CPU does not enter halt-state. Two
+    /// subcases by IME:
+    /// - IME=Disabled: classic halt-bug. The byte after HALT executes
+    ///   twice (next opcode fetch's PC++ is suppressed via `halt_bug`).
+    /// - IME=Enabled: PC is rolled back to the HALT byte so the
+    ///   immediately-following dispatch pushes HALT_byte (the value
+    ///   hardware-verified by AGE ei-halt-dmgC-cgbBCE on real DMG/CGB).
     fn check_halt_bug(&mut self) {
         if !matches!(self.halt_state, HaltState::Halted | HaltState::Halting) || !self.irq_pending {
             return;
         }
+        self.halt_state = HaltState::Running;
         if self.ime.output() == InterruptMasterEnable::Disabled {
-            self.halt_state = HaltState::Running;
             self.halt_bug = true;
+        } else {
+            self.bus_counter = self.bus_counter.wrapping_sub(1);
+            self.pc = self.bus_counter;
         }
     }
 
