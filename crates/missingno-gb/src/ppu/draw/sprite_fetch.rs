@@ -48,6 +48,10 @@ pub(in crate::ppu) struct SpriteFetch {
     /// Plane-B tile byte — REWO/PEBA/MOFO/PUDU/SAJA/SUNY/SEMO/SEGA
     /// temp latches, captured at counter = 5 (latch_sp_bp_b).
     tile_data_high: u8,
+    /// Sprite attribute byte latched during the fetch from OAM bank A.
+    /// On hardware the attr byte sits in a sprite-attr register through
+    /// the merge dot, not re-read from OAM at merge time.
+    attributes: sprites::Attributes,
 }
 
 impl SpriteFetch {
@@ -60,6 +64,7 @@ impl SpriteFetch {
             fetch_counter: 0,
             tile_data_low: 0,
             tile_data_high: 0,
+            attributes: sprites::Attributes(0),
         }
     }
 
@@ -85,8 +90,16 @@ impl SpriteFetch {
     /// matches gejy's combinational live-XYMO sampling; the famu enable
     /// window is implicit via the fetch_counter==3/5 read positions
     /// (called only inside SpriteState::Fetching).
-    fn read_tile_data(&self, regs: &PipelineRegisters, oam: &Oam, vram: &Vram, high: bool) -> u8 {
+    fn read_tile_data(
+        &mut self,
+        regs: &PipelineRegisters,
+        oam: &Oam,
+        vram: &Vram,
+        high: bool,
+    ) -> u8 {
         let sprite = oam.sprite(SpriteId(self.entry.oam_index));
+        self.attributes = sprite.attributes;
+
         let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
             TileIndex(sprite.tile.0 & 0xFE)
         } else {
@@ -143,30 +156,28 @@ impl SpriteFetch {
     /// wuty-pulse merge — temp-latch bytes into ObjShifter via the
     /// sprite_onN transparency gate. X-flip reversal applied here.
     /// Palette / priority broadcast from OAM attributes (DEPO for priority).
-    pub(in crate::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter, oam: &Oam) {
-        let sprite = oam.sprite(SpriteId(self.entry.oam_index));
-
+    pub(in crate::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter) {
         // X-flip: hardware reverses the bit order when loading the shift
         // register. For normal sprites, MSB shifts out first (leftmost pixel).
         // For flipped sprites, LSB shifts out first — achieved by reversing
         // the byte's bit order before loading.
-        let sprite_low = if sprite.attributes.flip_x() {
+        let sprite_low = if self.attributes.flip_x() {
             self.tile_data_low.reverse_bits()
         } else {
             self.tile_data_low
         };
-        let sprite_high = if sprite.attributes.flip_x() {
+        let sprite_high = if self.attributes.flip_x() {
             self.tile_data_high.reverse_bits()
         } else {
             self.tile_data_high
         };
 
-        let palette_bit = if sprite.attributes.contains(sprites::Attributes::PALETTE) {
+        let palette_bit = if self.attributes.contains(sprites::Attributes::PALETTE) {
             1
         } else {
             0
         };
-        let priority_bit = if sprite.attributes.contains(sprites::Attributes::PRIORITY) {
+        let priority_bit = if self.attributes.contains(sprites::Attributes::PRIORITY) {
             1
         } else {
             0

@@ -455,7 +455,8 @@ impl GameBoy {
 
         // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
         // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary);
+        let oam_bus = self.dma.oam_bus_owner();
+        let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary, oam_bus);
 
         // Mid-CUPA sample for the staged OAM/VRAM write (spec §10.5.6
         // AJUJ-glitch window). On hardware, the CPU's CUPA strobe is

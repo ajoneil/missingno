@@ -18,6 +18,7 @@
 //! appear in definitional contexts and where comments bridge to
 //! CPU-subsystem timing (register-write strobes, M-cycle phasing).
 
+use crate::dma::OamBusOwner;
 use rendering::Mode;
 use types::sprites::{Sprite, SpriteId};
 
@@ -624,7 +625,7 @@ impl Ppu {
     ///
     /// Also: DFF8/DFF9 register latches, scanline-boundary handling,
     /// and LCD-off state management.
-    pub fn on_master_clock_fall(&mut self, is_mcycle: bool) -> PpuTickResult {
+    pub fn on_master_clock_fall(&mut self, is_mcycle: bool, oam_bus: OamBusOwner) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
@@ -720,6 +721,7 @@ impl Ppu {
                     &self.registers,
                     &self.video,
                     &self.oam,
+                    oam_bus,
                     xupy_rising,
                 );
             }

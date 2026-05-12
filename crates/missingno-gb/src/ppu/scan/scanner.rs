@@ -4,7 +4,8 @@
 //! netlist, msinger/dmg-schematics) appear in doc comments for
 //! traceability to the hardware signal chain.
 
-use crate::ppu::{memory::Oam, PipelineRegisters};
+use crate::dma::OamBusOwner;
+use crate::ppu::{PipelineRegisters, memory::Oam};
 
 use super::oam_scan::{ScanCounter, SpriteStore};
 
@@ -236,6 +237,7 @@ impl SpriteScanner {
         ly: u8,
         regs: &PipelineRegisters,
         oam: &Oam,
+        oam_bus: OamBusOwner,
     ) -> ScanSignals {
         if !xupy_rising {
             return ScanSignals { avap: false };
@@ -245,7 +247,7 @@ impl SpriteScanner {
         // the counter ticks 0 → 1 below; subsequent edges walk 1..39.
         if self.scanning {
             self.counter
-                .compare_and_store(ly, &mut self.sprites, regs, oam);
+                .compare_and_store(ly, &mut self.sprites, regs, oam, oam_bus);
         }
 
         // DOBA captures OLD BYBA on this same XUPY edge — the

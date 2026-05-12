@@ -1,6 +1,7 @@
 // --- Sprite store and OAM scanner ---
 
-use crate::ppu::{memory::Oam, PipelineRegisters};
+use crate::dma::OamBusOwner;
+use crate::ppu::{PipelineRegisters, memory::Oam};
 
 use crate::ppu::types::sprites::SpriteId;
 
@@ -80,6 +81,16 @@ pub(in crate::ppu) struct ScanCounter {
     /// FETO fires (counter == 39), GAVA stays permanently high — no
     /// more rising edges reach the counter, freezing it.
     frozen: bool,
+    /// §5 Stage-1 Y-byte latch (YDYV/YCEB/ZUCA/WONE/ZAXE/XAFU/YSES/ZECA
+    /// on the bank-B OAM data bus). Captured into the Y-comparator path
+    /// on `oam_data_latch=1`; holds when gated off (e.g. during DMA +
+    /// Mode 2 overlap per §4.9.4.1).
+    stage1_y: u8,
+    /// §5 Stage-1 X-byte latch (XYKY/YRUM/YSEX/YVEL/WYNO/CYRA/ZUVE/ECED
+    /// on the bank-A OAM data bus). Shares `oam_data_latch` enable with
+    /// the Y-side latches; fans into the per-slot X-storage dlatches via
+    /// the §5.6 chain.
+    stage1_x: u8,
 }
 
 impl ScanCounter {
@@ -87,6 +98,8 @@ impl ScanCounter {
         Self {
             entry: 0,
             frozen: false,
+            stage1_y: 0,
+            stage1_x: 0,
         }
     }
 
@@ -97,6 +110,8 @@ impl ScanCounter {
         Self {
             entry: 39,
             frozen: true,
+            stage1_y: 0,
+            stage1_x: 0,
         }
     }
 
@@ -153,11 +168,21 @@ impl ScanCounter {
         sprites: &mut SpriteStore,
         regs: &PipelineRegisters,
         oam: &Oam,
+        oam_bus: OamBusOwner,
     ) {
-        if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
-            let (y_plus_16, x_plus_8) = oam.sprite_position(SpriteId(self.entry));
+        // §5 Stage-1 capture: `oam_data_latch=1` once per Mode 2 scan
+        // step when the bus is PPU-owned. During DMA the latch is gated
+        // off (§4.9.4.1: `ajep=1` from `mode2 = AND2(boge=0, BESU.q) = 0`)
+        // and the byte-pair holds.
+        if let OamBusOwner::Ppu = oam_bus {
+            let (y, x) = oam.sprite_position(SpriteId(self.entry));
+            self.stage1_y = y;
+            self.stage1_x = x;
+        }
 
-            let delta = line_number.wrapping_add(16).wrapping_sub(y_plus_16);
+        if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
+            // §5.4 Y comparator reads operand-B from the Stage-1 Y latch.
+            let delta = line_number.wrapping_add(16).wrapping_sub(self.stage1_y);
             let height = regs.control.sprite_size().height();
             let is_match = delta < height;
 
@@ -166,7 +191,7 @@ impl ScanCounter {
                 sprites.entries[sprites.count as usize] = SpriteStoreEntry {
                     oam_index: self.entry,
                     line_offset,
-                    x: x_plus_8,
+                    x: self.stage1_x,
                 };
                 sprites.count += 1;
             }

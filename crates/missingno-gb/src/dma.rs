@@ -1,5 +1,23 @@
 use super::memory::Bus;
 
+/// Which side is driving the OAM SRAM address bus this dot.
+///
+/// During DMA, all three PPU-side OAM bus drivers (CPU via ASAM, Parse
+/// via APAR, Render via BETE) tri-state through the shared
+/// `boge = NOT(dma_run)` upstream gate (spec §4.9.4). DMA owns the bus
+/// uncontested while a transfer is active.
+pub enum OamBusOwner {
+    /// A mode-appropriate PPU-side driver owns the bus; the §5 Stage-1
+    /// `oam_data_latch` enable is free to fire and capture the addressed
+    /// byte-pair into the (Y, X) latches.
+    Ppu,
+    /// DMA drives the bus, asserting this OAM byte offset (0..=159). The
+    /// §5 Stage-1 capture enable is gated off (mode2 = AND2(boge, BESU.q)
+    /// = 0 → ajep = 1 → oam_data_latch = 0), so the (Y, X) latches HOLD
+    /// their prior values throughout the overlap (spec §4.9.4.1).
+    Dma(u8),
+}
+
 /// Pre-transfer delay state for OAM DMA. `None` means the DMA is
 /// actively transferring bytes with bus conflicts enabled.
 pub enum DmaDelay {
@@ -55,6 +73,19 @@ impl Dma {
                 Some(t.source_bus)
             }
         })
+    }
+
+    /// Which side is driving the OAM SRAM address bus this dot — DMA
+    /// while a transfer is past its startup delay (`boge = NOT(dma_run)`
+    /// tri-states the three PPU-side drivers, spec §4.9.4), otherwise
+    /// the PPU.
+    pub fn oam_bus_owner(&self) -> OamBusOwner {
+        match self.transfer.as_ref() {
+            Some(t) if !matches!(t.delay, Some(DmaDelay::Startup(_))) => {
+                OamBusOwner::Dma(t.byte_index.min(159))
+            }
+            _ => OamBusOwner::Ppu,
+        }
     }
 
     /// Advance DMA by one M-cycle. Returns the (source address,

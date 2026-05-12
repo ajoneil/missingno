@@ -2,10 +2,11 @@ pub use super::draw::sprite_fetch::SpriteFetchPhase;
 
 use core::fmt;
 
+use crate::dma::OamBusOwner;
 use crate::ppu::{
+    PipelineRegisters, PixelOutput, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
-    PipelineRegisters, PixelOutput, VideoControl,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -510,6 +511,7 @@ impl Rendering {
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
+        oam_bus: OamBusOwner,
         xupy_rising: bool,
     ) -> Option<PixelOutput> {
         // Snapshot xymu BEFORE the AVAP reaction can set it. This gates
@@ -525,7 +527,9 @@ impl Rendering {
         // AVAP propagates combinationally from BYBA/DOBA, and XYMU set,
         // fetcher preload, and window WX init fire here so Mode 3 init
         // aligns with hardware's AVAP-rising edge.
-        let scan = self.scan.advance_scan(xupy_rising, video.ly(), regs, oam);
+        let scan = self
+            .scan
+            .advance_scan(xupy_rising, video.ly(), regs, oam, oam_bus);
         if scan.avap {
             // mode3↑ deferred to next master-clock rise per spec §10.5.6
             // (AJUJ-glitch window: BESU.q↓ at +559 ps, mode3 net↑ at
@@ -700,7 +704,7 @@ impl Rendering {
                 SpriteState::Fetching(ref mut sf) => {
                     let done = sf.advance(regs, oam, vram);
                     if done {
-                        sf.merge_into(&mut self.obj_shifter, oam);
+                        sf.merge_into(&mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_taka();
                         // Recompute FEPO: the sprite is now marked as fetched,
