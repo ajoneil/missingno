@@ -40,8 +40,6 @@ pub(in crate::ppu) struct WindowControl {
     /// NOPA `dffr`. Captures PYNU on ALET rising (= master-clock
     /// falling). NOPA_n drives NUNY's AND2 low gate.
     nopa: DffLatch,
-    /// Previous-dot NUNU.q for set-edge detection on PYNU.
-    prev_nunu_q: bool,
     /// Previous-dot PYNU.q for fall-edge detection on WAZY/VYNO.
     prev_pynu_q: bool,
     /// Previous-dot NUNY for MOSU rising-edge detection.
@@ -69,7 +67,6 @@ impl WindowControl {
             nunu: DffLatch::new(0),
             pynu: NorLatch::new(false),
             nopa: DffLatch::new(0),
-            prev_nunu_q: false,
             prev_pynu_q: false,
             prev_nuny: false,
             window_rendered: false,
@@ -179,9 +176,9 @@ impl WindowControl {
         let nuko = self.compute_nuko(pixel_counter, regs);
         let xofo = self.compute_xofo(regs);
 
-        // Save prior-dot values for edge detection.
+        // Save prior-dot PYNU for the falling-edge detection that drives
+        // the window line counter.
         let prev_pynu_q = self.pynu.output();
-        let prev_nunu_q = self.prev_nunu_q;
 
         // Step 1: NOPA captures prior-fall PYNU.
         self.nopa.write(if prev_pynu_q { 1 } else { 0 });
@@ -203,14 +200,14 @@ impl WindowControl {
         self.nunu.write(self.pyco.output());
         self.nunu.tick();
 
-        // Step 4: Apply XOFO to PYNU's reset.
+        // PYNU is a nor_latch with s=NUNU, r=XOFO — both level-sensitive.
+        // PYNU.q sets whenever NUNU=1 with XOFO=0; clears whenever XOFO=1;
+        // holds otherwise. The deferred-completion case (NUKO fires while
+        // XOFO=1, then LCDC.5 restore drops XOFO within the NUNU=1 high
+        // pulse) latches PYNU on xofo↓ via this level-sensitive set.
         if xofo {
             self.pynu.clear();
-        }
-
-        // Step 5: NUNU↑ → PYNU.s (only if XOFO is not asserting reset).
-        let nunu_rising = self.nunu.output() != 0 && prev_nunu_q == false;
-        if nunu_rising && !xofo {
+        } else if self.nunu.output() != 0 {
             self.pynu.set();
         }
 
@@ -226,7 +223,6 @@ impl WindowControl {
         }
 
         // Update edge-detection state for next dot.
-        self.prev_nunu_q = self.nunu.output() != 0;
         self.prev_nuny = nuny;
 
         // Side-effects on MOSU↑ (NYXU restart cascade).
@@ -272,7 +268,6 @@ impl WindowControl {
         self.nunu.tick();
         self.nopa.write(0);
         self.nopa.tick();
-        self.prev_nunu_q = false;
         self.prev_pynu_q = false;
         self.prev_nuny = false;
         self.nuko_wx = 0xFF;
