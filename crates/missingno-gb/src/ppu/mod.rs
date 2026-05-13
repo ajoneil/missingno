@@ -132,6 +132,8 @@ impl Ppu {
                     x_plus_7: DffLatch::new(0),
                 },
                 palettes: Palettes::default(),
+                bg_window_enabled_shadow: None,
+                bg_window_enabled_shadow_just_set: false,
             },
             // Post-boot PPU state: matches what real DMG boot ROM
             // produces at first PC=$0100 detection in missingno.
@@ -185,6 +187,8 @@ impl Ppu {
                     x_plus_7: DffLatch::new(0),
                 },
                 palettes: Palettes::default(),
+                bg_window_enabled_shadow: None,
+                bg_window_enabled_shadow_just_set: false,
             },
             video: VideoControl {
                 dividers: Dividers {
@@ -367,11 +371,27 @@ impl Ppu {
             }
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
+                let old_bg_window_enabled =
+                    self.registers.control.background_and_window_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
+
+                // §6.15 LCDC.0 mid-Mode-3 first-cp_pad↑-samples-OLD overlay:
+                // arm the shadow if VYXE transitions during Mode 3, so the
+                // BG resolve on the next cp_pad↑ uses the pre-transition
+                // value. Bidirectional — both OFF and RESTORE produce the
+                // overlay.
+                if is_drawing {
+                    let new_bg_window_enabled =
+                        self.registers.control.background_and_window_enabled();
+                    self.registers.arm_bg_window_enabled_shadow(
+                        old_bg_window_enabled,
+                        new_bg_window_enabled,
+                    );
+                }
 
                 // CUPA↑ → XODO↓ is combinational; schedule the matching
                 // divider / scanner reset for this fall.
@@ -725,6 +745,12 @@ impl Ppu {
             // tick boundary followed by combinational read of reg_old.
             self.registers.tick_palette_latches();
             self.registers.tick_register_latches();
+            // §6.15 LCDC.0 first-cp_pad↑-samples-OLD shadow: CPU writes
+            // earlier this fall (drive_ppu_bus, before this method) may
+            // have armed the shadow with `just_set=true`. The tick keeps
+            // it alive for this fall's BG resolve and clears it on the
+            // next fall where no fresh transition is armed.
+            self.registers.tick_bg_window_enabled_shadow();
 
             // ALET falls in-phase with ck1_ck2 falling. MYVO-clocked DFFs
             // capture here (PORY), SACU fires (delayed via TYFA), pixel
@@ -894,8 +920,10 @@ impl Ppu {
                 sprite0: DffLatch::new(snap.obp0),
                 sprite1: DffLatch::new(snap.obp1),
                 background_or_overlay: None,
-                dots_since_bgp_tick: u16::MAX,
+                bgp_recovery_active: false,
             },
+            bg_window_enabled_shadow: None,
+            bg_window_enabled_shadow_just_set: false,
         };
 
         Ppu {

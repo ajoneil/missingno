@@ -72,7 +72,7 @@ pub(in crate::ppu) fn resolve_current_pixel(
     let bgp = regs.palettes.background_for_bg_resolve();
     let obp0 = regs.palettes.sprite0.output();
     let obp1 = regs.palettes.sprite1.output();
-    let bg_window_enabled = regs.control.background_and_window_enabled();
+    let bg_window_enabled = regs.bg_window_enabled_for_resolve();
     let sprites_enabled = regs.control.sprites_enabled();
 
     let (bg_lo, bg_hi) = bg_shifter.read();
