@@ -110,6 +110,10 @@ pub struct Ppu {
     /// apply (dot-2 rise); consumed in the same fall to run
     /// `initialize_lcd_on`.
     pending_lcd_on_init: bool,
+    /// BESU snapshot from the prior fall, used to detect Mode 2 entry
+    /// (BESU↑) and release the BGP NURA-overlay recovery state — the
+    /// dlatch_ee cell has settled during the prior HBlank.
+    prev_besu: bool,
 }
 
 impl Ppu {
@@ -161,6 +165,7 @@ impl Ppu {
             pixel_pipeline: Some(Rendering::post_boot()),
             frame_number: 0,
             pending_lcd_on_init: false,
+            prev_besu: false,
         }
     }
 
@@ -215,6 +220,7 @@ impl Ppu {
             pixel_pipeline: None, // LCD off at power-on
             frame_number: 0,
             pending_lcd_on_init: false,
+            prev_besu: false,
         }
     }
 
@@ -702,6 +708,15 @@ impl Ppu {
         }
 
         if self.control().video_enabled() {
+            // BESU↑ (Mode 2 entry) at scanline start releases the BGP
+            // dlatch from its post-write recovery — the pixel pipe was
+            // idle through HBlank so the cell has settled by now.
+            let besu_now = self.besu();
+            if besu_now && !self.prev_besu {
+                self.registers.palettes.reset_on_mode_2_entry();
+            }
+            self.prev_besu = besu_now;
+
             // Resolve DFF8/DFF9 latches BEFORE the pipeline reads them.
             // The tick models the clock boundary *entering* this dot:
             // any CPU write from the previous dot (stored as pending)
@@ -876,6 +891,8 @@ impl Ppu {
                 background: DffLatch::new(snap.bgp),
                 sprite0: DffLatch::new(snap.obp0),
                 sprite1: DffLatch::new(snap.obp1),
+                background_or_overlay: None,
+                dots_since_bgp_tick: u16::MAX,
             },
         };
 
@@ -886,6 +903,7 @@ impl Ppu {
             oam,
             frame_number: 0,
             pending_lcd_on_init: false,
+            prev_besu: false,
         }
     }
 }

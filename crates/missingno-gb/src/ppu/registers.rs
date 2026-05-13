@@ -27,11 +27,12 @@ pub struct PipelineRegisters {
 }
 
 impl PipelineRegisters {
-    /// Advance DFF8 palette latches by one dot. The old value persists
-    /// through the write dot; the new value appears atomically on the
-    /// capture tick (one dot after write).
+    /// Advance DFF8 palette latches by one dot. BGP captures via the
+    /// Palettes wrapper so the NURA-combiner OR overlay updates with
+    /// the tick. OBP0/OBP1 capture directly — the sprite combiners
+    /// (WUFU/MOKA) read the settled output only.
     pub fn tick_palette_latches(&mut self) {
-        self.palettes.background.tick();
+        self.palettes.tick_background();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
     }
@@ -54,6 +55,7 @@ impl PipelineRegisters {
         self.palettes.background.clear();
         self.palettes.sprite0.clear();
         self.palettes.sprite1.clear();
+        self.palettes.clear_background_overlay();
         self.background_viewport.x.clear();
         self.background_viewport.y.clear();
         self.window.x_plus_7.clear();

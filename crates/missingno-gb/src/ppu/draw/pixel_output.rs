@@ -69,7 +69,7 @@ pub(in crate::ppu) fn resolve_current_pixel(
     obj_shifter: &ObjShifter,
     regs: &PipelineRegisters,
 ) -> PaletteIndex {
-    let bgp = regs.palettes.background.output();
+    let bgp = regs.palettes.background_for_bg_resolve();
     let obp0 = regs.palettes.sprite0.output();
     let obp1 = regs.palettes.sprite1.output();
     let bg_window_enabled = regs.control.background_and_window_enabled();

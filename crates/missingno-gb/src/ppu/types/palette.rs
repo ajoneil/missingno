@@ -90,6 +90,15 @@ pub struct Palettes {
     pub background: DffLatch,
     pub sprite0: DffLatch,
     pub sprite1: DffLatch,
+    /// NURA-combiner OR overlay. On the cp_pad sample of a BGP write
+    /// while the dlatch_ee cell is still in its post-write recovery
+    /// state, the cell presents OR(prior, new) instead of settled new.
+    /// Held for one tick after a qualifying write.
+    pub(crate) background_or_overlay: Option<u8>,
+    /// True once a BGP write has resolved during the current scanline's
+    /// active period (Mode 2 onward). Cleared at the next scanline's
+    /// Mode 2 entry (BESU↑) when the cell can finish settling.
+    pub(crate) bgp_recovery_active: bool,
 }
 
 impl Default for Palettes {
@@ -98,6 +107,44 @@ impl Default for Palettes {
             background: DffLatch::new(0xfc),
             sprite0: DffLatch::new(0xFF),
             sprite1: DffLatch::new(0xFF),
+            background_or_overlay: None,
+            bgp_recovery_active: false,
         }
+    }
+}
+
+impl Palettes {
+    pub fn tick_background(&mut self) -> bool {
+        let prior = self.background.output();
+        let ticked = self.background.tick();
+        if ticked {
+            self.background_or_overlay = if self.bgp_recovery_active {
+                Some(prior | self.background.output())
+            } else {
+                None
+            };
+            self.bgp_recovery_active = true;
+        } else {
+            self.background_or_overlay = None;
+        }
+        ticked
+    }
+
+    pub fn background_for_bg_resolve(&self) -> u8 {
+        self.background_or_overlay
+            .unwrap_or_else(|| self.background.output())
+    }
+
+    /// Mode 2 entry (BESU↑) at scanline start. The pixel pipe is idle
+    /// during the prior HBlank, so the BGP dlatch has settled by now —
+    /// a new BGP write will start a fresh recovery window.
+    pub fn reset_on_mode_2_entry(&mut self) {
+        self.background_or_overlay = None;
+        self.bgp_recovery_active = false;
+    }
+
+    pub fn clear_background_overlay(&mut self) {
+        self.background_or_overlay = None;
+        self.bgp_recovery_active = false;
     }
 }
