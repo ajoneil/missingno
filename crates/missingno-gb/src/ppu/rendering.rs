@@ -179,6 +179,12 @@ pub struct Rendering {
     /// shifter parallel-load and the window-tile-X counter increment
     /// land 1 dot late.
     pany_slip_pending: bool,
+    /// MOSU fired on the prior PPU rise (deferred-completion path —
+    /// LCDC.5 restore drops XOFO while NUNU=1 from the prior fall).
+    /// NYXU's reset pulse holds the BG fetch counter at 0 across the
+    /// following fall — consumed in `on_ppu_clock_fall` to gate out
+    /// `mode3_advance_fetcher` on the post-MOSU dot.
+    mosu_fired_rising: bool,
 }
 
 impl Rendering {
@@ -198,6 +204,7 @@ impl Rendering {
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
+            mosu_fired_rising: false,
         }
     }
 
@@ -224,6 +231,7 @@ impl Rendering {
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
+            mosu_fired_rising: false,
         }
     }
 
@@ -579,24 +587,28 @@ impl Rendering {
             // fetcher counter at 0 through the next ALET edge so the
             // first falling-edge VRAM read fires at counter=0 (window
             // tile-index) before the counter=2/4 data reads use it.
-            let poky = self.cascade.poky();
-            let taka = self.sprite_trigger.taka();
-            let mosu_fired = self.window.tick_pipeline(
+            let poky_for_window = self.cascade.poky();
+            let taka_for_window = self.sprite_trigger.taka();
+            let mosu_fired = self.window.tick_falling(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
                 pixel_counter_before_sacu,
-                poky,
-                taka,
+                poky_for_window,
+                taka_for_window,
                 regs,
-                video,
             );
 
             // SUZU is one of TEVO's OR3 inputs (alongside SEKO and TAVE) and
             // drives NYXU low — holding the BG shifter via LOZE on its dot.
             // Surface whether SUZU fired in mode3_advance_fetcher so the
             // BG-shift NYXU gate in mode3_pixel_pipeline can include it.
-            let suzu_fired = if was_rendering && !mosu_fired {
+            // `mosu_fired_rising` carries a deferred-completion MOSU from
+            // the prior rise — NYXU's reset hold straddles this fall, so
+            // mode3_advance_fetcher is gated out on this dot too.
+            let mosu_fired_rising = self.mosu_fired_rising;
+            self.mosu_fired_rising = false;
+            let suzu_fired = if was_rendering && !mosu_fired && !mosu_fired_rising {
                 self.mode3_advance_fetcher()
             } else {
                 false
@@ -604,7 +616,7 @@ impl Rendering {
             // MOSU is also a direct NYXU input. When MOSU fires,
             // mode3_advance_fetcher is skipped, but the MOSU pulse itself
             // holds the BG shifter on this dot.
-            let advance_nyxu_pulse = mosu_fired || suzu_fired;
+            let advance_nyxu_pulse = mosu_fired || mosu_fired_rising || suzu_fired;
             self.mode3_pixel_pipeline(
                 regs,
                 video,
@@ -681,6 +693,11 @@ impl Rendering {
         // reg_old.LYRY on ALET (falling edge).
         let lyry = self.fetcher.lyry();
 
+        // BG fetcher counter=0/2/4 VRAM reads. Counter increments on the
+        // companion fall via mode3_advance_fetcher; this rise drives
+        // the per-counter VRAM activity, reading fetching_window from
+        // the prior fall's PYNU via wx_triggered.
+        //
         // BG fetcher and cascade DFFs continue to advance during sprite
         // fetch — only SACU/CLKPIPE freezes (gated separately via TYFA
         // suppression). The counter saturates at 5 (LYRY=1, MOCE=0
@@ -697,7 +714,25 @@ impl Rendering {
             vram,
         );
 
+        // Cascade advance: NYKA captures LYRY, PYGO captures PORY, POKY
+        // settles. Runs before tick_rising so POKY's just-set value is
+        // visible to the window's PYCO gate.
         self.cascade.advance_cascade(lyry);
+
+        // Window cascade rise tick: NOPA captures prior-fall PYNU (ALET
+        // rising), then PYNU's level-sensitive nor_latch re-evaluates.
+        // The deferred-completion path can fire MOSU↑ on this edge when
+        // the LCDC.5 restore CUPA drops XOFO while NUNU=1 is held from
+        // the prior fall — NUNY rises on the same edge as PYNU.
+        // Carries to the following fall to gate `mode3_advance_fetcher`
+        // (NYXU reset hold across the post-MOSU dot).
+        self.mosu_fired_rising = self.window.tick_rising(
+            &mut self.fetcher,
+            &mut self.cascade,
+            &mut self.fine_scroll,
+            regs,
+            video,
+        );
 
         // Sprite fetch counter advance (SABE clock). On hardware, SABE =
         // NAND2(LAPE, TAME) fires when ALET rises (= master clock fall =
