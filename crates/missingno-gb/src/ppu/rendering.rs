@@ -435,6 +435,7 @@ impl Rendering {
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &Vram,
+        sprites_enabled_pre_cupa: bool,
     ) -> Option<PixelOutput> {
         // Scanner advance (BYBA capture, AVAP detection + reaction)
         // moved to on_ppu_clock_fall — BYBA is XUPY-clocked and
@@ -473,7 +474,7 @@ impl Rendering {
             .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram);
+            self.mode3_rising(regs, video, oam, oam_bus, vram, sprites_enabled_pre_cupa);
         }
 
         // XYMU↑ (Mode 3 exit): mode3 = NOT(XYMU.q) falls, async-resetting
@@ -679,13 +680,17 @@ impl Rendering {
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &Vram,
+        sprites_enabled_pre_cupa: bool,
     ) {
         // FEPO evaluated before any falling-phase mutations. Feeds VYBO
         // (TYFA suppression), TEKY (sprite-fetch trigger), and TYFA.
-        // Hardware FEPO→WODU is purely combinational (spec §8.2) — the
-        // post-pc.advance fall-side re-evaluation in mode3_pixel_pipeline
-        // feeds WODU directly, so no latch is needed for wodu().
-        let mut fepo = self.fepo(regs.control.sprites_enabled());
+        // Uses the pre-CUPA snapshot of LCDC.1: hardware's SOBU DFF
+        // captures TEKY at the alet rising edge BEFORE CUPA's
+        // transparent-latch propagation reaches XYLO (~14 ns gate delay,
+        // spec §6.10 line 1840). Combinational consumers downstream of
+        // mode3_rising's rise (e.g. mode3_pixel_pipeline on fall) read
+        // current `regs` directly and see post-CUPA values.
+        let mut fepo = self.fepo(sprites_enabled_pre_cupa);
 
         // LYRY: combinational on fetch_counter (>= 5). The counter only
         // increments on rising (LEBO clock), so the value here reflects
