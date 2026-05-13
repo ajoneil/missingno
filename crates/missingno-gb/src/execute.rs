@@ -349,6 +349,14 @@ impl GameBoy {
 
         // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
         if !is_mcycle_boundary {
+            // Snapshot LCDC.1 BEFORE the staged bus write applies — the
+            // alet-rising-edge DFF capture (SOBU on TEKY → FEPO → XYLO)
+            // wins the gate-delay race against CUPA-rising's transparent-
+            // latch propagation by ~14 ns (spec §6.10 line 1840). Other
+            // combinational consumers read `regs` directly and see
+            // post-CUPA values after `drive_ppu_bus` below.
+            self.ppu.snapshot_pre_cupa_lcdc();
+
             // Apply staged bus write at BusDot 2 rise (phase E). On
             // hardware, CUPA rises at dot 2 coincident with alet rising
             // and gates the PPU register latches transparent across
