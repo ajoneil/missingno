@@ -24,6 +24,14 @@ pub struct PipelineRegisters {
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
+    /// VYXE first-cp_pad↑-samples-OLD overlay. When a mid-Mode-3 CUPA
+    /// transitions LCDC.0 (either direction), the LCD column emitted on
+    /// the next cp_pad↑ resolves with the OLD VYXE state. Cleared on
+    /// the next fall via `tick_bg_window_enabled_shadow`. `just_set`
+    /// keeps the shadow alive for the same-fall resolve after the CPU
+    /// write site sets it.
+    pub(crate) bg_window_enabled_shadow: Option<bool>,
+    pub(crate) bg_window_enabled_shadow_just_set: bool,
 }
 
 impl PipelineRegisters {
@@ -60,5 +68,40 @@ impl PipelineRegisters {
         self.background_viewport.y.clear();
         self.window.x_plus_7.clear();
         self.control_latch.clear();
+        self.bg_window_enabled_shadow = None;
+        self.bg_window_enabled_shadow_just_set = false;
+    }
+
+    /// Live VYXE state for the BG plane gate (RAJY / TADE), with the
+    /// §6.15 first-cp_pad↑-samples-OLD overlay applied. When the shadow
+    /// is set, the BG resolve sees the pre-transition LCDC.0 value;
+    /// otherwise it sees the live `control` bit.
+    pub fn bg_window_enabled_for_resolve(&self) -> bool {
+        self.bg_window_enabled_shadow
+            .unwrap_or_else(|| self.control.background_and_window_enabled())
+    }
+
+    /// CPU-write site: capture the pre-write VYXE state into the overlay
+    /// shadow if LCDC.0 transitions during Mode 3. `just_set` keeps the
+    /// shadow alive across the same-fall `tick_bg_window_enabled_shadow`.
+    pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
+        if old_value != new_value {
+            self.bg_window_enabled_shadow = Some(old_value);
+            self.bg_window_enabled_shadow_just_set = true;
+        }
+    }
+
+    /// Once-per-fall tick. The CPU bus write fires before
+    /// `on_master_clock_fall`, so the shadow is set with `just_set=true`
+    /// before this tick runs. The tick consumes `just_set` — keeping the
+    /// shadow alive for the same-fall BG resolve. On any subsequent fall
+    /// without a fresh CPU write that toggles LCDC.0, the shadow clears,
+    /// reverting the BG resolve to the live LCDC.0.
+    pub fn tick_bg_window_enabled_shadow(&mut self) {
+        if self.bg_window_enabled_shadow_just_set {
+            self.bg_window_enabled_shadow_just_set = false;
+        } else {
+            self.bg_window_enabled_shadow = None;
+        }
     }
 }
