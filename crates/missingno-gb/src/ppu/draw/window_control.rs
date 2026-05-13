@@ -284,8 +284,8 @@ impl WindowControl {
         self.rydy.output()
     }
 
-    pub(in crate::ppu) fn wx_triggered(&self) -> bool {
-        self.pynu.output()
+    pub(in crate::ppu) fn wx_triggered(&self, regs: &PipelineRegisters) -> bool {
+        self.pynu.output() && !self.compute_xofo(regs)
     }
 
     pub(in crate::ppu) fn window_rendered(&self) -> bool {

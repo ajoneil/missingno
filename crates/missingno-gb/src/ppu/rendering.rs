@@ -348,7 +348,11 @@ impl Rendering {
         }
     }
 
-    pub fn pipeline_state(&self, video: &VideoControl) -> PipelineSnapshot {
+    pub fn pipeline_state(
+        &self,
+        video: &VideoControl,
+        regs: &PipelineRegisters,
+    ) -> PipelineSnapshot {
         let (bg_low, bg_high) = self.bg_shifter.registers();
         let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
@@ -375,7 +379,7 @@ impl Rendering {
             pova: self.lcd.pova(),
             pygo: self.cascade.pygo(),
             poky: self.cascade.poky(),
-            wx_triggered: self.window.wx_triggered(),
+            wx_triggered: self.window.wx_triggered(regs),
             wuvu: video.xupy(),
             byba: self.scan.scan_done_flag(),
             doba: self.scan.scan_done_prev(),
@@ -687,7 +691,7 @@ impl Rendering {
             self.pixel_counter.value(),
             self.fine_scroll.pixel_clock_active(),
             self.window.window_line_counter(),
-            self.window.wx_triggered(),
+            self.window.wx_triggered(regs),
             regs,
             video,
             vram,

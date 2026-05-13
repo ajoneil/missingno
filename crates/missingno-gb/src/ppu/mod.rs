@@ -816,7 +816,9 @@ impl Ppu {
 
     pub fn pipeline_state(&self) -> Option<PipelineSnapshot> {
         match &self.pixel_pipeline {
-            Some(rendering) if !self.video.vblank() => Some(rendering.pipeline_state(&self.video)),
+            Some(rendering) if !self.video.vblank() => {
+                Some(rendering.pipeline_state(&self.video, &self.registers))
+            }
             _ => None, // VBlank or LCD off: no pipeline to snapshot.
         }
     }
