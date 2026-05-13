@@ -161,12 +161,13 @@ Observation priority: `/compare-traces` → `/inspect` → `/instrument` (with u
 
 #### Hardware model gate (blocking prerequisite for `/design`)
 
-Before invoking `/design`, summary.md must have all three sections filled (not "Unknown" or blank):
+Before invoking `/design`, summary.md must have all four sections filled (not "Unknown" or blank):
 1. `## Hardware model` — what the hardware does step by step (from a research receipt)
 2. `## Model divergence` — what our emulator does differently, naming specific structs/enums (from an analysis receipt)
 3. **Emulator mechanism understanding** (in `## Model divergence`) — how our code uses the values we're about to change. **Most commonly skipped gate.** Without this, you'll cargo-cult values from references without understanding their effect in our architecture.
+4. **Concrete observable prediction** — what the fix will produce in specific values (column number, register value, cycle count). "Col 13 should show shade 1 instead of shade 0" is a prediction. "BGP write should land at the right place" is not. If you can't write a specific-value prediction, your model is too vague to design from — go back to `/inspect` or `/research` to ground the model in observed numbers, not directional intuition.
 
-If any section is missing → `/research` or `/inspect` + `/analyze`, not `/design`.
+If any section is missing or vague → `/research` or `/inspect` + `/analyze`, not `/design`.
 
 #### Design → implement → verify
 

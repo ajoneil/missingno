@@ -10,8 +10,9 @@ Even running in-context, the brief is mandatory. Before starting design work, wr
 
 **Question**: one sentence — what specifically needs to change
 **Context**: file paths, research receipts, investigation summary path, the established root cause
+**Prediction**: a concrete observable that the design will produce, in specific values — e.g. "test X currently shows shade 0 at col 13; after fix it should show shade 1", "register Y currently reads 0x42; after fix it should read 0x43", "cycle count drops from N+3 to N". The prediction must be checkable AFTER `/implement` runs.
 
-Writing the brief forces you to confirm you have validated understanding. If you can't write a clean brief, you're not ready to design — go back to `/research` or `/inspect` first.
+Writing the brief forces you to confirm you have validated understanding. If you can't write a clean brief — especially if you can't write the Prediction in concrete values rather than directional hand-waving ("should land at the right place", "should match hardware") — you're not ready to design. The hardware model is too vague. Go back to `/research` or `/inspect` to ground it.
 
 The deliverable is a receipt file. Receipts and summary.md are durable; conversation context is not.
 
