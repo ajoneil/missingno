@@ -111,9 +111,10 @@ impl WindowControl {
         }
     }
 
-    /// Compute combinational NUKO (PX==WX decode).
-    fn compute_nuko(&self, pixel_counter: u8, regs: &PipelineRegisters) -> bool {
-        regs.control.window_enabled() && self.wy_matched && pixel_counter == self.nuko_wx
+    /// Compute combinational NUKO (PX==WX decode). NOGY is a NAND5 of PX/WX
+    /// bits only; LCDC.5 gates the chain downstream via XOFO → PYNU.r.
+    fn compute_nuko(&self, pixel_counter: u8, _regs: &PipelineRegisters) -> bool {
+        self.wy_matched && pixel_counter == self.nuko_wx
     }
 
     /// Live NUKO read for consumers outside the §6.12 capture chain.
