@@ -898,80 +898,86 @@ impl Rendering {
             false
         };
 
-        // VYBO = NOR3(MYVO, FEPO, WODU) — TAKA is not in the SACU gate.
-        // SACU resumes whenever FEPO drops, regardless of TAKA state.
-        // The compound `!(taka && fepo_held)` gate reflects this: TAKA
-        // freezes the pipeline indirectly via FEPO=1 during normal
-        // sprite fetch (per-slot fetched-flag captures at WUTY↑, so
-        // FEPO stays HIGH for an unfetched sprite at sprite_x). When
-        // LCDC.1=0 drops FEPO mid-fetch via the AROR combinational
-        // chain, the gate releases and SACU resumes inside the 6-dot
-        // fetch window.
+        // VYBO = NOR3(MYVO, FEPO, WODU) — SACU is gated by FEPO/WODU
+        // (and the MYVO clock phase), NOT by TAKA. TAKA freezes SACU
+        // only indirectly: during sprite fetch the per-slot fetched-flag
+        // is unset (captured at WUTY↑, spec §6.9 line 1730), so FEPO=1
+        // for the unfetched sprite at sprite_x. When mid-fetch LCDC.1=0
+        // drops FEPO via the AROR combinational chain (spec §6.10 line
+        // 1858), SACU resumes inside the 6-dot fetch window.
+        let sacu = tyfa && self.fine_scroll.pixel_clock_active();
+
+        // PANY drain-detector slip: when NUKO=1 lands during the dot
+        // where SEKO would naturally fire, NUKO truncates PANY's
+        // high pulse; RYFA captures the second (later) half on the
+        // next SEGU edge, slipping the SEKO → TEVO → NYXU/wx_clk
+        // cascade by 1 dot. Both the BG-shifter parallel-load and
+        // the window-tile-X counter increment land 1 dot late.
+        let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
+        let nuko_now = self.window.nuko(pixel_counter_before_sacu, regs);
+        let pany_slip_now = proposed_seko && nuko_now;
+        let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
+        self.pany_slip_pending = pany_slip_now;
+
+        let nyxu_pulse = seko_fire || advance_nyxu_pulse;
+
+        // BG-fetcher state-change gate during sprite fetch with FEPO held.
+        // Spec describes the BG fetcher counter cycling normally during
+        // sprite fetch after a brief NYXU=0 pulse (~0.499 dots, spec §6.1
+        // line 1201). In our model, firing `fetcher.load_into` (which
+        // resets fetch_counter to 0 and parallel-loads bg_shifter) and
+        // `fine_scroll.reset_counter` during sprite fetch produces
+        // observable divergence from hardware reference images in
+        // mealybug LCDC.{2,3,4,6}/SCX/SCY mid-Mode-3 tests and mooneye
+        // sprite-intr tests. The root cause is downstream of these state
+        // changes — likely in BG-fetcher VRAM-read timing or tile_temp
+        // capture during the new tile cycle that occurs during sprite
+        // fetch. Until that audit is complete, gate these specific
+        // operations on `!fepo_held` (sprite-fetch-with-FEPO=1) so they
+        // fire at the previous steady-state cadence. Everything else in
+        // this method runs per dot per hardware.
         let fepo_held = self.sprite_trigger.taka() && self.fepo(regs.control.sprites_enabled());
-        let mut pixel_out: Option<PixelOutput> = None;
-        if !fepo_held {
-            let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
-            // PANY drain-detector slip: when NUKO=1 lands during the dot
-            // where SEKO would naturally fire, NUKO truncates PANY's
-            // high pulse; RYFA captures the second (later) half on the
-            // next SEGU edge, slipping the SEKO → TEVO → NYXU/wx_clk
-            // cascade by 1 dot. Both the BG-shifter parallel-load and
-            // the window-tile-X counter increment land 1 dot late.
-            let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
-            let nuko_now = self.window.nuko(pixel_counter_before_sacu, regs);
-            let pany_slip_now = proposed_seko && nuko_now;
-            let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
-            self.pany_slip_pending = pany_slip_now;
+        let pixel = pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
 
-            let pixel =
-                pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        if seko_fire && !fepo_held {
+            self.fetcher.load_into(&mut self.bg_shifter);
+        }
 
-            if seko_fire {
-                self.fetcher.load_into(&mut self.bg_shifter);
-            }
+        // NYXU pulse holds the BG shifter via LOZE async set/reset;
+        // the concurrent SACU edge is overridden, so no shift fires
+        // on the pulse dot. The OBJ shifter is not LOZE-gated — uses
+        // sprite_onN / xefy parallel-load — so shifts on SACU normally.
+        if sacu && !nyxu_pulse {
+            self.bg_shifter.shift();
+        }
+        if sacu {
+            self.obj_shifter.shift();
+        }
+        if sacu {
+            self.pixel_counter.advance();
+        }
 
-            // NYXU pulse holds the BG shifter via LOZE async set/reset;
-            // the concurrent SACU edge is overridden, so no shift fires
-            // on the pulse dot. NYXU = NOR3(MOSU, TEVO, AVAP); TEVO =
-            // OR3(SEKO, SUZU, TAVE). MOSU and SUZU fire in the fetcher-
-            // advance phase (advance_nyxu_pulse); SEKO fires here.
-            // TAVE/AVAP fire before the first SACU so don't reach this
-            // gate. The OBJ shifter is not LOZE-gated — uses sprite_onN
-            // / xefy parallel-load — so shifts on SACU normally.
-            let nyxu_pulse = seko_fire || advance_nyxu_pulse;
-            if sacu && !nyxu_pulse {
-                self.bg_shifter.shift();
-            }
-            if sacu {
-                self.obj_shifter.shift();
-            }
-            if sacu {
-                self.pixel_counter.advance();
-            }
+        // WODU↑ is sampled on this fall — combinational on the
+        // post-advance XANO (pixel_counter.terminal()) and the
+        // post-advance FEPO (re-evaluated against the updated
+        // pixel_counter so OAM-X=167 sprites are visible to WODU on
+        // the same edge XANO becomes true, per spec §8.2's
+        // FEPO→WODU combinational path).
+        let wodu_fepo = self.fepo(regs.control.sprites_enabled());
+        self.hblank
+            .evaluate_wodu_on_fall(self.pixel_counter.terminal(), wodu_fepo);
 
-            // WODU↑ is sampled on this fall — combinational on the
-            // post-advance XANO (pixel_counter.terminal()) and the
-            // post-advance FEPO (re-evaluated against the updated
-            // pixel_counter so OAM-X=167 sprites are visible to WODU on
-            // the same edge XANO becomes true, per spec §8.2's
-            // FEPO→WODU combinational path).
-            let wodu_fepo = self.fepo(regs.control.sprites_enabled());
-            self.hblank
-                .evaluate_wodu_on_fall(self.pixel_counter.terminal(), wodu_fepo);
+        let (_toba, pixel_out) =
+            self.lcd
+                .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
 
-            let (_toba, pix) =
-                self.lcd
-                    .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
-            pixel_out = pix;
+        if tyfa {
+            self.fine_scroll.tick();
+        }
 
-            if tyfa {
-                self.fine_scroll.tick();
-            }
-
-            if seko_fire {
-                self.fine_scroll.reset_counter();
-            }
+        if seko_fire && !fepo_held {
+            self.fine_scroll.reset_counter();
         }
 
         self.window.update_nuko_wx(regs.window.x_plus_7.output());
