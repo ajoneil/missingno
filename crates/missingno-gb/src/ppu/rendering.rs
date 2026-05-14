@@ -748,16 +748,20 @@ impl Rendering {
         if self.sprite_trigger.taka() {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
+                    let slot_index = sf.slot_index;
                     let done = sf.advance(regs, oam, oam_bus, vram);
                     if done {
                         sf.merge_into(&mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_taka();
-                        // Recompute FEPO: the sprite is now marked as fetched,
-                        // so FEPO goes false. On hardware, FEPO is purely
-                        // combinational — TYFA sees the updated value
-                        // immediately, allowing CLKPIPE to resume on the
-                        // next rising edge.
+                        // Per-slot fetched-flag DFF captures HIGH at WUTY↑
+                        // (spec §6.9 line 1730). Until this point FEPO=1
+                        // holds the trigger frozen; setting the flag drops
+                        // FEPO for this slot, allowing SACU to resume on
+                        // the next combinational evaluation.
+                        self.scan.sprites_mut().fetched |= 1 << slot_index;
+                        // Recompute FEPO with the now-fetched slot — TYFA
+                        // sees the updated value for this rise.
                         fepo = self.fepo(regs.control.sprites_enabled());
                     }
                 }
@@ -874,8 +878,6 @@ impl Rendering {
         advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
     ) -> Option<PixelOutput> {
-        let mut pixel_out: Option<PixelOutput> = None;
-
         // Consume TYFA from the rise-side snapshot. The snapshot
         // captures RYDY's pre-MOSU-set value, so the in-flight
         // pre-window SACU fires on the MOSU↑ dot before RYDY's
@@ -896,13 +898,18 @@ impl Rendering {
             false
         };
 
-        // Sprite fetch counter advances in mode3_rising (SABE clock,
-        // PPU-clock-rise edge). When TAKA is true, the pixel pipeline
-        // is frozen. After sprite fetch completes, TAKA clears and FEPO
-        // is recomputed, so TYFA correctly enables the pixel clock on
-        // the next rising edge.
-
-        if !self.sprite_trigger.taka() {
+        // VYBO = NOR3(MYVO, FEPO, WODU) — TAKA is not in the SACU gate.
+        // SACU resumes whenever FEPO drops, regardless of TAKA state.
+        // The compound `!(taka && fepo_held)` gate reflects this: TAKA
+        // freezes the pipeline indirectly via FEPO=1 during normal
+        // sprite fetch (per-slot fetched-flag captures at WUTY↑, so
+        // FEPO stays HIGH for an unfetched sprite at sprite_x). When
+        // LCDC.1=0 drops FEPO mid-fetch via the AROR combinational
+        // chain, the gate releases and SACU resumes inside the 6-dot
+        // fetch window.
+        let fepo_held = self.sprite_trigger.taka() && self.fepo(regs.control.sprites_enabled());
+        let mut pixel_out: Option<PixelOutput> = None;
+        if !fepo_held {
             let sacu = tyfa && self.fine_scroll.pixel_clock_active();
 
             // PANY drain-detector slip: when NUKO=1 lands during the dot
@@ -1008,6 +1015,15 @@ impl Rendering {
 
     /// Start sprite fetch for the first matching unfetched sprite.
     /// Called when RYCE fires (SOBU rising edge detected).
+    ///
+    /// The per-slot fetched-flag is NOT set here — hardware's per-slot
+    /// DFF captures HIGH at WUTY↑ (fetch completion, spec §6.9 line
+    /// 1730), not at fetch start. The flag is set in `mode3_rising`'s
+    /// fetch-completion branch once `SpriteFetch::advance` returns
+    /// `done`. This lets FEPO stay HIGH for the fetched slot through
+    /// the fetch window (freezing SACU via VYBO), and lets the AROR
+    /// combinational chain drop FEPO mid-fetch on a LCDC.1=0 write
+    /// (spec §6.4.1 VYBO = NOR3(MYVO, FEPO, WODU); no TAKA term).
     fn start_sprite_fetch(&mut self, _regs: &PipelineRegisters) {
         let match_x = self.pixel_counter.value();
         let sprites = self.scan.sprites_mut();
@@ -1018,8 +1034,8 @@ impl Rendering {
             }
             let entry = &sprites.entries[i];
             if entry.x == match_x && entry.x < 168 {
-                sprites.fetched |= 1 << i;
-                self.sprite_state = SpriteState::Fetching(SpriteFetch::new_fetching(*entry));
+                self.sprite_state =
+                    SpriteState::Fetching(SpriteFetch::new_fetching(*entry, i as u8));
                 break;
             }
         }
