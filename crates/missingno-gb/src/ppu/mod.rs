@@ -171,6 +171,11 @@ impl Ppu {
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
                     line_end_pending: false,
+                    meda: false,
+                    // Post-boot stance: the real boot ROM ran with LCD
+                    // on long enough for MEDA to have fired many times
+                    // before PC=$0100 handoff. Skip-boot starts here.
+                    vsync_committed: true,
                 },
             },
             oam: Oam::default(),
@@ -229,6 +234,8 @@ impl Ppu {
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
                     line_end_pending: false,
+                    meda: false,
+                    vsync_committed: false,
                 },
             },
             oam: Oam::default(),
@@ -242,6 +249,13 @@ impl Ppu {
 
     pub fn lx(&self) -> u8 {
         self.video.dot_position()
+    }
+
+    /// True once MEDA has gone 0→1 at least once since the most recent
+    /// VID_RST deassertion — the LCD's first VSYNC pulse has occurred
+    /// and frames may now be committed to the visible display.
+    pub fn vsync_committed(&self) -> bool {
+        self.video.line_end.vsync_committed
     }
 
     /// Current OAM scan counter entry (0-39). Returns None when not rendering.
@@ -925,6 +939,8 @@ impl Ppu {
             line_end: LineEndPipeline {
                 delayed_line_end: false,
                 line_end_pending: false,
+                meda: false,
+                vsync_committed: lcd_on,
             },
         };
 

@@ -626,8 +626,13 @@ impl GameBoy {
         PhaseResult { new_screen, pixel }
     }
 
-    /// Process a PPU tick result: write pixel to back buffer, present
-    /// on frame boundary. Returns `(new_frame, pixel)`.
+    /// Process a PPU tick result: write pixel to back buffer; on a
+    /// frame boundary, present iff MEDA has pulsed since LCD-on (the
+    /// LCD only latches frames after the first VSYNC). On LCD-off,
+    /// blank the display to match hardware's LCD-off state. Returns
+    /// `(new_frame, pixel)` — `new_frame` always fires on frame
+    /// boundaries so the test harness counts hardware frames, even
+    /// when the commit is skipped.
     fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
         if let Some(pixel) = result.pixel {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
@@ -636,9 +641,18 @@ impl GameBoy {
             }
         }
         if result.new_frame {
-            self.screen.present();
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&self.screen);
+            if self.ppu.control().video_enabled() {
+                if self.ppu.vsync_committed() {
+                    self.screen.present();
+                    if let Some(sgb) = &mut self.sgb {
+                        sgb.update_screen(&self.screen);
+                    }
+                }
+            } else {
+                self.screen.blank();
+                if let Some(sgb) = &mut self.sgb {
+                    sgb.update_screen(&self.screen);
+                }
             }
             return (true, result.pixel);
         }

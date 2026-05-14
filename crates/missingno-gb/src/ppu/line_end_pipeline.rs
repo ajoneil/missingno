@@ -6,18 +6,15 @@
 //! - **NYPE falling** (Q_n rising / nype_n): MYTA and MEDA capture
 //!   (FRAME_END from NOKO, LY=0 from NERU) — one TALU period later.
 //!
-//! MEDA's role is the LCD s_pad vertical-sync output only (not an
-//! OAM-scan or mode-control consumer); not modelled at bit level in
-//! this emulator — honest abstraction. Only POPU (rising) and MYTA
-//! (falling) are dispatched from the emulator's NypeEdge distribution.
+//! MEDA drives s_pad (LCD VSYNC) via the `mure` inverter. Its first
+//! 0→1 transition after VID_RST deassertion is the LCD's first VSYNC
+//! pulse — the LCD only latches frames after it has fired.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ppu) enum NypeEdge {
     /// NYPE rising — POPU fires.
     Rising,
-    /// NYPE falling (nype_n rising) — MYTA fires. MEDA would also fire
-    /// on this edge in hardware, but is not modelled (drives LCD s_pad
-    /// only; honest abstraction).
+    /// NYPE falling (nype_n rising) — MYTA and MEDA fire.
     Falling,
     /// No edge this TALU rise.
     None,
@@ -29,6 +26,13 @@ pub struct LineEndPipeline {
     /// NYPE D input pending feed (set when RUTU fires; consumed on the
     /// next TALU rising capture).
     pub(in crate::ppu) line_end_pending: bool,
+    /// MEDA DFF — captures NERU on NYPE-falling. Drives s_pad VSYNC
+    /// via the `mure` inverter. Held at 0 by VID_RST during LCD-off.
+    pub(in crate::ppu) meda: bool,
+    /// Latched: MEDA has gone 0→1 at least once since the most recent
+    /// VID_RST deassertion. The first 0→1 transition is the LCD's
+    /// first VSYNC pulse since LCD-on.
+    pub(in crate::ppu) vsync_committed: bool,
 }
 
 impl LineEndPipeline {
@@ -60,8 +64,19 @@ impl LineEndPipeline {
         self.delayed_line_end
     }
 
+    /// Capture NERU into MEDA on NYPE-falling. Latches `vsync_committed`
+    /// on the first 0→1 transition since VID_RST.
+    pub(in crate::ppu) fn capture_meda(&mut self, neru: bool) {
+        if !self.meda && neru {
+            self.vsync_committed = true;
+        }
+        self.meda = neru;
+    }
+
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.delayed_line_end = false;
         self.line_end_pending = false;
+        self.meda = false;
+        self.vsync_committed = false;
     }
 }
