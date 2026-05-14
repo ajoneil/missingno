@@ -408,14 +408,16 @@ impl Rendering {
     }
 
     pub(super) fn oam_write_locked(&self) -> bool {
-        // WYJA write-enable: AJUJ = NOR3(dma_run, mode2, mode3).
-        // mode2 takes BESU.Q directly (not the catu_pending pre-stage).
-        self.scan.besu() || self.hblank.rendering_active()
+        // WYJA write-enable: AJUJ = NOR3(dma_run, mode2, mode3). The
+        // §10.5.6 AJUJ pulse is an explicit write-permit override active
+        // for the 2,100 ps window during the AVAP cascade.
+        !self.hblank.ajuj_pulse() && (self.scan.besu() || self.hblank.rendering_active())
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
         // SERE/XEDU tri-state enables gate VRAM writes on mode3 only.
-        self.hblank.rendering_active()
+        // §10.5.6 AJUJ pulse overrides during the AVAP-cascade window.
+        !self.hblank.ajuj_pulse() && self.hblank.rendering_active()
     }
 
     /// Master-clock rising edge (= ALET rising): setup phase dispatcher.
@@ -442,12 +444,9 @@ impl Rendering {
         // captures on alet falling, opposite edge to alet-clocked
         // DFFs (NYKA, DOBA).
 
-        // §10.5.6 AJUJ-glitch window: mode3↑ (XYMU.q clear) fires one
-        // emulator edge after AVAP-fall. This rise discharges any
-        // pending begin_rendering set on the prior AVAP-fall, mirroring
-        // hardware's +2,655 ps mode3 net↑ propagation delay relative
-        // to BESU.q↓ at +559 ps.
-        self.hblank.tick_pending_begin_rendering();
+        // §10.5.6 AJUJ pulse close: the write-permit window opened on
+        // the prior AVAP-fall closes at this rise.
+        self.hblank.tick_ajuj_pulse_on_rise();
 
         if self.scan.scanning() {
             // Mode 2: fetcher/VOGA/WEGO logic suppressed during scanning.
@@ -545,12 +544,12 @@ impl Rendering {
             .scan
             .advance_scan(xupy_rising, video.ly(), regs, oam, oam_bus);
         if scan.avap {
-            // mode3↑ deferred to next master-clock rise per spec §10.5.6
-            // (AJUJ-glitch window: BESU.q↓ at +559 ps, mode3 net↑ at
-            // +2,655 ps after AVAP↑; the 2,100 ps gap is the OAM-write
-            // permit window). The fetcher/window init are not lock-
-            // decision-affecting and stay on the AVAP-fall edge.
-            self.hblank.pend_begin_rendering();
+            // Mode 3 begins on AVAP-fall per spec §7.1. The §10.5.6 AJUJ
+            // permit pulse is asserted alongside mode3↑ — it represents
+            // the 2,100 ps write-permit window between BESU.q↓ and the
+            // buffered mode3 net↑, consumed by oam_write_locked /
+            // vram_write_locked at the mid-CUPA sample.
+            self.hblank.pulse_ajuj_on_avap_fall();
             self.window.init_nuko_wx(regs.window.x_plus_7.output());
             self.fetcher.load_into(&mut self.bg_shifter);
         }

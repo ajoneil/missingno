@@ -50,13 +50,18 @@ pub(in crate::ppu) struct HblankPipeline {
     /// capture delay. Replaces the prior model that collapsed WODU
     /// sample + VOGA capture + WEGO + XYMU clear onto a single rise.
     voga_pending: bool,
-    /// XYMU set (mode3↑) deferred by one emulator edge after AVAP-fall.
-    /// Models the AJUJ-glitch window (spec §10.5.6): mode2 falls at AVAP-fall
-    /// (BESU clear), mode3 rises at the next master-clock rise via
-    /// `tick_pending_begin_rendering`. Between the two edges, mode2=0 AND
-    /// mode3=0 → the OAM-write enable AJUJ is briefly high, allowing OAM
-    /// writes whose CUPA strobe straddles the AVAP boundary to land.
-    pending_begin_rendering: bool,
+    /// AJUJ permit pulse (NOR3 gate, spec §4.9.1 / §10.5.6). High for the
+    /// ~2,100 ps window between BESU.q↓ and the buffered mode3 net↑ during
+    /// the AVAP cascade. In the emulator's half-dot edge granularity this
+    /// pulse spans one emulator edge: asserted at AVAP-fall together with
+    /// mode3↑, deasserted at the next master-clock rise.
+    ///
+    /// Modelled as an explicit first-class signal — rather than derived
+    /// from `!besu && !rendering_active` — so that mode3↑ can fire on
+    /// AVAP-fall (the spec-correct edge per §7.1) without collapsing the
+    /// AJUJ window. Consumed by `oam_write_locked` / `vram_write_locked`
+    /// as a write-permit override.
+    ajuj_pulse: bool,
 }
 
 impl HblankPipeline {
@@ -65,7 +70,7 @@ impl HblankPipeline {
             rendering_active: false,
             voga: false,
             voga_pending: false,
-            pending_begin_rendering: false,
+            ajuj_pulse: false,
         }
     }
 
@@ -80,7 +85,7 @@ impl HblankPipeline {
             rendering_active: false,
             voga: true,
             voga_pending: false,
-            pending_begin_rendering: false,
+            ajuj_pulse: false,
         }
     }
 
@@ -160,26 +165,30 @@ impl HblankPipeline {
         was_pending
     }
 
-    /// AVAP: Mode 2→3 transition. Marks XYMU.q clear (mode3↑) as pending —
-    /// it fires on the next master-clock rise via
-    /// `tick_pending_begin_rendering`. Models the §10.5.6 AJUJ-glitch window:
-    /// BESU.q clears at AVAP-fall (mode2↓), but mode3 net↑ is buffered to
-    /// +2,655 ps after AVAP↑ in hardware. In the emulator's half-dot edge
-    /// granularity, the deferral places mode3↑ on the next rise so the
-    /// discretized window `mode2=0 AND mode3=0` is representable — the
-    /// 2,100 ps AJUJ-high gap that gates OAM-write strobes during a
-    /// Mode 2→3 straddle.
-    pub(in crate::ppu) fn pend_begin_rendering(&mut self) {
-        self.pending_begin_rendering = true;
+    /// AVAP: Mode 2→3 transition. Sets XYMU.q clear (= rendering_active
+    /// true) at the AVAP-fall edge per spec §7.1, and asserts the AJUJ
+    /// permit pulse for the upcoming write-lock samples. The pulse
+    /// represents the 2,100 ps window between BESU.q↓ and the buffered
+    /// mode3 net↑ — both events that hardware sees within the same dot
+    /// near AVAP↑, collapsed in our half-dot edge resolution to a
+    /// single-edge transient signal cleared on the next master-clock rise.
+    pub(in crate::ppu) fn pulse_ajuj_on_avap_fall(&mut self) {
+        self.rendering_active = true;
+        self.ajuj_pulse = true;
     }
 
-    /// Fire any pending begin_rendering at this master-clock rise. Mirrors
-    /// hardware's mode3 net↑ at +2,655 ps after AVAP↑.
-    pub(in crate::ppu) fn tick_pending_begin_rendering(&mut self) {
-        if self.pending_begin_rendering {
-            self.rendering_active = true;
-            self.pending_begin_rendering = false;
-        }
+    /// Clear the AJUJ permit pulse at this master-clock rise. Closes the
+    /// 2,100 ps write-permit window opened on the prior AVAP-fall.
+    pub(in crate::ppu) fn tick_ajuj_pulse_on_rise(&mut self) {
+        self.ajuj_pulse = false;
+    }
+
+    /// AJUJ permit pulse (spec §10.5.6). True during the single emulator
+    /// edge between AVAP-fall and the next master-clock rise. Consumers:
+    /// `oam_write_locked` / `vram_write_locked` use it as a write-permit
+    /// override.
+    pub(in crate::ppu) fn ajuj_pulse(&self) -> bool {
+        self.ajuj_pulse
     }
 
     /// Rendering-mode latch (XYMU). True during Mode 3.
@@ -195,5 +204,6 @@ impl HblankPipeline {
         self.rendering_active = false;
         self.voga = false;
         self.voga_pending = false;
+        self.ajuj_pulse = false;
     }
 }
