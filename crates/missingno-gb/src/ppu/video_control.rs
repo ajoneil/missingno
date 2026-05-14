@@ -17,7 +17,7 @@
 
 use crate::ppu::dividers::Dividers;
 use crate::ppu::line_counter::LineCounter;
-use crate::ppu::line_end_pipeline::LineEndPipeline;
+use crate::ppu::line_end_pipeline::{LineEndPipeline, NypeEdge};
 use crate::ppu::stat_interrupt::StatInterrupt;
 
 /// Video timing and control (schematic page 21). Composes the extracted
@@ -143,6 +143,10 @@ impl VideoControl {
     pub fn on_lx_counter_clock_rise(&mut self) {
         let nype_edge = self.line_end.capture();
         self.lines.on_lx_counter_clock_rise(nype_edge);
+        if matches!(nype_edge, NypeEdge::Falling) {
+            let neru = self.lines.y.value == 0;
+            self.line_end.capture_meda(neru);
+        }
     }
 
     /// LX counter clock falling edge (TALU falling). LineCounter fires
