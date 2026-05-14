@@ -27,6 +27,13 @@ impl DffLatch {
         self.output
     }
 
+    /// Pending write value, if any. Visible between `write()` and the
+    /// next `tick()` — models the dlatch_ee cell's transparency window
+    /// before the capture edge resolves.
+    pub fn pending(&self) -> Option<u8> {
+        self.pending
+    }
+
     /// Advance the latch: if a value is pending, capture it to output.
     /// Returns true if the latch resolved on this tick.
     pub(super) fn tick(&mut self) -> bool {
