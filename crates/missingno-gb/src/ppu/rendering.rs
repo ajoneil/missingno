@@ -682,15 +682,11 @@ impl Rendering {
         vram: &Vram,
         sprites_enabled_pre_cupa: bool,
     ) {
-        // FEPO evaluated before any falling-phase mutations. Feeds VYBO
-        // (TYFA suppression), TEKY (sprite-fetch trigger), and TYFA.
-        // Uses the pre-CUPA snapshot of LCDC.1: hardware's SOBU DFF
-        // captures TEKY at the alet rising edge BEFORE CUPA's
-        // transparent-latch propagation reaches XYLO (~14 ns gate delay,
-        // spec §6.10 line 1840). Combinational consumers downstream of
-        // mode3_rising's rise (e.g. mode3_pixel_pipeline on fall) read
-        // current `regs` directly and see post-CUPA values.
-        let mut fepo = self.fepo(sprites_enabled_pre_cupa);
+        // Pre-CUPA FEPO drives the TEKY → SOBU gate-delay race: SOBU's
+        // alet-rising DFF capture wins by ~14 ns over CUPA's transparent-
+        // latch propagation through XYLO, so SOBU sees the pre-write
+        // LCDC.1 value.
+        let mut fepo_pre_cupa = self.fepo(sprites_enabled_pre_cupa);
 
         // LYRY: combinational on fetch_counter (>= 5). The counter only
         // increments on rising (LEBO clock), so the value here reflects
@@ -760,9 +756,9 @@ impl Rendering {
                         // FEPO for this slot, allowing SACU to resume on
                         // the next combinational evaluation.
                         self.scan.sprites_mut().fetched |= 1 << slot_index;
-                        // Recompute FEPO with the now-fetched slot — TYFA
-                        // sees the updated value for this rise.
-                        fepo = self.fepo(regs.control.sprites_enabled());
+                        // Recompute FEPO with the now-fetched slot for any
+                        // next-iteration TEKY trigger on this rise.
+                        fepo_pre_cupa = self.fepo(regs.control.sprites_enabled());
                     }
                 }
                 SpriteState::Idle => {}
@@ -773,13 +769,19 @@ impl Rendering {
         //
         // Hardware: TEKY = AND4(FEPO, TUKU, LYRY, !TAKA), where TUKU =
         // NOT(RYDY) collapses the SYLO/TOMU/TUKU triple-inversion.
-        let teky = fepo && !self.window.rydy() && lyry && !self.sprite_trigger.taka();
+        let teky = fepo_pre_cupa && !self.window.rydy() && lyry && !self.sprite_trigger.taka();
         let ryce = self.sprite_trigger.capture_sobu(teky);
 
         if ryce {
             // Find and mark the matching sprite entry, start the fetch.
             self.start_sprite_fetch(regs);
         }
+
+        // Post-CUPA FEPO drives TYFA's combinational AND. CUPA's
+        // transparent-latch propagation through XYLO → AROR → FEPO
+        // completes within ~90 ps of CUPA↑, well before the next
+        // alet-falling SACU pulse evaluation on this dot.
+        let fepo_post_cupa = self.fepo(regs.control.sprites_enabled());
 
         // TYFA = AND3(SOCY, POKY, VYBO). Snapshotted on master-clock
         // rise and consumed in mode3_pixel_pipeline on master-clock
@@ -790,8 +792,10 @@ impl Rendering {
         // between SACU and RYDY's effect via SOCY. VYBO = NOR3(
         // FEPO_old, WODU_old, MYVO); the !pixel_counter.terminal()
         // factor encodes !WODU_old.
-        self.tyfa =
-            !fepo && !self.pixel_counter.terminal() && !self.window.rydy() && self.cascade.poky();
+        self.tyfa = !fepo_post_cupa
+            && !self.pixel_counter.terminal()
+            && !self.window.rydy()
+            && self.cascade.poky();
 
         // POHU: combinational comparator, count == SCX & 7.
         // On hardware, POHU is combinational and ROXO captures into PUXA
