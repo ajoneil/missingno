@@ -50,6 +50,14 @@ impl Screen {
         true
     }
 
+    /// Blank both buffers — used on LCD-off to match hardware where
+    /// the LCD displays its "off" state (uniform light shade) when
+    /// LCDC.7 = 0 and the PPU is in VID_RST.
+    pub fn blank(&mut self) {
+        *self.front = Framebuffer::default();
+        *self.back = Framebuffer::default();
+    }
+
     /// Direct reference to the front buffer for bulk pixel reads
     /// (e.g. shader upload, screenshot comparison).
     pub fn front(&self) -> &Framebuffer {
