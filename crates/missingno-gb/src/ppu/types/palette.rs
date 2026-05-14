@@ -131,8 +131,21 @@ impl Palettes {
     }
 
     pub fn background_for_bg_resolve(&self) -> u8 {
-        self.background_or_overlay
-            .unwrap_or_else(|| self.background.output())
+        if let Some(overlay) = self.background_or_overlay {
+            return overlay;
+        }
+        // dlatch_ee transparency: while CUPA is high, a BGP write that
+        // has set DffLatch.pending but not yet been committed by
+        // tick_background presents OR(prior, new) on the cp_pad sample.
+        // Extends the NURA overlay window backwards by one emulator
+        // edge so a pixel emit between drive_ppu_bus (rise) and
+        // tick_palette_latches (fall) sees the in-flight value.
+        if self.bgp_recovery_active
+            && let Some(pending) = self.background.pending()
+        {
+            return self.background.output() | pending;
+        }
+        self.background.output()
     }
 
     /// Mode 2 entry (BESU↑) at scanline start. The pixel pipe is idle
