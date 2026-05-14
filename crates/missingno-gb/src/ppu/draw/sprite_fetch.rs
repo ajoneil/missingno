@@ -39,6 +39,10 @@ pub enum SpriteFetchPhase {
 pub(in crate::ppu) struct SpriteFetch {
     /// The sprite store entry that triggered this fetch.
     pub(in crate::ppu) entry: SpriteStoreEntry,
+    /// Slot index in the per-line sprite store — used to set the
+    /// per-slot fetched-flag at WUTY↑ (fetch completion), modelling
+    /// hardware's per-slot DFF capture (spec §6.9 line 1730).
+    pub(in crate::ppu) slot_index: u8,
     /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
     /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
     /// Self-stops at 5 via TAME clock gating.
@@ -59,9 +63,10 @@ impl SpriteFetch {
     /// Start the 6-dot sprite data fetch. The variable 0-5 dot penalty
     /// is handled by TEKY/SOBU staying low until the BG fetcher is done,
     /// not by a separate waiting state.
-    pub(in crate::ppu) fn new_fetching(entry: SpriteStoreEntry) -> Self {
+    pub(in crate::ppu) fn new_fetching(entry: SpriteStoreEntry, slot_index: u8) -> Self {
         Self {
             entry,
+            slot_index,
             fetch_counter: 0,
             tile_data_low: 0,
             tile_data_high: 0,

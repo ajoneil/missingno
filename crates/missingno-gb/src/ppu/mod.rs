@@ -114,6 +114,16 @@ pub struct Ppu {
     /// (BESU↑) and release the BGP NURA-overlay recovery state — the
     /// dlatch_ee cell has settled during the prior HBlank.
     prev_besu: bool,
+    /// XYLO (LCDC.1) snapshot taken at the start of each rise() BEFORE
+    /// the CPU's staged bus write applies. Models the gate-delay race
+    /// at the alet rising edge of M-cycle dot 2: SOBU's DFF capture of
+    /// TEKY (depending combinationally on FEPO depending on XYLO) wins
+    /// over CUPA-rising's transparent-latch propagation by ~14 ns (spec
+    /// §6.10 line 1840 et seq.). Read by `mode3_rising`'s FEPO-for-TEKY
+    /// computation; other FEPO reads in the rise/fall path use the
+    /// post-write regs directly (combinational consumers fire after
+    /// XYLO has settled through gate delay).
+    sprites_enabled_pre_cupa: bool,
 }
 
 impl Ppu {
@@ -168,6 +178,7 @@ impl Ppu {
             frame_number: 0,
             pending_lcd_on_init: false,
             prev_besu: false,
+            sprites_enabled_pre_cupa: true,
         }
     }
 
@@ -225,6 +236,7 @@ impl Ppu {
             frame_number: 0,
             pending_lcd_on_init: false,
             prev_besu: false,
+            sprites_enabled_pre_cupa: false,
         }
     }
 
@@ -371,8 +383,7 @@ impl Ppu {
             }
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
-                let old_bg_window_enabled =
-                    self.registers.control.background_and_window_enabled();
+                let old_bg_window_enabled = self.registers.control.background_and_window_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
@@ -387,10 +398,8 @@ impl Ppu {
                 if is_drawing {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
-                    self.registers.arm_bg_window_enabled_shadow(
-                        old_bg_window_enabled,
-                        new_bg_window_enabled,
-                    );
+                    self.registers
+                        .arm_bg_window_enabled_shadow(old_bg_window_enabled, new_bg_window_enabled);
                 }
 
                 // CUPA↑ → XODO↓ is combinational; schedule the matching
@@ -604,6 +613,15 @@ impl Ppu {
     /// pixel shift, scanline boundary handling, VBlank IF, and LYC.
     ///
     /// Collapsed cascade: ck1_ck2 → ANOS/AVET → ATAL/ADEH → AZOF → ZAXY → ZEME → PPU clock (ALET).
+    /// Capture LCDC.1 (XYLO) BEFORE the CPU's staged bus write applies
+    /// this rise. The captured value is consumed at the SOBU TEKY-capture
+    /// edge in `mode3_rising` to model the gate-delay race against
+    /// CUPA-rising (spec §6.10 line 1840). Combinational consumers
+    /// elsewhere continue to read post-write `regs` directly.
+    pub fn snapshot_pre_cupa_lcdc(&mut self) {
+        self.sprites_enabled_pre_cupa = self.registers.control.sprites_enabled();
+    }
+
     pub fn on_master_clock_rise(&mut self, vram: &Vram, oam_bus: OamBusOwner) -> PpuTickResult {
         let mut result = PpuTickResult {
             pixel: None,
@@ -630,8 +648,14 @@ impl Ppu {
         // VOGA (hblank), LYZU. Also XUPY-derived logic read at this
         // edge.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel =
-                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, oam_bus, vram);
+            result.pixel = rendering.on_ppu_clock_rise(
+                &self.registers,
+                &self.video,
+                &self.oam,
+                oam_bus,
+                vram,
+                self.sprites_enabled_pre_cupa,
+            );
         }
 
         result
@@ -934,6 +958,7 @@ impl Ppu {
             frame_number: 0,
             pending_lcd_on_init: false,
             prev_besu: false,
+            sprites_enabled_pre_cupa: lcd_on,
         }
     }
 }
