@@ -291,6 +291,10 @@ impl Rendering {
         self.scan.besu()
     }
 
+    pub(super) fn lcd_pushing_active(&self) -> bool {
+        self.lcd.wusa()
+    }
+
     /// Snapshot of the sprite store for debugging.
     pub(super) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
         let sprites = &self.scan.sprites_ref();
