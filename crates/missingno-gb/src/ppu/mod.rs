@@ -380,10 +380,26 @@ impl Ppu {
         self.video.stat.set_line_was_high(stat_line);
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, _vram: &Vram) -> bool {
+    pub fn write_register(
+        &mut self,
+        register: Register,
+        value: u8,
+        _vram: &Vram,
+        halt_wake_active: bool,
+    ) -> bool {
         let is_drawing = self.is_rendering();
 
         match register {
+            Register::BackgroundPalette if halt_wake_active => {
+                // BGP CUPA from a HALT-wake handler lands several LCD
+                // columns later than running-CPU dispatch produces.
+                // Park the value; `Palettes::tick_background` commits it
+                // after the countdown.
+                self.registers
+                    .palettes
+                    .write_background_halt_wake_deferred(value);
+                false
+            }
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
                 // Palette registers use DFF8 staging inside DffLatch —
                 // `apply_register_write` calls `DffLatch::write` (sets

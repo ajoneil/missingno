@@ -573,8 +573,9 @@ impl GameBoy {
     /// pulse. Returns true if a STAT interrupt was triggered (FF41 write quirk).
     pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
+            let halt_wake_active = self.cpu.is_halt_wake_active();
             self.ppu
-                .write_register(register, value, &self.vram_bus.vram)
+                .write_register(register, value, &self.vram_bus.vram, halt_wake_active)
         } else {
             false
         }
@@ -709,9 +710,10 @@ impl GameBoy {
             MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
+                let halt_wake_active = self.cpu.is_halt_wake_active();
                 if self
                     .ppu
-                    .write_register(register, value, &self.vram_bus.vram)
+                    .write_register(register, value, &self.vram_bus.vram, halt_wake_active)
                 {
                     self.interrupts
                         .requested

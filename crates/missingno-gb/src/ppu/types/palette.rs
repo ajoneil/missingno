@@ -99,6 +99,20 @@ pub struct Palettes {
     /// active period (Mode 2 onward). Cleared at the next scanline's
     /// Mode 2 entry (BESU↑) when the cell can finish settling.
     pub(crate) bgp_recovery_active: bool,
+    /// BGP write parked while the CPU is inside a HALT-wake handler
+    /// (`Cpu::is_halt_wake_active`). The dlatch_ee `pending` isn't set
+    /// at the CPU's CUPA edge; instead `tick_background` runs the
+    /// countdown and commits `pending` when it expires, shifting the
+    /// pixel-pipeline-visible transition 4-5 LCD columns later than
+    /// running-CPU dispatch produces. Behavioural overlay — no
+    /// gate-level anchor for the shift.
+    pub(crate) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DeferredBgpWrite {
+    pub value: u8,
+    pub ticks_remaining: u8,
 }
 
 impl Default for Palettes {
@@ -109,12 +123,43 @@ impl Default for Palettes {
             sprite1: DffLatch::new(0xFF),
             background_or_overlay: None,
             bgp_recovery_active: false,
+            bgp_halt_wake_deferred: None,
         }
     }
 }
 
 impl Palettes {
+    /// Defer a BGP write performed from a HALT-wake handler. The first
+    /// within-scanline write skips the NURA OR-overlap (no `bgp_recovery_active`
+    /// to add +1 visible column), so it needs a 6-tick countdown to land
+    /// at the same wall-clock as a second write's 5-tick countdown + NURA
+    /// overlap. The countdown is consumed by `tick_background`, which
+    /// commits the value into `pending` on the expiring tick so the
+    /// normal promote-and-overlay logic runs in the same call.
+    pub fn write_background_halt_wake_deferred(&mut self, value: u8) {
+        let ticks_remaining = if self.bgp_recovery_active { 5 } else { 6 };
+        self.bgp_halt_wake_deferred = Some(DeferredBgpWrite {
+            value,
+            ticks_remaining,
+        });
+    }
+
     pub fn tick_background(&mut self) -> bool {
+        // Advance any HALT-wake-deferred BGP write. On the tick that
+        // brings the countdown to 0, commit into `pending` so the normal
+        // promote-and-overlay logic below runs against the new value in
+        // the same call.
+        if let Some(deferred) = self.bgp_halt_wake_deferred.as_mut() {
+            if deferred.ticks_remaining > 0 {
+                deferred.ticks_remaining -= 1;
+            }
+            if deferred.ticks_remaining == 0 {
+                let value = deferred.value;
+                self.bgp_halt_wake_deferred = None;
+                self.background.write(value);
+            }
+        }
+
         let prior = self.background.output();
         let ticked = self.background.tick();
         if ticked {

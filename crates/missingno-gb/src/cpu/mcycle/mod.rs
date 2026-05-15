@@ -505,6 +505,7 @@ impl Cpu {
                 if irq_pending_for_dispatch {
                     self.halt_state = HaltState::Running;
                     self.halt_rs_latched = false;
+                    self.halt_wake_active = true;
                     let pc = self.pc;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
