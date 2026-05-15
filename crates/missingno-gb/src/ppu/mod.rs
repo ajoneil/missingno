@@ -977,6 +977,7 @@ impl Ppu {
                 sprite1: DffLatch::new(snap.obp1),
                 background_or_overlay: None,
                 bgp_recovery_active: false,
+                bgp_halt_wake_deferred: None,
             },
             bg_window_enabled_shadow: None,
             bg_window_enabled_shadow_just_set: false,
