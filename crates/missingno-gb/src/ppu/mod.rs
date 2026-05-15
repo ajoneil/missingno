@@ -263,6 +263,17 @@ impl Ppu {
         self.pixel_pipeline.as_ref().map(|r| r.scan_counter_entry())
     }
 
+    /// True when the WUSA NOR-latch is open — the LCD is actively shifting
+    /// pixels (TOBA gating SACU to the LD pads). Used by the §6.15 LCDC.0
+    /// overlay arm to gate out CUPA writes that fire during prelude, whose
+    /// "first cp_pad↑ after CUPA" lands on a non-LCD-emitting prelude cp_pad.
+    fn lcd_pushing_active(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .map(|r| r.lcd_pushing_active())
+            .unwrap_or(false)
+    }
+
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Control => self.registers.control.bits(),
@@ -424,8 +435,11 @@ impl Ppu {
                 // arm the shadow if VYXE transitions during Mode 3, so the
                 // BG resolve on the next cp_pad↑ uses the pre-transition
                 // value. Bidirectional — both OFF and RESTORE produce the
-                // overlay.
-                if is_drawing {
+                // overlay. Gated on WUSA: when LCD pushing is not yet
+                // active (still in prelude), the first cp_pad↑ after CUPA
+                // lands on a non-LCD-emitting prelude cp_pad, so the OLD-
+                // VYXE pixel is invisible at the LCD interface.
+                if is_drawing && self.lcd_pushing_active() {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
                     self.registers
