@@ -186,6 +186,7 @@ impl Cpu {
 
             Commit::EnterHalt | Commit::EnterStop => {
                 cpu.halt_state = HaltState::Halting;
+                cpu.halt_wake_active = false;
             }
         }
     }
@@ -431,6 +432,7 @@ impl Cpu {
                 cpu.ime_delay = true;
                 cpu.bus_counter = value;
                 cpu.pc = cpu.bus_counter;
+                cpu.halt_wake_active = false;
             }
         }
     }

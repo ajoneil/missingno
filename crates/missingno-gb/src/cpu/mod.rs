@@ -146,6 +146,12 @@ pub struct Cpu {
     /// gate in `execute.rs` consults this flag to keep `irq_latch_inst<i>`
     /// transparent throughout halt-state.
     pub(super) halt_rs_latched: bool,
+    /// True while executing a handler reached via IME=1 HALT-wake
+    /// dispatch. Read by the BGP CUPA write path to defer the dlatch_ee
+    /// effect — reference PNGs show post-HALT-wake BGP writes landing
+    /// 4-5 LCD columns later than the running-CPU dispatch path produces
+    /// at the same handler offsets. Behavioural; no gate-level anchor.
+    pub(super) halt_wake_active: bool,
 }
 
 impl Cpu {
@@ -212,6 +218,7 @@ impl Cpu {
             dispatch: dispatch_chain::DispatchChain::new(),
             halt_bug_check_pending: false,
             halt_rs_latched: false,
+            halt_wake_active: false,
         }
     }
 
@@ -252,6 +259,7 @@ impl Cpu {
             dispatch: dispatch_chain::DispatchChain::new(),
             halt_bug_check_pending: false,
             halt_rs_latched: false,
+            halt_wake_active: false,
         }
     }
 
@@ -304,6 +312,7 @@ impl Cpu {
             dispatch: dispatch_chain::DispatchChain::new(),
             halt_bug_check_pending: false,
             halt_rs_latched: false,
+            halt_wake_active: false,
         }
     }
 
@@ -468,6 +477,10 @@ impl Cpu {
     /// the per-bit `irq_latch_inst<i>` in halt-state.
     pub fn halt_rs_latched(&self) -> bool {
         self.halt_rs_latched
+    }
+
+    pub fn is_halt_wake_active(&self) -> bool {
+        self.halt_wake_active
     }
 
     /// Whether the CPU is in a fetch M-cycle (the bus is reading the
