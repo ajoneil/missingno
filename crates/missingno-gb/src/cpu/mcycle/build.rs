@@ -1,12 +1,12 @@
 use super::super::{
+    Cpu,
     commit::Commit,
     flags::Flags,
     instructions::{
-        jump, Address, Arithmetic, Arithmetic16, Arithmetic8, BitFlag, BitShift, Bitwise, Jump,
-        Load, Source16, Source8, Stack, Target16, Target8,
+        Address, Arithmetic, Arithmetic8, Arithmetic16, BitFlag, BitShift, Bitwise, Jump, Load,
+        Source8, Source16, Stack, Target8, Target16, jump,
     },
     registers::Register16,
-    Cpu,
 };
 use super::{AluOp, Phase, PopAction, ReadAction, RmwOp};
 

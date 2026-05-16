@@ -25,10 +25,14 @@ impl TempDir {
         std::fs::create_dir_all(&p).unwrap();
         Self(p)
     }
-    fn path(&self) -> &std::path::Path { &self.0 }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 impl Drop for TempDir {
-    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn minimal_rom() -> Vec<u8> {
@@ -95,7 +99,11 @@ fn missingno_extension_field_roundtrip() {
     );
 
     // Columns round-trip with the right types
-    let pvr_col = hdr.fields.iter().position(|f| f == "pending_vector_resolve").unwrap();
+    let pvr_col = hdr
+        .fields
+        .iter()
+        .position(|f| f == "pending_vector_resolve")
+        .unwrap();
     let hb_col = hdr.fields.iter().position(|f| f == "halt_bug").unwrap();
     for i in 0..store.entry_count() {
         let _ = store.get_bool(pvr_col, i);
@@ -129,5 +137,8 @@ fn unknown_extension_name_is_rejected() {
     let gb = GameBoy::new(cartridge, None);
 
     let result = Tracer::create(&path, &profile, &gb, BootRom::Skip);
-    assert!(result.is_err(), "tracer should reject unknown extension name");
+    assert!(
+        result.is_err(),
+        "tracer should reject unknown extension name"
+    );
 }

@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use gbtrace::format::SnapshotType;
 use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::write::GbtraceWriter;
-use gbtrace::format::SnapshotType;
 use gbtrace::header::{ExtensionField, TraceHeader};
-use gbtrace::profile::{field_nullable, field_type, FieldType};
+use gbtrace::profile::{FieldType, field_nullable, field_type};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use crate::ppu::PpuTraceSnapshot;
 use crate::GameBoy;
+use crate::ppu::PpuTraceSnapshot;
 
 // ---------------------------------------------------------------------------
 // Extension fields — emulator-internal debugging state
@@ -45,8 +45,7 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
     ExtensionDef {
         name: "halt_bug",
         field_type: FieldType::Bool,
-        description:
-            "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
+        description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
     },
     ExtensionDef {
         name: "ppu_wuvu",
