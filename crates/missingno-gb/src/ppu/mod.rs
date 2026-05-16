@@ -851,14 +851,8 @@ impl Ppu {
             // fall's advance_scan ticks counter 0→1 — matching the
             // "1 XUPY cycle between CATU capture and the first counter
             // tick" rule.
-            //
-            // tick_rutu runs after tick_catu so the CATU reader sees
-            // the pre-promotion RUTU value; the scanline-boundary
-            // write promoted by tick_rutu is only visible on the next
-            // XUPY rising edge.
             if let Some(rendering) = self.pixel_pipeline.as_mut() {
                 rendering.tick_catu(&self.video);
-                rendering.tick_rutu();
             }
 
             // STAT edge detection moved to check_stat_edge() — called
