@@ -7,6 +7,14 @@ fn bully() {
     let found_loop = common::run_until_infinite_loop(&mut run, 60);
     assert!(found_loop, "Bully timed out without reaching infinite loop");
 
+    // Bully enables the LCD one instruction before its lock-up `JR @`
+    // (BullyGB src/main.asm:151-154), so the JR-2 predicate fires on a
+    // mid-scanout frame. Advance a couple more frames so the captured
+    // screen is the stable rendering the reference PNG was taken from.
+    for _ in 0..2 {
+        while !run.step().new_screen {}
+    }
+
     let actual = common::screen_to_greyscale(run.gb.screen());
     let expected = common::load_reference_png("bully/bully-dmg.png");
 
