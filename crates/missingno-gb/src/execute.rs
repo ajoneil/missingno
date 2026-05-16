@@ -331,15 +331,40 @@ impl GameBoy {
             });
         }
 
-        // BOWA (dot 0): record OAM bug from address in the upcoming action.
-        if dot.bowa()
-            && let DotAction::InternalOamBug { address } = &self.current_dot_action
-            && (0xFE00..=0xFEFF).contains(address)
-        {
-            match self.pending_oam_bug {
-                Some(OamBugKind::Read) => {}
-                _ => {
-                    self.pending_oam_bug = Some(OamBugKind::Write);
+        // BOWA (dot 0): record OAM bug arming from any OAM-range
+        // address on the CPU bus this M-cycle. CUFE pulses at MOPA
+        // gated on SARO_ADDR_OAMp (the address-decoder signal), so
+        // the arming must be visible at BOWA — same M-cycle as the
+        // MOPA-rise apply at dot 2. Three sources:
+        //   1. InternalOamBug (IDU step puts SP+1/HL+1/HL-1 on bus)
+        //   2. BusAction::Read with OAM-range address
+        //   3. BusAction::Write with OAM-range address
+        if dot.bowa() {
+            if let DotAction::InternalOamBug { address } = &self.current_dot_action
+                && (0xFE00..=0xFEFF).contains(address)
+            {
+                match self.pending_oam_bug {
+                    Some(OamBugKind::Read) => {}
+                    _ => {
+                        self.pending_oam_bug = Some(OamBugKind::Write);
+                    }
+                }
+            }
+
+            if let Some(address) = self.cpu.pending_bus_read()
+                && (0xFE00..=0xFEFF).contains(&address)
+            {
+                self.pending_oam_bug = Some(OamBugKind::Read);
+            }
+
+            if let Some((address, _)) = self.cpu.pending_bus_write()
+                && (0xFE00..=0xFEFF).contains(&address)
+            {
+                match self.pending_oam_bug {
+                    Some(OamBugKind::Read) => {}
+                    _ => {
+                        self.pending_oam_bug = Some(OamBugKind::Write);
+                    }
                 }
             }
         }
@@ -499,15 +524,14 @@ impl GameBoy {
         // cpu_read had.
         if let DotAction::Read { address } = &self.current_dot_action {
             let address = *address;
-            if (0xFE00..=0xFEFF).contains(&address) {
-                self.pending_oam_bug = Some(OamBugKind::Read);
-            }
             // Latch edge (`data_phase_n↑` at dot 3.995, spec §13.6):
             // the CPU captures the bus into its internal data register.
             // The final value resolves the drive-enable snapshot against
             // any per-address mid-M-cycle flux — OAM/VRAM lock state at
             // the latch edge, STAT/LY per-bit transitions during the
-            // drive window.
+            // drive window. OAM-bug arming for this read already
+            // fired at BOWA (dot 0 rise) — same M-cycle, before MOPA
+            // applies it.
             let value = self.bus_value_at_latch(address, self.cpu_bus.data);
             self.last_read_value = value;
             self.commit_bus_read(address, value);
@@ -522,9 +546,9 @@ impl GameBoy {
             DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
             DotAction::Write { address, value: _ } => {
                 let address = *address;
-                if (0xFE00..=0xFEFF).contains(&address) {
-                    self.pending_oam_bug = Some(OamBugKind::Write);
-                }
+                // OAM-bug arming for this write already fired at BOWA
+                // (dot 0 rise) of the same M-cycle — see the BOWA
+                // detection block in rise().
                 // drive_ppu_bus already fired at dot 2 for PPU registers
                 // (CUPA-rising visibility); for non-PPU addresses it's a
                 // no-op. Memory commits here at fall() of dot 3 (CUPA-
