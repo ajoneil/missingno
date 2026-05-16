@@ -76,7 +76,6 @@ impl GameBoy {
     /// is advanced and control returns to the caller.
     fn step_instruction(&mut self) -> StepResult {
         let mut new_screen = false;
-        let mut pending_oam_bug: Option<OamBugKind> = None;
         self.last_read_value = 0;
 
         // Consume the current instruction boundary (we're starting
@@ -94,7 +93,7 @@ impl GameBoy {
             );
             phases_remaining -= 1;
 
-            let result = self.execute_phase(&mut pending_oam_bug);
+            let result = self.execute_phase();
             new_screen |= result.new_screen;
 
             // Check for instruction boundary after completing a dot
@@ -119,8 +118,7 @@ impl GameBoy {
     /// Advance exactly one half-phase — execute rise() or fall()
     /// depending on current clock level.
     pub fn step_phase(&mut self) -> PhaseResult {
-        let mut pending_oam_bug: Option<OamBugKind> = None;
-        self.execute_phase(&mut pending_oam_bug)
+        self.execute_phase()
     }
 
     /// Advance to the next dot (T-cycle) boundary — the next Low
@@ -128,11 +126,10 @@ impl GameBoy {
     /// Returns true if a new frame was produced.
     pub fn step_dot(&mut self) -> bool {
         let mut new_screen = false;
-        let mut pending_oam_bug: Option<OamBugKind> = None;
 
         // Run phases until clock returns to Low (dot complete)
         loop {
-            let result = self.execute_phase(&mut pending_oam_bug);
+            let result = self.execute_phase();
             new_screen |= result.new_screen;
             if self.clock_phase == ClockPhase::Low {
                 break;
@@ -150,10 +147,10 @@ impl GameBoy {
     /// Execute one phase (half-dot) of hardware. When the clock is
     /// Low, execute rise() (Low→High edge). When High, execute
     /// fall() (High→Low edge).
-    fn execute_phase(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
+    fn execute_phase(&mut self) -> PhaseResult {
         match self.clock_phase {
-            ClockPhase::Low => self.rise(pending_oam_bug),
-            ClockPhase::High => self.fall(pending_oam_bug),
+            ClockPhase::Low => self.rise(),
+            ClockPhase::High => self.fall(),
         }
     }
 
@@ -170,7 +167,7 @@ impl GameBoy {
     /// dispatch_active on the closing CLK9↑ of `Halted(WakeIntake)` so
     /// the next M-cycle's selector resolves dispatch vs fetch from the
     /// freshly-captured `dispatch_active.q`.
-    fn rise(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
+    fn rise(&mut self) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
@@ -334,15 +331,40 @@ impl GameBoy {
             });
         }
 
-        // BOWA (dot 0): record OAM bug from address in the upcoming action.
-        if dot.bowa()
-            && let DotAction::InternalOamBug { address } = &self.current_dot_action
-            && (0xFE00..=0xFEFF).contains(address)
-        {
-            match pending_oam_bug {
-                Some(OamBugKind::Read) => {}
-                _ => {
-                    *pending_oam_bug = Some(OamBugKind::Write);
+        // BOWA (dot 0): record OAM bug arming from any OAM-range
+        // address on the CPU bus this M-cycle. CUFE pulses at MOPA
+        // gated on SARO_ADDR_OAMp (the address-decoder signal), so
+        // the arming must be visible at BOWA — same M-cycle as the
+        // MOPA-rise apply at dot 2. Three sources:
+        //   1. InternalOamBug (IDU step puts SP+1/HL+1/HL-1 on bus)
+        //   2. BusAction::Read with OAM-range address
+        //   3. BusAction::Write with OAM-range address
+        if dot.bowa() {
+            if let DotAction::InternalOamBug { address } = &self.current_dot_action
+                && (0xFE00..=0xFEFF).contains(address)
+            {
+                match self.pending_oam_bug {
+                    Some(OamBugKind::Read) => {}
+                    _ => {
+                        self.pending_oam_bug = Some(OamBugKind::Write);
+                    }
+                }
+            }
+
+            if let Some(address) = self.cpu.pending_bus_read()
+                && (0xFE00..=0xFEFF).contains(&address)
+            {
+                self.pending_oam_bug = Some(OamBugKind::Read);
+            }
+
+            if let Some((address, _)) = self.cpu.pending_bus_write()
+                && (0xFE00..=0xFEFF).contains(&address)
+            {
+                match self.pending_oam_bug {
+                    Some(OamBugKind::Read) => {}
+                    _ => {
+                        self.pending_oam_bug = Some(OamBugKind::Write);
+                    }
                 }
             }
         }
@@ -430,7 +452,7 @@ impl GameBoy {
         // MOPA rising edge (dot 2): fire OAM bug.
         if dot.mopa()
             && !dot.boga()
-            && let Some(kind) = pending_oam_bug.take()
+            && let Some(kind) = self.pending_oam_bug.take()
         {
             match kind {
                 OamBugKind::Read => self.ppu.oam_bug_read(),
@@ -444,7 +466,7 @@ impl GameBoy {
 
     /// Falling edge: PPU falling phase, interrupt latch capture,
     /// bus writes, M-cycle subsystems (serial, DMA, audio).
-    fn fall(&mut self, pending_oam_bug: &mut Option<OamBugKind>) -> PhaseResult {
+    fn fall(&mut self) -> PhaseResult {
         let mut new_screen = false;
         let dot = self.current_dot;
         let is_mcycle_boundary = dot.boga();
@@ -502,15 +524,14 @@ impl GameBoy {
         // cpu_read had.
         if let DotAction::Read { address } = &self.current_dot_action {
             let address = *address;
-            if (0xFE00..=0xFEFF).contains(&address) {
-                *pending_oam_bug = Some(OamBugKind::Read);
-            }
             // Latch edge (`data_phase_n↑` at dot 3.995, spec §13.6):
             // the CPU captures the bus into its internal data register.
             // The final value resolves the drive-enable snapshot against
             // any per-address mid-M-cycle flux — OAM/VRAM lock state at
             // the latch edge, STAT/LY per-bit transitions during the
-            // drive window.
+            // drive window. OAM-bug arming for this read already
+            // fired at BOWA (dot 0 rise) — same M-cycle, before MOPA
+            // applies it.
             let value = self.bus_value_at_latch(address, self.cpu_bus.data);
             self.last_read_value = value;
             self.commit_bus_read(address, value);
@@ -525,9 +546,9 @@ impl GameBoy {
             DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
             DotAction::Write { address, value: _ } => {
                 let address = *address;
-                if (0xFE00..=0xFEFF).contains(&address) {
-                    *pending_oam_bug = Some(OamBugKind::Write);
-                }
+                // OAM-bug arming for this write already fired at BOWA
+                // (dot 0 rise) of the same M-cycle — see the BOWA
+                // detection block in rise().
                 // drive_ppu_bus already fired at dot 2 for PPU registers
                 // (CUPA-rising visibility); for non-PPU addresses it's a
                 // no-op. Memory commits here at fall() of dot 3 (CUPA-

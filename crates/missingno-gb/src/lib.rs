@@ -158,6 +158,11 @@ pub struct GameBoy {
     /// A CPU bus read staged at the M-cycle boundary, applied at
     /// dot 2 to drive the value onto `cpu_bus`.
     staged_bus_read: Option<StagedBusRead>,
+    /// Pending OAM-corruption arming. Set when an OAM-range bus
+    /// address (CPU read/write or IDU step) appears on the bus;
+    /// cleared and applied at the next MOPA (dot 2 rise) — which
+    /// may belong to the next instruction.
+    pending_oam_bug: Option<execute::OamBugKind>,
     /// Shared CPU data bus state.
     cpu_bus: CpuBus,
 }
@@ -230,6 +235,7 @@ impl GameBoy {
             current_dot: BusDot::ZERO,
             staged_bus_write,
             staged_bus_read,
+            pending_oam_bug: None,
             cpu_bus: CpuBus::new(),
         };
         if !has_boot_rom {
@@ -296,6 +302,7 @@ impl GameBoy {
             address,
             applied: false,
         });
+        self.pending_oam_bug = None;
         self.cpu_bus = CpuBus::new();
     }
 
