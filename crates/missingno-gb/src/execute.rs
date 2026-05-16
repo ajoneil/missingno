@@ -627,12 +627,13 @@ impl GameBoy {
     }
 
     /// Process a PPU tick result: write pixel to back buffer; on a
-    /// frame boundary, present iff MEDA has pulsed since LCD-on (the
-    /// LCD only latches frames after the first VSYNC). On LCD-off,
-    /// blank the display to match hardware's LCD-off state. Returns
-    /// `(new_frame, pixel)` — `new_frame` always fires on frame
-    /// boundaries so the test harness counts hardware frames, even
-    /// when the commit is skipped.
+    /// VSYNC pulse, present iff MEDA has pulsed since LCD-on (the
+    /// LCD only latches frames after the first VSYNC). On the LCD-off
+    /// transition, blank the display to match hardware's LCD-off state.
+    /// Returns `(new_screen, pixel)` — `new_screen` only fires on
+    /// VSYNC, matching hardware frame boundaries. LCD-off blanking
+    /// is a separate signal and does not count as a new screen for
+    /// harness/UI frame budgets.
     fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
         if let Some(pixel) = result.pixel {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
@@ -641,20 +642,19 @@ impl GameBoy {
             }
         }
         if result.new_frame {
-            if self.ppu.control().video_enabled() {
-                if self.ppu.vsync_committed() {
-                    self.screen.present();
-                    if let Some(sgb) = &mut self.sgb {
-                        sgb.update_screen(&self.screen);
-                    }
-                }
-            } else {
-                self.screen.blank();
+            if self.ppu.control().video_enabled() && self.ppu.vsync_committed() {
+                self.screen.present();
                 if let Some(sgb) = &mut self.sgb {
                     sgb.update_screen(&self.screen);
                 }
             }
             return (true, result.pixel);
+        }
+        if result.lcd_disabled {
+            self.screen.blank();
+            if let Some(sgb) = &mut self.sgb {
+                sgb.update_screen(&self.screen);
+            }
         }
         (false, result.pixel)
     }

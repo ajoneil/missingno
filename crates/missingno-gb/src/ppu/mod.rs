@@ -56,10 +56,15 @@ pub struct PpuTickResult {
     /// A pixel pushed to the LCD, if any. The caller is responsible
     /// for writing this into a framebuffer or capturing it in a trace.
     pub pixel: Option<PixelOutput>,
-    /// A completed frame is ready to present. Fires at VBlank (line 144)
-    /// or when the LCD is turned off. The caller should swap/present
-    /// its back buffer and clear for the next frame.
+    /// VSYNC pulse — LY just wrapped at the end of line 153, completing
+    /// a hardware frame. The caller should present its back buffer.
+    /// Not set on LCD-off (MEDA stops pulsing entirely).
     pub new_frame: bool,
+    /// LCDC.7 just transitioned 1 → 0 while the pixel pipeline was
+    /// active. The pipeline has been torn down and counters are in
+    /// VID_RST; the caller should blank the screen. Not a hardware
+    /// frame boundary.
+    pub lcd_disabled: bool,
     pub request_vblank: bool,
 }
 
@@ -670,6 +675,7 @@ impl Ppu {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
+            lcd_disabled: false,
             request_vblank: false,
         };
 
@@ -723,6 +729,7 @@ impl Ppu {
         let mut result = PpuTickResult {
             pixel: None,
             new_frame: false,
+            lcd_disabled: false,
             request_vblank: false,
         };
 
@@ -864,7 +871,7 @@ impl Ppu {
             if self.pixel_pipeline.is_some() {
                 self.pixel_pipeline = None;
                 self.registers.clear_latches();
-                result.new_frame = true;
+                result.lcd_disabled = true;
             }
 
             // VID_RST: async-reset all counters while LCD is off.
