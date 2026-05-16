@@ -1,5 +1,5 @@
 use crate::{
-    BusAccess, BusAccessKind, GameBoy, audio,
+    BusAccess, BusAccessKind, GameBoy, audio, dmg_sram,
     interrupts::{self, InterruptFlags},
     ppu, serial_transfer, timers,
 };
@@ -84,9 +84,11 @@ pub struct ExternalBus {
 impl ExternalBus {
     pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> Self {
         let boot_rom_mapped = boot_rom.is_some();
+        let mut work_ram = [0; 0x2000];
+        dmg_sram::fill(&mut work_ram);
         Self {
             cartridge,
-            work_ram: [0; 0x2000],
+            work_ram,
             latch: 0xFF,
             decay: 0,
             boot_rom,

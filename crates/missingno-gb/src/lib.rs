@@ -12,6 +12,7 @@ pub mod cartridge;
 pub mod cpu;
 pub mod debugger;
 pub mod dma;
+pub mod dmg_sram;
 pub mod execute;
 pub mod interrupts;
 pub mod joypad;
@@ -254,6 +255,7 @@ impl GameBoy {
         }
         self.screen = Screen::default();
         self.external.work_ram = [0; 0x2000];
+        dmg_sram::fill(&mut self.external.work_ram);
         self.external.latch = 0xFF;
         self.external.decay = 0;
         self.high_ram = HighRam::new();
