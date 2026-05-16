@@ -146,7 +146,9 @@ impl Registers {
     }
 
     /// Advance by one M-cycle. `counter` is the current internal 16-bit
-    /// counter value (sampled after the 4th T-cycle tick of this M-cycle).
+    /// counter value, sampled at the M-cycle boundary rise just after
+    /// `timers.mcycle()` increments it — the same edge on which
+    /// `TAMA_DIV05p` transitions in hardware.
     pub fn mcycle(&mut self, counter: u16, link: &mut dyn SerialLink) -> Option<Interrupt> {
         let mut result = None;
 

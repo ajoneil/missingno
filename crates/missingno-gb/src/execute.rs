@@ -220,6 +220,15 @@ impl GameBoy {
                 self.interrupts.request(interrupt);
             }
 
+            // Serial bit-5 fall detection at the M-cycle boundary rise —
+            // same edge as TAMA_DIV05p in hardware, where CALY_SER_CNT3
+            // rises and UBUL_FF0F_D3p latches IF.serial. Asserting here
+            // lands IF in the data_phase window for same-M-cycle dispatch.
+            let counter = self.timers.internal_counter();
+            if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
+                self.interrupts.request(interrupt);
+            }
+
             // PPU master-clock rising edge at the M-cycle boundary (dot 0).
             let oam_bus = self.dma.oam_bus_owner();
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
@@ -584,15 +593,6 @@ impl GameBoy {
         new_screen |= ns;
 
         if is_mcycle_boundary {
-            // Serial ticks once per M-cycle. Run before update_interrupt_state
-            // so a serial-complete IF is visible to the same-fall capture and
-            // the next rise's irq_latched sees it — keeping serial in the
-            // mid-M-cycle source class alongside VBlank/STAT.
-            let counter = self.timers.internal_counter();
-            if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
-                self.interrupts.request(interrupt);
-            }
-
             // OAM DMA: transfer one byte per M-cycle.
             if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
                 let byte = self.read_dma_source(src_addr);
