@@ -4,6 +4,21 @@ pub enum Mapped {
 }
 
 #[derive(Clone, Copy)]
+pub enum Mbc3Chip {
+    Mbc3,
+    Mbc30,
+}
+
+impl Mbc3Chip {
+    fn rom_bank_mask(self) -> u8 {
+        match self {
+            Mbc3Chip::Mbc3 => 0x7f,
+            Mbc3Chip::Mbc30 => 0xff,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum ClockRegister {
     Seconds,
     Minutes,
@@ -69,6 +84,7 @@ pub struct Mbc3 {
     pub ram_and_clock_enabled: bool,
     pub bank: u8,
     pub mapped: Mapped,
+    pub chip: Mbc3Chip,
 }
 
 impl Mbc3 {
@@ -107,12 +123,19 @@ impl Mbc3 {
             _ => None,
         };
 
+        let chip = if rom.len() > 0x200000 || matches!(rom[0x149], 0x04 | 0x05) {
+            Mbc3Chip::Mbc30
+        } else {
+            Mbc3Chip::Mbc3
+        };
+
         Self {
             ram,
             clock,
             ram_and_clock_enabled: false,
             bank: 1,
             mapped: Mapped::Ram(0),
+            chip,
         }
     }
 
@@ -150,7 +173,7 @@ impl Mbc3 {
                 false
             }
             0x2000..=0x3fff => {
-                let bank = value & 0x7f;
+                let bank = value & self.chip.rom_bank_mask();
                 self.bank = if bank == 0 { 1 } else { bank };
                 false
             }
