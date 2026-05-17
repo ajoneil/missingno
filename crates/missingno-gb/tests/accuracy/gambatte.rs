@@ -260,15 +260,6 @@ macro_rules! gambatte_screenshot_test {
     };
 }
 
-macro_rules! gambatte_blank_test {
-    ($name:ident, $path:literal) => {
-        #[test]
-        fn $name() {
-            run_gambatte_blank_test($path);
-        }
-    };
-}
-
 // ── display_startstate ──────────────────────────────────────────────────
 
 gambatte_hex_test!(
@@ -580,11 +571,23 @@ gambatte_screenshot_test!(
 
 // ── halt — blank screen tests ───────────────────────────────────────────
 
-gambatte_blank_test!(
-    halt_ime_noie_nolcdirq_blank,
-    "gambatte/halt/ime_noie_nolcdirq_readstat_dmg08_cgb_blank.gb"
-);
-gambatte_blank_test!(
-    halt_noime_noie_nolcdirq_blank,
-    "gambatte/halt/noime_noie_nolcdirq_readstat_dmg08_cgb_blank.gb"
-);
+// `_blank` is not a suffix the upstream gambatte testrunner recognises —
+// `testrunner.cpp` dispatches only on `_out` / `dmg08_out` / `dmg08_cgb04c_out`
+// and falls back to companion PNGs, none of which exist for these ROMs. Upstream
+// therefore silently skips them and never assigns a pass criterion. Both ROMs
+// HALT permanently (`IE=0, IF=0` — no interrupt can dispatch or halt-bug),
+// and the assertion "screen entirely 0xFF after 15 frames" is incompatible with
+// real DMG post-boot state, which leaves the Nintendo logo in VRAM under
+// `LCDC=0x91` / `BGP=0xFC` (the BIOS-final value). Ignored pending a
+// hardware-verifiable replacement criterion.
+// https://github.com/pokemon-speedrunning/gambatte-core/blob/master/test/testrunner.cpp
+#[ignore]
+#[test]
+fn halt_ime_noie_nolcdirq_blank() {
+    run_gambatte_blank_test("gambatte/halt/ime_noie_nolcdirq_readstat_dmg08_cgb_blank.gb");
+}
+#[ignore]
+#[test]
+fn halt_noime_noie_nolcdirq_blank() {
+    run_gambatte_blank_test("gambatte/halt/noime_noie_nolcdirq_readstat_dmg08_cgb_blank.gb");
+}
