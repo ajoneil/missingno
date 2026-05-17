@@ -283,8 +283,14 @@ fn oam_bug_6_timing_no_bug() {
     run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/6-timing_no_bug.gb", 1200);
 }
 
+// Die-specific OAM corruption pattern — CRC was captured from a single
+// DMG unit. The pattern depends on physical SRAM cell layout and varies
+// between die revisions; some rows are non-deterministic across units.
+// Not deterministically passable: dmg-sim's gate-level netlist also
+// xfails it. The combined `oam_bug` ROM above covers everything that
+// is deterministically testable.
 #[test]
-#[ignore] // Takes too long: 116 iterations of LCD off/on/compare/print cycles
+#[ignore]
 fn oam_bug_7_timing_effect() {
     run_blargg_cart_ram_test("blargg/oam_bug/rom_singles/7-timing_effect.gb", 6000);
 }
