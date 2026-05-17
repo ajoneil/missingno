@@ -153,12 +153,12 @@ pub struct Rendering {
     window: WindowControl,
     /// TYFA (pixel clock enable): `!FEPO && !WODU && !RYDY && POKY`,
     /// snapshotted at end of `mode3_rising` and consumed in
-    /// `mode3_pixel_pipeline`. The 1-dot snapshot lag relative to
-    /// `WindowControl::check_trigger_arming` (which sets RYDY on
-    /// fall) models hardware's propagation delay between SACU's
-    /// rising edge and RYDY's downstream effect on TYFA via SOCY:
-    /// the in-flight pre-window pixel SACU fires on the MOSU↑ dot
-    /// before RYDY's effect propagates.
+    /// `mode3_pixel_pipeline`. RYDY is sampled BEFORE the rise's
+    /// `WindowControl::tick_rising` so a same-dot RYDY↑ doesn't reach the
+    /// snapshot — modelling the SYLO/TOMU/SOCY → TYFA/SEGU/SACU gate
+    /// chain delay. The in-flight pre-window SACU fires on the MOSU↑ dot
+    /// on both the normal cascade (MOSU↑ on fall) and the deferred
+    /// cascade (MOSU↑ on rise).
     tyfa: bool,
     /// Pixel X position counter (PX). Advances on SACU; feeds WODU
     /// via `terminal()` for the Mode 3→0 transition.
@@ -715,6 +715,13 @@ impl Rendering {
         // visible to the window's PYCO gate.
         self.cascade.advance_cascade(lyry);
 
+        // SOCY's gate-chain (SYLO/TOMU/SOCY → TYFA/SEGU/SACU) is too slow
+        // to suppress the same-dot in-flight SACU↑ when RYDY rises mid-dot.
+        // Sample RYDY before tick_rising so the TYFA snapshot below sees
+        // the pre-MOSU value on both edges — symmetric for normal cascade
+        // (MOSU↑ on fall) and deferred cascade (MOSU↑ on rise).
+        let rydy_pre_mosu = self.window.rydy();
+
         // Window cascade rise tick: NOPA captures prior-fall PYNU (ALET
         // rising), then PYNU's level-sensitive nor_latch re-evaluates.
         // The deferred-completion path can fire MOSU↑ on this edge when
@@ -778,18 +785,17 @@ impl Rendering {
         // alet-falling SACU pulse evaluation on this dot.
         let fepo_post_cupa = self.fepo(regs.control.sprites_enabled());
 
-        // TYFA = AND3(SOCY, POKY, VYBO). Snapshotted on master-clock
-        // rise and consumed in mode3_pixel_pipeline on master-clock
-        // fall. SOCY = !RYDY; the snapshot's pre-RYDY-set value lets
-        // the in-flight pre-window SACU fire on the MOSU↑ dot before
-        // WindowControl::check_trigger_arming sets RYDY later that
-        // fall — modelling hardware's sub-dot propagation delay
-        // between SACU and RYDY's effect via SOCY. VYBO = NOR3(
+        // TYFA = AND3(SOCY, POKY, VYBO). Snapshotted at end of master-
+        // clock rise; consumed in mode3_pixel_pipeline on master-clock
+        // fall. SOCY = !RYDY; `rydy_pre_mosu` (sampled before tick_rising)
+        // is the pre-MOSU value so the in-flight pre-window SACU fires on
+        // the MOSU↑ dot before RYDY's effect reaches SACU through the
+        // SYLO/TOMU/SOCY → TYFA/SEGU/SACU gate chain. VYBO = NOR3(
         // FEPO_old, WODU_old, MYVO); the !pixel_counter.terminal()
         // factor encodes !WODU_old.
         self.tyfa = !fepo_post_cupa
             && !self.pixel_counter.terminal()
-            && !self.window.rydy()
+            && !rydy_pre_mosu
             && self.cascade.poky();
 
         // POHU: combinational comparator, count == SCX & 7.
