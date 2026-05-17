@@ -149,6 +149,8 @@ impl Ppu {
                 palettes: Palettes::default(),
                 bg_window_enabled_shadow: None,
                 bg_window_enabled_shadow_just_set: false,
+                sprites_enabled_shadow: None,
+                sprites_enabled_shadow_just_set: false,
             },
             // Post-boot PPU state: matches what real DMG boot ROM
             // produces at first PC=$0100 detection in missingno.
@@ -210,6 +212,8 @@ impl Ppu {
                 palettes: Palettes::default(),
                 bg_window_enabled_shadow: None,
                 bg_window_enabled_shadow_just_set: false,
+                sprites_enabled_shadow: None,
+                sprites_enabled_shadow_just_set: false,
             },
             video: VideoControl {
                 dividers: Dividers {
@@ -430,6 +434,7 @@ impl Ppu {
             Register::Control => {
                 let was_enabled = self.registers.control.video_enabled();
                 let old_bg_window_enabled = self.registers.control.background_and_window_enabled();
+                let old_sprites_enabled = self.registers.control.sprites_enabled();
                 // LCDC uses combinational reads on hardware — the fetcher's
                 // VRAM address logic reads reg_new.reg_lcdc with zero delay
                 // after the DFF9 latches. No propagation delay needed.
@@ -449,6 +454,9 @@ impl Ppu {
                         self.registers.control.background_and_window_enabled();
                     self.registers
                         .arm_bg_window_enabled_shadow(old_bg_window_enabled, new_bg_window_enabled);
+                    let new_sprites_enabled = self.registers.control.sprites_enabled();
+                    self.registers
+                        .arm_sprites_enabled_shadow(old_sprites_enabled, new_sprites_enabled);
                 }
 
                 // CUPA↑ → XODO↓ is combinational; schedule the matching
@@ -826,6 +834,7 @@ impl Ppu {
             // it alive for this fall's BG resolve and clears it on the
             // next fall where no fresh transition is armed.
             self.registers.tick_bg_window_enabled_shadow();
+            self.registers.tick_sprites_enabled_shadow();
 
             // ALET falls in-phase with ck1_ck2 falling. MYVO-clocked DFFs
             // capture here (PORY), SACU fires (delayed via TYFA), pixel
@@ -996,6 +1005,8 @@ impl Ppu {
             },
             bg_window_enabled_shadow: None,
             bg_window_enabled_shadow_just_set: false,
+            sprites_enabled_shadow: None,
+            sprites_enabled_shadow_just_set: false,
         };
 
         Ppu {

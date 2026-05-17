@@ -32,6 +32,13 @@ pub struct PipelineRegisters {
     /// write site sets it.
     pub(crate) bg_window_enabled_shadow: Option<bool>,
     pub(crate) bg_window_enabled_shadow_just_set: bool,
+    /// XYLO popper-side OLD overlay. When a mid-Mode-3 CUPA transitions
+    /// LCDC.1, the OBJ-mux popper (XULA/WOXA → NULY) at the next cp_pad↑
+    /// resolves with the OLD XYLO state. The sprite-fetch trigger chain
+    /// (AROR/FEPO/TEKY/SOBU) sees live XYLO — only the popper-side read
+    /// consumes the shadow.
+    pub(crate) sprites_enabled_shadow: Option<bool>,
+    pub(crate) sprites_enabled_shadow_just_set: bool,
 }
 
 impl PipelineRegisters {
@@ -70,6 +77,8 @@ impl PipelineRegisters {
         self.control_latch.clear();
         self.bg_window_enabled_shadow = None;
         self.bg_window_enabled_shadow_just_set = false;
+        self.sprites_enabled_shadow = None;
+        self.sprites_enabled_shadow_just_set = false;
     }
 
     /// Live VYXE state for the BG plane gate (RAJY / TADE), with the
@@ -102,6 +111,37 @@ impl PipelineRegisters {
             self.bg_window_enabled_shadow_just_set = false;
         } else {
             self.bg_window_enabled_shadow = None;
+        }
+    }
+
+    /// Live XYLO state for the OBJ-mux popper (XULA/WOXA → NULY), with
+    /// the popper-side OLD overlay applied. When the shadow is set, the
+    /// OBJ pixel resolve sees the pre-transition LCDC.1 value; otherwise
+    /// it sees the live `control` bit. The sprite-fetch trigger path
+    /// (FEPO/TEKY/SOBU) does NOT go through this accessor.
+    pub fn sprites_enabled_for_resolve(&self) -> bool {
+        self.sprites_enabled_shadow
+            .unwrap_or_else(|| self.control.sprites_enabled())
+    }
+
+    /// CPU-write site: capture the pre-write XYLO state into the overlay
+    /// shadow if LCDC.1 transitions during Mode 3. `just_set` keeps the
+    /// shadow alive across the same-fall `tick_sprites_enabled_shadow`.
+    pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
+        if old_value != new_value {
+            self.sprites_enabled_shadow = Some(old_value);
+            self.sprites_enabled_shadow_just_set = true;
+        }
+    }
+
+    /// Once-per-fall tick, mirroring `tick_bg_window_enabled_shadow`.
+    /// Keeps the shadow alive for the same-fall OBJ-mux resolve, then
+    /// clears on the next fall without a fresh LCDC.1 transition.
+    pub fn tick_sprites_enabled_shadow(&mut self) {
+        if self.sprites_enabled_shadow_just_set {
+            self.sprites_enabled_shadow_just_set = false;
+        } else {
+            self.sprites_enabled_shadow = None;
         }
     }
 }
