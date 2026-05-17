@@ -99,6 +99,13 @@ pub struct Palettes {
     /// active period (Mode 2 onward). Cleared at the next scanline's
     /// Mode 2 entry (BESU↑) when the cell can finish settling.
     pub(crate) bgp_recovery_active: bool,
+    /// True once a visible LCD cp_pad↑ has emitted a pixel since the
+    /// most recent `tick_background` commit cycle. The LCD-glass
+    /// column-shift register only enters the OR-overlap primed-state
+    /// after it has actually shifted a value in — a CUPA whose effect
+    /// was never visibly sampled does not engage the recovery. Cleared
+    /// by every `tick_background` commit cycle and at BESU↑ / LCD-off.
+    pub(crate) bgp_visible_emit_since_tick: bool,
     /// BGP write parked while the CPU is inside a HALT-wake handler
     /// (`Cpu::is_halt_wake_active`). The dlatch_ee `pending` isn't set
     /// at the CPU's CUPA edge; instead `tick_background` runs the
@@ -123,6 +130,7 @@ impl Default for Palettes {
             sprite1: DffLatch::new(0xFF),
             background_or_overlay: None,
             bgp_recovery_active: false,
+            bgp_visible_emit_since_tick: false,
             bgp_halt_wake_deferred: None,
         }
     }
@@ -163,16 +171,25 @@ impl Palettes {
         let prior = self.background.output();
         let ticked = self.background.tick();
         if ticked {
-            self.background_or_overlay = if self.bgp_recovery_active {
-                Some(prior | self.background.output())
-            } else {
-                None
-            };
+            self.background_or_overlay =
+                if self.bgp_recovery_active && self.bgp_visible_emit_since_tick {
+                    Some(prior | self.background.output())
+                } else {
+                    None
+                };
             self.bgp_recovery_active = true;
+            self.bgp_visible_emit_since_tick = false;
         } else {
             self.background_or_overlay = None;
         }
         ticked
+    }
+
+    /// A visible LCD cp_pad↑ has just emitted a pixel — the LCD glass's
+    /// column-shift register has shifted in the current BGP latch value.
+    /// Subsequent BGP CUPAs now satisfy the recovery-engaged precondition.
+    pub fn note_bg_pixel_emit(&mut self) {
+        self.bgp_visible_emit_since_tick = true;
     }
 
     pub fn background_for_bg_resolve(&self) -> u8 {
@@ -186,6 +203,7 @@ impl Palettes {
         // edge so a pixel emit between drive_ppu_bus (rise) and
         // tick_palette_latches (fall) sees the in-flight value.
         if self.bgp_recovery_active
+            && self.bgp_visible_emit_since_tick
             && let Some(pending) = self.background.pending()
         {
             return self.background.output() | pending;
@@ -199,10 +217,12 @@ impl Palettes {
     pub fn reset_on_mode_2_entry(&mut self) {
         self.background_or_overlay = None;
         self.bgp_recovery_active = false;
+        self.bgp_visible_emit_since_tick = false;
     }
 
     pub fn clear_background_overlay(&mut self) {
         self.background_or_overlay = None;
         self.bgp_recovery_active = false;
+        self.bgp_visible_emit_since_tick = false;
     }
 }

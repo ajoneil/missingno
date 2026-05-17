@@ -849,6 +849,9 @@ impl Ppu {
                     oam_bus,
                     xupy_rising,
                 );
+                if result.pixel.is_some() {
+                    self.registers.palettes.note_bg_pixel_emit();
+                }
             }
 
             // CATU DFF pipeline runs AFTER on_ppu_clock_fall so that
@@ -1001,6 +1004,7 @@ impl Ppu {
                 sprite1: DffLatch::new(snap.obp1),
                 background_or_overlay: None,
                 bgp_recovery_active: false,
+                bgp_visible_emit_since_tick: false,
                 bgp_halt_wake_deferred: None,
             },
             bg_window_enabled_shadow: None,
