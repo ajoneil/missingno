@@ -36,47 +36,6 @@ pub enum ClockPhase {
     Low,
 }
 
-/// A CPU bus write staged at the M-cycle boundary, applied at dot 2
-/// of the write M-cycle. The CPU drives `cpu_port_d` at dot 2 (CUPA-
-/// rising on the PPU side, `cpu_wr` asserted on the SM83 side); PPU
-/// register latches are transparent during dots 2-3 and capture at
-/// CUPA-falling (end of dot 3). Memory consumers commit at end-of-
-/// M-cycle (fall of dot 3) via `write_byte`. The write VALUE lives
-/// in `cpu_bus.data` — symmetric with `StagedBusRead` where the
-/// value is also in `cpu_bus.data` (driven by the peripheral).
-struct StagedBusWrite {
-    address: u16,
-    /// Whether the bus has been driven for this write.
-    applied: bool,
-    /// OAM/VRAM lock state at CUPA-rising (rise of dot 2 of the write
-    /// M-cycle). Captured separately from the mid-CUPA and commit
-    /// samples below — the three samples model the AJUJ-high window
-    /// (spec §10.5.6): a write lands if AJUJ is high at ANY edge during
-    /// the CUPA strobe, so block iff locked at ALL three samples.
-    /// None = non-OAM/VRAM address.
-    locked_at_snapshot: Option<bool>,
-    /// OAM/VRAM lock state at the mid-CUPA edge (fall of dot 2 of the
-    /// write M-cycle). Catches the AJUJ-glitch window when AVAP fires
-    /// this fall: BESU clears immediately (mode2↓), begin_rendering
-    /// defers to the next rise (mode3↑), so this sample sees
-    /// `mode2=0 AND mode3=0` → unlocked. The write then lands at the
-    /// straddle even though both snap and commit see locked state.
-    /// None = non-OAM/VRAM address.
-    locked_at_mid: Option<bool>,
-}
-
-/// A CPU bus read staged at the M-cycle boundary, applied at dot 2
-/// (matching `tobe`/`wafu` rising at hardware's dot 2.005). The
-/// addressed peripheral's tri-state driver enables at this dot, the
-/// bus settles to its source value, and the CPU latches at end of
-/// M-cycle. Same-M-cycle peripheral state changes that fire after
-/// dot 2 do not propagate to `cpu_port_d` in time for the latch.
-struct StagedBusRead {
-    address: u16,
-    /// Whether the bus has been driven for this read.
-    applied: bool,
-}
-
 /// The SoC's shared CPU data bus (`cpu_port_d[7:0]`).
 ///
 /// On hardware, a real wire driven by whichever peripheral's tri-state
@@ -155,10 +114,10 @@ pub struct GameBoy {
     /// A CPU bus write staged at the M-cycle boundary, applied at
     /// dot 2 to drive `cpu_bus.data` with the write value (CUPA-
     /// rising / `cpu_wr` asserted equivalent).
-    staged_bus_write: Option<StagedBusWrite>,
+    staged_bus_write: Option<execute::StagedBusWrite>,
     /// A CPU bus read staged at the M-cycle boundary, applied at
     /// dot 2 to drive the value onto `cpu_bus`.
-    staged_bus_read: Option<StagedBusRead>,
+    staged_bus_read: Option<execute::StagedBusRead>,
     /// Pending OAM-corruption arming. Set when an OAM-range bus
     /// address (CPU read/write or IDU step) appears on the bus;
     /// cleared and applied at the next MOPA (dot 2 rise) — which
@@ -170,94 +129,65 @@ pub struct GameBoy {
 
 impl GameBoy {
     pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> GameBoy {
-        let has_boot_rom = boot_rom.is_some();
-
-        let cpu = if has_boot_rom {
-            Cpu::power_on()
-        } else {
-            Cpu::new(cartridge.header_checksum())
-        };
-        let sgb = if cartridge.supports_sgb() {
-            Some(sgb::Sgb::new())
-        } else {
-            None
-        };
-
-        // Mirror the CPU's pending bus read/write at construction time so
-        // the dot-2 staging has a target for the in-flight M-cycle. Skip-
-        // boot anchors at the post-rise of the M-cycle that opens the
-        // cartridge m1 fetch (Cpu::new(): Read{0x0100}); the boundary
-        // work fired in the boot ROM's domain before t=0, so the staging
-        // block in rise() doesn't fire for that first M-cycle.
-        let staged_bus_read = cpu.pending_bus_read().map(|address| StagedBusRead {
-            address,
-            applied: false,
-        });
-        let staged_bus_write = cpu
-            .pending_bus_write()
-            .map(|(address, _value)| StagedBusWrite {
-                address,
-                applied: false,
-                locked_at_snapshot: None,
-                locked_at_mid: None,
-            });
-
         let mut gb = GameBoy {
-            cpu,
+            cpu: Cpu::new(0),
             screen: Screen::default(),
             external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
-            ppu: if has_boot_rom {
-                Ppu::power_on()
-            } else {
-                Ppu::new()
-            },
-            audio: if has_boot_rom {
-                Audio::power_on()
-            } else {
-                Audio::new()
-            },
+            ppu: Ppu::new(),
+            audio: Audio::new(),
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
             serial: serial_transfer::Registers::new(),
             link: Box::new(serial_transfer::Disconnected::new()),
-            timers: if has_boot_rom {
-                timers::Timers::power_on()
-            } else {
-                timers::Timers::new()
-            },
+            timers: timers::Timers::new(),
             dma: Dma::new(),
-            sgb,
+            sgb: None,
             vram_bus: VramBus::new(),
             last_read_value: 0,
             bus_trace: None,
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
-            staged_bus_write,
-            staged_bus_read,
+            staged_bus_write: None,
+            staged_bus_read: None,
             pending_oam_bug: None,
             cpu_bus: CpuBus::new(),
         };
-        if !has_boot_rom {
-            gb.init_post_boot_vram();
-        }
+        gb.rebuild_state();
         gb
     }
 
+    /// Power-cycle the console: re-create all volatile state while
+    /// preserving the inserted cartridge (and its battery-backed SRAM),
+    /// the boot ROM contents, and the user-attached serial link.
     pub fn reset(&mut self) {
+        self.external.reset();
+        self.rebuild_state();
+    }
+
+    /// Re-create every non-cartridge, non-link component to its post-
+    /// boot or power-on initial state. Called from `new` after the
+    /// initial struct has been laid out with placeholder values, and
+    /// from `reset` after `ExternalBus::reset` has cleared WRAM/latch.
+    ///
+    /// Mirrors the CPU's pending bus read/write so dot-2 staging has a
+    /// target for the in-flight M-cycle. The skip-boot CPU anchors at
+    /// the post-rise of the M-cycle that opens the cartridge m1 fetch
+    /// (`Cpu::new()` produces `Read{0x0100}`); the boundary work fired
+    /// in the boot ROM's domain before t=0, so the staging block in
+    /// `rise()` doesn't fire for that first M-cycle.
+    fn rebuild_state(&mut self) {
         let has_boot_rom = self.external.has_boot_rom();
-        if has_boot_rom {
-            self.cpu = Cpu::power_on();
-            self.external.remap_boot_rom();
+        let header_checksum = self.external.cartridge.header_checksum();
+        let supports_sgb = self.external.cartridge.supports_sgb();
+
+        self.cpu = if has_boot_rom {
+            Cpu::power_on()
         } else {
-            self.cpu = Cpu::new(self.external.cartridge.header_checksum());
-        }
+            Cpu::new(header_checksum)
+        };
         self.screen = Screen::default();
-        self.external.work_ram = [0; 0x2000];
-        dmg_sram::fill(&mut self.external.work_ram);
-        self.external.latch = 0xFF;
-        self.external.decay = 0;
         self.high_ram = HighRam::new();
         self.ppu = if has_boot_rom {
             Ppu::power_on()
@@ -279,31 +209,22 @@ impl GameBoy {
         };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();
-        self.sgb = if self.external.cartridge.supports_sgb() {
-            Some(sgb::Sgb::new())
-        } else {
-            None
-        };
+        self.sgb = supports_sgb.then(sgb::Sgb::new);
+
         if !has_boot_rom {
             self.init_post_boot_vram();
         }
+
+        self.last_read_value = 0;
         self.bus_trace = None;
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
-        self.staged_bus_write =
-            self.cpu
-                .pending_bus_write()
-                .map(|(address, _value)| StagedBusWrite {
-                    address,
-                    applied: false,
-                    locked_at_snapshot: None,
-                    locked_at_mid: None,
-                });
-        self.staged_bus_read = self.cpu.pending_bus_read().map(|address| StagedBusRead {
-            address,
-            applied: false,
-        });
+        self.staged_bus_read = self.cpu.pending_bus_read().map(execute::StagedBusRead::new);
+        self.staged_bus_write = self
+            .cpu
+            .pending_bus_write()
+            .map(|(address, _value)| execute::StagedBusWrite::new(address));
         self.pending_oam_bug = None;
         self.cpu_bus = CpuBus::new();
     }
@@ -333,16 +254,8 @@ impl GameBoy {
         (0..len).map(|i| self.peek(start.wrapping_add(i))).collect()
     }
 
-    pub fn ppu_mut(&mut self) -> &mut Ppu {
-        &mut self.ppu
-    }
-
     pub fn audio(&self) -> &Audio {
         &self.audio
-    }
-
-    pub fn audio_mut(&mut self) -> &mut Audio {
-        &mut self.audio
     }
 
     pub fn clock_phase(&self) -> ClockPhase {
@@ -351,12 +264,6 @@ impl GameBoy {
 
     pub fn screen(&self) -> &Screen {
         &self.screen
-    }
-
-    /// The bus action for the most recently completed dot.
-    /// Use after `step_phase()` to detect memory writes (e.g. VRAM writes).
-    pub fn last_dot_action(&self) -> &cpu::mcycle::DotAction {
-        &self.current_dot_action
     }
 
     pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
@@ -379,64 +286,24 @@ impl GameBoy {
         &self.timers
     }
 
-    pub fn timers_mut(&mut self) -> &mut timers::Timers {
-        &mut self.timers
-    }
-
     pub fn interrupts(&self) -> &interrupts::Registers {
         &self.interrupts
-    }
-
-    pub fn interrupts_mut(&mut self) -> &mut interrupts::Registers {
-        &mut self.interrupts
     }
 
     pub fn dma(&self) -> &Dma {
         &self.dma
     }
 
-    pub fn dma_mut(&mut self) -> &mut Dma {
-        &mut self.dma
-    }
-
     pub fn serial(&self) -> &serial_transfer::Registers {
         &self.serial
-    }
-
-    pub fn serial_mut(&mut self) -> &mut serial_transfer::Registers {
-        &mut self.serial
-    }
-
-    pub fn joypad(&self) -> &Joypad {
-        &self.joypad
-    }
-
-    pub fn joypad_mut(&mut self) -> &mut Joypad {
-        &mut self.joypad
     }
 
     pub fn external_bus(&self) -> &ExternalBus {
         &self.external
     }
 
-    pub fn external_bus_mut(&mut self) -> &mut ExternalBus {
-        &mut self.external
-    }
-
     pub fn high_ram(&self) -> &HighRam {
         &self.high_ram
-    }
-
-    pub fn high_ram_mut(&mut self) -> &mut HighRam {
-        &mut self.high_ram
-    }
-
-    pub fn vram_bus(&self) -> &VramBus {
-        &self.vram_bus
-    }
-
-    pub fn vram_bus_mut(&mut self) -> &mut VramBus {
-        &mut self.vram_bus
     }
 
     pub fn sgb(&self) -> Option<&sgb::Sgb> {
@@ -447,65 +314,15 @@ impl GameBoy {
         self.link.drain_output()
     }
 
-    pub fn link_mut(&mut self) -> &mut dyn serial_transfer::SerialLink {
-        &mut *self.link
-    }
-
     pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
         self.link = link;
     }
 
-    /// Populate VRAM with the data the DMG boot ROM would have left:
-    /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
-    /// and tile map entries for the logo display.
     fn init_post_boot_vram(&mut self) {
-        use ppu::types::tiles::TileIndex;
-
-        // 1. Decompress Nintendo logo from cartridge header (0x0104-0x0133)
-        // into tiles 1-24 in tile block 0.
-        //
-        // Each of the 48 logo bytes contains two nibbles. Each nibble is
-        // expanded horizontally (each bit doubled to 2 pixels = 1 byte)
-        // and vertically (each row written twice), producing 4 VRAM bytes
-        // per nibble (low bitplane only, high bitplane stays zero).
-        let mut vram_offset: usize = 0x10; // tile 1 starts at byte 16
-        for addr in 0x0104u16..=0x0133 {
-            let logo_byte = self.external.cartridge.read(addr);
-            for &nibble in &[logo_byte >> 4, logo_byte & 0x0F] {
-                let expanded = (((nibble >> 3) & 1) * 0xC0)
-                    | (((nibble >> 2) & 1) * 0x30)
-                    | (((nibble >> 1) & 1) * 0x0C)
-                    | ((nibble & 1) * 0x03);
-                // Row A: low bitplane
-                self.vram_bus.vram.tiles[0].data[vram_offset] = expanded;
-                // Row A: high bitplane (zero, skip)
-                // Row B (vertical double): low bitplane
-                self.vram_bus.vram.tiles[0].data[vram_offset + 2] = expanded;
-                // Row B: high bitplane (zero, skip)
-                vram_offset += 4;
-            }
+        let mut logo = [0u8; 0x30];
+        for (i, byte) in logo.iter_mut().enumerate() {
+            *byte = self.external.cartridge.read(0x0104 + i as u16);
         }
-
-        // 2. Write ® symbol into tile 25 (offset 0x190 in tile block 0).
-        const REGISTERED_SYMBOL: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
-        let tile_25_offset: usize = 25 * 16;
-        for (i, &byte) in REGISTERED_SYMBOL.iter().enumerate() {
-            self.vram_bus.vram.tiles[0].data[tile_25_offset + i * 2] = byte;
-            // High bitplane (odd offset) stays zero
-        }
-
-        // 3. Write tile map entries for the logo display.
-        // Row 8, cols 4-15: tiles 1-12
-        for col in 0u16..12 {
-            let map_offset = (8 * 32 + 4 + col) as usize;
-            self.vram_bus.vram.tile_maps[0].data[map_offset] = TileIndex((col + 1) as u8);
-        }
-        // Row 8, col 16: tile 25 (® symbol)
-        self.vram_bus.vram.tile_maps[0].data[(8 * 32 + 16) as usize] = TileIndex(25);
-        // Row 9, cols 4-15: tiles 13-24
-        for col in 0u16..12 {
-            let map_offset = (9 * 32 + 4 + col) as usize;
-            self.vram_bus.vram.tile_maps[0].data[map_offset] = TileIndex((col + 13) as u8);
-        }
+        self.vram_bus.vram.init_post_boot(&logo);
     }
 }

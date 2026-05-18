@@ -120,8 +120,16 @@ impl ExternalBus {
         self.boot_rom_mapped = false;
     }
 
-    /// Re-map the boot ROM (for reset). Only has effect if a boot ROM was provided.
-    pub fn remap_boot_rom(&mut self) {
+    /// Reset volatile state for a power-cycle: clear WRAM (filled with
+    /// the same DMG SRAM pattern as a fresh power-on), clear the data-
+    /// bus latch and decay timer, and re-map the boot ROM if present.
+    /// Preserves the cartridge (including its MBC/SRAM state) and the
+    /// boot ROM contents.
+    pub fn reset(&mut self) {
+        self.work_ram = [0; 0x2000];
+        dmg_sram::fill(&mut self.work_ram);
+        self.latch = 0xFF;
+        self.decay = 0;
         self.boot_rom_mapped = self.boot_rom.is_some();
     }
 

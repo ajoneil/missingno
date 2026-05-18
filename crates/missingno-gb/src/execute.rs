@@ -1,5 +1,5 @@
 use super::{
-    BusAccess, BusAccessKind, ClockPhase, GameBoy, StagedBusRead, StagedBusWrite,
+    BusAccess, BusAccessKind, ClockPhase, GameBoy,
     cpu::mcycle::DotAction,
     interrupts::Interrupt,
     memory::Bus,
@@ -12,6 +12,67 @@ use super::{
 pub(super) enum OamBugKind {
     Read,
     Write,
+}
+
+/// A CPU bus write staged at the M-cycle boundary, applied at dot 2
+/// of the write M-cycle. The CPU drives `cpu_port_d` at dot 2 (CUPA-
+/// rising on the PPU side, `cpu_wr` asserted on the SM83 side); PPU
+/// register latches are transparent during dots 2-3 and capture at
+/// CUPA-falling (end of dot 3). Memory consumers commit at end-of-
+/// M-cycle (fall of dot 3) via `write_byte`. The write VALUE lives
+/// in `cpu_bus.data` — symmetric with `StagedBusRead` where the
+/// value is also in `cpu_bus.data` (driven by the peripheral).
+pub(crate) struct StagedBusWrite {
+    pub(super) address: u16,
+    /// Whether the bus has been driven for this write.
+    pub(super) applied: bool,
+    /// OAM/VRAM lock state at CUPA-rising (rise of dot 2 of the write
+    /// M-cycle). Captured separately from the mid-CUPA and commit
+    /// samples below — the three samples model the AJUJ-high window:
+    /// a write lands if AJUJ is high at ANY edge during the CUPA
+    /// strobe, so block iff locked at ALL three samples.
+    /// None = non-OAM/VRAM address.
+    pub(super) locked_at_snapshot: Option<bool>,
+    /// OAM/VRAM lock state at the mid-CUPA edge (fall of dot 2 of the
+    /// write M-cycle). Catches the AJUJ-glitch window when AVAP fires
+    /// this fall: BESU clears immediately (mode2↓), begin_rendering
+    /// defers to the next rise (mode3↑), so this sample sees
+    /// `mode2=0 AND mode3=0` → unlocked. The write then lands at the
+    /// straddle even though both snap and commit see locked state.
+    /// None = non-OAM/VRAM address.
+    pub(super) locked_at_mid: Option<bool>,
+}
+
+impl StagedBusWrite {
+    pub(crate) fn new(address: u16) -> Self {
+        Self {
+            address,
+            applied: false,
+            locked_at_snapshot: None,
+            locked_at_mid: None,
+        }
+    }
+}
+
+/// A CPU bus read staged at the M-cycle boundary, applied at dot 2
+/// (matching `tobe`/`wafu` rising at hardware's dot 2.005). The
+/// addressed peripheral's tri-state driver enables at this dot, the
+/// bus settles to its source value, and the CPU latches at end of
+/// M-cycle. Same-M-cycle peripheral state changes that fire after
+/// dot 2 do not propagate to `cpu_port_d` in time for the latch.
+pub(crate) struct StagedBusRead {
+    pub(super) address: u16,
+    /// Whether the bus has been driven for this read.
+    pub(super) applied: bool,
+}
+
+impl StagedBusRead {
+    pub(crate) fn new(address: u16) -> Self {
+        Self {
+            address,
+            applied: false,
+        }
+    }
 }
 
 /// Result of executing one instruction.
@@ -318,12 +379,7 @@ impl GameBoy {
         // registers apply via drive_ppu_bus at the same dot, memory
         // commits via write_byte at fall() of dot 3.
         if is_mcycle_boundary && let Some((address, _value)) = self.cpu.pending_bus_write() {
-            self.staged_bus_write = Some(StagedBusWrite {
-                address,
-                applied: false,
-                locked_at_snapshot: None,
-                locked_at_mid: None,
-            });
+            self.staged_bus_write = Some(StagedBusWrite::new(address));
         }
 
         // Stage CPU bus reads at dot 0. On hardware, the addressed
@@ -334,10 +390,7 @@ impl GameBoy {
         // state changes after dot 2 do not propagate to the bus
         // in time — captured here, applied at dot 2.
         if is_mcycle_boundary && let Some(address) = self.cpu.pending_bus_read() {
-            self.staged_bus_read = Some(StagedBusRead {
-                address,
-                applied: false,
-            });
+            self.staged_bus_read = Some(StagedBusRead::new(address));
         }
 
         // BOWA (dot 0): record OAM bug arming from any OAM-range

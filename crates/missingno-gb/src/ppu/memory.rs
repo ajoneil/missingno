@@ -95,6 +95,50 @@ impl Vram {
             self.tile_maps[map].data[within] = TileIndex(value);
         }
     }
+
+    /// Populate VRAM with the state the DMG boot ROM leaves behind:
+    /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
+    /// and tile map entries for the logo display.
+    ///
+    /// `logo` is the 48-byte logo region of the cartridge header
+    /// (0x0104-0x0133).
+    pub fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
+        // Decompress each logo byte into two tiles' worth of low-bitplane
+        // data. Each nibble's bits are doubled horizontally (1 bit → 2
+        // pixels) and the resulting row is doubled vertically.
+        let mut vram_offset: usize = 0x10; // tile 1 starts at byte 16
+        for &logo_byte in logo {
+            for &nibble in &[logo_byte >> 4, logo_byte & 0x0F] {
+                let expanded = (((nibble >> 3) & 1) * 0xC0)
+                    | (((nibble >> 2) & 1) * 0x30)
+                    | (((nibble >> 1) & 1) * 0x0C)
+                    | ((nibble & 1) * 0x03);
+                self.tiles[0].data[vram_offset] = expanded;
+                self.tiles[0].data[vram_offset + 2] = expanded;
+                vram_offset += 4;
+            }
+        }
+
+        // ® symbol into tile 25.
+        const REGISTERED_SYMBOL: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
+        let tile_25_offset: usize = 25 * 16;
+        for (i, &byte) in REGISTERED_SYMBOL.iter().enumerate() {
+            self.tiles[0].data[tile_25_offset + i * 2] = byte;
+        }
+
+        // Tile map entries for the logo display.
+        // Row 8, cols 4-15: tiles 1-12; col 16: tile 25 (®).
+        for col in 0u16..12 {
+            let map_offset = (8 * 32 + 4 + col) as usize;
+            self.tile_maps[0].data[map_offset] = TileIndex((col + 1) as u8);
+        }
+        self.tile_maps[0].data[8 * 32 + 16] = TileIndex(25);
+        // Row 9, cols 4-15: tiles 13-24.
+        for col in 0u16..12 {
+            let map_offset = (9 * 32 + 4 + col) as usize;
+            self.tile_maps[0].data[map_offset] = TileIndex((col + 13) as u8);
+        }
+    }
 }
 
 /// OAM: sprite attribute memory. SoC-internal, not on either data bus.
