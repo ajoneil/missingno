@@ -534,8 +534,8 @@ impl GameBoy {
                 value
             }
             MappedAddress::SerialTransferRegister(register) => match register {
-                serial_transfer::Register::Data => self.serial.data,
-                serial_transfer::Register::Control => self.serial.control.bits() | 0x7E,
+                serial_transfer::Register::Data => self.serial.registers.data,
+                serial_transfer::Register::Control => self.serial.registers.control.bits() | 0x7E,
             },
             MappedAddress::TimerRegister(register) => self.timers.read_register(register),
             MappedAddress::InterruptRegister(register) => match register {
@@ -698,10 +698,11 @@ impl GameBoy {
                 }
             }
             MappedAddress::SerialTransferRegister(register) => match register {
-                serial_transfer::Register::Data => self.serial.data = value,
+                serial_transfer::Register::Data => self.serial.registers.data = value,
                 serial_transfer::Register::Control => {
-                    self.serial.control = serial_transfer::Control::from_bits_retain(value);
-                    self.serial.start_transfer(&mut *self.link);
+                    self.serial.registers.control =
+                        serial_transfer::Control::from_bits_retain(value);
+                    self.serial.start_transfer();
                 }
             },
             MappedAddress::TimerRegister(register) => {

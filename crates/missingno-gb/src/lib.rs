@@ -41,8 +41,7 @@ pub struct GameBoy {
     audio: Audio,
     joypad: Joypad,
     interrupts: interrupts::Registers,
-    serial: serial_transfer::Registers,
-    link: Box<dyn serial_transfer::SerialLink>,
+    serial: serial_transfer::Serial,
     timers: timers::Timers,
     dma: Dma,
     sgb: Option<sgb::Sgb>,
@@ -68,8 +67,7 @@ impl GameBoy {
             audio: Audio::new(),
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
-            serial: serial_transfer::Registers::new(),
-            link: Box::new(serial_transfer::Disconnected::new()),
+            serial: serial_transfer::Serial::new(),
             timers: timers::Timers::new(),
             dma: Dma::new(),
             sgb: None,
@@ -125,7 +123,7 @@ impl GameBoy {
         };
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
-        self.serial = serial_transfer::Registers::new();
+        self.serial = serial_transfer::Serial::new();
         self.timers = if has_boot_rom {
             timers::Timers::new()
         } else {
@@ -214,7 +212,7 @@ impl GameBoy {
         &self.dma
     }
 
-    pub fn serial(&self) -> &serial_transfer::Registers {
+    pub fn serial(&self) -> &serial_transfer::Serial {
         &self.serial
     }
 
@@ -231,11 +229,11 @@ impl GameBoy {
     }
 
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
-        self.link.drain_output()
+        self.serial.drain_output()
     }
 
     pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
-        self.link = link;
+        self.serial.set_link(link);
     }
 
     fn init_post_boot_vram(&mut self) {

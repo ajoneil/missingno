@@ -216,7 +216,7 @@ impl GameBoy {
             // rises and UBUL_FF0F_D3p latches IF.serial. Asserting here
             // lands IF in the data_phase window for same-M-cycle dispatch.
             let counter = self.timers.internal_counter();
-            if let Some(interrupt) = self.serial.mcycle(counter, &mut *self.link) {
+            if let Some(interrupt) = self.serial.mcycle(counter) {
                 self.interrupts.request(interrupt);
             }
 

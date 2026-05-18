@@ -208,12 +208,12 @@ pub fn capture_dma(gb: &GameBoy) -> DmaSnapshot {
 }
 
 pub fn capture_serial(gb: &GameBoy) -> SerialSnapshot {
-    let s = gb.serial();
+    let r = &gb.serial().registers;
     SerialSnapshot {
-        sb: s.data,
-        sc: s.control.bits(),
-        bits_remaining: s.bits_remaining,
-        shift_clock: s.serial_clock,
+        sb: r.data,
+        sc: r.control.bits(),
+        bits_remaining: r.bits_remaining,
+        shift_clock: r.serial_clock,
     }
 }
 
@@ -358,8 +358,7 @@ impl GameBoy {
             audio: Audio::from_snapshot(&snap.apu, wave_ram),
             timers: crate::timers::Timers::from_snapshot(&snap.timer),
             dma: crate::dma::Dma::from_snapshot(&snap.dma),
-            serial: crate::serial_transfer::Registers::from_snapshot(&snap.serial),
-            link: Box::new(crate::serial_transfer::Disconnected::new()),
+            serial: crate::serial_transfer::Serial::from_snapshot(&snap.serial),
             joypad: crate::joypad::Joypad::new(),
             interrupts: crate::interrupts::Registers {
                 enabled: InterruptFlags::from_bits_retain(snap.cpu.ie),

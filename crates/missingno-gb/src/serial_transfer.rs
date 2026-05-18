@@ -185,6 +185,59 @@ impl Registers {
     }
 }
 
+/// The serial subsystem: the SoC-internal transfer registers plus
+/// the device on the other end of the link cable. Memory-mapped
+/// accesses go through `registers`; the executor drives transfers
+/// via `mcycle` / `start_transfer`.
+pub struct Serial {
+    pub registers: Registers,
+    link: Box<dyn SerialLink>,
+}
+
+impl Serial {
+    pub fn new() -> Self {
+        Self {
+            registers: Registers::new(),
+            link: Box::new(Disconnected::new()),
+        }
+    }
+
+    /// Advance by one M-cycle. See `Registers::mcycle`.
+    pub fn mcycle(&mut self, counter: u16) -> Option<Interrupt> {
+        self.registers.mcycle(counter, &mut *self.link)
+    }
+
+    /// Arm a new transfer (called when SC is written with ENABLE).
+    pub fn start_transfer(&mut self) {
+        self.registers.start_transfer(&mut *self.link);
+    }
+
+    /// Drain bytes captured by the link device.
+    pub fn drain_output(&mut self) -> Vec<u8> {
+        self.link.drain_output()
+    }
+
+    /// Swap the link device. The previous device's captured state
+    /// is discarded.
+    pub fn set_link(&mut self, link: Box<dyn SerialLink>) {
+        self.link = link;
+    }
+
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::SerialSnapshot) -> Self {
+        Self {
+            registers: Registers::from_snapshot(snap),
+            link: Box::new(Disconnected::new()),
+        }
+    }
+}
+
+impl Default for Serial {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub enum Register {
     Data,
