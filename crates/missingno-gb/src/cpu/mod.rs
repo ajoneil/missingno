@@ -18,23 +18,22 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
-/// CPU execution state w.r.t. the HALT instruction. Halt-release fires
-/// combinationally via g43 → g49 once irq_latched (yoii) captures
-/// `(IF & IE) != 0`.
+/// CPU execution state w.r.t. the HALT instruction. Halt-release
+/// fires combinationally via g43 → g49 once `irq_latched` (yoii)
+/// captures `(IF & IE) != 0`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
     Running,
-    /// HALT instruction decoded — the next fetch runs as a dummy
-    /// fetch (read [PC] without incrementing), then transitions to
-    /// Halted. Models the hardware's 1 M-cycle transition from HALT
-    /// execution to idle mode.
+    /// HALT decoded — the next fetch runs as a dummy fetch (read
+    /// [PC] without incrementing) before transitioning to `Halted`.
     Halting,
     /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
     Halted,
 }
 
-/// Selected-interrupt latch consumed at the dispatch check.
+/// The SM83 CPU. Owns register file, IME, halt state, and the
+/// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
     pub a: u8,
     pub b: u8,
@@ -45,49 +44,42 @@ pub struct Cpu {
     pub l: u8,
 
     pub stack_pointer: u16,
-    /// The IDU address counter. Drives the address bus during fetch and
-    /// operand reads. Advances by 1 each time a byte is fetched. Also
-    /// used for relative jump resolution. On hardware this is the IDU
-    /// output, distinct from the PC register DFF (reg.pc).
+    /// IDU address counter. Drives the address bus during fetch and
+    /// operand reads; advances by 1 per fetched byte. Hardware IDU
+    /// output — distinct from `reg.pc` (currently mirrored as `pc`).
     pub bus_counter: u16,
-    /// The PC register DFF (hardware reg.pc). On hardware this latches
-    /// when the CPU issues a bus_read (reg.pc = bus_addr + 1), but does
-    /// NOT latch after the last operand byte of JP/JR (which use
-    /// bus_pass instead of bus_read). Currently mirrors bus_counter —
-    /// the divergence points will be added incrementally.
-    pub pc: u16,
-    /// The PC at the start of the current instruction. Latched at each
-    /// instruction boundary — stays constant during operand fetches.
-    pub instruction_pc: u16,
+    /// PC register DFF (hardware `reg.pc`). Latches on `bus_read`
+    /// (= `bus_addr + 1`) but NOT on JP/JR's final operand (which uses
+    /// `bus_pass`). Currently mirrors `bus_counter`; divergence points
+    /// will be added incrementally.
+    pub(crate) pc: u16,
+    /// PC at the start of the current instruction. Latched at each
+    /// instruction boundary; stays constant during operand fetches.
+    pub(crate) instruction_pc: u16,
 
-    /// Bus data latch — the byte the SM83 captured off `cpu_port_d` at
-    /// `data_phase_n↑` (end of T-cycle 3 of the read M-cycle). Holds
-    /// until the next read latches. Read by the state machine each
-    /// T-cycle to see the most-recent bus read.
+    /// Bus data latch — the byte the SM83 captured off `cpu_port_d`
+    /// near the end of T-cycle 3 of a read M-cycle. Holds until the
+    /// next read latches. Read by the state machine each T-cycle.
     pub data_latch: u8,
 
     /// The `BusAction` produced by the most recent `next_tcycle`. The
     /// executor reads this between rise/fall edges of the same T-cycle
-    /// to route memory reads/writes to peripherals.
+    /// to route memory reads/writes.
     pub last_bus_action: BusAction,
 
     pub flags: Flags,
 
     /// IME flip-flop. Promoted from `ime_delay` at every M-cycle
-    /// boundary; that one-stage staging is what produces EI's
-    /// 1-instruction delay (the boundary copy lands AFTER the M-cycle's
-    /// dispatch evaluation). DI clears both stages immediately; RETI
-    /// sets both immediately.
+    /// boundary — that staging produces EI's one-instruction delay.
+    /// DI clears both stages immediately; RETI sets both immediately.
     pub ime: Dff<InterruptMasterEnable>,
-    /// One-stage shadow for IME. EI sets this to `true` (without
-    /// touching `ime`); the next M-cycle boundary copies it into `ime`,
-    /// which is when dispatch can first observe the enable.
+    /// One-stage shadow for IME. EI sets this; the next M-cycle
+    /// boundary copies it into `ime`.
     pub ime_delay: bool,
     pub halt_state: HaltState,
-    /// HALT bug: when HALT is executed with IME=0 and an interrupt is
-    /// already pending, the CPU doesn't truly halt — it resumes
-    /// immediately but fails to increment PC on the next opcode fetch,
-    /// causing that byte to be read twice.
+    /// HALT-bug flag: set when HALT is decoded with IME=0 and an
+    /// interrupt already pending. The next opcode fetch reads its
+    /// byte twice (PC fails to increment).
     pub halt_bug: bool,
 
     // ── Persistent state machine fields ──
@@ -97,75 +89,72 @@ pub struct Cpu {
     pub(super) instruction: instructions::Instruction,
     /// T-cycle position within the current M-cycle (0–3).
     pub(super) tcycle: TCycle,
-    /// Whether we have a pending M-cycle.
+    /// Whether an M-cycle is in flight.
     pub(super) mcycle_active: bool,
-    /// Whether the next rise() should fire the M-cycle-boundary block
-    /// (timers.mcycle, tick_zacw, tick_irq_latched, boundary PPU rise,
-    /// dispatch capture). Decoupled from mcycle_active to let the
-    /// skip-boot constructor encode "M-cycle in flight, but the opening
-    /// CLK9↑'s boundary work has already fired in the boot ROM's domain"
-    /// — the post-CLK9↑ state hardware is in at PC=0x0100. In normal
-    /// execution, this mirrors !mcycle_active (one boundary per
-    /// M-cycle).
+    /// Whether the next rise() should fire the M-cycle-boundary block.
+    /// Decoupled from `mcycle_active` so the skip-boot constructor can
+    /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
+    /// fired in the boot ROM's domain." Normally tracks `!mcycle_active`.
     pub(super) boundary_pending: bool,
-    /// The MCycleAction for the current M-cycle.
+    /// The `MCycleAction` for the current M-cycle.
     current_action: Option<mcycle::MCycleAction>,
-    /// Step counter for Fetch/Halted phases (tracks M-cycle sub-steps).
+    /// Step counter for Fetch / Halted phases (tracks M-cycle sub-steps).
     pub(super) exec_step: u8,
-    /// Pending jump target address. Set by CondJump's internal M-cycle,
-    /// consumed by the next enter_fetch() to issue the fetch Read from
-    /// the target instead of bus_counter. On hardware, the PC
-    /// register stays at the post-operand address during the internal
-    /// M-cycle; it only advances to target+1 when the fetch processes.
+    /// Pending jump target. Set by CondJump's internal M-cycle,
+    /// consumed by the next `enter_fetch()` to issue the fetch Read
+    /// from the target instead of `bus_counter`.
     pub(super) pending_jump_target: Option<u16>,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
-    /// The T-cycle position that produced the last BusAction (for the
-    /// executor to check timing signals like boga, bowa, mopa).
+    /// T-cycle that produced the last `BusAction` — the executor reads
+    /// this to time per-T-cycle work after `next_tcycle()`.
     pub(super) last_tcycle: TCycle,
-    /// IE push bug flag.
+    /// IE push-bug flag.
     pub(super) pending_vector_resolve: bool,
-    /// Set when the CPU transitions to the Fetch phase. The executor
-    /// reads this to detect instruction boundaries for EI delay and
-    /// step_instruction().
+    /// Set when the CPU transitions to Fetch. The executor reads this
+    /// to detect instruction boundaries.
     pub(super) boundary_flag: bool,
-    /// Combinational `(IF & IE) != 0`. Retained as a coarse signal for
-    /// the gbtrace adapter; the dispatch chain and halt-bug detection
-    /// read the data-phase-gated `dispatch.latched()` instead.
+    /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
+    /// gbtrace adapter; dispatch reads the data-phase-gated
+    /// `dispatch.latched()` instead.
     pub(super) irq_pending: bool,
-    /// irq_latched (yoii) flip-flop. CLK9-cadence; captures the
-    /// post-data-phase-gated `dispatch.latched()` once per M-cycle on
-    /// the master-clock rising edge. Drives the HALT release chain
-    /// (yoii → ykua → ynkw) and produces the per-source HALT-wake
-    /// timing differential.
+    /// `irq_latched` (yoii) DFF. CLK9-cadence capture of the data-
+    /// phase-gated `dispatch.latched()`. Drives the HALT-release
+    /// chain (yoii → ykua → ynkw).
     pub(super) irq_latched: Dff<bool>,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
-    /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw DFF.
-    /// Owns the data_phase_n latch, the zzom EI/DI block, and the
-    /// dispatch_active (zacw) capture; consumers read
-    /// `dispatch.dispatch_active()`.
+    /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
+    /// Owns the `data_phase_n` latch and the EI/DI block.
     pub(super) dispatch: dispatch_chain::DispatchChain,
-    /// True between HALT decode and the immediately-following M-cycle
-    /// boundary (M_h start), where the halt-bug-vs-halt-state decision
-    /// fires. Models the window from `ctl_op_halt_delayed` rising
-    /// (during HALT body) up through `yoii`/`ysbt`'s parallel capture
-    /// at M_h start CLK9↑.
+    /// Window between HALT decode and the next M-cycle boundary, where
+    /// the halt-bug-vs-halt-state decision fires (yoii/ysbt parallel
+    /// capture at M_h start CLK9↑).
     pub(super) halt_bug_check_pending: bool,
-    /// True when the halt RS-latch (`ynkw`) is set. False during HALT
-    /// body M-cycle; true during halt-state spin. While true,
-    /// `data_phase` is held LOW per spec §13.5 — the `data_phase_n`
-    /// gate in `execute.rs` consults this flag to keep `irq_latch_inst<i>`
-    /// transparent throughout halt-state.
+    /// True when the halt RS-latch (`ynkw`) is set: false during the
+    /// HALT body M-cycle, true during halt-state spin. While true,
+    /// `data_phase` is held LOW so the per-bit irq_latch stays
+    /// transparent.
     pub(super) halt_rs_latched: bool,
     /// True while executing a handler reached via IME=1 HALT-wake
-    /// dispatch. Read by the BGP CUPA write path to defer the dlatch_ee
-    /// effect — reference PNGs show post-HALT-wake BGP writes landing
-    /// 4-5 LCD columns later than the running-CPU dispatch path produces
-    /// at the same handler offsets. Behavioural; no gate-level anchor.
+    /// dispatch. Read by the BGP CUPA write path to defer the
+    /// `dlatch_ee` effect — post-HALT-wake BGP writes land 4-5 LCD
+    /// columns later than the running-CPU path. Behavioural; no
+    /// gate-level anchor.
     pub(super) halt_wake_active: bool,
 }
 
 impl Cpu {
+    /// Cold-start state: all registers zeroed, PC=0x0000 ready for
+    /// the boot ROM to execute from address 0.
+    pub fn new() -> Cpu {
+        Self::boundary_state()
+    }
+
+    /// Post-boot-ROM state at PC=0x0100. The in-flight M-cycle is the
+    /// cartridge m1 fetch overlapping the boot ROM's final
+    /// `LDH (0xFF50),A` — `boundary_pending` is false because the
+    /// opening CLK9↑'s boundary work fired in the boot ROM's domain
+    /// before simulator t=0.
     pub fn post_boot(checksum: u8) -> Cpu {
         Cpu {
             a: 0x01,
@@ -180,7 +169,6 @@ impl Cpu {
             bus_counter: 0x0100,
             pc: 0x0100,
             instruction_pc: 0x0100,
-            data_latch: 0,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -188,55 +176,61 @@ impl Cpu {
                 Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
             },
 
-            ime: Dff::new(InterruptMasterEnable::Disabled),
-            ime_delay: false,
-            halt_state: HaltState::Running,
-            halt_bug: false,
-
-            // Skip-boot anchor: simulator t=0 is the post-rise of
-            // the M-cycle boundary CLK9↑ that opens LDH (0xFF50),A's
-            // post-body fetch (= cartridge instruction m1 under SM83
-            // fetch overlap). The ring counter captured the new
-            // M-cycle's state on the edge; reg_pc holds 0x0100 and
-            // cpu_port_a is driving 0x0100 combinationally; LDH's
-            // FF50 write retired in the prior m2 cycle. The in-flight
-            // M-cycle is the FetchOverlap carrying NoOperation; the
-            // staged Read emits Idle for dots 0-2 and the cartridge
-            // byte read at dot 3 = boga. boundary_pending is false:
-            // the opening CLK9↑'s boundary work fired in the boot
-            // ROM's domain, before simulator t=0 — the dispatch
-            // chain DFFs, timers, and PPU init already reflect the
-            // post-edge state.
+            // ── In-flight M-cycle: opening m1 fetch of cartridge code ──
             phase: CpuPhase::Execute {
                 phase: Phase::FetchOverlap {
                     commit: Commit::NoOperation,
                 },
                 step: 1,
             },
-            instruction: instructions::Instruction::NoOperation,
             tcycle: TCycle::ONE,
             mcycle_active: true,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
-            pending_jump_target: None,
-            scratch: 0,
-            last_tcycle: TCycle::ZERO,
-            last_bus_action: BusAction::Idle,
-            pending_vector_resolve: false,
-            boundary_flag: true, // Start at an instruction boundary
 
-            irq_pending: false,
-            irq_latched: Dff::new(false),
-            dispatch: dispatch_chain::DispatchChain::new(),
-            halt_bug_check_pending: false,
-            halt_rs_latched: false,
-            halt_wake_active: false,
+            ..Self::boundary_state()
         }
     }
 
-    /// Power-on state: all registers zeroed, PC=0x0000 for boot ROM entry.
-    pub fn new() -> Cpu {
+    /// Construct a CPU from a gbtrace snapshot at an instruction
+    /// boundary. The state machine fields are reset to their boundary
+    /// defaults (Fetch phase, step 0, no pending actions).
+    #[cfg(feature = "gbtrace")]
+    pub fn from_snapshot(snap: &gbtrace::snapshot::CpuSnapshot) -> Cpu {
+        Cpu {
+            a: snap.a,
+            b: snap.b,
+            c: snap.c,
+            d: snap.d,
+            e: snap.e,
+            h: snap.h,
+            l: snap.l,
+            stack_pointer: snap.sp,
+            bus_counter: snap.pc,
+            pc: snap.pc,
+            instruction_pc: snap.pc,
+            flags: Flags::from_bits_retain(snap.f),
+            ime: Dff::new(if snap.ime {
+                InterruptMasterEnable::Enabled
+            } else {
+                InterruptMasterEnable::Disabled
+            }),
+            ime_delay: snap.ime,
+            halt_state: match snap.halt_state {
+                1 => HaltState::Halting,
+                2 => HaltState::Halted,
+                _ => HaltState::Running,
+            },
+            halt_bug: snap.halt_bug,
+            ..Self::boundary_state()
+        }
+    }
+
+    /// Boundary-aligned defaults: zeroed registers, Fetch phase, no
+    /// pending actions, dispatch chain fresh. Used by `new`, and as
+    /// the `..base` for `post_boot` and `from_snapshot`.
+    fn boundary_state() -> Cpu {
         Cpu {
             a: 0,
             b: 0,
@@ -245,10 +239,10 @@ impl Cpu {
             e: 0,
             h: 0,
             l: 0,
-            stack_pointer: 0x0000,
-            bus_counter: 0x0000,
-            pc: 0x0000,
-            instruction_pc: 0x0000,
+            stack_pointer: 0,
+            bus_counter: 0,
+            pc: 0,
+            instruction_pc: 0,
             data_latch: 0,
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),
@@ -268,62 +262,6 @@ impl Cpu {
             last_bus_action: BusAction::Idle,
             pending_vector_resolve: false,
             boundary_flag: true,
-
-            irq_pending: false,
-            irq_latched: Dff::new(false),
-            dispatch: dispatch_chain::DispatchChain::new(),
-            halt_bug_check_pending: false,
-            halt_rs_latched: false,
-            halt_wake_active: false,
-        }
-    }
-
-    /// Construct a CPU from a gbtrace snapshot at an instruction boundary.
-    ///
-    /// Execution state machine fields are set to their instruction-boundary
-    /// defaults (Fetch phase, step 0, no pending actions).
-    #[cfg(feature = "gbtrace")]
-    pub fn from_snapshot(snap: &gbtrace::snapshot::CpuSnapshot) -> Cpu {
-        Cpu {
-            a: snap.a,
-            b: snap.b,
-            c: snap.c,
-            d: snap.d,
-            e: snap.e,
-            h: snap.h,
-            l: snap.l,
-            stack_pointer: snap.sp,
-            bus_counter: snap.pc,
-            pc: snap.pc,
-            instruction_pc: snap.pc,
-            data_latch: 0,
-            flags: Flags::from_bits_retain(snap.f),
-            ime: Dff::new(if snap.ime {
-                InterruptMasterEnable::Enabled
-            } else {
-                InterruptMasterEnable::Disabled
-            }),
-            ime_delay: snap.ime,
-            halt_state: match snap.halt_state {
-                1 => HaltState::Halting,
-                2 => HaltState::Halted,
-                _ => HaltState::Running,
-            },
-            halt_bug: snap.halt_bug,
-            phase: CpuPhase::Fetch,
-            instruction: instructions::Instruction::NoOperation,
-            tcycle: TCycle::ZERO,
-            mcycle_active: false,
-            boundary_pending: true,
-            current_action: None,
-            exec_step: 0,
-            pending_jump_target: None,
-            scratch: 0,
-            last_tcycle: TCycle::ZERO,
-            last_bus_action: BusAction::Idle,
-            pending_vector_resolve: false,
-            boundary_flag: true,
-
             irq_pending: false,
             irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
@@ -368,9 +306,7 @@ impl Cpu {
     }
 
     pub(crate) fn set_register16(&mut self, register: Register16, value: u16) {
-        let high = (value / 0x100) as u8;
-        let low = (value % 0x100) as u8;
-
+        let [high, low] = value.to_be_bytes();
         match register {
             Register16::Bc => {
                 self.b = high;
@@ -396,16 +332,10 @@ impl Cpu {
         self.ime.output() != InterruptMasterEnable::Disabled
     }
 
-    /// Per-instruction (or dispatch) M-cycle index, matching GateBoy's
-    /// hardware sequencer state. Resets to 0 at instruction boundaries.
-    /// 0 = fetch M-cycle, 1 = first post-fetch M-cycle, ... For interrupt
-    /// dispatch the 5 M-cycles report 0, 1, 2, 3, 4 (M0 = the fetch
-    /// M-cycle the dispatch overlaps with). For halt the index is 0.
+    /// Per-instruction (or dispatch) M-cycle index — 0 = fetch,
+    /// 1 = first post-fetch M-cycle, etc. Interrupt dispatch's
+    /// 5 M-cycles report 0..=4 (M0 overlaps the fetch). Halt: 0.
     pub fn op_state(&self) -> u8 {
-        // Computed from the current phase + step. Both Execute and
-        // InterruptDispatch's `step` fields are post-incremented inside
-        // mcycle_execute / mcycle_isr, so by the after-fall sample point
-        // they hold the M-cycle index of the *current* M-cycle.
         match &self.phase {
             mcycle::CpuPhase::Fetch => 0,
             mcycle::CpuPhase::Execute { step, .. } => *step as u8,
@@ -414,10 +344,9 @@ impl Cpu {
         }
     }
 
-    /// AFUR/ALEF/APUK/ADYK ring counter state (AFUR<<3|ALEF<<2|APUK<<1|ADYK<<0),
-    /// matching GateBoy's encoding. Reports the post-fall settled DFF state at
-    /// the after-fall sampling instant, so the value matches what GateBoy's
-    /// adapter emits at the same physical edge.
+    /// AFUR/ALEF/APUK/ADYK ring-counter state, packed
+    /// `AFUR<<3 | ALEF<<2 | APUK<<1 | ADYK<<0` to match GateBoy's
+    /// encoding at the post-fall sampling instant.
     pub fn mcycle_phase(&self) -> u8 {
         match self.last_tcycle.as_u8() {
             0 => 0x0E, // AFUR=1 ALEF=1 APUK=1 ADYK=0
@@ -428,7 +357,7 @@ impl Cpu {
         }
     }
 
-    /// The address on the CPU bus for the current M-cycle.
+    /// Address on the CPU bus for the current M-cycle.
     pub fn bus_address(&self) -> u16 {
         match &self.current_action {
             Some(mcycle::MCycleAction::Read { address }) => *address,
@@ -439,15 +368,14 @@ impl Cpu {
         }
     }
 
-    /// Combinational `(IF & IE) != 0` across the 5 active IRQ bits.
-    /// Level-sensitive input to both the running-CPU dispatch chain and
-    /// the `irq_latched` (yoii) DFF.
+    /// Combinational `(IF & IE) != 0` — level-sensitive input to the
+    /// dispatch chain and to the `irq_latched` (yoii) DFF.
     pub fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 
-    /// Captured running-CPU dispatch decision (zacw) DFF q. When true,
-    /// the 5-M-cycle dispatch sequence is in progress.
+    /// Captured running-CPU dispatch decision (zacw). True while the
+    /// 5-M-cycle dispatch sequence is in progress.
     pub fn dispatch_active(&self) -> bool {
         self.dispatch.dispatch_active()
     }
@@ -458,40 +386,28 @@ impl Cpu {
         self.irq_latched.output()
     }
 
-    /// Consume `boundary_pending` — return its current value and clear
-    /// it to false. Called by the executor at the start of each rise()
-    /// to decide whether the M-cycle-boundary block fires this edge.
+    /// Return `boundary_pending` and clear it. Called once per rise().
     pub(super) fn consume_boundary_pending(&mut self) -> bool {
         let pending = self.boundary_pending;
         self.boundary_pending = false;
         pending
     }
 
-    /// IE push bug flag — set during dispatch M3 vector resolution
-    /// (the spec's "vector resolved between M-cycles 3 and 4" window
-    /// where a write to IE from the pushed PC's high byte can change
-    /// which vector is dispatched). Exposed as a gbtrace extension
-    /// field for emulator-internal debugging.
+    /// IE-push-bug flag (gbtrace extension). Set during dispatch's M3
+    /// vector-resolve window.
     pub fn pending_vector_resolve_flag(&self) -> bool {
         self.pending_vector_resolve
     }
 
-    /// HALT bug flag — set when HALT decoded with IME=0 and an
-    /// interrupt already pending. Causes the next opcode fetch to read
-    /// the byte twice. Exposed as a gbtrace extension field.
+    /// HALT-bug flag (gbtrace extension). See `Cpu::halt_bug`.
     pub fn halt_bug_flag(&self) -> bool {
         self.halt_bug
     }
 
-    /// Whether the CPU is currently halted.
     pub fn is_halted(&self) -> bool {
         self.halt_state == HaltState::Halted
     }
 
-    /// Whether the halt RS-latch (`ynkw`) is set. False during HALT
-    /// body M-cycle (before M_h start halt-bug-vs-halt-state decision);
-    /// true during halt-state spin. Drives the `data_phase_n` gate for
-    /// the per-bit `irq_latch_inst<i>` in halt-state.
     pub fn halt_rs_latched(&self) -> bool {
         self.halt_rs_latched
     }
@@ -500,11 +416,8 @@ impl Cpu {
         self.halt_wake_active
     }
 
-    /// Whether the CPU is in a fetch M-cycle (the bus is reading the
-    /// next opcode). Drives ctl_fetch in the dispatch chain's xogs
-    /// gate. True for CpuPhase::Fetch (M1 opcode fetch) and for
-    /// Phase::FetchOverlap (the trailing fetch-overlap M-cycle that
-    /// reads the next instruction's opcode while finishing the current).
+    /// Whether the CPU is in a fetch M-cycle (reading the next opcode).
+    /// Drives `ctl_fetch` in the dispatch chain's xogs gate.
     pub fn is_fetch_phase(&self) -> bool {
         matches!(
             self.phase,
@@ -516,9 +429,7 @@ impl Cpu {
         )
     }
 
-    /// The pending bus write for the current M-cycle, if any.
-    /// On hardware, the CPU places the address on the bus at phase A
-    /// and drives write data from phase E.
+    /// Address + value the CPU is writing this M-cycle.
     pub fn pending_bus_write(&self) -> Option<(u16, u8)> {
         match &self.current_action {
             Some(mcycle::MCycleAction::Write { address, value }) => Some((*address, *value)),
@@ -526,10 +437,7 @@ impl Cpu {
         }
     }
 
-    /// The pending bus read address for the current M-cycle, if any.
-    /// On hardware, the CPU places the address on the bus at phase A;
-    /// the addressed peripheral's tri-state driver enables at dot 2
-    /// (`tobe`/`wafu` rising) and drives the bus.
+    /// Address the CPU is reading this M-cycle.
     pub fn pending_bus_read(&self) -> Option<u16> {
         match &self.current_action {
             Some(mcycle::MCycleAction::Read { address }) => Some(*address),
