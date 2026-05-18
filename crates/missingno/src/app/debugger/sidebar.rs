@@ -119,7 +119,7 @@ impl Sidebar {
         .spacing(s())
         .into();
 
-        let running = cpu.halt_state != HaltState::Halted;
+        let running = cpu.halt.state != HaltState::Halted;
         section(
             "CPU",
             &summary,
@@ -271,7 +271,7 @@ pub fn tooltip_style(theme: &iced::Theme) -> container::Style {
 // --- Pointers + halt ---
 
 fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
-    let halted = cpu.halt_state == HaltState::Halted;
+    let halted = cpu.halt.state == HaltState::Halted;
     let pc_color = if halted {
         palette::OVERLAY0
     } else {

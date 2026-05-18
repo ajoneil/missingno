@@ -32,6 +32,51 @@ pub enum HaltState {
     Halted,
 }
 
+/// All halt-related state on the CPU: the high-level execution mode
+/// plus the four hardware-level flags that together drive HALT-bug
+/// behaviour, the data_phase_n gating during halt-spin, and the
+/// PPU's post-HALT-wake timing offset.
+pub struct HaltContext {
+    pub state: HaltState,
+    /// HALT-bug flag: set when HALT is decoded with IME=0 and an
+    /// interrupt already pending. The next opcode fetch reads its
+    /// byte twice (PC fails to increment).
+    pub bug: bool,
+    /// Window between HALT decode and the next M-cycle boundary, where
+    /// the halt-bug-vs-halt-state decision fires (yoii/ysbt parallel
+    /// capture at M_h start CLK9↑).
+    pub bug_check_pending: bool,
+    /// True when the halt RS-latch (`ynkw`) is set: false during the
+    /// HALT body M-cycle, true during halt-state spin. While true,
+    /// `data_phase` is held LOW so the per-bit irq_latch stays
+    /// transparent.
+    pub rs_latched: bool,
+    /// True while executing a handler reached via IME=1 HALT-wake
+    /// dispatch. Read by the BGP CUPA write path to defer the
+    /// `dlatch_ee` effect — post-HALT-wake BGP writes land 4-5 LCD
+    /// columns later than the running-CPU path. Behavioural; no
+    /// gate-level anchor.
+    pub wake_active: bool,
+}
+
+impl HaltContext {
+    pub fn new() -> Self {
+        Self {
+            state: HaltState::Running,
+            bug: false,
+            bug_check_pending: false,
+            rs_latched: false,
+            wake_active: false,
+        }
+    }
+}
+
+impl Default for HaltContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The SM83 CPU. Owns register file, IME, halt state, and the
 /// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
@@ -69,11 +114,7 @@ pub struct Cpu {
     /// One-stage shadow for IME. EI sets this; the next M-cycle
     /// boundary copies it into `ime`.
     pub ime_delay: bool,
-    pub halt_state: HaltState,
-    /// HALT-bug flag: set when HALT is decoded with IME=0 and an
-    /// interrupt already pending. The next opcode fetch reads its
-    /// byte twice (PC fails to increment).
-    pub halt_bug: bool,
+    pub halt: HaltContext,
 
     // ── Persistent state machine fields ──
     /// Current execution phase of the CPU state machine.
@@ -119,21 +160,6 @@ pub struct Cpu {
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
     /// Owns the `data_phase_n` latch and the EI/DI block.
     pub(super) dispatch: dispatch_chain::DispatchChain,
-    /// Window between HALT decode and the next M-cycle boundary, where
-    /// the halt-bug-vs-halt-state decision fires (yoii/ysbt parallel
-    /// capture at M_h start CLK9↑).
-    pub(super) halt_bug_check_pending: bool,
-    /// True when the halt RS-latch (`ynkw`) is set: false during the
-    /// HALT body M-cycle, true during halt-state spin. While true,
-    /// `data_phase` is held LOW so the per-bit irq_latch stays
-    /// transparent.
-    pub(super) halt_rs_latched: bool,
-    /// True while executing a handler reached via IME=1 HALT-wake
-    /// dispatch. Read by the BGP CUPA write path to defer the
-    /// `dlatch_ee` effect — post-HALT-wake BGP writes land 4-5 LCD
-    /// columns later than the running-CPU path. Behavioural; no
-    /// gate-level anchor.
-    pub(super) halt_wake_active: bool,
 }
 
 impl Cpu {
@@ -206,12 +232,15 @@ impl Cpu {
                 InterruptMasterEnable::Disabled
             }),
             ime_delay: snap.ime,
-            halt_state: match snap.halt_state {
-                1 => HaltState::Halting,
-                2 => HaltState::Halted,
-                _ => HaltState::Running,
+            halt: HaltContext {
+                state: match snap.halt_state {
+                    1 => HaltState::Halting,
+                    2 => HaltState::Halted,
+                    _ => HaltState::Running,
+                },
+                bug: snap.halt_bug,
+                ..HaltContext::new()
             },
-            halt_bug: snap.halt_bug,
             ..Self::boundary_state()
         }
     }
@@ -234,8 +263,7 @@ impl Cpu {
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),
             ime_delay: false,
-            halt_state: HaltState::Running,
-            halt_bug: false,
+            halt: HaltContext::new(),
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
             tcycle: TCycle::ZERO,
@@ -252,9 +280,6 @@ impl Cpu {
             irq_pending: false,
             irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
-            halt_bug_check_pending: false,
-            halt_rs_latched: false,
-            halt_wake_active: false,
         }
     }
 
@@ -386,21 +411,21 @@ impl Cpu {
         self.pending_vector_resolve
     }
 
-    /// HALT-bug flag (gbtrace extension). See `Cpu::halt_bug`.
+    /// HALT-bug flag (gbtrace extension). See `HaltContext::bug`.
     pub fn halt_bug_flag(&self) -> bool {
-        self.halt_bug
+        self.halt.bug
     }
 
     pub fn is_halted(&self) -> bool {
-        self.halt_state == HaltState::Halted
+        self.halt.state == HaltState::Halted
     }
 
     pub fn halt_rs_latched(&self) -> bool {
-        self.halt_rs_latched
+        self.halt.rs_latched
     }
 
     pub fn is_halt_wake_active(&self) -> bool {
-        self.halt_wake_active
+        self.halt.wake_active
     }
 
     /// Whether the CPU is in a fetch M-cycle (reading the next opcode).

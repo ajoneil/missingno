@@ -18,7 +18,7 @@ impl Cpu {
         match commit {
             Commit::NoOperation => {}
             Commit::Invalid => {
-                cpu.halt_state = HaltState::Halting;
+                cpu.halt.state = HaltState::Halting;
             }
 
             Commit::LoadR8 { reg, value } => cpu.set_register8(reg, value),
@@ -185,8 +185,8 @@ impl Cpu {
             }
 
             Commit::EnterHalt | Commit::EnterStop => {
-                cpu.halt_state = HaltState::Halting;
-                cpu.halt_wake_active = false;
+                cpu.halt.state = HaltState::Halting;
+                cpu.halt.wake_active = false;
             }
         }
     }
@@ -430,7 +430,7 @@ impl Cpu {
                 cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.ime_delay = true;
                 cpu.bus_counter = value;
-                cpu.halt_wake_active = false;
+                cpu.halt.wake_active = false;
             }
         }
     }

@@ -80,7 +80,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         ime: cpu.interrupts_enabled(),
         if_: gb.interrupts().requested.bits(),
         ie: gb.interrupts().enabled.bits(),
-        halt_state: match cpu.halt_state {
+        halt_state: match cpu.halt.state {
             HaltState::Running => 0,
             HaltState::Halting => 1,
             HaltState::Halted => 2,
@@ -94,7 +94,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         } else {
             0
         },
-        halt_bug: cpu.halt_bug,
+        halt_bug: cpu.halt.bug,
     }
 }
 

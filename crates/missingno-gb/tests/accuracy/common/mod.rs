@@ -368,7 +368,7 @@ fn is_infinite_loop(gb: &GameBoy) -> bool {
         return true;
     }
 
-    if gb.cpu().halt_state != missingno_gb::cpu::HaltState::Running {
+    if gb.cpu().halt.state != missingno_gb::cpu::HaltState::Running {
         // Permanent halt: IE register is empty, so no interrupt can ever wake
         // the CPU. Used by SameSuite's exit sequence (di; IE=0; halt; nop).
         if gb.interrupts().enabled.is_empty() {

@@ -372,11 +372,11 @@ impl Cpu {
         // for IF rises held by the per-bit latch through HALT body's
         // data-phase, yoii sees the pre-release value and the halt
         // RS-latch sets normally.
-        if self.halt_bug_check_pending {
-            self.halt_bug_check_pending = false;
+        if self.halt.bug_check_pending {
+            self.halt.bug_check_pending = false;
             if self.irq_latched.output() {
                 // Halt RS-latch can't set (ykua holds reset LOW).
-                self.halt_state = HaltState::Running;
+                self.halt.state = HaltState::Running;
                 let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
                 if ime_enabled {
                     // HALT-IDU+1 suppression + dispatch's universal `-1`
@@ -400,7 +400,7 @@ impl Cpu {
                     // via the existing halt_bug flag's PC++ suppression
                     // at the next opcode fetch (handled by FetchOverlap
                     // step 1 below).
-                    self.halt_bug = true;
+                    self.halt.bug = true;
                 }
                 // Phase is already Execute(FetchOverlap step 1) from
                 // enter_fetch_overlap's halt-entry branch; the M-cycle
@@ -408,7 +408,7 @@ impl Cpu {
                 // read of HALT+1 (or HALT_addr after pc--).
             } else {
                 // No IF pending at M_h start: halt RS-latch sets.
-                self.halt_rs_latched = true;
+                self.halt.rs_latched = true;
                 // Phase transitions from Execute(FetchOverlap) to
                 // Halted(Spin) — the read byte from this boundary is
                 // discarded; the CPU enters halt-state spin.
@@ -445,9 +445,9 @@ impl Cpu {
                 let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
                 let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
                 if irq_pending_for_dispatch {
-                    self.halt_state = HaltState::Running;
-                    self.halt_rs_latched = false;
-                    self.halt_wake_active = true;
+                    self.halt.state = HaltState::Running;
+                    self.halt.rs_latched = false;
+                    self.halt.wake_active = true;
                     let pc = self.bus_counter;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
@@ -497,8 +497,8 @@ impl Cpu {
                 Some(MCycleAction::Read { address }) => *address,
                 _ => self.bus_counter,
             };
-            if self.halt_bug {
-                self.halt_bug = false;
+            if self.halt.bug {
+                self.halt.bug = false;
             } else {
                 self.bus_counter = fetch_addr.wrapping_add(1);
             }
@@ -573,8 +573,8 @@ impl Cpu {
     /// path. With `mcyc = m7` parked through HALT, this M-cycle carries
     /// the m7-driven post-body fetch from PC.
     fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<MCycleAction> {
-        self.halt_state = HaltState::Running;
-        self.halt_rs_latched = false;
+        self.halt.state = HaltState::Running;
+        self.halt.rs_latched = false;
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
@@ -713,8 +713,8 @@ impl Cpu {
                     return (self.next_mcycle(0), false);
                 }
 
-                if self.halt_bug {
-                    self.halt_bug = false;
+                if self.halt.bug {
+                    self.halt.bug = false;
                 } else {
                     self.bus_counter = fetch_addr.wrapping_add(1);
                 }
@@ -1098,8 +1098,8 @@ impl Cpu {
             // (M3→M4 vector resolve) — driven by
             // pending_vector_resolve in execute.rs.
 
-            self.halt_state = HaltState::Running;
-            self.halt_rs_latched = false;
+            self.halt.state = HaltState::Running;
+            self.halt.rs_latched = false;
             let pc = self.bus_counter;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
@@ -1114,7 +1114,7 @@ impl Cpu {
                 .expect("next_mcycle must return Some after dispatch arm");
         }
 
-        if self.halt_state == HaltState::Halting {
+        if self.halt.state == HaltState::Halting {
             // Defer the halt-bug-vs-halt-state decision to M_h start
             // (= the boundary at the END of HALT's body M-cycle =
             // next_mcycle's entry on the following M-cycle). The HALT
@@ -1124,9 +1124,9 @@ impl Cpu {
             // halt-bug path. `data_phase_n` pulses normally during it
             // (halt_rs_latched stays false) so the per-bit irq_latch
             // gates correctly against IF rises in non-data-phase.
-            self.halt_state = HaltState::Halted;
-            self.halt_rs_latched = false;
-            self.halt_bug_check_pending = true;
+            self.halt.state = HaltState::Halted;
+            self.halt.rs_latched = false;
+            self.halt.bug_check_pending = true;
             // Fall through to the FetchOverlap step 1 setup below; the
             // halt-bug-vs-halt-state branch fires at next_mcycle's
             // entry on the following M-cycle (M_h start).

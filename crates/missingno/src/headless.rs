@@ -499,7 +499,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
             carry: cpu.flags.contains(Flags::CARRY),
         },
         ime: cpu.interrupts_enabled(),
-        halted: cpu.halt_state != missingno_gb::cpu::HaltState::Running,
+        halted: cpu.halt.state != missingno_gb::cpu::HaltState::Running,
     }
 }
 
