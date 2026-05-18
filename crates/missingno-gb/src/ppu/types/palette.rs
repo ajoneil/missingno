@@ -94,18 +94,18 @@ pub struct Palettes {
     /// while the dlatch_ee cell is still in its post-write recovery
     /// state, the cell presents OR(prior, new) instead of settled new.
     /// Held for one tick after a qualifying write.
-    pub(crate) background_or_overlay: Option<u8>,
+    pub(in crate::ppu) background_or_overlay: Option<u8>,
     /// True once a BGP write has resolved during the current scanline's
     /// active period (Mode 2 onward). Cleared at the next scanline's
     /// Mode 2 entry (BESU↑) when the cell can finish settling.
-    pub(crate) bgp_recovery_active: bool,
+    pub(in crate::ppu) bgp_recovery_active: bool,
     /// True once a visible LCD cp_pad↑ has emitted a pixel since the
     /// most recent `tick_background` commit cycle. The LCD-glass
     /// column-shift register only enters the OR-overlap primed-state
     /// after it has actually shifted a value in — a CUPA whose effect
     /// was never visibly sampled does not engage the recovery. Cleared
     /// by every `tick_background` commit cycle and at BESU↑ / LCD-off.
-    pub(crate) bgp_visible_emit_since_tick: bool,
+    pub(in crate::ppu) bgp_visible_emit_since_tick: bool,
     /// BGP write parked while the CPU is inside a HALT-wake handler
     /// (`Cpu::is_halt_wake_active`). The dlatch_ee `pending` isn't set
     /// at the CPU's CUPA edge; instead `tick_background` runs the
@@ -113,10 +113,10 @@ pub struct Palettes {
     /// pixel-pipeline-visible transition 4-5 LCD columns later than
     /// running-CPU dispatch produces. Behavioural overlay — no
     /// gate-level anchor for the shift.
-    pub(crate) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
+    pub(in crate::ppu) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
     /// Prior fall's BESU value — feeds the BESU↑ edge detector that
     /// releases the BGP NURA-overlay recovery at Mode 2 entry.
-    pub(crate) prev_besu: bool,
+    pub(in crate::ppu) prev_besu: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

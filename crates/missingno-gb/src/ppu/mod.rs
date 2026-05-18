@@ -8,14 +8,14 @@ use dividers::Dividers;
 use line_counter::{LineCounter, LineCounterX, LineCounterY};
 use line_end_pipeline::LineEndPipeline;
 use memory::{Oam, OamAddress};
-use registers::BackgroundViewportPosition;
+use registers::{BackgroundViewportPosition, Window};
 use rendering::Rendering;
 use types::control::{Control, ControlFlags};
 use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
-pub use registers::{PipelineRegisters, Window};
+pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
@@ -408,11 +408,11 @@ impl Ppu {
         }
     }
 
-    pub fn read_oam(&self, address: OamAddress) -> u8 {
+    pub(crate) fn read_oam(&self, address: OamAddress) -> u8 {
         self.oam.read(address)
     }
 
-    pub fn write_oam(&mut self, address: OamAddress, value: u8) {
+    pub(crate) fn write_oam(&mut self, address: OamAddress, value: u8) {
         self.oam.write(address, value);
     }
 }

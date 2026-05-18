@@ -192,13 +192,13 @@ impl Oam {
     /// byte 0 (Y) and byte 1 (X) are read in a single access. Bytes 2–3
     /// (tile index, attributes) are not on the bus during scanning — they
     /// are only read during Mode 3's sprite tile fetch.
-    pub fn sprite_position(&self, id: SpriteId) -> (u8, u8) {
+    pub(in crate::ppu) fn sprite_position(&self, id: SpriteId) -> (u8, u8) {
         let sprite = &self.sprites[id.0 as usize];
         (sprite.position.y_plus_16, sprite.position.x_plus_8)
     }
 
     /// Read a raw byte from OAM at the given byte offset (0–159).
-    pub(crate) fn oam_byte(&self, offset: u8) -> u8 {
+    pub(in crate::ppu) fn oam_byte(&self, offset: u8) -> u8 {
         let sprite = &self.sprites[(offset / 4) as usize];
         match offset % 4 {
             0 => sprite.position.y_plus_16,
@@ -210,7 +210,7 @@ impl Oam {
     }
 
     /// Write a raw byte to OAM at the given byte offset (0–159).
-    pub(crate) fn set_oam_byte(&mut self, offset: u8, value: u8) {
+    pub(in crate::ppu) fn set_oam_byte(&mut self, offset: u8, value: u8) {
         let sprite = &mut self.sprites[(offset / 4) as usize];
         match offset % 4 {
             0 => sprite.position.y_plus_16 = value,
@@ -222,14 +222,14 @@ impl Oam {
     }
 
     /// Read a little-endian 16-bit word from OAM at the given byte offset.
-    pub(crate) fn oam_word(&self, offset: u8) -> u16 {
+    pub(in crate::ppu) fn oam_word(&self, offset: u8) -> u16 {
         let lo = self.oam_byte(offset) as u16;
         let hi = self.oam_byte(offset + 1) as u16;
         lo | (hi << 8)
     }
 
     /// Write a little-endian 16-bit word to OAM at the given byte offset.
-    pub(crate) fn set_oam_word(&mut self, offset: u8, value: u16) {
+    pub(in crate::ppu) fn set_oam_word(&mut self, offset: u8, value: u16) {
         self.set_oam_byte(offset, value as u8);
         self.set_oam_byte(offset + 1, (value >> 8) as u8);
     }

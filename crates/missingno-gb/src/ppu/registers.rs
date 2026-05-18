@@ -30,19 +30,19 @@ pub struct PipelineRegisters {
     /// the next fall via `tick_bg_window_enabled_shadow`. `just_set`
     /// keeps the shadow alive for the same-fall resolve after the CPU
     /// write site sets it.
-    pub(crate) bg_window_enabled_shadow: Option<bool>,
-    pub(crate) bg_window_enabled_shadow_just_set: bool,
+    pub(in crate::ppu) bg_window_enabled_shadow: Option<bool>,
+    pub(in crate::ppu) bg_window_enabled_shadow_just_set: bool,
     /// XYLO popper-side OLD overlay. When a mid-Mode-3 CUPA transitions
     /// LCDC.1, the OBJ-mux popper (XULA/WOXA → NULY) at the next cp_pad↑
     /// resolves with the OLD XYLO state. The sprite-fetch trigger chain
     /// (AROR/FEPO/TEKY/SOBU) sees live XYLO — only the popper-side read
     /// consumes the shadow.
-    pub(crate) sprites_enabled_shadow: Option<bool>,
-    pub(crate) sprites_enabled_shadow_just_set: bool,
+    pub(in crate::ppu) sprites_enabled_shadow: Option<bool>,
+    pub(in crate::ppu) sprites_enabled_shadow_just_set: bool,
     /// LCDC.1 snapshot taken at the start of rise() BEFORE the CPU's
     /// staged write applies. Read by mode3_rising's FEPO-for-TEKY path
     /// to model the SOBU vs CUPA gate-delay race.
-    pub(crate) sprites_enabled_pre_cupa: bool,
+    pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
 }
 
 impl PipelineRegisters {
