@@ -39,6 +39,10 @@ pub struct PipelineRegisters {
     /// consumes the shadow.
     pub(crate) sprites_enabled_shadow: Option<bool>,
     pub(crate) sprites_enabled_shadow_just_set: bool,
+    /// LCDC.1 snapshot taken at the start of rise() BEFORE the CPU's
+    /// staged write applies. Read by mode3_rising's FEPO-for-TEKY path
+    /// to model the SOBU vs CUPA gate-delay race.
+    pub(crate) sprites_enabled_pre_cupa: bool,
 }
 
 impl PipelineRegisters {

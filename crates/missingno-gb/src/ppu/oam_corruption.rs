@@ -37,6 +37,14 @@ pub(super) enum OamBugKind {
     Write,
 }
 
+/// OAM-corruption arming state. `armed = Some` means a CUFE pulse
+/// fired in the BOWA→MOPA window and the corruption will apply at
+/// the next MOPA (possibly in the following M-cycle).
+#[derive(Default)]
+pub(crate) struct OamCorruption {
+    pub(super) armed: Option<OamBugKind>,
+}
+
 /// OAM address range — used as the arming filter for CUFE pulses
 /// derived from the CPU address bus.
 const OAM_RANGE: std::ops::RangeInclusive<u16> = 0xFE00..=0xFEFF;
@@ -48,15 +56,17 @@ impl Ppu {
     /// M-cycle.
     pub(crate) fn arm_oam_bug_for_read(&mut self, address: u16) {
         if OAM_RANGE.contains(&address) {
-            self.pending_oam_bug = Some(OamBugKind::Read);
+            self.oam_corruption.armed = Some(OamBugKind::Read);
         }
     }
 
     /// Arm an OAM-bug Write for the next MOPA if `address` falls in
     /// the OAM range. Does not overwrite an existing Read arming.
     pub(crate) fn arm_oam_bug_for_write(&mut self, address: u16) {
-        if OAM_RANGE.contains(&address) && !matches!(self.pending_oam_bug, Some(OamBugKind::Read)) {
-            self.pending_oam_bug = Some(OamBugKind::Write);
+        if OAM_RANGE.contains(&address)
+            && !matches!(self.oam_corruption.armed, Some(OamBugKind::Read))
+        {
+            self.oam_corruption.armed = Some(OamBugKind::Write);
         }
     }
 
@@ -64,7 +74,7 @@ impl Ppu {
     /// Called at MOPA (dot 2 rise) — possibly in the M-cycle that
     /// follows the arming.
     pub(crate) fn apply_pending_oam_bug(&mut self) {
-        match self.pending_oam_bug.take() {
+        match self.oam_corruption.armed.take() {
             Some(OamBugKind::Read) => self.oam_bug_read(),
             Some(OamBugKind::Write) => self.oam_bug_write(),
             None => {}

@@ -91,19 +91,9 @@ pub struct Ppu {
     pub frame_number: u16,
     /// CUPA↑ → XODO↓ scheduling: set on LCDC.7 0→1 in the rise-edge
     /// staged write; consumed in the same fall.
-    pending_lcd_on_init: bool,
-    /// Prior fall's BESU value — used to detect Mode 2 entry (BESU↑)
-    /// and release the BGP NURA-overlay recovery.
-    prev_besu: bool,
-    /// XYLO (LCDC.1) snapshot captured at the start of rise(), before
-    /// the CPU's staged write applies. Models the SOBU vs CUPA gate-
-    /// delay race at dot-2 ALET↑; read by mode3_rising's FEPO-for-TEKY
-    /// path. Other FEPO reads use post-write regs directly.
-    sprites_enabled_pre_cupa: bool,
-    /// OAM-corruption arming. Set at BOWA (dot 0) when an OAM-range
-    /// address sits on the CPU bus; cleared and fired at MOPA (dot 2
-    /// rise) — possibly in the next instruction.
-    pending_oam_bug: Option<oam_corruption::OamBugKind>,
+    lcd_on_init_pending: bool,
+    /// OAM-bug arming (BOWA → MOPA window).
+    oam_corruption: oam_corruption::OamCorruption,
 }
 
 impl Ppu {
@@ -126,6 +116,7 @@ impl Ppu {
                 bg_window_enabled_shadow_just_set: false,
                 sprites_enabled_shadow: None,
                 sprites_enabled_shadow_just_set: false,
+                sprites_enabled_pre_cupa: false,
             },
             video: VideoControl {
                 dividers: Dividers {
@@ -162,10 +153,8 @@ impl Ppu {
             oam: Oam::default(),
             pixel_pipeline: None,
             frame_number: 0,
-            pending_lcd_on_init: false,
-            prev_besu: false,
-            sprites_enabled_pre_cupa: false,
-            pending_oam_bug: None,
+            lcd_on_init_pending: false,
+            oam_corruption: oam_corruption::OamCorruption::default(),
         }
     }
 
@@ -198,7 +187,7 @@ impl Ppu {
             },
         };
         ppu.pixel_pipeline = Some(Rendering::post_boot());
-        ppu.sprites_enabled_pre_cupa = true;
+        ppu.registers.sprites_enabled_pre_cupa = true;
         ppu
     }
 
@@ -363,7 +352,7 @@ impl Ppu {
                 // CUPA↑ → XODO↓ is combinational; schedule the matching
                 // divider/scanner reset for this fall.
                 if !was_enabled && self.registers.control.video_enabled() {
-                    self.pending_lcd_on_init = true;
+                    self.lcd_on_init_pending = true;
                 }
                 false
             }
@@ -537,7 +526,7 @@ impl Ppu {
     /// this rise. The captured value is consumed in mode3_rising to
     /// model the SOBU vs CUPA gate-delay race.
     pub fn snapshot_pre_cupa_lcdc(&mut self) {
-        self.sprites_enabled_pre_cupa = self.registers.control.sprites_enabled();
+        self.registers.sprites_enabled_pre_cupa = self.registers.control.sprites_enabled();
     }
 
     /// Master clock rise — PPU clock (ALET) rises. ALET-clocked DFFs
@@ -555,13 +544,14 @@ impl Ppu {
         }
 
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            let sprites_enabled_pre_cupa = self.registers.sprites_enabled_pre_cupa;
             result.pixel = rendering.on_ppu_clock_rise(
                 &self.registers,
                 &self.video,
                 &self.oam,
                 oam_bus,
                 vram,
-                self.sprites_enabled_pre_cupa,
+                sprites_enabled_pre_cupa,
             );
         }
 
@@ -585,9 +575,9 @@ impl Ppu {
 
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's
         // first toggle.
-        if self.pending_lcd_on_init {
+        if self.lcd_on_init_pending {
             self.initialize_lcd_on();
-            self.pending_lcd_on_init = false;
+            self.lcd_on_init_pending = false;
         }
 
         if !self.control().video_enabled() {
@@ -602,7 +592,7 @@ impl Ppu {
         let xupy_rising = !self.video.tick_dot();
 
         self.advance_dividers(&mut result);
-        self.handle_besu_edge();
+        self.registers.palettes.tick_besu(self.besu());
         self.tick_register_latches();
         self.run_ppu_clock_fall(oam_bus, xupy_rising, &mut result);
 
@@ -654,16 +644,6 @@ impl Ppu {
         if self.video.vblank() && !popu_was {
             result.request_vblank = true;
         }
-    }
-
-    /// BESU↑ at Mode-2 entry releases the BGP dlatch's post-write
-    /// recovery — the pipe has been idle through HBlank.
-    fn handle_besu_edge(&mut self) {
-        let besu_now = self.besu();
-        if besu_now && !self.prev_besu {
-            self.registers.palettes.reset_on_mode_2_entry();
-        }
-        self.prev_besu = besu_now;
     }
 
     /// Resolve DFF8/DFF9 latches BEFORE the pipeline reads them — the
@@ -828,11 +808,13 @@ impl Ppu {
                 bgp_recovery_active: false,
                 bgp_visible_emit_since_tick: false,
                 bgp_halt_wake_deferred: None,
+                prev_besu: false,
             },
             bg_window_enabled_shadow: None,
             bg_window_enabled_shadow_just_set: false,
             sprites_enabled_shadow: None,
             sprites_enabled_shadow_just_set: false,
+            sprites_enabled_pre_cupa: lcd_on,
         };
 
         Ppu {
@@ -841,10 +823,8 @@ impl Ppu {
             video,
             oam,
             frame_number: 0,
-            pending_lcd_on_init: false,
-            prev_besu: false,
-            sprites_enabled_pre_cupa: lcd_on,
-            pending_oam_bug: None,
+            lcd_on_init_pending: false,
+            oam_corruption: oam_corruption::OamCorruption::default(),
         }
     }
 }

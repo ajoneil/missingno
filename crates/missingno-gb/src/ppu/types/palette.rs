@@ -114,6 +114,9 @@ pub struct Palettes {
     /// running-CPU dispatch produces. Behavioural overlay — no
     /// gate-level anchor for the shift.
     pub(crate) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
+    /// Prior fall's BESU value — feeds the BESU↑ edge detector that
+    /// releases the BGP NURA-overlay recovery at Mode 2 entry.
+    pub(crate) prev_besu: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -132,6 +135,7 @@ impl Default for Palettes {
             bgp_recovery_active: false,
             bgp_visible_emit_since_tick: false,
             bgp_halt_wake_deferred: None,
+            prev_besu: false,
         }
     }
 }
@@ -211,13 +215,16 @@ impl Palettes {
         self.background.output()
     }
 
-    /// Mode 2 entry (BESU↑) at scanline start. The pixel pipe is idle
-    /// during the prior HBlank, so the BGP dlatch has settled by now —
-    /// a new BGP write will start a fresh recovery window.
-    pub fn reset_on_mode_2_entry(&mut self) {
-        self.background_or_overlay = None;
-        self.bgp_recovery_active = false;
-        self.bgp_visible_emit_since_tick = false;
+    /// Run the BESU edge detector. On BESU↑ (Mode 2 entry at the
+    /// scanline start), release the BGP NURA-overlay recovery — the
+    /// pipe was idle through HBlank so the dlatch has settled.
+    pub fn tick_besu(&mut self, besu: bool) {
+        if besu && !self.prev_besu {
+            self.background_or_overlay = None;
+            self.bgp_recovery_active = false;
+            self.bgp_visible_emit_since_tick = false;
+        }
+        self.prev_besu = besu;
     }
 
     pub fn clear_background_overlay(&mut self) {
