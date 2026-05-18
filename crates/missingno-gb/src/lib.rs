@@ -1,11 +1,3 @@
-use crate::audio::Audio;
-use cartridge::Cartridge;
-use cpu::Cpu;
-use dma::Dma;
-use joypad::{Button, Joypad};
-use memory::{ExternalBus, HighRam, VramBus};
-use ppu::{Ppu, screen::Screen};
-
 pub mod audio;
 pub mod cartridge;
 pub mod cpu;
@@ -28,16 +20,26 @@ pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
 
+use audio::Audio;
+use cartridge::Cartridge;
+use cpu::Cpu;
 use cpu_bus::CpuBus;
+use dma::Dma;
+use joypad::{Button, Joypad};
+use memory::{ExternalBus, HighRam, VramBus};
+use ppu::{Ppu, screen::Screen};
+
 pub use master_clock::ClockPhase;
 
 pub struct GameBoy {
     cpu: Cpu,
-    screen: Screen,
 
     external: ExternalBus,
     high_ram: HighRam,
+    vram_bus: VramBus,
+
     ppu: Ppu,
+    screen: Screen,
     audio: Audio,
     joypad: Joypad,
     interrupts: interrupts::Registers,
@@ -45,25 +47,24 @@ pub struct GameBoy {
     timers: timers::Timers,
     dma: Dma,
     sgb: Option<sgb::Sgb>,
-    vram_bus: VramBus,
-
-    bus_trace: cpu_bus::BusTrace,
 
     /// Master clock signal level. Toggles each half-T-cycle.
     clock_phase: ClockPhase,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
+    bus_trace: cpu_bus::BusTrace,
 }
 
 impl GameBoy {
     pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> GameBoy {
         let mut gb = GameBoy {
             cpu: Cpu::new(),
-            screen: Screen::default(),
             external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
+            vram_bus: VramBus::new(),
             ppu: Ppu::new(),
+            screen: Screen::default(),
             audio: Audio::new(),
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
@@ -71,10 +72,9 @@ impl GameBoy {
             timers: timers::Timers::new(),
             dma: Dma::new(),
             sgb: None,
-            vram_bus: VramBus::new(),
-            bus_trace: cpu_bus::BusTrace::new(),
             clock_phase: ClockPhase::Low,
             cpu_bus: CpuBus::new(),
+            bus_trace: cpu_bus::BusTrace::new(),
         };
         gb.rebuild_state();
         gb
@@ -93,12 +93,13 @@ impl GameBoy {
     /// initial struct has been laid out with placeholder values, and
     /// from `reset` after `ExternalBus::reset` has cleared WRAM/latch.
     ///
-    /// Mirrors the CPU's pending bus read/write so dot-2 staging has a
-    /// target for the in-flight M-cycle. The skip-boot CPU anchors at
-    /// the post-rise of the M-cycle that opens the cartridge m1 fetch
-    /// (`Cpu::post_boot()` produces `Read{0x0100}`); the boundary work
-    /// fired in the boot ROM's domain before t=0, so the staging block
-    /// in `rise()` doesn't fire for that first M-cycle.
+    /// Mirrors the CPU's pending bus read/write so T-cycle 2 staging
+    /// has a target for the in-flight M-cycle. The skip-boot CPU
+    /// anchors at the post-rise of the M-cycle that opens the
+    /// cartridge m1 fetch (`Cpu::post_boot()` produces `Read{0x0100}`);
+    /// the boundary work fired in the boot ROM's domain before t=0,
+    /// so the staging block in `rise()` doesn't fire for that first
+    /// M-cycle.
     fn rebuild_state(&mut self) {
         let has_boot_rom = self.external.has_boot_rom();
         let header_checksum = self.external.cartridge.header_checksum();
@@ -134,7 +135,9 @@ impl GameBoy {
         self.sgb = supports_sgb.then(sgb::Sgb::new);
 
         if !has_boot_rom {
-            self.init_post_boot_vram();
+            let logo: [u8; 0x30] =
+                std::array::from_fn(|i| self.external.cartridge.read(0x0104 + i as u16));
+            self.vram_bus.vram.init_post_boot(&logo);
         }
 
         self.bus_trace = cpu_bus::BusTrace::new();
@@ -234,13 +237,5 @@ impl GameBoy {
 
     pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
         self.serial.set_link(link);
-    }
-
-    fn init_post_boot_vram(&mut self) {
-        let mut logo = [0u8; 0x30];
-        for (i, byte) in logo.iter_mut().enumerate() {
-            *byte = self.external.cartridge.read(0x0104 + i as u16);
-        }
-        self.vram_bus.vram.init_post_boot(&logo);
     }
 }
