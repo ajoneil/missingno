@@ -86,16 +86,65 @@ impl PaletteMap {
 
 use super::super::DffLatch;
 
+/// BGP NURA-combiner recovery state. While `active`, a BGP CUPA on a
+/// dot where the LCD has already emitted a pixel produces the OR
+/// overlay on the cp_pad sample; otherwise the new value lands clean.
+#[derive(Default)]
+pub(in crate::ppu) struct BgpRecovery {
+    /// OR(prior, new) presented on the cp_pad sample when a same-tick
+    /// BGP write engages the recovery overlap.
+    or_overlay: Option<u8>,
+    /// A BGP write has resolved during the current scanline's active
+    /// period; cleared at the next BESU↑.
+    active: bool,
+    /// LCD has emitted a visible pixel since the last tick commit —
+    /// primes the OR-overlap precondition.
+    visible_emit_since_tick: bool,
+}
+
+impl BgpRecovery {
+    fn note_pixel_emit(&mut self) {
+        self.visible_emit_since_tick = true;
+    }
+
+    /// Apply a BGP DffLatch tick: present OR(prior, new) if the
+    /// overlap is engaged, then arm `active` for the next CUPA.
+    fn commit_tick(&mut self, prior: u8, new: u8) {
+        self.or_overlay = (self.active && self.visible_emit_since_tick).then_some(prior | new);
+        self.active = true;
+        self.visible_emit_since_tick = false;
+    }
+
+    /// No-op tick (no pending write committed) — overlay clears.
+    fn clear_overlay(&mut self) {
+        self.or_overlay = None;
+    }
+
+    /// Whole-cell reset: BESU↑ at scanline start, or LCD off.
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn overlay(&self) -> Option<u8> {
+        self.or_overlay
+    }
+
+    /// True when a pending DffLatch write would present OR(output, pending)
+    /// at the cp_pad sample — the dlatch_ee transparency window.
+    fn pending_or_engaged(&self) -> bool {
+        self.active && self.visible_emit_since_tick
+    }
+
+    fn active(&self) -> bool {
+        self.active
+    }
+}
+
 pub struct Palettes {
     pub background: DffLatch,
     pub sprite0: DffLatch,
     pub sprite1: DffLatch,
-    /// NURA-combiner OR overlay: a same-tick BGP write presents OR(prior, new) on the cp_pad sample.
-    pub(in crate::ppu) background_or_overlay: Option<u8>,
-    /// A BGP write has resolved during this scanline's active period; cleared at next BESU↑.
-    pub(in crate::ppu) bgp_recovery_active: bool,
-    /// LCD has emitted a visible pixel since the last tick_background commit (primes OR-overlap).
-    pub(in crate::ppu) bgp_visible_emit_since_tick: bool,
+    pub(in crate::ppu) recovery: BgpRecovery,
     /// BGP write parked while CPU is in a HALT-wake handler; countdown shifts the visible transition 4-5 columns later.
     pub(in crate::ppu) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
     /// Prior fall's BESU; feeds the BESU↑ edge detector that releases the NURA-overlay recovery.
@@ -114,9 +163,7 @@ impl Default for Palettes {
             background: DffLatch::new(0xfc),
             sprite0: DffLatch::new(0xFF),
             sprite1: DffLatch::new(0xFF),
-            background_or_overlay: None,
-            bgp_recovery_active: false,
-            bgp_visible_emit_since_tick: false,
+            recovery: BgpRecovery::default(),
             bgp_halt_wake_deferred: None,
             prev_besu: false,
         }
@@ -126,7 +173,7 @@ impl Default for Palettes {
 impl Palettes {
     /// 5-tick countdown if recovery is active (NURA adds +1 column), else 6, so HALT-wake and running-CPU writes land at the same wall-clock.
     pub fn write_background_halt_wake_deferred(&mut self, value: u8) {
-        let ticks_remaining = if self.bgp_recovery_active { 5 } else { 6 };
+        let ticks_remaining = if self.recovery.active() { 5 } else { 6 };
         self.bgp_halt_wake_deferred = Some(DeferredBgpWrite {
             value,
             ticks_remaining,
@@ -149,33 +196,25 @@ impl Palettes {
         let prior = self.background.output();
         let ticked = self.background.tick();
         if ticked {
-            self.background_or_overlay =
-                if self.bgp_recovery_active && self.bgp_visible_emit_since_tick {
-                    Some(prior | self.background.output())
-                } else {
-                    None
-                };
-            self.bgp_recovery_active = true;
-            self.bgp_visible_emit_since_tick = false;
+            self.recovery.commit_tick(prior, self.background.output());
         } else {
-            self.background_or_overlay = None;
+            self.recovery.clear_overlay();
         }
         ticked
     }
 
     /// A visible cp_pad↑ has emitted a pixel; subsequent BGP CUPAs satisfy the recovery-engaged precondition.
     pub fn note_bg_pixel_emit(&mut self) {
-        self.bgp_visible_emit_since_tick = true;
+        self.recovery.note_pixel_emit();
     }
 
     pub fn background_for_bg_resolve(&self) -> u8 {
-        if let Some(overlay) = self.background_or_overlay {
+        if let Some(overlay) = self.recovery.overlay() {
             return overlay;
         }
         // dlatch_ee transparency: a pixel emit between drive_ppu_bus (rise) and tick_palette_latches (fall)
         // sees OR(prior, pending) — extends the NURA overlay one emulator edge backwards.
-        if self.bgp_recovery_active
-            && self.bgp_visible_emit_since_tick
+        if self.recovery.pending_or_engaged()
             && let Some(pending) = self.background.pending()
         {
             return self.background.output() | pending;
@@ -186,16 +225,12 @@ impl Palettes {
     /// BESU↑ at Mode 2 entry releases the BGP NURA-overlay recovery (dlatch has settled through HBlank).
     pub(in crate::ppu) fn tick_besu(&mut self, besu: bool) {
         if besu && !self.prev_besu {
-            self.background_or_overlay = None;
-            self.bgp_recovery_active = false;
-            self.bgp_visible_emit_since_tick = false;
+            self.recovery.reset();
         }
         self.prev_besu = besu;
     }
 
     pub fn clear_background_overlay(&mut self) {
-        self.background_or_overlay = None;
-        self.bgp_recovery_active = false;
-        self.bgp_visible_emit_since_tick = false;
+        self.recovery.reset();
     }
 }
