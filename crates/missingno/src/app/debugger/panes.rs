@@ -34,7 +34,7 @@ use crate::app::{
 use missingno_gb::debugger::Debugger;
 use missingno_gb::ppu::types::{
     palette::{Palette, PaletteChoice},
-    tile_maps::TileMapId,
+    tiles::TileMapId,
 };
 
 #[derive(Debug, Clone)]

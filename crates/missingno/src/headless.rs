@@ -92,7 +92,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             let _ = request.respond(response);
         }
         (&Method::Get, "/tilemap/0/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tile_maps::TileMapId(0));
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tiles::TileMapId(0));
             let response = Response::from_data(bmp).with_header(
                 "Content-Type: image/bmp"
                     .parse::<tiny_http::Header>()
@@ -101,7 +101,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             let _ = request.respond(response);
         }
         (&Method::Get, "/tilemap/1/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tile_maps::TileMapId(1));
+            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tiles::TileMapId(1));
             let response = Response::from_data(bmp).with_header(
                 "Content-Type: image/bmp"
                     .parse::<tiny_http::Header>()
@@ -740,7 +740,7 @@ fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
 }
 
 /// Renders a 32x32 tile map as a 256x256 bitmap.
-fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::types::tile_maps::TileMapId) -> Vec<u8> {
+fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::types::tiles::TileMapId) -> Vec<u8> {
     let vram = gb.vram();
     let tile_map = vram.tile_map(map_id);
     let addr_mode = gb.ppu().control().tile_address_mode();
@@ -863,7 +863,7 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
 
     let mut maps = Vec::with_capacity(2);
     for map_id in 0..2u8 {
-        let tile_map = vram.tile_map(ppu::types::tile_maps::TileMapId(map_id));
+        let tile_map = vram.tile_map(ppu::types::tiles::TileMapId(map_id));
         let base_addr = 0x9800u16 + map_id as u16 * 0x400;
         let mut rows = Vec::with_capacity(32);
         for y in 0..32u8 {

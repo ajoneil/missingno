@@ -1,7 +1,6 @@
 use super::types::{
     sprites::{self, Sprite, SpriteId},
-    tile_maps::{TileMap, TileMapId},
-    tiles::{TileBlock, TileBlockId, TileIndex},
+    tiles::{TileBlock, TileBlockId, TileIndex, TileMap, TileMapId},
 };
 
 /// VRAM: tile data and tile maps. Physically on the VRAM data bus

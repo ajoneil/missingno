@@ -46,26 +46,34 @@ pub struct PipelineRegisters {
 }
 
 impl PipelineRegisters {
-    /// Advance DFF8 palette latches by one dot. BGP captures via the
-    /// Palettes wrapper so the NURA-combiner OR overlay updates with
-    /// the tick. OBP0/OBP1 capture directly — the sprite combiners
-    /// (WUFU/MOKA) read the settled output only.
-    pub fn tick_palette_latches(&mut self) {
+    /// All per-fall register work, in order: palette dlatch_ee tick
+    /// (BGP NURA-overlay), DFF9 register latch tick (SCY/SCX/WX/LCDC),
+    /// BESU edge detector (Mode-2 entry BGP recovery release), and the
+    /// LCDC.0/.1 OLD-overlay shadow ticks.
+    pub fn tick_on_master_clock_fall(&mut self, besu: bool) {
+        // DFF8 palettes — BGP via wrapper for NURA overlay; OBP0/OBP1
+        // direct (the sprite combiners read settled output only).
         self.palettes.tick_background();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
-    }
 
-    /// Advance DFF9 register latches by one dot. Runs after the pipeline
-    /// (in the PPU-clock-rise phase) so the pipeline reads pre-tick values
-    /// (reg_old), matching hardware's combinational read-from-old behavior.
-    pub fn tick_register_latches(&mut self) {
+        // DFF9 registers — pipeline read pre-tick values (reg_old) so
+        // ticks fire after the pipeline reads.
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();
         if self.control_latch.tick() {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
+
+        // BESU↑ at scanline start releases the BGP dlatch's post-write
+        // recovery.
+        self.palettes.tick_besu(besu);
+
+        // LCDC.0/.1 first-cp_pad↑-samples-OLD shadows live for this
+        // fall's BG resolve and clear on the next fall.
+        self.tick_bg_window_enabled_shadow();
+        self.tick_sprites_enabled_shadow();
     }
 
     /// Clear all pending DFF latch state without applying final values.
@@ -110,7 +118,7 @@ impl PipelineRegisters {
     /// shadow alive for the same-fall BG resolve. On any subsequent fall
     /// without a fresh CPU write that toggles LCDC.0, the shadow clears,
     /// reverting the BG resolve to the live LCDC.0.
-    pub fn tick_bg_window_enabled_shadow(&mut self) {
+    fn tick_bg_window_enabled_shadow(&mut self) {
         if self.bg_window_enabled_shadow_just_set {
             self.bg_window_enabled_shadow_just_set = false;
         } else {
@@ -141,7 +149,7 @@ impl PipelineRegisters {
     /// Once-per-fall tick, mirroring `tick_bg_window_enabled_shadow`.
     /// Keeps the shadow alive for the same-fall OBJ-mux resolve, then
     /// clears on the next fall without a fresh LCDC.1 transition.
-    pub fn tick_sprites_enabled_shadow(&mut self) {
+    fn tick_sprites_enabled_shadow(&mut self) {
         if self.sprites_enabled_shadow_just_set {
             self.sprites_enabled_shadow_just_set = false;
         } else {

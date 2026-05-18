@@ -16,12 +16,7 @@ impl Ppu {
     /// Master clock rise — PPU clock (ALET) rises. ALET-clocked DFFs
     /// capture: NYKA, LYZU, PYGO, RENE, DOBA, NOPA, VOGA.
     pub fn on_master_clock_rise(&mut self, vram: &Vram, oam_bus: OamBusOwner) -> PpuTickResult {
-        let mut result = PpuTickResult {
-            pixel: None,
-            new_frame: false,
-            lcd_disabled: false,
-            request_vblank: false,
-        };
+        let mut result = PpuTickResult::default();
 
         if !self.control().video_enabled() {
             return result;
@@ -48,12 +43,7 @@ impl Ppu {
         is_mcycle: bool,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult {
-        let mut result = PpuTickResult {
-            pixel: None,
-            new_frame: false,
-            lcd_disabled: false,
-            request_vblank: false,
-        };
+        let mut result = PpuTickResult::default();
 
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's
         // first toggle.
@@ -74,8 +64,7 @@ impl Ppu {
         let xupy_rising = !self.video.tick_dot();
 
         self.advance_dividers(&mut result);
-        self.registers.palettes.tick_besu(self.besu());
-        self.tick_register_latches();
+        self.registers.tick_on_master_clock_fall(self.besu());
         self.run_ppu_clock_fall(oam_bus, xupy_rising, &mut result);
 
         result
@@ -146,19 +135,6 @@ impl Ppu {
         if self.video.vblank() && !popu_was {
             result.request_vblank = true;
         }
-    }
-
-    /// Resolve DFF8/DFF9 latches BEFORE the pipeline reads them — the
-    /// tick models the boundary entering this dot: a CPU write from
-    /// the previous dot (pending) transfers to output here, giving the
-    /// pipeline a 1-dot delay.
-    fn tick_register_latches(&mut self) {
-        self.registers.tick_palette_latches();
-        self.registers.tick_register_latches();
-        // LCDC.0/.1 first-cp_pad↑-samples-OLD shadows live for this
-        // fall's BG resolve and clear on the next fall.
-        self.registers.tick_bg_window_enabled_shadow();
-        self.registers.tick_sprites_enabled_shadow();
     }
 
     /// PPU clock falling work: pixel emit + CATU pipeline.

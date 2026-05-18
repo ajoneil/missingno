@@ -53,6 +53,7 @@ pub struct PixelOutput {
     pub shade: u8,
 }
 
+#[derive(Default)]
 pub struct PpuTickResult {
     /// A pixel pushed to the LCD, if any.
     pub pixel: Option<PixelOutput>,
@@ -321,8 +322,7 @@ impl Ppu {
     pub fn is_rendering(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.rendering_active())
-            .unwrap_or(false)
+            .is_some_and(|r| r.rendering_active())
     }
 
     /// True when the WUSA NOR-latch is open — LCD is actively shifting
@@ -330,8 +330,7 @@ impl Ppu {
     pub(super) fn lcd_pushing_active(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.lcd_pushing_active())
-            .unwrap_or(false)
+            .is_some_and(|r| r.lcd_pushing_active())
     }
 }
 
@@ -363,30 +362,26 @@ impl Ppu {
     pub fn oam_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.oam_locked())
-            .unwrap_or(false)
+            .is_some_and(|r| r.oam_locked())
     }
 
     /// VRAM read-locked: XYMU asserted.
     pub fn vram_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.vram_locked())
-            .unwrap_or(false)
+            .is_some_and(|r| r.vram_locked())
     }
 
     pub fn oam_write_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.oam_write_locked())
-            .unwrap_or(false)
+            .is_some_and(|r| r.oam_write_locked())
     }
 
     pub fn vram_write_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.vram_write_locked())
-            .unwrap_or(false)
+            .is_some_and(|r| r.vram_write_locked())
     }
 
     /// Lock state for a CPU write to `address`. `None` for non-PPU
@@ -528,7 +523,6 @@ impl Ppu {
     pub(super) fn besu(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .map(|r| r.scan_besu())
-            .unwrap_or(false)
+            .is_some_and(|r| r.scan_besu())
     }
 }

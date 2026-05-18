@@ -11,7 +11,7 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu, memory::Vram, types::control::Control, types::palette::Palette,
-    types::tile_maps::TileMapId,
+    types::tiles::TileMapId,
 };
 
 mod viewport_overlay;
@@ -93,7 +93,7 @@ impl TileMapPane {
 
 /// Pre-render tile map pixels as RGBA bytes.
 fn render_tile_map(
-    tile_map: &missingno_gb::ppu::types::tile_maps::TileMap,
+    tile_map: &missingno_gb::ppu::types::tiles::TileMap,
     control: Control,
     vram: &Vram,
     palette: &Palette,

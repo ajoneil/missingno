@@ -218,7 +218,7 @@ impl Palettes {
     /// Run the BESU edge detector. On BESU↑ (Mode 2 entry at the
     /// scanline start), release the BGP NURA-overlay recovery — the
     /// pipe was idle through HBlank so the dlatch has settled.
-    pub fn tick_besu(&mut self, besu: bool) {
+    pub(in crate::ppu) fn tick_besu(&mut self, besu: bool) {
         if besu && !self.prev_besu {
             self.background_or_overlay = None;
             self.bgp_recovery_active = false;
