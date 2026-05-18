@@ -374,10 +374,10 @@ impl Cpu {
         // RS-latch sets normally.
         if self.halt.bug_check_pending {
             self.halt.bug_check_pending = false;
-            if self.irq_latched.output() {
+            if self.irq.irq_latched.output() {
                 // Halt RS-latch can't set (ykua holds reset LOW).
                 self.halt.state = HaltState::Running;
-                let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                 if ime_enabled {
                     // HALT-IDU+1 suppression + dispatch's universal `-1`
                     // step collapsed at the boundary: pc HALT+1 → HALT_addr.
@@ -391,7 +391,7 @@ impl Cpu {
                             step: 0,
                         };
                         self.exec_step = 0;
-                        self.pending_vector_resolve = false;
+                        self.irq.pending_vector_resolve = false;
                         self.boundary_flag = true;
                         return self.mcycle_isr(0);
                     }
@@ -422,15 +422,15 @@ impl Cpu {
             CpuPhase::Execute { .. } => self.mcycle_execute(read_value),
             CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(read_value),
             CpuPhase::Halted(HaltPhase::Spin) => {
-                if self.irq_latched.output() {
-                    let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                if self.irq.irq_latched.output() {
+                    let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                     let dispatch_pending = ime_enabled && !self.dispatch.latched().is_empty();
                     if dispatch_pending {
                         Some(self.mcycle_halted_wake_intake_entry())
                     } else {
                         self.enter_post_halt_fetch(read_value)
                     }
-                } else if self.irq_pending {
+                } else if self.irq.irq_pending {
                     Some(self.mcycle_halted_setup_miss_entry())
                 } else {
                     Some(self.mcycle_halted_spin_entry())
@@ -442,7 +442,7 @@ impl Cpu {
                 // and routes the next M-cycle to dispatch M1. The IME=0
                 // fall-through stays defensive for the SetupMiss path; the
                 // primary IME=0 wake short-circuits at the Spin arm above.
-                let ime_enabled = self.ime.output() == InterruptMasterEnable::Enabled;
+                let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                 let irq_pending_for_dispatch = ime_enabled && !self.dispatch.latched().is_empty();
                 if irq_pending_for_dispatch {
                     self.halt.state = HaltState::Running;
@@ -456,7 +456,7 @@ impl Cpu {
                         step: 0,
                     };
                     self.exec_step = 0;
-                    self.pending_vector_resolve = false;
+                    self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
                     self.mcycle_isr(0)
                 } else {
@@ -707,7 +707,7 @@ impl Cpu {
                         step: 0,
                     };
                     self.exec_step = 0;
-                    self.pending_vector_resolve = false;
+                    self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
                     self.bus_counter = pc;
                     return (self.next_mcycle(0), false);
@@ -1011,8 +1011,8 @@ impl Cpu {
             // Both stages must clear so the boundary copy doesn't restore
             // IME on the next M-cycle.
             0 => {
-                self.ime.write_immediate(InterruptMasterEnable::Disabled);
-                self.ime_delay = false;
+                self.irq.ime.write_immediate(InterruptMasterEnable::Disabled);
+                self.irq.ime_delay = false;
                 Some(MCycleAction::Internal { address: self.bus_counter })
             }
             1 => Some(MCycleAction::InternalOamBug { address: sp }),
@@ -1027,7 +1027,7 @@ impl Cpu {
             3 => {
                 // IE push bug: the vector must be resolved after the
                 // high-byte push (step 2) but before this low-byte push.
-                self.pending_vector_resolve = true;
+                self.irq.pending_vector_resolve = true;
                 let addr = sp.wrapping_sub(2);
                 self.stack_pointer = addr;
                 Some(MCycleAction::Write {
@@ -1108,7 +1108,7 @@ impl Cpu {
                 step: 0,
             };
             self.exec_step = 0;
-            self.pending_vector_resolve = false;
+            self.irq.pending_vector_resolve = false;
             return self
                 .next_mcycle(0)
                 .expect("next_mcycle must return Some after dispatch arm");
@@ -1174,8 +1174,8 @@ impl Cpu {
 
     /// IE push bug: consume the pending vector resolution request.
     pub fn take_pending_vector_resolve(&mut self) -> bool {
-        if self.pending_vector_resolve {
-            self.pending_vector_resolve = false;
+        if self.irq.pending_vector_resolve {
+            self.irq.pending_vector_resolve = false;
             true
         } else {
             false
@@ -1191,7 +1191,7 @@ impl Cpu {
         &mut self,
         triggered: Option<super::super::interrupts::Interrupt>,
     ) {
-        self.irq_pending = triggered.is_some();
+        self.irq.irq_pending = triggered.is_some();
     }
 
     /// Clock irq_latched (yoii) on its CLK9 capture edge. yoii's D
@@ -1200,7 +1200,7 @@ impl Cpu {
     /// irq_latched drives the HALT release chain (yoii → ykua →
     /// halt RS-latch reset).
     pub fn tick_irq_latched(&mut self) {
-        self.irq_latched.write(!self.dispatch.latched().is_empty());
-        self.irq_latched.tick();
+        self.irq.irq_latched.write(!self.dispatch.latched().is_empty());
+        self.irq.irq_latched.tick();
     }
 }

@@ -173,15 +173,15 @@ impl Cpu {
 
             Commit::DisableInterrupts => {
                 // DI takes effect immediately — clear both stages.
-                cpu.ime.write_immediate(InterruptMasterEnable::Disabled);
-                cpu.ime_delay = false;
+                cpu.irq.ime.write_immediate(InterruptMasterEnable::Disabled);
+                cpu.irq.ime_delay = false;
             }
             Commit::EnableInterrupts => {
                 // EI sets only the shadow stage. The next M-cycle
                 // boundary copies ime_delay → ime, which is when
                 // dispatch can first observe the enable — the
                 // 1-instruction delay falls out of that ordering.
-                cpu.ime_delay = true;
+                cpu.irq.ime_delay = true;
             }
 
             Commit::EnterHalt | Commit::EnterStop => {
@@ -427,8 +427,8 @@ impl Cpu {
                 // RETI re-enables IME immediately (no delay, unlike EI).
                 // Both stages set so the next M-cycle boundary's
                 // ime ← ime_delay copy preserves Enabled.
-                cpu.ime.write_immediate(InterruptMasterEnable::Enabled);
-                cpu.ime_delay = true;
+                cpu.irq.ime.write_immediate(InterruptMasterEnable::Enabled);
+                cpu.irq.ime_delay = true;
                 cpu.bus_counter = value;
                 cpu.halt.wake_active = false;
             }

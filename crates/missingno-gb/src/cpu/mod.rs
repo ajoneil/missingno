@@ -77,6 +77,47 @@ impl Default for HaltContext {
     }
 }
 
+/// All CPU-side interrupt state apart from the dispatch chain itself.
+/// The IF/IE register file lives on `interrupts::Registers` (bus-side);
+/// this struct holds the latches inside the SM83 that gate it.
+pub struct IrqContext {
+    /// IME flip-flop. Promoted from `ime_delay` at every M-cycle
+    /// boundary — that staging produces EI's one-instruction delay.
+    /// DI clears both stages immediately; RETI sets both immediately.
+    pub ime: Dff<InterruptMasterEnable>,
+    /// One-stage shadow for IME. EI sets this; the next M-cycle
+    /// boundary copies it into `ime`.
+    pub ime_delay: bool,
+    /// IE-push-bug flag — set during dispatch's M3 vector-resolve window.
+    pub(super) pending_vector_resolve: bool,
+    /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
+    /// gbtrace adapter; dispatch reads the data-phase-gated
+    /// `dispatch.latched()` instead.
+    pub(super) irq_pending: bool,
+    /// `irq_latched` (yoii) DFF. CLK9-cadence capture of the data-
+    /// phase-gated `dispatch.latched()`. Drives the HALT-release
+    /// chain (yoii → ykua → ynkw).
+    pub(super) irq_latched: Dff<bool>,
+}
+
+impl IrqContext {
+    pub fn new() -> Self {
+        Self {
+            ime: Dff::new(InterruptMasterEnable::Disabled),
+            ime_delay: false,
+            pending_vector_resolve: false,
+            irq_pending: false,
+            irq_latched: Dff::new(false),
+        }
+    }
+}
+
+impl Default for IrqContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The SM83 CPU. Owns register file, IME, halt state, and the
 /// state-machine fields that sequence each instruction's M-cycles.
 pub struct Cpu {
@@ -107,13 +148,7 @@ pub struct Cpu {
 
     pub flags: Flags,
 
-    /// IME flip-flop. Promoted from `ime_delay` at every M-cycle
-    /// boundary — that staging produces EI's one-instruction delay.
-    /// DI clears both stages immediately; RETI sets both immediately.
-    pub ime: Dff<InterruptMasterEnable>,
-    /// One-stage shadow for IME. EI sets this; the next M-cycle
-    /// boundary copies it into `ime`.
-    pub ime_delay: bool,
+    pub irq: IrqContext,
     pub halt: HaltContext,
 
     // ── Persistent state machine fields ──
@@ -143,19 +178,9 @@ pub struct Cpu {
     /// T-cycle that produced the last `BusAction` — the executor reads
     /// this to time per-T-cycle work after `next_tcycle()`.
     pub(super) last_tcycle: TCycle,
-    /// IE push-bug flag.
-    pub(super) pending_vector_resolve: bool,
     /// Set when the CPU transitions to Fetch. The executor reads this
     /// to detect instruction boundaries.
     pub(super) boundary_flag: bool,
-    /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
-    /// gbtrace adapter; dispatch reads the data-phase-gated
-    /// `dispatch.latched()` instead.
-    pub(super) irq_pending: bool,
-    /// `irq_latched` (yoii) DFF. CLK9-cadence capture of the data-
-    /// phase-gated `dispatch.latched()`. Drives the HALT-release
-    /// chain (yoii → ykua → ynkw).
-    pub(super) irq_latched: Dff<bool>,
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
     /// Owns the `data_phase_n` latch and the EI/DI block.
@@ -226,12 +251,15 @@ impl Cpu {
             stack_pointer: snap.sp,
             bus_counter: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
-            ime: Dff::new(if snap.ime {
-                InterruptMasterEnable::Enabled
-            } else {
-                InterruptMasterEnable::Disabled
-            }),
-            ime_delay: snap.ime,
+            irq: IrqContext {
+                ime: Dff::new(if snap.ime {
+                    InterruptMasterEnable::Enabled
+                } else {
+                    InterruptMasterEnable::Disabled
+                }),
+                ime_delay: snap.ime,
+                ..IrqContext::new()
+            },
             halt: HaltContext {
                 state: match snap.halt_state {
                     1 => HaltState::Halting,
@@ -261,8 +289,7 @@ impl Cpu {
             bus_counter: 0,
             data_latch: 0,
             flags: Flags::empty(),
-            ime: Dff::new(InterruptMasterEnable::Disabled),
-            ime_delay: false,
+            irq: IrqContext::new(),
             halt: HaltContext::new(),
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
@@ -275,10 +302,7 @@ impl Cpu {
             scratch: 0,
             last_tcycle: TCycle::ZERO,
             last_bus_action: BusAction::Idle,
-            pending_vector_resolve: false,
             boundary_flag: true,
-            irq_pending: false,
-            irq_latched: Dff::new(false),
             dispatch: dispatch_chain::DispatchChain::new(),
         }
     }
@@ -341,7 +365,7 @@ impl Cpu {
     }
 
     pub fn interrupts_enabled(&self) -> bool {
-        self.ime.output() != InterruptMasterEnable::Disabled
+        self.irq.ime.output() != InterruptMasterEnable::Disabled
     }
 
     /// Per-instruction (or dispatch) M-cycle index — 0 = fetch,
@@ -383,7 +407,7 @@ impl Cpu {
     /// Combinational `(IF & IE) != 0` — level-sensitive input to the
     /// dispatch chain and to the `irq_latched` (yoii) DFF.
     pub fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq.irq_pending
     }
 
     /// Captured running-CPU dispatch decision (zacw). True while the
@@ -395,7 +419,7 @@ impl Cpu {
     /// CLK9-cadence captured `(IF & IE) != 0` (yoii). Drives the
     /// HALT-release chain.
     pub fn irq_latched(&self) -> bool {
-        self.irq_latched.output()
+        self.irq.irq_latched.output()
     }
 
     /// Return `boundary_pending` and clear it. Called once per rise().
@@ -408,7 +432,7 @@ impl Cpu {
     /// IE-push-bug flag (gbtrace extension). Set during dispatch's M3
     /// vector-resolve window.
     pub fn pending_vector_resolve_flag(&self) -> bool {
-        self.pending_vector_resolve
+        self.irq.pending_vector_resolve
     }
 
     /// HALT-bug flag (gbtrace extension). See `HaltContext::bug`.

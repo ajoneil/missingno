@@ -89,7 +89,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         // counter; missingno's model is a single shadow flag, so report
         // 1 when EI's deferred enable is in flight (ime_delay set but
         // ime not yet reflecting it) and 0 otherwise.
-        ei_delay: if cpu.ime_delay && !cpu.interrupts_enabled() {
+        ei_delay: if cpu.irq.ime_delay && !cpu.interrupts_enabled() {
             1
         } else {
             0

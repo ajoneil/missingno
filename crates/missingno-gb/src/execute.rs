@@ -246,7 +246,7 @@ impl GameBoy {
 
         // Promote ime_delay (EI's shadow) to ime — produces EI's
         // one-instruction delay.
-        self.cpu.ime.write_immediate(if self.cpu.ime_delay {
+        self.cpu.irq.ime.write_immediate(if self.cpu.irq.ime_delay {
             crate::cpu::InterruptMasterEnable::Enabled
         } else {
             crate::cpu::InterruptMasterEnable::Disabled
@@ -367,7 +367,7 @@ impl GameBoy {
         let write_phase = !halt_spin && tcycle.as_u8() == 3;
         let ctl_fetch = self.cpu.is_fetch_phase() || halt_body;
         let xogs = (data_phase && ctl_fetch) || halt_spin;
-        let ime_enabled = self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
+        let ime_enabled = self.cpu.irq.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
         self.cpu
             .dispatch
             .update_latch(self.interrupts.enabled, self.interrupts.requested);
