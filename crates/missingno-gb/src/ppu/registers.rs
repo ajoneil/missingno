@@ -9,7 +9,7 @@ pub struct BackgroundViewportPosition {
 
 pub struct Window {
     pub y: u8,
-    pub x_plus_7: DffLatch,
+    pub x: DffLatch,
 }
 
 /// One-fall OLD-value overlay for an LCDC bit that transitioned mid-Mode-3.
@@ -76,7 +76,7 @@ impl PipelineRegisters {
         // Pipeline reads reg_old; ticks fire after.
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
-        self.window.x_plus_7.tick();
+        self.window.x.tick();
         if self.control_latch.tick() {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
@@ -96,7 +96,7 @@ impl PipelineRegisters {
         self.palettes.clear_background_overlay();
         self.background_viewport.x.clear();
         self.background_viewport.y.clear();
-        self.window.x_plus_7.clear();
+        self.window.x.clear();
         self.control_latch.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();

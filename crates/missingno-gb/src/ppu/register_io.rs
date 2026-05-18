@@ -24,7 +24,7 @@ impl Ppu {
             Register::BackgroundViewportY => self.registers.background_viewport.y.output(),
             Register::BackgroundViewportX => self.registers.background_viewport.x.output(),
             Register::WindowY => self.registers.window.y,
-            Register::WindowX => self.registers.window.x_plus_7.output(),
+            Register::WindowX => self.registers.window.x.output(),
             Register::CurrentScanline => self.video.ly(),
             Register::InterruptOnScanline => self.video.stat.lyc(),
             Register::BackgroundPalette => self.registers.palettes.background.output(),
@@ -78,7 +78,7 @@ impl Ppu {
                 false
             }
             Register::WindowX if is_drawing => {
-                self.registers.window.x_plus_7.write(value);
+                self.registers.window.x.write(value);
                 false
             }
             _ => self.apply_register_write(&register, value),
@@ -110,7 +110,7 @@ impl Ppu {
                 self.registers.background_viewport.x.write_immediate(value)
             }
             Register::WindowY => self.registers.window.y = value,
-            Register::WindowX => self.registers.window.x_plus_7.write_immediate(value),
+            Register::WindowX => self.registers.window.x.write_immediate(value),
             Register::InterruptOnScanline => {
                 self.video.write_lyc(value);
             }

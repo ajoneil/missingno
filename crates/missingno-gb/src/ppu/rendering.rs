@@ -407,7 +407,7 @@ impl Rendering {
         if scan.avap {
             // Mode 3 begins on AVAP-fall; AJUJ pulse asserts alongside mode3↑ for write-permit.
             self.hblank.pulse_ajuj_on_avap_fall();
-            self.window.init_nuko_wx(regs.window.x_plus_7.output());
+            self.window.init_nuko_wx(regs.window.x.output());
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
@@ -678,7 +678,7 @@ impl Rendering {
             self.fine_scroll.reset_counter();
         }
 
-        self.window.update_nuko_wx(regs.window.x_plus_7.output());
+        self.window.update_nuko_wx(regs.window.x.output());
 
         pixel_out
     }

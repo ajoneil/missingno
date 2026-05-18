@@ -104,7 +104,7 @@ impl Ppu {
                 },
                 window: Window {
                     y: 0,
-                    x_plus_7: DffLatch::new(0),
+                    x: DffLatch::new(0),
                 },
                 palettes: Palettes::default(),
                 bg_window_enabled_overlay: registers::OldOverlay::default(),
@@ -231,7 +231,7 @@ impl Ppu {
             },
             window: Window {
                 y: snap.wy,
-                x_plus_7: DffLatch::new(snap.wx),
+                x: DffLatch::new(snap.wx),
             },
             palettes: Palettes {
                 background: DffLatch::new(snap.bgp),
