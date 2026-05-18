@@ -60,6 +60,12 @@ pub struct Cpu {
     /// instruction boundary — stays constant during operand fetches.
     pub instruction_pc: u16,
 
+    /// Bus data latch — the byte the SM83 captured off `cpu_port_d` at
+    /// `data_phase_n↑` (dot 3.995 of the read M-cycle). Holds until
+    /// the next read latches. Read by the state machine each dot to
+    /// see the most-recent bus read.
+    pub data_latch: u8,
+
     pub flags: Flags,
 
     /// IME flip-flop. Promoted from `ime_delay` at every M-cycle
@@ -169,6 +175,7 @@ impl Cpu {
             bus_counter: 0x0100,
             pc: 0x0100,
             instruction_pc: 0x0100,
+            data_latch: 0,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -236,6 +243,7 @@ impl Cpu {
             bus_counter: 0x0000,
             pc: 0x0000,
             instruction_pc: 0x0000,
+            data_latch: 0,
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),
             ime_delay: false,
@@ -281,6 +289,7 @@ impl Cpu {
             bus_counter: snap.pc,
             pc: snap.pc,
             instruction_pc: snap.pc,
+            data_latch: 0,
             flags: Flags::from_bits_retain(snap.f),
             ime: Dff::new(if snap.ime {
                 InterruptMasterEnable::Enabled

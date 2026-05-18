@@ -28,7 +28,7 @@ pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
 
-use cpu_bus::{BusAccess, CpuBus};
+use cpu_bus::CpuBus;
 
 /// Master clock signal level. The clock alternates High → Low
 /// uniformly. Edge logic runs at transitions: `rise()` at the
@@ -65,9 +65,7 @@ pub struct GameBoy {
     sgb: Option<sgb::Sgb>,
     vram_bus: VramBus,
 
-    /// Last read value from the bus, persisted across dots for step_dot().
-    last_read_value: u8,
-    bus_trace: Option<Vec<BusAccess>>,
+    bus_trace: cpu_bus::BusTrace,
 
     /// Master clock phase — alternates Rising/Falling uniformly.
     clock_phase: ClockPhase,
@@ -102,8 +100,7 @@ impl GameBoy {
             dma: Dma::new(),
             sgb: None,
             vram_bus: VramBus::new(),
-            last_read_value: 0,
-            bus_trace: None,
+            bus_trace: cpu_bus::BusTrace::new(),
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
@@ -171,8 +168,7 @@ impl GameBoy {
             self.init_post_boot_vram();
         }
 
-        self.last_read_value = 0;
-        self.bus_trace = None;
+        self.bus_trace = cpu_bus::BusTrace::new();
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;

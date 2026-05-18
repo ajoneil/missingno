@@ -187,3 +187,31 @@ pub struct BusAccess {
     pub value: u8,
     pub kind: BusAccessKind,
 }
+
+/// Optional recording of every CPU/DMA bus access during a step.
+/// Enabled only when the debugger needs watchpoint matching — the
+/// non-recording path stays allocation-free.
+pub struct BusTrace {
+    entries: Option<Vec<BusAccess>>,
+}
+
+impl BusTrace {
+    pub(crate) fn new() -> Self {
+        Self { entries: None }
+    }
+
+    pub(crate) fn enable(&mut self) {
+        self.entries = Some(Vec::new());
+    }
+
+    pub(crate) fn record(&mut self, access: BusAccess) {
+        if let Some(entries) = &mut self.entries {
+            entries.push(access);
+        }
+    }
+
+    /// Drain the accumulated trace and disable recording.
+    pub(crate) fn take(&mut self) -> Vec<BusAccess> {
+        self.entries.take().unwrap_or_default()
+    }
+}

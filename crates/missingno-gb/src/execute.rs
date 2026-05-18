@@ -42,7 +42,7 @@ impl GameBoy {
     /// Returns (result, trace). Trace is empty when `trace` is false.
     pub fn step_traced(&mut self, trace: bool) -> (StepResult, Vec<BusAccess>) {
         if trace {
-            self.bus_trace = Some(Vec::new());
+            self.bus_trace.enable();
         }
 
         // If step_dot() left us mid-instruction, drain to the next
@@ -59,14 +59,13 @@ impl GameBoy {
         dots += r.dots;
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
-        let trace = self.bus_trace.take().unwrap_or_default();
         (
             StepResult {
                 new_screen,
                 sram_dirty,
                 dots,
             },
-            trace,
+            self.bus_trace.take(),
         )
     }
 
@@ -77,7 +76,7 @@ impl GameBoy {
     /// is advanced and control returns to the caller.
     fn step_instruction(&mut self) -> StepResult {
         let mut new_screen = false;
-        self.last_read_value = 0;
+        self.cpu.data_latch = 0;
 
         // Consume the current instruction boundary (we're starting
         // from a boundary — we want to run until the NEXT one).
@@ -252,7 +251,7 @@ impl GameBoy {
         }
 
         // ── CPU dot advance ──
-        let dot_action = self.cpu.next_dot(self.last_read_value);
+        let dot_action = self.cpu.next_dot();
         self.current_dot_action = dot_action;
 
         // IE push bug + ctl_int_entry_m6: vector-resolve fires between
@@ -513,7 +512,7 @@ impl GameBoy {
             // fired at BOWA (dot 0 rise) — same M-cycle, before MOPA
             // applies it.
             let value = self.bus_value_at_latch(address, self.cpu_bus.data);
-            self.last_read_value = value;
+            self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }
 
@@ -569,18 +568,16 @@ impl GameBoy {
                     _ => unreachable!(),
                 };
                 self.ppu.write_oam(oam_addr, byte);
-                if let Some(trace) = &mut self.bus_trace {
-                    trace.push(BusAccess {
-                        address: src_addr,
-                        value: byte,
-                        kind: BusAccessKind::DmaRead,
-                    });
-                    trace.push(BusAccess {
-                        address: dst_addr,
-                        value: byte,
-                        kind: BusAccessKind::DmaWrite,
-                    });
-                }
+                self.bus_trace.record(BusAccess {
+                    address: src_addr,
+                    value: byte,
+                    kind: BusAccessKind::DmaRead,
+                });
+                self.bus_trace.record(BusAccess {
+                    address: dst_addr,
+                    value: byte,
+                    kind: BusAccessKind::DmaWrite,
+                });
                 match Bus::of(src_addr) {
                     Some(Bus::External) => {
                         self.external.drive(byte);

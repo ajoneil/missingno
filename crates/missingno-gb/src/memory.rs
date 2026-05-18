@@ -313,13 +313,11 @@ impl GameBoy {
     /// tests) that should not mutate bus state.
     pub fn cpu_read(&mut self, address: u16) -> u8 {
         let value = self.cpu_read_inner(address);
-        if let Some(trace) = &mut self.bus_trace {
-            trace.push(BusAccess {
-                address,
-                value,
-                kind: BusAccessKind::Read,
-            });
-        }
+        self.bus_trace.record(BusAccess {
+            address,
+            value,
+            kind: BusAccessKind::Read,
+        });
         value
     }
 
@@ -382,13 +380,11 @@ impl GameBoy {
     /// the side effects had under the pre-split single-stage `cpu_read`
     /// path. Called at the CPU's data-latch dot (dot 3, BUKE).
     pub fn commit_bus_read(&mut self, address: u16, value: u8) {
-        if let Some(trace) = &mut self.bus_trace {
-            trace.push(BusAccess {
-                address,
-                value,
-                kind: BusAccessKind::Read,
-            });
-        }
+        self.bus_trace.record(BusAccess {
+            address,
+            value,
+            kind: BusAccessKind::Read,
+        });
         match Bus::of(address) {
             Some(Bus::External) => {
                 self.external.drive(value);
@@ -618,13 +614,11 @@ impl GameBoy {
         locked_at_snapshot: Option<bool>,
         locked_at_mid: Option<bool>,
     ) {
-        if let Some(trace) = &mut self.bus_trace {
-            trace.push(BusAccess {
-                address,
-                value,
-                kind: BusAccessKind::Write,
-            });
-        }
+        self.bus_trace.record(BusAccess {
+            address,
+            value,
+            kind: BusAccessKind::Write,
+        });
         if let Some(bus) = self.dma.is_active_on_bus() {
             // OAM is being written to by DMA; CPU writes are ignored.
             if (0xFE00..=0xFE9F).contains(&address) {

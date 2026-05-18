@@ -356,7 +356,7 @@ impl Cpu {
     /// a `DotAction`. When an instruction completes, the boundary flag is
     /// set and the first dot of the next instruction is deferred to the
     /// next call.
-    pub fn next_dot(&mut self, read_value: u8) -> DotAction {
+    pub fn next_dot(&mut self) -> DotAction {
         // At the start of a new M-cycle, fetch the next BusAction.
         // The CPU always chains into the next M-cycle (enter_fetch chains
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
@@ -364,7 +364,7 @@ impl Cpu {
             // Save the previous M-cycle's bus address before replacing.
             // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
-                .next_mcycle(read_value)
+                .next_mcycle(self.data_latch)
                 .expect("next_mcycle must always return Some (CPU chains at boundaries)");
             self.current_action = Some(action);
             self.dot = BusDot::ZERO;
