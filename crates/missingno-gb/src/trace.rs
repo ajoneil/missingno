@@ -500,6 +500,7 @@ impl Tracer {
         };
 
         let channels = gb.audio().channels();
+        let ppu_sigs = gb.ppu().trace_signals();
         let pix_buffer = &self.pix_buffer;
         let vram_write_addr = self.vram_write_addr;
         let vram_write_data = self.vram_write_data;
@@ -535,13 +536,13 @@ impl Tracer {
                     w.set_bool(col, gb.cpu().pending_vector_resolve_flag())
                 }
                 Emitter::ExtHaltBug => w.set_bool(col, gb.cpu().halt_bug_flag()),
-                Emitter::ExtPpuWuvu => w.set_bool(col, gb.ppu().wuvu()),
-                Emitter::ExtPpuVena => w.set_bool(col, gb.ppu().vena()),
-                Emitter::ExtPpuXupy => w.set_bool(col, gb.ppu().xupy()),
+                Emitter::ExtPpuWuvu => w.set_bool(col, ppu_sigs.wuvu),
+                Emitter::ExtPpuVena => w.set_bool(col, ppu_sigs.vena),
+                Emitter::ExtPpuXupy => w.set_bool(col, ppu_sigs.xupy),
                 Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
-                Emitter::ExtPpuBesu => w.set_bool(col, gb.ppu().besu()),
-                Emitter::ExtPpuWodu => w.set_bool(col, gb.ppu().wodu()),
-                Emitter::ExtPpuStatLine => w.set_bool(col, gb.ppu().stat_line()),
+                Emitter::ExtPpuBesu => w.set_bool(col, ppu_sigs.besu),
+                Emitter::ExtPpuWodu => w.set_bool(col, ppu_sigs.wodu),
+                Emitter::ExtPpuStatLine => w.set_bool(col, ppu_sigs.stat_line),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
                     w.set_u8(col, gb.peek(*addr));
