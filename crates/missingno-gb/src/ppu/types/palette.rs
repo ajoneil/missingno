@@ -100,6 +100,9 @@ pub(in crate::ppu) struct BgpRecovery {
     /// LCD has emitted a visible pixel since the last tick commit —
     /// primes the OR-overlap precondition.
     visible_emit_since_tick: bool,
+    /// Prior fall's BESU; feeds the BESU↑ edge detector that releases
+    /// the recovery at Mode 2 entry.
+    prev_besu: bool,
 }
 
 impl BgpRecovery {
@@ -120,9 +123,21 @@ impl BgpRecovery {
         self.or_overlay = None;
     }
 
-    /// Whole-cell reset: BESU↑ at scanline start, or LCD off.
+    /// BESU↑ at Mode 2 entry releases the recovery (dlatch has
+    /// settled through HBlank). No-op on other edges.
+    fn tick_besu(&mut self, besu: bool) {
+        let rising = besu && !self.prev_besu;
+        self.prev_besu = besu;
+        if rising {
+            self.reset();
+        }
+    }
+
+    /// Whole-cell reset: LCD off, or via BESU↑.
     fn reset(&mut self) {
-        *self = Self::default();
+        self.or_overlay = None;
+        self.active = false;
+        self.visible_emit_since_tick = false;
     }
 
     fn overlay(&self) -> Option<u8> {
@@ -147,8 +162,6 @@ pub struct Palettes {
     pub(in crate::ppu) recovery: BgpRecovery,
     /// BGP write parked while CPU is in a HALT-wake handler; countdown shifts the visible transition 4-5 columns later.
     pub(in crate::ppu) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
-    /// Prior fall's BESU; feeds the BESU↑ edge detector that releases the NURA-overlay recovery.
-    pub(in crate::ppu) prev_besu: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -165,7 +178,6 @@ impl Default for Palettes {
             sprite1: DffLatch::new(0xFF),
             recovery: BgpRecovery::default(),
             bgp_halt_wake_deferred: None,
-            prev_besu: false,
         }
     }
 }
@@ -224,10 +236,7 @@ impl Palettes {
 
     /// BESU↑ at Mode 2 entry releases the BGP NURA-overlay recovery (dlatch has settled through HBlank).
     pub(in crate::ppu) fn tick_besu(&mut self, besu: bool) {
-        if besu && !self.prev_besu {
-            self.recovery.reset();
-        }
-        self.prev_besu = besu;
+        self.recovery.tick_besu(besu);
     }
 
     pub fn clear_background_overlay(&mut self) {

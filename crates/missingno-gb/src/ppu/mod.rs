@@ -239,7 +239,6 @@ impl Ppu {
                 sprite1: DffLatch::new(snap.obp1),
                 recovery: types::palette::BgpRecovery::default(),
                 bgp_halt_wake_deferred: None,
-                prev_besu: false,
             },
             bg_window_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_overlay: registers::OldOverlay::default(),
