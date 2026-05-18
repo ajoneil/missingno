@@ -1,8 +1,4 @@
-//! PPU timing is measured in **dots** — one dot = one master clock
-//! period (`ck1_ck2`). The PPU clock (ALET) is the 4 MHz subsystem
-//! clock derived from `ck1_ck2`; ALET-clocked DFFs capture on one
-//! edge, MYVO-clocked DFFs on the other. 1 dot = 1 T-cycle = 2 atal
-//! half-cycles.
+//! PPU timing measured in dots (master clock periods, ck1_ck2). 1 dot = 1 T-cycle.
 
 use dividers::Dividers;
 use line_counter::{LineCounter, LineCounterX, LineCounterY};
@@ -40,35 +36,25 @@ pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
 
-// ── PPU output ──────────────────────────────────────────────────────────
-
-/// A pixel pushed to the LCD — one per SACU edge during Mode 3.
+/// A pixel pushed to the LCD on a SACU edge.
 #[derive(Clone, Copy, Debug)]
 pub struct PixelOutput {
-    /// LCD X position (0-159).
     pub x: u8,
-    /// Scanline (0-143).
     pub y: u8,
-    /// Post-palette shade (0-3).
     pub shade: u8,
 }
 
 #[derive(Default)]
 pub struct PpuTickResult {
-    /// A pixel pushed to the LCD, if any.
     pub pixel: Option<PixelOutput>,
-    /// VSYNC pulse — LY wrapped at the end of line 153. Not set on
-    /// LCD-off (MEDA stops pulsing).
+    /// MEDA VSYNC pulse — LY wrapped at end of line 153.
     pub new_frame: bool,
-    /// LCDC.7 just went 1→0 while the pipeline was active; the caller
-    /// should blank the screen. Not a hardware frame boundary.
+    /// LCDC.7 went 1→0 mid-pipeline; caller should blank the screen.
     pub lcd_disabled: bool,
     pub request_vblank: bool,
 }
 
-/// Internal PPU signals exposed for gbtrace capture. These mirror
-/// specific DFFs/NOR-latches and are otherwise of no interest to
-/// callers.
+/// Internal PPU DFF/latch signals exposed for gbtrace capture.
 #[derive(Clone, Copy, Debug)]
 pub struct TraceSignals {
     pub wuvu: bool,
@@ -94,29 +80,19 @@ pub enum Register {
     Sprite1Palette,
 }
 
-// ── PPU state ───────────────────────────────────────────────────────────
-
 pub struct Ppu {
-    /// Pixel pipeline state. `None` = LCD off (VID_RST asserted). The
-    /// pipeline persists through both active display and VBlank;
-    /// VBlank is derived from `video.vblank` (POPU).
+    /// `None` while LCD is off (VID_RST asserted).
     pub(super) pixel_pipeline: Option<Rendering>,
     pub registers: PipelineRegisters,
     pub video: VideoControl,
     pub oam: Oam,
-    /// Frame counter for gbtrace output.
     pub frame_number: u16,
-    /// CUPA↑ → XODO↓ scheduling: set on LCDC.7 0→1 in the rise-edge
-    /// staged write; consumed in the same fall.
+    /// CUPA↑ → XODO↓: set on LCDC.7 0→1 in the rise-edge staged write, consumed in the same fall.
     pub(super) lcd_on_init_pending: bool,
-    /// OAM-bug arming (BOWA → MOPA window).
     pub(super) oam_corruption: oam_corruption::OamCorruption,
 }
 
-// ── Construction ────────────────────────────────────────────────────────
-
 impl Ppu {
-    /// Power-on state: LCD off, all registers zeroed.
     pub fn new() -> Self {
         Self {
             registers: PipelineRegisters {
@@ -177,8 +153,7 @@ impl Ppu {
         }
     }
 
-    /// Post-boot state — equivalent to what the DMG boot ROM leaves
-    /// behind at first PC=$0100 detection.
+    /// State equivalent to what the DMG boot ROM leaves at first PC=$0100.
     pub fn post_boot() -> Self {
         let control = Control::default();
         let mut ppu = Self::new();
@@ -210,8 +185,6 @@ impl Ppu {
         ppu
     }
 
-    /// Construct a PPU from a gbtrace snapshot. Pipeline is created
-    /// when LCD is enabled; VBlank derived from `LY >= 144`.
     #[cfg(feature = "gbtrace")]
     pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));
@@ -291,21 +264,16 @@ impl Ppu {
     }
 }
 
-// ── Position / state accessors ──────────────────────────────────────────
-
 impl Ppu {
     pub fn lx(&self) -> u8 {
         self.video.dot_position()
     }
 
-    /// True once MEDA has gone 0→1 since the most recent VID_RST
-    /// deassertion — the LCD's first VSYNC has fired and frames may
-    /// be committed.
+    /// MEDA has gone 0→1 since the most recent VID_RST deassertion — first VSYNC has fired.
     pub fn vsync_committed(&self) -> bool {
         self.video.line_end.vsync_committed
     }
 
-    /// Current OAM scan counter entry (0-39). None when not rendering.
     pub fn scan_counter(&self) -> Option<u8> {
         self.pixel_pipeline.as_ref().map(|r| r.scan_counter_entry())
     }
@@ -325,8 +293,7 @@ impl Ppu {
             .is_some_and(|r| r.rendering_active())
     }
 
-    /// True when the WUSA NOR-latch is open — LCD is actively shifting
-    /// pixels. Gates LCDC.0/.1 overlay arming during prelude.
+    /// WUSA NOR-latch open — LCD shifting pixels. Gates LCDC.0/.1 overlay arming during prelude.
     pub(super) fn lcd_pushing_active(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
@@ -334,14 +301,8 @@ impl Ppu {
     }
 }
 
-// ── Mode + memory locks ─────────────────────────────────────────────────
-
 impl Ppu {
-    /// STAT mode bits — independent NOR gates on the rendering /
-    /// scanning / vblank lines (schematic page 21):
-    ///   bit 0 = XYMU OR POPU   (rendering OR vblank)
-    ///   bit 1 = ACYL OR XYMU   (scanning OR rendering)
-    /// CPU STAT reads use the cpu_port_d bus model to sample at dot 2.
+    /// STAT mode bits: bit0 = XYMU OR POPU, bit1 = ACYL OR XYMU.
     pub fn mode(&self) -> Mode {
         let rendering = match &self.pixel_pipeline {
             Some(r) => r,
@@ -358,14 +319,12 @@ impl Ppu {
         }
     }
 
-    /// OAM read-locked: ACYL (BESU) or XYMU asserted.
     pub fn oam_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
             .is_some_and(|r| r.oam_locked())
     }
 
-    /// VRAM read-locked: XYMU asserted.
     pub fn vram_locked(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
@@ -384,8 +343,6 @@ impl Ppu {
             .is_some_and(|r| r.vram_write_locked())
     }
 
-    /// Lock state for a CPU write to `address`. `None` for non-PPU
-    /// memory.
     pub fn write_lock(&self, address: u16) -> Option<bool> {
         match address {
             0xFE00..=0xFE9F => Some(self.oam_write_locked()),
@@ -394,7 +351,6 @@ impl Ppu {
         }
     }
 
-    /// Whether a CPU read at `address` is blocked by PPU mode gating.
     pub fn read_locked(&self, address: u16) -> bool {
         match address {
             0xFE00..=0xFE9F => self.oam_locked(),
@@ -412,8 +368,6 @@ impl Ppu {
     }
 }
 
-// ── STAT interrupt ──────────────────────────────────────────────────────
-
 impl Ppu {
     /// Combinational STAT interrupt line.
     pub fn stat_line(&self) -> bool {
@@ -422,8 +376,7 @@ impl Ppu {
             None => return false,
         };
 
-        // popu_active includes the NYPE→POPU DFF holdover at the 153→0
-        // boundary so Mode-2-during-VBlank suppression covers it.
+        // popu_active covers the NYPE→POPU DFF holdover at the 153→0 boundary.
         let popu = self.video.popu_active();
         let mode2_active = if popu {
             false
@@ -431,8 +384,7 @@ impl Ppu {
             rendering.mode2_interrupt_active(&self.video)
         };
 
-        // Mode 2 STAT also fires at LX=0 of line 144 (first M-cycle
-        // where POPU is high).
+        // Mode 2 STAT also fires at LX=0 of line 144.
         let vblank_line_144 = popu && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
@@ -446,9 +398,7 @@ impl Ppu {
                 && self.video.stat.ly_eq_lyc())
     }
 
-    /// SUKO edge detect — combinational on hardware, fires on any
-    /// phase where an enabled condition transitions inactive → active.
-    /// LCD off: inputs hold static, latch freezes.
+    /// SUKO edge detect: fires on any inactive→active transition of an enabled condition.
     pub fn check_stat_edge(&mut self) -> bool {
         if !self.control().video_enabled() {
             return false;
@@ -457,8 +407,6 @@ impl Ppu {
         self.video.stat.detect_line_edge(stat_line_high)
     }
 }
-
-// ── Inspection / trace ──────────────────────────────────────────────────
 
 impl Ppu {
     pub fn palettes(&self) -> &Palettes {
@@ -492,14 +440,10 @@ impl Ppu {
             .map(|r| r.sprite_store_snapshot())
     }
 
-    /// LALU edge-detector state (STAT line previous value). Exposed
-    /// for gbtrace snapshot capture.
     pub fn stat_line_was_high(&self) -> bool {
         self.video.stat.line_was_high()
     }
 
-    /// Snapshot the per-DFF signals that gbtrace exposes as individual
-    /// trace columns. Hot path: called once per row.
     pub fn trace_signals(&self) -> TraceSignals {
         let sprites_enabled = self.registers.control.sprites_enabled();
         let (besu, wodu) = self
@@ -517,9 +461,7 @@ impl Ppu {
         }
     }
 
-    /// Single-signal accessor for the BGP recovery edge detector. Not
-    /// part of the public trace surface; used internally by the
-    /// master-clock-fall path.
+    /// Used internally by the master-clock-fall path for the BGP recovery edge detector.
     pub(super) fn besu(&self) -> bool {
         self.pixel_pipeline
             .as_ref()

@@ -3,8 +3,7 @@ use super::types::{
     tiles::{TileBlock, TileBlockId, TileIndex, TileMap, TileMapId},
 };
 
-/// VRAM: tile data and tile maps. Physically on the VRAM data bus
-/// (0x8000–0x9FFF), separate from OAM.
+/// VRAM data bus (0x8000–0x9FFF): tile data and tile maps.
 #[derive(Default)]
 pub struct Vram {
     pub(crate) tiles: [TileBlock; 3],
@@ -12,7 +11,6 @@ pub struct Vram {
 }
 
 impl Vram {
-    /// Construct VRAM from a flat 8KB byte slice (0x8000–0x9FFF layout).
     pub fn from_bytes(data: &[u8]) -> Self {
         let mut vram = Vram::default();
         let len = data.len().min(0x2000);
@@ -61,18 +59,14 @@ impl Vram {
         &self.tile_maps[id.0 as usize]
     }
 
-    /// Read a byte from VRAM by flat offset (0x0000–0x1FFF, corresponding
-    /// to the 0x8000–0x9FFF address range). Used by the fetcher's T2 phase
-    /// to read at the address computed during T1.
+    /// Read by flat offset (0x0000–0x1FFF; the 0x8000–0x9FFF range).
     pub fn read_byte(&self, offset: u16) -> u8 {
         let offset = offset as usize & 0x1FFF;
         if offset < 0x1800 {
-            // Tile data: 3 blocks × 0x800 bytes each.
             let block = offset / 0x800;
             let within = offset % 0x800;
             self.tiles[block].data[within]
         } else {
-            // Tile maps: 2 maps × 0x400 bytes each.
             let map_offset = offset - 0x1800;
             let map = map_offset / 0x400;
             let within = map_offset % 0x400;
@@ -80,17 +74,12 @@ impl Vram {
         }
     }
 
-    /// Populate VRAM with the state the DMG boot ROM leaves behind:
-    /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
-    /// and tile map entries for the logo display.
-    ///
-    /// `logo` is the 48-byte logo region of the cartridge header
-    /// (0x0104-0x0133).
+    /// Populate VRAM with the state the DMG boot ROM leaves behind: decompressed
+    /// Nintendo logo tiles (1-24), ® (tile 25), and tile-map entries. `logo` is
+    /// the 48-byte logo region of the cartridge header (0x0104-0x0133).
     pub fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
-        // Decompress each logo byte into two tiles' worth of low-bitplane
-        // data. Each nibble's bits are doubled horizontally (1 bit → 2
-        // pixels) and the resulting row is doubled vertically.
-        let mut vram_offset: usize = 0x10; // tile 1 starts at byte 16
+        // Each nibble's bits are doubled horizontally (1 bit → 2 pixels) and the row is doubled vertically.
+        let mut vram_offset: usize = 0x10;
         for &logo_byte in logo {
             for &nibble in &[logo_byte >> 4, logo_byte & 0x0F] {
                 let expanded = (((nibble >> 3) & 1) * 0xC0)
@@ -103,21 +92,17 @@ impl Vram {
             }
         }
 
-        // ® symbol into tile 25.
         const REGISTERED_SYMBOL: [u8; 8] = [0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C];
         let tile_25_offset: usize = 25 * 16;
         for (i, &byte) in REGISTERED_SYMBOL.iter().enumerate() {
             self.tiles[0].data[tile_25_offset + i * 2] = byte;
         }
 
-        // Tile map entries for the logo display.
-        // Row 8, cols 4-15: tiles 1-12; col 16: tile 25 (®).
         for col in 0u16..12 {
             let map_offset = (8 * 32 + 4 + col) as usize;
             self.tile_maps[0].data[map_offset] = TileIndex((col + 1) as u8);
         }
         self.tile_maps[0].data[8 * 32 + 16] = TileIndex(25);
-        // Row 9, cols 4-15: tiles 13-24.
         for col in 0u16..12 {
             let map_offset = (9 * 32 + 4 + col) as usize;
             self.tile_maps[0].data[map_offset] = TileIndex((col + 13) as u8);
@@ -125,8 +110,7 @@ impl Vram {
     }
 }
 
-/// OAM: sprite attribute memory. SoC-internal, not on either data bus.
-/// 40 sprites × 4 bytes = 160 bytes (0xFE00–0xFE9F).
+/// Sprite attribute memory (0xFE00–0xFE9F): 40 sprites × 4 bytes. SoC-internal.
 pub struct Oam {
     sprites: [Sprite; 40],
 }
@@ -140,7 +124,6 @@ impl Default for Oam {
 }
 
 impl Oam {
-    /// Construct OAM from a flat 160-byte slice (0xFE00–0xFE9F layout).
     pub fn from_bytes(data: &[u8]) -> Self {
         let mut oam = Oam::default();
         for i in 0..40 {
@@ -184,19 +167,12 @@ impl Oam {
         &self.sprites[id.0 as usize]
     }
 
-    /// Read the Y and X position bytes for an OAM entry.
-    ///
-    /// On hardware, the OAM bus is 16 bits wide. During Mode 2 scanning,
-    /// the scan counter drives `OAM_A[7:2]` with `A[1:0] = 0`, so both
-    /// byte 0 (Y) and byte 1 (X) are read in a single access. Bytes 2–3
-    /// (tile index, attributes) are not on the bus during scanning — they
-    /// are only read during Mode 3's sprite tile fetch.
+    /// Read the Y/X byte-pair driven on the 16-bit OAM bus during Mode 2 scanning.
     pub(in crate::ppu) fn sprite_position(&self, id: SpriteId) -> (u8, u8) {
         let sprite = &self.sprites[id.0 as usize];
         (sprite.position.y_plus_16, sprite.position.x_plus_8)
     }
 
-    /// Read a raw byte from OAM at the given byte offset (0–159).
     pub(in crate::ppu) fn oam_byte(&self, offset: u8) -> u8 {
         let sprite = &self.sprites[(offset / 4) as usize];
         match offset % 4 {
@@ -208,7 +184,6 @@ impl Oam {
         }
     }
 
-    /// Write a raw byte to OAM at the given byte offset (0–159).
     pub(in crate::ppu) fn set_oam_byte(&mut self, offset: u8, value: u8) {
         let sprite = &mut self.sprites[(offset / 4) as usize];
         match offset % 4 {
@@ -220,28 +195,24 @@ impl Oam {
         }
     }
 
-    /// Read a little-endian 16-bit word from OAM at the given byte offset.
     pub(in crate::ppu) fn oam_word(&self, offset: u8) -> u16 {
         let lo = self.oam_byte(offset) as u16;
         let hi = self.oam_byte(offset + 1) as u16;
         lo | (hi << 8)
     }
 
-    /// Write a little-endian 16-bit word to OAM at the given byte offset.
     pub(in crate::ppu) fn set_oam_word(&mut self, offset: u8, value: u16) {
         self.set_oam_byte(offset, value as u8);
         self.set_oam_byte(offset + 1, (value >> 8) as u8);
     }
 }
 
-/// Address on the VRAM bus (0x8000–0x9FFF).
 #[derive(Debug, Clone)]
 pub enum VramAddress {
     Tile(TileAddress),
     TileMap(TileMapAddress),
 }
 
-/// Address in OAM (0xFE00–0xFE9F).
 #[derive(Debug, Clone)]
 pub struct OamAddress {
     pub sprite: SpriteId,

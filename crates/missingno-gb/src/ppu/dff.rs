@@ -1,17 +1,6 @@
-/// A DFF register cell that holds its output value and any pending latch.
-///
-/// On hardware, each register is a physical DFF cell whose output feeds
-/// the pixel pipeline. The CPU writes to the cell's input; the pending
-/// value resolves on the next tick of the appropriate clock edge.
-///
-/// Outside Mode 3, writes go directly to `output` (no pending state).
-/// During Mode 3, the old output persists until the capture tick fires.
+/// DFF register cell: holds output and an optional pending value resolved on the next tick.
 pub struct DffLatch {
     pub(super) output: u8,
-    /// A value waiting to be captured on the next tick. Both DFF8
-    /// (palette registers, captured on falling/phase H) and DFF9
-    /// (viewport/control registers, captured on falling after pipeline)
-    /// use the same mechanism: write sets pending, next tick resolves.
     pub(super) pending: Option<u8>,
 }
 
@@ -27,15 +16,12 @@ impl DffLatch {
         self.output
     }
 
-    /// Pending write value, if any. Visible between `write()` and the
-    /// next `tick()` — models the dlatch_ee cell's transparency window
-    /// before the capture edge resolves.
+    /// Models the dlatch_ee transparency window between write() and the next tick().
     pub fn pending(&self) -> Option<u8> {
         self.pending
     }
 
-    /// Advance the latch: if a value is pending, capture it to output.
-    /// Returns true if the latch resolved on this tick.
+    /// Returns true if a pending value was captured to output.
     pub(super) fn tick(&mut self) -> bool {
         if let Some(value) = self.pending.take() {
             self.output = value;
@@ -45,36 +31,23 @@ impl DffLatch {
         }
     }
 
-    /// Write during Mode 3. The old output persists until the next
-    /// falling-phase tick resolves the pending value.
+    /// Mode 3 write: pending until next fall.
     pub(super) fn write(&mut self, new_value: u8) {
         self.pending = Some(new_value);
     }
 
-    /// Direct write — sets the output immediately and clears any
-    /// pending state.
     pub(super) fn write_immediate(&mut self, new_value: u8) {
         self.output = new_value;
         self.pending = None;
     }
 
-    /// Clear pending state without applying the value.
     pub(super) fn clear(&mut self) {
         self.pending = None;
     }
 }
 
-/// A combinational NOR-latch cell.
-///
-/// On hardware, a NOR-latch is a cross-coupled NOR pair whose output
-/// settles immediately when its set/reset inputs change — there is no
-/// capture-edge gating. `set()` and `clear()` apply immediately;
-/// `output()` always returns the most recent value.
-///
-/// Use this for hardware NOR-latches such as RYDY (window-hit), PYNU
-/// (window-armed), REJO (WY-match), XYMU (rendering-mode), and WUSA
-/// (LCD clock gate). Use `DffLatch` for hardware DFFs that capture on
-/// a clock edge.
+/// Combinational NOR-latch (cross-coupled NOR pair; no clock).
+/// Use for RYDY, PYNU, REJO, XYMU, WUSA. Use `DffLatch` for clocked DFFs.
 pub struct NorLatch {
     output: bool,
 }

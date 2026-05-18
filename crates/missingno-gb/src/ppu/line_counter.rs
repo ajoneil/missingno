@@ -1,13 +1,6 @@
-//! Line counters composed per hardware cascade.
+//! LX 7-bit ripple (TALU-clocked) cascades into LY 8-bit ripple (RUTU-clocked).
 //!
-//! `LineCounter` composes `LineCounterX` (scanline dot position; LX
-//! 7-bit ripple clocked by TALU) and `LineCounterY` (scanline index;
-//! LY 8-bit ripple clocked by RUTU when X completes a line). The cascade
-//! matches hardware: LX's RUTU pulse clocks LY; no other coupling.
-//!
-//! Two-level LY vocabulary: `y.value` is the hardware-internal counter
-//! (0-153); `y.value_register()` is the CPU-visible $FF44 value (MYTA-
-//! smoothed to 0 during the frame-end transition).
+//! `y.value` is the internal counter (0-153); `y.value_register()` is CPU-visible $FF44 (MYTA-smoothed).
 
 use crate::ppu::line_end_pipeline::NypeEdge;
 
@@ -30,10 +23,6 @@ pub struct LineCounterY {
 }
 
 impl LineCounter {
-    /// LX counter clock rising — orchestrates POPU/MYTA capture per
-    /// NYPE edge from the LineEndPipeline, plus LX advance + SANU
-    /// decode. `nype_edge` distinguishes rising (POPU fires) from
-    /// falling (MYTA fires) per the NYPE dual-edge distribution.
     pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, nype_edge: NypeEdge) {
         match nype_edge {
             NypeEdge::Rising => self.y.capture_popu(),
@@ -44,29 +33,16 @@ impl LineCounter {
         self.x.detect_line_end();
     }
 
-    /// LX counter clock falling — RUTU DFF captures SANU on every
-    /// TALU-falling edge. `line_end_active` reflects the current
-    /// RUTU.Q (0 when SANU was 0 at the prior TALU-fall; 1 when SANU
-    /// was 1). The pulse therefore spans one full TALU cycle — from
-    /// the TALU-fall that captures SANU=1 to the next TALU-fall that
-    /// captures SANU=0 (hardware RUTU.Q pulse width ≈ 976 ns).
-    ///
-    /// MUDE = NOR2(RUTU, reset) is a combinational LX reset: while
-    /// RUTU.Q=1, LX is held at 0 and SANU consequently settles to 0,
-    /// so the next TALU-fall captures SANU=0 and RUTU.Q drops.
-    ///
-    /// Returns `true` only on the RUTU-rising edge (the scanline
-    /// boundary), not for the whole pulse — the orchestrator runs
-    /// per-boundary work (NYPE feed + scan reset) once per scanline.
+    /// RUTU captures SANU each TALU-fall; pulse spans one TALU cycle.
+    /// MUDE = NOR2(RUTU, reset) holds LX at 0 while RUTU=1.
+    /// Returns true only on the RUTU rising edge (scanline boundary).
     pub(in crate::ppu) fn on_lx_counter_clock_fall(&mut self) -> bool {
         let prior_rutu = self.x.line_end_active;
         let new_rutu = self.x.line_end_detected;
         self.x.line_end_active = new_rutu;
 
         if new_rutu {
-            // MUDE async reset: LX held at 0 while RUTU=1 — capture
-            // the combinational effect here so SANU is cleared for
-            // the next decode.
+            // MUDE async reset: LX held at 0 while RUTU=1; clear SANU for next decode.
             self.x.value = 0;
             self.x.line_end_detected = false;
         }
@@ -80,8 +56,6 @@ impl LineCounter {
         }
     }
 
-    // Pass-through accessors — external callers read line state without
-    // reaching through x/y directly.
     pub(in crate::ppu) fn ly(&self) -> u8 {
         self.y.value_register()
     }
@@ -108,17 +82,14 @@ impl LineCounter {
 }
 
 impl LineCounterX {
-    /// Advance LX on LX counter clock rising. Suppressed while RUTU.Q=1
-    /// — MUDE = NOR2(RUTU, reset) holds LX at 0 for the full RUTU
-    /// pulse (one TALU cycle).
+    /// MUDE = NOR2(RUTU, reset) holds LX at 0 for the full RUTU pulse.
     pub(in crate::ppu) fn advance(&mut self) {
         if !self.line_end_active {
             self.value += 1;
         }
     }
 
-    /// SANU combinational LX=113 decode; cached for RUTU to consume on
-    /// the next LX counter clock falling.
+    /// SANU = LX==113 decode; cached for RUTU on next falling edge.
     pub(in crate::ppu) fn detect_line_end(&mut self) {
         self.line_end_detected = self.value == 113;
     }
@@ -131,11 +102,6 @@ impl LineCounterX {
 }
 
 impl LineCounterY {
-    /// Boot-ROM-handoff LY counter state: LY-internal at terminal 153
-    /// with MYTA latched (LAMA reset still applied), POPU latched from
-    /// the LY=144 NYPE rising edge. The `value_register()` accessor
-    /// smooths register-LY to 0 via the `frame_end_reset` short-circuit,
-    /// matching the post-boot "LY | 0" register row.
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             value: 153,
@@ -145,9 +111,7 @@ impl LineCounterY {
         }
     }
 
-    /// LY ripple counter advance or 153→0 wrap. On wrap the MYTA-held
-    /// window clears (frame_end_reset=false) and POPU goes low. Returns
-    /// true if the wrap occurred.
+    /// Returns true if a 153→0 wrap occurred; on wrap MYTA-held window clears and POPU drops.
     pub(in crate::ppu) fn advance_or_wrap(&mut self) -> bool {
         if self.value >= 153 {
             self.value = 0;
@@ -160,40 +124,30 @@ impl LineCounterY {
         }
     }
 
-    /// POPU VBlank capture — fires on NYPE rising edge. Caller gates
-    /// on NypeEdge::Rising.
+    /// POPU VBlank capture on NYPE rising.
     pub(in crate::ppu) fn capture_popu(&mut self) {
         self.vblank = self.value >= 144;
     }
 
-    /// MYTA FRAME_END capture — fires on NYPE falling edge (nype_n
-    /// rising), one TALU period after POPU's capture edge. Caller
-    /// gates on NypeEdge::Falling.
-    ///
-    /// Sets `frame_end_reset` (register smoothing for LY=0).
+    /// MYTA FRAME_END capture on NYPE falling — one TALU after POPU. Sets `frame_end_reset` for LY=0 smoothing.
     pub(in crate::ppu) fn capture_myta(&mut self) {
         if self.value == 153 {
             self.frame_end_reset = true;
         }
     }
 
-    /// POPU holdover: extends VBlank by one dot past the 153→0 wrap
-    /// (modelling the NYPE→POPU DFF propagation delay). Armed only on
-    /// the wrap path; cleared on the next XOTA edge by `tick_dot`.
+    /// Models the NYPE→POPU DFF propagation delay across the 153→0 wrap.
     pub(in crate::ppu) fn update_popu_holdover(&mut self, wrap_occurred: bool) {
         if wrap_occurred {
             self.popu_holdover = true;
         }
     }
 
-    /// Clear the POPU holdover flag. Called on each XOTA edge (tick_dot).
     pub(in crate::ppu) fn clear_popu_holdover(&mut self) {
         self.popu_holdover = false;
     }
 
-    /// CPU-visible LY value for $FF44. On line 153, MYTA's async-reset
-    /// path drives LAMA low, making LY read as 0 while the internal
-    /// counter is still 153.
+    /// $FF44 read. MYTA drives LAMA low on line 153, so register reads as 0 while internal counter is still 153.
     pub(in crate::ppu) fn value_register(&self) -> u8 {
         if self.frame_end_reset { 0 } else { self.value }
     }

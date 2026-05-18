@@ -1,4 +1,4 @@
-//! Memory-mapped register read/write — the CPU's interface to the PPU.
+//! Memory-mapped register read/write.
 
 use super::Ppu;
 use super::Register;
@@ -43,17 +43,13 @@ impl Ppu {
 
         match register {
             Register::BackgroundPalette if halt_wake_active => {
-                // BGP CUPA from a HALT-wake handler lands several LCD
-                // columns later than running-CPU dispatch. Park the
-                // value; tick_background commits it after the countdown.
+                // BGP write from a HALT-wake handler lands later than running-CPU dispatch — park.
                 self.registers
                     .palettes
                     .write_background_halt_wake_deferred(value);
                 false
             }
             Register::BackgroundPalette | Register::Sprite0Palette | Register::Sprite1Palette => {
-                // DFF8 staging inside DffLatch — apply_register_write
-                // sets pending, tick_palette_latches commits next fall.
                 self.apply_register_write(&register, value)
             }
             Register::Control => {
@@ -63,10 +59,8 @@ impl Ppu {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // VYXE / sprites_enabled mid-Mode-3 first-cp_pad↑-samples-
-                // OLD overlay: arm the shadow so the next BG resolve uses
-                // the pre-transition value. Gated on WUSA so prelude writes
-                // (where the first cp_pad↑ lands off-LCD) are ignored.
+                // Arm the VYXE/sprites-enabled OLD-overlay so the next resolve uses pre-transition.
+                // Gated on WUSA so prelude writes (off-LCD first cp_pad↑) are ignored.
                 if is_drawing && self.lcd_pushing_active() {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
@@ -77,8 +71,7 @@ impl Ppu {
                         .arm_sprites_enabled_shadow(old_sprites_enabled, new_sprites_enabled);
                 }
 
-                // CUPA↑ → XODO↓ is combinational; schedule the matching
-                // divider/scanner reset for this fall.
+                // CUPA↑ → XODO↓: schedule divider/scanner reset for this fall.
                 if !was_enabled && self.registers.control.video_enabled() {
                     self.lcd_on_init_pending = true;
                 }
@@ -92,18 +85,14 @@ impl Ppu {
         }
     }
 
-    /// Apply a register write to its backing store. Returns true if
-    /// the write produced a STAT rising edge (the DMG STAT write
-    /// glitch can transiently raise all enable bits).
+    /// Returns true if the write produced a STAT rising edge (DMG STAT glitch transient).
     fn apply_register_write(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
                 self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
             }
             Register::Status => {
-                // DMG STAT write glitch: briefly raise all enables, then
-                // settle to the real value. Either transition can produce
-                // a STAT rising edge.
+                // DMG STAT write glitch: all enables briefly high, then settle.
                 self.video.stat.set_enables(InterruptFlags::all());
                 let glitch_line = self.stat_line();
                 let glitch_edge = self.video.stat.detect_line_edge(glitch_line);

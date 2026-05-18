@@ -1,39 +1,13 @@
-//! Sprite fetch trigger pipeline.
+//! TEKY → SOBU → {RYCE → TAKA, SUDA}. Sprite fetch trigger pipeline.
 //!
-//! SOBU captures TEKY on TAVA rising (= LAPE falling = ALET rising).
-//! SUDA captures SOBU on the complementary edge (LAPE rising = ALET
-//! falling). The methods are named for the DFFs they clock.
-
-/// Sprite fetch trigger pipeline: TEKY → SOBU → {RYCE → TAKA, SUDA}.
-///
-/// Collapses the hardware chain:
-///
-///   SOBU (dffr, clk=TAVA/clk5) captures TEKY (=AND4 of FEPO, !RYDY,
-///   LYRY, !TAKA)
-///   SUDA (dffr, clk=LAPE/clk4) captures SOBU one edge later
-///   RYCE = AND2(!SUDA, SOBU) — one-shot pulse at SOBU rise, clears
-///   when SUDA captures
-///   TAKA = nand_latch, set via SECA = NOR3(RYCE, ROSY, ATEJ),
-///   cleared via VEKU = NOR2(WUTY, TAVE); output freezes SACU for
-///   6 dots via VYBO halt path
-///
-/// SOWO = NOT(TAKA) is the local feedback inverter that blocks TEKY
-/// re-trigger while a fetch is active — handled by the `!taka()`
-/// term at TEKY's emulator call site.
-///
-/// SOBU and SUDA have no reset (r_n tied high via vypo); TAKA carries
-/// over across scanline boundaries until VEKU clears it.
-///
-/// Consumers:
-///   - `taka()` → gates SACU via TYFA suppression
-///   - `capture_sobu()` return → triggers sprite fetch start
+//! RYCE = AND2(!SUDA, SOBU); TAKA is the sprite-fetch-running NAND-latch.
+//! TAKA carries over across scanlines until VEKU clears it.
 pub(in crate::ppu) struct SpriteTrigger {
-    /// SOBU: captures TEKY on TAVA rising (= ALET rising).
+    /// SOBU captures TEKY on ALET rising.
     sobu: bool,
-    /// SUDA: captures SOBU on LAPE rising (= ALET falling).
+    /// SUDA captures SOBU on ALET falling.
     suda: bool,
-    /// TAKA NAND latch: sprite fetch running. Set by SECA =
-    /// NOR3(RYCE, ROSY, ATEJ); cleared by VEKU = NOR2(WUTY, TAVE).
+    /// TAKA: SECA=NOR3(RYCE, ROSY, ATEJ) sets, VEKU=NOR2(WUTY, TAVE) clears.
     taka: bool,
 }
 
@@ -46,9 +20,7 @@ impl SpriteTrigger {
         }
     }
 
-    /// SOBU captures TEKY on TAVA rising (= ALET rising). Returns
-    /// true if RYCE fires — the one-shot AND2(!SUDA, SOBU) pulse at
-    /// SOBU's rise sets TAKA via SECA.
+    /// Returns true if RYCE fires (one-shot pulse at SOBU rise sets TAKA via SECA).
     pub(in crate::ppu) fn capture_sobu(&mut self, teky: bool) -> bool {
         self.sobu = teky;
         let ryce = self.sobu && !self.suda;
@@ -58,22 +30,17 @@ impl SpriteTrigger {
         ryce
     }
 
-    /// SUDA captures SOBU on LAPE rising (= ALET falling). The capture
-    /// clears RYCE (= AND2(!SUDA, SOBU)) — ending the one-shot pulse.
+    /// SUDA captures SOBU on the falling edge; the capture clears RYCE.
     pub(in crate::ppu) fn capture_suda(&mut self) {
         self.suda = self.sobu;
     }
 
-    /// Clear TAKA via VEKU = NOR2(WUTY, TAVE). Called from both arms:
-    /// WUTY (sprite-fetch-done) and TAVE (cascade-startup carry-over clear).
+    /// VEKU clear path: WUTY (fetch-done) or TAVE (startup carry-over).
     pub(in crate::ppu) fn clear_taka(&mut self) {
         self.taka = false;
     }
 
-    /// Set TAKA via SECA's ATEJ arm — the line-end pulse from §7.4
-    /// CATU/ANEL chain. RYCE's set arm is handled inline in
-    /// `capture_sobu`; ROSY (NOT ppu_reset_n) is irrelevant during
-    /// normal rendering.
+    /// SECA's ATEJ arm — line-end pulse re-asserts TAKA at each scanline boundary.
     pub(in crate::ppu) fn set_taka(&mut self) {
         self.taka = true;
     }

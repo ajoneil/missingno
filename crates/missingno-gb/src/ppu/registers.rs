@@ -12,53 +12,33 @@ pub struct Window {
     pub x_plus_7: DffLatch,
 }
 
-/// Pipeline registers (schematic pages 23/36): the DFF register file
-/// that the CPU writes and the pixel pipeline reads. One-directional —
-/// CPU → pipeline. These cells sit together on the die as a register
-/// bank, and their DFF8/DFF9 write-conflict behavior during Mode 3
-/// is specific to this group.
+/// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
 pub struct PipelineRegisters {
     pub control: Control,
-    /// DFF9-style latch for full LCDC byte.
+    /// DFF9 latch for full LCDC byte.
     pub control_latch: DffLatch,
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
-    /// VYXE first-cp_pad↑-samples-OLD overlay. When a mid-Mode-3 CUPA
-    /// transitions LCDC.0 (either direction), the LCD column emitted on
-    /// the next cp_pad↑ resolves with the OLD VYXE state. Cleared on
-    /// the next fall via `tick_bg_window_enabled_shadow`. `just_set`
-    /// keeps the shadow alive for the same-fall resolve after the CPU
-    /// write site sets it.
+    /// VYXE OLD-overlay for mid-Mode-3 LCDC.0 transitions. `just_set` keeps it alive across the same-fall tick.
     pub(in crate::ppu) bg_window_enabled_shadow: Option<bool>,
     pub(in crate::ppu) bg_window_enabled_shadow_just_set: bool,
-    /// XYLO popper-side OLD overlay. When a mid-Mode-3 CUPA transitions
-    /// LCDC.1, the OBJ-mux popper (XULA/WOXA → NULY) at the next cp_pad↑
-    /// resolves with the OLD XYLO state. The sprite-fetch trigger chain
-    /// (AROR/FEPO/TEKY/SOBU) sees live XYLO — only the popper-side read
-    /// consumes the shadow.
+    /// XYLO popper-side OLD-overlay for mid-Mode-3 LCDC.1 transitions. Sprite-fetch trigger chain sees live XYLO.
     pub(in crate::ppu) sprites_enabled_shadow: Option<bool>,
     pub(in crate::ppu) sprites_enabled_shadow_just_set: bool,
-    /// LCDC.1 snapshot taken at the start of rise() BEFORE the CPU's
-    /// staged write applies. Read by mode3_rising's FEPO-for-TEKY path
-    /// to model the SOBU vs CUPA gate-delay race.
+    /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
     pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
 }
 
 impl PipelineRegisters {
-    /// All per-fall register work, in order: palette dlatch_ee tick
-    /// (BGP NURA-overlay), DFF9 register latch tick (SCY/SCX/WX/LCDC),
-    /// BESU edge detector (Mode-2 entry BGP recovery release), and the
-    /// LCDC.0/.1 OLD-overlay shadow ticks.
+    /// Per-fall work: palette ticks, DFF9 ticks, BESU edge, OLD-overlay shadow ticks.
     pub fn tick_on_master_clock_fall(&mut self, besu: bool) {
-        // DFF8 palettes — BGP via wrapper for NURA overlay; OBP0/OBP1
-        // direct (the sprite combiners read settled output only).
+        // BGP via wrapper for NURA overlay; OBP0/OBP1 direct.
         self.palettes.tick_background();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
 
-        // DFF9 registers — pipeline read pre-tick values (reg_old) so
-        // ticks fire after the pipeline reads.
+        // Pipeline reads reg_old; ticks fire after.
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x_plus_7.tick();
@@ -66,18 +46,14 @@ impl PipelineRegisters {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
 
-        // BESU↑ at scanline start releases the BGP dlatch's post-write
-        // recovery.
+        // BESU↑ at scanline start releases BGP dlatch post-write recovery.
         self.palettes.tick_besu(besu);
 
-        // LCDC.0/.1 first-cp_pad↑-samples-OLD shadows live for this
-        // fall's BG resolve and clear on the next fall.
         self.tick_bg_window_enabled_shadow();
         self.tick_sprites_enabled_shadow();
     }
 
-    /// Clear all pending DFF latch state without applying final values.
-    /// Called when the PPU turns off — latches freeze at their current output.
+    /// Freeze latches at their current output (LCD off).
     pub fn clear_latches(&mut self) {
         self.palettes.background.clear();
         self.palettes.sprite0.clear();
@@ -93,18 +69,13 @@ impl PipelineRegisters {
         self.sprites_enabled_shadow_just_set = false;
     }
 
-    /// Live VYXE state for the BG plane gate (RAJY / TADE), with the
-    /// §6.15 first-cp_pad↑-samples-OLD overlay applied. When the shadow
-    /// is set, the BG resolve sees the pre-transition LCDC.0 value;
-    /// otherwise it sees the live `control` bit.
+    /// VYXE state for the BG plane gate (RAJY/TADE), with OLD-overlay applied.
     pub fn bg_window_enabled_for_resolve(&self) -> bool {
         self.bg_window_enabled_shadow
             .unwrap_or_else(|| self.control.background_and_window_enabled())
     }
 
-    /// CPU-write site: capture the pre-write VYXE state into the overlay
-    /// shadow if LCDC.0 transitions during Mode 3. `just_set` keeps the
-    /// shadow alive across the same-fall `tick_bg_window_enabled_shadow`.
+    /// Capture pre-write VYXE if LCDC.0 transitions during Mode 3.
     pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
         if old_value != new_value {
             self.bg_window_enabled_shadow = Some(old_value);
@@ -112,12 +83,7 @@ impl PipelineRegisters {
         }
     }
 
-    /// Once-per-fall tick. The CPU bus write fires before
-    /// `on_master_clock_fall`, so the shadow is set with `just_set=true`
-    /// before this tick runs. The tick consumes `just_set` — keeping the
-    /// shadow alive for the same-fall BG resolve. On any subsequent fall
-    /// without a fresh CPU write that toggles LCDC.0, the shadow clears,
-    /// reverting the BG resolve to the live LCDC.0.
+    /// CPU write site sets shadow before this fall runs; consume `just_set`, clear on next fall.
     fn tick_bg_window_enabled_shadow(&mut self) {
         if self.bg_window_enabled_shadow_just_set {
             self.bg_window_enabled_shadow_just_set = false;
@@ -126,19 +92,13 @@ impl PipelineRegisters {
         }
     }
 
-    /// Live XYLO state for the OBJ-mux popper (XULA/WOXA → NULY), with
-    /// the popper-side OLD overlay applied. When the shadow is set, the
-    /// OBJ pixel resolve sees the pre-transition LCDC.1 value; otherwise
-    /// it sees the live `control` bit. The sprite-fetch trigger path
-    /// (FEPO/TEKY/SOBU) does NOT go through this accessor.
+    /// XYLO state for the OBJ-mux popper, with OLD-overlay applied. Sprite-fetch trigger does NOT use this.
     pub fn sprites_enabled_for_resolve(&self) -> bool {
         self.sprites_enabled_shadow
             .unwrap_or_else(|| self.control.sprites_enabled())
     }
 
-    /// CPU-write site: capture the pre-write XYLO state into the overlay
-    /// shadow if LCDC.1 transitions during Mode 3. `just_set` keeps the
-    /// shadow alive across the same-fall `tick_sprites_enabled_shadow`.
+    /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3.
     pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
         if old_value != new_value {
             self.sprites_enabled_shadow = Some(old_value);
@@ -146,9 +106,6 @@ impl PipelineRegisters {
         }
     }
 
-    /// Once-per-fall tick, mirroring `tick_bg_window_enabled_shadow`.
-    /// Keeps the shadow alive for the same-fall OBJ-mux resolve, then
-    /// clears on the next fall without a fresh LCDC.1 transition.
     fn tick_sprites_enabled_shadow(&mut self) {
         if self.sprites_enabled_shadow_just_set {
             self.sprites_enabled_shadow_just_set = false;

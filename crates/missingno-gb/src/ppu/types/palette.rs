@@ -90,32 +90,15 @@ pub struct Palettes {
     pub background: DffLatch,
     pub sprite0: DffLatch,
     pub sprite1: DffLatch,
-    /// NURA-combiner OR overlay. On the cp_pad sample of a BGP write
-    /// while the dlatch_ee cell is still in its post-write recovery
-    /// state, the cell presents OR(prior, new) instead of settled new.
-    /// Held for one tick after a qualifying write.
+    /// NURA-combiner OR overlay: a same-tick BGP write presents OR(prior, new) on the cp_pad sample.
     pub(in crate::ppu) background_or_overlay: Option<u8>,
-    /// True once a BGP write has resolved during the current scanline's
-    /// active period (Mode 2 onward). Cleared at the next scanline's
-    /// Mode 2 entry (BESU↑) when the cell can finish settling.
+    /// A BGP write has resolved during this scanline's active period; cleared at next BESU↑.
     pub(in crate::ppu) bgp_recovery_active: bool,
-    /// True once a visible LCD cp_pad↑ has emitted a pixel since the
-    /// most recent `tick_background` commit cycle. The LCD-glass
-    /// column-shift register only enters the OR-overlap primed-state
-    /// after it has actually shifted a value in — a CUPA whose effect
-    /// was never visibly sampled does not engage the recovery. Cleared
-    /// by every `tick_background` commit cycle and at BESU↑ / LCD-off.
+    /// LCD has emitted a visible pixel since the last tick_background commit (primes OR-overlap).
     pub(in crate::ppu) bgp_visible_emit_since_tick: bool,
-    /// BGP write parked while the CPU is inside a HALT-wake handler
-    /// (`Cpu::is_halt_wake_active`). The dlatch_ee `pending` isn't set
-    /// at the CPU's CUPA edge; instead `tick_background` runs the
-    /// countdown and commits `pending` when it expires, shifting the
-    /// pixel-pipeline-visible transition 4-5 LCD columns later than
-    /// running-CPU dispatch produces. Behavioural overlay — no
-    /// gate-level anchor for the shift.
+    /// BGP write parked while CPU is in a HALT-wake handler; countdown shifts the visible transition 4-5 columns later.
     pub(in crate::ppu) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
-    /// Prior fall's BESU value — feeds the BESU↑ edge detector that
-    /// releases the BGP NURA-overlay recovery at Mode 2 entry.
+    /// Prior fall's BESU; feeds the BESU↑ edge detector that releases the NURA-overlay recovery.
     pub(in crate::ppu) prev_besu: bool,
 }
 
@@ -141,13 +124,7 @@ impl Default for Palettes {
 }
 
 impl Palettes {
-    /// Defer a BGP write performed from a HALT-wake handler. The first
-    /// within-scanline write skips the NURA OR-overlap (no `bgp_recovery_active`
-    /// to add +1 visible column), so it needs a 6-tick countdown to land
-    /// at the same wall-clock as a second write's 5-tick countdown + NURA
-    /// overlap. The countdown is consumed by `tick_background`, which
-    /// commits the value into `pending` on the expiring tick so the
-    /// normal promote-and-overlay logic runs in the same call.
+    /// 5-tick countdown if recovery is active (NURA adds +1 column), else 6, so HALT-wake and running-CPU writes land at the same wall-clock.
     pub fn write_background_halt_wake_deferred(&mut self, value: u8) {
         let ticks_remaining = if self.bgp_recovery_active { 5 } else { 6 };
         self.bgp_halt_wake_deferred = Some(DeferredBgpWrite {
@@ -157,10 +134,7 @@ impl Palettes {
     }
 
     pub fn tick_background(&mut self) -> bool {
-        // Advance any HALT-wake-deferred BGP write. On the tick that
-        // brings the countdown to 0, commit into `pending` so the normal
-        // promote-and-overlay logic below runs against the new value in
-        // the same call.
+        // Commit a HALT-wake-deferred write into `pending` when its countdown expires.
         if let Some(deferred) = self.bgp_halt_wake_deferred.as_mut() {
             if deferred.ticks_remaining > 0 {
                 deferred.ticks_remaining -= 1;
@@ -189,9 +163,7 @@ impl Palettes {
         ticked
     }
 
-    /// A visible LCD cp_pad↑ has just emitted a pixel — the LCD glass's
-    /// column-shift register has shifted in the current BGP latch value.
-    /// Subsequent BGP CUPAs now satisfy the recovery-engaged precondition.
+    /// A visible cp_pad↑ has emitted a pixel; subsequent BGP CUPAs satisfy the recovery-engaged precondition.
     pub fn note_bg_pixel_emit(&mut self) {
         self.bgp_visible_emit_since_tick = true;
     }
@@ -200,12 +172,8 @@ impl Palettes {
         if let Some(overlay) = self.background_or_overlay {
             return overlay;
         }
-        // dlatch_ee transparency: while CUPA is high, a BGP write that
-        // has set DffLatch.pending but not yet been committed by
-        // tick_background presents OR(prior, new) on the cp_pad sample.
-        // Extends the NURA overlay window backwards by one emulator
-        // edge so a pixel emit between drive_ppu_bus (rise) and
-        // tick_palette_latches (fall) sees the in-flight value.
+        // dlatch_ee transparency: a pixel emit between drive_ppu_bus (rise) and tick_palette_latches (fall)
+        // sees OR(prior, pending) — extends the NURA overlay one emulator edge backwards.
         if self.bgp_recovery_active
             && self.bgp_visible_emit_since_tick
             && let Some(pending) = self.background.pending()
@@ -215,9 +183,7 @@ impl Palettes {
         self.background.output()
     }
 
-    /// Run the BESU edge detector. On BESU↑ (Mode 2 entry at the
-    /// scanline start), release the BGP NURA-overlay recovery — the
-    /// pipe was idle through HBlank so the dlatch has settled.
+    /// BESU↑ at Mode 2 entry releases the BGP NURA-overlay recovery (dlatch has settled through HBlank).
     pub(in crate::ppu) fn tick_besu(&mut self, besu: bool) {
         if besu && !self.prev_besu {
             self.background_or_overlay = None;

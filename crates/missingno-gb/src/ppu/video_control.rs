@@ -1,68 +1,35 @@
-//! Video timing and control orchestrator.
-//!
-//! After the Stage 1-4 decomposition, VideoControl is a thin composer
-//! of the Dividers, StatInterrupt, and LineCounter containers. The
-//! only state it still owns directly is the NYPE pipeline
-//! (`line_end_pending` / `delayed_line_end`), awaiting Stage 5
-//! extraction after the NYPE review.
-//!
-//! Dispatcher methods sequence the subsystems' per-edge work:
-//!   on_lx_counter_clock_rise: NYPE capture → POPU/MYTA →
-//!                             LX advance → SANU decode
-//!   on_lx_counter_clock_fall: RUTU fire → LY advance+wrap →
-//!                             POPU holdover → NYPE feed
-//!
-//! Pass-through accessors preserve the external call-site interface
-//! per OQ.6 (`ly()`, `xupy()`, `line_end_active()`, etc.).
+//! Composer of Dividers, StatInterrupt, LineCounter, and the NYPE LINE_END pipeline.
 
 use crate::ppu::dividers::Dividers;
 use crate::ppu::line_counter::LineCounter;
 use crate::ppu::line_end_pipeline::{LineEndPipeline, NypeEdge};
 use crate::ppu::stat_interrupt::StatInterrupt;
 
-/// Video timing and control (schematic page 21). Composes the extracted
-/// subsystem containers; retains NYPE state inline until Stage 5.
 pub struct VideoControl {
-    /// WUVU + VENA clock dividers.
     pub dividers: Dividers,
-
-    /// LX and LY line counters, composed per hardware cascade.
     pub lines: LineCounter,
-
-    /// STAT Interrupt Generation (LYC register, enable bits,
-    /// LYC-match pipeline, LALU edge-detection state).
     pub stat: StatInterrupt,
-
-    /// NYPE LINE_END redistribution DFF — produces NypeEdge
-    /// (rising / falling / none) for POPU / MYTA dispatch per hardware.
+    /// NYPE LINE_END redistribution DFF — produces NypeEdge for POPU/MYTA dispatch.
     pub line_end: LineEndPipeline,
 }
 
 impl VideoControl {
-    /// VID_RST: reset all subsystems. Used when the LCD is turned off
-    /// and when LCD turns on (VID_RST released after initialization).
     pub fn vid_rst(&mut self) {
         self.dividers.vid_rst();
         self.lines.vid_rst();
         self.line_end.vid_rst();
     }
 
-    /// XUPY — scan-counter / OAM-pipeline clock.
     pub fn xupy(&self) -> bool {
         self.dividers.xupy()
     }
 
-    // ── Line pass-throughs (Stage 4; OQ.6 high-traffic stability) ──
-
-    /// CPU-visible LY value ($FF44). On line 153, frame-end reset (MYTA)
-    /// drives LAMA low, making LY read as 0 while the internal counter
-    /// is still 153. See `LineCounterY` two-level partition.
+    /// CPU-visible LY ($FF44). On line 153, MYTA drives LAMA low so register reads as 0.
     pub fn ly(&self) -> u8 {
         self.lines.ly()
     }
 
-    /// Hardware-internal LY (0-153); bypasses MYTA smoothing. Use for
-    /// hardware-level checks (e.g., detecting the 153→0 internal wrap).
+    /// Hardware-internal LY (0-153); bypasses MYTA smoothing.
     pub fn ly_hardware(&self) -> u8 {
         self.lines.ly_hardware()
     }
@@ -87,37 +54,24 @@ impl VideoControl {
         self.lines.y.write_ly(value);
     }
 
-    // ── Cross-subsystem orchestration ─────────────────────────
-
-    /// Triggers a PALY recompute against register-visible LY.
     pub fn update_ly_comparison(&mut self) {
         let ly = self.lines.ly();
         self.stat.update_comparison(ly);
     }
 
-    /// LYC register write — CPU path. Updates LYC then recomputes PALY.
     pub fn write_lyc(&mut self, value: u8) {
         let ly = self.lines.ly();
         self.stat.write_lyc(value, ly);
     }
 
-    // ── Per-dot tick ─────────────────────────────────────────
-
-    /// XOTA rising edge: toggle WUVU (via Dividers) and clear POPU
-    /// holdover. Called every dot. Returns the previous WUVU.Q
-    /// value so the caller can detect XUPY rising (WUVU 0→1).
+    /// XOTA rising: toggle WUVU and clear POPU holdover. Returns previous WUVU.Q.
     pub fn tick_dot(&mut self) -> bool {
         let wuvu_was = self.dividers.tick_dot();
         self.lines.y.clear_popu_holdover();
         wuvu_was
     }
 
-    // ── LX counter clock edges ───────────────────────────────
-
-    /// LX counter clock rising edge (TALU rising). NYPE captures on
-    /// this edge and reports which Q-transition occurred (Rising /
-    /// Falling / None); LineCounter dispatches POPU (Rising) or MYTA
-    /// (Falling). LineCounter.x advances and decodes SANU regardless.
+    /// TALU rising: NYPE captures; LineCounter dispatches POPU (Rising) or MYTA (Falling); LX advances + SANU decodes.
     pub fn on_lx_counter_clock_rise(&mut self) {
         let nype_edge = self.line_end.capture();
         self.lines.on_lx_counter_clock_rise(nype_edge);
@@ -127,9 +81,7 @@ impl VideoControl {
         }
     }
 
-    /// LX counter clock falling edge (TALU falling). LineCounter fires
-    /// the scanline boundary (RUTU + LY advance) atomically; if the
-    /// boundary fired, NYPE feed is signalled for the next rise.
+    /// TALU falling: RUTU fires (scanline boundary + LY advance); on boundary, signal NYPE feed.
     pub fn on_lx_counter_clock_fall(&mut self) -> bool {
         let scanline_boundary = self.lines.on_lx_counter_clock_fall();
         if scanline_boundary {

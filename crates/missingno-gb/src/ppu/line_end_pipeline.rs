@@ -1,53 +1,30 @@
-//! NYPE pipeline — LINE_END redistribution DFF.
-//!
-//! NYPE captures RUTU on TALU rising. Its Q output and Q_n complement
-//! drive distinct downstream consumers:
-//! - **NYPE rising** (Q): POPU captures (VBlank flag from XYVO).
-//! - **NYPE falling** (Q_n rising / nype_n): MYTA and MEDA capture
-//!   (FRAME_END from NOKO, LY=0 from NERU) — one TALU period later.
-//!
-//! MEDA drives s_pad (LCD VSYNC) via the `mure` inverter. Its first
-//! 0→1 transition after VID_RST deassertion is the LCD's first VSYNC
-//! pulse — the LCD only latches frames after it has fired.
+//! NYPE LINE_END redistribution DFF (TALU-rising capture of RUTU).
+//! NYPE rising → POPU; NYPE falling (nype_n rising) → MYTA + MEDA, one TALU later.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ppu) enum NypeEdge {
-    /// NYPE rising — POPU fires.
     Rising,
-    /// NYPE falling (nype_n rising) — MYTA and MEDA fire.
     Falling,
-    /// No edge this TALU rise.
     None,
 }
 
 pub struct LineEndPipeline {
-    /// NYPE DFF output (Q).
     pub(in crate::ppu) delayed_line_end: bool,
-    /// NYPE D input pending feed (set when RUTU fires; consumed on the
-    /// next TALU rising capture).
+    /// Pending NYPE D input; set when RUTU fires, consumed at next TALU rising.
     pub(in crate::ppu) line_end_pending: bool,
-    /// MEDA DFF — captures NERU on NYPE-falling. Drives s_pad VSYNC
-    /// via the `mure` inverter. Held at 0 by VID_RST during LCD-off.
+    /// MEDA captures NERU on NYPE-falling; drives s_pad VSYNC via the `mure` inverter.
     pub(in crate::ppu) meda: bool,
-    /// Latched: MEDA has gone 0→1 at least once since the most recent
-    /// VID_RST deassertion. The first 0→1 transition is the LCD's
-    /// first VSYNC pulse since LCD-on.
+    /// MEDA has gone 0→1 since the most recent VID_RST deassertion.
     pub(in crate::ppu) vsync_committed: bool,
 }
 
 impl LineEndPipeline {
-    /// Signal LINE_END to NYPE's D input. Called when RUTU fires (from
-    /// LineCounterX's fire_rutu_and_reset). NYPE captures this on the
-    /// next TALU rising edge.
+    /// Signal LINE_END to NYPE's D input (RUTU fired).
     pub(in crate::ppu) fn signal_line_end(&mut self) {
         self.line_end_pending = true;
     }
 
-    /// Capture NYPE's D input on TALU rising. Returns the edge type
-    /// based on the Q transition:
-    /// - Rising: Q transitioned 0 → 1 (POPU fires this edge)
-    /// - Falling: Q transitioned 1 → 0 (MYTA fires on nype_n rising)
-    /// - None: no Q transition
+    /// Capture NYPE on TALU rising; returns the Q transition.
     pub(in crate::ppu) fn capture(&mut self) -> NypeEdge {
         let prev = self.delayed_line_end;
         self.delayed_line_end = self.line_end_pending;
@@ -59,8 +36,7 @@ impl LineEndPipeline {
         }
     }
 
-    /// Capture NERU into MEDA on NYPE-falling. Latches `vsync_committed`
-    /// on the first 0→1 transition since VID_RST.
+    /// Capture NERU into MEDA on NYPE-falling; latch vsync_committed on first 0→1.
     pub(in crate::ppu) fn capture_meda(&mut self, neru: bool) {
         if !self.meda && neru {
             self.vsync_committed = true;

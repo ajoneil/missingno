@@ -1,60 +1,33 @@
-//! Sprite scanner — OAM scan (Mode 2) state machine.
-//!
-//! Netlist gate names (BYBA, DOBA, CATU, RUTU, BESU, from the dmgcpu
-//! netlist, msinger/dmg-schematics) appear in doc comments for
-//! traceability to the hardware signal chain.
+//! Mode 2 OAM scan state machine.
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{PipelineRegisters, memory::Oam};
 
 use super::oam_scan::{ScanCounter, SpriteStore};
 
-/// Sprite scanner — owns all OAM scan (Mode 2) state.
-///
-/// Encapsulates the scan counter, scanning latch (BESU), BYBA/DOBA
-/// scan-done pipeline, and the sprite store that bridges Mode 2 and
-/// Mode 3. Communicates with the rest of the pipeline through explicit
-/// signals: AVAP (scan complete) triggers the Mode 2→3 transition,
-/// and the populated `SpriteStore` is consumed by the X matchers.
+/// Scan counter, BESU latch, BYBA/DOBA pipeline, and 10-entry sprite store. AVAP signals Mode 2→3.
 pub(in crate::ppu) struct SpriteScanner {
-    /// 6-bit scan counter + Y comparator (YFEL-FONY).
+    /// YFEL-FONY 6-bit scan counter + Y comparator.
     counter: ScanCounter,
-    /// Scan machinery active — set on all lines including LCD-on line 0.
-    /// Controls counter ticking, OAM comparisons, and mode 3 gating in advance_scan().
+    /// Active on all lines including LCD-on line 0.
     scanning: bool,
-    /// BESU scanning latch — drives ACYL for STAT mode bits and OAM bus locking.
-    /// Set by CATU only when catu_enabled is true (NOT set on LCD-on line 0).
+    /// BESU drives ACYL for STAT mode bits and OAM bus locking; set by CATU only when catu_enabled.
     besu: bool,
-    /// Models NOT(VID_RST) for CATU gating. Starts false at LCD-on (VID_RST
-    /// blocks CATU). Set to true by enable_catu() after the first scanline
-    /// completes. Persists across scanline resets.
+    /// NOT(VID_RST) gate for CATU; false at LCD-on, set by enable_catu() after the first scanline.
     catu_enabled: bool,
-    /// CATU_LINE_ENDp DFF17: clocked by XUPY rising, D = ABOV_LINE_ENDp.
-    /// Single-stage: boundary sets `rutu` → next XUPY rise CATU fires.
+    /// CATU_LINE_ENDp DFF17 (XUPY-rising, D = ABOV_LINE_ENDp).
     catu: bool,
-    /// RUTU latch: nor_latch set combinationally at the scanline boundary
-    /// by reset(); cleared by tick_catu only on capture. Consumed by
-    /// tick_catu on the next XUPY rising edge (one-dot delay).
+    /// RUTU nor_latch: set at scanline boundary by reset(), cleared by tick_catu on capture.
     rutu: bool,
-    /// Scan-done flag. BYBA (dffr, clocked by XUPY — captures in fall).
-    ///
-    /// Combined with `scan_done_prev` for AVAP rising-edge detection:
-    /// AVAP = BYBA && !DOBA.
+    /// BYBA (dffr, XUPY-clocked).
     scan_done_flag: bool,
-    /// Scan-done flag from the previous XUPY cycle. DOBA (dffr, clocked
-    /// by ALET — captures in fall, one half-cycle after BYBA).
-    ///
-    /// Forms the rising-edge detector with `scan_done_flag` that
-    /// produces AVAP.
+    /// DOBA (dffr, ALET-clocked); pairs with BYBA for AVAP = BYBA && !DOBA.
     scan_done_prev: bool,
-    /// Ten-entry sprite register file (page 30). Populated during Mode 2,
-    /// consumed by X matchers during Mode 3.
     sprites: SpriteStore,
 }
 
-/// Signals produced by `SpriteScanner::advance_scan()` for the rest of the pipeline.
 pub(in crate::ppu) struct ScanSignals {
-    /// AVAP fired this dot — scan complete (Mode 2 → 3 transition).
+    /// AVAP — scan complete (Mode 2→3).
     pub(in crate::ppu) avap: bool,
 }
 
@@ -73,11 +46,6 @@ impl SpriteScanner {
         }
     }
 
-    /// Boot-ROM-handoff scanner state: scan counter at
-    /// terminal value 39 with GAVA frozen. BYBA/DOBA latched to 1 from
-    /// FETO=1 over many XUPY cycles; `catu_enabled` released after the
-    /// boot ROM's first post-LCD-on scanline. Other latches stay at
-    /// their power-on defaults (BESU=0, AVAP=0).
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             counter: ScanCounter::post_boot(),
@@ -92,59 +60,45 @@ impl SpriteScanner {
         }
     }
 
-    /// Set scanning active for LCD-on initialization. On hardware, VID_RST
-    /// deassertion releases the scan counter and comparison logic
-    /// simultaneously — there is no separate CATU "start scanning" event
-    /// on the first line. The counter is already at 0 from async reset.
+    /// VID_RST deassertion releases the scan counter; no separate first-line CATU event.
     pub(in crate::ppu) fn start_scanning(&mut self) {
         self.scanning = true;
     }
 
-    /// Whether the scan machinery is currently active.
     pub(in crate::ppu) fn scanning(&self) -> bool {
         self.scanning
     }
 
-    /// BESU scanning latch — drives ACYL for STAT mode and OAM bus locking.
     pub(in crate::ppu) fn besu(&self) -> bool {
         self.besu
     }
 
-    /// Whether CATU is pending — RUTU has been set at the scanline boundary
-    /// but CATU hasn't fired yet. On hardware, the OAM bus is gated by the
-    /// scan machinery even before BESU formally asserts. We use this to lock
-    /// OAM during the pre-BESU dots at scanline boundaries.
+    /// RUTU has been set at the scanline boundary but CATU hasn't fired yet — used to lock OAM pre-BESU.
     pub(in crate::ppu) fn catu_pending(&self) -> bool {
         self.rutu
     }
 
-    /// Whether CATU is enabled (NOT first line after LCD-on).
     pub(in crate::ppu) fn catu_enabled(&self) -> bool {
         self.catu_enabled
     }
 
-    /// Release VID_RST's blocking effect on CATU. Called after the first
-    /// scanline completes (reset_scanline), enabling BESU on subsequent lines.
+    /// Release VID_RST blocking on CATU after the first scanline completes.
     pub(in crate::ppu) fn enable_catu(&mut self) {
         self.catu_enabled = true;
     }
 
-    /// Current scan counter entry (0-39).
     pub(in crate::ppu) fn scan_counter_entry(&self) -> u8 {
         self.counter.entry()
     }
 
-    /// Scan-done flag (BYBA) state, for debug snapshot.
     pub(in crate::ppu) fn scan_done_flag(&self) -> bool {
         self.scan_done_flag
     }
 
-    /// Previous scan-done flag (DOBA) state, for debug snapshot.
     pub(in crate::ppu) fn scan_done_prev(&self) -> bool {
         self.scan_done_prev
     }
 
-    /// The OAM address the scanner is currently driving, if scanning.
     pub(in crate::ppu) fn oam_address(&self) -> Option<u8> {
         if self.scanning {
             Some(self.counter.oam_address())
@@ -153,35 +107,16 @@ impl SpriteScanner {
         }
     }
 
-    /// Read access to the sprite store for debug snapshots.
     pub(in crate::ppu) fn sprites_ref(&self) -> &SpriteStore {
         &self.sprites
     }
 
-    /// Mutable access to the sprite store for X matching and marking fetched slots.
     pub(in crate::ppu) fn sprites_mut(&mut self) -> &mut SpriteStore {
         &mut self.sprites
     }
 
-    /// Advance the CATU DFF — runs every dot regardless of VBlank.
-    ///
-    /// On the XUPY rising edge where RUTU is asserted (scanline
-    /// boundary), CATU captures RUTU and the counter reset pulse
-    /// asserts combinationally on the same edge via the
-    /// NOT(CATU) → BYHA → ATEJ → ANOM path. ANEL's subsequent capture
-    /// on the following XUPY falling edge releases the reset via
-    /// BYHA's ANEL input path within the cycle. The counter sees
-    /// `r_n = 1` by the next XUPY rising edge and ticks 0 → 1 there.
-    ///
-    /// Net: one XUPY cycle between CATU capture and the first counter
-    /// tick. Modeled by doing capture + scan-start atomically on this
-    /// edge; the first compare+tick runs in `advance_scan` on the
-    /// following xupy_rising.
-    ///
-    /// CATU has no POPU gate on hardware — it evaluates on every XUPY
-    /// cycle. This method must be called unconditionally so the DFF
-    /// can advance during the 153→0 frame boundary while POPU is
-    /// still high.
+    /// Runs every XUPY cycle regardless of POPU (so the DFF advances across the 153→0 boundary).
+    /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next xupy_rising.
     pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
         if !xupy_rising {
             return;
@@ -191,10 +126,7 @@ impl SpriteScanner {
         let catu_captures = self.rutu && !xyvo;
 
         if catu_captures {
-            // Hardware: CATU capturing + the downstream reset path
-            // deasserts RUTU. Clear on capture only — an XYVO-gated XUPY
-            // edge must not lose RUTU, since the latched model relies on
-            // RUTU persisting until a non-blocked edge actually captures.
+            // Capture deasserts RUTU; XYVO-gated edges must not lose RUTU.
             self.rutu = false;
         }
 
@@ -209,9 +141,7 @@ impl SpriteScanner {
         self.catu = catu_captures;
     }
 
-    /// Advance one scan cycle: counter tick, BYBA/DOBA capture, AVAP
-    /// combinational detection. Called on the PPU-clock-rise phase
-    /// (master-clock fall; gate: ALET rising).
+    /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection.
     pub(in crate::ppu) fn advance_scan(
         &mut self,
         xupy_rising: bool,
@@ -224,36 +154,20 @@ impl SpriteScanner {
             return ScanSignals { avap: false };
         }
 
-        // OAM comparison. One XUPY after CATU's same-edge capture+reset,
-        // the counter ticks 0 → 1 below; subsequent edges walk 1..39.
         if self.scanning {
             self.counter
                 .compare_and_store(ly, &mut self.sprites, regs, oam, oam_bus);
         }
 
-        // DOBA captures OLD BYBA on this same XUPY edge — the
-        // half-cycle separation (BYBA on alet falling, DOBA on alet
-        // rising) is captured combinationally here: DOBA reads the
-        // pre-update BYBA before BYBA captures FETO below.
+        // DOBA captures OLD BYBA before BYBA captures FETO below.
         self.scan_done_prev = self.scan_done_flag;
 
-        // BYBA captures FETO sampled from the *pre-tick* counter.
-        // FETO is a combinational AND4 over the counter bits; its
-        // propagation depth exceeds BYBA's clock-to-Q path, so at an
-        // XUPY rising edge BYBA's D-input reflects FETO over the
-        // counter's pre-tick value. We model this by reading
-        // `counter.scan_done()` before `counter.tick_clock()`. The
-        // XUPY rising edge that ticks the counter to 39 captures
-        // FETO(38) = 0; the next XUPY rising edge captures
-        // FETO(39) = 1.
+        // BYBA captures FETO from the pre-tick counter (FETO's NAND4 depth exceeds BYBA's clock-to-Q).
         self.scan_done_flag = self.counter.scan_done();
 
         self.counter.tick_clock();
 
-        // AVAP: combinational. new BYBA && !DOBA (which has old BYBA).
-        // Detection AND reaction (XYMU set, BESU clear) co-locate on
-        // this XUPY-rising fall — matching hardware where AVAP rises
-        // and Mode 3 init fire on the same alet-falling edge.
+        // AVAP detection + reaction co-locate (AVAP↑ and Mode 3 init on the same alet-falling edge).
         let avap = self.scan_done_flag && !self.scan_done_prev && self.scanning;
         if avap {
             self.scanning = false;
@@ -262,17 +176,12 @@ impl SpriteScanner {
         ScanSignals { avap }
     }
 
-    /// Reset at scanline boundary. RUTU is the nor_latch set
-    /// combinationally by RUTU_LINE_ENDp; tick_catu captures it on the
-    /// next XUPY rising edge (1-dot delay per spec §7.4).
+    /// Scanline boundary reset. RUTU is set here; tick_catu captures on the next XUPY rising.
     pub(in crate::ppu) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
         self.besu = false;
         self.sprites = SpriteStore::new();
-        // BYBA/DOBA are not explicitly reset at line boundaries on hardware —
-        // they naturally clear because FETO is false after counter reset.
-        // But we reset them for cleanliness.
         self.scan_done_flag = false;
         self.scan_done_prev = false;
         self.catu = false;

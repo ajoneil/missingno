@@ -1,5 +1,3 @@
-// --- Sprite fetch ---
-
 use crate::dma::OamBusOwner;
 use crate::ppu::{
     PipelineRegisters,
@@ -11,58 +9,31 @@ use super::super::types::sprites::{self, SpriteId, SpriteSize};
 use super::super::types::tiles::{TileAddressMode, TileIndex};
 use super::shifters::ObjShifter;
 
-/// The phases of a sprite fetch on real hardware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteFetchPhase {
-    /// The BG fetcher is frozen at its current position. Sprite tile
-    /// data is read through the SpriteStep state machine (6 dots total).
-    /// On hardware, the 3-bit counter (TOXE/TULY/TESE) counts 0-5,
-    /// self-stopping at 5 via TAME clock gating. WUTY (fetch done)
-    /// fires on the rising phase of counter=5, the same dot as the
-    /// tile data HIGH read and sprite pixel merge. There is no separate
-    /// "done" dot — TAKA clears on the same dot.
+    /// BG fetcher frozen; 6-dot sprite data read. WUTY fires at counter=5 on the same dot as tile data HIGH read.
     FetchingData,
 }
 
-/// Active sprite data fetch. Collapses the 3-bit ripple counter
-/// (TOXE/TULY/TESE, clocked by SABE = NAND2(LAPE, TAME)) into a u8
-/// counting 0–5. Also collapses the fetch-done decode (WUTY =
-/// NOT(VUSA), VUSA = OR2(TYNO, TYFO_n), TYNO = NAND3(SEBA, TOXE,
-/// VONU) + TYFO = dffr(TOXE, LAPE)) into the `return true` at
-/// counter=5 — both hardware decode branches fire at the same
-/// counter-terminal state that the u8 check detects directly.
-///
-/// Also collapses the sprite temp-latch layer — 16 dlatch_ee_q cells
-/// (plane A: PEFO/ROKA/MYTU/RAMU/SELE/SUTO/RAMA/RYDU via
-/// `latch_sp_bp_a`; plane B: REWO/PEBA/MOFO/PUDU/SAJA/SUNY/SEMO/SEGA
-/// via `latch_sp_bp_b`) into `tile_data_low` / `tile_data_high`.
+/// 6-dot sprite data fetch. Collapses the 3-bit ripple counter (TOXE/TULY/TESE) into a u8,
+/// the fetch-done decode (WUTY) into the counter==5 return, and the 16 sprite temp-latch cells
+/// into `tile_data_low` / `tile_data_high`.
 pub(in crate::ppu) struct SpriteFetch {
-    /// The sprite store entry that triggered this fetch.
     pub(in crate::ppu) entry: SpriteStoreEntry,
-    /// Slot index in the per-line sprite store — used to set the
-    /// per-slot fetched-flag at WUTY↑ (fetch completion), modelling
-    /// hardware's per-slot DFF capture (spec §6.9 line 1730).
+    /// Used to set the per-slot fetched-flag at WUTY↑.
     pub(in crate::ppu) slot_index: u8,
-    /// Hardware counter (TOXE/TULY/TESE): 0-5 (6 dots).
-    /// VRAM reads at counter 3 (tile data low) and 5 (tile data high).
-    /// Self-stops at 5 via TAME clock gating.
+    /// 0-5; self-stops at 5 via TAME clock gating. VRAM reads at 2 (low) and 4 (high).
     fetch_counter: u8,
-    /// Plane-A tile byte — PEFO/ROKA/MYTU/RAMU/SELE/SUTO/RAMA/RYDU
-    /// temp latches, captured at counter = 3 (latch_sp_bp_a).
+    /// Plane-A tile byte captured at counter=2.
     tile_data_low: u8,
-    /// Plane-B tile byte — REWO/PEBA/MOFO/PUDU/SAJA/SUNY/SEMO/SEGA
-    /// temp latches, captured at counter = 5 (latch_sp_bp_b).
+    /// Plane-B tile byte captured at counter=4.
     tile_data_high: u8,
-    /// Sprite attribute byte latched during the fetch from OAM bank A.
-    /// On hardware the attr byte sits in a sprite-attr register through
-    /// the merge dot, not re-read from OAM at merge time.
+    /// OAM bank-A attributes latched at fetch time and held through the merge dot.
     attributes: sprites::Attributes,
 }
 
 impl SpriteFetch {
-    /// Start the 6-dot sprite data fetch. The variable 0-5 dot penalty
-    /// is handled by TEKY/SOBU staying low until the BG fetcher is done,
-    /// not by a separate waiting state.
+    /// The variable 0-5 dot penalty is implicit in TEKY/SOBU staying low until BG fetch is done.
     pub(in crate::ppu) fn new_fetching(entry: SpriteStoreEntry, slot_index: u8) -> Self {
         Self {
             entry,
@@ -82,20 +53,7 @@ impl SpriteFetch {
         self.fetch_counter
     }
 
-    /// Read one byte of sprite tile data (low or high bitplane).
-    ///
-    /// Collapses the gejy → famu → ~ma4 chain: hardware's gejy AO22
-    /// (XYMO-controlled mux — xuso_n for 8×8, wago = XOR(sprite_y_store_b3,
-    /// wuky) for 8×16) drives the famu tri-state inverter onto bus:~ma4
-    /// when abon = NOR2(tuly, vonu) OR NOT(mode3) goes low — the
-    /// (tuly OR vonu) sprite tile-data fetch window during Mode 3.
-    /// Emulator collapses to indexed VRAM access using live
-    /// `regs.control.sprite_size()` for tile_index masking (8×16:
-    /// tile.0 & 0xFE) and the row-within-sprite computation (flipped_y
-    /// → final_block / final_idx). Live sprite_size read at fetch time
-    /// matches gejy's combinational live-XYMO sampling; the famu enable
-    /// window is implicit via the fetch_counter==3/5 read positions
-    /// (called only inside SpriteState::Fetching).
+    /// Reads `sprite_size` live at fetch time, matching the combinational gejy/XYMO path on hardware.
     fn read_tile_data(
         &mut self,
         regs: &PipelineRegisters,
@@ -142,8 +100,7 @@ impl SpriteFetch {
         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
     }
 
-    /// Advance the sprite fetch pipeline by one dot. Returns `true` when
-    /// the fetch is complete (fetch_counter == 5, tile data high read).
+    /// Returns true on completion (counter==5).
     pub(in crate::ppu) fn advance(
         &mut self,
         regs: &PipelineRegisters,
@@ -153,34 +110,22 @@ impl SpriteFetch {
     ) -> bool {
         match self.fetch_counter {
             2 => {
-                // Tile data low: address drive. SRAM response at next dot;
-                // emulator captures the byte using LCDC live at this dot.
                 self.tile_data_low = self.read_tile_data(regs, oam, oam_bus, vram, false);
             }
             4 => {
-                // Tile data high: address drive. Same.
                 self.tile_data_high = self.read_tile_data(regs, oam, oam_bus, vram, true);
             }
             5 => {
-                // WUTY fires; fetch complete. Bytes already captured at 2/4.
                 return true;
             }
-            _ => {
-                // GetTile wait (0, 1) and inter-stage dots (3): no VRAM action.
-            }
+            _ => {}
         }
         self.fetch_counter += 1;
         false
     }
 
-    /// wuty-pulse merge — temp-latch bytes into ObjShifter via the
-    /// sprite_onN transparency gate. X-flip reversal applied here.
-    /// Palette / priority broadcast from OAM attributes (DEPO for priority).
+    /// Merge fetched bytes into ObjShifter via sprite_onN transparency gating; X-flip reverses bits.
     pub(in crate::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter) {
-        // X-flip: hardware reverses the bit order when loading the shift
-        // register. For normal sprites, MSB shifts out first (leftmost pixel).
-        // For flipped sprites, LSB shifts out first — achieved by reversing
-        // the byte's bit order before loading.
         let sprite_low = if self.attributes.flip_x() {
             self.tile_data_low.reverse_bits()
         } else {
@@ -207,12 +152,8 @@ impl SpriteFetch {
     }
 }
 
-/// Sprite fetch lifecycle. On hardware, FEPO (sprite X match) freezes
-/// the pixel clock, the fetch runs, then the pixel clock resumes
-/// normally on the next dot (state_old.FEPO=0).
+/// FEPO (sprite X match) freezes SACU; the fetch runs; SACU resumes on the next dot.
 pub(in crate::ppu) enum SpriteState {
-    /// No sprite activity. Pixel clock runs normally.
     Idle,
-    /// Sprite fetch in progress (wait + data phases).
     Fetching(SpriteFetch),
 }
