@@ -1,10 +1,4 @@
-use channels::{
-    Channels,
-    noise::{self, NoiseChannel},
-    pulse::{self, PulseChannel},
-    pulse_sweep::{self, PulseSweepChannel},
-    wave::{self, WaveChannel},
-};
+use channels::{Channels, noise, pulse, pulse_sweep, wave};
 use volume::Volume;
 
 pub mod channels;
@@ -29,14 +23,14 @@ const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequ
 
 #[derive(Clone)]
 pub struct Audio {
-    pub enabled: bool,
-    pub channels: Channels,
-    pub volume_left: Volume,
-    pub volume_right: Volume,
-    pub nr50: u8,
+    pub(crate) enabled: bool,
+    pub(crate) channels: Channels,
+    pub(crate) volume_left: Volume,
+    pub(crate) volume_right: Volume,
+    pub(crate) nr50: u8,
 
-    pub prev_div_apu_bit: bool,
-    pub frame_sequencer_step: u8,
+    pub(crate) prev_div_apu_bit: bool,
+    pub(crate) frame_sequencer_step: u8,
     sample_counter: f32,
     sample_buffer: Vec<(f32, f32)>,
 }
@@ -45,12 +39,7 @@ impl Audio {
     pub fn post_boot() -> Self {
         Self {
             enabled: true,
-            channels: Channels {
-                ch1: PulseSweepChannel::default(),
-                ch2: PulseChannel::default(),
-                ch3: WaveChannel::default(),
-                ch4: NoiseChannel::default(),
-            },
+            channels: Channels::default(),
             volume_left: Volume::max(),
             volume_right: Volume::max(),
             nr50: 0x77,
@@ -66,12 +55,7 @@ impl Audio {
     pub fn new() -> Self {
         Self {
             enabled: false,
-            channels: Channels {
-                ch1: PulseSweepChannel::default(),
-                ch2: PulseChannel::default(),
-                ch3: WaveChannel::default(),
-                ch4: NoiseChannel::default(),
-            },
+            channels: Channels::default(),
             volume_left: Volume(0),
             volume_right: Volume(0),
             nr50: 0x00,
@@ -131,28 +115,15 @@ impl Audio {
     }
 
     fn tick_frame_sequencer(&mut self) {
-        match self.frame_sequencer_step {
-            0 | 4 => {
-                self.channels.ch1.tick_length();
-                self.channels.ch2.tick_length();
-                self.channels.ch3.tick_length();
-                self.channels.ch4.tick_length();
-            }
-            2 | 6 => {
-                self.channels.ch1.tick_length();
-                self.channels.ch2.tick_length();
-                self.channels.ch3.tick_length();
-                self.channels.ch4.tick_length();
-                self.channels.ch1.tick_sweep();
-            }
-            7 => {
-                self.channels.ch1.tick_envelope();
-                self.channels.ch2.tick_envelope();
-                self.channels.ch4.tick_envelope();
-            }
-            _ => {}
+        if matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6) {
+            self.channels.tick_length_all();
         }
-
+        if matches!(self.frame_sequencer_step, 2 | 6) {
+            self.channels.ch1.tick_sweep();
+        }
+        if self.frame_sequencer_step == 7 {
+            self.channels.tick_envelope_all();
+        }
         self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
     }
 
@@ -166,44 +137,12 @@ impl Audio {
     }
 
     fn mix(&self) -> (f32, f32) {
-        let mut left = 0.0f32;
-        let mut right = 0.0f32;
-
-        let ch1 = self.channels.ch1.sample();
-        let ch2 = self.channels.ch2.sample();
-        let ch3 = self.channels.ch3.sample();
-        let ch4 = self.channels.ch4.sample();
-
-        if self.channels.ch1.enabled.output_left {
-            left += ch1;
-        }
-        if self.channels.ch1.enabled.output_right {
-            right += ch1;
-        }
-        if self.channels.ch2.enabled.output_left {
-            left += ch2;
-        }
-        if self.channels.ch2.enabled.output_right {
-            right += ch2;
-        }
-        if self.channels.ch3.enabled.output_left {
-            left += ch3;
-        }
-        if self.channels.ch3.enabled.output_right {
-            right += ch3;
-        }
-        if self.channels.ch4.enabled.output_left {
-            left += ch4;
-        }
-        if self.channels.ch4.enabled.output_right {
-            right += ch4;
-        }
-
-        // Scale by master volume and normalize (4 channels max)
-        left = left / 4.0 * self.volume_left.percentage();
-        right = right / 4.0 * self.volume_right.percentage();
-
-        (left, right)
+        let (left, right) = self.channels.mix();
+        // Normalize over four channels and scale by master volume.
+        (
+            left / 4.0 * self.volume_left.percentage(),
+            right / 4.0 * self.volume_right.percentage(),
+        )
     }
 
     pub fn drain_samples(&mut self) -> Vec<(f32, f32)> {

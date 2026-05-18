@@ -161,10 +161,7 @@ impl Audio {
                     self.enabled = true;
                 } else {
                     self.enabled = false;
-                    self.channels.ch1.reset();
-                    self.channels.ch2.reset();
-                    self.channels.ch3.reset();
-                    self.channels.ch4.reset();
+                    self.channels.reset_all();
                     self.nr50 = 0;
                     self.volume_left = Volume(0);
                     self.volume_right = Volume(0);
