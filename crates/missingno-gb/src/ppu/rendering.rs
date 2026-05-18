@@ -649,15 +649,12 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // NYXU pulse holds the BG shifter via LOZE (overrides the concurrent SACU edge).
-        // OBJ shifter is not LOZE-gated.
-        if sacu && !nyxu_pulse {
-            self.bg_shifter.shift();
-        }
         if sacu {
+            // NYXU pulse holds the BG shifter via LOZE; OBJ shifter is not LOZE-gated.
+            if !nyxu_pulse {
+                self.bg_shifter.shift();
+            }
             self.obj_shifter.shift();
-        }
-        if sacu {
             self.pixel_counter.advance();
         }
 
