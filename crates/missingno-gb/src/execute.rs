@@ -7,14 +7,6 @@ use super::{
     ppu::{self, PpuTickResult, types::palette::PaletteIndex},
 };
 
-/// Whether the OAM bug corruption uses the read or write formula.
-/// Determined by the CPU operation type, not by the OAM control
-/// signals at the moment of the spurious SRAM clock.
-pub(super) enum OamBugKind {
-    Read,
-    Write,
-}
-
 /// Result of executing one instruction.
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
@@ -326,41 +318,21 @@ impl GameBoy {
             }
         }
 
-        // BOWA (dot 0): record OAM bug arming from any OAM-range
-        // address on the CPU bus this M-cycle. CUFE pulses at MOPA
-        // gated on SARO_ADDR_OAMp (the address-decoder signal), so
-        // the arming must be visible at BOWA — same M-cycle as the
-        // MOPA-rise apply at dot 2. Three sources:
-        //   1. InternalOamBug (IDU step puts SP+1/HL+1/HL-1 on bus)
-        //   2. BusAction::Read with OAM-range address
-        //   3. BusAction::Write with OAM-range address
+        // BOWA (dot 0): arm OAM corruption from any OAM-range address
+        // on the CPU bus this M-cycle. CUFE pulses at MOPA gated on
+        // SARO_ADDR_OAMp, so the arming must be visible at BOWA —
+        // same M-cycle as the MOPA-rise apply at dot 2. Three
+        // sources: IDU step (SP+1/HL+1/HL-1 on the address bus), a
+        // pending CPU read, or a pending CPU write.
         if dot.bowa() {
-            if let DotAction::InternalOamBug { address } = &self.current_dot_action
-                && (0xFE00..=0xFEFF).contains(address)
-            {
-                match self.pending_oam_bug {
-                    Some(OamBugKind::Read) => {}
-                    _ => {
-                        self.pending_oam_bug = Some(OamBugKind::Write);
-                    }
-                }
+            if let DotAction::InternalOamBug { address } = self.current_dot_action {
+                self.ppu.arm_oam_bug_for_write(address);
             }
-
-            if let Some(address) = self.cpu.pending_bus_read()
-                && (0xFE00..=0xFEFF).contains(&address)
-            {
-                self.pending_oam_bug = Some(OamBugKind::Read);
+            if let Some(address) = self.cpu.pending_bus_read() {
+                self.ppu.arm_oam_bug_for_read(address);
             }
-
-            if let Some((address, _)) = self.cpu.pending_bus_write()
-                && (0xFE00..=0xFEFF).contains(&address)
-            {
-                match self.pending_oam_bug {
-                    Some(OamBugKind::Read) => {}
-                    _ => {
-                        self.pending_oam_bug = Some(OamBugKind::Write);
-                    }
-                }
+            if let Some((address, _)) = self.cpu.pending_bus_write() {
+                self.ppu.arm_oam_bug_for_write(address);
             }
         }
 
@@ -437,15 +409,9 @@ impl GameBoy {
         // STAT reads, so settle_alet is not needed. G4.2 confirmed WODU
         // doesn't depend on XYMU, making the prediction reliable.
 
-        // MOPA rising edge (dot 2): fire OAM bug.
-        if dot.mopa()
-            && !dot.boga()
-            && let Some(kind) = self.pending_oam_bug.take()
-        {
-            match kind {
-                OamBugKind::Read => self.ppu.oam_bug_read(),
-                OamBugKind::Write => self.ppu.oam_bug_write(),
-            }
+        // MOPA rising edge (dot 2): fire any armed OAM bug.
+        if dot.mopa() && !dot.boga() {
+            self.ppu.apply_pending_oam_bug();
         }
 
         self.clock_phase = ClockPhase::High;

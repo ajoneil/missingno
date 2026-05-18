@@ -73,11 +73,6 @@ pub struct GameBoy {
     current_dot_action: DotAction,
     /// Dot position for the current dot, set on Rising and consumed during Falling.
     current_dot: BusDot,
-    /// Pending OAM-corruption arming. Set when an OAM-range bus
-    /// address (CPU read/write or IDU step) appears on the bus;
-    /// cleared and applied at the next MOPA (dot 2 rise) — which
-    /// may belong to the next instruction.
-    pending_oam_bug: Option<execute::OamBugKind>,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
@@ -104,7 +99,6 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
-            pending_oam_bug: None,
             cpu_bus: CpuBus::new(),
         };
         gb.rebuild_state();
@@ -172,7 +166,6 @@ impl GameBoy {
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
-        self.pending_oam_bug = None;
         self.cpu_bus = CpuBus::new();
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);

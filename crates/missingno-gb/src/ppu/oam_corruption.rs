@@ -28,6 +28,50 @@
 
 use super::Ppu;
 
+/// Whether a pending OAM-bug corruption uses the read or write
+/// formula. Determined by the CPU operation that produced the
+/// OAM-range address on the bus, not by the OAM control signals at
+/// the moment of the spurious SRAM clock.
+pub(super) enum OamBugKind {
+    Read,
+    Write,
+}
+
+/// OAM address range — used as the arming filter for CUFE pulses
+/// derived from the CPU address bus.
+const OAM_RANGE: std::ops::RangeInclusive<u16> = 0xFE00..=0xFEFF;
+
+impl Ppu {
+    /// Arm an OAM-bug Read for the next MOPA if `address` falls in
+    /// the OAM range. Reads have priority over writes — a Read
+    /// arming sticks even if a subsequent Write is armed in the same
+    /// M-cycle.
+    pub(crate) fn arm_oam_bug_for_read(&mut self, address: u16) {
+        if OAM_RANGE.contains(&address) {
+            self.pending_oam_bug = Some(OamBugKind::Read);
+        }
+    }
+
+    /// Arm an OAM-bug Write for the next MOPA if `address` falls in
+    /// the OAM range. Does not overwrite an existing Read arming.
+    pub(crate) fn arm_oam_bug_for_write(&mut self, address: u16) {
+        if OAM_RANGE.contains(&address) && !matches!(self.pending_oam_bug, Some(OamBugKind::Read)) {
+            self.pending_oam_bug = Some(OamBugKind::Write);
+        }
+    }
+
+    /// Fire whichever OAM bug is armed (if any) and clear the arming.
+    /// Called at MOPA (dot 2 rise) — possibly in the M-cycle that
+    /// follows the arming.
+    pub(crate) fn apply_pending_oam_bug(&mut self) {
+        match self.pending_oam_bug.take() {
+            Some(OamBugKind::Read) => self.oam_bug_read(),
+            Some(OamBugKind::Write) => self.oam_bug_write(),
+            None => {}
+        }
+    }
+}
+
 impl Ppu {
     /// Trigger OAM bug write corruption during Mode 2.
     ///

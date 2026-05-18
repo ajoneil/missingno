@@ -129,6 +129,12 @@ pub struct Ppu {
     /// post-write regs directly (combinational consumers fire after
     /// XYLO has settled through gate delay).
     sprites_enabled_pre_cupa: bool,
+    /// OAM-corruption arming. Set at BOWA (dot 0) when an OAM-range
+    /// address sits on the CPU bus; cleared and fired at MOPA (dot 2
+    /// rise) — possibly in the next instruction. CUFE pulses on the
+    /// CPU address bus while ASAM blocks OAM-address driving, so the
+    /// SRAM clock spikes on the scanner's row.
+    pending_oam_bug: Option<oam_corruption::OamBugKind>,
 }
 
 impl Ppu {
@@ -191,6 +197,7 @@ impl Ppu {
             pending_lcd_on_init: false,
             prev_besu: false,
             sprites_enabled_pre_cupa: true,
+            pending_oam_bug: None,
         }
     }
 
@@ -253,6 +260,7 @@ impl Ppu {
             pending_lcd_on_init: false,
             prev_besu: false,
             sprites_enabled_pre_cupa: false,
+            pending_oam_bug: None,
         }
     }
 
@@ -1022,6 +1030,7 @@ impl Ppu {
             pending_lcd_on_init: false,
             prev_besu: false,
             sprites_enabled_pre_cupa: lcd_on,
+            pending_oam_bug: None,
         }
     }
 }
