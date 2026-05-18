@@ -419,15 +419,13 @@ impl Cpu {
                     // uses HL.
                     if taken {
                         cpu.bus_counter = address;
-                        cpu.pc = cpu.bus_counter;
                     }
                     (Phase::Empty, Commit::NoOperation)
                 } else if is_relative && taken {
-                    // JR taken: decode-edge bus_counter + pc write
+                    // JR taken: decode-edge bus_counter write
                     // (multi-cycle — Phase::InternalOamBug shows target
                     // on bus).
                     cpu.bus_counter = address;
-                    cpu.pc = cpu.bus_counter;
                     (Phase::InternalOamBug { address }, Commit::NoOperation)
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
@@ -445,12 +443,11 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if taken {
-                    let pc = cpu.pc;
+                    let pc = cpu.bus_counter;
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
                     cpu.bus_counter = address;
-                    cpu.pc = cpu.bus_counter;
                     (
                         Phase::CondCall {
                             taken: true,
@@ -497,12 +494,11 @@ impl Cpu {
                 Commit::NoOperation,
             ),
             Jump::Restart(address) => {
-                let pc = cpu.pc;
+                let pc = cpu.bus_counter;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
                 cpu.bus_counter = *address as u16;
-                cpu.pc = cpu.bus_counter;
                 (
                     Phase::Push {
                         sp,

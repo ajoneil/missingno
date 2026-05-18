@@ -45,17 +45,10 @@ pub struct Cpu {
 
     pub stack_pointer: u16,
     /// IDU address counter. Drives the address bus during fetch and
-    /// operand reads; advances by 1 per fetched byte. Hardware IDU
-    /// output — distinct from `reg.pc` (currently mirrored as `pc`).
+    /// operand reads; advances by 1 per fetched byte. Functions as
+    /// the working PC; the hardware-truthful split into `reg.pc` DFF
+    /// vs IDU output isn't modelled (no observable consumer yet).
     pub bus_counter: u16,
-    /// PC register DFF (hardware `reg.pc`). Latches on `bus_read`
-    /// (= `bus_addr + 1`) but NOT on JP/JR's final operand (which uses
-    /// `bus_pass`). Currently mirrors `bus_counter`; divergence points
-    /// will be added incrementally.
-    pub(crate) pc: u16,
-    /// PC at the start of the current instruction. Latched at each
-    /// instruction boundary; stays constant during operand fetches.
-    pub(crate) instruction_pc: u16,
 
     /// Bus data latch — the byte the SM83 captured off `cpu_port_d`
     /// near the end of T-cycle 3 of a read M-cycle. Holds until the
@@ -167,8 +160,6 @@ impl Cpu {
 
             stack_pointer: 0xfffe,
             bus_counter: 0x0100,
-            pc: 0x0100,
-            instruction_pc: 0x0100,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -208,8 +199,6 @@ impl Cpu {
             l: snap.l,
             stack_pointer: snap.sp,
             bus_counter: snap.pc,
-            pc: snap.pc,
-            instruction_pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
             ime: Dff::new(if snap.ime {
                 InterruptMasterEnable::Enabled
@@ -241,8 +230,6 @@ impl Cpu {
             l: 0,
             stack_pointer: 0,
             bus_counter: 0,
-            pc: 0,
-            instruction_pc: 0,
             data_latch: 0,
             flags: Flags::empty(),
             ime: Dff::new(InterruptMasterEnable::Disabled),

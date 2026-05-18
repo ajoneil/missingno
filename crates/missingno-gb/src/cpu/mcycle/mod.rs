@@ -382,9 +382,8 @@ impl Cpu {
                     // HALT-IDU+1 suppression + dispatch's universal `-1`
                     // step collapsed at the boundary: pc HALT+1 → HALT_addr.
                     self.bus_counter = self.bus_counter.wrapping_sub(1);
-                    self.pc = self.bus_counter;
                     if self.dispatch.dispatch_active() {
-                        let pc = self.pc;
+                        let pc = self.bus_counter;
                         self.phase = CpuPhase::InterruptDispatch {
                             sp: self.stack_pointer,
                             pc_hi: (pc >> 8) as u8,
@@ -394,7 +393,6 @@ impl Cpu {
                         self.exec_step = 0;
                         self.pending_vector_resolve = false;
                         self.boundary_flag = true;
-                        self.instruction_pc = pc;
                         return self.mcycle_isr(0);
                     }
                 } else {
@@ -450,7 +448,7 @@ impl Cpu {
                     self.halt_state = HaltState::Running;
                     self.halt_rs_latched = false;
                     self.halt_wake_active = true;
-                    let pc = self.pc;
+                    let pc = self.bus_counter;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
                         pc_hi: (pc >> 8) as u8,
@@ -460,7 +458,6 @@ impl Cpu {
                     self.exec_step = 0;
                     self.pending_vector_resolve = false;
                     self.boundary_flag = true;
-                    self.instruction_pc = pc;
                     self.mcycle_isr(0)
                 } else {
                     self.enter_post_halt_fetch(read_value)
@@ -504,7 +501,6 @@ impl Cpu {
                 self.halt_bug = false;
             } else {
                 self.bus_counter = fetch_addr.wrapping_add(1);
-                self.pc = self.bus_counter;
             }
 
             let needed = operand_count(opcode);
@@ -545,7 +541,6 @@ impl Cpu {
         self.phase = CpuPhase::Halted(HaltPhase::Spin);
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
         MCycleAction::Internal {
             address: self.bus_counter,
         }
@@ -557,7 +552,6 @@ impl Cpu {
         self.phase = CpuPhase::Halted(HaltPhase::SetupMiss);
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
         MCycleAction::Internal {
             address: self.bus_counter,
         }
@@ -570,7 +564,6 @@ impl Cpu {
         self.phase = CpuPhase::Halted(HaltPhase::WakeIntake);
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
         MCycleAction::Internal {
             address: self.bus_counter,
         }
@@ -585,7 +578,6 @@ impl Cpu {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.instruction_pc = self.bus_counter;
         self.mcycle_fetch(read_value)
     }
 
@@ -656,7 +648,6 @@ impl Cpu {
                         0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA // JP nn / JP cc,nn
                     );
                     if !is_jp_nn {
-                        self.pc = self.bus_counter;
                     }
                     let b = *bytes;
                     let n = *bytes_read;
@@ -672,7 +663,6 @@ impl Cpu {
 
                 // Non-last operand: issue bus_read for next byte.
                 // On hardware, reg.pc = adp fires with cpu_bus_read.
-                self.pc = self.bus_counter;
                 (Some(MCycleAction::Read { address: *pc }), true)
             }
 
@@ -719,8 +709,6 @@ impl Cpu {
                     self.exec_step = 0;
                     self.pending_vector_resolve = false;
                     self.boundary_flag = true;
-                    self.instruction_pc = pc;
-                    self.pc = pc;
                     self.bus_counter = pc;
                     return (self.next_mcycle(0), false);
                 }
@@ -729,9 +717,7 @@ impl Cpu {
                     self.halt_bug = false;
                 } else {
                     self.bus_counter = fetch_addr.wrapping_add(1);
-                    self.pc = self.bus_counter;
                 }
-                self.instruction_pc = self.bus_counter;
 
                 let needed = operand_count(opcode);
                 if needed == 0 {
@@ -833,7 +819,7 @@ impl Cpu {
 
             Phase::InternalOp { count } => {
                 if current_step < *count {
-                    (Some(MCycleAction::Internal { address: self.pc }), true)
+                    (Some(MCycleAction::Internal { address: self.bus_counter }), true)
                 } else {
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
@@ -862,7 +848,7 @@ impl Cpu {
                         let has_trailing =
                             matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
-                            (Some(MCycleAction::Internal { address: self.pc }), true)
+                            (Some(MCycleAction::Internal { address: self.bus_counter }), true)
                         } else {
                             (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                         }
@@ -909,11 +895,10 @@ impl Cpu {
                     // target is placed on the bus at DELTA_EF, and PC
                     // updates to target+1 when the fetch processes.
                     self.pending_jump_target = Some(*target);
-                    (Some(MCycleAction::Internal { address: self.pc }), true)
+                    (Some(MCycleAction::Internal { address: self.bus_counter }), true)
                 } else {
                     if let Some(target) = self.pending_jump_target.take() {
                         self.bus_counter = target;
-                        self.pc = target;
                     }
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
@@ -951,7 +936,6 @@ impl Cpu {
                     _ => {
                         if let Some(target) = self.pending_jump_target.take() {
                             self.bus_counter = target;
-                            self.pc = target;
                         }
                         (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                     }
@@ -962,7 +946,7 @@ impl Cpu {
                 let sp = *sp;
                 let taken = *taken;
                 match current_step {
-                    0 => (Some(MCycleAction::Internal { address: self.pc }), true),
+                    0 => (Some(MCycleAction::Internal { address: self.bus_counter }), true),
                     1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
@@ -976,7 +960,7 @@ impl Cpu {
                     }
                     3 => {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
-                        (Some(MCycleAction::Internal { address: self.pc }), true)
+                        (Some(MCycleAction::Internal { address: self.bus_counter }), true)
                     }
                     _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
@@ -1029,7 +1013,7 @@ impl Cpu {
             0 => {
                 self.ime.write_immediate(InterruptMasterEnable::Disabled);
                 self.ime_delay = false;
-                Some(MCycleAction::Internal { address: self.pc })
+                Some(MCycleAction::Internal { address: self.bus_counter })
             }
             1 => Some(MCycleAction::InternalOamBug { address: sp }),
             2 => {
@@ -1107,8 +1091,6 @@ impl Cpu {
         if let Some(target) = self.pending_jump_target.take() {
             self.bus_counter = target;
         }
-        self.pc = self.bus_counter;
-        self.instruction_pc = self.bus_counter;
         self.boundary_flag = true;
 
         if self.dispatch.dispatch_active() {
@@ -1118,7 +1100,7 @@ impl Cpu {
 
             self.halt_state = HaltState::Running;
             self.halt_rs_latched = false;
-            let pc = self.pc;
+            let pc = self.bus_counter;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
@@ -1127,7 +1109,6 @@ impl Cpu {
             };
             self.exec_step = 0;
             self.pending_vector_resolve = false;
-            self.instruction_pc = pc;
             return self
                 .next_mcycle(0)
                 .expect("next_mcycle must return Some after dispatch arm");
