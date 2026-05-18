@@ -1,7 +1,7 @@
 //! The SoC's shared CPU data bus (`cpu_port_d[7:0]`): its current
-//! value, the M-cycle-boundary staging used to drive reads and writes
-//! onto it at hardware-accurate dots, and the access-trace primitives
-//! the debugger uses to observe traffic.
+//! value, the M-cycle activity tracking that times reads and writes
+//! onto it at hardware-accurate dots, and the access-trace
+//! primitives the debugger uses to observe traffic.
 
 /// The SoC's shared CPU data bus (`cpu_port_d[7:0]`).
 ///
@@ -17,73 +17,158 @@
 /// driver was stably driving at dot 2.085.
 pub struct CpuBus {
     /// Value currently on `cpu_port_d[7:0]`. Updated at dot 2 of each
-    /// CPU read M-cycle; latched by the CPU at end of M-cycle.
+    /// CPU read/write M-cycle; latched by the CPU at end of M-cycle.
     pub data: u8,
+    activity: Activity,
+}
+
+/// What the CPU is doing on the bus during the current M-cycle.
+///
+/// At most one of read/write is in flight at any time: the CPU
+/// asserts either `cpu_rd` or `cpu_wr` per M-cycle, never both.
+enum Activity {
+    Idle,
+    /// CPU is reading from `address`. The addressed peripheral's
+    /// tri-state driver (`tobe`/`wafu`) enables at dot 2.005 and
+    /// drives `cpu_port_d`; the CPU latches at dot 3.995. `applied`
+    /// flips true once the dot-2 drive has fired.
+    Read { address: u16, applied: bool },
+    /// CPU is writing to `address`. The write value is driven onto
+    /// the bus at CUPA-rising (rise of dot 2). PPU register latches
+    /// are transparent during dots 2-3 and capture at CUPA-falling
+    /// (end of dot 3); memory commits at fall() of dot 3.
+    Write {
+        address: u16,
+        applied: bool,
+        /// OAM/VRAM lock state at CUPA-rising (rise of dot 2).
+        /// Combined with the mid-CUPA and commit-time samples — the
+        /// three samples model the AJUJ-high window: a write lands
+        /// if AJUJ is high at ANY edge during the CUPA strobe, so
+        /// block iff locked at ALL three.
+        /// None = non-OAM/VRAM address.
+        locked_at_snapshot: Option<bool>,
+        /// OAM/VRAM lock state at the mid-CUPA edge (fall of dot 2).
+        /// Catches the AJUJ-glitch window when AVAP fires this fall:
+        /// BESU clears immediately (mode2↓), begin_rendering defers
+        /// to the next rise (mode3↑), so this sample sees
+        /// `mode2=0 AND mode3=0` → unlocked. The write then lands
+        /// at the straddle even though both snap and commit see
+        /// locked state.
+        /// None = non-OAM/VRAM address.
+        locked_at_mid: Option<bool>,
+    },
 }
 
 impl CpuBus {
     pub(crate) fn new() -> Self {
-        Self { data: 0xFF }
-    }
-}
-
-/// A CPU bus write staged at the M-cycle boundary, applied at dot 2
-/// of the write M-cycle. The CPU drives `cpu_port_d` at dot 2 (CUPA-
-/// rising on the PPU side, `cpu_wr` asserted on the SM83 side); PPU
-/// register latches are transparent during dots 2-3 and capture at
-/// CUPA-falling (end of dot 3). Memory consumers commit at end-of-
-/// M-cycle (fall of dot 3) via `write_byte`. The write VALUE lives
-/// in `cpu_bus.data` — symmetric with `StagedBusRead` where the
-/// value is also in `cpu_bus.data` (driven by the peripheral).
-pub(crate) struct StagedBusWrite {
-    pub(crate) address: u16,
-    /// Whether the bus has been driven for this write.
-    pub(crate) applied: bool,
-    /// OAM/VRAM lock state at CUPA-rising (rise of dot 2 of the write
-    /// M-cycle). Captured separately from the mid-CUPA and commit
-    /// samples below — the three samples model the AJUJ-high window:
-    /// a write lands if AJUJ is high at ANY edge during the CUPA
-    /// strobe, so block iff locked at ALL three samples.
-    /// None = non-OAM/VRAM address.
-    pub(crate) locked_at_snapshot: Option<bool>,
-    /// OAM/VRAM lock state at the mid-CUPA edge (fall of dot 2 of the
-    /// write M-cycle). Catches the AJUJ-glitch window when AVAP fires
-    /// this fall: BESU clears immediately (mode2↓), begin_rendering
-    /// defers to the next rise (mode3↑), so this sample sees
-    /// `mode2=0 AND mode3=0` → unlocked. The write then lands at the
-    /// straddle even though both snap and commit see locked state.
-    /// None = non-OAM/VRAM address.
-    pub(crate) locked_at_mid: Option<bool>,
-}
-
-impl StagedBusWrite {
-    pub(crate) fn new(address: u16) -> Self {
         Self {
+            data: 0xFF,
+            activity: Activity::Idle,
+        }
+    }
+
+    /// Clear at the M-cycle boundary (rise of dot 0).
+    pub(crate) fn clear_activity(&mut self) {
+        self.activity = Activity::Idle;
+    }
+
+    /// Stage a read for this M-cycle.
+    pub(crate) fn stage_read(&mut self, address: u16) {
+        self.activity = Activity::Read {
+            address,
+            applied: false,
+        };
+    }
+
+    /// Stage a write for this M-cycle.
+    pub(crate) fn stage_write(&mut self, address: u16) {
+        self.activity = Activity::Write {
             address,
             applied: false,
             locked_at_snapshot: None,
             locked_at_mid: None,
+        };
+    }
+
+    /// Address of a pending (unapplied) read this M-cycle.
+    pub(crate) fn pending_read(&self) -> Option<u16> {
+        match self.activity {
+            Activity::Read {
+                address,
+                applied: false,
+            } => Some(address),
+            _ => None,
         }
     }
-}
 
-/// A CPU bus read staged at the M-cycle boundary, applied at dot 2
-/// (matching `tobe`/`wafu` rising at hardware's dot 2.005). The
-/// addressed peripheral's tri-state driver enables at this dot, the
-/// bus settles to its source value, and the CPU latches at end of
-/// M-cycle. Same-M-cycle peripheral state changes that fire after
-/// dot 2 do not propagate to `cpu_port_d` in time for the latch.
-pub(crate) struct StagedBusRead {
-    pub(crate) address: u16,
-    /// Whether the bus has been driven for this read.
-    pub(crate) applied: bool,
-}
+    /// Address of a pending (unapplied) write this M-cycle.
+    pub(crate) fn pending_write(&self) -> Option<u16> {
+        match self.activity {
+            Activity::Write {
+                address,
+                applied: false,
+                ..
+            } => Some(address),
+            _ => None,
+        }
+    }
 
-impl StagedBusRead {
-    pub(crate) fn new(address: u16) -> Self {
-        Self {
-            address,
-            applied: false,
+    /// Address of an applied write whose mid-CUPA lock sample has
+    /// not yet been recorded. Used at fall of dot 2 to drive the
+    /// AJUJ-glitch sampling.
+    pub(crate) fn mid_sample_pending(&self) -> Option<u16> {
+        match self.activity {
+            Activity::Write {
+                address,
+                applied: true,
+                locked_at_mid: None,
+                ..
+            } => Some(address),
+            _ => None,
+        }
+    }
+
+    /// Drive the bus with `value` and mark the staged read/write as
+    /// applied. On `Idle`, only `data` is updated.
+    pub(crate) fn drive(&mut self, value: u8) {
+        self.data = value;
+        match &mut self.activity {
+            Activity::Read { applied, .. } | Activity::Write { applied, .. } => {
+                *applied = true;
+            }
+            Activity::Idle => {}
+        }
+    }
+
+    /// Record the OAM/VRAM lock state at CUPA-rising (rise of dot 2).
+    /// No-op for non-write activity.
+    pub(crate) fn record_snapshot_lock(&mut self, lock: Option<bool>) {
+        if let Activity::Write {
+            locked_at_snapshot, ..
+        } = &mut self.activity
+        {
+            *locked_at_snapshot = lock;
+        }
+    }
+
+    /// Record the OAM/VRAM lock state at mid-CUPA (fall of dot 2).
+    /// No-op for non-write activity.
+    pub(crate) fn record_mid_lock(&mut self, lock: Option<bool>) {
+        if let Activity::Write { locked_at_mid, .. } = &mut self.activity {
+            *locked_at_mid = lock;
+        }
+    }
+
+    /// AJUJ-window lock samples for a staged write — `(snapshot, mid)`.
+    /// `(None, None)` if no write activity.
+    pub(crate) fn write_lock_samples(&self) -> (Option<bool>, Option<bool>) {
+        match self.activity {
+            Activity::Write {
+                locked_at_snapshot,
+                locked_at_mid,
+                ..
+            } => (locked_at_snapshot, locked_at_mid),
+            _ => (None, None),
         }
     }
 }

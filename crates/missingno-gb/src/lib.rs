@@ -75,19 +75,13 @@ pub struct GameBoy {
     current_dot_action: DotAction,
     /// Dot position for the current dot, set on Rising and consumed during Falling.
     current_dot: BusDot,
-    /// A CPU bus write staged at the M-cycle boundary, applied at
-    /// dot 2 to drive `cpu_bus.data` with the write value (CUPA-
-    /// rising / `cpu_wr` asserted equivalent).
-    staged_bus_write: Option<cpu_bus::StagedBusWrite>,
-    /// A CPU bus read staged at the M-cycle boundary, applied at
-    /// dot 2 to drive the value onto `cpu_bus`.
-    staged_bus_read: Option<cpu_bus::StagedBusRead>,
     /// Pending OAM-corruption arming. Set when an OAM-range bus
     /// address (CPU read/write or IDU step) appears on the bus;
     /// cleared and applied at the next MOPA (dot 2 rise) — which
     /// may belong to the next instruction.
     pending_oam_bug: Option<execute::OamBugKind>,
-    /// Shared CPU data bus state.
+    /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
+    /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
 }
 
@@ -113,8 +107,6 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             current_dot_action: DotAction::Idle,
             current_dot: BusDot::ZERO,
-            staged_bus_write: None,
-            staged_bus_read: None,
             pending_oam_bug: None,
             cpu_bus: CpuBus::new(),
         };
@@ -184,13 +176,13 @@ impl GameBoy {
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
-        self.staged_bus_read = self.cpu.pending_bus_read().map(cpu_bus::StagedBusRead::new);
-        self.staged_bus_write = self
-            .cpu
-            .pending_bus_write()
-            .map(|(address, _value)| cpu_bus::StagedBusWrite::new(address));
         self.pending_oam_bug = None;
         self.cpu_bus = CpuBus::new();
+        if let Some((address, _value)) = self.cpu.pending_bus_write() {
+            self.cpu_bus.stage_write(address);
+        } else if let Some(address) = self.cpu.pending_bus_read() {
+            self.cpu_bus.stage_read(address);
+        }
     }
 
     pub fn cartridge(&self) -> &Cartridge {
