@@ -1,26 +1,13 @@
-//! DMG on-die SRAM power-on pattern.
-//!
-//! Models the bring-up state of the SRAM cells used for WRAM (0xC000),
-//! HRAM (0xFF80), and OAM (0xFE00). At power-on each cell settles
-//! according to its bit-line / word-line layout: Gekkio's DMG dumps
-//! show this as 16-byte word-line stripes alternating 0xFF and 0x00,
-//! with a small minority of "stuck" cells that come up at values
-//! outside {0x00, 0xFF} due to per-cell manufacturing variability.
-//!
-//! `fill` produces a deterministic approximation of that state: the
-//! stripe pattern overlaid with a fixed table of stuck-cell offsets.
-//! The pattern is purely a function of byte offset, so replay and
-//! snapshot semantics are unaffected.
+//! DMG on-die SRAM power-on pattern: 16-byte word-line stripes
+//! alternating 0xFF / 0x00, overlaid with a fixed table of "stuck"
+//! cells that settle at mixed-bit values due to per-cell manufacturing
+//! variability. Used to seed WRAM, HRAM, and OAM at cold start.
 
 const STRIPE_LEN: usize = 16;
 
-/// Stuck-cell overlay: byte offsets within an SRAM region that settle
-/// outside the {0x00, 0xFF} stripe pattern. Offsets past the region's
-/// length are silently ignored, so the same table works for WRAM
-/// (8 KiB), OAM (160 B) and HRAM (127 B). Every supported region size
-/// is large enough to hit at least one entry — the smallest offset
-/// here is below 127 so HRAM is covered. Values are picked to be
-/// mixed-bit so they are visibly non-canonical in a memory viewer.
+/// Offsets past the buffer length are ignored, so the same table seeds
+/// WRAM (8 KiB), OAM (160 B), and HRAM (127 B). At least one entry
+/// sits below 127 so HRAM is covered.
 const STUCK_CELLS: &[(usize, u8)] = &[
     (0x0011, 0x55),
     (0x0023, 0xAA),
