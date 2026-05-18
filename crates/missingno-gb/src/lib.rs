@@ -1,7 +1,6 @@
 use crate::audio::Audio;
 use cartridge::Cartridge;
 use cpu::Cpu;
-use cpu::mcycle::{BusDot, DotAction};
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
@@ -17,6 +16,7 @@ pub mod dmg_sram;
 pub mod execute;
 pub mod interrupts;
 pub mod joypad;
+pub mod master_clock;
 pub mod memory;
 pub mod ppu;
 pub mod recording;
@@ -29,24 +29,7 @@ pub mod timers;
 pub mod trace;
 
 use cpu_bus::CpuBus;
-
-/// Master clock signal level. The clock alternates High → Low
-/// uniformly. Edge logic runs at transitions: `rise()` at the
-/// Low→High edge, `fall()` at the High→Low edge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClockPhase {
-    High,
-    Low,
-}
-
-impl ClockPhase {
-    pub fn next(self) -> ClockPhase {
-        match self {
-            ClockPhase::High => ClockPhase::Low,
-            ClockPhase::Low => ClockPhase::High,
-        }
-    }
-}
+pub use master_clock::ClockPhase;
 
 pub struct GameBoy {
     cpu: Cpu,
@@ -67,12 +50,8 @@ pub struct GameBoy {
 
     bus_trace: cpu_bus::BusTrace,
 
-    /// Master clock phase — alternates Rising/Falling uniformly.
+    /// Master clock signal level. Toggles each half-T-cycle.
     clock_phase: ClockPhase,
-    /// Action for the current dot, set on Rising and consumed during Falling.
-    current_dot_action: DotAction,
-    /// Dot position for the current dot, set on Rising and consumed during Falling.
-    current_dot: BusDot,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
@@ -97,8 +76,6 @@ impl GameBoy {
             vram_bus: VramBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             clock_phase: ClockPhase::Low,
-            current_dot_action: DotAction::Idle,
-            current_dot: BusDot::ZERO,
             cpu_bus: CpuBus::new(),
         };
         gb.rebuild_state();
@@ -164,8 +141,6 @@ impl GameBoy {
 
         self.bus_trace = cpu_bus::BusTrace::new();
         self.clock_phase = ClockPhase::Low;
-        self.current_dot_action = DotAction::Idle;
-        self.current_dot = BusDot::ZERO;
         self.cpu_bus = CpuBus::new();
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);

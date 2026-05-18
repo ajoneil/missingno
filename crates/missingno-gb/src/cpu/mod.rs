@@ -1,7 +1,7 @@
 use commit::Commit;
 use dff::Dff;
 use flags::{Flag, Flags};
-use mcycle::{BusAction, BusDot, CpuPhase, Phase};
+use mcycle::{BusAction, CpuPhase, MCycleAction, Phase, TCycle};
 use registers::{Register8, Register16};
 
 pub mod commit;
@@ -61,10 +61,15 @@ pub struct Cpu {
     pub instruction_pc: u16,
 
     /// Bus data latch — the byte the SM83 captured off `cpu_port_d` at
-    /// `data_phase_n↑` (dot 3.995 of the read M-cycle). Holds until
-    /// the next read latches. Read by the state machine each dot to
-    /// see the most-recent bus read.
+    /// `data_phase_n↑` (end of T-cycle 3 of the read M-cycle). Holds
+    /// until the next read latches. Read by the state machine each
+    /// T-cycle to see the most-recent bus read.
     pub data_latch: u8,
+
+    /// The `BusAction` produced by the most recent `next_tcycle`. The
+    /// executor reads this between rise/fall edges of the same T-cycle
+    /// to route memory reads/writes to peripherals.
+    pub last_bus_action: BusAction,
 
     pub flags: Flags,
 
@@ -90,8 +95,8 @@ pub struct Cpu {
     pub(super) phase: CpuPhase,
     /// The decoded instruction, preserved for debugger display.
     pub(super) instruction: instructions::Instruction,
-    /// Dot position within the current M-cycle (0–3).
-    pub(super) dot: BusDot,
+    /// T-cycle position within the current M-cycle (0–3).
+    pub(super) tcycle: TCycle,
     /// Whether we have a pending M-cycle.
     pub(super) mcycle_active: bool,
     /// Whether the next rise() should fire the M-cycle-boundary block
@@ -103,8 +108,8 @@ pub struct Cpu {
     /// execution, this mirrors !mcycle_active (one boundary per
     /// M-cycle).
     pub(super) boundary_pending: bool,
-    /// The BusAction for the current M-cycle.
-    current_action: Option<mcycle::BusAction>,
+    /// The MCycleAction for the current M-cycle.
+    current_action: Option<mcycle::MCycleAction>,
     /// Step counter for Fetch/Halted phases (tracks M-cycle sub-steps).
     pub(super) exec_step: u8,
     /// Pending jump target address. Set by CondJump's internal M-cycle,
@@ -115,9 +120,9 @@ pub struct Cpu {
     pub(super) pending_jump_target: Option<u16>,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
-    /// The dot position that produced the last DotAction (for the executor
-    /// to check timing signals like boga, bowa, mopa).
-    pub(super) last_dot: BusDot,
+    /// The T-cycle position that produced the last BusAction (for the
+    /// executor to check timing signals like boga, bowa, mopa).
+    pub(super) last_tcycle: TCycle,
     /// IE push bug flag.
     pub(super) pending_vector_resolve: bool,
     /// Set when the CPU transitions to the Fetch phase. The executor
@@ -209,14 +214,15 @@ impl Cpu {
                 step: 1,
             },
             instruction: instructions::Instruction::NoOperation,
-            dot: BusDot::ONE,
+            tcycle: TCycle::ONE,
             mcycle_active: true,
             boundary_pending: false,
-            current_action: Some(BusAction::Read { address: 0x0100 }),
+            current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
             pending_jump_target: None,
             scratch: 0,
-            last_dot: BusDot::ZERO,
+            last_tcycle: TCycle::ZERO,
+            last_bus_action: BusAction::Idle,
             pending_vector_resolve: false,
             boundary_flag: true, // Start at an instruction boundary
 
@@ -251,14 +257,15 @@ impl Cpu {
             halt_bug: false,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
-            dot: BusDot::ZERO,
+            tcycle: TCycle::ZERO,
             mcycle_active: false,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
             pending_jump_target: None,
             scratch: 0,
-            last_dot: BusDot::ZERO,
+            last_tcycle: TCycle::ZERO,
+            last_bus_action: BusAction::Idle,
             pending_vector_resolve: false,
             boundary_flag: true,
 
@@ -305,14 +312,15 @@ impl Cpu {
             halt_bug: snap.halt_bug,
             phase: CpuPhase::Fetch,
             instruction: instructions::Instruction::NoOperation,
-            dot: BusDot::ZERO,
+            tcycle: TCycle::ZERO,
             mcycle_active: false,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
             pending_jump_target: None,
             scratch: 0,
-            last_dot: BusDot::ZERO,
+            last_tcycle: TCycle::ZERO,
+            last_bus_action: BusAction::Idle,
             pending_vector_resolve: false,
             boundary_flag: true,
 
@@ -411,7 +419,7 @@ impl Cpu {
     /// the after-fall sampling instant, so the value matches what GateBoy's
     /// adapter emits at the same physical edge.
     pub fn mcycle_phase(&self) -> u8 {
-        match self.last_dot.as_u8() {
+        match self.last_tcycle.as_u8() {
             0 => 0x0E, // AFUR=1 ALEF=1 APUK=1 ADYK=0
             1 => 0x07, // AFUR=0 ALEF=1 APUK=1 ADYK=1
             2 => 0x01, // AFUR=0 ALEF=0 APUK=0 ADYK=1
@@ -423,10 +431,10 @@ impl Cpu {
     /// The address on the CPU bus for the current M-cycle.
     pub fn bus_address(&self) -> u16 {
         match &self.current_action {
-            Some(mcycle::BusAction::Read { address }) => *address,
-            Some(mcycle::BusAction::Write { address, .. }) => *address,
-            Some(mcycle::BusAction::InternalOamBug { address }) => *address,
-            Some(mcycle::BusAction::Internal { address }) => *address,
+            Some(mcycle::MCycleAction::Read { address }) => *address,
+            Some(mcycle::MCycleAction::Write { address, .. }) => *address,
+            Some(mcycle::MCycleAction::InternalOamBug { address }) => *address,
+            Some(mcycle::MCycleAction::Internal { address }) => *address,
             None => 0,
         }
     }
@@ -513,7 +521,7 @@ impl Cpu {
     /// and drives write data from phase E.
     pub fn pending_bus_write(&self) -> Option<(u16, u8)> {
         match &self.current_action {
-            Some(mcycle::BusAction::Write { address, value }) => Some((*address, *value)),
+            Some(mcycle::MCycleAction::Write { address, value }) => Some((*address, *value)),
             _ => None,
         }
     }
@@ -524,7 +532,7 @@ impl Cpu {
     /// (`tobe`/`wafu` rising) and drives the bus.
     pub fn pending_bus_read(&self) -> Option<u16> {
         match &self.current_action {
-            Some(mcycle::BusAction::Read { address }) => Some(*address),
+            Some(mcycle::MCycleAction::Read { address }) => Some(*address),
             _ => None,
         }
     }

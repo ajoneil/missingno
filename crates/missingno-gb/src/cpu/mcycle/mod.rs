@@ -14,7 +14,7 @@ mod build;
 
 /// What happens on the memory bus during one M-cycle.
 #[derive(Debug)]
-pub(super) enum BusAction {
+pub(super) enum MCycleAction {
     /// Read a byte at the given address.
     Read { address: u16 },
     /// Write a byte to the given address.
@@ -28,109 +28,49 @@ pub(super) enum BusAction {
     InternalOamBug { address: u16 },
 }
 
-// ── Bus dot (ring counter phase model) ────────────────────────────────
+// ── T-cycle position within the M-cycle ─────────────────────────────────
 
-/// The CPU bus timing signals for the current dot within an M-cycle.
-///
-/// In hardware, AFUR/ALEF/APUK/ADYK form a 4-DFF ring counter producing
-/// 8 phases (A-H) per M-cycle. Each emulator dot spans 2 phases. The
-/// named signals here are the same combinational outputs that hardware
-/// derives from the ring counter DFF states.
+/// Position of the CPU's ring counter within an M-cycle: 0–3 (four
+/// T-cycles per M-cycle). Driven by the master clock; ticked by the
+/// SM83's internal AFUR/ALEF/APUK/ADYK DFFs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BusDot(u8);
+pub struct TCycle(u8);
 
-impl BusDot {
-    /// Dot 0 (phases A,B). First dot of the M-cycle.
-    pub const ZERO: BusDot = BusDot(0);
-    /// Dot 1 (phases C,D). Second dot of the M-cycle.
-    pub const ONE: BusDot = BusDot(1);
+impl TCycle {
+    pub const ZERO: TCycle = TCycle(0);
+    pub const ONE: TCycle = TCycle(1);
 
-    /// Raw dot number (0–3) for trace output.
+    /// Raw T-cycle number (0–3).
     pub fn as_u8(self) -> u8 {
         self.0
     }
 
-    pub fn advance(self) -> BusDot {
-        debug_assert!(self.0 < 3, "cannot advance past dot 3");
-        BusDot(self.0 + 1)
-    }
-
-    /// BOGA_Axxxxxxx: M-cycle boundary. Active during phase A only.
-    /// Rising edge at H->A marks the transition between M-cycles.
-    ///
-    /// In the emulator's dot model, this fires at dot 3 because the
-    /// M-cycle boundary work (interrupt latch, DMA, serial, audio)
-    /// must complete before the next M-cycle's dot 0 begins.
-    pub fn boga(self) -> bool {
-        self.0 == 3
-    }
-
-    /// BOWA_Axxxxxxx: Address latch clock. The CPU places the address
-    /// on the bus during phase A.
-    ///
-    /// Used for: OAM bug address recording (IDU address on bus).
-    pub fn bowa(self) -> bool {
-        self.0 == 0
-    }
-
-    /// BUDE_xxxxEFGH: Write data window. The CPU drives write data
-    /// onto the bus during phases E-H (dots 2-3).
-    ///
-    /// MOPA_xxxxEFGH: Second half of the M-cycle. Rising edge at
-    /// D->E (start of dot 2).
-    ///
-    /// Used for: OAM bug fire timing (CUFE_OAM_CLKp fires when
-    /// MOPA goes high while SARO_ADDR_OAMp is active).
-    pub fn mopa(self) -> bool {
-        self.0 >= 2
-    }
-
-    /// AFAS_xxxxEFGx: Write pulse window. Active during phases E,F,G.
-    /// Falling edge at G->H is the DFF latch point for register writes.
-    ///
-    /// Used for: Write action placement (the actual bus write that
-    /// latches at the G->H boundary = end of dot 3).
-    pub fn afas_falling(self) -> bool {
-        self.0 == 3
-    }
-
-    /// BUKE_AxxxxxGH: Data latch window. The data latch accumulates
-    /// bus data during phases G,H,A. CPU reads the latch at H->A.
-    ///
-    /// Used for: Read action placement (data capture at end of
-    /// M-cycle, coinciding with BOGA).
-    pub fn buke(self) -> bool {
-        self.0 == 0 || self.0 == 3
-    }
-
-    /// Raw dot index (0-3). Escape hatch for the rare cases where
-    /// a named signal doesn't exist (e.g., fetch dot counter).
-    /// Prefer named signals in all other contexts.
-    pub fn index(self) -> u8 {
-        self.0
+    pub fn advance(self) -> TCycle {
+        debug_assert!(self.0 < 3, "cannot advance past T-cycle 3");
+        TCycle(self.0 + 1)
     }
 }
 
-// ── Dot-level bus state ─────────────────────────────────────────────────
+// ── T-cycle-level bus state ─────────────────────────────────────────────
 
-/// What the CPU bus is doing during one dot (T-cycle).
+/// What the CPU bus is doing during one T-cycle.
 ///
 /// The executor ticks all hardware and routes these to subsystems.
-/// Each M-cycle expands into 4 dots with bus operations placed at
-/// the hardware-correct position:
+/// Each M-cycle expands into 4 T-cycles with bus operations placed
+/// at the hardware-correct position:
 /// - **Read**:     `[Idle, Idle, Idle, Read]`
 /// - **Write**:    `[Idle, Idle, Idle, Write]`
 /// - **Internal**: `[Idle, Idle, Idle, Idle]`
 /// - **OamBug**:   `[InternalOamBug, Idle, Idle, Idle]`
 #[derive(Clone, Copy, Debug)]
-pub enum DotAction {
-    /// No bus transfer this dot.
+pub enum BusAction {
+    /// No bus transfer this T-cycle.
     Idle,
     /// CPU is reading from this address. The executor must provide
     /// the value before the next M-cycle begins.
     Read { address: u16 },
     /// CPU is writing this value to this address. The write latches
-    /// at this dot (G→H boundary, end of M-cycle).
+    /// at this T-cycle (G→H boundary, end of M-cycle).
     Write { address: u16, value: u8 },
     /// Internal cycle where the IDU places an address on the bus.
     /// May trigger OAM bug if address is in 0xFE00-0xFEFF.
@@ -193,7 +133,7 @@ enum RmwOp {
 
 /// The behavior of the current instruction's post-decode M-cycles,
 /// expressed as a sequence of bus actions. The CPU walks through the
-/// phase yielding one `BusAction` per M-cycle via `next_mcycle()`.
+/// phase yielding one `MCycleAction` per M-cycle via `next_mcycle()`.
 #[derive(Debug)]
 #[allow(private_interfaces)]
 pub(crate) enum Phase {
@@ -304,7 +244,7 @@ fn operand_count(opcode: u8) -> u8 {
 
 /// The CPU's top-level execution phase. The CPU is a persistent state
 /// machine that continuously cycles through these phases, yielding one
-/// `DotAction` per dot.
+/// `BusAction` per dot.
 #[derive(Debug)]
 pub(crate) enum CpuPhase {
     /// Generic fetch: reading opcode at [PC]. First M-cycle of every
@@ -349,15 +289,15 @@ pub(crate) enum HaltPhase {
 // ── CPU state machine methods ───────────────────────────────────────────
 
 impl Cpu {
-    /// Advance one dot (T-cycle). Returns a `DotAction` that the executor
+    /// Advance one dot (T-cycle). Returns a `BusAction` that the executor
     /// must handle (tick hardware, perform bus operations).
     ///
     /// The CPU is a continuous state machine — this method always returns
-    /// a `DotAction`. When an instruction completes, the boundary flag is
+    /// a `BusAction`. When an instruction completes, the boundary flag is
     /// set and the first dot of the next instruction is deferred to the
     /// next call.
-    pub fn next_dot(&mut self) -> DotAction {
-        // At the start of a new M-cycle, fetch the next BusAction.
+    pub fn next_tcycle(&mut self) -> BusAction {
+        // At the start of a new M-cycle, fetch the next MCycleAction.
         // The CPU always chains into the next M-cycle (enter_fetch chains
         // into mcycle_fetch, etc.), so next_mcycle always returns Some.
         if !self.mcycle_active {
@@ -367,52 +307,56 @@ impl Cpu {
                 .next_mcycle(self.data_latch)
                 .expect("next_mcycle must always return Some (CPU chains at boundaries)");
             self.current_action = Some(action);
-            self.dot = BusDot::ZERO;
+            self.tcycle = TCycle::ZERO;
             self.mcycle_active = true;
         }
 
-        let dot = self.dot;
-        self.last_dot = dot;
-        self.dot = if dot.boga() {
-            BusDot::ZERO
+        let tcycle = self.tcycle;
+        self.last_tcycle = tcycle;
+        self.tcycle = if tcycle.as_u8() == 3 {
+            TCycle::ZERO
         } else {
-            dot.advance()
+            tcycle.advance()
         };
 
         let result = match &self.current_action {
-            Some(BusAction::Read { address }) => {
-                if dot.boga() {
-                    DotAction::Read { address: *address }
+            Some(MCycleAction::Read { address }) => {
+                // CPU latches read data at the end of the M-cycle.
+                if tcycle.as_u8() == 3 {
+                    BusAction::Read { address: *address }
                 } else {
-                    DotAction::Idle
+                    BusAction::Idle
                 }
             }
-            Some(BusAction::Write { address, value }) => {
-                if dot.afas_falling() {
-                    DotAction::Write {
+            Some(MCycleAction::Write { address, value }) => {
+                // CPU write commits at the end of the M-cycle.
+                if tcycle.as_u8() == 3 {
+                    BusAction::Write {
                         address: *address,
                         value: *value,
                     }
                 } else {
-                    DotAction::Idle
+                    BusAction::Idle
                 }
             }
-            Some(BusAction::InternalOamBug { address }) => {
-                if dot.bowa() {
-                    DotAction::InternalOamBug { address: *address }
+            Some(MCycleAction::InternalOamBug { address }) => {
+                // IDU address is on the bus during the first T-cycle.
+                if tcycle.as_u8() == 0 {
+                    BusAction::InternalOamBug { address: *address }
                 } else {
-                    DotAction::Idle
+                    BusAction::Idle
                 }
             }
-            Some(BusAction::Internal { .. }) => DotAction::Idle,
+            Some(MCycleAction::Internal { .. }) => BusAction::Idle,
             None => unreachable!(),
         };
 
-        if dot.boga() {
+        if tcycle.as_u8() == 3 {
             self.mcycle_active = false;
             self.boundary_pending = true;
         }
 
+        self.last_bus_action = result;
         result
     }
 
@@ -421,7 +365,7 @@ impl Cpu {
     /// `irq_pending` have all settled by the time this runs.
     /// `Halted(_)` arms model the halt sequencer's three sub-states; the
     /// running paths reuse the existing `mcycle_*` step machinery.
-    fn next_mcycle(&mut self, read_value: u8) -> Option<BusAction> {
+    fn next_mcycle(&mut self, read_value: u8) -> Option<MCycleAction> {
         // M_h start halt-bug-vs-halt-state decision. Keys on
         // yoii.q (= irq_latched.output() post-tick). yoii captured the
         // pre-update_latch `dispatch.latched()` at this boundary, so
@@ -528,7 +472,7 @@ impl Cpu {
     /// Fetch phase: single M-cycle reading opcode at [PC].
     /// Returns `None` when the fetched instruction has no post-decode
     /// M-cycles (e.g., NOP) — the instruction completes immediately.
-    fn mcycle_fetch(&mut self, read_value: u8) -> Option<BusAction> {
+    fn mcycle_fetch(&mut self, read_value: u8) -> Option<MCycleAction> {
         let step = self.exec_step;
         self.exec_step += 1;
 
@@ -536,7 +480,7 @@ impl Cpu {
             // Emit the fetch read from bus_counter. Any pending jump
             // target was already consumed in enter_fetch(), which
             // updated bus_counter to the target address.
-            Some(BusAction::Read {
+            Some(MCycleAction::Read {
                 address: self.bus_counter,
             })
         } else {
@@ -553,7 +497,7 @@ impl Cpu {
             // bus_counter), this is where PC physically updates.
             let opcode = read_value;
             let fetch_addr = match &self.current_action {
-                Some(BusAction::Read { address }) => *address,
+                Some(MCycleAction::Read { address }) => *address,
                 _ => self.bus_counter,
             };
             if self.halt_bug {
@@ -597,24 +541,24 @@ impl Cpu {
     /// Enter `Halted(Spin)` — steady-state halt loop. No bus activity:
     /// the halted state holds the address bus passively (`Internal{...}`
     /// matches dmg-sim observation that no `bus_read` fires here).
-    fn mcycle_halted_spin_entry(&mut self) -> BusAction {
+    fn mcycle_halted_spin_entry(&mut self) -> MCycleAction {
         self.phase = CpuPhase::Halted(HaltPhase::Spin);
         self.exec_step = 0;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
-        BusAction::Internal {
+        MCycleAction::Internal {
             address: self.bus_counter,
         }
     }
 
     /// Enter `Halted(SetupMiss)` — one extra M-cycle so `irq_latched`
     /// can capture `irq_pending` on the next CLK9↑. No bus activity.
-    fn mcycle_halted_setup_miss_entry(&mut self) -> BusAction {
+    fn mcycle_halted_setup_miss_entry(&mut self) -> MCycleAction {
         self.phase = CpuPhase::Halted(HaltPhase::SetupMiss);
         self.exec_step = 0;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
-        BusAction::Internal {
+        MCycleAction::Internal {
             address: self.bus_counter,
         }
     }
@@ -622,12 +566,12 @@ impl Cpu {
     /// Enter `Halted(WakeIntake)` — IME=1 stand-in for the wake M-cycle:
     /// hardware's discarded m7 fetch plus the `dispatch_active.q` (zacw)
     /// capture cycle, modelled as a single Internal M-cycle.
-    fn mcycle_halted_wake_intake_entry(&mut self) -> BusAction {
+    fn mcycle_halted_wake_intake_entry(&mut self) -> MCycleAction {
         self.phase = CpuPhase::Halted(HaltPhase::WakeIntake);
         self.exec_step = 0;
         self.boundary_flag = true;
         self.instruction_pc = self.bus_counter;
-        BusAction::Internal {
+        MCycleAction::Internal {
             address: self.bus_counter,
         }
     }
@@ -635,7 +579,7 @@ impl Cpu {
     /// Drop halt and start the post-halt opcode fetch on the IME=0 wake
     /// path. With `mcyc = m7` parked through HALT, this M-cycle carries
     /// the m7-driven post-body fetch from PC.
-    fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<BusAction> {
+    fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<MCycleAction> {
         self.halt_state = HaltState::Running;
         self.halt_rs_latched = false;
         self.phase = CpuPhase::Fetch;
@@ -653,7 +597,7 @@ impl Cpu {
     ///
     /// Uses `std::mem::replace` to take the phase out, avoiding
     /// simultaneous borrows of `self.phase` and `&mut self`.
-    fn mcycle_execute(&mut self, read_value: u8) -> Option<BusAction> {
+    fn mcycle_execute(&mut self, read_value: u8) -> Option<MCycleAction> {
         // Take the phase out to avoid borrow conflicts.
         let taken = std::mem::replace(&mut self.phase, CpuPhase::Fetch);
         let (mut phase, mut step) = match taken {
@@ -681,7 +625,7 @@ impl Cpu {
         phase: &mut Phase,
         current_step: u8,
         read_value: u8,
-    ) -> (Option<BusAction>, bool) {
+    ) -> (Option<MCycleAction>, bool) {
         match phase {
             Phase::Operands {
                 pc,
@@ -690,7 +634,7 @@ impl Cpu {
                 bytes_needed,
             } => {
                 if current_step == 0 && *bytes_read < *bytes_needed {
-                    return (Some(BusAction::Read { address: *pc }), true);
+                    return (Some(MCycleAction::Read { address: *pc }), true);
                 }
 
                 // Operand byte just read
@@ -729,7 +673,7 @@ impl Cpu {
                 // Non-last operand: issue bus_read for next byte.
                 // On hardware, reg.pc = adp fires with cpu_bus_read.
                 self.pc = self.bus_counter;
-                (Some(BusAction::Read { address: *pc }), true)
+                (Some(MCycleAction::Read { address: *pc }), true)
             }
 
             Phase::Empty => {
@@ -749,7 +693,7 @@ impl Cpu {
 
                 let opcode = read_value;
                 let fetch_addr = match &self.current_action {
-                    Some(BusAction::Read { address }) => *address,
+                    Some(MCycleAction::Read { address }) => *address,
                     _ => self.bus_counter,
                 };
 
@@ -820,7 +764,7 @@ impl Cpu {
             }
 
             Phase::ReadOp { address, action } => match current_step {
-                0 => (Some(BusAction::Read { address: *address }), true),
+                0 => (Some(MCycleAction::Read { address: *address }), true),
                 _ => {
                     Self::apply_read_action(self, action, read_value);
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
@@ -830,11 +774,11 @@ impl Cpu {
             Phase::ReadModifyWrite { address, op } => {
                 let address = *address;
                 match current_step {
-                    0 => (Some(BusAction::Read { address }), true),
+                    0 => (Some(MCycleAction::Read { address }), true),
                     1 => {
                         let result = Self::apply_rmw(self, op, read_value);
                         (
-                            Some(BusAction::Write {
+                            Some(MCycleAction::Write {
                                 address,
                                 value: result,
                             }),
@@ -856,7 +800,7 @@ impl Cpu {
                         self.set_register16(Register16::Hl, hl.wrapping_add(*hl_post as u16));
                     }
                     (
-                        Some(BusAction::Write {
+                        Some(MCycleAction::Write {
                             address: *address,
                             value: *value,
                         }),
@@ -870,14 +814,14 @@ impl Cpu {
                 let address = *address;
                 match current_step {
                     0 => (
-                        Some(BusAction::Write {
+                        Some(MCycleAction::Write {
                             address,
                             value: *lo,
                         }),
                         true,
                     ),
                     1 => (
-                        Some(BusAction::Write {
+                        Some(MCycleAction::Write {
                             address: address.wrapping_add(1),
                             value: *hi,
                         }),
@@ -889,25 +833,25 @@ impl Cpu {
 
             Phase::InternalOp { count } => {
                 if current_step < *count {
-                    (Some(BusAction::Internal { address: self.pc }), true)
+                    (Some(MCycleAction::Internal { address: self.pc }), true)
                 } else {
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
 
             Phase::InternalOamBug { address } => match current_step {
-                0 => (Some(BusAction::InternalOamBug { address: *address }), true),
+                0 => (Some(MCycleAction::InternalOamBug { address: *address }), true),
                 _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
             },
 
             Phase::Pop { sp, action } => {
                 let sp = *sp;
                 match current_step {
-                    0 => (Some(BusAction::Read { address: sp }), true),
+                    0 => (Some(MCycleAction::Read { address: sp }), true),
                     1 => {
                         self.scratch = read_value;
                         (
-                            Some(BusAction::Read {
+                            Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
                             }),
                             true,
@@ -918,7 +862,7 @@ impl Cpu {
                         let has_trailing =
                             matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
-                            (Some(BusAction::Internal { address: self.pc }), true)
+                            (Some(MCycleAction::Internal { address: self.pc }), true)
                         } else {
                             (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                         }
@@ -930,12 +874,12 @@ impl Cpu {
             Phase::Push { sp, hi, lo } => {
                 let sp = *sp;
                 match current_step {
-                    0 => (Some(BusAction::InternalOamBug { address: sp }), true),
+                    0 => (Some(MCycleAction::InternalOamBug { address: sp }), true),
                     1 => {
                         let addr = sp.wrapping_sub(1);
                         self.stack_pointer = addr;
                         (
-                            Some(BusAction::Write {
+                            Some(MCycleAction::Write {
                                 address: addr,
                                 value: *hi,
                             }),
@@ -946,7 +890,7 @@ impl Cpu {
                         let addr = sp.wrapping_sub(2);
                         self.stack_pointer = addr;
                         (
-                            Some(BusAction::Write {
+                            Some(MCycleAction::Write {
                                 address: addr,
                                 value: *lo,
                             }),
@@ -965,7 +909,7 @@ impl Cpu {
                     // target is placed on the bus at DELTA_EF, and PC
                     // updates to target+1 when the fetch processes.
                     self.pending_jump_target = Some(*target);
-                    (Some(BusAction::Internal { address: self.pc }), true)
+                    (Some(MCycleAction::Internal { address: self.pc }), true)
                 } else {
                     if let Some(target) = self.pending_jump_target.take() {
                         self.bus_counter = target;
@@ -981,12 +925,12 @@ impl Cpu {
                 }
                 let sp = *sp;
                 match current_step {
-                    0 => (Some(BusAction::InternalOamBug { address: sp }), true),
+                    0 => (Some(MCycleAction::InternalOamBug { address: sp }), true),
                     1 => {
                         let addr = sp.wrapping_sub(1);
                         self.stack_pointer = addr;
                         (
-                            Some(BusAction::Write {
+                            Some(MCycleAction::Write {
                                 address: addr,
                                 value: *hi,
                             }),
@@ -997,7 +941,7 @@ impl Cpu {
                         let addr = sp.wrapping_sub(2);
                         self.stack_pointer = addr;
                         (
-                            Some(BusAction::Write {
+                            Some(MCycleAction::Write {
                                 address: addr,
                                 value: *lo,
                             }),
@@ -1018,13 +962,13 @@ impl Cpu {
                 let sp = *sp;
                 let taken = *taken;
                 match current_step {
-                    0 => (Some(BusAction::Internal { address: self.pc }), true),
+                    0 => (Some(MCycleAction::Internal { address: self.pc }), true),
                     1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
-                    1 => (Some(BusAction::Read { address: sp }), true),
+                    1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
                         self.scratch = read_value;
                         (
-                            Some(BusAction::Read {
+                            Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
                             }),
                             true,
@@ -1032,7 +976,7 @@ impl Cpu {
                     }
                     3 => {
                         Self::apply_pop(self, action, self.scratch, read_value, sp);
-                        (Some(BusAction::Internal { address: self.pc }), true)
+                        (Some(MCycleAction::Internal { address: self.pc }), true)
                     }
                     _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
@@ -1042,8 +986,8 @@ impl Cpu {
 
     /// ISR dispatch: 5 held M-cycles spanning steps 0..=4.
     ///
-    /// - Steps 0..=3 each return their own BusAction directly,
-    ///   held for one M-cycle by next_dot's bus-output loop.
+    /// - Steps 0..=3 each return their own MCycleAction directly,
+    ///   held for one M-cycle by next_tcycle's bus-output loop.
     /// - Step 4 transitions to Fetch via retire_edge(NoOperation,
     ///   Phase::Empty); the chained mcycle_fetch(0) returns
     ///   Read{vector} as step 4's held M-cycle (M5 vector fetch).
@@ -1062,7 +1006,7 @@ impl Cpu {
     /// (retire_edge → next_mcycle → mcycle_isr(0)) and HALT-wake
     /// dispatch (Halted(WakeIntake) → next_mcycle → mcycle_isr(0))
     /// reach this entry through the generic combinational selector.
-    fn mcycle_isr(&mut self, _read_value: u8) -> Option<BusAction> {
+    fn mcycle_isr(&mut self, _read_value: u8) -> Option<MCycleAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
                 sp,
@@ -1085,13 +1029,13 @@ impl Cpu {
             0 => {
                 self.ime.write_immediate(InterruptMasterEnable::Disabled);
                 self.ime_delay = false;
-                Some(BusAction::Internal { address: self.pc })
+                Some(MCycleAction::Internal { address: self.pc })
             }
-            1 => Some(BusAction::InternalOamBug { address: sp }),
+            1 => Some(MCycleAction::InternalOamBug { address: sp }),
             2 => {
                 let addr = sp.wrapping_sub(1);
                 self.stack_pointer = addr;
-                Some(BusAction::Write {
+                Some(MCycleAction::Write {
                     address: addr,
                     value: pc_hi,
                 })
@@ -1102,7 +1046,7 @@ impl Cpu {
                 self.pending_vector_resolve = true;
                 let addr = sp.wrapping_sub(2);
                 self.stack_pointer = addr;
-                Some(BusAction::Write {
+                Some(MCycleAction::Write {
                     address: addr,
                     value: pc_lo,
                 })
@@ -1156,7 +1100,7 @@ impl Cpu {
     /// halt when needed. All commits apply inline here so the new
     /// register/flag values are visible at the start of the M-cycle
     /// that fetches the next opcode (gb-ctr's M3/M1 column).
-    fn enter_fetch_overlap(&mut self, commit: Commit) -> BusAction {
+    fn enter_fetch_overlap(&mut self, commit: Commit) -> MCycleAction {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
@@ -1212,16 +1156,23 @@ impl Cpu {
             step: 1,
         };
         self.exec_step = 1;
-        BusAction::Read {
+        MCycleAction::Read {
             address: self.bus_counter,
         }
     }
 
-    /// The dot position that produced the last `DotAction`. The executor
-    /// needs this to check timing signals (boga, bowa, mopa) for hardware
-    /// tick ordering and OAM bug timing.
-    pub fn dot_for_execute(&self) -> BusDot {
-        self.last_dot
+    /// The T-cycle that produced the most recent `BusAction`. Used by
+    /// the executor to time per-T-cycle work after `next_tcycle()` runs.
+    pub fn last_tcycle(&self) -> TCycle {
+        self.last_tcycle
+    }
+
+    /// True at the last T-cycle of the current M-cycle — the position
+    /// at which M-cycle-boundary work (interrupt latch, DMA, serial,
+    /// audio tick, PPU boundary work) must complete before the next
+    /// M-cycle's first T-cycle begins.
+    pub fn at_mcycle_boundary(&self) -> bool {
+        self.last_tcycle.as_u8() == 3
     }
 
     /// Check and consume the instruction boundary flag. Returns true

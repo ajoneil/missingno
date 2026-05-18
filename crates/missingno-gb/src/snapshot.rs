@@ -15,7 +15,7 @@ use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
-use crate::{ClockPhase, GameBoy};
+use crate::GameBoy;
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -307,7 +307,6 @@ impl GameBoy {
     /// else. The GameBoy is placed at an instruction boundary with the
     /// clock phase at Low (ready for the next rising edge).
     pub fn from_snapshot(cartridge: Cartridge, snap: Snapshot) -> GameBoy {
-        use crate::cpu::mcycle::{BusDot, DotAction};
         use crate::memory::{ExternalBus, VramBus};
         use crate::ppu::{
             memory::{Oam, Vram},
@@ -378,9 +377,7 @@ impl GameBoy {
             external,
             sgb,
             bus_trace: crate::cpu_bus::BusTrace::new(),
-            clock_phase: ClockPhase::Low,
-            current_dot_action: DotAction::Idle,
-            current_dot: BusDot::ZERO,
+            clock_phase: crate::ClockPhase::Low,
             cpu_bus: crate::cpu_bus::CpuBus::new(),
         }
     }

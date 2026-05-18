@@ -200,7 +200,7 @@ struct ResolvedField {
 pub struct Tracer {
     writer: GbtraceWriter,
     emitters: Vec<ResolvedField>,
-    dot_count: u64,
+    tcycle_count: u64,
     trigger: Trigger,
     needs_ppu_snapshot: bool,
     pix_buffer: String,
@@ -454,7 +454,7 @@ impl Tracer {
         Ok(Self {
             writer,
             emitters,
-            dot_count: 0,
+            tcycle_count: 0,
             trigger,
             needs_ppu_snapshot,
             pix_buffer: String::new(),
@@ -657,15 +657,15 @@ impl Tracer {
     }
 
     pub fn advance_dot(&mut self) {
-        self.dot_count += 1;
+        self.tcycle_count += 1;
     }
 
-    pub fn advance(&mut self, dots: u32) {
-        self.dot_count += dots as u64;
+    pub fn advance(&mut self, tcycles: u32) {
+        self.tcycle_count += tcycles as u64;
     }
 
-    pub fn dot_count(&self) -> u64 {
-        self.dot_count
+    pub fn tcycle_count(&self) -> u64 {
+        self.tcycle_count
     }
 
     pub fn finish(self) -> Result<(), gbtrace::Error> {

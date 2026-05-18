@@ -90,14 +90,14 @@ impl Emulator {
             Message::EmulateFrame => {
                 // A GB frame is ~70224 T-cycles. Allow 2x headroom to avoid
                 // hanging the UI if the PPU never produces a frame (e.g. LCD off).
-                const MAX_DOTS_PER_FRAME: u32 = 70224 * 2;
-                let mut dots = 0;
+                const MAX_TCYCLES_PER_FRAME: u32 = 70224 * 2;
+                let mut tcycles = 0;
                 let mut sram_dirty = false;
                 loop {
                     let result = self.game_boy.step();
-                    dots += result.dots;
+                    tcycles += result.tcycles;
                     sram_dirty |= result.sram_dirty;
-                    if result.new_screen || dots >= MAX_DOTS_PER_FRAME {
+                    if result.new_screen || tcycles >= MAX_TCYCLES_PER_FRAME {
                         break;
                     }
                 }

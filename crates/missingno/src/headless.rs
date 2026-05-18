@@ -159,7 +159,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             respond_json(request, cpu_state(debugger.game_boy()));
         }
         (&Method::Post, "/step-dot") => {
-            debugger.step_dot();
+            debugger.step_tcycle();
             respond_json(request, pipeline_state(debugger.game_boy()));
         }
         (&Method::Post, "/step-phase") => {

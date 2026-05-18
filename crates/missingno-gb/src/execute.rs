@@ -1,6 +1,6 @@
 use super::{
     ClockPhase, GameBoy,
-    cpu::mcycle::DotAction,
+    cpu::mcycle::BusAction,
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
     memory::Bus,
@@ -13,8 +13,8 @@ pub struct StepResult {
     pub new_screen: bool,
     /// Whether battery-backed SRAM was written during this instruction.
     pub sram_dirty: bool,
-    /// Number of T-cycles (dots) consumed by this instruction.
-    pub dots: u32,
+    /// Number of T-cycles consumed by this instruction.
+    pub tcycles: u32,
 }
 
 /// Result of executing one half-phase (rise or fall).
@@ -37,25 +37,25 @@ impl GameBoy {
             self.bus_trace.enable();
         }
 
-        // If step_dot() left us mid-instruction, drain to the next
+        // If step_tcycle() left us mid-instruction, drain to the next
         // boundary first, then run one full instruction.
         let mut new_screen = false;
-        let mut dots = 0u32;
+        let mut tcycles = 0u32;
         if !self.cpu.at_instruction_boundary() {
             let r = self.step_instruction();
             new_screen |= r.new_screen;
-            dots += r.dots;
+            tcycles += r.tcycles;
         }
         let r = self.step_instruction();
         new_screen |= r.new_screen;
-        dots += r.dots;
+        tcycles += r.tcycles;
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
         (
             StepResult {
                 new_screen,
                 sram_dirty,
-                dots,
+                tcycles,
             },
             self.bus_trace.take(),
         )
@@ -76,7 +76,7 @@ impl GameBoy {
 
         const PHASE_BUDGET: u32 = 400;
         let mut phases_remaining = PHASE_BUDGET;
-        let mut dots = 0u32;
+        let mut tcycles = 0u32;
 
         loop {
             assert!(
@@ -88,10 +88,10 @@ impl GameBoy {
             let result = self.execute_phase();
             new_screen |= result.new_screen;
 
-            // Check for instruction boundary after completing a dot
-            // (clock is Low = just finished fall() = dot complete)
+            // Check for instruction boundary after completing a T-cycle
+            // (clock is Low = just finished fall() = T-cycle complete).
             if self.clock_phase == ClockPhase::Low {
-                dots += 1;
+                tcycles += 1;
                 if self.cpu.at_instruction_boundary() {
                     break;
                 }
@@ -103,7 +103,7 @@ impl GameBoy {
         StepResult {
             new_screen,
             sram_dirty,
-            dots,
+            tcycles,
         }
     }
 
@@ -113,13 +113,13 @@ impl GameBoy {
         self.execute_phase()
     }
 
-    /// Advance to the next dot (T-cycle) boundary — the next Low
-    /// state. Executes 1 phase if clock is High, 2 if Low.
-    /// Returns true if a new frame was produced.
-    pub fn step_dot(&mut self) -> bool {
+    /// Advance to the next T-cycle boundary — the next Low state.
+    /// Executes 1 phase if clock is High, 2 if Low. Returns true if
+    /// a new frame was produced.
+    pub fn step_tcycle(&mut self) -> bool {
         let mut new_screen = false;
 
-        // Run phases until clock returns to Low (dot complete)
+        // Run phases until clock returns to Low (T-cycle complete)
         loop {
             let result = self.execute_phase();
             new_screen |= result.new_screen;
@@ -136,7 +136,7 @@ impl GameBoy {
         new_screen
     }
 
-    /// Execute one phase (half-dot) of hardware. When the clock is
+    /// Execute one phase (half-T-cycle) of hardware. When the clock is
     /// Low, execute rise() (Low→High edge). When High, execute
     /// fall() (High→Low edge).
     fn execute_phase(&mut self) -> PhaseResult {
@@ -220,7 +220,7 @@ impl GameBoy {
                 self.interrupts.request(interrupt);
             }
 
-            // PPU master-clock rising edge at the M-cycle boundary (dot 0).
+            // PPU master-clock rising edge at the M-cycle boundary (T-cycle 0).
             let oam_bus = self.dma.oam_bus_owner();
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
@@ -242,9 +242,8 @@ impl GameBoy {
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // ── CPU dot advance ──
-        let dot_action = self.cpu.next_dot();
-        self.current_dot_action = dot_action;
+        // ── CPU T-cycle advance ──
+        self.cpu.next_tcycle();
 
         // IE push bug + ctl_int_entry_m6: vector-resolve fires between
         // ISR M3 and M4. Clears zkog/zloz (per netlist R_n =
@@ -263,10 +262,9 @@ impl GameBoy {
             self.cpu.dispatch.clear_dispatch();
         }
 
-        let dot = self.cpu.dot_for_execute();
-        self.current_dot = dot;
+        let tcycle = self.cpu.last_tcycle();
 
-        // data_phase_n↓ at the dot 1→2 boundary closes the per-bit
+        // data_phase_n↓ at the T-cycle 1→2 boundary closes the per-bit
         // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
         // M-cycle still set `requested` but do not propagate to the
         // latch until the next data_phase_n↑ at the M-cycle boundary.
@@ -276,7 +274,7 @@ impl GameBoy {
         // LOW. HALT body M-cycle (halt_rs_latched=false) still pulses
         // data_phase normally so the per-bit latch gates correctly
         // against IF rises during HALT body's data-phase.
-        if dot.index() == 2 && !self.cpu.halt_rs_latched() {
+        if tcycle.as_u8() == 2 && !self.cpu.halt_rs_latched() {
             self.cpu.dispatch.set_data_phase_n(false);
         }
 
@@ -288,8 +286,8 @@ impl GameBoy {
         // start for the immediate-dispatch path.
         let halt_body = self.cpu.is_halted() && !self.cpu.halt_rs_latched();
         let halt_spin = self.cpu.halt_rs_latched();
-        let data_phase = !halt_spin && (dot.index() == 2 || dot.index() == 3);
-        let write_phase = !halt_spin && dot.index() == 3;
+        let data_phase = !halt_spin && (tcycle.as_u8() == 2 || tcycle.as_u8() == 3);
+        let write_phase = !halt_spin && tcycle.as_u8() == 3;
         let ctl_fetch = self.cpu.is_fetch_phase() || halt_body;
         let xogs = (data_phase && ctl_fetch) || halt_spin;
         let ime_enabled = self.cpu.ime.output() == crate::cpu::InterruptMasterEnable::Enabled;
@@ -303,13 +301,13 @@ impl GameBoy {
         // Stage CPU bus activity for this M-cycle. The CPU asserts
         // either cpu_wr or cpu_rd (or neither) — never both:
         //   * Writes: CPU drives cpu_port_d at CUPA-rising (rise of
-        //     dot 2). PPU register latches are transparent during
-        //     dots 2-3 and capture at CUPA-falling (end of dot 3);
-        //     memory commits via write_byte at fall() of dot 3.
+        //     T-cycle 2). PPU register latches are transparent during
+        //     T-cycles 2-3 and capture at CUPA-falling (end of T-cycle 3);
+        //     memory commits via write_byte at fall() of T-cycle 3.
         //   * Reads: the addressed peripheral's tri-state driver
-        //     (`tobe`/`wafu`) enables at dot 2.005 and drives the
-        //     bus; the CPU latches at dot 3.995. Source-state
-        //     changes after dot 2 don't propagate to the latch.
+        //     (`tobe`/`wafu`) enables at T-cycle 2.005 and drives the
+        //     bus; the CPU latches at T-cycle 3.995. Source-state
+        //     changes after T-cycle 2 don't propagate to the latch.
         if is_mcycle_boundary {
             if let Some((address, _value)) = self.cpu.pending_bus_write() {
                 self.cpu_bus.stage_write(address);
@@ -318,14 +316,14 @@ impl GameBoy {
             }
         }
 
-        // BOWA (dot 0): arm OAM corruption from any OAM-range address
+        // BOWA (T-cycle 0): arm OAM corruption from any OAM-range address
         // on the CPU bus this M-cycle. CUFE pulses at MOPA gated on
         // SARO_ADDR_OAMp, so the arming must be visible at BOWA —
-        // same M-cycle as the MOPA-rise apply at dot 2. Three
+        // same M-cycle as the MOPA-rise apply at T-cycle 2. Three
         // sources: IDU step (SP+1/HL+1/HL-1 on the address bus), a
         // pending CPU read, or a pending CPU write.
-        if dot.bowa() {
-            if let DotAction::InternalOamBug { address } = self.current_dot_action {
+        if tcycle.as_u8() == 0 {
+            if let BusAction::InternalOamBug { address } = self.cpu.last_bus_action {
                 self.ppu.arm_oam_bug_for_write(address);
             }
             if let Some(address) = self.cpu.pending_bus_read() {
@@ -336,24 +334,25 @@ impl GameBoy {
             }
         }
 
-        // ── Non-boundary dots: PPU rise + interrupt capture AFTER CPU dot advance ──
+        // ── Non-boundary T-cycles: PPU rise + interrupt capture AFTER CPU T-cycle advance ──
         if !is_mcycle_boundary {
             // Snapshot LCDC.1 BEFORE the staged bus write applies — the
             // alet-rising-edge DFF capture (SOBU on TEKY → FEPO → XYLO)
             // wins the gate-delay race against CUPA-rising's transparent-
-            // latch propagation by ~14 ns (spec §6.10 line 1840). Other
-            // combinational consumers read `regs` directly and see
-            // post-CUPA values after `drive_ppu_bus` below.
+            // latch propagation by ~14 ns. Other combinational consumers
+            // read `regs` directly and see post-CUPA values after
+            // `drive_ppu_bus` below.
             self.ppu.snapshot_pre_cupa_lcdc();
 
-            // Apply staged bus write at BusDot 2 rise (phase E). On
-            // hardware, CUPA rises at dot 2 coincident with alet rising
-            // and gates the PPU register latches transparent across
-            // dots 2-3 (CUPA pulse ~1.498 dots wide). The CPU drives
-            // cpu_port_d at this dot; consumers latch from it at their
-            // sub-phase event (PPU regs combinationally during CUPA-
-            // high, memory at fall() of dot 3 / CUPA-falling).
-            if dot.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_write() {
+            // Apply staged bus write at the rise of T-cycle 2. On
+            // hardware, CUPA rises at T-cycle 2 coincident with alet
+            // rising and gates the PPU register latches transparent
+            // across T-cycles 2-3 (CUPA pulse ~1.498 T-cycles wide).
+            // The CPU drives cpu_port_d at this T-cycle; consumers
+            // latch at their respective edges (PPU regs combinationally
+            // during CUPA-high, memory at fall() of T-cycle 3 /
+            // CUPA-falling).
+            if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_write() {
                 let value = self.cpu.pending_bus_write().map(|(_, v)| v).expect(
                     "cpu_bus pending write requires cpu.pending_bus_write to be Some",
                 );
@@ -361,7 +360,7 @@ impl GameBoy {
                 if self.drive_ppu_bus(address, value) {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
-                // Capture OAM/VRAM lock at CUPA-rising (dot 2), the
+                // Capture OAM/VRAM lock at CUPA-rising (T-cycle 2), the
                 // start of the write strobe. Combined with the commit-
                 // time lock state via AND in `write_byte_with_lock` —
                 // block only when locked across the entire CUPA window.
@@ -373,7 +372,7 @@ impl GameBoy {
                 self.cpu_bus.record_snapshot_lock(locked);
             }
 
-            // PPU master-clock rising edge for non-boundary dots.
+            // PPU master-clock rising edge for non-boundary T-cycles.
             let oam_bus = self.dma.oam_bus_owner();
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
@@ -392,9 +391,9 @@ impl GameBoy {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Capture interrupt state for non-boundary dots. irq_latched
-            // ticks in the matching fall(), capturing this dot's irq_pending
-            // for the cascade-settling counter.
+            // Capture interrupt state for non-boundary T-cycles. irq_latched
+            // ticks in the matching fall(), capturing this T-cycle's
+            // irq_pending for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
             self.cpu
@@ -409,8 +408,8 @@ impl GameBoy {
         // STAT reads, so settle_alet is not needed. G4.2 confirmed WODU
         // doesn't depend on XYMU, making the prediction reliable.
 
-        // MOPA rising edge (dot 2): fire any armed OAM bug.
-        if dot.mopa() && !dot.boga() {
+        // MOPA rising edge (T-cycle 2): fire any armed OAM bug.
+        if tcycle.as_u8() == 2 {
             self.ppu.apply_pending_oam_bug();
         }
 
@@ -422,15 +421,15 @@ impl GameBoy {
     /// bus writes, M-cycle subsystems (serial, DMA, audio).
     fn fall(&mut self) -> PhaseResult {
         let mut new_screen = false;
-        let dot = self.current_dot;
-        let is_mcycle_boundary = dot.boga();
+        let tcycle = self.cpu.last_tcycle();
+        let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
-        // Driver-enable edge (`tobe↑` / `wafu↑` at dot 2.005):
+        // Driver-enable edge (`tobe↑` / `wafu↑` at T-cycle 2.005):
         // the addressed peripheral opens its tri-state driver and starts
         // putting its value on the bus. Any per-address mid-M-cycle flux
         // (OAM/VRAM lock transitions, STAT/LY bit changes) propagates
         // combinationally to the latch edge and is resolved there.
-        if dot.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_read() {
+        if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
             self.cpu_bus.drive(value);
         }
@@ -442,16 +441,16 @@ impl GameBoy {
 
         // Mid-CUPA sample for the staged OAM/VRAM write (AJUJ-glitch
         // window). On hardware, the CPU's CUPA strobe is high
-        // throughout dots 2-3 of the write M-cycle; if AJUJ is
+        // throughout T-cycles 2-3 of the write M-cycle; if AJUJ is
         // briefly high at ANY edge during that window, the per-byte
         // strobe asserts and the write lands. The discretized model
-        // samples lock state at 3 edges (snapshot at rise of dot 2,
-        // mid at fall of dot 2 just after AVAP processing, commit at
-        // fall of dot 3) and blocks only if locked at ALL three. AVAP
+        // samples lock state at 3 edges (snapshot at rise of T-cycle 2,
+        // mid at fall of T-cycle 2 just after AVAP processing, commit at
+        // fall of T-cycle 3) and blocks only if locked at ALL three. AVAP
         // detection fires inside `on_master_clock_fall` above; the
         // begin_rendering deferral to next rise (hblank_pipeline.rs)
         // makes `mode2=0 AND mode3=0` observable at this exact edge.
-        if dot.as_u8() == 2 && let Some(address) = self.cpu_bus.mid_sample_pending() {
+        if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.mid_sample_pending() {
             let locked = match address {
                 0xFE00..=0xFE9F => Some(self.ppu.oam_write_locked()),
                 0x8000..=0x9FFF => Some(self.ppu.vram_write_locked()),
@@ -460,23 +459,23 @@ impl GameBoy {
             self.cpu_bus.record_mid_lock(locked);
         }
 
-        // CPU data latch: at data_phase_n↑ (~end of M-cycle, dot 3.995),
+        // CPU data latch: at data_phase_n↑ (~end of M-cycle, T-cycle 3.995),
         // the SM83 captures cpu_port_d into its internal data register.
-        // The bus value was set at dot 2 (above) when the peripheral's
+        // The bus value was set at T-cycle 2 (above) when the peripheral's
         // tri-state driver enabled — capture from cpu_bus.data here and
         // fire commit_bus_read for the side effects (bus-latch drive,
         // trace recording) at the same timing the original single-stage
         // cpu_read had.
-        if let DotAction::Read { address } = &self.current_dot_action {
+        if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
-            // Latch edge (`data_phase_n↑` at dot 3.995, spec §13.6):
+            // Latch edge (`data_phase_n↑` near the end of T-cycle 3):
             // the CPU captures the bus into its internal data register.
             // The final value resolves the drive-enable snapshot against
             // any per-address mid-M-cycle flux — OAM/VRAM lock state at
             // the latch edge, STAT/LY per-bit transitions during the
-            // drive window. OAM-bug arming for this read already
-            // fired at BOWA (dot 0 rise) — same M-cycle, before MOPA
-            // applies it.
+            // drive window. OAM-bug arming for this read already fired
+            // at the start of T-cycle 0 (same M-cycle), before the
+            // T-cycle 2 fire edge.
             let value = self.bus_value_at_latch(address, self.cpu_bus.data);
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
@@ -486,17 +485,17 @@ impl GameBoy {
         // before mid-M-cycle source clocks rise (POPU, SUKO), so a
         // FF0F-write-clear pulse on lyta/movu/etc. (the IF dffsr r_n
         // inputs) releases before the source-clock capture — rise
-        // wins same-dot. Apply CPU writes first, then IF mutations.
-        match &self.current_dot_action {
-            DotAction::Idle | DotAction::InternalOamBug { .. } | DotAction::Read { .. } => {}
-            DotAction::Write { address, value: _ } => {
+        // wins same-T-cycle. Apply CPU writes first, then IF mutations.
+        match &self.cpu.last_bus_action {
+            BusAction::Idle | BusAction::InternalOamBug { .. } | BusAction::Read { .. } => {}
+            BusAction::Write { address, value: _ } => {
                 let address = *address;
                 // OAM-bug arming for this write already fired at BOWA
-                // (dot 0 rise) of the same M-cycle — see the BOWA
+                // (T-cycle 0 rise) of the same M-cycle — see the BOWA
                 // detection block in rise().
-                // drive_ppu_bus already fired at dot 2 for PPU registers
+                // drive_ppu_bus already fired at T-cycle 2 for PPU registers
                 // (CUPA-rising visibility); for non-PPU addresses it's a
-                // no-op. Memory commits here at fall() of dot 3 (CUPA-
+                // no-op. Memory commits here at fall() of T-cycle 3 (CUPA-
                 // falling / M-cycle boundary equivalent), reading the
                 // CPU-driven value from cpu_bus.data.
                 let (locked_at_snapshot, locked_at_mid) = self.cpu_bus.write_lock_samples();

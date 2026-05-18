@@ -54,7 +54,7 @@ impl TestRun {
             let result = self.gb.step();
 
             if let Some(tracer) = &mut self.tracer {
-                tracer.advance(result.dots);
+                tracer.advance(result.tcycles);
                 if result.new_screen {
                     tracer.mark_frame().unwrap();
                 }
@@ -76,7 +76,7 @@ impl TestRun {
     #[cfg(feature = "gbtrace")]
     fn step_traced_tcycle(&mut self) -> StepResult {
         let mut new_screen = false;
-        let mut dots = 0u32;
+        let mut tcycles = 0u32;
 
         // Consume the current instruction boundary so we can detect the next one.
         self.gb.cpu_mut().take_instruction_boundary();
@@ -110,7 +110,7 @@ impl TestRun {
             // Matches GateBoy's convention of capturing at end of tcycle.
             tracer.capture(&self.gb).unwrap();
             tracer.advance_dot();
-            dots += 1;
+            tcycles += 1;
 
             if self.gb.cpu().at_instruction_boundary() {
                 break;
@@ -119,7 +119,7 @@ impl TestRun {
 
         StepResult {
             new_screen,
-            dots,
+            tcycles,
             sram_dirty: false,
         }
     }

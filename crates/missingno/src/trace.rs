@@ -46,7 +46,7 @@ pub fn run(
     tracer.mark_frame().unwrap();
 
     let mut gb = gb;
-    let mut dots: u64 = 0;
+    let mut tcycles: u64 = 0;
     let mut frames = 0u64;
     let mut instructions = 0u64;
 
@@ -55,12 +55,12 @@ pub fn run(
     eprintln!("tracing: {title}");
     eprintln!("profile: {}", profile_path.display());
     eprintln!("output: {}", output_path.display());
-    eprintln!("limit: {cycles} dots");
+    eprintln!("limit: {cycles} T-cycles");
 
     if is_tcycle {
         // T-cycle level tracing
         gb.cpu_mut().take_instruction_boundary();
-        while dots < cycles {
+        while tcycles < cycles {
             let rise = gb.step_phase();
             if let Some(pixel) = rise.pixel {
                 tracer.push_pixel(pixel.shade);
@@ -75,18 +75,18 @@ pub fn run(
             }
             tracer.capture(&gb).unwrap();
             tracer.advance_dot();
-            dots += 1;
+            tcycles += 1;
             if gb.cpu().at_instruction_boundary() {
                 instructions += 1;
             }
         }
     } else {
         // Instruction level tracing
-        while dots < cycles {
+        while tcycles < cycles {
             tracer.capture(&gb).unwrap();
             let result = gb.step();
-            tracer.advance(result.dots);
-            dots += result.dots as u64;
+            tracer.advance(result.tcycles);
+            tcycles += result.tcycles as u64;
             instructions += 1;
             if result.new_screen {
                 frames += 1;
@@ -99,5 +99,5 @@ pub fn run(
         eprintln!("error: failed to finalize trace: {e}");
         process::exit(1);
     });
-    eprintln!("done: {instructions} instructions, {dots} dots, {frames} frames");
+    eprintln!("done: {instructions} instructions, {tcycles} T-cycles, {frames} frames");
 }
