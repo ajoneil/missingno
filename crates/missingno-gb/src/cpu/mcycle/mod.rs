@@ -192,14 +192,11 @@ pub(crate) enum Phase {
         action: PopAction,
     },
 
-    /// Trailing fetch-overlap M-cycle: drives the next instruction's
-    /// M1 fetch read on the bus. The carried `commit` is the in-flight
-    /// instruction's writeback — applied at the CLOSING edge so the
-    /// register-file DFFs capture on the same master-clock edge that
-    /// `zacw` (dispatch_active) captures on. Phase-changers (EnterHalt
-    /// / EnterStop / Invalid) never land here: `enter_fetch_overlap`
-    /// peels them off at OPEN so halt/lockup routing fires before the
-    /// next cell.
+    /// Trailing fetch-overlap M-cycle: reads the next instruction's
+    /// opcode while the in-flight instruction's `commit` retires at
+    /// the closing edge (same edge as `zacw` capture). Phase-changers
+    /// (EnterHalt / EnterStop / Invalid) are peeled off at the opening
+    /// edge so halt/lockup routing fires before this cell.
     FetchOverlap { commit: Commit },
 
     /// No post-fetch M-cycles (NOP, LD r,r, ALU A,r, HALT, STOP, etc.).
@@ -304,7 +301,7 @@ impl Cpu {
             // Save the previous M-cycle's bus address before replacing.
             // On hardware, op_addr holds the old value until DELTA_EF.
             let action = self
-                .next_mcycle(self.data_latch)
+                .next_mcycle()
                 .expect("next_mcycle must always return Some (CPU chains at boundaries)");
             self.current_action = Some(action);
             self.tcycle = TCycle::ZERO;
@@ -360,18 +357,15 @@ impl Cpu {
         result
     }
 
-    /// Get the next M-cycle's bus action. Single combinational selector
-    /// over post-edge state — `irq_latched.q`, `dispatch_active.q`, and
-    /// `irq_pending` have all settled by the time this runs.
-    /// `Halted(_)` arms model the halt sequencer's three sub-states; the
-    /// running paths reuse the existing `mcycle_*` step machinery.
-    fn next_mcycle(&mut self, read_value: u8) -> Option<MCycleAction> {
-        // M_h start halt-bug-vs-halt-state decision. Keys on
-        // yoii.q (= irq_latched.output() post-tick). yoii captured the
-        // pre-update_latch `dispatch.latched()` at this boundary, so
-        // for IF rises held by the per-bit latch through HALT body's
-        // data-phase, yoii sees the pre-release value and the halt
-        // RS-latch sets normally.
+    /// Pick the next M-cycle's bus action. Single combinational
+    /// selector over post-edge state — `irq_latched.q`,
+    /// `dispatch_active.q`, and `irq_pending` have all settled when
+    /// this runs.
+    fn next_mcycle(&mut self) -> Option<MCycleAction> {
+        // M_h start: halt-bug-vs-halt-state decision. yoii captured
+        // the pre-update_latch dispatch.latched() at this boundary, so
+        // IF rises held by the per-bit latch through HALT body's
+        // data-phase see the pre-release value here.
         if self.halt.bug_check_pending {
             self.halt.bug_check_pending = false;
             if self.irq.irq_latched.output() {
@@ -379,8 +373,8 @@ impl Cpu {
                 self.halt.state = HaltState::Running;
                 let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                 if ime_enabled {
-                    // HALT-IDU+1 suppression + dispatch's universal `-1`
-                    // step collapsed at the boundary: pc HALT+1 → HALT_addr.
+                    // Collapse HALT-IDU+1 + dispatch's universal -1
+                    // step: PC HALT+1 → HALT_addr.
                     self.bus_counter = self.bus_counter.wrapping_sub(1);
                     if self.dispatch.dispatch_active() {
                         let pc = self.bus_counter;
@@ -393,50 +387,46 @@ impl Cpu {
                         self.exec_step = 0;
                         self.irq.pending_vector_resolve = false;
                         self.boundary_flag = true;
-                        return self.mcycle_isr(0);
+                        return self.mcycle_isr();
                     }
                 } else {
-                    // Pan Docs halt-bug: byte after HALT executes twice
-                    // via the existing halt_bug flag's PC++ suppression
-                    // at the next opcode fetch (handled by FetchOverlap
-                    // step 1 below).
+                    // HALT-bug: PC++ suppression at the next opcode
+                    // fetch makes the byte after HALT execute twice.
                     self.halt.bug = true;
                 }
                 // Phase is already Execute(FetchOverlap step 1) from
-                // enter_fetch_overlap's halt-entry branch; the M-cycle
-                // from this boundary onwards is the post-halt body
-                // read of HALT+1 (or HALT_addr after pc--).
+                // enter_fetch_overlap's halt-entry branch; this M-cycle
+                // reads HALT+1 (or HALT_addr after pc--).
             } else {
                 // No IF pending at M_h start: halt RS-latch sets.
                 self.halt.rs_latched = true;
-                // Phase transitions from Execute(FetchOverlap) to
-                // Halted(Spin) — the read byte from this boundary is
-                // discarded; the CPU enters halt-state spin.
                 self.phase = CpuPhase::Halted(HaltPhase::Spin);
                 self.exec_step = 0;
             }
         }
 
         match &self.phase {
-            CpuPhase::Fetch => self.mcycle_fetch(read_value),
-            CpuPhase::Execute { .. } => self.mcycle_execute(read_value),
-            CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(read_value),
+            CpuPhase::Fetch => self.mcycle_fetch(),
+            CpuPhase::Execute { .. } => self.mcycle_execute(),
+            CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(),
             CpuPhase::Halted(HaltPhase::Spin) => {
                 if self.irq.irq_latched.output() {
                     let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                     let dispatch_pending = ime_enabled && !self.dispatch.latched().is_empty();
                     if dispatch_pending {
-                        Some(self.mcycle_halted_wake_intake_entry())
+                        Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
                     } else {
-                        self.enter_post_halt_fetch(read_value)
+                        self.enter_post_halt_fetch()
                     }
                 } else if self.irq.irq_pending {
-                    Some(self.mcycle_halted_setup_miss_entry())
+                    Some(self.mcycle_halted_entry(HaltPhase::SetupMiss))
                 } else {
-                    Some(self.mcycle_halted_spin_entry())
+                    Some(self.mcycle_halted_entry(HaltPhase::Spin))
                 }
             }
-            CpuPhase::Halted(HaltPhase::SetupMiss) => Some(self.mcycle_halted_wake_intake_entry()),
+            CpuPhase::Halted(HaltPhase::SetupMiss) => {
+                Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
+            }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
                 // and routes the next M-cycle to dispatch M1. The IME=0
@@ -458,9 +448,9 @@ impl Cpu {
                     self.exec_step = 0;
                     self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
-                    self.mcycle_isr(0)
+                    self.mcycle_isr()
                 } else {
-                    self.enter_post_halt_fetch(read_value)
+                    self.enter_post_halt_fetch()
                 }
             }
         }
@@ -469,7 +459,7 @@ impl Cpu {
     /// Fetch phase: single M-cycle reading opcode at [PC].
     /// Returns `None` when the fetched instruction has no post-decode
     /// M-cycles (e.g., NOP) — the instruction completes immediately.
-    fn mcycle_fetch(&mut self, read_value: u8) -> Option<MCycleAction> {
+    fn mcycle_fetch(&mut self) -> Option<MCycleAction> {
         let step = self.exec_step;
         self.exec_step += 1;
 
@@ -492,7 +482,7 @@ impl Cpu {
             // On hardware, reg.pc = bus_addr + 1 at this execute step.
             // If the fetch was from a jump target (different from
             // bus_counter), this is where PC physically updates.
-            let opcode = read_value;
+            let opcode = self.data_latch;
             let fetch_addr = match &self.current_action {
                 Some(MCycleAction::Read { address }) => *address,
                 _ => self.bus_counter,
@@ -515,7 +505,7 @@ impl Cpu {
                     // run its execute phase before fetch overlap.
                     self.phase = CpuPhase::Execute { phase, step: 0 };
                     self.exec_step = 0;
-                    self.mcycle_execute(0)
+                    self.mcycle_execute()
                 }
             } else {
                 // Need operand bytes — enter Execute with Operands phase
@@ -529,39 +519,16 @@ impl Cpu {
                     step: 0,
                 };
                 self.exec_step = 0;
-                self.mcycle_execute(0)
+                self.mcycle_execute()
             }
         }
     }
 
-    /// Enter `Halted(Spin)` — steady-state halt loop. No bus activity:
-    /// the halted state holds the address bus passively (`Internal{...}`
-    /// matches dmg-sim observation that no `bus_read` fires here).
-    fn mcycle_halted_spin_entry(&mut self) -> MCycleAction {
-        self.phase = CpuPhase::Halted(HaltPhase::Spin);
-        self.exec_step = 0;
-        self.boundary_flag = true;
-        MCycleAction::Internal {
-            address: self.bus_counter,
-        }
-    }
-
-    /// Enter `Halted(SetupMiss)` — one extra M-cycle so `irq_latched`
-    /// can capture `irq_pending` on the next CLK9↑. No bus activity.
-    fn mcycle_halted_setup_miss_entry(&mut self) -> MCycleAction {
-        self.phase = CpuPhase::Halted(HaltPhase::SetupMiss);
-        self.exec_step = 0;
-        self.boundary_flag = true;
-        MCycleAction::Internal {
-            address: self.bus_counter,
-        }
-    }
-
-    /// Enter `Halted(WakeIntake)` — IME=1 stand-in for the wake M-cycle:
-    /// hardware's discarded m7 fetch plus the `dispatch_active.q` (zacw)
-    /// capture cycle, modelled as a single Internal M-cycle.
-    fn mcycle_halted_wake_intake_entry(&mut self) -> MCycleAction {
-        self.phase = CpuPhase::Halted(HaltPhase::WakeIntake);
+    /// Enter `CpuPhase::Halted(phase)`. No bus activity — the halted
+    /// state holds the address bus passively (dmg-sim shows no
+    /// `bus_read` fires in any of the three halt sub-phases).
+    fn mcycle_halted_entry(&mut self, phase: HaltPhase) -> MCycleAction {
+        self.phase = CpuPhase::Halted(phase);
         self.exec_step = 0;
         self.boundary_flag = true;
         MCycleAction::Internal {
@@ -572,13 +539,13 @@ impl Cpu {
     /// Drop halt and start the post-halt opcode fetch on the IME=0 wake
     /// path. With `mcyc = m7` parked through HALT, this M-cycle carries
     /// the m7-driven post-body fetch from PC.
-    fn enter_post_halt_fetch(&mut self, read_value: u8) -> Option<MCycleAction> {
+    fn enter_post_halt_fetch(&mut self) -> Option<MCycleAction> {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
-        self.mcycle_fetch(read_value)
+        self.mcycle_fetch()
     }
 
     /// Execute phase: operand reading and post-decode M-cycles.
@@ -589,7 +556,7 @@ impl Cpu {
     ///
     /// Uses `std::mem::replace` to take the phase out, avoiding
     /// simultaneous borrows of `self.phase` and `&mut self`.
-    fn mcycle_execute(&mut self, read_value: u8) -> Option<MCycleAction> {
+    fn mcycle_execute(&mut self) -> Option<MCycleAction> {
         // Take the phase out to avoid borrow conflicts.
         let taken = std::mem::replace(&mut self.phase, CpuPhase::Fetch);
         let (mut phase, mut step) = match taken {
@@ -600,7 +567,7 @@ impl Cpu {
         let current_step = step;
         step += 1;
 
-        let (action, put_back) = self.execute_phase_step(&mut phase, current_step, read_value);
+        let (action, put_back) = self.execute_phase_step(&mut phase, current_step);
 
         if put_back {
             self.phase = CpuPhase::Execute { phase, step };
@@ -616,7 +583,6 @@ impl Cpu {
         &mut self,
         phase: &mut Phase,
         current_step: u8,
-        read_value: u8,
     ) -> (Option<MCycleAction>, bool) {
         match phase {
             Phase::Operands {
@@ -630,7 +596,7 @@ impl Cpu {
                 }
 
                 // Operand byte just read
-                bytes[*bytes_read as usize] = read_value;
+                bytes[*bytes_read as usize] = self.data_latch;
                 *bytes_read += 1;
                 *pc = pc.wrapping_add(1);
                 self.bus_counter = *pc;
@@ -658,7 +624,7 @@ impl Cpu {
                     }
                     self.phase = CpuPhase::Execute { phase, step: 0 };
                     self.exec_step = 0;
-                    return (self.next_mcycle(0), false);
+                    return (self.next_mcycle(), false);
                 }
 
                 // Non-last operand: issue bus_read for next byte.
@@ -681,7 +647,7 @@ impl Cpu {
                 let carried = std::mem::replace(commit, Commit::NoOperation);
                 Self::apply_commit(self, carried);
 
-                let opcode = read_value;
+                let opcode = self.data_latch;
                 let fetch_addr = match &self.current_action {
                     Some(MCycleAction::Read { address }) => *address,
                     _ => self.bus_counter,
@@ -710,7 +676,7 @@ impl Cpu {
                     self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
                     self.bus_counter = pc;
-                    return (self.next_mcycle(0), false);
+                    return (self.next_mcycle(), false);
                 }
 
                 if self.halt.bug {
@@ -732,7 +698,7 @@ impl Cpu {
                             step: 0,
                         };
                         self.exec_step = 0;
-                        (self.next_mcycle(0), false)
+                        (self.next_mcycle(), false)
                     }
                 } else {
                     self.phase = CpuPhase::Execute {
@@ -745,14 +711,14 @@ impl Cpu {
                         step: 0,
                     };
                     self.exec_step = 0;
-                    (self.next_mcycle(0), false)
+                    (self.next_mcycle(), false)
                 }
             }
 
             Phase::ReadOp { address, action } => match current_step {
                 0 => (Some(MCycleAction::Read { address: *address }), true),
                 _ => {
-                    Self::apply_read_action(self, action, read_value);
+                    Self::apply_read_action(self, action, self.data_latch);
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             },
@@ -762,7 +728,7 @@ impl Cpu {
                 match current_step {
                     0 => (Some(MCycleAction::Read { address }), true),
                     1 => {
-                        let result = Self::apply_rmw(self, op, read_value);
+                        let result = Self::apply_rmw(self, op, self.data_latch);
                         (
                             Some(MCycleAction::Write {
                                 address,
@@ -835,7 +801,7 @@ impl Cpu {
                 match current_step {
                     0 => (Some(MCycleAction::Read { address: sp }), true),
                     1 => {
-                        self.scratch = read_value;
+                        self.scratch = self.data_latch;
                         (
                             Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
@@ -844,7 +810,7 @@ impl Cpu {
                         )
                     }
                     2 => {
-                        Self::apply_pop(self, action, self.scratch, read_value, sp);
+                        Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         let has_trailing =
                             matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
@@ -950,7 +916,7 @@ impl Cpu {
                     1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
-                        self.scratch = read_value;
+                        self.scratch = self.data_latch;
                         (
                             Some(MCycleAction::Read {
                                 address: sp.wrapping_add(1),
@@ -959,7 +925,7 @@ impl Cpu {
                         )
                     }
                     3 => {
-                        Self::apply_pop(self, action, self.scratch, read_value, sp);
+                        Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         (Some(MCycleAction::Internal { address: self.bus_counter }), true)
                     }
                     _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
@@ -968,29 +934,15 @@ impl Cpu {
         }
     }
 
-    /// ISR dispatch: 5 held M-cycles spanning steps 0..=4.
-    ///
-    /// - Steps 0..=3 each return their own MCycleAction directly,
-    ///   held for one M-cycle by next_tcycle's bus-output loop.
-    /// - Step 4 transitions to Fetch via retire_edge(NoOperation,
-    ///   Phase::Empty); the chained mcycle_fetch(0) returns
-    ///   Read{vector} as step 4's held M-cycle (M5 vector fetch).
-    ///   The handler's first opcode then decodes via the standard
-    ///   fetch/execute overlap on the next M-cycle.
-    ///
-    /// Hardware mapping (gb-ctr RST n p129):
-    ///   step 0 → M1 internal (Internal{pc})
-    ///   step 1 → M2 internal (InternalOamBug{sp})
-    ///   step 2 → M3 push pc_hi (Write{sp-1, pc_hi})
-    ///   step 3 → M4 push pc_lo (Write{sp-2, pc_lo}, vector resolved here)
-    ///   step 4 → M5 vector fetch (Read{vector} via retire_edge chain)
-    ///
-    /// IME (zacw downstream) is cleared on the dispatching CLK9↑ inside
-    /// step 0's `write_immediate(Disabled)`. Both running-CPU dispatch
-    /// (retire_edge → next_mcycle → mcycle_isr(0)) and HALT-wake
-    /// dispatch (Halted(WakeIntake) → next_mcycle → mcycle_isr(0))
-    /// reach this entry through the generic combinational selector.
-    fn mcycle_isr(&mut self, _read_value: u8) -> Option<MCycleAction> {
+    /// ISR dispatch: 5 M-cycles (steps 0..=4) per gb-ctr RST n p129.
+    ///   step 0 → M1 internal (PC on bus)
+    ///   step 1 → M2 InternalOamBug(SP)
+    ///   step 2 → M3 push pc_hi (Write {sp-1})
+    ///   step 3 → M4 push pc_lo (Write {sp-2}); vector resolved here
+    ///   step 4 → M5 vector fetch (via enter_fetch_overlap)
+    /// IME (zacw downstream) clears on the dispatching CLK9↑ — step 0's
+    /// `write_immediate(Disabled)` on both stages.
+    fn mcycle_isr(&mut self) -> Option<MCycleAction> {
         let (sp, pc_hi, pc_lo, step) = match &mut self.phase {
             CpuPhase::InterruptDispatch {
                 sp,
@@ -1094,10 +1046,8 @@ impl Cpu {
         self.boundary_flag = true;
 
         if self.dispatch.dispatch_active() {
-            // zkog/zloz reset happens at ctl_int_entry_m6
-            // (M3→M4 vector resolve) — driven by
-            // pending_vector_resolve in execute.rs.
-
+            // zkog/zloz reset fires at ctl_int_entry_m6 (M3→M4 vector
+            // resolve), driven by pending_vector_resolve in execute.rs.
             self.halt.state = HaltState::Running;
             self.halt.rs_latched = false;
             let pc = self.bus_counter;
@@ -1110,26 +1060,19 @@ impl Cpu {
             self.exec_step = 0;
             self.irq.pending_vector_resolve = false;
             return self
-                .next_mcycle(0)
+                .next_mcycle()
                 .expect("next_mcycle must return Some after dispatch arm");
         }
 
         if self.halt.state == HaltState::Halting {
             // Defer the halt-bug-vs-halt-state decision to M_h start
-            // (= the boundary at the END of HALT's body M-cycle =
-            // next_mcycle's entry on the following M-cycle). The HALT
-            // body M-cycle's bus activity is the overlap-fetch read at
-            // HALT+1 (same M-cycle structure as any overlap-capable
-            // body), shared with the post-halt-body M-cycle for the
-            // halt-bug path. `data_phase_n` pulses normally during it
-            // (halt_rs_latched stays false) so the per-bit irq_latch
-            // gates correctly against IF rises in non-data-phase.
+            // (the boundary at the end of HALT's body M-cycle). The
+            // body M-cycle reads HALT+1 like any overlap fetch;
+            // `data_phase_n` pulses normally (rs_latched stays false)
+            // so the per-bit irq_latch gates correctly.
             self.halt.state = HaltState::Halted;
             self.halt.rs_latched = false;
             self.halt.bug_check_pending = true;
-            // Fall through to the FetchOverlap step 1 setup below; the
-            // halt-bug-vs-halt-state branch fires at next_mcycle's
-            // entry on the following M-cycle (M_h start).
         }
 
         self.phase = CpuPhase::Execute {
@@ -1148,10 +1091,9 @@ impl Cpu {
         self.last_tcycle
     }
 
-    /// True at the last T-cycle of the current M-cycle — the position
-    /// at which M-cycle-boundary work (interrupt latch, DMA, serial,
-    /// audio tick, PPU boundary work) must complete before the next
-    /// M-cycle's first T-cycle begins.
+    /// True at the last T-cycle of the current M-cycle, where the
+    /// boundary work (timers, DMA, serial, audio, PPU boundary)
+    /// completes before the next M-cycle begins.
     pub fn at_mcycle_boundary(&self) -> bool {
         self.last_tcycle.as_u8() == 3
     }
@@ -1183,10 +1125,9 @@ impl Cpu {
     }
 
     /// Update `irq_pending` from the priority-encoded `IF & IE`.
-    /// Combinational on hardware (not IME-gated — the IME gate sits in
-    /// `dispatch_trigger`). The vector itself is resolved later via
-    /// `pending_vector_resolve` reading `interrupts.triggered()` at the
-    /// ISR's M3→M4 push.
+    /// Combinational, not IME-gated — the IME gate sits in
+    /// `dispatch_trigger`. The vector is resolved separately via
+    /// `pending_vector_resolve` at the ISR's M3→M4 push.
     pub fn update_interrupt_state(
         &mut self,
         triggered: Option<super::super::interrupts::Interrupt>,
@@ -1194,11 +1135,10 @@ impl Cpu {
         self.irq.irq_pending = triggered.is_some();
     }
 
-    /// Clock irq_latched (yoii) on its CLK9 capture edge. yoii's D
-    /// input is the post-data-phase-gated priority chain output —
-    /// modelled by `dispatch.latched()`, not raw `irq_pending`.
-    /// irq_latched drives the HALT release chain (yoii → ykua →
-    /// halt RS-latch reset).
+    /// Clock `irq_latched` (yoii) on its CLK9 capture edge. Its D
+    /// input is the data-phase-gated priority chain output
+    /// (`dispatch.latched()`), not raw `irq_pending`. yoii drives
+    /// the HALT-release chain.
     pub fn tick_irq_latched(&mut self) {
         self.irq.irq_latched.write(!self.dispatch.latched().is_empty());
         self.irq.irq_latched.tick();
