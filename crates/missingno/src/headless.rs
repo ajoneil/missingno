@@ -780,8 +780,8 @@ fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {
     (0..40)
         .map(|i| {
             let sprite = ppu.sprite(SpriteId(i));
-            let x = sprite.position.x_plus_8 as i16 - 8;
-            let y = sprite.position.y_plus_16 as i16 - 16;
+            let x = sprite.position.x as i16 - 8;
+            let y = sprite.position.y as i16 - 16;
             SpriteState {
                 id: i,
                 x,

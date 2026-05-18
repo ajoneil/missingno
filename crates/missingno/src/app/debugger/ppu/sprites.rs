@@ -205,13 +205,13 @@ impl SpritesPane {
 
     fn position(&self, position: &Position, size: SpriteSize) -> Element<'static, app::Message> {
         rich_text![
-            span(position.x_plus_8 as i16 - 8).color(if position.on_screen_x() {
+            span(position.x as i16 - 8).color(if position.on_screen_x() {
                 palette::GREEN
             } else {
                 palette::RED
             }),
             span(",").color(palette::MUTED),
-            span(position.y_plus_16 as i16 - 16).color(if position.on_screen_y(size) {
+            span(position.y as i16 - 16).color(if position.on_screen_y(size) {
                 palette::GREEN
             } else {
                 palette::RED

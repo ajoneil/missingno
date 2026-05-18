@@ -15,8 +15,8 @@ impl Default for Sprite {
     fn default() -> Self {
         Self {
             position: Position {
-                x_plus_8: 0,
-                y_plus_16: 0,
+                x: 0,
+                y: 0,
             },
             tile: TileIndex(0),
             attributes: Attributes::empty(),
@@ -28,13 +28,13 @@ impl Sprite {}
 
 #[derive(Clone, Copy)]
 pub struct Position {
-    pub x_plus_8: u8,
-    pub y_plus_16: u8,
+    pub x: u8,
+    pub y: u8,
 }
 
 impl Position {
     pub fn on_screen_x(&self) -> bool {
-        (1..168).contains(&self.x_plus_8)
+        (1..168).contains(&self.x)
     }
 
     pub fn on_screen_y(&self, size: SpriteSize) -> bool {
@@ -43,11 +43,11 @@ impl Position {
             SpriteSize::Double => 1,
         };
 
-        (min..160).contains(&self.y_plus_16)
+        (min..160).contains(&self.y)
     }
 
     pub fn on_line(&self, line: u8, size: SpriteSize) -> bool {
-        let first_line = self.y_plus_16 as i16 - 16;
+        let first_line = self.y as i16 - 16;
         let line_after = first_line + size.height() as i16;
 
         (first_line..line_after).contains(&(line as i16))

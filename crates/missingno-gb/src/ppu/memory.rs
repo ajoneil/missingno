@@ -129,8 +129,8 @@ impl Oam {
         for i in 0..40 {
             let base = i * 4;
             if base + 3 < data.len() {
-                oam.sprites[i].position.y_plus_16 = data[base];
-                oam.sprites[i].position.x_plus_8 = data[base + 1];
+                oam.sprites[i].position.y = data[base];
+                oam.sprites[i].position.x = data[base + 1];
                 oam.sprites[i].tile = TileIndex(data[base + 2]);
                 oam.sprites[i].attributes = sprites::Attributes(data[base + 3]);
             }
@@ -141,8 +141,8 @@ impl Oam {
     pub fn read(&self, address: OamAddress) -> u8 {
         let sprite = &self.sprites[address.sprite.0 as usize];
         match address.byte {
-            SpriteByte::PositionY => sprite.position.y_plus_16,
-            SpriteByte::PositionX => sprite.position.x_plus_8,
+            SpriteByte::PositionY => sprite.position.y,
+            SpriteByte::PositionX => sprite.position.x,
             SpriteByte::Tile => sprite.tile.0,
             SpriteByte::Attributes => sprite.attributes.0,
         }
@@ -151,10 +151,10 @@ impl Oam {
     pub fn write(&mut self, address: OamAddress, value: u8) {
         match address.byte {
             SpriteByte::PositionY => {
-                self.sprites[address.sprite.0 as usize].position.y_plus_16 = value
+                self.sprites[address.sprite.0 as usize].position.y = value
             }
             SpriteByte::PositionX => {
-                self.sprites[address.sprite.0 as usize].position.x_plus_8 = value
+                self.sprites[address.sprite.0 as usize].position.x = value
             }
             SpriteByte::Tile => self.sprites[address.sprite.0 as usize].tile = TileIndex(value),
             SpriteByte::Attributes => {
@@ -170,14 +170,14 @@ impl Oam {
     /// Read the Y/X byte-pair driven on the 16-bit OAM bus during Mode 2 scanning.
     pub(in crate::ppu) fn sprite_position(&self, id: SpriteId) -> (u8, u8) {
         let sprite = &self.sprites[id.0 as usize];
-        (sprite.position.y_plus_16, sprite.position.x_plus_8)
+        (sprite.position.y, sprite.position.x)
     }
 
     pub(in crate::ppu) fn oam_byte(&self, offset: u8) -> u8 {
         let sprite = &self.sprites[(offset / 4) as usize];
         match offset % 4 {
-            0 => sprite.position.y_plus_16,
-            1 => sprite.position.x_plus_8,
+            0 => sprite.position.y,
+            1 => sprite.position.x,
             2 => sprite.tile.0,
             3 => sprite.attributes.0,
             _ => unreachable!(),
@@ -187,8 +187,8 @@ impl Oam {
     pub(in crate::ppu) fn set_oam_byte(&mut self, offset: u8, value: u8) {
         let sprite = &mut self.sprites[(offset / 4) as usize];
         match offset % 4 {
-            0 => sprite.position.y_plus_16 = value,
-            1 => sprite.position.x_plus_8 = value,
+            0 => sprite.position.y = value,
+            1 => sprite.position.x = value,
             2 => sprite.tile = TileIndex(value),
             3 => sprite.attributes = sprites::Attributes(value),
             _ => unreachable!(),

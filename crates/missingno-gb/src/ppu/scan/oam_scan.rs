@@ -11,7 +11,7 @@ pub(in crate::ppu) struct SpriteStoreEntry {
     pub(in crate::ppu) oam_index: u8,
     /// Row of the sprite on this scanline (0-15); precomputed during Mode 2.
     pub(in crate::ppu) line_offset: u8,
-    /// x_plus_8 from OAM byte 1; collapses the per-slot BODE-clocked X dlatches into one u8.
+    /// x from OAM byte 1; collapses the per-slot BODE-clocked X dlatches into one u8.
     pub(in crate::ppu) x: u8,
 }
 
