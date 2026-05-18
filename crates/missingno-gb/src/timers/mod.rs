@@ -29,7 +29,7 @@ impl Timers {
     /// observationally indistinguishable by construction: bit 15
     /// (UPOF) has no consumer outside reg_div16 — FF04 reads
     /// bits[13:6], TAC selects bits 1/3/5/7, no other path reads UPOF.
-    pub fn new() -> Self {
+    pub fn post_boot() -> Self {
         Self {
             internal_counter: 0xEAF3,
             counter: 0,
@@ -50,7 +50,7 @@ impl Timers {
     /// would initialise to 0x0001 and reach 0x6AF3 at PC=0x0100 —
     /// observationally indistinguishable by construction (UPOF has no
     /// consumer outside reg_div16).
-    pub fn power_on() -> Self {
+    pub fn new() -> Self {
         Self {
             internal_counter: 0x8001,
             counter: 0,

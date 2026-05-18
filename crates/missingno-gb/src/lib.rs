@@ -81,7 +81,7 @@ pub struct GameBoy {
 impl GameBoy {
     pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> GameBoy {
         let mut gb = GameBoy {
-            cpu: Cpu::new(0),
+            cpu: Cpu::new(),
             screen: Screen::default(),
             external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
@@ -113,46 +113,46 @@ impl GameBoy {
         self.rebuild_state();
     }
 
-    /// Re-create every non-cartridge, non-link component to its post-
-    /// boot or power-on initial state. Called from `new` after the
+    /// Re-create every non-cartridge, non-link component to its power-
+    /// on or post-boot-ROM initial state. Called from `new` after the
     /// initial struct has been laid out with placeholder values, and
     /// from `reset` after `ExternalBus::reset` has cleared WRAM/latch.
     ///
     /// Mirrors the CPU's pending bus read/write so dot-2 staging has a
     /// target for the in-flight M-cycle. The skip-boot CPU anchors at
     /// the post-rise of the M-cycle that opens the cartridge m1 fetch
-    /// (`Cpu::new()` produces `Read{0x0100}`); the boundary work fired
-    /// in the boot ROM's domain before t=0, so the staging block in
-    /// `rise()` doesn't fire for that first M-cycle.
+    /// (`Cpu::post_boot()` produces `Read{0x0100}`); the boundary work
+    /// fired in the boot ROM's domain before t=0, so the staging block
+    /// in `rise()` doesn't fire for that first M-cycle.
     fn rebuild_state(&mut self) {
         let has_boot_rom = self.external.has_boot_rom();
         let header_checksum = self.external.cartridge.header_checksum();
         let supports_sgb = self.external.cartridge.supports_sgb();
 
         self.cpu = if has_boot_rom {
-            Cpu::power_on()
+            Cpu::new()
         } else {
-            Cpu::new(header_checksum)
+            Cpu::post_boot(header_checksum)
         };
         self.screen = Screen::default();
         self.high_ram = HighRam::new();
         self.ppu = if has_boot_rom {
-            Ppu::power_on()
-        } else {
             Ppu::new()
+        } else {
+            Ppu::post_boot()
         };
         self.audio = if has_boot_rom {
-            Audio::power_on()
-        } else {
             Audio::new()
+        } else {
+            Audio::post_boot()
         };
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
         self.serial = serial_transfer::Registers::new();
         self.timers = if has_boot_rom {
-            timers::Timers::power_on()
-        } else {
             timers::Timers::new()
+        } else {
+            timers::Timers::post_boot()
         };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();

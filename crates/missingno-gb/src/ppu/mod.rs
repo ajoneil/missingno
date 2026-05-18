@@ -138,7 +138,7 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
+    pub fn post_boot() -> Self {
         let control = Control::default();
         Self {
             registers: PipelineRegisters {
@@ -202,7 +202,7 @@ impl Ppu {
     }
 
     /// Power-on state: LCD off, all registers zeroed.
-    pub fn power_on() -> Self {
+    pub fn new() -> Self {
         let control = Control::new(ControlFlags::empty());
         Self {
             registers: PipelineRegisters {

@@ -42,7 +42,7 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new() -> Self {
+    pub fn post_boot() -> Self {
         Self {
             enabled: true,
             channels: Channels {
@@ -63,7 +63,7 @@ impl Audio {
     }
 
     /// Power-on state: audio disabled, all registers zeroed.
-    pub fn power_on() -> Self {
+    pub fn new() -> Self {
         Self {
             enabled: false,
             channels: Channels {

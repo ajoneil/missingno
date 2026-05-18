@@ -161,7 +161,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
-    pub fn new(checksum: u8) -> Cpu {
+    pub fn post_boot(checksum: u8) -> Cpu {
         Cpu {
             a: 0x01,
             b: 0x00,
@@ -230,7 +230,7 @@ impl Cpu {
     }
 
     /// Power-on state: all registers zeroed, PC=0x0000 for boot ROM entry.
-    pub fn power_on() -> Cpu {
+    pub fn new() -> Cpu {
         Cpu {
             a: 0,
             b: 0,
