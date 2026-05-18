@@ -128,9 +128,8 @@ impl GameBoy {
             }
         }
 
-        // Consume instruction boundary flag (used by step_traced to detect
-        // mid-instruction state). HALT bug and EI delay are handled
-        // internally by the CPU state machine.
+        // Consume the boundary flag so step_traced sees mid-instruction
+        // state after this returns.
         self.cpu.take_instruction_boundary();
 
         new_screen
@@ -146,81 +145,50 @@ impl GameBoy {
         }
     }
 
-    /// Rising edge: advance CPU state machine, capture bus reads,
-    /// tick timer and PPU, fire OAM bugs.
-    ///
-    /// At each M-cycle boundary, `irq_latched` (yoii) captures
-    /// `irq_pending`, driving the HALT-release chain (yoii → ykua →
-    /// halt↓). The dispatching CLK9↑ — where zacw and the write-back
-    /// DFFs share the same capture edge — happens inside `retire_edge()`,
-    /// called via `next_mcycle` → `mcycle_*`; the sequencer combinationally
-    /// selects fetch vs dispatch from `dispatch_active.q` on that same
-    /// edge. On the HALT-wake path, `tick_dispatch_active` captures
-    /// dispatch_active on the closing CLK9↑ of `Halted(WakeIntake)` so
-    /// the next M-cycle's selector resolves dispatch vs fetch from the
-    /// freshly-captured `dispatch_active.q`.
+    /// Rising edge: tick boundary subsystems on M-cycle boundaries,
+    /// advance the CPU, apply staged writes, tick the PPU, fire OAM bug.
     fn rise(&mut self) -> PhaseResult {
         let mut new_screen = false;
         let mut pixel = None;
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
 
-        // ── M-cycle boundary: irq_latched capture, then PPU + interrupt updates ──
         if is_mcycle_boundary {
-            // yoii (irq_latched) captures `dispatch.latched()` first —
-            // BEFORE this boundary's data_phase_n↑ + update_latch
-            // refreshes the per-bit irq_latch. Hardware: yoii's setup
-            // window precedes the data_phase_n↑ at -1,144 ps; for an
-            // IF source held by the per-bit latch through the prior
-            // M-cycle's data-phase, the held value's release lands
-            // AFTER yoii's capture window, so yoii captures the
-            // pre-release value.
+            // yoii captures dispatch.latched() before data_phase_n↑
+            // refreshes the per-bit irq_latch — preserves pre-release
+            // values held through the prior M-cycle's data phase.
             self.cpu.tick_irq_latched();
 
-            // data_phase_n↑ at the new M-cycle's CLK9↑: the per-bit
-            // irq_latch_inst<i> enabled D-latch reopens and re-snapshots
-            // IF — visible to dispatch from this M-cycle onwards.
+            // data_phase_n↑ reopens the per-bit irq_latch_inst<i> to
+            // re-snapshot IF for this M-cycle's dispatch.
             self.cpu.dispatch.set_data_phase_n(true);
             self.cpu
                 .dispatch
                 .update_latch(self.interrupts.enabled, self.interrupts.requested);
 
-            // zacw captures zfex on this CLK9↑.
             self.cpu.dispatch.tick_zacw();
 
-            // ime ← ime_delay: copies the EI shadow stage onto the IME
-            // DFF at the M-cycle boundary. EI's commit only set
-            // ime_delay; this copy is what makes the new IME visible to
-            // dispatch — one M-cycle after EI committed.
+            // Promote ime_delay (EI's shadow) to ime — produces EI's
+            // one-instruction delay.
             self.cpu.ime.write_immediate(if self.cpu.ime_delay {
                 crate::cpu::InterruptMasterEnable::Enabled
             } else {
                 crate::cpu::InterruptMasterEnable::Disabled
             });
 
-            // Clear any staged bus activity from the previous M-cycle.
             self.cpu_bus.clear_activity();
 
-            // Timer ticks once per M-cycle (BOGA).
             self.timers.mcycle();
-
-            // Drain g151 → g154: the CLK9-clocked g151 DFF latches the
-            // reload-cycle pulse during timers.mcycle(); g154 captures
-            // immediately after this CLK9↑, raising IF.bit2 before the
-            // CPU's dispatch read at this M-cycle.
             if let Some(interrupt) = self.timers.take_pending_interrupt() {
                 self.interrupts.request(interrupt);
             }
 
-            // Serial bit-5 fall detection at the M-cycle boundary rise —
-            // same edge as TAMA_DIV05p in hardware, where CALY_SER_CNT3
-            // rises and UBUL_FF0F_D3p latches IF.serial. Asserting here
-            // lands IF in the data_phase window for same-M-cycle dispatch.
+            // Serial bit-5 fall lands IF.serial in this M-cycle's
+            // data-phase window for same-M-cycle dispatch.
             let counter = self.timers.internal_counter();
             if let Some(interrupt) = self.serial.mcycle(counter) {
                 self.interrupts.request(interrupt);
             }
 
-            // PPU master-clock rising edge at the M-cycle boundary (T-cycle 0).
             let oam_bus = self.dma.oam_bus_owner();
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
@@ -232,27 +200,20 @@ impl GameBoy {
                 pixel = pix;
             }
 
-            // SUKO is combinational — check for STAT edge after PPU rise.
             if self.ppu.check_stat_edge() {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Capture interrupt state so the CPU's dispatch check sees it.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
         }
 
-        // ── CPU T-cycle advance ──
         self.cpu.next_tcycle();
 
-        // IE push bug + ctl_int_entry_m6: vector-resolve fires between
-        // ISR M3 and M4. Clears zkog/zloz (per netlist R_n =
-        // NOR(ctl_int_entry_m6, sys_reset)) and the dispatched IF bit
-        // (per netlist inta[i] = AND(ctl_int_entry_m6, irq_latch_gated_q_n[i])).
+        // Vector resolve (ISR M3→M4): clear zkog/zloz + the dispatched
+        // IF bit, latch the vector into bus_counter. Reads the priority
+        // chain output (post-latch), matching the IE-push-bug timing.
         if self.cpu.take_pending_vector_resolve() {
-            // Read the post-latch priority chain output (matches the
-            // hardware vector resolve which reads irq_latch_gated, not
-            // raw IF).
             if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
                 self.cpu.bus_counter = interrupt.vector();
@@ -264,26 +225,17 @@ impl GameBoy {
 
         let tcycle = self.cpu.last_tcycle();
 
-        // data_phase_n↓ at the T-cycle 1→2 boundary closes the per-bit
-        // irq_latch_inst<i> enabled D-latch. Subsequent IF requests this
-        // M-cycle still set `requested` but do not propagate to the
-        // latch until the next data_phase_n↑ at the M-cycle boundary.
-        //
-        // Skipped only when the halt RS-latch is set (true halt-state
-        // spin): the CPU phase ring is frozen and data_phase is held
-        // LOW. HALT body M-cycle (halt_rs_latched=false) still pulses
-        // data_phase normally so the per-bit latch gates correctly
-        // against IF rises during HALT body's data-phase.
+        // data_phase_n↓ closes the per-bit irq_latch at the T1→T2
+        // boundary, freezing IF visibility for this M-cycle's dispatch.
+        // The halt-state spin keeps data_phase LOW so the latch stays
+        // transparent throughout.
         if tcycle.as_u8() == 2 && !self.cpu.halt_rs_latched() {
             self.cpu.dispatch.set_data_phase_n(false);
         }
 
-        // step_zkog drives zaij combinational + zkog SR-latch update.
-        // zaij = ime ∧ data_phase ∧ int_take ∧ xogs.
-        // HALT body M-cycle acts as a fetch cycle for xogs (ctl_op_halt
-        // overlap fetch is the next-instruction prefetch) — so zaij can
-        // fire during HALT body's data-phase, capturing zacw at M_h
-        // start for the immediate-dispatch path.
+        // step_zkog: zaij = ime ∧ data_phase ∧ int_take ∧ xogs. HALT
+        // body and halt-spin both feed into xogs so dispatch can fire
+        // mid-HALT for the immediate-dispatch path.
         let halt_body = self.cpu.is_halted() && !self.cpu.halt_rs_latched();
         let halt_spin = self.cpu.halt_rs_latched();
         let data_phase = !halt_spin && (tcycle.as_u8() == 2 || tcycle.as_u8() == 3);
@@ -298,16 +250,8 @@ impl GameBoy {
             .dispatch
             .step_zkog(ime_enabled, data_phase, write_phase, xogs);
 
-        // Stage CPU bus activity for this M-cycle. The CPU asserts
-        // either cpu_wr or cpu_rd (or neither) — never both:
-        //   * Writes: CPU drives cpu_port_d at CUPA-rising (rise of
-        //     T-cycle 2). PPU register latches are transparent during
-        //     T-cycles 2-3 and capture at CUPA-falling (end of T-cycle 3);
-        //     memory commits via write_byte at fall() of T-cycle 3.
-        //   * Reads: the addressed peripheral's tri-state driver
-        //     (`tobe`/`wafu`) enables at T-cycle 2.005 and drives the
-        //     bus; the CPU latches at T-cycle 3.995. Source-state
-        //     changes after T-cycle 2 don't propagate to the latch.
+        // Stage this M-cycle's bus activity. The CPU asserts at most one
+        // of cpu_rd / cpu_wr per M-cycle; we apply it at T-cycle 2 below.
         if is_mcycle_boundary {
             if let Some((address, _value)) = self.cpu.pending_bus_write() {
                 self.cpu_bus.stage_write(address);
@@ -316,12 +260,10 @@ impl GameBoy {
             }
         }
 
-        // BOWA (T-cycle 0): arm OAM corruption from any OAM-range address
-        // on the CPU bus this M-cycle. CUFE pulses at MOPA gated on
-        // SARO_ADDR_OAMp, so the arming must be visible at BOWA —
-        // same M-cycle as the MOPA-rise apply at T-cycle 2. Three
-        // sources: IDU step (SP+1/HL+1/HL-1 on the address bus), a
-        // pending CPU read, or a pending CPU write.
+        // BOWA: arm OAM corruption from any OAM-range address on the
+        // CPU bus this M-cycle. CUFE fires at MOPA (T-cycle 2 rise);
+        // arming must be visible at T-cycle 0 so the same M-cycle's
+        // MOPA edge picks it up.
         if tcycle.as_u8() == 0 {
             if let BusAction::InternalOamBug { address } = self.cpu.last_bus_action {
                 self.ppu.arm_oam_bug_for_write(address);
@@ -334,24 +276,16 @@ impl GameBoy {
             }
         }
 
-        // ── Non-boundary T-cycles: PPU rise + interrupt capture AFTER CPU T-cycle advance ──
         if !is_mcycle_boundary {
-            // Snapshot LCDC.1 BEFORE the staged bus write applies — the
-            // alet-rising-edge DFF capture (SOBU on TEKY → FEPO → XYLO)
-            // wins the gate-delay race against CUPA-rising's transparent-
-            // latch propagation by ~14 ns. Other combinational consumers
-            // read `regs` directly and see post-CUPA values after
-            // `drive_ppu_bus` below.
+            // Snapshot LCDC.1 BEFORE the staged write applies — the
+            // alet-rising DFF capture (SOBU on TEKY → FEPO → XYLO)
+            // beats CUPA-rising's transparent-latch propagation by
+            // ~14 ns. Other consumers read post-CUPA `regs` directly.
             self.ppu.snapshot_pre_cupa_lcdc();
 
-            // Apply staged bus write at the rise of T-cycle 2. On
-            // hardware, CUPA rises at T-cycle 2 coincident with alet
-            // rising and gates the PPU register latches transparent
-            // across T-cycles 2-3 (CUPA pulse ~1.498 T-cycles wide).
-            // The CPU drives cpu_port_d at this T-cycle; consumers
-            // latch at their respective edges (PPU regs combinationally
-            // during CUPA-high, memory at fall() of T-cycle 3 /
-            // CUPA-falling).
+            // Apply staged write at CUPA-rising (T-cycle 2). PPU
+            // registers latch combinationally during CUPA-high; memory
+            // commits at CUPA-falling in fall().
             if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_write() {
                 let value = self.cpu.pending_bus_write().map(|(_, v)| v).expect(
                     "cpu_bus pending write requires cpu.pending_bus_write to be Some",
@@ -360,19 +294,13 @@ impl GameBoy {
                 if self.drive_ppu_bus(address, value) {
                     self.interrupts.request(Interrupt::VideoStatus);
                 }
-                // Capture OAM/VRAM lock at CUPA-rising (T-cycle 2), the
-                // start of the write strobe. Combined with the commit-
-                // time lock state via AND in `write_byte_with_lock` —
-                // block only when locked across the entire CUPA window.
-                let locked = match address {
-                    0xFE00..=0xFE9F => Some(self.ppu.oam_write_locked()),
-                    0x8000..=0x9FFF => Some(self.ppu.vram_write_locked()),
-                    _ => None,
-                };
-                self.cpu_bus.record_snapshot_lock(locked);
+                // Snapshot OAM/VRAM lock at CUPA-rising. AND'd with the
+                // mid and commit samples — write blocks only if locked
+                // throughout the entire CUPA window.
+                self.cpu_bus
+                    .record_snapshot_lock(self.ppu.write_lock(address));
             }
 
-            // PPU master-clock rising edge for non-boundary T-cycles.
             let oam_bus = self.dma.oam_bus_owner();
             let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
             if ppu_result.request_vblank {
@@ -385,15 +313,10 @@ impl GameBoy {
                 pixel = pix;
             }
 
-            // SUKO is combinational — check for STAT edge after PPU rise.
-            let stat_edge = self.ppu.check_stat_edge();
-            if stat_edge {
+            if self.ppu.check_stat_edge() {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
 
-            // Capture interrupt state for non-boundary T-cycles. irq_latched
-            // ticks in the matching fall(), capturing this T-cycle's
-            // irq_pending for the cascade-settling counter.
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
             self.cpu
@@ -401,14 +324,7 @@ impl GameBoy {
                 .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
-        // VOGA capture (HBlank) happens on the master-clock rising edge via
-        // HblankPipeline::capture_voga(): VOGA is ALET-clocked, and ALET
-        // rises in-phase with ck1_ck2 (master-clock rising). The mode()
-        // function uses `xymu && !wodu` to predict HBlank state for CPU
-        // STAT reads, so settle_alet is not needed. G4.2 confirmed WODU
-        // doesn't depend on XYMU, making the prediction reliable.
-
-        // MOPA rising edge (T-cycle 2): fire any armed OAM bug.
+        // MOPA-rising fires any armed OAM bug.
         if tcycle.as_u8() == 2 {
             self.ppu.apply_pending_oam_bug();
         }
@@ -424,80 +340,43 @@ impl GameBoy {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
-        // Driver-enable edge (`tobe↑` / `wafu↑` at T-cycle 2.005):
-        // the addressed peripheral opens its tri-state driver and starts
-        // putting its value on the bus. Any per-address mid-M-cycle flux
-        // (OAM/VRAM lock transitions, STAT/LY bit changes) propagates
-        // combinationally to the latch edge and is resolved there.
+        // Driver-enable edge (tobe↑ / wafu↑): the addressed peripheral
+        // opens its tri-state driver. Mid-M-cycle flux propagates
+        // combinationally to the latch edge below.
         if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
             self.cpu_bus.drive(value);
         }
 
-        // PPU master-clock falling edge: divider chain (WUVU/VENA/TALU),
-        // CATU, scanline boundaries, fetcher, DFF8/DFF9, LCD-off.
+        // PPU master-clock fall: divider chain, CATU, scanline
+        // boundaries, fetcher, DFF8/DFF9, LCD-off.
         let oam_bus = self.dma.oam_bus_owner();
         let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary, oam_bus);
 
-        // Mid-CUPA sample for the staged OAM/VRAM write (AJUJ-glitch
-        // window). On hardware, the CPU's CUPA strobe is high
-        // throughout T-cycles 2-3 of the write M-cycle; if AJUJ is
-        // briefly high at ANY edge during that window, the per-byte
-        // strobe asserts and the write lands. The discretized model
-        // samples lock state at 3 edges (snapshot at rise of T-cycle 2,
-        // mid at fall of T-cycle 2 just after AVAP processing, commit at
-        // fall of T-cycle 3) and blocks only if locked at ALL three. AVAP
-        // detection fires inside `on_master_clock_fall` above; the
-        // begin_rendering deferral to next rise (hblank_pipeline.rs)
-        // makes `mode2=0 AND mode3=0` observable at this exact edge.
+        // Mid-CUPA sample: catches the AJUJ-glitch window where AVAP
+        // ends mode-2 mid-strobe and the rendering deferral leaves
+        // mode2=0 ∧ mode3=0 observable here.
         if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.mid_sample_pending() {
-            let locked = match address {
-                0xFE00..=0xFE9F => Some(self.ppu.oam_write_locked()),
-                0x8000..=0x9FFF => Some(self.ppu.vram_write_locked()),
-                _ => None,
-            };
-            self.cpu_bus.record_mid_lock(locked);
+            self.cpu_bus.record_mid_lock(self.ppu.write_lock(address));
         }
 
-        // CPU data latch: at data_phase_n↑ (~end of M-cycle, T-cycle 3.995),
-        // the SM83 captures cpu_port_d into its internal data register.
-        // The bus value was set at T-cycle 2 (above) when the peripheral's
-        // tri-state driver enabled — capture from cpu_bus.data here and
-        // fire commit_bus_read for the side effects (bus-latch drive,
-        // trace recording) at the same timing the original single-stage
-        // cpu_read had.
+        // CPU data latch (data_phase_n↑ near the end of T-cycle 3).
+        // Resolves the drive-enable snapshot against mid-M-cycle flux
+        // before the SM83 captures cpu_port_d.
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
-            // Latch edge (`data_phase_n↑` near the end of T-cycle 3):
-            // the CPU captures the bus into its internal data register.
-            // The final value resolves the drive-enable snapshot against
-            // any per-address mid-M-cycle flux — OAM/VRAM lock state at
-            // the latch edge, STAT/LY per-bit transitions during the
-            // drive window. OAM-bug arming for this read already fired
-            // at the start of T-cycle 0 (same M-cycle), before the
-            // T-cycle 2 fire edge.
             let value = self.bus_value_at_latch(address, self.cpu_bus.data);
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }
 
-        // Bus writes on the falling edge. The cpu_wr window closes
-        // before mid-M-cycle source clocks rise (POPU, SUKO), so a
-        // FF0F-write-clear pulse on lyta/movu/etc. (the IF dffsr r_n
-        // inputs) releases before the source-clock capture — rise
-        // wins same-T-cycle. Apply CPU writes first, then IF mutations.
+        // CPU writes commit at CUPA-falling (end of T-cycle 3). PPU
+        // registers were already written at CUPA-rising via
+        // drive_ppu_bus in rise(); this commits memory.
         match &self.cpu.last_bus_action {
             BusAction::Idle | BusAction::InternalOamBug { .. } | BusAction::Read { .. } => {}
             BusAction::Write { address, value: _ } => {
                 let address = *address;
-                // OAM-bug arming for this write already fired at BOWA
-                // (T-cycle 0 rise) of the same M-cycle — see the BOWA
-                // detection block in rise().
-                // drive_ppu_bus already fired at T-cycle 2 for PPU registers
-                // (CUPA-rising visibility); for non-PPU addresses it's a
-                // no-op. Memory commits here at fall() of T-cycle 3 (CUPA-
-                // falling / M-cycle boundary equivalent), reading the
-                // CPU-driven value from cpu_bus.data.
                 let (locked_at_snapshot, locked_at_mid) = self.cpu_bus.write_lock_samples();
                 self.write_byte_with_cupa_lock(
                     address,
@@ -508,15 +387,13 @@ impl GameBoy {
             }
         }
 
-        // VBlank IF: the divider chain now runs in fall(), so POPU
-        // (VBlank) transitions happen here, not in rise().
+        // VBlank IF: POPU transitions happen here since the divider
+        // chain runs in fall().
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
 
-        // SUKO is combinational — check for STAT edge after every phase.
-        let stat_edge = self.ppu.check_stat_edge();
-        if stat_edge {
+        if self.ppu.check_stat_edge() {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
@@ -544,26 +421,20 @@ impl GameBoy {
                     kind: BusAccessKind::DmaWrite,
                 });
                 match Bus::of(src_addr) {
-                    Some(Bus::External) => {
-                        self.external.drive(byte);
-                    }
-                    Some(Bus::Vram) => {
-                        self.vram_bus.drive(byte);
-                    }
+                    Some(Bus::External) => self.external.drive(byte),
+                    Some(Bus::Vram) => self.vram_bus.drive(byte),
                     None => {}
                 }
             }
 
-            // External bus decay.
             self.external.tick_decay();
-
             self.audio.mcycle(self.timers.internal_counter());
         }
 
-        // Capture interrupt state AFTER bus writes and M-cycle subsystems so
-        // IF updates from a CPU write to 0xFF0F, STAT edges from PPU register
-        // writes, and serial completion are all visible on the same fall.
-        // irq_latched ticks on the next rise to sample irq_pending into the DFF.
+        // Re-capture interrupt state after bus writes and M-cycle
+        // subsystems so IF mutations from CPU writes to 0xFF0F, STAT
+        // edges from PPU register writes, and serial completion are all
+        // visible by the time the next rise() ticks irq_latched.
         {
             let triggered = self.interrupts.triggered();
             self.cpu.update_interrupt_state(triggered);
@@ -576,14 +447,10 @@ impl GameBoy {
         PhaseResult { new_screen, pixel }
     }
 
-    /// Process a PPU tick result: write pixel to back buffer; on a
-    /// VSYNC pulse, present iff MEDA has pulsed since LCD-on (the
-    /// LCD only latches frames after the first VSYNC). On the LCD-off
-    /// transition, blank the display to match hardware's LCD-off state.
-    /// Returns `(new_screen, pixel)` — `new_screen` only fires on
-    /// VSYNC, matching hardware frame boundaries. LCD-off blanking
-    /// is a separate signal and does not count as a new screen for
-    /// harness/UI frame budgets.
+    /// Process a PPU tick: draw the pixel, present on VSYNC (only if
+    /// MEDA has pulsed since LCD-on), blank on LCD-off. Returns
+    /// `(new_screen, pixel)` — `new_screen` fires only on VSYNC, never
+    /// on LCD-off blank.
     fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
         if let Some(pixel) = result.pixel {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {

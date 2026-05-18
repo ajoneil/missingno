@@ -574,6 +574,17 @@ impl Ppu {
         }
     }
 
+    /// Lock state for a CPU write to `address`: `Some(true/false)` for
+    /// OAM and VRAM addresses, `None` for everything else (where the
+    /// PPU lock model doesn't apply).
+    pub fn write_lock(&self, address: u16) -> Option<bool> {
+        match address {
+            0xFE00..=0xFE9F => Some(self.oam_write_locked()),
+            0x8000..=0x9FFF => Some(self.vram_write_locked()),
+            _ => None,
+        }
+    }
+
     pub fn control(&self) -> Control {
         self.registers.control
     }
