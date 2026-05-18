@@ -441,8 +441,7 @@ impl GameBoy {
     pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
             let halt_wake_active = self.cpu.is_halt_wake_active();
-            self.ppu
-                .write_register(register, value, &self.vram_bus.vram, halt_wake_active)
+            self.ppu.write_register(register, value, halt_wake_active)
         } else {
             false
         }
@@ -540,10 +539,7 @@ impl GameBoy {
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
-                if self
-                    .ppu
-                    .write_register(register, value, &self.vram_bus.vram, halt_wake_active)
-                {
+                if self.ppu.write_register(register, value, halt_wake_active) {
                     self.interrupts
                         .requested
                         .insert(InterruptFlags::VIDEO_STATUS);

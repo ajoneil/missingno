@@ -441,7 +441,6 @@ impl Rendering {
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &Vram,
-        sprites_enabled_pre_cupa: bool,
     ) -> Option<PixelOutput> {
         // Scanner advance (BYBA capture, AVAP detection + reaction)
         // moved to on_ppu_clock_fall — BYBA is XUPY-clocked and
@@ -477,7 +476,7 @@ impl Rendering {
             .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram, sprites_enabled_pre_cupa);
+            self.mode3_rising(regs, video, oam, oam_bus, vram);
         }
 
         // XYMU↑ (Mode 3 exit): mode3 = NOT(XYMU.q) falls, async-resetting
@@ -615,7 +614,6 @@ impl Rendering {
             let advance_nyxu_pulse = mosu_fired || mosu_fired_rising || suzu_fired;
             self.mode3_pixel_pipeline(
                 regs,
-                video,
                 rydy_before_pory,
                 advance_nyxu_pulse,
                 pixel_counter_before_sacu,
@@ -675,13 +673,12 @@ impl Rendering {
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &Vram,
-        sprites_enabled_pre_cupa: bool,
     ) {
         // Pre-CUPA FEPO drives the TEKY → SOBU gate-delay race: SOBU's
         // alet-rising DFF capture wins by ~14 ns over CUPA's transparent-
         // latch propagation through XYLO, so SOBU sees the pre-write
         // LCDC.1 value.
-        let mut fepo_pre_cupa = self.fepo(sprites_enabled_pre_cupa);
+        let mut fepo_pre_cupa = self.fepo(regs.sprites_enabled_pre_cupa);
 
         // LYRY: combinational on fetch_counter (>= 5). The counter only
         // increments on rising (LEBO clock), so the value here reflects
@@ -776,7 +773,7 @@ impl Rendering {
 
         if ryce {
             // Find and mark the matching sprite entry, start the fetch.
-            self.start_sprite_fetch(regs);
+            self.start_sprite_fetch();
         }
 
         // Post-CUPA FEPO drives TYFA's combinational AND. CUPA's
@@ -878,7 +875,6 @@ impl Rendering {
     fn mode3_pixel_pipeline(
         &mut self,
         regs: &PipelineRegisters,
-        _video: &VideoControl,
         rydy_before_pory: bool,
         advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
@@ -919,7 +915,7 @@ impl Rendering {
         // cascade by 1 dot. Both the BG-shifter parallel-load and
         // the window-tile-X counter increment land 1 dot late.
         let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
-        let nuko_now = self.window.nuko(pixel_counter_before_sacu, regs);
+        let nuko_now = self.window.nuko(pixel_counter_before_sacu);
         let pany_slip_now = proposed_seko && nuko_now;
         let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
         self.pany_slip_pending = pany_slip_now;
@@ -1035,7 +1031,7 @@ impl Rendering {
     /// the fetch window (freezing SACU via VYBO), and lets the AROR
     /// combinational chain drop FEPO mid-fetch on a LCDC.1=0 write
     /// (spec §6.4.1 VYBO = NOR3(MYVO, FEPO, WODU); no TAKA term).
-    fn start_sprite_fetch(&mut self, _regs: &PipelineRegisters) {
+    fn start_sprite_fetch(&mut self) {
         let match_x = self.pixel_counter.value();
         let sprites = self.scan.sprites_mut();
 

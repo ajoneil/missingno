@@ -308,7 +308,6 @@ impl Ppu {
         &mut self,
         register: Register,
         value: u8,
-        _vram: &Vram,
         halt_wake_active: bool,
     ) -> bool {
         let is_drawing = self.is_rendering();
@@ -544,14 +543,12 @@ impl Ppu {
         }
 
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            let sprites_enabled_pre_cupa = self.registers.sprites_enabled_pre_cupa;
             result.pixel = rendering.on_ppu_clock_rise(
                 &self.registers,
                 &self.video,
                 &self.oam,
                 oam_bus,
                 vram,
-                sprites_enabled_pre_cupa,
             );
         }
 

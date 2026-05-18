@@ -124,18 +124,18 @@ impl WindowControl {
 
     /// Compute combinational NUKO (PX==WX decode). NOGY is a NAND5 of PX/WX
     /// bits only; LCDC.5 gates the chain downstream via XOFO → PYNU.r.
-    fn compute_nuko(&self, pixel_counter: u8, _regs: &PipelineRegisters) -> bool {
+    fn compute_nuko(&self, pixel_counter: u8) -> bool {
         self.wy_matched && pixel_counter == self.nuko_wx
     }
 
     /// Live NUKO read for consumers outside the §6.12 capture chain.
     /// Hardware NUKO has two netlist consumers: PYCO (this module's
     /// capture chain, gated on NOPA_n once the window is active) and
-    /// PANY (the §6.1 drain-detector input, `pany = NOR2(roze, wxy_match)`).
+    /// PANY (the drain-detector input, `pany = NOR2(roze, wxy_match)`).
     /// The PANY consumer is what produces the WX-rewrite cascade slip
     /// when NUKO=1 lands inside PANY's tile-boundary high window.
-    pub(in crate::ppu) fn nuko(&self, pixel_counter: u8, regs: &PipelineRegisters) -> bool {
-        self.compute_nuko(pixel_counter, regs)
+    pub(in crate::ppu) fn nuko(&self, pixel_counter: u8) -> bool {
+        self.compute_nuko(pixel_counter)
     }
 
     /// Compute combinational XOFO. NAND3(LCDC.5, NOT(atej), ppu_reset_n);
@@ -188,7 +188,7 @@ impl WindowControl {
         taka: bool,
         regs: &PipelineRegisters,
     ) -> bool {
-        let nuko = self.compute_nuko(pixel_counter, regs);
+        let nuko = self.compute_nuko(pixel_counter);
 
         // PYCO captures NUKO on ROCO rising. ROCO derives from TYFA, so
         // any TYFA halt freezes the clock and PYCO holds. Two halts
