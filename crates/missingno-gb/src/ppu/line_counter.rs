@@ -94,9 +94,6 @@ impl LineCounter {
     pub(in crate::ppu) fn popu_active(&self) -> bool {
         self.y.popu_active()
     }
-    pub(in crate::ppu) fn popu_holdover(&self) -> bool {
-        self.y.popu_holdover
-    }
     pub(in crate::ppu) fn line_end_active(&self) -> bool {
         self.x.line_end_active
     }

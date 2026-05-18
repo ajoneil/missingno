@@ -59,11 +59,6 @@ impl LineEndPipeline {
         }
     }
 
-    /// NYPE output accessor (Q high for one M-cycle after a RUTU pulse).
-    pub(in crate::ppu) fn delayed_line_end(&self) -> bool {
-        self.delayed_line_end
-    }
-
     /// Capture NERU into MEDA on NYPE-falling. Latches `vsync_committed`
     /// on the first 0→1 transition since VID_RST.
     pub(in crate::ppu) fn capture_meda(&mut self, neru: bool) {

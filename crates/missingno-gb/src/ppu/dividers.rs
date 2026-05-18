@@ -57,19 +57,6 @@ impl Dividers {
         self.mcycle
     }
 
-    /// TALU = NOT(vena_n) = VENA.Q — 1 MHz LX counter clock. TALU
-    /// tracks VENA.Q in phase: at XODO↓, VENA.Q=0 and TALU=0; first
-    /// TALU↑ coincides with first VENA.Q↑.
-    pub(in crate::ppu) fn talu(&self) -> bool {
-        self.mcycle
-    }
-
-    /// SONO = NOT(TALU) = NOT(VENA.Q). Clocks RUTU's capture of SANU
-    /// on its rising edge.
-    pub(in crate::ppu) fn sono(&self) -> bool {
-        !self.mcycle
-    }
-
     /// XUPY = NOT(wuvu_n) = WUVU.Q. XUPY is the scan-counter /
     /// OAM-pipeline clock; consumers read it as the signal whose
     /// rising edge captures BYBA, CATU, etc.

@@ -47,20 +47,7 @@ impl VideoControl {
         self.line_end.vid_rst();
     }
 
-    // ── Clock pass-throughs (Stage 3) ─────────────────────────
-
-    /// TALU = NOT(VENA.Q) — 1 MHz LX counter clock. Pass-through to
-    /// Dividers.
-    pub fn talu(&self) -> bool {
-        self.dividers.talu()
-    }
-
-    /// SONO — RUTU capture clock (= VENA phase). Pass-through to Dividers.
-    pub fn sono(&self) -> bool {
-        self.dividers.sono()
-    }
-
-    /// XUPY — scan-counter / OAM-pipeline clock. Pass-through to Dividers.
+    /// XUPY — scan-counter / OAM-pipeline clock.
     pub fn xupy(&self) -> bool {
         self.dividers.xupy()
     }
@@ -88,10 +75,6 @@ impl VideoControl {
         self.lines.popu_active()
     }
 
-    pub fn popu_holdover(&self) -> bool {
-        self.lines.popu_holdover()
-    }
-
     pub fn line_end_active(&self) -> bool {
         self.lines.line_end_active()
     }
@@ -102,11 +85,6 @@ impl VideoControl {
 
     pub fn write_ly(&mut self, value: u8) {
         self.lines.y.write_ly(value);
-    }
-
-    /// NYPE output accessor — pass-through to LineEndPipeline.
-    pub fn delayed_line_end(&self) -> bool {
-        self.line_end.delayed_line_end()
     }
 
     // ── Cross-subsystem orchestration ─────────────────────────

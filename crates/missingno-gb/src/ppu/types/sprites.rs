@@ -73,13 +73,6 @@ pub enum Priority {
     Background,
 }
 
-#[allow(dead_code)]
-pub enum Palette {
-    Palette0,
-    Palette1,
-}
-
-#[allow(dead_code)]
 impl Attributes {
     pub fn priority(&self) -> Priority {
         if self.contains(Attributes::PRIORITY) {
@@ -95,14 +88,6 @@ impl Attributes {
 
     pub fn flip_x(&self) -> bool {
         self.contains(Attributes::FLIP_X)
-    }
-
-    pub fn palette(&self) -> Palette {
-        if self.contains(Attributes::PALETTE) {
-            Palette::Palette1
-        } else {
-            Palette::Palette0
-        }
     }
 }
 

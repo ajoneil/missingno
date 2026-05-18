@@ -81,21 +81,6 @@ impl Vram {
         }
     }
 
-    /// Write a byte to VRAM by flat offset (0x0000–0x1FFF).
-    pub fn write_byte(&mut self, offset: u16, value: u8) {
-        let offset = offset as usize & 0x1FFF;
-        if offset < 0x1800 {
-            let block = offset / 0x800;
-            let within = offset % 0x800;
-            self.tiles[block].data[within] = value;
-        } else {
-            let map_offset = offset - 0x1800;
-            let map = map_offset / 0x400;
-            let within = map_offset % 0x400;
-            self.tile_maps[map].data[within] = TileIndex(value);
-        }
-    }
-
     /// Populate VRAM with the state the DMG boot ROM leaves behind:
     /// decompressed Nintendo logo tiles (1-24), ® symbol (tile 25),
     /// and tile map entries for the logo display.
@@ -194,10 +179,6 @@ impl Oam {
                 self.sprites[address.sprite.0 as usize].attributes = sprites::Attributes(value)
             }
         }
-    }
-
-    pub fn sprites(&self) -> &[Sprite] {
-        &self.sprites
     }
 
     pub fn sprite(&self, id: SpriteId) -> &Sprite {

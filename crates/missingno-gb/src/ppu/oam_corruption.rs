@@ -89,7 +89,7 @@ impl Ppu {
     /// address on the bus while the scanner owns the OAM SRAM.
     /// The spurious SRAM clock causes a garbled write to the
     /// scanner's current row.
-    pub fn oam_bug_write(&mut self) {
+    fn oam_bug_write(&mut self) {
         let row = match self.corrupted_oam_row() {
             Some(row) if (8..160).contains(&row) => row,
             _ => return,
@@ -126,7 +126,7 @@ impl Ppu {
     ///
     /// These variants are revision-specific and even unit-specific.
     /// The formulas here target DMG behaviour.
-    pub fn oam_bug_read(&mut self) {
+    fn oam_bug_read(&mut self) {
         let row = match self.corrupted_oam_row() {
             Some(row) if (8..160).contains(&row) => row,
             _ => return,
