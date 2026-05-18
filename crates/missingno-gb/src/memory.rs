@@ -9,20 +9,13 @@ use crate::{
 use super::cartridge::Cartridge;
 use ppu::memory::{OamAddress, Vram, VramAddress};
 
-/// M-cycles before the external data bus decays to 0xFF.
-///
-/// On real hardware the external bus retains its last driven value
-/// through parasitic capacitance. With no device driving the bus
-/// the charge leaks and the value trends toward 0xFF. The exact
-/// rate is board-dependent; 12 M-cycles (~2.86 µs) is a reasonable
-/// approximation.
+/// M-cycles before the external data bus decays to 0xFF. The bus
+/// retains its last driven value via parasitic capacitance; 12 M-cycles
+/// (~2.86 µs) is a board-independent approximation.
 const EXTERNAL_BUS_DECAY_MCYCLES: u8 = 12;
 
-/// High RAM (0xFF80–0xFFFE): 127 bytes of SoC-internal SRAM.
-///
-/// Not on either the external or VRAM bus — always accessible to
-/// the CPU, even during OAM DMA. This is why DMA wait loops must
-/// execute from HRAM.
+/// High RAM (0xFF80–0xFFFE): 127 bytes of SoC-internal SRAM. Not on
+/// either bus — always accessible to the CPU, even during OAM DMA.
 pub struct HighRam([u8; 0x7F]);
 
 impl HighRam {
@@ -48,10 +41,6 @@ impl HighRam {
     pub fn data(&self) -> &[u8; 0x7F] {
         &self.0
     }
-
-    pub fn data_mut(&mut self) -> &mut [u8; 0x7F] {
-        &mut self.0
-    }
 }
 
 /// Address on the external data bus: cartridge or work RAM.
@@ -61,18 +50,18 @@ pub enum ExternalAddress {
     WorkRam(u16),
 }
 
-/// The external data bus connects the SoC to the cartridge and, on
-/// DMG, to work RAM. The bus retains its last driven value through
+/// The external data bus connects the SoC to the cartridge and (on
+/// DMG) to work RAM. The bus retains its last driven value through
 /// parasitic capacitance, decaying toward 0xFF when idle.
 pub struct ExternalBus {
     pub cartridge: Cartridge,
-    pub work_ram: [u8; 0x2000],
+    pub(crate) work_ram: [u8; 0x2000],
 
     /// Retained value on the data bus. Updated on every CPU read/write
     /// to an external-bus address and by DMA when reading from this bus.
-    pub latch: u8,
+    pub(crate) latch: u8,
     /// M-cycles remaining before `latch` decays to 0xFF.
-    pub decay: u8,
+    pub(crate) decay: u8,
 
     /// DMG boot ROM (256 bytes). When present and `boot_rom_mapped` is
     /// true, reads from 0x0000–0x00FF return boot ROM data instead of
@@ -98,8 +87,8 @@ impl ExternalBus {
         }
     }
 
-    /// Read from a device on this bus (cartridge or WRAM).
-    /// Does NOT update the latch — callers decide when to latch.
+    /// Read from a device on this bus (cartridge or WRAM). Does NOT
+    /// update the latch — callers decide when to latch.
     pub fn read(&self, address: ExternalAddress) -> u8 {
         match address {
             ExternalAddress::Cartridge(addr) if addr <= 0x00FF && self.boot_rom_mapped => {
@@ -135,7 +124,6 @@ impl ExternalBus {
         self.boot_rom_mapped = self.boot_rom.is_some();
     }
 
-    /// Write to a device on this bus (cartridge or WRAM).
     pub fn write(&mut self, address: ExternalAddress, value: u8) {
         match address {
             ExternalAddress::Cartridge(addr) => self.cartridge.write(addr, value),
@@ -143,19 +131,18 @@ impl ExternalBus {
         }
     }
 
-    /// Update the bus latch to `value` and reset the decay counter.
+    /// Drive `value` onto the bus latch and reset the decay counter.
     pub fn drive(&mut self, value: u8) {
         self.latch = value;
         self.decay = EXTERNAL_BUS_DECAY_MCYCLES;
     }
 
-    /// Return the current latch value (for DMA bus conflict reads).
     pub fn latch(&self) -> u8 {
         self.latch
     }
 
-    /// Tick decay: call once per M-cycle. If the counter reaches zero,
-    /// the latch decays to 0xFF.
+    /// Tick the decay counter once per M-cycle. When it reaches zero
+    /// the latch falls back to 0xFF.
     pub fn tick_decay(&mut self) {
         if self.decay > 0 {
             self.decay -= 1;
@@ -171,7 +158,7 @@ impl ExternalBus {
 pub struct VramBus {
     pub vram: Vram,
     /// Retained value on the VRAM data bus.
-    pub latch: u8,
+    pub(crate) latch: u8,
 }
 
 impl VramBus {
@@ -182,36 +169,20 @@ impl VramBus {
         }
     }
 
-    /// Read from VRAM. Does NOT update the latch.
-    pub fn read(&self, address: VramAddress) -> u8 {
-        self.vram.read(address)
-    }
-
-    /// Write to VRAM.
-    pub fn write(&mut self, address: VramAddress, value: u8) {
-        self.vram.write(address, value);
-    }
-
-    /// Update the bus latch to `value`.
+    /// Drive `value` onto the bus latch.
     pub fn drive(&mut self, value: u8) {
         self.latch = value;
-    }
-
-    /// Return the current latch value.
-    pub fn latch(&self) -> u8 {
-        self.latch
     }
 }
 
 /// Which physical data bus an address resides on, if any.
 ///
-/// The Game Boy has two data buses:
-/// - **External**: ROM, SRAM, WRAM, and WRAM echo
+/// - **External**: ROM, SRAM, WRAM, WRAM echo (0x0000-0x7FFF, 0xA000-0xFDFF)
 /// - **Vram**: Video RAM (0x8000-0x9FFF)
 ///
-/// OAM, IO registers, and HRAM are internal to the CPU and not on
-/// either bus. During OAM DMA the DMA controller occupies one bus,
-/// and the CPU can still freely access the other.
+/// OAM, IO registers, and HRAM are CPU-internal and not on either bus.
+/// During OAM DMA the controller occupies one bus and the CPU can
+/// still freely access the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bus {
     External,
@@ -223,10 +194,8 @@ impl Bus {
     /// addresses (OAM, IO, HRAM, unmapped).
     pub fn of(address: u16) -> Option<Bus> {
         match address {
-            0x0000..=0x7FFF => Some(Bus::External),
             0x8000..=0x9FFF => Some(Bus::Vram),
-            0xA000..=0xBFFF => Some(Bus::External),
-            0xC000..=0xFDFF => Some(Bus::External),
+            0x0000..=0x7FFF | 0xA000..=0xFDFF => Some(Bus::External),
             _ => None,
         }
     }
@@ -305,195 +274,74 @@ impl MappedAddress {
 }
 
 impl GameBoy {
-    /// Read a byte as the CPU sees it, updating the data bus latch.
-    ///
-    /// This is the "real" CPU read path: it checks DMA bus conflicts,
-    /// PPU mode gating, and updates the bus latch on the appropriate
-    /// physical bus. Use [`read`] for non-emulation reads (debugger,
-    /// tests) that should not mutate bus state.
-    pub fn cpu_read(&mut self, address: u16) -> u8 {
-        let value = self.cpu_read_inner(address);
-        self.bus_trace.record(BusAccess {
-            address,
-            value,
-            kind: BusAccessKind::Read,
-        });
-        value
-    }
-
-    fn cpu_read_inner(&mut self, address: u16) -> u8 {
-        if let Some(bus) = self.dma.is_active_on_bus() {
-            // OAM is being written to by DMA; CPU reads return $FF.
-            if (0xFE00..=0xFE9F).contains(&address) {
-                return 0xFF;
-            }
-            // Bus conflict: the DMA controller is driving this bus,
-            // so the CPU sees whatever value the DMA last placed on
-            // it — which is the bus latch.
-            if Bus::of(address) == Some(bus) {
-                return match bus {
-                    Bus::External => self.external.latch(),
-                    Bus::Vram => self.vram_bus.latch(),
-                };
-            }
-        }
-
-        // PPU mode-based memory gating: the PPU locks OAM during Mode 2
-        // and Mode 3, and locks VRAM during Mode 3. Reads return 0xFF.
-        // The bus latch is NOT updated — no device drove the bus.
-        match address {
-            0xFE00..=0xFE9F => {
-                if self.ppu.oam_locked() {
-                    return 0xFF;
-                }
-            }
-            0x8000..=0x9FFF => {
-                if self.ppu.vram_locked() {
-                    return 0xFF;
-                }
-            }
-            _ => {}
-        }
-
-        let value = self.read_mapped(MappedAddress::map(address));
-
-        // Update the bus latch for whichever physical bus this address
-        // resides on. CPU-internal addresses (OAM, IO, HRAM) are not
-        // on either bus and do not update a latch.
-        match Bus::of(address) {
-            Some(Bus::External) => {
-                self.external.drive(value);
-            }
-            Some(Bus::Vram) => {
-                self.vram_bus.drive(value);
-            }
-            None => {}
-        }
-
-        value
-    }
-
     /// Apply the side effects of a CPU bus read whose value was already
-    /// captured into `cpu_bus.data` at the dot the bus driver enabled
-    /// (dot 2 of the read M-cycle). Drives the appropriate physical bus
-    /// latch and records the read in the trace, mirroring the timing
-    /// the side effects had under the pre-split single-stage `cpu_read`
-    /// path. Called at the CPU's data-latch dot (dot 3, BUKE).
+    /// captured into `cpu_bus.data` at the driver-enable edge: drive
+    /// the appropriate physical bus latch and record the read in the
+    /// trace. Called at the CPU's data-latch edge.
     pub fn commit_bus_read(&mut self, address: u16, value: u8) {
         self.bus_trace.record(BusAccess {
             address,
             value,
             kind: BusAccessKind::Read,
         });
-        match Bus::of(address) {
-            Some(Bus::External) => {
-                self.external.drive(value);
-            }
-            Some(Bus::Vram) => {
-                self.vram_bus.drive(value);
-            }
-            None => {}
-        }
+        self.drive_bus(address, value);
     }
 
-    /// Read a byte without side effects.
-    ///
-    /// Returns the same value as [`cpu_read`] but does NOT update the
-    /// data bus latch. Used by the debugger, test helpers, and any
-    /// context where a non-emulation peek is needed.
+    /// Read a byte without side effects. Same value as a real CPU read
+    /// would see, but the bus latch is not updated. Used by the
+    /// debugger, test helpers, and any non-emulation peek.
     pub fn read(&self, address: u16) -> u8 {
-        if let Some(bus) = self.dma.is_active_on_bus() {
-            if (0xFE00..=0xFE9F).contains(&address) {
-                return 0xFF;
-            }
-            if Bus::of(address) == Some(bus) {
-                return match bus {
-                    Bus::External => self.external.latch(),
-                    Bus::Vram => self.vram_bus.latch(),
-                };
-            }
+        if let Some(value) = self.dma_read_conflict(address) {
+            return value;
         }
-
-        match address {
-            0xFE00..=0xFE9F => {
-                if self.ppu.oam_locked() {
-                    return 0xFF;
-                }
-            }
-            0x8000..=0x9FFF => {
-                if self.ppu.vram_locked() {
-                    return 0xFF;
-                }
-            }
-            _ => {}
+        if self.ppu.read_locked(address) {
+            return 0xFF;
         }
-
         self.read_mapped(MappedAddress::map(address))
     }
 
     /// Read a byte bypassing all bus conflicts and PPU mode gating.
-    ///
-    /// Returns the actual value stored in memory regardless of DMA
-    /// state or PPU locking. Used by the debugger to inspect memory
-    /// contents that would normally be hidden.
+    /// Used by the debugger to inspect memory that would normally be
+    /// hidden.
     pub fn peek(&self, address: u16) -> u8 {
         self.read_mapped(MappedAddress::map(address))
     }
 
-    /// Value the addressed peripheral first drives onto the CPU bus
-    /// at the driver-enable edge (`tobe↑` / `wafu↑` at dot 2.005 of
-    /// the read M-cycle, per spec §4.6). DMA bus redirection happens
-    /// at this edge (bus-level routing); the OAM/VRAM lock is a
-    /// property of the driver's state at the LATCH edge and is
-    /// resolved in `bus_value_at_latch` below.
+    /// Value the addressed peripheral first drives onto the CPU bus at
+    /// the driver-enable edge (tobe↑ / wafu↑ early in T-cycle 2). DMA
+    /// bus redirection happens here; the OAM/VRAM lock is a property
+    /// of the driver's state at the LATCH edge and is resolved in
+    /// `bus_value_at_latch` below.
     pub fn bus_value_at_drive_enable(&self, address: u16) -> u8 {
-        if let Some(bus) = self.dma.is_active_on_bus() {
-            if (0xFE00..=0xFE9F).contains(&address) {
-                return 0xFF;
-            }
-            if Bus::of(address) == Some(bus) {
-                return match bus {
-                    Bus::External => self.external.latch(),
-                    Bus::Vram => self.vram_bus.latch(),
-                };
-            }
+        if let Some(value) = self.dma_read_conflict(address) {
+            return value;
         }
         self.read_mapped(MappedAddress::map(address))
     }
 
-    /// Value the CPU latches from the bus at `data_phase_n↑` (dot
-    /// 3.995 of the read M-cycle, per spec §13.6). Resolves the
-    /// drive-enable snapshot against per-address mid-M-cycle flux:
-    /// OAM/VRAM lock (full-byte 0xFF override when the access-control
-    /// gates assert at the latch edge) and STAT/LY (per-bit merge
-    /// modelling NOT_IF1 / NOT_IF0 driver settling within the drive
-    /// window). Addresses with no flux pass the snapshot through.
+    /// Value the CPU latches from the bus at `data_phase_n↑` (near the
+    /// end of T-cycle 3). Resolves the drive-enable snapshot against
+    /// per-address mid-M-cycle flux: OAM/VRAM lock (full-byte 0xFF
+    /// override when the access-control gates assert at the latch
+    /// edge) and STAT/LY per-bit flux (NOT_IF0 / NOT_IF1 driver
+    /// settling within the drive window).
     pub fn bus_value_at_latch(&self, address: u16, snapshot: u8) -> u8 {
         match address {
-            // OAM read lock (mode2 | mode3 | catu_pending via the
-            // AJON / ASAM / AZEM / BUZA access-control chain). When
-            // asserted, the on-chip OAM bus tri-states; the CPU latch
-            // sees the bus-default high (0xFF).
-            0xFE00..=0xFE9F if self.ppu.oam_locked() => 0xFF,
+            // OAM/VRAM read locks: the on-chip OAM / off-chip VRAM
+            // drivers tri-state at the latch edge, so the bus floats
+            // high (0xFF).
+            _ if self.ppu.read_locked(address) => 0xFF,
 
-            // VRAM read lock (mode3 via ROPY / XANE / XEDU / SERE).
-            // When asserted, the off-chip VRAM address/data pads
-            // tri-state; `md_pad[*]` floats to its pull-up (0xFF).
-            0x8000..=0x9FFF if self.ppu.vram_locked() => 0xFF,
-
-            // LY: entire byte fluxes via `wafu`-enabled NOT_IF0
-            // drivers when LAMA fires (MYTA-driven LY reset). The
-            // drive-enable snapshot can be stale by the latch edge,
-            // so re-read live (cascade settles within tens of ps,
-            // well before `data_phase_n↑`).
+            // LY: full byte fluxes via `wafu`-enabled NOT_IF0 drivers
+            // when LAMA fires (MYTA-driven LY reset). The drive-enable
+            // snapshot can be stale by the latch edge; re-read live.
             0xFF44 => self.read(address),
 
-            // STAT bits 0-2 (mode + LYC=LY) drive `cpu_port_d` via
-            // `dmg_not_if1` cells with a bus-flux x-window during
-            // mode-bit cascades (spec §10.5.x). Resolve to AND of
-            // snapshot and live ("0 wins ties" per dmg-sim's analog
-            // resolution). Bits 3-7 come from stable enable-DRLATCH
-            // outputs — pass the snapshot through.
+            // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via
+            // dmg_not_if1 cells with a bus-flux x-window during
+            // mode-bit cascades. Resolve to AND of snapshot and live
+            // ("0 wins" per dmg-sim's analog resolution). Bits 3-7
+            // come from stable enable-DRLATCH outputs.
             0xFF41 => {
                 let live = self.read(address);
                 const X_WINDOW: u8 = 0b0000_0111;
@@ -514,11 +362,38 @@ impl GameBoy {
         self.read_mapped(mapped)
     }
 
-    pub fn read_mapped(&self, address: MappedAddress) -> u8 {
+    /// If DMA is driving a bus that conflicts with `address`, return
+    /// the override value the CPU sees: 0xFF for an OAM read during
+    /// DMA, otherwise the bus latch.
+    fn dma_read_conflict(&self, address: u16) -> Option<u8> {
+        let bus = self.dma.is_active_on_bus()?;
+        if (0xFE00..=0xFE9F).contains(&address) {
+            return Some(0xFF);
+        }
+        if Bus::of(address) == Some(bus) {
+            return Some(match bus {
+                Bus::External => self.external.latch(),
+                Bus::Vram => self.vram_bus.latch,
+            });
+        }
+        None
+    }
+
+    /// Drive `value` onto whichever physical bus `address` resides on.
+    /// CPU-internal addresses (OAM, IO, HRAM) don't update a latch.
+    fn drive_bus(&mut self, address: u16, value: u8) {
+        match Bus::of(address) {
+            Some(Bus::External) => self.external.drive(value),
+            Some(Bus::Vram) => self.vram_bus.drive(value),
+            None => {}
+        }
+    }
+
+    fn read_mapped(&self, address: MappedAddress) -> u8 {
         match address {
             MappedAddress::External(addr) => self.external.read(addr),
             MappedAddress::HighRam(offset) => self.high_ram.read(offset),
-            MappedAddress::Vram(address) => self.vram_bus.read(address),
+            MappedAddress::Vram(address) => self.vram_bus.vram.read(address),
             MappedAddress::Oam(address) => self.ppu.read_oam(address),
             MappedAddress::JoypadRegister => {
                 let mut value = self.joypad.read_register();
@@ -555,30 +430,14 @@ impl GameBoy {
                     0xFF
                 }
             }
-
             MappedAddress::Unmapped => 0xFF,
         }
     }
 
-    /// Trigger OAM bug write corruption if the address is in the OAM
-    /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
-    pub fn oam_bug_write(&mut self, address: u16) {
-        if (0xFE00..=0xFEFF).contains(&address) {
-            self.ppu.oam_bug_write();
-        }
-    }
-
-    /// Trigger OAM bug read corruption if the address is in the OAM
-    /// range (0xFE00-0xFEFF) and the PPU is in Mode 2.
-    pub fn oam_bug_read(&mut self, address: u16) {
-        if (0xFE00..=0xFEFF).contains(&address) {
-            self.ppu.oam_bug_read();
-        }
-    }
-
-    /// Write pulse: on hardware, the CPU write pulse (phases E,F,G) drives
-    /// the data bus. PPU register DFF cells latch from the bus during this
-    /// pulse. Returns true if a STAT interrupt was triggered (FF41 write quirk).
+    /// CPU write pulse drives the data bus during T-cycles 2-3. PPU
+    /// register DFF cells latch combinationally during this window.
+    /// Returns true if the write triggered a STAT interrupt (FF41
+    /// write quirk).
     pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
             let halt_wake_active = self.cpu.is_halt_wake_active();
@@ -589,24 +448,13 @@ impl GameBoy {
         }
     }
 
-    pub fn write_byte(&mut self, address: u16, value: u8) {
-        // Default path: evaluate OAM/VRAM lock live. CPU bus writes
-        // commits via write_byte_with_cupa_lock with three CUPA-window
-        // lock samples AND'd together; this entry point exists for
-        // non-CPU writes (debugger, tests) where the CUPA window is moot.
-        self.write_byte_with_cupa_lock(address, value, None, None);
-    }
-
-    /// CPU bus write commit. The `locked_at_snapshot` / `locked_at_mid`
-    /// parameters are the OAM/VRAM lock state captured at the rise of
-    /// dot 2 (CUPA rising) and the fall of dot 2 (mid-CUPA, after the
-    /// PPU's AVAP processing on this fall has fired) of the write
-    /// M-cycle. The commit-time live lock is read here. The write is
-    /// blocked iff locked at ALL THREE samples — modelling hardware's
-    /// "OAM cell captures if AJUJ is high at ANY edge during CUPA"
-    /// (spec §4.9.1 + §10.5.6 AJUJ-glitch window). `None` = non-OAM/VRAM
-    /// address or non-CPU write path; the lock evaluation falls back
-    /// to live-only.
+    /// CPU bus write commit. `locked_at_snapshot` / `locked_at_mid` are
+    /// the OAM/VRAM lock states sampled at CUPA-rising (rise of T-cycle
+    /// 2) and mid-CUPA (fall of T-cycle 2 after AVAP). The commit-time
+    /// live lock is read here. The write is blocked iff locked at ALL
+    /// THREE samples — modelling hardware's "AJUJ high at ANY edge
+    /// during CUPA strobes the per-byte write." `None` lock samples
+    /// mean a non-CUPA write path; the live lock alone decides.
     pub fn write_byte_with_cupa_lock(
         &mut self,
         address: u16,
@@ -620,60 +468,34 @@ impl GameBoy {
             kind: BusAccessKind::Write,
         });
         if let Some(bus) = self.dma.is_active_on_bus() {
-            // OAM is being written to by DMA; CPU writes are ignored.
+            // OAM is being written by DMA; CPU writes are ignored.
             if (0xFE00..=0xFE9F).contains(&address) {
                 return;
             }
-            // Bus conflict: CPU writes on the same bus as DMA are ignored.
-            // The bus latch is NOT updated — DMA is driving the bus.
+            // Bus conflict: CPU writes on the same bus as DMA are
+            // ignored. The bus latch is NOT updated.
             if Bus::of(address) == Some(bus) {
                 return;
             }
         }
 
-        // PPU mode-based memory gating for writes.
-        // The bus latch is NOT updated — the write was blocked.
-        // Block iff locked at ALL three CUPA-window edges (snapshot at
-        // rise of dot 2, mid at fall of dot 2 after AVAP processing,
-        // live at fall of dot 3 / commit). Models the AJUJ-glitch window
-        // for OAM at Mode 2→3 straddles (spec §10.5.6) and the M-cycle-
-        // quantised lock for non-straddle M-cycles (spec §4.9.3).
-        match address {
-            0xFE00..=0xFE9F => {
-                let locked_now = self.ppu.oam_write_locked();
-                let blocked = match (locked_at_snapshot, locked_at_mid) {
-                    (Some(snap), Some(mid)) => snap && mid && locked_now,
-                    _ => locked_now,
-                };
-                if blocked {
-                    return;
-                }
+        // PPU mode gating: block if locked at all three CUPA samples
+        // (snapshot at rise of T-cycle 2, mid at fall of T-cycle 2
+        // after AVAP, live at fall of T-cycle 3). Models the AJUJ-
+        // glitch window for OAM at Mode 2→3 straddles.
+        if let Some(locked_now) = self.ppu.write_lock(address) {
+            let blocked = match (locked_at_snapshot, locked_at_mid) {
+                (Some(snap), Some(mid)) => snap && mid && locked_now,
+                _ => locked_now,
+            };
+            if blocked {
+                return;
             }
-            0x8000..=0x9FFF => {
-                let locked_now = self.ppu.vram_write_locked();
-                let blocked = match (locked_at_snapshot, locked_at_mid) {
-                    (Some(snap), Some(mid)) => snap && mid && locked_now,
-                    _ => locked_now,
-                };
-                if blocked {
-                    return;
-                }
-            }
-            _ => {}
         }
 
-        // Update the bus latch to the written value. The CPU drives
-        // the data bus with the value it's writing, regardless of
-        // whether the target device actually stores it.
-        match Bus::of(address) {
-            Some(Bus::External) => {
-                self.external.drive(value);
-            }
-            Some(Bus::Vram) => {
-                self.vram_bus.drive(value);
-            }
-            None => {}
-        }
+        // The CPU drives the data bus with the value it's writing,
+        // regardless of whether the target device stores it.
+        self.drive_bus(address, value);
 
         let mapped = MappedAddress::map(address);
         if !matches!(mapped, MappedAddress::PpuRegister(_)) {
@@ -681,11 +503,11 @@ impl GameBoy {
         }
     }
 
-    pub fn write_mapped(&mut self, address: MappedAddress, value: u8) {
+    fn write_mapped(&mut self, address: MappedAddress, value: u8) {
         match address {
             MappedAddress::External(addr) => self.external.write(addr, value),
             MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
-            MappedAddress::Vram(address) => self.vram_bus.write(address, value),
+            MappedAddress::Vram(address) => self.vram_bus.vram.write(address, value),
             MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 if let Some(sgb) = &mut self.sgb {

@@ -585,6 +585,17 @@ impl Ppu {
         }
     }
 
+    /// Whether a CPU read at `address` is blocked by the PPU's
+    /// mode-based memory gating. Returns false for non-OAM/VRAM
+    /// addresses (where the lock model doesn't apply).
+    pub fn read_locked(&self, address: u16) -> bool {
+        match address {
+            0xFE00..=0xFE9F => self.oam_locked(),
+            0x8000..=0x9FFF => self.vram_locked(),
+            _ => false,
+        }
+    }
+
     pub fn control(&self) -> Control {
         self.registers.control
     }
