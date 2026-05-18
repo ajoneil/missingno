@@ -107,10 +107,8 @@ impl Ppu {
                     x_plus_7: DffLatch::new(0),
                 },
                 palettes: Palettes::default(),
-                bg_window_enabled_shadow: None,
-                bg_window_enabled_shadow_just_set: false,
-                sprites_enabled_shadow: None,
-                sprites_enabled_shadow_just_set: false,
+                bg_window_enabled_overlay: registers::OldOverlay::default(),
+                sprites_enabled_overlay: registers::OldOverlay::default(),
                 sprites_enabled_pre_cupa: false,
             },
             video: VideoControl {
@@ -245,10 +243,8 @@ impl Ppu {
                 bgp_halt_wake_deferred: None,
                 prev_besu: false,
             },
-            bg_window_enabled_shadow: None,
-            bg_window_enabled_shadow_just_set: false,
-            sprites_enabled_shadow: None,
-            sprites_enabled_shadow_just_set: false,
+            bg_window_enabled_overlay: registers::OldOverlay::default(),
+            sprites_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_pre_cupa: lcd_on,
         };
 

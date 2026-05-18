@@ -12,6 +12,42 @@ pub struct Window {
     pub x_plus_7: DffLatch,
 }
 
+/// One-fall OLD-value overlay for an LCDC bit that transitioned mid-Mode-3.
+/// Arms with the pre-write value on a CPU write site; survives the same
+/// fall's tick (`just_set`) so the BG/OBJ resolve still sees OLD, then
+/// clears on the next fall.
+#[derive(Default)]
+pub(in crate::ppu) struct OldOverlay {
+    value: Option<bool>,
+    just_set: bool,
+}
+
+impl OldOverlay {
+    fn arm(&mut self, old: bool, new: bool) {
+        if old != new {
+            self.value = Some(old);
+            self.just_set = true;
+        }
+    }
+
+    fn tick(&mut self) {
+        if self.just_set {
+            self.just_set = false;
+        } else {
+            self.value = None;
+        }
+    }
+
+    fn resolve(&self, live: bool) -> bool {
+        self.value.unwrap_or(live)
+    }
+
+    fn clear(&mut self) {
+        self.value = None;
+        self.just_set = false;
+    }
+}
+
 /// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
 pub struct PipelineRegisters {
     pub control: Control,
@@ -20,12 +56,11 @@ pub struct PipelineRegisters {
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
-    /// VYXE OLD-overlay for mid-Mode-3 LCDC.0 transitions. `just_set` keeps it alive across the same-fall tick.
-    pub(in crate::ppu) bg_window_enabled_shadow: Option<bool>,
-    pub(in crate::ppu) bg_window_enabled_shadow_just_set: bool,
-    /// XYLO popper-side OLD-overlay for mid-Mode-3 LCDC.1 transitions. Sprite-fetch trigger chain sees live XYLO.
-    pub(in crate::ppu) sprites_enabled_shadow: Option<bool>,
-    pub(in crate::ppu) sprites_enabled_shadow_just_set: bool,
+    /// VYXE OLD-overlay for mid-Mode-3 LCDC.0 transitions.
+    pub(in crate::ppu) bg_window_enabled_overlay: OldOverlay,
+    /// XYLO popper-side OLD-overlay for mid-Mode-3 LCDC.1 transitions.
+    /// Sprite-fetch trigger chain sees live XYLO, not this overlay.
+    pub(in crate::ppu) sprites_enabled_overlay: OldOverlay,
     /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
     pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
 }
@@ -49,8 +84,8 @@ impl PipelineRegisters {
         // BESU↑ at scanline start releases BGP dlatch post-write recovery.
         self.palettes.tick_besu(besu);
 
-        self.tick_bg_window_enabled_shadow();
-        self.tick_sprites_enabled_shadow();
+        self.bg_window_enabled_overlay.tick();
+        self.sprites_enabled_overlay.tick();
     }
 
     /// Freeze latches at their current output (LCD off).
@@ -63,54 +98,29 @@ impl PipelineRegisters {
         self.background_viewport.y.clear();
         self.window.x_plus_7.clear();
         self.control_latch.clear();
-        self.bg_window_enabled_shadow = None;
-        self.bg_window_enabled_shadow_just_set = false;
-        self.sprites_enabled_shadow = None;
-        self.sprites_enabled_shadow_just_set = false;
+        self.bg_window_enabled_overlay.clear();
+        self.sprites_enabled_overlay.clear();
     }
 
     /// VYXE state for the BG plane gate (RAJY/TADE), with OLD-overlay applied.
     pub fn bg_window_enabled_for_resolve(&self) -> bool {
-        self.bg_window_enabled_shadow
-            .unwrap_or_else(|| self.control.background_and_window_enabled())
+        self.bg_window_enabled_overlay
+            .resolve(self.control.background_and_window_enabled())
     }
 
     /// Capture pre-write VYXE if LCDC.0 transitions during Mode 3.
     pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
-        if old_value != new_value {
-            self.bg_window_enabled_shadow = Some(old_value);
-            self.bg_window_enabled_shadow_just_set = true;
-        }
-    }
-
-    /// CPU write site sets shadow before this fall runs; consume `just_set`, clear on next fall.
-    fn tick_bg_window_enabled_shadow(&mut self) {
-        if self.bg_window_enabled_shadow_just_set {
-            self.bg_window_enabled_shadow_just_set = false;
-        } else {
-            self.bg_window_enabled_shadow = None;
-        }
+        self.bg_window_enabled_overlay.arm(old_value, new_value);
     }
 
     /// XYLO state for the OBJ-mux popper, with OLD-overlay applied. Sprite-fetch trigger does NOT use this.
     pub fn sprites_enabled_for_resolve(&self) -> bool {
-        self.sprites_enabled_shadow
-            .unwrap_or_else(|| self.control.sprites_enabled())
+        self.sprites_enabled_overlay
+            .resolve(self.control.sprites_enabled())
     }
 
     /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3.
     pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
-        if old_value != new_value {
-            self.sprites_enabled_shadow = Some(old_value);
-            self.sprites_enabled_shadow_just_set = true;
-        }
-    }
-
-    fn tick_sprites_enabled_shadow(&mut self) {
-        if self.sprites_enabled_shadow_just_set {
-            self.sprites_enabled_shadow_just_set = false;
-        } else {
-            self.sprites_enabled_shadow = None;
-        }
+        self.sprites_enabled_overlay.arm(old_value, new_value);
     }
 }
