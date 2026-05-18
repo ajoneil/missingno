@@ -10,6 +10,7 @@ use ppu::{Ppu, screen::Screen};
 pub mod audio;
 pub mod cartridge;
 pub mod cpu;
+pub mod cpu_bus;
 pub mod debugger;
 pub mod dma;
 pub mod dmg_sram;
@@ -27,6 +28,8 @@ pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
 
+use cpu_bus::{BusAccess, CpuBus};
+
 /// Master clock signal level. The clock alternates High → Low
 /// uniformly. Edge logic runs at transitions: `rise()` at the
 /// Low→High edge, `fall()` at the High→Low edge.
@@ -36,30 +39,6 @@ pub enum ClockPhase {
     Low,
 }
 
-/// The SoC's shared CPU data bus (`cpu_port_d[7:0]`).
-///
-/// On hardware, a real wire driven by whichever peripheral's tri-state
-/// driver is enabled (PPU registers via `tobe`/`wafu`, work RAM, OAM,
-/// VRAM, cartridge, IF/IE, etc.). The CPU latches the bus at
-/// `data_phase_n↑` (dot 3.995 of the read M-cycle).
-///
-/// Driver outputs settle within ~80 ns of the driver enabling at
-/// dot 2.005. Subsequent same-M-cycle source-state transitions
-/// experience ~340 ns of bus-voltage flux that extends past the
-/// CPU's latch edge — the CPU therefore captures the value the
-/// driver was stably driving at dot 2.085.
-pub struct CpuBus {
-    /// Value currently on `cpu_port_d[7:0]`. Updated at dot 2 of each
-    /// CPU read M-cycle; latched by the CPU at end of M-cycle.
-    pub data: u8,
-}
-
-impl CpuBus {
-    fn new() -> Self {
-        Self { data: 0xFF }
-    }
-}
-
 impl ClockPhase {
     pub fn next(self) -> ClockPhase {
         match self {
@@ -67,21 +46,6 @@ impl ClockPhase {
             ClockPhase::Low => ClockPhase::High,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BusAccessKind {
-    Read,
-    Write,
-    DmaRead,
-    DmaWrite,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct BusAccess {
-    pub address: u16,
-    pub value: u8,
-    pub kind: BusAccessKind,
 }
 
 pub struct GameBoy {
@@ -114,10 +78,10 @@ pub struct GameBoy {
     /// A CPU bus write staged at the M-cycle boundary, applied at
     /// dot 2 to drive `cpu_bus.data` with the write value (CUPA-
     /// rising / `cpu_wr` asserted equivalent).
-    staged_bus_write: Option<execute::StagedBusWrite>,
+    staged_bus_write: Option<cpu_bus::StagedBusWrite>,
     /// A CPU bus read staged at the M-cycle boundary, applied at
     /// dot 2 to drive the value onto `cpu_bus`.
-    staged_bus_read: Option<execute::StagedBusRead>,
+    staged_bus_read: Option<cpu_bus::StagedBusRead>,
     /// Pending OAM-corruption arming. Set when an OAM-range bus
     /// address (CPU read/write or IDU step) appears on the bus;
     /// cleared and applied at the next MOPA (dot 2 rise) — which
@@ -220,11 +184,11 @@ impl GameBoy {
         self.clock_phase = ClockPhase::Low;
         self.current_dot_action = DotAction::Idle;
         self.current_dot = BusDot::ZERO;
-        self.staged_bus_read = self.cpu.pending_bus_read().map(execute::StagedBusRead::new);
+        self.staged_bus_read = self.cpu.pending_bus_read().map(cpu_bus::StagedBusRead::new);
         self.staged_bus_write = self
             .cpu
             .pending_bus_write()
-            .map(|(address, _value)| execute::StagedBusWrite::new(address));
+            .map(|(address, _value)| cpu_bus::StagedBusWrite::new(address));
         self.pending_oam_bug = None;
         self.cpu_bus = CpuBus::new();
     }

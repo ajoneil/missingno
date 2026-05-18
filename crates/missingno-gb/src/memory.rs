@@ -1,5 +1,7 @@
 use crate::{
-    BusAccess, BusAccessKind, GameBoy, audio, dmg_sram,
+    GameBoy, audio,
+    cpu_bus::{BusAccess, BusAccessKind},
+    dmg_sram,
     interrupts::{self, InterruptFlags},
     ppu, serial_transfer, timers,
 };

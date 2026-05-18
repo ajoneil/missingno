@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{
-    BusAccess, BusAccessKind, GameBoy,
+    GameBoy,
     cpu::instructions::Instruction,
+    cpu_bus::{BusAccess, BusAccessKind},
     ppu::{self, rendering::Mode, screen::Screen},
 };
 use instructions::InstructionsIterator;

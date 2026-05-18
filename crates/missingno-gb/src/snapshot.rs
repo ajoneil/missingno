@@ -384,7 +384,7 @@ impl GameBoy {
             current_dot: BusDot::ZERO,
             staged_bus_write: None,
             staged_bus_read: None,
-            cpu_bus: crate::CpuBus::new(),
+            cpu_bus: crate::cpu_bus::CpuBus::new(),
             pending_oam_bug: None,
         }
     }
