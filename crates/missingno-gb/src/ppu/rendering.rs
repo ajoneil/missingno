@@ -409,6 +409,31 @@ impl Rendering {
             self.hblank.pulse_ajuj_on_avap_fall();
             self.window.init_nuko_wx(regs.window.x.output());
             self.fetcher.load_into(&mut self.bg_shifter);
+
+            // EXPERIMENT 14: shorter initial mode-2/3 startup at SCX=1 + worst-case stacked-X.
+            // Same as Exp 13 but additionally gated on `SCX & 7 == 1` — tests whether the
+            // 2-dot acceleration is specific to SCX=1's 1-pixel fine-scroll discard interaction.
+            let scx = regs.background_viewport.x.output();
+            if scx & 7 == 1 {
+                let sprites = self.scan.sprites_ref();
+                let mut stacked_worst_case = false;
+                'outer: for i in 0..sprites.count as usize {
+                    let x = sprites.entries[i].x;
+                    if (x.wrapping_add(scx)) & 7 != 0 {
+                        continue;
+                    }
+                    let same_x_count = (0..sprites.count as usize)
+                        .filter(|&j| sprites.entries[j].x == x)
+                        .count();
+                    if same_x_count >= 5 {
+                        stacked_worst_case = true;
+                        break 'outer;
+                    }
+                }
+                if stacked_worst_case {
+                    self.fetcher.jump_counter(2);
+                }
+            }
         }
 
         // SARY/REJO: sample WY==LY in all modes (TALU-rising-derived clock).
