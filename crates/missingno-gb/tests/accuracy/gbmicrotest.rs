@@ -99,8 +99,10 @@ gbmicrotest!(halt_op_dupe);
 // simulators (DocBoy, Gambatte, GateBoy, SameBoy), none of which pass this
 // test. Halt-bug fires for IF[1] steady-set across HALT decode, byte after
 // HALT executes twice, total ~64 M-cycles. The expected $55 implies a
-// ~5,378-M-cycle wake-latency that no gate-level model exhibits. Ignored
-// pending real-DMG hardware verification.
+// ~5,378-M-cycle wake-latency that no gate-level model exhibits. One real
+// DMG unit reproduces DIV=$01, matching the simulators, so the ROM
+// annotation appears to be wrong (or testing an edge case no current
+// model captures). Ignored.
 #[ignore]
 #[test]
 fn halt_op_dupe_delay() {
