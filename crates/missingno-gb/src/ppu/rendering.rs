@@ -363,10 +363,10 @@ impl Rendering {
         if was_rendering {
             self.mode3_rising(regs, video, oam, oam_bus, vram);
             // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
-            // FEPO drop at a terminal pix latches voga_pending without waiting for the next fall.
+            // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
             let fepo = self.fepo(regs.control.sprites_enabled());
-            self.hblank.evaluate_wodu_on_fall(xano, fepo);
+            self.hblank.evaluate_wodu(xano, fepo);
         }
 
         // VOGA.q captures on this rise; WEGO clears XYMU.
@@ -667,7 +667,7 @@ impl Rendering {
         // WODU sampled on the post-advance XANO/FEPO so OAM-X=167 sprites are visible on the same edge.
         let wodu_fepo = self.fepo(regs.control.sprites_enabled());
         self.hblank
-            .evaluate_wodu_on_fall(self.pixel_counter.terminal(), wodu_fepo);
+            .evaluate_wodu(self.pixel_counter.terminal(), wodu_fepo);
 
         let (_toba, pixel_out) =
             self.lcd
