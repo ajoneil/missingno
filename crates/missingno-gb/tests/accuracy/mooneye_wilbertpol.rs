@@ -135,11 +135,19 @@ fn run_wilbertpol_test(rom_path: &str) {
         panic!("{msg}");
     }
 
+    // Wilbertpol harness stores the failing testcase_id at WRAM $C000.
+    let testcase_id = run.gb.peek_range(0xC000, 1)[0];
+    let round = match cpu.c {
+        0x49 => "Round A FAILED (mode-3 too LONG)",
+        0xBA => "Round B FAILED (mode-3 too SHORT)",
+        0x17 => "STAT IRQ never fired",
+        _ => "(unknown failure round)",
+    };
     panic!(
         "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
-         (regs_flags=0x{flags:02X}; either no asserts were registered, or all set asserts matched). \
+         (regs_flags=0x{flags:02X}). testcase_id=0x{:02X}, {round}. \
          Post-halt registers: A=0x{:02X} B=0x{:02X} C=0x{:02X} D=0x{:02X} E=0x{:02X} H=0x{:02X} L=0x{:02X}",
-        cpu.a, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l,
+        testcase_id, cpu.a, cpu.b, cpu.c, cpu.d, cpu.e, cpu.h, cpu.l,
     );
 }
 
