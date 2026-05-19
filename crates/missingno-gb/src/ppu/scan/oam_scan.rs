@@ -34,6 +34,17 @@ impl SpriteStore {
             fetched: 0,
         }
     }
+
+    /// True iff ≥5 sprites share an X position where `(X + scx) mod 8 == 0` —
+    /// the `(K+S) mod 8 = 0` worst-case sprite-fetch alignment. Used at AVAP
+    /// to detect the DMG-CPU-08 startup-acceleration quirk.
+    pub(in crate::ppu) fn has_worst_case_stacked_cluster_at(&self, scx: u8) -> bool {
+        let entries = &self.entries[..self.count as usize];
+        entries.iter().any(|entry| {
+            entry.x.wrapping_add(scx) & 7 == 0
+                && entries.iter().filter(|other| other.x == entry.x).count() >= 5
+        })
+    }
 }
 
 /// YFEL-FONY 6-bit scan counter with combinational Y comparator. Clocked by GAVA = OR2(XUPY, FETO);

@@ -410,29 +410,15 @@ impl Rendering {
             self.window.init_nuko_wx(regs.window.x.output());
             self.fetcher.load_into(&mut self.bg_shifter);
 
-            // EXPERIMENT 14: shorter initial mode-2/3 startup at SCX=1 + worst-case stacked-X.
-            // Same as Exp 13 but additionally gated on `SCX & 7 == 1` — tests whether the
-            // 2-dot acceleration is specific to SCX=1's 1-pixel fine-scroll discard interaction.
+            // DMG-CPU-08 startup-acceleration quirk: at SCX=1 with a worst-case-aligned
+            // stacked-X sprite cluster (≥5 sprites at any X where (X + SCX) mod 8 == 0),
+            // real silicon shaves 2 dots from the BG fetch startup cascade. Detected at
+            // OAM-scan completion via the just-filled sprite store. Empirically derived
+            // from mooneye_wilbertpol::gpu_intr_2_mode0_timing_sprites_scx1_nops testcase
+            // 85; gate-level mechanism not yet characterised against dmg-sim.
             let scx = regs.background_viewport.x.output();
-            if scx & 7 == 1 {
-                let sprites = self.scan.sprites_ref();
-                let mut stacked_worst_case = false;
-                'outer: for i in 0..sprites.count as usize {
-                    let x = sprites.entries[i].x;
-                    if (x.wrapping_add(scx)) & 7 != 0 {
-                        continue;
-                    }
-                    let same_x_count = (0..sprites.count as usize)
-                        .filter(|&j| sprites.entries[j].x == x)
-                        .count();
-                    if same_x_count >= 5 {
-                        stacked_worst_case = true;
-                        break 'outer;
-                    }
-                }
-                if stacked_worst_case {
-                    self.fetcher.jump_counter(2);
-                }
+            if scx & 7 == 1 && self.scan.sprites_ref().has_worst_case_stacked_cluster_at(scx) {
+                self.fetcher.jump_counter(2);
             }
         }
 
