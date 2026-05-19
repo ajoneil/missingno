@@ -437,13 +437,18 @@ gbmicrotest!(stat_write_glitch_l143_d);
 gbmicrotest!(stat_write_glitch_l154_a);
 gbmicrotest!(stat_write_glitch_l154_b);
 gbmicrotest!(stat_write_glitch_l154_c);
-// Annotated `; pass - dmg` expecting IF=$E0, but dmg-sim's gate-level netlist
-// and four other DMG simulators (including die-photo-derived GateBoy) all
-// produce IF=$E1 at the read anchor — VBlank IF latches at LY=144 entry of
-// the preceding frame and is never cleared before the read. The sibling
-// stat_write_glitch_l143_d annotation acknowledges normal VBlank IF firing
-// under the same scaffold, so this annotation looks unverified. Ignored
-// pending real-DMG hardware verification.
+// Probes the same-M-cycle race between a CPU `LD (FF0F), 0` clear pulse
+// (lyta↓) and the VBlank source clock (POPU↑ via int_vbl). In dmg-sim the
+// two edges land ~387 ps apart with the source rising after the clear
+// releases, so the LOPE dffsr captures D=1 and IF[0] ends the M-cycle set
+// (IF=$E1). That margin is smaller than a single gate delay in the DMG's
+// process and well inside the envelope of die-to-die process variation,
+// supply voltage, and temperature — so the ordering can plausibly flip on
+// real silicon. The ROM annotation `; pass - dmg` expects IF=$E0 (clear
+// wins); one real DMG unit reproduces IF=$E1 instead, matching
+// missingno + dmg-sim + GateBoy + the four behavioural emulators. The
+// outcome appears to be unit-dependent, which is the expected signature
+// of a race resolved by less than one gate delay.
 #[ignore]
 #[test]
 fn stat_write_glitch_l154_d() {
