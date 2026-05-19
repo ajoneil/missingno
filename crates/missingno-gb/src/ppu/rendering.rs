@@ -631,21 +631,22 @@ impl Rendering {
         let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
         let nuko_now = self.window.nuko(pixel_counter_before_sacu);
         let pany_slip_now = proposed_seko && nuko_now;
-        let seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
+        let raw_seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
         self.pany_slip_pending = pany_slip_now;
+
+        // SEKO drain-detector freeze during sprite-fetch FEPO-held window: FEPO=1 → VYBO=0 →
+        // SACU=0 → SEGU stuck at 1 → RYFA frozen → RENE.D = RYFA holds → SEKO = NOR2(RENE, RYFA)
+        // holds at its pre-freeze value (0 in normal BG cadence). The collapsed `raw_seko_fire`
+        // formula doesn't model the cascade DFFs explicitly, so we override to 0 during the
+        // freeze. Zero NYXU pulses across 30 TAKA-high windows confirmed by gate-level FST.
+        let fepo_held = self.sprite_trigger.taka() && self.fepo(regs.control.sprites_enabled());
+        let seko_fire = if fepo_held { false } else { raw_seko_fire };
 
         let nyxu_pulse = seko_fire || advance_nyxu_pulse;
 
-        // Sprite-fetch-with-FEPO=1 gate: firing fetcher.load_into / fine_scroll.reset_counter
-        // mid-sprite-fetch diverges from hardware reference images in mealybug LCDC.{2,3,4,6}/SCX/SCY
-        // and mooneye sprite-intr tests. Root cause is downstream (BG VRAM-read timing or tile_temp
-        // capture during the new tile cycle); until audited, gate on `!fepo_held` to keep the
-        // previous steady-state cadence.
-        let fepo_held = self.sprite_trigger.taka() && self.fepo(regs.control.sprites_enabled());
-
         let pixel = pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
 
-        if seko_fire && !fepo_held {
+        if seko_fire {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
@@ -671,7 +672,7 @@ impl Rendering {
             self.fine_scroll.tick();
         }
 
-        if seko_fire && !fepo_held {
+        if seko_fire {
             self.fine_scroll.reset_counter();
         }
 
