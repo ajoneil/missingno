@@ -220,8 +220,7 @@ wilbertpol_test!(
 // variation that puts real-silicon transistor strengths on one side of a
 // dot boundary that dmg-sim's typical-corner model puts on the other.
 // Needs further hardware testing (ideally the same test on a QFP-80
-// DMG-CPU B unit to separate die effects from mainboard effects). Ignored.
-#[ignore]
+// DMG-CPU B unit to separate die effects from mainboard effects).
 #[test]
 fn gpu_intr_2_mode0_timing_sprites_scx1_nops() {
     run_wilbertpol_test(
