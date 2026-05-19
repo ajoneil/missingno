@@ -207,8 +207,17 @@ wilbertpol_test!(
     "mooneye-wilbertpol/acceptance/gpu/intr_2_mode0_timing_sprites_nops.gb"
 );
 // testcase 85 (5×OAM X=7 + 5×OAM X=167, SCX=1) fails by ~2 dots — dmg-sim
-// and missingno agree on Mode 3 length; the test calibration is shorter.
-// Ignored pending real-DMG hardware verification.
+// and missingno agree on Mode 3 length (~245 dots); the test calibration
+// expects ≤242 dots. A real DMG-CPU-08 unit does pass this test, so the
+// shorter Mode 3 is genuine hardware behaviour, not a test-calibration
+// artefact. dmg-sim is derived from Digshadow's decap of a DMG-CPU B
+// chip (specific revision within the B family not recorded);
+// DMG-CPU-08 is the last revision in the B family. The gap may be
+// intra-revision variation within DMG-CPU B, or a CPU-PPU sub-M-cycle
+// phase effect the gate-level model doesn't capture. Needs further
+// hardware testing across revisions and possible model refinement
+// before this can be passed without regressing other timing tests.
+// Ignored.
 #[ignore]
 #[test]
 fn gpu_intr_2_mode0_timing_sprites_scx1_nops() {
