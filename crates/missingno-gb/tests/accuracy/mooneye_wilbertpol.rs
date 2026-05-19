@@ -207,17 +207,20 @@ wilbertpol_test!(
     "mooneye-wilbertpol/acceptance/gpu/intr_2_mode0_timing_sprites_nops.gb"
 );
 // testcase 85 (5×OAM X=7 + 5×OAM X=167, SCX=1) fails by ~2 dots — dmg-sim
-// and missingno agree on Mode 3 length (~245 dots); the test calibration
-// expects ≤242 dots. A real DMG-CPU-08 unit does pass this test, so the
-// shorter Mode 3 is genuine hardware behaviour, not a test-calibration
-// artefact. dmg-sim is derived from Digshadow's decap of a DMG-CPU B
-// chip (specific revision within the B family not recorded);
-// DMG-CPU-08 is the last revision in the B family. The gap may be
-// intra-revision variation within DMG-CPU B, or a CPU-PPU sub-M-cycle
-// phase effect the gate-level model doesn't capture. Needs further
-// hardware testing across revisions and possible model refinement
-// before this can be passed without regressing other timing tests.
-// Ignored.
+// and missingno agree on Mode 3 length (~245 dots), including on the
+// actual wilbertpol ROM (not just custom sweep ROMs); the test
+// calibration expects ≤242 dots. A real DMG-CPU-08 unit does pass this
+// test. Per Gekkio's hardware database the DMG-CPU-08 designation is a
+// mainboard revision (glop-top SoC + blobbed RAM), and Gekkio's decap
+// confirms the glop-top SoC die is the same DMG-CPU B silicon dmg-sim
+// was derived from. The 2-dot gap is therefore between dmg-sim's
+// gate-level model and real B silicon, not a silicon-revision difference
+// or a missingno extraction issue. Likely sources: cumulative gate-delay
+// annotation error, idealised external SRAM / pad modelling, or process
+// variation that puts real-silicon transistor strengths on one side of a
+// dot boundary that dmg-sim's typical-corner model puts on the other.
+// Needs further hardware testing (ideally the same test on a QFP-80
+// DMG-CPU B unit to separate die effects from mainboard effects). Ignored.
 #[ignore]
 #[test]
 fn gpu_intr_2_mode0_timing_sprites_scx1_nops() {
