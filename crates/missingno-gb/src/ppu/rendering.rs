@@ -360,7 +360,16 @@ impl Rendering {
         // Capture XYMU before tick_voga_on_rise() may clear it.
         let was_rendering = self.hblank.rendering_active();
 
-        // VOGA.q captures on this rise (WODU was sampled on the prior fall); WEGO clears XYMU.
+        if was_rendering {
+            self.mode3_rising(regs, video, oam, oam_bus, vram);
+            // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
+            // FEPO drop at a terminal pix latches voga_pending without waiting for the next fall.
+            let xano = self.pixel_counter.terminal();
+            let fepo = self.fepo(regs.control.sprites_enabled());
+            self.hblank.evaluate_wodu_on_fall(xano, fepo);
+        }
+
+        // VOGA.q captures on this rise; WEGO clears XYMU.
         // `wodu` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
         let wodu = self.hblank.tick_voga_on_rise();
 
@@ -369,10 +378,6 @@ impl Rendering {
         let pixel = self
             .lcd
             .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
-
-        if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram);
-        }
 
         // Mode 3 exit: clear fetch cascade and fine-scroll on XYMU↑.
         if was_rendering && !self.hblank.rendering_active() {
@@ -409,17 +414,6 @@ impl Rendering {
             self.hblank.pulse_ajuj_on_avap_fall();
             self.window.init_nuko_wx(regs.window.x.output());
             self.fetcher.load_into(&mut self.bg_shifter);
-
-            // DMG-CPU-08 startup-acceleration quirk: at SCX=1 with a worst-case-aligned
-            // stacked-X sprite cluster (≥5 sprites at any X where (X + SCX) mod 8 == 0),
-            // real silicon shaves 2 dots from the BG fetch startup cascade. Detected at
-            // OAM-scan completion via the just-filled sprite store. Empirically derived
-            // from mooneye_wilbertpol::gpu_intr_2_mode0_timing_sprites_scx1_nops testcase
-            // 85; gate-level mechanism not yet characterised against dmg-sim.
-            let scx = regs.background_viewport.x.output();
-            if scx & 7 == 1 && self.scan.sprites_ref().has_worst_case_stacked_cluster_at(scx) {
-                self.fetcher.jump_counter(2);
-            }
         }
 
         // SARY/REJO: sample WY==LY in all modes (TALU-rising-derived clock).

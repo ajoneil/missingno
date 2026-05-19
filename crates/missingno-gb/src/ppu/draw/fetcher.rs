@@ -54,11 +54,6 @@ impl TileFetcher {
         }
     }
 
-    /// EXPERIMENT 14: jump BG fetch counter ahead to skip startup dots.
-    pub(in crate::ppu) fn jump_counter(&mut self, value: u8) {
-        self.fetch_counter = value.min(5);
-    }
-
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             fetch_counter: 5,

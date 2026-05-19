@@ -7,7 +7,8 @@ pub(in crate::ppu) struct HblankPipeline {
     rendering_active: bool,
     /// VOGA DFF (captures WODU on ALET rising). Reset by TADY.
     voga: bool,
-    /// VOGA's pending: set on fall when WODU first rises, committed on next rise (~0.479-dot capture delay).
+    /// VOGA's pending: set when WODU first rises (combinational on XANO/!FEPO), committed on
+    /// the same-dot ALET-rising edge — modelled as the next tick_voga_on_rise.
     voga_pending: bool,
     /// AJUJ permit pulse — ~2,100 ps window between BESU.q↓ and mode3 net↑ during the AVAP cascade.
     /// Asserted at AVAP-fall with mode3↑, deasserted at the next master-clock rise.
@@ -54,7 +55,7 @@ impl HblankPipeline {
         wodu_now
     }
 
-    /// Commit pending VOGA on the next rise (~0.479-dot WODU↑→VOGA.q↑ delay).
+    /// Commit pending VOGA on the same-dot ALET-rising edge.
     /// Returns true iff VOGA just committed — LCD uses this to push screen_x=159.
     pub(in crate::ppu) fn tick_voga_on_rise(&mut self) -> bool {
         let was_pending = self.voga_pending;
