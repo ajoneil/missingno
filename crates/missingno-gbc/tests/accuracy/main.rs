@@ -10,6 +10,7 @@ mod little_things;
 mod mbc3_tester;
 mod mealybug_tearoom;
 mod mooneye;
+mod mooneye_wilbertpol;
 mod samesuite;
 mod scribbltests;
 mod strikethrough;

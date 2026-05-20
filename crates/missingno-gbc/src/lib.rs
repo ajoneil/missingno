@@ -247,4 +247,7 @@ impl missingno_gb::test_support::System for GameBoyColor {
     fn interrupts(&self) -> &interrupts::Registers {
         GameBoyColor::interrupts(self)
     }
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        GameBoyColor::peek_range(self, start, len)
+    }
 }

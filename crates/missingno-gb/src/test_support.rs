@@ -36,6 +36,10 @@ pub trait System {
     fn cpu_mut(&mut self) -> &mut Cpu;
     fn drain_serial_output(&mut self) -> Vec<u8>;
     fn interrupts(&self) -> &interrupts::Registers;
+    /// Peek a contiguous range of memory, bypassing bus conflicts and
+    /// PPU mode gating. Used by tests that decode assertion records
+    /// from WRAM after the test has halted.
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8>;
 }
 
 impl System for GameBoy {
@@ -56,6 +60,9 @@ impl System for GameBoy {
     }
     fn interrupts(&self) -> &interrupts::Registers {
         GameBoy::interrupts(self)
+    }
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        GameBoy::peek_range(self, start, len)
     }
 }
 
@@ -197,6 +204,9 @@ impl System for TestRun {
     }
     fn interrupts(&self) -> &interrupts::Registers {
         self.gb.interrupts()
+    }
+    fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
+        self.gb.peek_range(start, len)
     }
 }
 
