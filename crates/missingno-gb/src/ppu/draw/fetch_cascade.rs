@@ -30,8 +30,8 @@ impl FetchCascade {
     }
 
     /// ALET rising: NYKA captures LYRY, PYGO captures PORY, POKY settles. POKY's R input is asserted outside Mode 3 (handled by `reset()`).
-    pub(in crate::ppu) fn advance_cascade(&mut self, lyry: bool) {
-        self.nyka = lyry;
+    pub(in crate::ppu) fn advance_cascade(&mut self, bg_fetch_done: bool) {
+        self.nyka = bg_fetch_done;
         self.pygo = self.pory;
         if self.pygo {
             self.poky = true;

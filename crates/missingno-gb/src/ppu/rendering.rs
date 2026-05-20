@@ -139,9 +139,10 @@ pub struct Rendering {
     /// PANY drain-detector slip carry-over: NUKO=1 lands while SEKO would fire (count==7),
     /// splitting PANY's high pulse — RYFA captures the second half, slipping SEKO→TEVO→NYXU by 1 dot.
     pany_slip_pending: bool,
-    /// MOSU fired on the prior rise (LCDC.5 restore drops XOFO while NUNU=1).
-    /// NYXU's reset pulse holds the BG fetch counter at 0 across the following fall.
-    mosu_fired_rising: bool,
+    /// Window trigger (MOSU) fired on the prior rise via the deferred-completion path
+    /// (LCDC.5 restore drops XOFO while NUNU=1); consumed on the following fall to hold
+    /// the BG fetch counter at 0 via NYXU's reset pulse.
+    pending_window_trigger: bool,
 }
 
 impl Rendering {
@@ -161,7 +162,7 @@ impl Rendering {
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
-            mosu_fired_rising: false,
+            pending_window_trigger: false,
         }
     }
 
@@ -181,7 +182,7 @@ impl Rendering {
             sprite_state: SpriteState::Idle,
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
-            mosu_fired_rising: false,
+            pending_window_trigger: false,
         }
     }
 
@@ -456,16 +457,16 @@ impl Rendering {
             );
 
             // SUZU is a TEVO OR3 input alongside SEKO/TAVE; drives NYXU low (LOZE holds BG shifter).
-            // `mosu_fired_rising` carries deferred-completion MOSU from the prior rise.
-            let mosu_fired_rising = self.mosu_fired_rising;
-            self.mosu_fired_rising = false;
-            let load_window_pulse = if was_rendering && !mosu_fired && !mosu_fired_rising {
+            // `pending_window_trigger` carries the deferred-completion MOSU from the prior rise.
+            let deferred_window_trigger = self.pending_window_trigger;
+            self.pending_window_trigger = false;
+            let load_window_pulse = if was_rendering && !mosu_fired && !deferred_window_trigger {
                 self.mode3_advance_fetcher()
             } else {
                 false
             };
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
-            let advance_nyxu_pulse = mosu_fired || mosu_fired_rising || load_window_pulse;
+            let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
             self.mode3_pixel_pipeline(
                 regs,
                 rydy_before_pory,
@@ -517,7 +518,7 @@ impl Rendering {
         let mut fepo_pre_cupa = self.fepo(regs.sprites_enabled_pre_cupa);
 
         // LYRY = fetch_counter >= 5 (combinational). Counter only increments on rising.
-        let lyry = self.fetcher.lyry();
+        let bg_fetch_done = self.fetcher.bg_fetch_done();
 
         // BG fetcher counter=0/2/4 VRAM reads. Counter saturates at 5 during sprite fetch (MOCE=0
         // freezes LEBO) — no explicit !taka() gate needed here.
@@ -532,7 +533,7 @@ impl Rendering {
         );
 
         // Cascade advance runs before tick_rising so POKY's just-set value reaches the window's PYCO gate.
-        self.cascade.advance_cascade(lyry);
+        self.cascade.advance_cascade(bg_fetch_done);
 
         // SOCY's gate chain is too slow to suppress the same-dot in-flight SACU↑;
         // sample RYDY before tick_rising so the TYFA snapshot sees the pre-MOSU value.
@@ -540,7 +541,7 @@ impl Rendering {
 
         // Window rise tick: NOPA captures prior-fall PYNU, then PYNU re-evaluates.
         // Deferred-completion path can fire MOSU↑ here when LCDC.5 restore drops XOFO while NUNU=1.
-        self.mosu_fired_rising = self.window.tick_rising(
+        self.pending_window_trigger = self.window.tick_rising(
             &mut self.fetcher,
             &mut self.cascade,
             &mut self.fine_scroll,
@@ -569,8 +570,10 @@ impl Rendering {
         }
 
         // TEKY = AND4(FEPO, !RYDY, LYRY, !TAKA).
-        let teky =
-            fepo_pre_cupa && !self.window.rydy() && lyry && !self.sprite_trigger.fetch_running();
+        let teky = fepo_pre_cupa
+            && !self.window.rydy()
+            && bg_fetch_done
+            && !self.sprite_trigger.fetch_running();
         let ryce = self.sprite_trigger.tick_trigger_on_rise(teky);
 
         if ryce {

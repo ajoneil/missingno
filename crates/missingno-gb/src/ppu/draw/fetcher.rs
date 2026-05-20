@@ -29,8 +29,9 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
 }
 
 impl TileFetcher {
-    /// LYRY = NOT(MOCE) = counter >= 5 (combinational).
-    pub(in crate::ppu) fn lyry(&self) -> bool {
+    /// LYRY = NOT(MOCE) = counter >= 5 (combinational). True when the BG tile fetch is ready
+    /// to load into the shifter on the next NYXU.
+    pub(in crate::ppu) fn bg_fetch_done(&self) -> bool {
         self.fetch_counter >= 5
     }
 

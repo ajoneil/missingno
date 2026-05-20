@@ -5,6 +5,10 @@ use crate::ppu::types::sprites::SpriteId;
 
 pub(in crate::ppu) const MAX_SPRITES_PER_LINE: usize = 10;
 
+/// FETO_SCAN_DONE AND4 decode of scan-counter bits 0/1/2/5. Equivalent to `entry == 39`
+/// since the counter freezes at 39 (bits 3/4 don't reach this gate's input).
+const FETO_SCAN_DONE_DECODE: u8 = 0b100111;
+
 #[derive(Clone, Copy)]
 pub(in crate::ppu) struct SpriteStoreEntry {
     /// OAM sprite number (0-39).
@@ -118,9 +122,8 @@ impl ScanCounter {
         }
     }
 
-    /// FETO_SCAN_DONE: AND4 of scan counter bits 0/1/2/5 — fires at entry==39 (0b100111).
     pub(in crate::ppu) fn scan_done(&self) -> bool {
-        self.entry & 0b100111 == 0b100111
+        self.entry & FETO_SCAN_DONE_DECODE == FETO_SCAN_DONE_DECODE
     }
 
     pub(in crate::ppu) fn entry(&self) -> u8 {

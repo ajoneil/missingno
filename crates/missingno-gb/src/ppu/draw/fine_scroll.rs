@@ -17,10 +17,10 @@ pub(in crate::ppu) struct FineScroll {
     /// 3-bit counter (0–7).
     pub(in crate::ppu) count: u8,
     roxy: Roxy,
-    /// Previous PUXA for the rising-edge detector that produces POVA.
-    nyze: bool,
-    /// POHU comparator result; PUXA captures this on the next fall (ROXO).
-    pohu: bool,
+    /// NYZE — previous-rise's PUXA, for the rising-edge detector that produces POVA.
+    prev_match_captured: bool,
+    /// POHU combinational match; PUXA captures this on the next rise (ROXO).
+    match_pending: bool,
 }
 
 impl FineScroll {
@@ -28,8 +28,8 @@ impl FineScroll {
         Self {
             count: 0,
             roxy: Roxy::Gating,
-            nyze: false,
-            pohu: false,
+            prev_match_captured: false,
+            match_pending: false,
         }
     }
 
@@ -51,20 +51,21 @@ impl FineScroll {
 
     /// Combinational POHU = (count == SCX & 7); captured into PUXA on the next rise (ROXO).
     pub(in crate::ppu) fn compare_falling(&mut self, scx: u8) {
-        self.pohu = self.count == (scx & 7);
+        self.match_pending = self.count == (scx & 7);
     }
 
     /// Capture PUXA, edge-detect POVA, clear ROXY on match. Caller gates on TYFA.
+    /// Returns true on the PUXA 0→1 rising edge (POVA pulse).
     pub(in crate::ppu) fn capture_rising(&mut self) -> bool {
-        let puxa = self.pohu;
-        let pova = puxa && !self.nyze;
-        self.nyze = puxa;
+        let match_captured = self.match_pending;
+        let match_edge = match_captured && !self.prev_match_captured;
+        self.prev_match_captured = match_captured;
 
-        if self.roxy == Roxy::Gating && puxa {
+        if self.roxy == Roxy::Gating && match_captured {
             self.roxy = Roxy::Done;
         }
 
-        pova
+        match_edge
     }
 
     /// Window trigger resets the counter only; ROXY and `pohu` keep their state so the

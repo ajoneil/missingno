@@ -85,7 +85,9 @@ impl Ppu {
         }
     }
 
-    /// Returns true if the write produced a STAT rising edge (DMG STAT glitch transient).
+    /// Returns true only on the STAT-write DMG glitch path — momentarily all enables go high
+    /// before settling to `value`, which may raise the STAT line and request an interrupt.
+    /// All other registers return false (writes never produce a same-tick STAT edge).
     fn apply_register_write(&mut self, register: &Register, value: u8) -> bool {
         match register {
             Register::Control => {
