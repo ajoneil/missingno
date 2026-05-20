@@ -37,7 +37,7 @@ enum Activity {
 }
 
 impl CpuBus {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             data: 0xFF,
             activity: Activity::Idle,
@@ -45,18 +45,18 @@ impl CpuBus {
     }
 
     /// Clear at the M-cycle boundary.
-    pub(crate) fn clear_activity(&mut self) {
+    pub fn clear_activity(&mut self) {
         self.activity = Activity::Idle;
     }
 
-    pub(crate) fn stage_read(&mut self, address: u16) {
+    pub fn stage_read(&mut self, address: u16) {
         self.activity = Activity::Read {
             address,
             applied: false,
         };
     }
 
-    pub(crate) fn stage_write(&mut self, address: u16) {
+    pub fn stage_write(&mut self, address: u16) {
         self.activity = Activity::Write {
             address,
             applied: false,
@@ -66,7 +66,7 @@ impl CpuBus {
     }
 
     /// Address of a pending (unapplied) read this M-cycle.
-    pub(crate) fn pending_read(&self) -> Option<u16> {
+    pub fn pending_read(&self) -> Option<u16> {
         match self.activity {
             Activity::Read {
                 address,
@@ -77,7 +77,7 @@ impl CpuBus {
     }
 
     /// Address of a pending (unapplied) write this M-cycle.
-    pub(crate) fn pending_write(&self) -> Option<u16> {
+    pub fn pending_write(&self) -> Option<u16> {
         match self.activity {
             Activity::Write {
                 address,
@@ -90,7 +90,7 @@ impl CpuBus {
 
     /// Address of an applied write whose mid-CUPA lock sample has
     /// not yet been recorded.
-    pub(crate) fn mid_sample_pending(&self) -> Option<u16> {
+    pub fn mid_sample_pending(&self) -> Option<u16> {
         match self.activity {
             Activity::Write {
                 address,
@@ -103,7 +103,7 @@ impl CpuBus {
     }
 
     /// Drive the bus and mark the staged read/write as applied.
-    pub(crate) fn drive(&mut self, value: u8) {
+    pub fn drive(&mut self, value: u8) {
         self.data = value;
         match &mut self.activity {
             Activity::Read { applied, .. } | Activity::Write { applied, .. } => {
@@ -114,7 +114,7 @@ impl CpuBus {
     }
 
     /// Record the OAM/VRAM lock at CUPA-rising. No-op outside writes.
-    pub(crate) fn record_snapshot_lock(&mut self, lock: Option<bool>) {
+    pub fn record_snapshot_lock(&mut self, lock: Option<bool>) {
         if let Activity::Write {
             locked_at_snapshot, ..
         } = &mut self.activity
@@ -124,7 +124,7 @@ impl CpuBus {
     }
 
     /// Record the OAM/VRAM lock at mid-CUPA. No-op outside writes.
-    pub(crate) fn record_mid_lock(&mut self, lock: Option<bool>) {
+    pub fn record_mid_lock(&mut self, lock: Option<bool>) {
         if let Activity::Write { locked_at_mid, .. } = &mut self.activity {
             *locked_at_mid = lock;
         }
@@ -132,7 +132,7 @@ impl CpuBus {
 
     /// AJUJ-window lock samples for a staged write: `(snapshot, mid)`.
     /// `(None, None)` outside writes.
-    pub(crate) fn write_lock_samples(&self) -> (Option<bool>, Option<bool>) {
+    pub fn write_lock_samples(&self) -> (Option<bool>, Option<bool>) {
         match self.activity {
             Activity::Write {
                 locked_at_snapshot,
@@ -166,22 +166,22 @@ pub struct BusTrace {
 }
 
 impl BusTrace {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self { entries: None }
     }
 
-    pub(crate) fn enable(&mut self) {
+    pub fn enable(&mut self) {
         self.entries = Some(Vec::new());
     }
 
-    pub(crate) fn record(&mut self, access: BusAccess) {
+    pub fn record(&mut self, access: BusAccess) {
         if let Some(entries) = &mut self.entries {
             entries.push(access);
         }
     }
 
     /// Drain the accumulated trace and disable recording.
-    pub(crate) fn take(&mut self) -> Vec<BusAccess> {
+    pub fn take(&mut self) -> Vec<BusAccess> {
         self.entries.take().unwrap_or_default()
     }
 }

@@ -158,7 +158,7 @@ impl ExternalBus {
 pub struct VramBus {
     pub vram: Vram,
     /// Retained value on the VRAM data bus.
-    pub(crate) latch: u8,
+    pub latch: u8,
 }
 
 impl VramBus {

@@ -23,7 +23,7 @@
 use crate::cpu::dff::Dff;
 use crate::interrupts::{Interrupt, InterruptFlags};
 
-pub(crate) struct DispatchChain {
+pub struct DispatchChain {
     /// irq_latch_inst<i> outputs: per-bit post-latch IF.
     /// Bit i holds the (IE ∧ IF) bit i value sampled through the
     /// data_phase_n-gated D-latch.
@@ -43,7 +43,7 @@ pub(crate) struct DispatchChain {
 }
 
 impl DispatchChain {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             irq_latch: InterruptFlags::empty(),
             data_phase_n: true,
@@ -55,7 +55,7 @@ impl DispatchChain {
     /// Drive data_phase_n from the CPU phase ring. Called every dot.
     /// When transparent (true), irq_latch tracks live IE & IF; when held
     /// (false), irq_latch stays frozen.
-    pub(crate) fn set_data_phase_n(&mut self, transparent: bool) {
+    pub fn set_data_phase_n(&mut self, transparent: bool) {
         self.data_phase_n = transparent;
     }
 
@@ -67,7 +67,7 @@ impl DispatchChain {
     /// `irq_latch_inst<i>` cells only for V/S/T/Serial/Joypad, with
     /// no connection for bits 5-7. Writes to FF0F bits 5-7 don't
     /// produce any pending state.
-    pub(crate) fn update_latch(&mut self, ie: InterruptFlags, requested: InterruptFlags) {
+    pub fn update_latch(&mut self, ie: InterruptFlags, requested: InterruptFlags) {
         if self.data_phase_n {
             self.irq_latch = (ie & requested)
                 & (InterruptFlags::VIDEO_BETWEEN_FRAMES
@@ -82,14 +82,14 @@ impl DispatchChain {
     /// priority chain has evaluated). The wired-NAND bus is precharged
     /// HIGH while write_phase=0, so int_take is gated false outside
     /// the eval phase.
-    pub(crate) fn int_take(&self, write_phase: bool) -> bool {
+    pub fn int_take(&self, write_phase: bool) -> bool {
         write_phase && !self.irq_latch.is_empty()
     }
 
     /// Post-latch IF & IE — read at HaltPhase::WakeIntake to decide
     /// dispatch-vs-spurious-wake without going through zaij/zkog (which
     /// can't fire during HALT because data_phase is held LOW).
-    pub(crate) fn latched(&self) -> InterruptFlags {
+    pub fn latched(&self) -> InterruptFlags {
         self.irq_latch
     }
 
@@ -107,7 +107,7 @@ impl DispatchChain {
     /// through zkog — during HALT, data_phase is held LOW, so zaij's
     /// data_phase requirement blocks zkog from setting until the CPU
     /// phase ring restarts after halt drops.
-    pub(crate) fn step_zkog(
+    pub fn step_zkog(
         &mut self,
         ime_enabled: bool,
         data_phase: bool,
@@ -123,21 +123,21 @@ impl DispatchChain {
 
     /// Clock zacw on CLK9↑ (M-cycle boundary rise). Captures zfex = zkog
     /// (zloz hold-chain not modelled — see file header).
-    pub(crate) fn tick_zacw(&mut self) {
+    pub fn tick_zacw(&mut self) {
         self.zacw.write(self.zkog);
         self.zacw.tick();
     }
 
     /// dispatch_active output (zacw.q). Drives the running-CPU
     /// fetch-vs-dispatch sequencer decision.
-    pub(crate) fn dispatch_active(&self) -> bool {
+    pub fn dispatch_active(&self) -> bool {
         self.zacw.output()
     }
 
     /// Priority-encode the latched IF for ISR vector resolution.
     /// Reads post-latch state — what zacw captured. Used at the ISR's
     /// vector-resolve point (M3→M4 boundary, IE push bug window).
-    pub(crate) fn vector(&self) -> Option<Interrupt> {
+    pub fn vector(&self) -> Option<Interrupt> {
         for interrupt in Interrupt::priority_order() {
             if self.irq_latch.contains((*interrupt).into()) {
                 return Some(*interrupt);
@@ -148,7 +148,7 @@ impl DispatchChain {
 
     /// Reset zkog at ctl_int_entry_m6 — fires when the ISR commits to
     /// dispatch. Per netlist: zkog R_n = NOR(ctl_int_entry_m6, sys_reset).
-    pub(crate) fn clear_dispatch(&mut self) {
+    pub fn clear_dispatch(&mut self) {
         self.zkog = false;
     }
 }

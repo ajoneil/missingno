@@ -184,7 +184,7 @@ pub struct Cpu {
     /// Running-CPU dispatch chain: per-bit irq_latch_inst<i> →
     /// priority chain → int_take → zaij → zkog/zloz → zfex → zacw.
     /// Owns the `data_phase_n` latch and the EI/DI block.
-    pub(super) dispatch: dispatch_chain::DispatchChain,
+    pub dispatch: dispatch_chain::DispatchChain,
 }
 
 impl Cpu {
@@ -423,7 +423,7 @@ impl Cpu {
     }
 
     /// Return `boundary_pending` and clear it. Called once per rise().
-    pub(super) fn consume_boundary_pending(&mut self) -> bool {
+    pub fn consume_boundary_pending(&mut self) -> bool {
         let pending = self.boundary_pending;
         self.boundary_pending = false;
         pending

@@ -357,11 +357,11 @@ impl Ppu {
         }
     }
 
-    pub(crate) fn read_oam(&self, address: OamAddress) -> u8 {
+    pub fn read_oam(&self, address: OamAddress) -> u8 {
         self.oam.read(address)
     }
 
-    pub(crate) fn write_oam(&mut self, address: OamAddress, value: u8) {
+    pub fn write_oam(&mut self, address: OamAddress, value: u8) {
         self.oam.write(address, value);
     }
 }
