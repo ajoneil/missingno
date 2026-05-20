@@ -125,7 +125,7 @@ impl Ppu {
                     y: LineCounterY {
                         value: 0,
                         vblank: false,
-                        popu_holdover: false,
+                        vblank_holdover: false,
                         frame_end_reset: false,
                     },
                 },
@@ -203,7 +203,7 @@ impl Ppu {
                 y: LineCounterY {
                     value: snap.ly,
                     vblank: snap.ly >= 144,
-                    popu_holdover: false,
+                    vblank_holdover: false,
                     frame_end_reset: false,
                 },
             },
@@ -369,23 +369,23 @@ impl Ppu {
             None => return false,
         };
 
-        // popu_active covers the NYPE→POPU DFF holdover at the 153→0 boundary.
-        let popu = self.video.popu_active();
-        let mode2_active = if popu {
+        // vblank_or_holdover covers the NYPE→POPU DFF holdover at the 153→0 boundary.
+        let vblank = self.video.vblank_or_holdover();
+        let mode2_active = if vblank {
             false
         } else {
             rendering.mode2_interrupt_active(&self.video)
         };
 
         // Mode 2 STAT also fires at LX=0 of line 144.
-        let vblank_line_144 = popu && self.video.ly() == 144 && self.video.line_end_active();
+        let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
         let sprites_enabled = self.registers.control.sprites_enabled();
         (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !popu
-            && rendering.wodu(sprites_enabled))
-            || (enables.contains(InterruptFlags::VERTICAL_BLANK) && popu)
+            && !vblank
+            && rendering.end_of_line_signal(sprites_enabled))
+            || (enables.contains(InterruptFlags::VERTICAL_BLANK) && vblank)
             || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
             || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
                 && self.video.stat.ly_eq_lyc())
@@ -442,7 +442,7 @@ impl Ppu {
         let (besu, wodu) = self
             .pixel_pipeline
             .as_ref()
-            .map(|r| (r.scan_besu(), r.wodu(sprites_enabled)))
+            .map(|r| (r.scan_besu(), r.end_of_line_signal(sprites_enabled)))
             .unwrap_or((false, false));
         TraceSignals {
             wuvu: self.video.dividers.half_mcycle,

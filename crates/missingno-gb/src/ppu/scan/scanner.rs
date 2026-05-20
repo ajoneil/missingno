@@ -11,13 +11,14 @@ pub(in crate::ppu) struct SpriteScanner {
     counter: ScanCounter,
     /// Active on all lines including LCD-on line 0.
     scanning: bool,
-    /// BESU drives ACYL for STAT mode bits and OAM bus locking; set by CATU only when catu_enabled.
-    besu: bool,
-    /// NOT(VID_RST) gate for CATU; false at LCD-on, set by enable_catu() after the first scanline.
-    catu_enabled: bool,
+    /// BESU: Mode 2 OAM-scan + locks asserted (drives ACYL → STAT mode bits, OAM bus lock).
+    /// Set by CATU only when scan_capture_armed; cleared on AVAP.
+    mode2_active: bool,
+    /// NOT(VID_RST) gate for CATU; false at LCD-on, set by arm_scan_capture() after the first scanline.
+    scan_capture_armed: bool,
     /// CATU_LINE_ENDp DFF17 (XUPY-rising, D = ABOV_LINE_ENDp).
     catu: bool,
-    /// RUTU nor_latch: set at scanline boundary by reset(), cleared by tick_catu on capture.
+    /// RUTU nor_latch: set at scanline boundary by reset(), cleared by tick_scan_capture on capture.
     rutu: bool,
     /// BYBA (dffr, XUPY-clocked).
     scan_done_flag: bool,
@@ -36,8 +37,8 @@ impl SpriteScanner {
         Self {
             counter: ScanCounter::new(),
             scanning: false,
-            besu: false,
-            catu_enabled: false,
+            mode2_active: false,
+            scan_capture_armed: false,
             catu: false,
             rutu: false,
             scan_done_flag: false,
@@ -50,8 +51,8 @@ impl SpriteScanner {
         Self {
             counter: ScanCounter::post_boot(),
             scanning: false,
-            besu: false,
-            catu_enabled: true,
+            mode2_active: false,
+            scan_capture_armed: true,
             catu: false,
             rutu: false,
             scan_done_flag: true,
@@ -69,22 +70,23 @@ impl SpriteScanner {
         self.scanning
     }
 
-    pub(in crate::ppu) fn besu(&self) -> bool {
-        self.besu
+    pub(in crate::ppu) fn mode2_active(&self) -> bool {
+        self.mode2_active
     }
 
-    /// RUTU has been set at the scanline boundary but CATU hasn't fired yet — used to lock OAM pre-BESU.
-    pub(in crate::ppu) fn catu_pending(&self) -> bool {
+    /// RUTU has been set at the scanline boundary but CATU hasn't fired yet — used to lock OAM
+    /// pre-BESU.
+    pub(in crate::ppu) fn scan_capture_pending(&self) -> bool {
         self.rutu
     }
 
-    pub(in crate::ppu) fn catu_enabled(&self) -> bool {
-        self.catu_enabled
+    pub(in crate::ppu) fn scan_capture_armed(&self) -> bool {
+        self.scan_capture_armed
     }
 
     /// Release VID_RST blocking on CATU after the first scanline completes.
-    pub(in crate::ppu) fn enable_catu(&mut self) {
-        self.catu_enabled = true;
+    pub(in crate::ppu) fn arm_scan_capture(&mut self) {
+        self.scan_capture_armed = true;
     }
 
     pub(in crate::ppu) fn scan_counter_entry(&self) -> u8 {
@@ -117,7 +119,7 @@ impl SpriteScanner {
 
     /// Runs every XUPY cycle regardless of POPU (so the DFF advances across the 153→0 boundary).
     /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next xupy_rising.
-    pub(in crate::ppu) fn tick_catu(&mut self, xupy_rising: bool, ly: u8) {
+    pub(in crate::ppu) fn tick_scan_capture(&mut self, xupy_rising: bool, ly: u8) {
         if !xupy_rising {
             return;
         }
@@ -132,8 +134,8 @@ impl SpriteScanner {
 
         if catu_captures && !self.scanning {
             self.scanning = true;
-            if self.catu_enabled {
-                self.besu = true;
+            if self.scan_capture_armed {
+                self.mode2_active = true;
             }
             self.counter.reset();
         }
@@ -171,16 +173,16 @@ impl SpriteScanner {
         let avap = self.scan_done_flag && !self.scan_done_prev && self.scanning;
         if avap {
             self.scanning = false;
-            self.besu = false;
+            self.mode2_active = false;
         }
         ScanSignals { avap }
     }
 
-    /// Scanline boundary reset. RUTU is set here; tick_catu captures on the next XUPY rising.
+    /// Scanline boundary reset. RUTU is set here; tick_scan_capture captures on the next XUPY rising.
     pub(in crate::ppu) fn reset(&mut self) {
         self.counter.reset();
         self.scanning = false;
-        self.besu = false;
+        self.mode2_active = false;
         self.sprites = SpriteStore::new();
         self.scan_done_flag = false;
         self.scan_done_prev = false;

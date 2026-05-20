@@ -70,9 +70,14 @@ impl WindowControl {
         }
     }
 
-    /// Returns true on RYDY 1→0 (SUZU fires → load-window via TEVO).
-    pub(in crate::ppu) fn clear_rydy_on_pory(&mut self, pory: bool) -> bool {
-        if pory && self.rydy.output() {
+    /// Releases the window-hit latch (RYDY) when the fetcher-idle DFF (PORY) signals the
+    /// cascade restart. Returns true on the RYDY 1→0 edge — SUZU fires, which triggers TEVO's
+    /// load-window pulse.
+    pub(in crate::ppu) fn release_window_hit_on_fetcher_reset(
+        &mut self,
+        fetcher_reset: bool,
+    ) -> bool {
+        if fetcher_reset && self.rydy.output() {
             self.rydy.clear();
             true
         } else {
@@ -84,9 +89,10 @@ impl WindowControl {
         self.wy_matched && pixel_counter == self.nuko_wx
     }
 
-    /// Live NUKO. Two netlist consumers: PYCO (this chain) and PANY (drain-detector input).
-    /// PANY's tile-boundary high window is where a same-dot NUKO=1 lands as the cascade slip.
-    pub(in crate::ppu) fn nuko(&self, pixel_counter: u8) -> bool {
+    /// Live NUKO (pixel_counter == WX). Two netlist consumers: PYCO (this chain) and PANY
+    /// (drain-detector input). PANY's tile-boundary high window is where a same-dot hit lands
+    /// as the cascade slip.
+    pub(in crate::ppu) fn window_x_reached(&self, pixel_counter: u8) -> bool {
         self.compute_nuko(pixel_counter)
     }
 
@@ -122,14 +128,14 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
-        poky: bool,
-        taka: bool,
+        fetcher_ready: bool,
+        sprite_fetch_running: bool,
         regs: &PipelineRegisters,
     ) -> bool {
         let nuko = self.compute_nuko(pixel_counter);
 
         // PYCO holds when ROCO is halted (POKY=0 = data not ready, or TAKA=1 = sprite fetch with FEPO=1).
-        if poky && !taka {
+        if fetcher_ready && !sprite_fetch_running {
             self.pyco.write(if nuko { 1 } else { 0 });
             self.pyco.tick();
         }

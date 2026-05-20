@@ -6,7 +6,7 @@ pub(in crate::ppu) struct HblankPipeline {
     /// XYMU NOR-latch (inverted polarity).
     rendering_active: bool,
     /// VOGA DFF — latches when WODU first rises (combinational on XANO/!FEPO); reset by TADY.
-    voga: bool,
+    end_of_line_latched: bool,
     /// AJUJ permit pulse — ~2,100 ps window between BESU.q↓ and mode3 net↑ during the AVAP cascade.
     /// Asserted at AVAP-fall with mode3↑, deasserted at the next master-clock rise.
     ajuj_pulse: bool,
@@ -16,7 +16,7 @@ impl HblankPipeline {
     pub(in crate::ppu) fn new() -> Self {
         Self {
             rendering_active: false,
-            voga: false,
+            end_of_line_latched: false,
             ajuj_pulse: false,
         }
     }
@@ -24,30 +24,30 @@ impl HblankPipeline {
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             rendering_active: false,
-            voga: true,
+            end_of_line_latched: true,
             ajuj_pulse: false,
         }
     }
 
     /// WODU = AND2(!FEPO, XANO). Zero registered cells between FEPO and WODU on hardware.
-    pub(in crate::ppu) fn wodu(xano: bool, fepo: bool) -> bool {
+    pub(in crate::ppu) fn compute_end_of_line(xano: bool, fepo: bool) -> bool {
         xano && !fepo
     }
 
     /// Latch VOGA when WODU first rises. FEPO→WODU is combinational; `fepo` must reflect
     /// any same-edge transitions (post-WUTY for rise-side, post-pix-advance for fall-side).
-    pub(in crate::ppu) fn evaluate_wodu(&mut self, xano: bool, fepo: bool) -> bool {
-        let wodu_now = Self::wodu(xano, fepo);
-        if wodu_now {
-            self.voga = true;
+    pub(in crate::ppu) fn latch_end_of_line(&mut self, xano: bool, fepo: bool) -> bool {
+        let end_of_line_now = Self::compute_end_of_line(xano, fepo);
+        if end_of_line_now {
+            self.end_of_line_latched = true;
         }
-        wodu_now
+        end_of_line_now
     }
 
     /// Clear XYMU on the same-dot ALET-rising edge after VOGA latched.
     /// Returns true iff XYMU just cleared — LCD uses this to push screen_x=159.
-    pub(in crate::ppu) fn tick_voga_on_rise(&mut self) -> bool {
-        if self.voga && self.rendering_active {
+    pub(in crate::ppu) fn commit_end_of_line_on_rise(&mut self) -> bool {
+        if self.end_of_line_latched && self.rendering_active {
             self.rendering_active = false;
             true
         } else {
@@ -75,13 +75,13 @@ impl HblankPipeline {
         self.rendering_active
     }
 
-    pub(in crate::ppu) fn voga(&self) -> bool {
-        self.voga
+    pub(in crate::ppu) fn end_of_line_latched(&self) -> bool {
+        self.end_of_line_latched
     }
 
     pub(in crate::ppu) fn reset(&mut self) {
         self.rendering_active = false;
-        self.voga = false;
+        self.end_of_line_latched = false;
         self.ajuj_pulse = false;
     }
 }

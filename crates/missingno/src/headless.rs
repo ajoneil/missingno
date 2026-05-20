@@ -576,7 +576,7 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
     match ppu.pipeline_state() {
         Some(snap) => serde_json::json!({
             "pixel_counter": snap.pixel_counter,
-            "xymu": snap.xymu,
+            "rendering_active": snap.rendering_active,
             "bg_shifter": {
                 "low": snap.bg_low,
                 "high": snap.bg_high,
@@ -597,15 +597,15 @@ fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
             },
             "lcd_x": snap.lcd_x,
             "fetcher_step": format!("fetch_counter={}", snap.fetch_counter),
-            "rydy": snap.rydy,
-            "wusa": snap.wusa,
-            "pova": snap.pova,
-            "pygo": snap.pygo,
-            "poky": snap.poky,
+            "window_hit": snap.window_hit,
+            "pixel_gate": snap.pixel_gate,
+            "fine_scroll_match": snap.fine_scroll_match,
+            "fetcher_idle_stage_3": snap.fetcher_idle_stage_3,
+            "fetcher_ready": snap.fetcher_ready,
             "wx_triggered": snap.wx_triggered,
-            "wuvu": snap.wuvu,
-            "byba": snap.byba,
-            "doba": snap.doba,
+            "video_clock": snap.video_clock,
+            "scan_done": snap.scan_done,
+            "scan_done_prev": snap.scan_done_prev,
         }),
         None => serde_json::Value::Null,
     }

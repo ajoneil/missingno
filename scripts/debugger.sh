@@ -99,20 +99,20 @@ gb_step_to_px() {
 gb_step_dots() {
   local n="${1:?usage: gb_step_dots <count>}"
   printf "%-4s  %-4s  %-3s  %-4s  %-5s  %-5s  %s\n" \
-    "step" "lx" "pc" "poky" "lo" "hi" "sprite"
+    "step" "lx" "pc" "ready" "lo" "hi" "sprite"
   for i in $(seq 1 "$n"); do
     local pipe dot
     pipe=$(curl -s -X POST "$GB_URL/step-dot")
     dot=$(curl -s "$GB_URL/ppu" | jq -r '.lx')
     echo "$pipe" | jq -r --arg i "$i" --arg dot "$dot" \
-      '"\($i | " " * (4 - ($i|length))) \($i)  \($dot | " " * (4 - ($dot|length)))\($dot)  \(.pixel_counter | tostring | " " * (3 - length))\(.pixel_counter)  \(if .poky then "T   " else "F   " end)  \(.bg_shifter.low | tostring | " " * (5 - length))\(.bg_shifter.low)  \(.bg_shifter.high | tostring | " " * (5 - length))\(.bg_shifter.high)  \(.sprite_fetch // "none")"'
+      '"\($i | " " * (4 - ($i|length))) \($i)  \($dot | " " * (4 - ($dot|length)))\($dot)  \(.pixel_counter | tostring | " " * (3 - length))\(.pixel_counter)  \(if .fetcher_ready then "T   " else "F   " end)  \(.bg_shifter.low | tostring | " " * (5 - length))\(.bg_shifter.low)  \(.bg_shifter.high | tostring | " " * (5 - length))\(.bg_shifter.high)  \(.sprite_fetch // "none")"'
   done
 }
 
 gb_step_phases() {
   local n="${1:?usage: gb_step_phases <count>}"
   printf "%-4s  %-5s  %-3s  %-4s  %-4s  %-3s  %s\n" \
-    "step" "phase" "lx" "scan" "mode" "pc" "poky"
+    "step" "phase" "lx" "scan" "mode" "pc" "ready"
   for i in $(seq 1 "$n"); do
     local result ppu
     result=$(curl -s -X POST "$GB_URL/step-phase")
@@ -124,7 +124,7 @@ gb_step_phases() {
       "$(echo "$ppu" | jq -r '.scan_counter // "-"')" \
       "$(echo "$ppu" | jq -r '.stat.mode_number')" \
       "$(echo "$result" | jq -r '.pixel_counter')" \
-      "$(echo "$result" | jq -r 'if .poky then "T" else "F" end')"
+      "$(echo "$result" | jq -r 'if .fetcher_ready then "T" else "F" end')"
   done
 }
 
@@ -137,7 +137,7 @@ gb_ppu() {
 
 gb_pipeline() {
   curl -s "$GB_URL/ppu/pipeline" | jq -r \
-    '"pc=\(.pixel_counter) poky=\(.poky) lo=\(.bg_shifter.low) hi=\(.bg_shifter.high) phase=\(.render_phase) sprite=\(.sprite_fetch // "none")"'
+    '"pc=\(.pixel_counter) ready=\(.fetcher_ready) lo=\(.bg_shifter.low) hi=\(.bg_shifter.high) phase=\(.render_phase) sprite=\(.sprite_fetch // "none")"'
 }
 
 gb_cpu() {

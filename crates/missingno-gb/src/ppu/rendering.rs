@@ -78,11 +78,11 @@ pub struct PpuTraceSnapshot {
     pub frame_num: u16,
 }
 
-/// Debugger pipeline snapshot. Field names are a de-facto JSON API for the headless debugger;
-/// renames break the external UI.
+/// Debugger pipeline snapshot, serialised by the headless debugger JSON API.
 pub struct PipelineSnapshot {
     pub pixel_counter: u8,
-    pub xymu: bool,
+    /// Mode 3 active (XYMU; inverted polarity).
+    pub rendering_active: bool,
     pub bg_low: u8,
     pub bg_high: u8,
     pub obj_low: u8,
@@ -93,17 +93,23 @@ pub struct PipelineSnapshot {
     pub sprite_tile_data: Option<(u8, u8)>,
     pub lcd_x: u8,
     pub fetch_counter: u8,
-    pub rydy: bool,
-    pub wusa: bool,
-    pub pova: bool,
-    pub pygo: bool,
-    pub poky: bool,
+    /// Window-hit latch (RYDY).
+    pub window_hit: bool,
+    /// LCD pixel-emit gate (WUSA).
+    pub pixel_gate: bool,
+    /// Fine-scroll match for the cp_pad strobe (POVA).
+    pub fine_scroll_match: bool,
+    /// Fetcher-idle stage 3 (PYGO).
+    pub fetcher_idle_stage_3: bool,
+    /// Fetcher-ready output (POKY).
+    pub fetcher_ready: bool,
     pub wx_triggered: bool,
-    pub wuvu: bool,
-    /// BYBA (dffr, XUPY-clocked).
-    pub byba: bool,
-    /// DOBA (dffr, ALET-clocked) — captures previous BYBA.
-    pub doba: bool,
+    /// Video clock divider (WUVU).
+    pub video_clock: bool,
+    /// Scan-done flag (BYBA, dffr, XUPY-clocked).
+    pub scan_done: bool,
+    /// Prior-scan-done (DOBA, dffr, ALET-clocked).
+    pub scan_done_prev: bool,
 }
 
 pub struct Rendering {
@@ -190,13 +196,16 @@ impl Rendering {
     }
 
     /// WODU = AND2(XUGU, !FEPO); combinational, doesn't depend on XYMU.
-    pub(super) fn wodu(&self, sprites_enabled: bool) -> bool {
-        HblankPipeline::wodu(self.pixel_counter.terminal(), self.fepo(sprites_enabled))
+    pub(super) fn end_of_line_signal(&self, sprites_enabled: bool) -> bool {
+        HblankPipeline::compute_end_of_line(
+            self.pixel_counter.terminal(),
+            self.fepo(sprites_enabled),
+        )
     }
 
     /// LCD-enable first line — no prior scanline boundary, so RUTU is suppressed.
     fn is_first_line(&self) -> bool {
-        !self.scan.catu_enabled()
+        !self.scan.scan_capture_armed()
     }
 
     /// TAPA_INT_OAM active. RUTU is suppressed on the LCD-enable first line.
@@ -216,11 +225,11 @@ impl Rendering {
     }
 
     pub(super) fn scan_besu(&self) -> bool {
-        self.scan.besu()
+        self.scan.mode2_active()
     }
 
     pub(super) fn lcd_pushing_active(&self) -> bool {
-        self.lcd.wusa()
+        self.lcd.pixel_gate()
     }
 
     pub(super) fn sprite_store_snapshot(&self) -> SpriteStoreSnapshot {
@@ -300,7 +309,7 @@ impl Rendering {
         };
         PipelineSnapshot {
             pixel_counter: self.pixel_counter.value(),
-            xymu: self.hblank.rendering_active(),
+            rendering_active: self.hblank.rendering_active(),
             bg_low,
             bg_high,
             obj_low,
@@ -311,21 +320,23 @@ impl Rendering {
             sprite_tile_data,
             lcd_x: self.lcd.lcd_x(),
             fetch_counter: self.fetcher.fetch_counter,
-            rydy: self.window.rydy(),
-            wusa: self.lcd.wusa(),
-            pova: self.lcd.pova(),
-            pygo: self.cascade.pygo(),
-            poky: self.cascade.poky(),
+            window_hit: self.window.rydy(),
+            pixel_gate: self.lcd.pixel_gate(),
+            fine_scroll_match: self.lcd.fine_scroll_match(),
+            fetcher_idle_stage_3: self.cascade.pygo(),
+            fetcher_ready: self.cascade.poky(),
             wx_triggered: self.window.wx_triggered(regs),
-            wuvu: video.xupy(),
-            byba: self.scan.scan_done_flag(),
-            doba: self.scan.scan_done_prev(),
+            video_clock: video.xupy(),
+            scan_done: self.scan.scan_done_flag(),
+            scan_done_prev: self.scan.scan_done_prev(),
         }
     }
 
     pub(super) fn oam_locked(&self) -> bool {
-        // OAM blocked by ACYL (BESU) or XYMU; also by catu_pending (RUTU set, BESU not yet asserted).
-        self.scan.besu() || self.hblank.rendering_active() || self.scan.catu_pending()
+        // OAM blocked by ACYL (BESU) or XYMU; also by scan_capture_pending (RUTU set, BESU not yet asserted).
+        self.scan.mode2_active()
+            || self.hblank.rendering_active()
+            || self.scan.scan_capture_pending()
     }
 
     pub(super) fn vram_locked(&self) -> bool {
@@ -334,7 +345,7 @@ impl Rendering {
 
     pub(super) fn oam_write_locked(&self) -> bool {
         // AJUJ = NOR3(dma_run, mode2, mode3) — write-permit override during the AVAP-cascade window.
-        !self.hblank.ajuj_pulse() && (self.scan.besu() || self.hblank.rendering_active())
+        !self.hblank.ajuj_pulse() && (self.scan.mode2_active() || self.hblank.rendering_active())
     }
 
     pub(super) fn vram_write_locked(&self) -> bool {
@@ -357,7 +368,7 @@ impl Rendering {
             return None;
         }
 
-        // Capture XYMU before tick_voga_on_rise() may clear it.
+        // Capture XYMU before commit_end_of_line_on_rise() may clear it.
         let was_rendering = self.hblank.rendering_active();
 
         if was_rendering {
@@ -366,18 +377,20 @@ impl Rendering {
             // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
             let fepo = self.fepo(regs.control.sprites_enabled());
-            self.hblank.evaluate_wodu(xano, fepo);
+            self.hblank.latch_end_of_line(xano, fepo);
         }
 
         // VOGA.q captures on this rise; WEGO clears XYMU.
-        // `wodu` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
-        let wodu = self.hblank.tick_voga_on_rise();
+        // `end_of_line` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
+        let end_of_line = self.hblank.commit_end_of_line_on_rise();
 
         let post_shift_pixel =
             pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
-        let pixel = self
-            .lcd
-            .on_ppu_clock_rise(self.hblank.voga(), wodu, post_shift_pixel);
+        let pixel = self.lcd.on_ppu_clock_rise(
+            self.hblank.end_of_line_latched(),
+            end_of_line,
+            post_shift_pixel,
+        );
 
         // Mode 3 exit: clear fetch cascade and fine-scroll on XYMU↑.
         if was_rendering && !self.hblank.rendering_active() {
@@ -389,8 +402,8 @@ impl Rendering {
     }
 
     /// CATU runs every XUPY cycle regardless of POPU so the DFF advances across the 153→0 boundary.
-    pub(super) fn tick_catu(&mut self, video: &VideoControl) {
-        self.scan.tick_catu(video.xupy(), video.ly());
+    pub(super) fn tick_scan_capture(&mut self, video: &VideoControl) {
+        self.scan.tick_scan_capture(video.xupy(), video.ly());
     }
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
@@ -431,14 +444,14 @@ impl Rendering {
             // MOSU↑ arming runs before mode3_advance_fetcher so the counter=0 VRAM read sees
             // fetching_window=true. When MOSU↑ fires, advance_fetcher is gated out for this dot.
             let poky_for_window = self.cascade.poky();
-            let taka_for_window = self.sprite_trigger.taka();
+            let fetch_running_for_window = self.sprite_trigger.fetch_running();
             let mosu_fired = self.window.tick_falling(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
                 pixel_counter_before_sacu,
                 poky_for_window,
-                taka_for_window,
+                fetch_running_for_window,
                 regs,
             );
 
@@ -446,13 +459,13 @@ impl Rendering {
             // `mosu_fired_rising` carries deferred-completion MOSU from the prior rise.
             let mosu_fired_rising = self.mosu_fired_rising;
             self.mosu_fired_rising = false;
-            let suzu_fired = if was_rendering && !mosu_fired && !mosu_fired_rising {
+            let load_window_pulse = if was_rendering && !mosu_fired && !mosu_fired_rising {
                 self.mode3_advance_fetcher()
             } else {
                 false
             };
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
-            let advance_nyxu_pulse = mosu_fired || mosu_fired_rising || suzu_fired;
+            let advance_nyxu_pulse = mosu_fired || mosu_fired_rising || load_window_pulse;
             self.mode3_pixel_pipeline(
                 regs,
                 rydy_before_pory,
@@ -467,7 +480,7 @@ impl Rendering {
     pub(super) fn reset_scanline(&mut self, scanline: u8) {
         self.hblank.reset();
         self.scan.reset();
-        self.scan.enable_catu();
+        self.scan.arm_scan_capture();
         self.bg_shifter = BgShifter::new();
         self.obj_shifter = ObjShifter::new();
         self.fetcher.reset_scanline();
@@ -481,7 +494,7 @@ impl Rendering {
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         // SECA's ATEJ arm re-asserts TAKA at each scanline boundary; SOBU/SUDA free-run.
-        self.sprite_trigger.set_taka();
+        self.sprite_trigger.arm_at_line_end();
     }
 
     /// Frame boundary at LY=0: window line counter and the per-scanline reset for line 0.
@@ -537,7 +550,7 @@ impl Rendering {
 
         // SABE clock fires on ALET rising. Placed before the TEKY/RYCE block so a newly
         // initiated sprite fetch doesn't advance on its first dot.
-        if self.sprite_trigger.taka() {
+        if self.sprite_trigger.fetch_running() {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
@@ -545,7 +558,7 @@ impl Rendering {
                     if done {
                         sf.merge_into(&mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;
-                        self.sprite_trigger.clear_taka();
+                        self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
                         self.scan.sprites_mut().fetched |= 1 << slot_index;
                         fepo_pre_cupa = self.fepo(regs.control.sprites_enabled());
@@ -556,8 +569,9 @@ impl Rendering {
         }
 
         // TEKY = AND4(FEPO, !RYDY, LYRY, !TAKA).
-        let teky = fepo_pre_cupa && !self.window.rydy() && lyry && !self.sprite_trigger.taka();
-        let ryce = self.sprite_trigger.capture_sobu(teky);
+        let teky =
+            fepo_pre_cupa && !self.window.rydy() && lyry && !self.sprite_trigger.fetch_running();
+        let ryce = self.sprite_trigger.tick_trigger_on_rise(teky);
 
         if ryce {
             self.start_sprite_fetch();
@@ -581,7 +595,7 @@ impl Rendering {
     /// MYVO-clocked DFFs: SUDA, PORY, BG fetch counter (LEBO). Runs before the pixel pipeline
     /// (depth ~16-22 ge vs SACU at ~63.8 ge).
     fn mode3_advance_fetcher(&mut self) -> bool {
-        self.sprite_trigger.capture_suda();
+        self.sprite_trigger.tick_trigger_on_fall();
 
         // Counter saturates at 5 so it stays at 5 during sprite fetch without a !taka gate.
         self.fetcher.advance_rising();
@@ -589,8 +603,10 @@ impl Rendering {
 
         // PORY clears RYDY via the NOR3(PUKU, PORY, VID_RST) reset arm.
         // SUZU = AND2(!RYDY_new, SOVY): one-half-cycle pulse on RYDY 1→0; triggers TEVO.
-        let suzu_fired = self.window.clear_rydy_on_pory(self.cascade.pory());
-        if suzu_fired {
+        let load_window_pulse = self
+            .window
+            .release_window_hit_on_fetcher_reset(self.cascade.pory());
+        if load_window_pulse {
             // SUZU → TEVO → NYXU: load window tile, reset fine counter.
             self.fetcher.load_into(&mut self.bg_shifter);
             self.fine_scroll.reset_counter();
@@ -601,10 +617,10 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
             self.fine_scroll.reset_counter();
             // VEKU's TAVE arm clears TAKA carry-over from the prior scanline.
-            self.sprite_trigger.clear_taka();
+            self.sprite_trigger.clear_fetch_running();
         }
 
-        suzu_fired
+        load_window_pulse
     }
 
     /// SACU/CLKPIPE domain (depth ~63.8 ge); runs against settled fetcher state.
@@ -621,7 +637,7 @@ impl Rendering {
         self.tyfa = false;
 
         // PUXA via ROXO. Using prior-rise TYFA carries the correct cascade-propagated POKY value.
-        let pova = if tyfa {
+        let fine_scroll_match = if tyfa {
             self.fine_scroll.capture_rising()
         } else {
             false
@@ -634,8 +650,8 @@ impl Rendering {
         // PANY drain-detector slip: NUKO=1 lands when SEKO would fire (count==7), truncating
         // PANY's high pulse — RYFA captures the second half, slipping SEKO→TEVO→NYXU by 1 dot.
         let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
-        let nuko_now = self.window.nuko(pixel_counter_before_sacu);
-        let pany_slip_now = proposed_seko && nuko_now;
+        let window_x_hit = self.window.window_x_reached(pixel_counter_before_sacu);
+        let pany_slip_now = proposed_seko && window_x_hit;
         let raw_seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
         self.pany_slip_pending = pany_slip_now;
 
@@ -644,7 +660,8 @@ impl Rendering {
         // holds at its pre-freeze value (0 in normal BG cadence). The collapsed `raw_seko_fire`
         // formula doesn't model the cascade DFFs explicitly, so we override to 0 during the
         // freeze. Zero NYXU pulses across 30 TAKA-high windows confirmed by gate-level FST.
-        let fepo_held = self.sprite_trigger.taka() && self.fepo(regs.control.sprites_enabled());
+        let fepo_held =
+            self.sprite_trigger.fetch_running() && self.fepo(regs.control.sprites_enabled());
         let seko_fire = if fepo_held { false } else { raw_seko_fire };
 
         let nyxu_pulse = seko_fire || advance_nyxu_pulse;
@@ -665,13 +682,16 @@ impl Rendering {
         }
 
         // WODU sampled on the post-advance XANO/FEPO so OAM-X=167 sprites are visible on the same edge.
-        let wodu_fepo = self.fepo(regs.control.sprites_enabled());
+        let post_advance_fepo = self.fepo(regs.control.sprites_enabled());
         self.hblank
-            .evaluate_wodu(self.pixel_counter.terminal(), wodu_fepo);
+            .latch_end_of_line(self.pixel_counter.terminal(), post_advance_fepo);
 
-        let (_toba, pixel_out) =
-            self.lcd
-                .on_ppu_clock_fall(sacu, pixel, pova, self.pixel_counter.value());
+        let (_toba, pixel_out) = self.lcd.on_ppu_clock_fall(
+            sacu,
+            pixel,
+            fine_scroll_match,
+            self.pixel_counter.value(),
+        );
 
         if tyfa {
             self.fine_scroll.tick();

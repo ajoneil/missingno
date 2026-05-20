@@ -141,9 +141,9 @@ impl Ppu {
             }
         }
 
-        // CATU runs after advance_scan so advance_scan reads pre-tick_catu state.
+        // CATU runs after advance_scan so advance_scan reads pre-tick_scan_capture state.
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            rendering.tick_catu(&self.video);
+            rendering.tick_scan_capture(&self.video);
         }
     }
 

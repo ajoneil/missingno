@@ -8,7 +8,7 @@ pub(in crate::ppu) struct SpriteTrigger {
     /// SUDA captures SOBU on ALET falling.
     suda: bool,
     /// TAKA: SECA=NOR3(RYCE, ROSY, ATEJ) sets, VEKU=NOR2(WUTY, TAVE) clears.
-    taka: bool,
+    fetch_running: bool,
 }
 
 impl SpriteTrigger {
@@ -16,36 +16,37 @@ impl SpriteTrigger {
         Self {
             sobu: false,
             suda: false,
-            taka: false,
+            fetch_running: false,
         }
     }
 
-    /// Returns true if RYCE fires (one-shot pulse at SOBU rise sets TAKA via SECA).
-    pub(in crate::ppu) fn capture_sobu(&mut self, teky: bool) -> bool {
+    /// ALET rise: SOBU captures TEKY. Returns true if RYCE fires (one-shot at SOBU rise sets
+    /// the fetch-running latch via SECA).
+    pub(in crate::ppu) fn tick_trigger_on_rise(&mut self, teky: bool) -> bool {
         self.sobu = teky;
         let ryce = self.sobu && !self.suda;
         if ryce {
-            self.taka = true;
+            self.fetch_running = true;
         }
         ryce
     }
 
-    /// SUDA captures SOBU on the falling edge; the capture clears RYCE.
-    pub(in crate::ppu) fn capture_suda(&mut self) {
+    /// ALET fall: SUDA captures SOBU; this clears RYCE on the next rise.
+    pub(in crate::ppu) fn tick_trigger_on_fall(&mut self) {
         self.suda = self.sobu;
     }
 
     /// VEKU clear path: WUTY (fetch-done) or TAVE (startup carry-over).
-    pub(in crate::ppu) fn clear_taka(&mut self) {
-        self.taka = false;
+    pub(in crate::ppu) fn clear_fetch_running(&mut self) {
+        self.fetch_running = false;
     }
 
-    /// SECA's ATEJ arm — line-end pulse re-asserts TAKA at each scanline boundary.
-    pub(in crate::ppu) fn set_taka(&mut self) {
-        self.taka = true;
+    /// SECA's ATEJ arm — line-end pulse re-asserts the fetch-running latch at each scanline boundary.
+    pub(in crate::ppu) fn arm_at_line_end(&mut self) {
+        self.fetch_running = true;
     }
 
-    pub(in crate::ppu) fn taka(&self) -> bool {
-        self.taka
+    pub(in crate::ppu) fn fetch_running(&self) -> bool {
+        self.fetch_running
     }
 }

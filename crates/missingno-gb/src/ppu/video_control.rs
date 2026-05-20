@@ -38,8 +38,8 @@ impl VideoControl {
         self.lines.vblank()
     }
 
-    pub fn popu_active(&self) -> bool {
-        self.lines.popu_active()
+    pub fn vblank_or_holdover(&self) -> bool {
+        self.lines.vblank_or_holdover()
     }
 
     pub fn line_end_active(&self) -> bool {
@@ -64,10 +64,10 @@ impl VideoControl {
         self.stat.write_lyc(value, ly);
     }
 
-    /// XOTA rising: toggle WUVU and clear POPU holdover. Returns previous WUVU.Q.
+    /// XOTA rising: toggle WUVU and clear vblank holdover. Returns previous WUVU.Q.
     pub fn tick_dot(&mut self) -> bool {
         let wuvu_was = self.dividers.tick_dot();
-        self.lines.y.clear_popu_holdover();
+        self.lines.y.clear_vblank_holdover();
         wuvu_was
     }
 
