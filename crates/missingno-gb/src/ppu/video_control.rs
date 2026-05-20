@@ -2,14 +2,14 @@
 
 use crate::ppu::dividers::Dividers;
 use crate::ppu::line_counter::LineCounter;
-use crate::ppu::line_end_pipeline::{LineEndPipeline, NypeEdge};
+use crate::ppu::line_end_pipeline::{LineEndEdge, LineEndPipeline};
 use crate::ppu::stat_interrupt::StatInterrupt;
 
 pub struct VideoControl {
     pub dividers: Dividers,
     pub lines: LineCounter,
     pub stat: StatInterrupt,
-    /// NYPE LINE_END redistribution DFF — produces NypeEdge for POPU/MYTA dispatch.
+    /// NYPE LINE_END redistribution DFF — produces LineEndEdge for POPU/MYTA dispatch.
     pub line_end: LineEndPipeline,
 }
 
@@ -20,8 +20,8 @@ impl VideoControl {
         self.line_end.vid_rst();
     }
 
-    pub fn xupy(&self) -> bool {
-        self.dividers.xupy()
+    pub fn scan_clock(&self) -> bool {
+        self.dividers.scan_clock()
     }
 
     /// CPU-visible LY ($FF44). On line 153, MYTA drives LAMA low so register reads as 0.
@@ -73,11 +73,11 @@ impl VideoControl {
 
     /// TALU rising: NYPE captures; LineCounter dispatches POPU (Rising) or MYTA (Falling); LX advances + SANU decodes.
     pub fn on_lx_counter_clock_rise(&mut self) {
-        let nype_edge = self.line_end.capture();
-        self.lines.on_lx_counter_clock_rise(nype_edge);
-        if matches!(nype_edge, NypeEdge::Falling) {
+        let line_end_edge = self.line_end.capture();
+        self.lines.on_lx_counter_clock_rise(line_end_edge);
+        if matches!(line_end_edge, LineEndEdge::Falling) {
             let neru = self.lines.y.value == 0;
-            self.line_end.capture_meda(neru);
+            self.line_end.capture_vsync(neru);
         }
     }
 

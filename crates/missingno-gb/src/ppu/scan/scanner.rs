@@ -118,14 +118,15 @@ impl SpriteScanner {
     }
 
     /// Runs every XUPY cycle regardless of POPU (so the DFF advances across the 153→0 boundary).
-    /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next xupy_rising.
-    pub(in crate::ppu) fn tick_scan_capture(&mut self, xupy_rising: bool, ly: u8) {
-        if !xupy_rising {
+    /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next scan_clock_rising.
+    pub(in crate::ppu) fn tick_scan_capture(&mut self, scan_clock_rising: bool, ly: u8) {
+        if !scan_clock_rising {
             return;
         }
 
-        let xyvo = ly & 0x90 == 0x90;
-        let catu_captures = self.rutu && !xyvo;
+        // XYVO = LY bit 7 & bit 4 — true for LY 144..=153 in practice (i.e. VBlank lines).
+        let in_vblank_line = ly & 0x90 == 0x90;
+        let catu_captures = self.rutu && !in_vblank_line;
 
         if catu_captures {
             // Capture deasserts RUTU; XYVO-gated edges must not lose RUTU.
@@ -146,13 +147,13 @@ impl SpriteScanner {
     /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection.
     pub(in crate::ppu) fn advance_scan(
         &mut self,
-        xupy_rising: bool,
+        scan_clock_rising: bool,
         ly: u8,
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
     ) -> ScanSignals {
-        if !xupy_rising {
+        if !scan_clock_rising {
             return ScanSignals { avap: false };
         }
 

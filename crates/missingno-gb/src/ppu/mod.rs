@@ -57,11 +57,16 @@ pub struct PpuTickResult {
 /// Internal PPU DFF/latch signals exposed for gbtrace capture.
 #[derive(Clone, Copy, Debug)]
 pub struct TraceSignals {
-    pub wuvu: bool,
-    pub vena: bool,
-    pub xupy: bool,
-    pub besu: bool,
-    pub wodu: bool,
+    /// WUVU.Q — 2-dot divider.
+    pub half_mcycle: bool,
+    /// VENA.Q — 4-dot divider.
+    pub mcycle: bool,
+    /// XUPY = WUVU.Q — scan-counter / OAM-pipeline clock.
+    pub scan_clock: bool,
+    /// BESU — Mode 2 OAM-scan + locks asserted.
+    pub mode2_active: bool,
+    /// WODU = AND2(XUGU, !FEPO) — HBlank STAT contributor.
+    pub end_of_visible_line: bool,
     pub stat_line: bool,
 }
 
@@ -139,7 +144,7 @@ impl Ppu {
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
                     line_end_pending: false,
-                    meda: false,
+                    vsync_active: false,
                     vsync_committed: false,
                 },
             },
@@ -174,7 +179,7 @@ impl Ppu {
             line_end: LineEndPipeline {
                 delayed_line_end: false,
                 line_end_pending: false,
-                meda: false,
+                vsync_active: false,
                 vsync_committed: true,
             },
         };
@@ -217,7 +222,7 @@ impl Ppu {
             line_end: LineEndPipeline {
                 delayed_line_end: false,
                 line_end_pending: false,
-                meda: false,
+                vsync_active: false,
                 vsync_committed: lcd_on,
             },
         };
@@ -303,7 +308,7 @@ impl Ppu {
         };
         let rendering_active = rendering.rendering_active();
         let bit0 = rendering_active || self.video.vblank();
-        let bit1 = rendering_active || rendering.scan_besu();
+        let bit1 = rendering_active || rendering.scan_mode2_active();
         match (bit1, bit0) {
             (false, false) => Mode::HorizontalBlank,
             (false, true) => Mode::VerticalBlank,
@@ -439,25 +444,25 @@ impl Ppu {
 
     pub fn trace_signals(&self) -> TraceSignals {
         let sprites_enabled = self.registers.control.sprites_enabled();
-        let (besu, wodu) = self
+        let (mode2_active, end_of_visible_line) = self
             .pixel_pipeline
             .as_ref()
-            .map(|r| (r.scan_besu(), r.end_of_line_signal(sprites_enabled)))
+            .map(|r| (r.scan_mode2_active(), r.end_of_line_signal(sprites_enabled)))
             .unwrap_or((false, false));
         TraceSignals {
-            wuvu: self.video.dividers.half_mcycle,
-            vena: self.video.dividers.mcycle(),
-            xupy: self.video.dividers.xupy(),
-            besu,
-            wodu,
+            half_mcycle: self.video.dividers.half_mcycle,
+            mcycle: self.video.dividers.mcycle(),
+            scan_clock: self.video.dividers.scan_clock(),
+            mode2_active,
+            end_of_visible_line,
             stat_line: self.stat_line(),
         }
     }
 
     /// Used internally by the master-clock-fall path for the BGP recovery edge detector.
-    pub(super) fn besu(&self) -> bool {
+    pub(super) fn mode2_active(&self) -> bool {
         self.pixel_pipeline
             .as_ref()
-            .is_some_and(|r| r.scan_besu())
+            .is_some_and(|r| r.scan_mode2_active())
     }
 }

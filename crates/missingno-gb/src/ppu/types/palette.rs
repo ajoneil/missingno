@@ -100,9 +100,9 @@ pub(in crate::ppu) struct BgpRecovery {
     /// LCD has emitted a visible pixel since the last tick commit —
     /// primes the OR-overlap precondition.
     visible_emit_since_tick: bool,
-    /// Prior fall's BESU; feeds the BESU↑ edge detector that releases
+    /// Prior fall's mode2_active; feeds the BESU↑ edge detector that releases
     /// the recovery at Mode 2 entry.
-    prev_besu: bool,
+    prev_mode2_active: bool,
 }
 
 impl BgpRecovery {
@@ -125,9 +125,9 @@ impl BgpRecovery {
 
     /// BESU↑ at Mode 2 entry releases the recovery (dlatch has
     /// settled through HBlank). No-op on other edges.
-    fn tick_besu(&mut self, besu: bool) {
-        let rising = besu && !self.prev_besu;
-        self.prev_besu = besu;
+    fn tick_mode2_active(&mut self, mode2_active: bool) {
+        let rising = mode2_active && !self.prev_mode2_active;
+        self.prev_mode2_active = mode2_active;
         if rising {
             self.reset();
         }
@@ -235,8 +235,8 @@ impl Palettes {
     }
 
     /// BESU↑ at Mode 2 entry releases the BGP NURA-overlay recovery (dlatch has settled through HBlank).
-    pub(in crate::ppu) fn tick_besu(&mut self, besu: bool) {
-        self.recovery.tick_besu(besu);
+    pub(in crate::ppu) fn tick_mode2_active(&mut self, mode2_active: bool) {
+        self.recovery.tick_mode2_active(mode2_active);
     }
 
     pub fn clear_background_overlay(&mut self) {

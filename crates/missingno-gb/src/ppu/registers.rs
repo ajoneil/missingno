@@ -66,14 +66,13 @@ pub struct PipelineRegisters {
 }
 
 impl PipelineRegisters {
-    /// Per-fall work: palette ticks, DFF9 ticks, BESU edge, OLD-overlay shadow ticks.
-    pub fn tick_on_master_clock_fall(&mut self, besu: bool) {
-        // BGP via wrapper for NURA overlay; OBP0/OBP1 direct.
+    /// Per-fall work: tick palette/DFF9 latches, run the BESU↑ edge detector, then advance
+    /// OLD-overlay shadows. Order matters — pipeline consumers read `reg_old` before any tick fires.
+    pub fn tick_on_master_clock_fall(&mut self, mode2_active: bool) {
         self.palettes.tick_background();
         self.palettes.sprite0.tick();
         self.palettes.sprite1.tick();
 
-        // Pipeline reads reg_old; ticks fire after.
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();
         self.window.x.tick();
@@ -81,8 +80,7 @@ impl PipelineRegisters {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
 
-        // BESU↑ at scanline start releases BGP dlatch post-write recovery.
-        self.palettes.tick_besu(besu);
+        self.palettes.tick_mode2_active(mode2_active);
 
         self.bg_window_enabled_overlay.tick();
         self.sprites_enabled_overlay.tick();

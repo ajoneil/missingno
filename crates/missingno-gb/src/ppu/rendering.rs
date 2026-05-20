@@ -224,7 +224,7 @@ impl Rendering {
         self.scan.scan_counter_entry()
     }
 
-    pub(super) fn scan_besu(&self) -> bool {
+    pub(super) fn scan_mode2_active(&self) -> bool {
         self.scan.mode2_active()
     }
 
@@ -326,7 +326,7 @@ impl Rendering {
             fetcher_idle_stage_3: self.cascade.pygo(),
             fetcher_ready: self.cascade.poky(),
             wx_triggered: self.window.wx_triggered(regs),
-            video_clock: video.xupy(),
+            video_clock: video.scan_clock(),
             scan_done: self.scan.scan_done_flag(),
             scan_done_prev: self.scan.scan_done_prev(),
         }
@@ -403,7 +403,7 @@ impl Rendering {
 
     /// CATU runs every XUPY cycle regardless of POPU so the DFF advances across the 153→0 boundary.
     pub(super) fn tick_scan_capture(&mut self, video: &VideoControl) {
-        self.scan.tick_scan_capture(video.xupy(), video.ly());
+        self.scan.tick_scan_capture(video.scan_clock(), video.ly());
     }
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
@@ -413,7 +413,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        xupy_rising: bool,
+        scan_clock_rising: bool,
     ) -> Option<PixelOutput> {
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();
@@ -421,7 +421,7 @@ impl Rendering {
         // BYBA/AVAP co-locate on this XUPY-rising fall.
         let scan = self
             .scan
-            .advance_scan(xupy_rising, video.ly(), regs, oam, oam_bus);
+            .advance_scan(scan_clock_rising, video.ly(), regs, oam, oam_bus);
         if scan.avap {
             // Mode 3 begins on AVAP-fall; AJUJ pulse asserts alongside mode3↑ for write-permit.
             self.hblank.pulse_ajuj_on_avap_fall();

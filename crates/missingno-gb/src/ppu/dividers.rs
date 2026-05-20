@@ -32,7 +32,7 @@ impl Dividers {
     }
 
     /// XUPY = WUVU.Q — scan-counter / OAM-pipeline clock.
-    pub(in crate::ppu) fn xupy(&self) -> bool {
+    pub(in crate::ppu) fn scan_clock(&self) -> bool {
         self.half_mcycle
     }
 

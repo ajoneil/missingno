@@ -53,12 +53,12 @@ impl Ppu {
             return result;
         }
 
-        // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so xupy_rising = !was.
-        let xupy_rising = !self.video.tick_dot();
+        // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
+        let scan_clock_rising = !self.video.tick_dot();
 
         self.advance_dividers(&mut result);
-        self.registers.tick_on_master_clock_fall(self.besu());
-        self.run_ppu_clock_fall(oam_bus, xupy_rising, &mut result);
+        self.registers.tick_on_master_clock_fall(self.mode2_active());
+        self.run_ppu_clock_fall(oam_bus, scan_clock_rising, &mut result);
 
         result
     }
@@ -125,7 +125,7 @@ impl Ppu {
     fn run_ppu_clock_fall(
         &mut self,
         oam_bus: OamBusOwner,
-        xupy_rising: bool,
+        scan_clock_rising: bool,
         result: &mut PpuTickResult,
     ) {
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -134,7 +134,7 @@ impl Ppu {
                 &self.video,
                 &self.oam,
                 oam_bus,
-                xupy_rising,
+                scan_clock_rising,
             );
             if result.pixel.is_some() {
                 self.registers.palettes.note_bg_pixel_emit();

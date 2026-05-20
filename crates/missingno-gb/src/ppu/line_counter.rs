@@ -2,7 +2,10 @@
 //!
 //! `y.value` is the internal counter (0-153); `y.value_register()` is CPU-visible $FF44 (MYTA-smoothed).
 
-use crate::ppu::line_end_pipeline::NypeEdge;
+use crate::ppu::line_end_pipeline::LineEndEdge;
+
+/// LX value SANU decodes as scanline-end (113 = last dot before the RUTU pulse).
+const SANU_DECODE_LX: u8 = 113;
 
 pub struct LineCounter {
     pub x: LineCounterX,
@@ -24,11 +27,11 @@ pub struct LineCounterY {
 }
 
 impl LineCounter {
-    pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, nype_edge: NypeEdge) {
-        match nype_edge {
-            NypeEdge::Rising => self.y.capture_vblank_on_nype_rise(),
-            NypeEdge::Falling => self.y.capture_myta(),
-            NypeEdge::None => {}
+    pub(in crate::ppu) fn on_lx_counter_clock_rise(&mut self, line_end_edge: LineEndEdge) {
+        match line_end_edge {
+            LineEndEdge::Rising => self.y.capture_vblank_on_nype_rise(),
+            LineEndEdge::Falling => self.y.capture_frame_end_on_line_end_fall(),
+            LineEndEdge::None => {}
         }
         self.x.advance();
         self.x.detect_line_end();
@@ -36,7 +39,7 @@ impl LineCounter {
 
     /// RUTU captures SANU each TALU-fall; pulse spans one TALU cycle.
     /// MUDE = NOR2(RUTU, reset) holds LX at 0 while RUTU=1.
-    /// Returns true only on the RUTU rising edge (scanline boundary).
+    /// Returns true on the RUTU rising edge — i.e. when the scanline boundary is just reached.
     pub(in crate::ppu) fn on_lx_counter_clock_fall(&mut self) -> bool {
         let prior_rutu = self.x.line_end_active;
         let new_rutu = self.x.line_end_detected;
@@ -92,7 +95,7 @@ impl LineCounterX {
 
     /// SANU = LX==113 decode; cached for RUTU on next falling edge.
     pub(in crate::ppu) fn detect_line_end(&mut self) {
-        self.line_end_detected = self.value == 113;
+        self.line_end_detected = self.value == SANU_DECODE_LX;
     }
 
     pub(in crate::ppu) fn vid_rst(&mut self) {
@@ -131,7 +134,7 @@ impl LineCounterY {
     }
 
     /// MYTA FRAME_END capture on NYPE falling — one TALU after POPU. Sets `frame_end_reset` for LY=0 smoothing.
-    pub(in crate::ppu) fn capture_myta(&mut self) {
+    pub(in crate::ppu) fn capture_frame_end_on_line_end_fall(&mut self) {
         if self.value == 153 {
             self.frame_end_reset = true;
         }

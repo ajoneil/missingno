@@ -48,17 +48,17 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
         description: "HALT bug flag — opcode after HALT will be re-read because PC failed to advance",
     },
     ExtensionDef {
-        name: "ppu_wuvu",
+        name: "ppu_half_mcycle",
         field_type: FieldType::Bool,
         description: "WUVU.Q — 2-dot half-mcycle divider",
     },
     ExtensionDef {
-        name: "ppu_vena",
+        name: "ppu_mcycle",
         field_type: FieldType::Bool,
         description: "VENA.Q — 4-dot mcycle divider",
     },
     ExtensionDef {
-        name: "ppu_xupy",
+        name: "ppu_scan_clock",
         field_type: FieldType::Bool,
         description: "XUPY = NOT(WUVU.Q) — scan/OAM clock",
     },
@@ -68,12 +68,12 @@ static EXTENSION_DEFS: &[ExtensionDef] = &[
         description: "LX counter (0..113), M-cycle position on current line",
     },
     ExtensionDef {
-        name: "ppu_besu",
+        name: "ppu_mode2_active",
         field_type: FieldType::Bool,
         description: "BESU — OAM scanning latch (drives ACYL)",
     },
     ExtensionDef {
-        name: "ppu_wodu",
+        name: "ppu_end_of_visible_line",
         field_type: FieldType::Bool,
         description: "WODU = AND2(XUGU, !FEPO) — HBlank STAT contributor",
     },
@@ -114,12 +114,12 @@ enum Emitter {
     // [fields.extensions.missingno] in the profile. See EXTENSION_DEFS.
     ExtPendingVectorResolve,
     ExtHaltBug,
-    ExtPpuWuvu,
-    ExtPpuVena,
-    ExtPpuXupy,
+    ExtPpuHalfMcycle,
+    ExtPpuMcycle,
+    ExtPpuScanClock,
     ExtPpuLx,
-    ExtPpuBesu,
-    ExtPpuWodu,
+    ExtPpuMode2Active,
+    ExtPpuEndOfVisibleLine,
     ExtPpuStatLine,
     // IO read (PPU regs, timer, interrupt, serial, APU regs)
     IoRead(u16),
@@ -284,12 +284,12 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
         // Extension fields
         "pending_vector_resolve" => Emitter::ExtPendingVectorResolve,
         "halt_bug" => Emitter::ExtHaltBug,
-        "ppu_wuvu" => Emitter::ExtPpuWuvu,
-        "ppu_vena" => Emitter::ExtPpuVena,
-        "ppu_xupy" => Emitter::ExtPpuXupy,
+        "ppu_half_mcycle" => Emitter::ExtPpuHalfMcycle,
+        "ppu_mcycle" => Emitter::ExtPpuMcycle,
+        "ppu_scan_clock" => Emitter::ExtPpuScanClock,
         "ppu_lx" => Emitter::ExtPpuLx,
-        "ppu_besu" => Emitter::ExtPpuBesu,
-        "ppu_wodu" => Emitter::ExtPpuWodu,
+        "ppu_mode2_active" => Emitter::ExtPpuMode2Active,
+        "ppu_end_of_visible_line" => Emitter::ExtPpuEndOfVisibleLine,
         "ppu_stat_line" => Emitter::ExtPpuStatLine,
         // APU internal
         "ch1_active" => Emitter::Ch1Active,
@@ -536,12 +536,14 @@ impl Tracer {
                     w.set_bool(col, gb.cpu().pending_vector_resolve_flag())
                 }
                 Emitter::ExtHaltBug => w.set_bool(col, gb.cpu().halt_bug_flag()),
-                Emitter::ExtPpuWuvu => w.set_bool(col, ppu_sigs.wuvu),
-                Emitter::ExtPpuVena => w.set_bool(col, ppu_sigs.vena),
-                Emitter::ExtPpuXupy => w.set_bool(col, ppu_sigs.xupy),
+                Emitter::ExtPpuHalfMcycle => w.set_bool(col, ppu_sigs.half_mcycle),
+                Emitter::ExtPpuMcycle => w.set_bool(col, ppu_sigs.mcycle),
+                Emitter::ExtPpuScanClock => w.set_bool(col, ppu_sigs.scan_clock),
                 Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
-                Emitter::ExtPpuBesu => w.set_bool(col, ppu_sigs.besu),
-                Emitter::ExtPpuWodu => w.set_bool(col, ppu_sigs.wodu),
+                Emitter::ExtPpuMode2Active => w.set_bool(col, ppu_sigs.mode2_active),
+                Emitter::ExtPpuEndOfVisibleLine => {
+                    w.set_bool(col, ppu_sigs.end_of_visible_line)
+                }
                 Emitter::ExtPpuStatLine => w.set_bool(col, ppu_sigs.stat_line),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
