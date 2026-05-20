@@ -336,6 +336,19 @@ pub fn run_frames<S: System>(s: &mut S, frames: u32) {
     }
 }
 
+/// Run the emulator for a fixed number of T-cycles. Unlike
+/// [`run_frames`], doesn't depend on the LCD producing frames — used
+/// by gambatte tests which finish after a fixed cycle count (the
+/// gambatte testrunner runs for 1,053,360 T-cycles, equal to 15 LCD
+/// frames at single speed).
+pub fn run_for_tcycles<S: System>(s: &mut S, max_tcycles: u32) {
+    let mut total: u32 = 0;
+    while total < max_tcycles {
+        let result = s.step();
+        total = total.saturating_add(result.tcycles);
+    }
+}
+
 /// Run the emulator until it enters an infinite loop, or until a timeout (in frames) is reached.
 pub fn run_until_infinite_loop<S: System>(s: &mut S, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {

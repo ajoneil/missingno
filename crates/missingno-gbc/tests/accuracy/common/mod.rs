@@ -17,9 +17,9 @@ use missingno_gbc::GameBoyColor;
 #[allow(unused_imports)]
 pub use missingno_gb::test_support::{
     System, check_mooneye_pass, format_registers, format_wram_dump, is_infinite_loop,
-    load_reference_png, rom_path, run_frames, run_until_breakpoint, run_until_infinite_loop,
-    run_until_infinite_loop_no_lcd, run_until_serial_match, run_until_undefined_opcode,
-    screen_to_greyscale,
+    load_reference_png, rom_path, run_for_tcycles, run_frames, run_until_breakpoint,
+    run_until_infinite_loop, run_until_infinite_loop_no_lcd, run_until_serial_match,
+    run_until_undefined_opcode, screen_to_greyscale,
 };
 
 /// Resolve a path relative to `missingno-gbc/tests/accuracy/roms/`.
