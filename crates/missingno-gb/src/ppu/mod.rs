@@ -351,7 +351,7 @@ impl Ppu {
 
     pub fn read_locked(&self, address: u16) -> bool {
         match address {
-            0xFE00..=0xFE9F => self.oam_locked(),
+            0xFE00..=0xFEFF => self.oam_locked(),
             0x8000..=0x9FFF => self.vram_locked(),
             _ => false,
         }

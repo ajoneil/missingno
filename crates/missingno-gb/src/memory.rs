@@ -207,6 +207,9 @@ pub enum MappedAddress {
     HighRam(u8),
     Vram(VramAddress),
     Oam(OamAddress),
+    /// Region $FEA0–$FEFF, just above OAM. Not connected to any
+    /// storage on DMG — reads return 0x00, writes are dropped.
+    OamExtra,
     JoypadRegister,
     SerialTransferRegister(serial_transfer::Register),
     TimerRegister(timers::Register),
@@ -234,7 +237,7 @@ impl MappedAddress {
                 ppu::memory::MappedAddress::Oam(addr) => Self::Oam(addr),
                 ppu::memory::MappedAddress::Vram(_) => unreachable!(),
             },
-            0xfea0..=0xfeff => Self::Unmapped,
+            0xfea0..=0xfeff => Self::OamExtra,
             0xff00 => Self::JoypadRegister,
             0xff01 => Self::SerialTransferRegister(serial_transfer::Register::Data),
             0xff02 => Self::SerialTransferRegister(serial_transfer::Register::Control),
@@ -370,7 +373,7 @@ impl GameBoy {
     /// no byte will commit this M-cycle.
     fn dma_read_conflict(&self, address: u16) -> Option<u8> {
         let bus = self.dma.is_active_on_bus()?;
-        if (0xFE00..=0xFE9F).contains(&address) {
+        if (0xFE00..=0xFEFF).contains(&address) {
             return Some(0xFF);
         }
         if Bus::of(address) != Some(bus) {
@@ -436,6 +439,7 @@ impl GameBoy {
                     0xFF
                 }
             }
+            MappedAddress::OamExtra => 0x00,
             MappedAddress::Unmapped => 0xFF,
         }
     }
@@ -577,6 +581,7 @@ impl GameBoy {
                 }
             },
 
+            MappedAddress::OamExtra => {}
             MappedAddress::Unmapped => {}
         }
     }
