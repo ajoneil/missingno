@@ -34,12 +34,6 @@ impl HblankPipeline {
         xano && !fepo
     }
 
-    /// WEGO = OR2(TOFU, VOGA). TOFU (video-reset path) is handled via pipeline reset elsewhere,
-    /// so during rendering WEGO reduces to VOGA.
-    pub(in crate::ppu) fn wego(&self) -> bool {
-        self.voga
-    }
-
     /// Latch VOGA when WODU first rises. FEPO→WODU is combinational; `fepo` must reflect
     /// any same-edge transitions (post-WUTY for rise-side, post-pix-advance for fall-side).
     pub(in crate::ppu) fn evaluate_wodu(&mut self, xano: bool, fepo: bool) -> bool {
