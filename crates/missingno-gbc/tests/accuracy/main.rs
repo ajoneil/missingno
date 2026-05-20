@@ -1,3 +1,4 @@
+mod age;
 mod blargg;
 mod bully;
 mod cgb_acid2;
@@ -8,6 +9,7 @@ mod little_things;
 mod mbc3_tester;
 mod mealybug_tearoom;
 mod mooneye;
+mod samesuite;
 mod scribbltests;
 mod strikethrough;
 mod turtle_tests;

@@ -390,6 +390,23 @@ pub fn run_until_undefined_opcode<S: System>(s: &mut S, timeout_frames: u32) -> 
     false
 }
 
+/// Run the emulator instruction-by-instruction (no LCD frame
+/// assumption) until an infinite loop is detected or the instruction
+/// budget is exhausted.
+///
+/// Use this for tests that don't enable the LCD — frame-based runners
+/// hang in the inner `while !step().new_screen {}` loop when no frame
+/// is ever produced.
+pub fn run_until_infinite_loop_no_lcd<S: System>(s: &mut S, max_instructions: u32) -> bool {
+    for _ in 0..max_instructions {
+        s.step();
+        if is_infinite_loop(s) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check if the CPU is stuck in a known completion loop.
 pub fn is_infinite_loop<S: System>(s: &S) -> bool {
     let pc = s.cpu().bus_counter;
