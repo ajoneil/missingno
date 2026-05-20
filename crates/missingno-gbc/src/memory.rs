@@ -124,6 +124,7 @@ impl GameBoyColor {
                     0xFF
                 }
             }
+            MappedAddress::OamExtra => 0x00,
             MappedAddress::Unmapped => 0xFF,
         }
     }
@@ -236,6 +237,7 @@ impl GameBoyColor {
                 }
             },
 
+            MappedAddress::OamExtra => {}
             MappedAddress::Unmapped => {}
         }
     }
