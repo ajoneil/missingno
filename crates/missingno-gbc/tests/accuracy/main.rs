@@ -1,5 +1,7 @@
 mod blargg;
 mod bully;
+mod cgb_acid2;
+mod cgb_acid_hell;
 mod common;
 mod dmg_acid2;
 mod little_things;

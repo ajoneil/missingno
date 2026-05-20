@@ -3020,6 +3020,7 @@ version = "0.0.1"
 dependencies = [
  "missingno-gb",
  "missingno-gbc",
+ "png 0.18.1",
  "rgb",
 ]
 
