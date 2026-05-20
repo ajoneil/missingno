@@ -22,12 +22,18 @@ use crate::trace::Tracer;
 /// Common interface for a Game Boy–family console runnable under the
 /// shared accuracy test helpers. Implemented by `GameBoy` here and by
 /// downstream systems (e.g. `GameBoyColor`).
+/// Common interface for a Game Boy–family console runnable under the
+/// shared accuracy test helpers. Implemented by `GameBoy` here and by
+/// downstream systems (e.g. `GameBoyColor`).
+///
+/// `screen()` deliberately isn't on this trait — the DMG screen stores
+/// 2-bit shade indices while the CGB screen stores RGB pixels, so
+/// callers needing screenshot comparison go through the concrete type.
 pub trait System {
     fn step(&mut self) -> StepResult;
     fn read(&self, address: u16) -> u8;
     fn cpu(&self) -> &Cpu;
     fn cpu_mut(&mut self) -> &mut Cpu;
-    fn screen(&self) -> &Screen;
     fn drain_serial_output(&mut self) -> Vec<u8>;
     fn interrupts(&self) -> &interrupts::Registers;
 }
@@ -44,9 +50,6 @@ impl System for GameBoy {
     }
     fn cpu_mut(&mut self) -> &mut Cpu {
         GameBoy::cpu_mut(self)
-    }
-    fn screen(&self) -> &Screen {
-        GameBoy::screen(self)
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
         GameBoy::drain_serial_output(self)
@@ -188,9 +191,6 @@ impl System for TestRun {
     }
     fn cpu_mut(&mut self) -> &mut Cpu {
         self.gb.cpu_mut()
-    }
-    fn screen(&self) -> &Screen {
-        self.gb.screen()
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
         self.gb.drain_serial_output()

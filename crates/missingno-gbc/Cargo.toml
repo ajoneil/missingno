@@ -10,6 +10,7 @@ test-support = ["missingno-gb/test-support"]
 
 [dependencies]
 missingno-gb = { path = "../missingno-gb" }
+rgb = { workspace = true }
 
 [dev-dependencies]
 missingno-gbc = { path = ".", features = ["test-support"] }

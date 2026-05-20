@@ -20,10 +20,13 @@ use missingno_gb::{
     execute::{PhaseResult, StepResult},
     interrupts::Interrupt,
     memory::Bus,
-    ppu::{self, PpuTickResult, types::palette::PaletteIndex},
+    ppu::{self, PpuTickResult},
 };
 
-use crate::GameBoyColor;
+use crate::{
+    GameBoyColor,
+    screen::{self, GREYSCALE_PALETTE},
+};
 
 impl GameBoyColor {
     pub fn step(&mut self) -> StepResult {
@@ -385,12 +388,18 @@ impl GameBoyColor {
 
     /// Process a PPU tick: draw the pixel, present on VSYNC (only if
     /// MEDA has pulsed since LCD-on), blank on LCD-off.
+    ///
+    /// The DMG PPU emits a 2-bit shade index (post-BGP) per pixel; on
+    /// CGB hardware the PPU's palette lookup yields 15-bit RGB. Until
+    /// CGB palette memory and the CGB palette path land, we map the
+    /// shade through [`GREYSCALE_PALETTE`].
     fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
-        if let Some(pixel) = result.pixel {
-            if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
-                self.screen
-                    .draw_pixel(pixel.x, pixel.y, PaletteIndex(pixel.shade));
-            }
+        if let Some(pixel) = result.pixel
+            && pixel.x < screen::PIXELS_PER_LINE
+            && pixel.y < screen::NUM_SCANLINES
+        {
+            let rgb = GREYSCALE_PALETTE[(pixel.shade & 0x3) as usize];
+            self.screen.draw_pixel(pixel.x, pixel.y, rgb);
         }
         if result.new_frame {
             if self.ppu.control().video_enabled() && self.ppu.vsync_committed() {

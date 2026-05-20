@@ -29,7 +29,7 @@ fn run_blargg_screen_test(rom_path: &str, reference_path: &str, timeout_frames: 
         "Blargg test {rom_path} timed out without reaching infinite loop"
     );
 
-    let actual = common::screen_to_greyscale(common::System::screen(&gbc));
+    let actual = gbc.screen().to_greyscale_bytes();
     let expected = common::load_reference_png(reference_path);
 
     let mut mismatches = 0;

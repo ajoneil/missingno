@@ -10,6 +10,7 @@
 
 pub mod execute;
 pub mod memory;
+pub mod screen;
 
 use missingno_gb::{
     ClockPhase,
@@ -21,10 +22,12 @@ use missingno_gb::{
     interrupts,
     joypad::{Button, Joypad},
     memory::{ExternalBus, HighRam, VramBus},
-    ppu::{self, Ppu, screen::Screen},
+    ppu::{self, Ppu},
     serial_transfer::{Serial, SerialLink},
     timers::Timers,
 };
+
+use crate::screen::Screen;
 
 pub struct GameBoyColor {
     cpu: Cpu,
@@ -224,9 +227,6 @@ impl missingno_gb::test_support::System for GameBoyColor {
     }
     fn cpu_mut(&mut self) -> &mut Cpu {
         GameBoyColor::cpu_mut(self)
-    }
-    fn screen(&self) -> &Screen {
-        GameBoyColor::screen(self)
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
         GameBoyColor::drain_serial_output(self)
