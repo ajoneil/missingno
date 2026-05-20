@@ -273,3 +273,116 @@ wilbertpol_test!(
     mbc1_rom_4banks,
     "mooneye-wilbertpol/emulator-only/mbc1_rom_4banks.gb"
 );
+
+// ── Newly imported no-suffix wilbertpol tests (DMG+CGB compat, shared ROMs)
+wilbertpol_test!(add_sp_e_timing, "mooneye-wilbertpol/acceptance/add_sp_e_timing.gb");
+wilbertpol_test!(call_cc_timing2, "mooneye-wilbertpol/acceptance/call_cc_timing2.gb");
+wilbertpol_test!(call_cc_timing, "mooneye-wilbertpol/acceptance/call_cc_timing.gb");
+wilbertpol_test!(call_timing2, "mooneye-wilbertpol/acceptance/call_timing2.gb");
+wilbertpol_test!(call_timing, "mooneye-wilbertpol/acceptance/call_timing.gb");
+wilbertpol_test!(div_timing, "mooneye-wilbertpol/acceptance/div_timing.gb");
+wilbertpol_test!(timer_div_write, "mooneye-wilbertpol/acceptance/timer/div_write.gb");
+wilbertpol_test!(ei_timing, "mooneye-wilbertpol/acceptance/ei_timing.gb");
+wilbertpol_test!(halt_ime0_ei, "mooneye-wilbertpol/acceptance/halt_ime0_ei.gb");
+wilbertpol_test!(halt_ime0_nointr_timing, "mooneye-wilbertpol/acceptance/halt_ime0_nointr_timing.gb");
+wilbertpol_test!(halt_ime1_timing, "mooneye-wilbertpol/acceptance/halt_ime1_timing.gb");
+wilbertpol_test!(if_ie_registers, "mooneye-wilbertpol/acceptance/if_ie_registers.gb");
+wilbertpol_test!(gpu_intr_2_0_timing, "mooneye-wilbertpol/acceptance/gpu/intr_2_0_timing.gb");
+wilbertpol_test!(gpu_intr_2_mode0_timing, "mooneye-wilbertpol/acceptance/gpu/intr_2_mode0_timing.gb");
+wilbertpol_test!(gpu_intr_2_mode0_timing_sprites, "mooneye-wilbertpol/acceptance/gpu/intr_2_mode0_timing_sprites.gb");
+wilbertpol_test!(gpu_intr_2_mode3_timing, "mooneye-wilbertpol/acceptance/gpu/intr_2_mode3_timing.gb");
+wilbertpol_test!(gpu_intr_2_oam_ok_timing, "mooneye-wilbertpol/acceptance/gpu/intr_2_oam_ok_timing.gb");
+wilbertpol_test!(intr_timing, "mooneye-wilbertpol/acceptance/intr_timing.gb");
+wilbertpol_test!(jp_cc_timing, "mooneye-wilbertpol/acceptance/jp_cc_timing.gb");
+wilbertpol_test!(jp_timing, "mooneye-wilbertpol/acceptance/jp_timing.gb");
+wilbertpol_test!(ld_hl_sp_e_timing, "mooneye-wilbertpol/acceptance/ld_hl_sp_e_timing.gb");
+wilbertpol_test!(bits_mem_oam, "mooneye-wilbertpol/acceptance/bits/mem_oam.gb");
+wilbertpol_test!(oam_dma_restart, "mooneye-wilbertpol/acceptance/oam_dma_restart.gb");
+wilbertpol_test!(oam_dma_start, "mooneye-wilbertpol/acceptance/oam_dma_start.gb");
+wilbertpol_test!(oam_dma_timing, "mooneye-wilbertpol/acceptance/oam_dma_timing.gb");
+wilbertpol_test!(pop_timing, "mooneye-wilbertpol/acceptance/pop_timing.gb");
+wilbertpol_test!(push_timing, "mooneye-wilbertpol/acceptance/push_timing.gb");
+wilbertpol_test!(rapid_di_ei, "mooneye-wilbertpol/acceptance/rapid_di_ei.gb");
+wilbertpol_test!(timer_rapid_toggle, "mooneye-wilbertpol/acceptance/timer/rapid_toggle.gb");
+wilbertpol_test!(bits_reg_f, "mooneye-wilbertpol/acceptance/bits/reg_f.gb");
+wilbertpol_test!(ret_cc_timing, "mooneye-wilbertpol/acceptance/ret_cc_timing.gb");
+wilbertpol_test!(reti_intr_timing, "mooneye-wilbertpol/acceptance/reti_intr_timing.gb");
+wilbertpol_test!(reti_timing, "mooneye-wilbertpol/acceptance/reti_timing.gb");
+wilbertpol_test!(ret_timing, "mooneye-wilbertpol/acceptance/ret_timing.gb");
+wilbertpol_test!(rst_timing, "mooneye-wilbertpol/acceptance/rst_timing.gb");
+wilbertpol_test!(timer_tim00_div_trigger, "mooneye-wilbertpol/acceptance/timer/tim00_div_trigger.gb");
+wilbertpol_test!(timer_tim00, "mooneye-wilbertpol/acceptance/timer/tim00.gb");
+wilbertpol_test!(timer_tim01_div_trigger, "mooneye-wilbertpol/acceptance/timer/tim01_div_trigger.gb");
+wilbertpol_test!(timer_tim01, "mooneye-wilbertpol/acceptance/timer/tim01.gb");
+wilbertpol_test!(timer_tim10_div_trigger, "mooneye-wilbertpol/acceptance/timer/tim10_div_trigger.gb");
+wilbertpol_test!(timer_tim10, "mooneye-wilbertpol/acceptance/timer/tim10.gb");
+wilbertpol_test!(timer_tim11_div_trigger, "mooneye-wilbertpol/acceptance/timer/tim11_div_trigger.gb");
+wilbertpol_test!(timer_tim11, "mooneye-wilbertpol/acceptance/timer/tim11.gb");
+wilbertpol_test!(timer_tima_reload, "mooneye-wilbertpol/acceptance/timer/tima_reload.gb");
+wilbertpol_test!(timer_tima_write_reloading, "mooneye-wilbertpol/acceptance/timer/tima_write_reloading.gb");
+wilbertpol_test!(timer_tma_write_reloading, "mooneye-wilbertpol/acceptance/timer/tma_write_reloading.gb");
+
+// ── CGB-only wilbertpol tests (`-C` and `-cgb` suffixes; ROMs in gbc crate)
+
+fn run_wilbertpol_cgb_test(rom_path: &str) {
+    let mut gbc = common::load_cgb_rom(rom_path);
+    let found = common::run_until_undefined_opcode(&mut gbc, TIMEOUT_FRAMES);
+    assert!(
+        found,
+        "Mooneye-wilbertpol test {rom_path} timed out without reaching exit condition"
+    );
+    let cpu = gbc.cpu();
+    if common::check_mooneye_pass(cpu) {
+        return;
+    }
+
+    let (flags, failed) = decode_assertion_record(&gbc);
+    if !failed.is_empty() {
+        let mut msg = format!(
+            "Mooneye-wilbertpol test {rom_path} failed: {} assertion(s)",
+            failed.len()
+        );
+        for f in &failed {
+            msg.push_str(&format!(
+                "\n  assert_{}: expected 0x{:02X}, got 0x{:02X}",
+                f.reg.label(),
+                f.expected,
+                f.actual,
+            ));
+        }
+        panic!("{msg}");
+    }
+
+    let testcase_id = gbc.peek_range(0xC000, 1)[0];
+    panic!(
+        "Mooneye-wilbertpol test {rom_path} failed with no per-assertion mismatch \
+         (regs_flags=0x{flags:02X}). testcase_id=0x{testcase_id:02X}. \
+         Registers: {}",
+        common::format_registers(cpu),
+    );
+}
+
+macro_rules! wilbertpol_cgb_test {
+    ($name:ident, $path:literal) => {
+        #[test]
+        fn $name() {
+            run_wilbertpol_cgb_test($path);
+        }
+    };
+}
+
+wilbertpol_cgb_test!(misc_boot_hwio_c, "mooneye-wilbertpol/misc/boot_hwio-C.gb");
+wilbertpol_cgb_test!(misc_boot_regs_cgb, "mooneye-wilbertpol/misc/boot_regs-cgb.gb");
+wilbertpol_cgb_test!(misc_bits_unused_hwio_c, "mooneye-wilbertpol/misc/bits/unused_hwio-C.gb");
+wilbertpol_cgb_test!(misc_gpu_vblank_stat_intr_c, "mooneye-wilbertpol/misc/gpu/vblank_stat_intr-C.gb");
+wilbertpol_cgb_test!(gpu_hblank_ly_scx_timing_c, "mooneye-wilbertpol/acceptance/gpu/hblank_ly_scx_timing-C.gb");
+wilbertpol_cgb_test!(gpu_ly00_mode1_2_c, "mooneye-wilbertpol/acceptance/gpu/ly00_mode1_2-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_0_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_0-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_0_write_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_0_write-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_144_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_144-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_153_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_153-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_153_write_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_153_write-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc-C.gb");
+wilbertpol_cgb_test!(gpu_ly_lyc_write_c, "mooneye-wilbertpol/acceptance/gpu/ly_lyc_write-C.gb");
+wilbertpol_cgb_test!(gpu_ly_new_frame_c, "mooneye-wilbertpol/acceptance/gpu/ly_new_frame-C.gb");
+wilbertpol_cgb_test!(gpu_stat_write_if_c, "mooneye-wilbertpol/acceptance/gpu/stat_write_if-C.gb");
