@@ -18,7 +18,7 @@ If the test suite produces unexpected output (build failure, panic before any te
 
 ### 1. Capture baseline
 
-Run `./scripts/test-report.sh --save-baseline` to save the current state, then `./scripts/test-report.sh --diff` to generate the report. Record pass/fail/ignored counts.
+Run `./scripts/test-report-gb.sh --save-baseline` to save the current state, then `./scripts/test-report-gb.sh --diff` to generate the report. Record pass/fail/ignored counts. Use `test-report-gbc.sh` for the CGB crate.
 
 Also capture the raw test output with actual/expected values:
 

@@ -8,7 +8,7 @@ The investigate skill is a **pure dispatcher**. It decides which subroutine to i
 
 ### What investigate does directly
 - Update `summary.md` (before every dispatch, after every return — no exceptions)
-- Run `./scripts/test-report.sh --diff` (bookkeeping, not instrumentation)
+- Run `./scripts/test-report-gb.sh --diff` (bookkeeping, not instrumentation; use `-gbc` variant for CGB investigations)
 - Read receipts, skill files, and summary.md
 
 ### What gets delegated (always)
@@ -117,7 +117,7 @@ The core loop:
   ├── measurements/     # Measurement receipts
   └── logs/             # Raw diagnostic output captures
   ```
-- **Capture a baseline.** Run `./scripts/test-report.sh --diff` directly (not via a subroutine) and record the pass/fail/ignored counts in summary.md's `## Baseline` section. This is investigate's bookkeeping — like branch hygiene, it's not delegated. This is a blocking prerequisite: no other work happens until the baseline is recorded.
+- **Capture a baseline.** Run `./scripts/test-report-gb.sh --diff` directly (not via a subroutine — use `-gbc` variant for CGB investigations) and record the pass/fail/ignored counts in summary.md's `## Baseline` section. This is investigate's bookkeeping — like branch hygiene, it's not delegated. This is a blocking prerequisite: no other work happens until the baseline is recorded.
 - Invoke `/analyze` to interpret the initial results.
 - Classify the problem type and write it in summary.md.
 
@@ -145,7 +145,7 @@ The core loop:
 
 ### 3. Track test state
 
-Run `./scripts/test-report.sh --diff` directly (investigate's bookkeeping) after every code change. Update summary.md `## Baseline` with current counts.
+Run `./scripts/test-report-gb.sh --diff` directly (investigate's bookkeeping; `-gbc` variant for CGB) after every code change. Update summary.md `## Baseline` with current counts.
 
 ### 4. Observe and diagnose
 

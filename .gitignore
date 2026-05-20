@@ -5,5 +5,5 @@ target
 build-dir
 CLAUDE.md
 receipts
-scripts/.test-baseline
+scripts/.test-baseline-*
 net.andyofniall.missingno

@@ -95,9 +95,9 @@ cargo fmt                                    # Format
 
 ## Testing
 
-- Always run tests against missingno-gb: `cargo test -p missingno-gb`. Do not run `cargo test` against the whole workspace unless specifically asked.
-- For regression checking, use `./scripts/test-report.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/`.
-- To save a baseline before experimenting: `./scripts/test-report.sh --save-baseline`. Always save a baseline from `main` (or the known-good state) before making changes, so `--diff` has an accurate reference point.
+- Always run tests against missingno-gb: `cargo test -p missingno-gb`. Do not run `cargo test` against the whole workspace unless specifically asked. For GBC work, run `cargo test -p missingno-gbc`.
+- For regression checking, use `./scripts/test-report-gb.sh --diff` instead of raw `cargo test`. It generates structured reports with baseline comparison and saves them to `receipts/test-reports/gb/`. The GBC variant is `./scripts/test-report-gbc.sh` (reports under `receipts/test-reports/gbc/`); use it when working on `missingno-gbc`.
+- To save a baseline before experimenting: `./scripts/test-report-gb.sh --save-baseline` (or the `-gbc` variant). Always save a baseline from `main` (or the known-good state) before making changes, so `--diff` has an accurate reference point.
 - To run a specific test with the boot ROM: `DMG_BOOT_ROM=<path> cargo test -p missingno-gb <test_name>`. Boot ROMs are proprietary — ask the user for the path, never commit them. Only use on targeted tests; the boot ROM adds significant startup time per test, making full-suite runs impractical.
 - After any fix, verify no regressions before committing.
 

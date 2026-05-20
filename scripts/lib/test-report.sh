@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Generate a structured test report for missingno-gb.
-# Usage:
-#   ./scripts/test-report.sh                  # Run tests, print report
-#   ./scripts/test-report.sh --save-baseline  # Run tests and save as baseline
-#   ./scripts/test-report.sh --diff           # Run tests and diff against saved baseline
+# Shared core for test-report-{gb,gbc}.sh.
+#
+# Callers (the wrapper scripts) set the following before sourcing:
+#   CRATE          — cargo package name (e.g. missingno-gb, missingno-gbc)
+#   CRATE_LABEL    — short label used in report titles (e.g. gb, gbc)
+#   BASELINE_FILE  — absolute path to this variant's baseline file
+#   REPORT_DIR     — absolute path to this variant's report output directory
+#   MODE           — "" | --save-baseline | --diff (forwarded from caller's $1)
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BASELINE_FILE="$PROJECT_DIR/scripts/.test-baseline"
-REPORT_DIR="$PROJECT_DIR/receipts/test-reports"
+: "${CRATE:?CRATE must be set}"
+: "${CRATE_LABEL:?CRATE_LABEL must be set}"
+: "${BASELINE_FILE:?BASELINE_FILE must be set}"
+: "${REPORT_DIR:?REPORT_DIR must be set}"
+MODE="${MODE:-}"
 
 mkdir -p "$REPORT_DIR"
 
 # Run tests and capture output
-RAW_OUTPUT=$(cargo test -p missingno-gb 2>&1 || true)
+RAW_OUTPUT=$(cargo test -p "$CRATE" 2>&1 || true)
 
 # Extract test lines (ok/FAILED/ignored) and sort for stable diffing.
 # Uses sed -n /p (always exits 0) so an empty set doesn't trip pipefail.
@@ -27,24 +31,27 @@ PASS_COUNT=$(echo "$PASSED" | grep -c . || true)
 FAIL_COUNT=$(echo "$FAILED" | grep -c . || true)
 IGNORE_COUNT=$(echo "$IGNORED" | grep -c . || true)
 
-# Build current state file (sorted list of test=status)
+# Build current state file (sorted list of test=status).
+# `|| true` absorbs the non-zero exit when a category is empty — the
+# `[ -n "$t" ] && echo …` short-circuit returns 1 for the trailing
+# empty line, which pipefail + set -e would otherwise treat as fatal.
 CURRENT=$(
-    (echo "$PASSED" | while read -r t; do [ -n "$t" ] && echo "$t=ok"; done
-     echo "$FAILED" | while read -r t; do [ -n "$t" ] && echo "$t=FAILED"; done
-     echo "$IGNORED" | while read -r t; do [ -n "$t" ] && echo "$t=ignored"; done) | sort
+    {
+        echo "$PASSED" | while read -r t; do [ -n "$t" ] && echo "$t=ok"; done
+        echo "$FAILED" | while read -r t; do [ -n "$t" ] && echo "$t=FAILED"; done
+        echo "$IGNORED" | while read -r t; do [ -n "$t" ] && echo "$t=ignored"; done
+    } | sort || true
 )
-
-MODE="${1:-}"
 
 if [ "$MODE" = "--save-baseline" ]; then
     echo "$CURRENT" > "$BASELINE_FILE"
-    echo "Baseline saved ($PASS_COUNT passed, $FAIL_COUNT failed, $IGNORE_COUNT ignored)"
+    echo "Baseline ($CRATE_LABEL) saved ($PASS_COUNT passed, $FAIL_COUNT failed, $IGNORE_COUNT ignored)"
     exit 0
 fi
 
 # Print report
 TIMESTAMP=$(date -Iseconds)
-REPORT="# Test Report — $TIMESTAMP
+REPORT="# Test Report ($CRATE_LABEL) — $TIMESTAMP
 
 ## Summary
 - **Passed**: $PASS_COUNT

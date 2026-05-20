@@ -67,7 +67,7 @@ After all changes are made:
 
 - **Build check**: Run `cargo check` to verify compilation.
 - **Targeted test**: If the design or caller specifies a particular test, run it.
-- **Full suite**: Run `./scripts/test-report.sh --diff` to check for regressions (requires a saved baseline — if none exists, run `./scripts/test-report.sh --save-baseline` first, then apply your changes, then `--diff`). The report is saved automatically to `receipts/test-reports/`.
+- **Full suite**: Run `./scripts/test-report-gb.sh --diff` to check for regressions (requires a saved baseline — if none exists, run `./scripts/test-report-gb.sh --save-baseline` first, then apply your changes, then `--diff`). The report is saved automatically to `receipts/test-reports/gb/`. Use `test-report-gbc.sh` instead for changes scoped to `missingno-gbc`.
 
 Also capture raw test output to the investigation log:
 ```
