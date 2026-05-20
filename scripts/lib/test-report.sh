@@ -70,23 +70,18 @@ fi
 if [ "$MODE" = "--diff" ] && [ -f "$BASELINE_FILE" ]; then
     BASELINE=$(cat "$BASELINE_FILE")
 
-    # Find newly passing (was FAILED in baseline, now ok)
-    NEWLY_PASSING=$(comm -13 <(echo "$BASELINE" | grep '=ok$' | sort) <(echo "$CURRENT" | grep '=ok$' | sort) | \
-        while read -r line; do
-            name="${line%=ok}"
-            if echo "$BASELINE" | grep -q "^${name}=FAILED$"; then
-                echo "$name"
-            fi
-        done)
+    # Extract sorted test-name sets by status. `sed -n 's/=X$//p'`
+    # strips the suffix and prints lines that had it.
+    baseline_failed=$(echo "$BASELINE" | sed -n 's/=FAILED$//p' | sort)
+    baseline_ok=$(echo "$BASELINE" | sed -n 's/=ok$//p' | sort)
+    current_failed=$(echo "$CURRENT" | sed -n 's/=FAILED$//p' | sort)
+    current_ok=$(echo "$CURRENT" | sed -n 's/=ok$//p' | sort)
 
-    # Find regressions (was ok in baseline, now FAILED)
-    REGRESSIONS=$(comm -13 <(echo "$CURRENT" | grep '=ok$' | sort) <(echo "$BASELINE" | grep '=ok$' | sort) | \
-        while read -r line; do
-            name="${line%=ok}"
-            if echo "$CURRENT" | grep -q "^${name}=FAILED$"; then
-                echo "$name"
-            fi
-        done)
+    # Newly passing = was FAILED in baseline AND is ok in current.
+    NEWLY_PASSING=$(comm -12 <(echo "$baseline_failed") <(echo "$current_ok"))
+
+    # Regressions = was ok in baseline AND is FAILED in current.
+    REGRESSIONS=$(comm -12 <(echo "$baseline_ok") <(echo "$current_failed"))
 
     BASELINE_PASS=$(echo "$BASELINE" | grep -c '=ok$' || true)
     BASELINE_FAIL=$(echo "$BASELINE" | grep -c '=FAILED$' || true)
