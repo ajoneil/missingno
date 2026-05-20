@@ -17,10 +17,11 @@ mkdir -p "$REPORT_DIR"
 # Run tests and capture output
 RAW_OUTPUT=$(cargo test -p missingno-gb 2>&1 || true)
 
-# Extract test lines (ok/FAILED) and sort for stable diffing
-PASSED=$(echo "$RAW_OUTPUT" | grep '^\s*test .* ok$' | sed 's/^\s*test //' | sed 's/ \.\.\. ok$//' | sort)
-FAILED=$(echo "$RAW_OUTPUT" | grep '^\s*test .* FAILED$' | sed 's/^\s*test //' | sed 's/ \.\.\. FAILED$//' | sort)
-IGNORED=$(echo "$RAW_OUTPUT" | grep '^\s*test .* ignored$' | sed 's/^\s*test //' | sed 's/ \.\.\. ignored$//' | sort)
+# Extract test lines (ok/FAILED/ignored) and sort for stable diffing.
+# Uses sed -n /p (always exits 0) so an empty set doesn't trip pipefail.
+PASSED=$(echo "$RAW_OUTPUT" | sed -n 's/^[[:space:]]*test \(.*\) \.\.\. ok$/\1/p' | sort)
+FAILED=$(echo "$RAW_OUTPUT" | sed -n 's/^[[:space:]]*test \(.*\) \.\.\. FAILED$/\1/p' | sort)
+IGNORED=$(echo "$RAW_OUTPUT" | sed -n 's/^[[:space:]]*test \(.*\) \.\.\. ignored$/\1/p' | sort)
 
 PASS_COUNT=$(echo "$PASSED" | grep -c . || true)
 FAIL_COUNT=$(echo "$FAILED" | grep -c . || true)
