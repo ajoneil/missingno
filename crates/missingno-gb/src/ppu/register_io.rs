@@ -14,7 +14,7 @@ impl Ppu {
                     Some(_) => self.mode() as u8,
                     None => 0,
                 };
-                let line_compare = if self.video.stat.ly_eq_lyc_stat() {
+                let line_compare = if self.video.stat.ly_eq_lyc() {
                     0b00000100
                 } else {
                     0

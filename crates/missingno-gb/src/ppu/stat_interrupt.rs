@@ -48,12 +48,9 @@ impl StatInterrupt {
         self.comparison_latched = self.comparison_pending;
     }
 
+    /// ROPO.Q — drives STAT bit 2 via the transparent RUPO latch, and also feeds the
+    /// LYC-match arm of the STAT-interrupt edge detector.
     pub(in crate::ppu) fn ly_eq_lyc(&self) -> bool {
-        self.comparison_latched
-    }
-
-    /// STAT bit 2; RUPO transparent so tracks ROPO.Q directly.
-    pub(in crate::ppu) fn ly_eq_lyc_stat(&self) -> bool {
         self.comparison_latched
     }
 
