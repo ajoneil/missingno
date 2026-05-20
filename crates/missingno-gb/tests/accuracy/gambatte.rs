@@ -249,6 +249,29 @@ fn run_gambatte_screenshot_test(rom_path: &str, reference_path: &str) {
     );
 }
 
+/// Gambatte audio test. Filename contains `_outaudio0` (silent
+/// expected) or `_outaudio1` (audio expected). Drains samples after
+/// the cycle budget and checks whether any non-silent samples were
+/// produced. Threshold: |sample| > 0.005 (the APU outputs slowly-
+/// decaying DC offsets at zero amplitude; we want anything above
+/// quantization noise).
+fn run_gambatte_audio_test(rom_path: &str) {
+    let mut run = common::load_rom(rom_path);
+    common::run_for_tcycles(&mut run, TCYCLES);
+
+    let samples = run.gb.drain_audio_samples();
+    let any_audio = samples
+        .iter()
+        .any(|&(l, r)| l.abs() > 0.005 || r.abs() > 0.005);
+
+    let expect_audio = rom_path.contains("outaudio1");
+    assert_eq!(
+        any_audio, expect_audio,
+        "Gambatte audio test {rom_path}: expected audio={expect_audio}, got audio={any_audio} (samples={})",
+        samples.len(),
+    );
+}
+
 fn run_gambatte_blank_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
     common::run_for_tcycles(&mut run, TCYCLES);
@@ -267,6 +290,15 @@ macro_rules! gambatte_hex_test {
         #[test]
         fn $name() {
             run_gambatte_hex_test($path);
+        }
+    };
+}
+
+macro_rules! gambatte_audio_test {
+    ($name:ident, $path:literal) => {
+        #[test]
+        fn $name() {
+            run_gambatte_audio_test($path);
         }
     };
 }
@@ -2240,3 +2272,70 @@ gambatte_hex_test!(window_m2int_wxA6_scx5_m3stat_2_dmg08_out0_cgb04c_out3, "gamb
 gambatte_hex_test!(window_m2int_wxA6_spxA7_m3stat_2_dmg08_out0_cgb04c_out3, "gambatte/window/m2int_wxA6_spxA7_m3stat_2_dmg08_out0_cgb04c_out3.gbc");
 gambatte_hex_test!(window_m2int_wxA6_spxA7_m3stat_4_dmg08_out0_cgb04c_out3, "gambatte/window/m2int_wxA6_spxA7_m3stat_4_dmg08_out0_cgb04c_out3.gbc");
 gambatte_hex_test!(window_m2int_wxA6_vrambusyread_2_dmg08_out5_cgb04c_out0, "gambatte/window/m2int_wxA6_vrambusyread_2_dmg08_out5_cgb04c_out0.gbc");
+
+// ── Audio dual tests (65 ROMs; _outaudio0 = silent, _outaudio1 = audio)
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos0_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos0_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos1_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos2_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos2_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos3_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos3_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos4_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos4_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos5_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos5_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos6_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos6_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos7_outaudio1, "gambatte/sound/ch1_duty0_pattern_pos7_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pattern_pos8_outaudio0, "gambatte/sound/ch1_duty0_pattern_pos8_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pos6_to_pos7_timing_1_outaudio0, "gambatte/sound/ch1_duty0_pos6_to_pos7_timing_1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_pos6_to_pos7_timing_2_outaudio1, "gambatte/sound/ch1_duty0_pos6_to_pos7_timing_2_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty0_to_duty3_pos3_0_outaudio1, "gambatte/sound/ch1_duty0_to_duty3_pos3_0_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty0_to_duty3_pos3_2_outaudio0, "gambatte/sound/ch1_duty0_to_duty3_pos3_2_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty0_to_duty3_pos3_outaudio0, "gambatte/sound/ch1_duty0_to_duty3_pos3_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos0_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos0_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos1_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos2_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos2_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos3_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos3_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos4_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos4_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos5_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos5_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos6_outaudio0, "gambatte/sound/ch1_duty1_pattern_pos6_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos7_outaudio1, "gambatte/sound/ch1_duty1_pattern_pos7_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty1_pattern_pos8_outaudio1, "gambatte/sound/ch1_duty1_pattern_pos8_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos0_outaudio0, "gambatte/sound/ch1_duty2_pattern_pos0_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos1_outaudio0, "gambatte/sound/ch1_duty2_pattern_pos1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos2_outaudio0, "gambatte/sound/ch1_duty2_pattern_pos2_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos3_outaudio0, "gambatte/sound/ch1_duty2_pattern_pos3_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos4_outaudio0, "gambatte/sound/ch1_duty2_pattern_pos4_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos5_outaudio1, "gambatte/sound/ch1_duty2_pattern_pos5_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos6_outaudio1, "gambatte/sound/ch1_duty2_pattern_pos6_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos7_outaudio1, "gambatte/sound/ch1_duty2_pattern_pos7_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty2_pattern_pos8_outaudio1, "gambatte/sound/ch1_duty2_pattern_pos8_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos0_outaudio0, "gambatte/sound/ch1_duty3_pattern_pos0_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos1_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos1_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos2_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos2_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos3_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos3_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos4_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos4_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos5_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos5_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos6_outaudio1, "gambatte/sound/ch1_duty3_pattern_pos6_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos7_outaudio0, "gambatte/sound/ch1_duty3_pattern_pos7_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_duty3_pattern_pos8_outaudio0, "gambatte/sound/ch1_duty3_pattern_pos8_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_init_pos_2_outaudio1, "gambatte/sound/ch1_init_pos_2_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_init_pos_3_outaudio1, "gambatte/sound/ch1_init_pos_3_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_init_pos_6_outaudio0, "gambatte/sound/ch1_init_pos_6_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_init_pos_7_outaudio0, "gambatte/sound/ch1_init_pos_7_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_init_reset_sweep_counter_timing_12_outaudio0, "gambatte/sound/ch1_init_reset_sweep_counter_timing_12_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_init_reset_sweep_counter_timing_1_outaudio1, "gambatte/sound/ch1_init_reset_sweep_counter_timing_1_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch1_init_reset_sweep_counter_timing_6_outaudio0, "gambatte/sound/ch1_init_reset_sweep_counter_timing_6_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch1_init_reset_sweep_counter_timing_7_outaudio1, "gambatte/sound/ch1_init_reset_sweep_counter_timing_7_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_env_counter_timing_1_outaudio0, "gambatte/sound/ch2_init_env_counter_timing_1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_env_counter_timing_4_outaudio1, "gambatte/sound/ch2_init_env_counter_timing_4_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_pos_1_outaudio0, "gambatte/sound/ch2_init_pos_1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_pos_2_outaudio0, "gambatte/sound/ch2_init_pos_2_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_12_outaudio1, "gambatte/sound/ch2_init_reset_env_counter_timing_12_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_13_outaudio0, "gambatte/sound/ch2_init_reset_env_counter_timing_13_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_16_outaudio1, "gambatte/sound/ch2_init_reset_env_counter_timing_16_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_1_outaudio0, "gambatte/sound/ch2_init_reset_env_counter_timing_1_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_3_outaudio0, "gambatte/sound/ch2_init_reset_env_counter_timing_3_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_6_outaudio1, "gambatte/sound/ch2_init_reset_env_counter_timing_6_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_8_outaudio1, "gambatte/sound/ch2_init_reset_env_counter_timing_8_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_env_counter_timing_9_outaudio0, "gambatte/sound/ch2_init_reset_env_counter_timing_9_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_length_counter_timing_1_outaudio1, "gambatte/sound/ch2_init_reset_length_counter_timing_1_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_length_counter_timing_4_outaudio0, "gambatte/sound/ch2_init_reset_length_counter_timing_4_dmg08_cgb04c_outaudio0.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_length_counter_timing_5_outaudio1, "gambatte/sound/ch2_init_reset_length_counter_timing_5_dmg08_cgb04c_outaudio1.gbc");
+gambatte_audio_test!(sound_ch2_init_reset_length_counter_timing_8_outaudio0, "gambatte/sound/ch2_init_reset_length_counter_timing_8_dmg08_cgb04c_outaudio0.gbc");

@@ -40,6 +40,10 @@ pub trait System {
     /// PPU mode gating. Used by tests that decode assertion records
     /// from WRAM after the test has halted.
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8>;
+    /// Drain accumulated audio samples (stereo, f32 pairs). Used by
+    /// gambatte audio tests to check whether the test ROM produced
+    /// any sound (`_outaudio1`) or was silent (`_outaudio0`).
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
 }
 
 impl System for GameBoy {
@@ -63,6 +67,9 @@ impl System for GameBoy {
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         GameBoy::peek_range(self, start, len)
+    }
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        GameBoy::drain_audio_samples(self)
     }
 }
 
@@ -207,6 +214,9 @@ impl System for TestRun {
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         self.gb.peek_range(start, len)
+    }
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.gb.drain_audio_samples()
     }
 }
 
