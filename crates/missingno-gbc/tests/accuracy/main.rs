@@ -1,2 +1,9 @@
 mod blargg;
+mod bully;
 mod common;
+mod dmg_acid2;
+mod little_things;
+mod mbc3_tester;
+mod scribbltests;
+mod strikethrough;
+mod turtle_tests;
