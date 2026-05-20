@@ -364,19 +364,25 @@ impl GameBoy {
 
     /// If DMA is driving a bus that conflicts with `address`, return
     /// the override value the CPU sees: 0xFF for an OAM read during
-    /// DMA, otherwise the bus latch.
+    /// DMA, otherwise the source byte DMA is about to commit this
+    /// M-cycle (the value being driven on the bus right now). Falls
+    /// back to the bus latch during DMA's restart-delay window when
+    /// no byte will commit this M-cycle.
     fn dma_read_conflict(&self, address: u16) -> Option<u8> {
         let bus = self.dma.is_active_on_bus()?;
         if (0xFE00..=0xFE9F).contains(&address) {
             return Some(0xFF);
         }
-        if Bus::of(address) == Some(bus) {
-            return Some(match bus {
+        if Bus::of(address) != Some(bus) {
+            return None;
+        }
+        Some(match self.dma.peek_transfer() {
+            Some((src, _)) => self.read_dma_source(src),
+            None => match bus {
                 Bus::External => self.external.latch(),
                 Bus::Vram => self.vram_bus.latch,
-            });
-        }
-        None
+            },
+        })
     }
 
     /// Drive `value` onto whichever physical bus `address` resides on.
@@ -471,9 +477,15 @@ impl GameBoy {
             if (0xFE00..=0xFE9F).contains(&address) {
                 return;
             }
-            // Bus conflict: CPU writes on the same bus as DMA are
-            // ignored. The bus latch is NOT updated.
+            // Source-bus conflict: CPU's write strobe collides with
+            // DMA's on the source bus, CPU wins. Stash the value so
+            // `tick_mcycle_boundary_fall` can overwrite the OAM slot
+            // DMA just deposited. The CPU also drives the bus latch.
             if Bus::of(address) == Some(bus) {
+                if let Some((_, dst_offset)) = self.dma.peek_transfer() {
+                    self.dma_conflict_write_pending = Some((dst_offset, value));
+                }
+                self.drive_bus(address, value);
                 return;
             }
         }

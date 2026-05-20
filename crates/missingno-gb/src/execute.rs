@@ -477,6 +477,20 @@ impl GameBoy {
             }
         }
 
+        if let Some((dst_offset, value)) = self.dma_conflict_write_pending.take() {
+            let dst_addr = 0xfe00 + dst_offset as u16;
+            let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
+                ppu::memory::MappedAddress::Oam(addr) => addr,
+                _ => unreachable!(),
+            };
+            self.ppu.write_oam(oam_addr, value);
+            self.bus_trace.record(BusAccess {
+                address: dst_addr,
+                value,
+                kind: BusAccessKind::Write,
+            });
+        }
+
         self.external.tick_decay();
         self.audio.mcycle(self.timers.internal_counter());
     }

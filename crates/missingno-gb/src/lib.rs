@@ -56,6 +56,11 @@ pub struct GameBoy {
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
     bus_trace: cpu_bus::BusTrace,
+    /// Conflict write deferred from `commit_write` to after DMA's
+    /// `mcycle()` commit so the CPU value overwrites the byte DMA just
+    /// deposited at `(oam_offset, value)`. Set in
+    /// `write_byte_with_cupa_lock`, drained in `tick_mcycle_boundary_fall`.
+    dma_conflict_write_pending: Option<(u8, u8)>,
 }
 
 impl GameBoy {
@@ -77,6 +82,7 @@ impl GameBoy {
             clock_phase: ClockPhase::Low,
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
+            dma_conflict_write_pending: None,
         };
         gb.rebuild_state();
         gb
@@ -145,6 +151,7 @@ impl GameBoy {
         self.bus_trace = cpu_bus::BusTrace::new();
         self.clock_phase = ClockPhase::Low;
         self.cpu_bus = CpuBus::new();
+        self.dma_conflict_write_pending = None;
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);
         } else if let Some(address) = self.cpu.pending_bus_read() {

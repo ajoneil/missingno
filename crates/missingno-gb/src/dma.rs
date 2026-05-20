@@ -79,6 +79,17 @@ impl Dma {
         }
     }
 
+    /// `(source address, destination offset)` of the byte the next
+    /// `mcycle()` will transfer, without mutating state. None during
+    /// startup, restart delay, or after the 160th byte.
+    pub fn peek_transfer(&self) -> Option<(u16, u8)> {
+        let t = self.transfer.as_ref()?;
+        if t.delay.is_some() || t.byte_index >= 160 {
+            return None;
+        }
+        Some((t.source + t.byte_index as u16, t.byte_index))
+    }
+
     /// Advance DMA by one M-cycle. Returns the `(source address,
     /// destination offset)` pair when a byte should be transferred.
     pub fn mcycle(&mut self) -> Option<(u16, u8)> {
