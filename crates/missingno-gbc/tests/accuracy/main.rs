@@ -5,6 +5,7 @@ mod cgb_acid2;
 mod cgb_acid_hell;
 mod common;
 mod dmg_acid2;
+mod gambatte;
 mod little_things;
 mod mbc3_tester;
 mod mealybug_tearoom;
