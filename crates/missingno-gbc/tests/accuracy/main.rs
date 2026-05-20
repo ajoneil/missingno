@@ -4,6 +4,7 @@ mod common;
 mod dmg_acid2;
 mod little_things;
 mod mbc3_tester;
+mod mooneye;
 mod scribbltests;
 mod strikethrough;
 mod turtle_tests;
