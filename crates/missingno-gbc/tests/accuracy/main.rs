@@ -11,6 +11,7 @@ mod mbc3_tester;
 mod mealybug_tearoom;
 mod mooneye;
 mod mooneye_wilbertpol;
+mod rtc3test;
 mod samesuite;
 mod scribbltests;
 mod strikethrough;
