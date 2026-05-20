@@ -56,6 +56,16 @@ impl Dma {
         self.source_register
     }
 
+    /// Whether the DMA source actively drives the data bus through the
+    /// OAM-write half-cycle. True for WRAM ($C0..=$DF) — the WRAM
+    /// controller holds the data lines, so a same-bus CPU strobe
+    /// open-drains as `src_byte AND cpu_byte`. False for cartridge ROM
+    /// / SRAM / VRAM, which latch and release before the write phase,
+    /// letting the CPU's value land cleanly.
+    pub fn source_drives_write_phase(&self) -> bool {
+        matches!(self.source_register, 0xC0..=0xDF)
+    }
+
     /// Bus that DMA is actively conflicting with (past the startup
     /// delay). `None` when idle or still in startup.
     pub fn is_active_on_bus(&self) -> Option<Bus> {

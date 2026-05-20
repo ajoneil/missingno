@@ -478,12 +478,17 @@ impl GameBoy {
                 return;
             }
             // Source-bus conflict: CPU's write strobe collides with
-            // DMA's on the source bus, CPU wins. Stash the value so
-            // `tick_mcycle_boundary_fall` can overwrite the OAM slot
-            // DMA just deposited. The CPU also drives the bus latch.
+            // DMA's on the source bus. Stash both the CPU value and
+            // the source byte DMA fetched this M-cycle so
+            // `tick_mcycle_boundary_fall` can land the right value at
+            // the OAM slot DMA is depositing — CPU value alone for
+            // ROM/SRAM source, AND-mix of source and CPU value for
+            // WRAM source (where the WRAM driver stays live through
+            // the OAM write phase). The CPU also drives the bus latch.
             if Bus::of(address) == Some(bus) {
-                if let Some((_, dst_offset)) = self.dma.peek_transfer() {
-                    self.dma_conflict_write_pending = Some((dst_offset, value));
+                if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
+                    let src_byte = self.read_dma_source(src_addr);
+                    self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));
                 }
                 self.drive_bus(address, value);
                 return;

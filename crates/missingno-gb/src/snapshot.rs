@@ -378,6 +378,7 @@ impl GameBoy {
             bus_trace: crate::cpu_bus::BusTrace::new(),
             clock_phase: crate::ClockPhase::Low,
             cpu_bus: crate::cpu_bus::CpuBus::new(),
+            dma_conflict_write_pending: None,
         }
     }
 }

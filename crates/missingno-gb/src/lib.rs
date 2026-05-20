@@ -57,10 +57,12 @@ pub struct GameBoy {
     cpu_bus: CpuBus,
     bus_trace: cpu_bus::BusTrace,
     /// Conflict write deferred from `commit_write` to after DMA's
-    /// `mcycle()` commit so the CPU value overwrites the byte DMA just
-    /// deposited at `(oam_offset, value)`. Set in
-    /// `write_byte_with_cupa_lock`, drained in `tick_mcycle_boundary_fall`.
-    dma_conflict_write_pending: Option<(u8, u8)>,
+    /// `mcycle()` commit. Tuple is `(oam_offset, src_byte, cpu_value)`:
+    /// `src_byte` is the byte DMA fetched this M-cycle, used to
+    /// AND-mix on WRAM-source DMA where both drivers stay live through
+    /// the OAM write phase. Set in `write_byte_with_cupa_lock`, drained
+    /// in `tick_mcycle_boundary_fall`.
+    dma_conflict_write_pending: Option<(u8, u8, u8)>,
 }
 
 impl GameBoy {
