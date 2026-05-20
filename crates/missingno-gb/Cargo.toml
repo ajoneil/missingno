@@ -7,12 +7,15 @@ license = "MIT"
 
 [features]
 gbtrace = ["dep:gbtrace", "dep:sha2"]
+test-support = ["dep:png"]
 
 [dependencies]
 bitflags = { workspace = true }
 rgb = { workspace = true }
 gbtrace = { git = "https://github.com/ajoneil/gbtrace", optional = true }
 sha2 = { version = "0.11", optional = true }
+png = { version = "0.18", optional = true }
 
 [dev-dependencies]
+missingno-gb = { path = ".", features = ["test-support"] }
 png = "0.18"

@@ -3008,9 +3008,18 @@ version = "0.0.1"
 dependencies = [
  "bitflags 2.11.1",
  "gbtrace",
+ "missingno-gb",
  "png 0.18.1",
  "rgb",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "missingno-gbc"
+version = "0.0.1"
+dependencies = [
+ "missingno-gb",
+ "missingno-gbc",
 ]
 
 [[package]]

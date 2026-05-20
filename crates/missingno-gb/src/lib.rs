@@ -16,6 +16,8 @@ pub mod serial_transfer;
 pub mod sgb;
 #[cfg(feature = "gbtrace")]
 pub mod snapshot;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 pub mod timers;
 #[cfg(feature = "gbtrace")]
 pub mod trace;
