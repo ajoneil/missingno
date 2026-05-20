@@ -132,3 +132,35 @@ fn mem_timing_2() {
 fn halt_bug() {
     run_blargg_screen_test("blargg/halt_bug.gb", "blargg/halt_bug-dmg-cgb.png", 1200);
 }
+
+/// CGB-only ROM — fails on DMG hardware (per c-sp howto). Tests
+/// interrupt timing in both normal and double-speed CPU modes; will
+/// fail until KEY1 / double-speed lands.
+#[test]
+fn interrupt_time() {
+    let mut gbc = common::load_cgb_rom("blargg/interrupt_time.gb");
+    let found_loop = common::run_until_infinite_loop(&mut gbc, 1200);
+    assert!(
+        found_loop,
+        "Blargg interrupt_time timed out without reaching infinite loop"
+    );
+
+    let actual = gbc.screen().to_greyscale_bytes();
+    let expected = common::load_cgb_reference_png("blargg/interrupt_time-cgb.png");
+
+    let mut mismatches = 0;
+    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+        if a != e {
+            if mismatches < 10 {
+                let (x, y) = (i % 160, i / 160);
+                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
+            }
+            mismatches += 1;
+        }
+    }
+
+    assert_eq!(
+        mismatches, 0,
+        "Blargg interrupt_time: {mismatches} pixel mismatches"
+    );
+}

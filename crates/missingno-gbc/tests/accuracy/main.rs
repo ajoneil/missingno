@@ -6,6 +6,7 @@ mod common;
 mod dmg_acid2;
 mod little_things;
 mod mbc3_tester;
+mod mealybug_tearoom;
 mod mooneye;
 mod scribbltests;
 mod strikethrough;

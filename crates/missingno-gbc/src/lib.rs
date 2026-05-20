@@ -7,6 +7,19 @@
 //!
 //! No SGB co-processor and no DMG OAM corruption bug — both are
 //! DMG-only hardware quirks.
+//!
+//! ## Target SoC revision
+//!
+//! The CGB went through several CPU-SoC revisions (CPU-CGB-A through
+//! CPU-CGB-E). Behaviour differs subtly between them — STOP/double-speed
+//! wakeup timing, PPU mode-boundary alignment, STAT IRQ edges, APU
+//! envelope retrigger, and so on. This crate targets **CPU-CGB-C**:
+//! the most commonly-targeted revision across emulators (Gambatte's
+//! `cgb04c`), the best-documented in test ROMs, and behaviourally
+//! representative of the mainstream CGB hardware run.
+//!
+//! Test suites filter their ROM selection accordingly — CGB-E-only or
+//! CGB-B-only ROMs are excluded from the CGB-C-passing set.
 
 pub mod execute;
 pub mod memory;
