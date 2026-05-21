@@ -452,7 +452,12 @@ impl GameBoy {
     /// M-cycle-boundary subsystems on the falling edge: OAM DMA byte
     /// transfer, external-bus decay, audio mcycle.
     fn tick_mcycle_boundary_fall(&mut self) {
-        if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+        // `matu` (DMA byte counter) is clocked by `dma_phi = NOT(data_phase)`.
+        // While the halt RS-latch `ynkw` is set, `data_phase` is held LOW,
+        // so `dma_phi` stays HIGH and the counter freezes on the in-flight
+        // byte. `dma_run` stays asserted, so bus arbitration is unaffected.
+        let halt_paused = self.cpu.halt.rs_latched;
+        if !halt_paused && let Some((src_addr, dst_offset)) = self.dma.mcycle() {
             let byte = self.read_dma_source(src_addr);
             let dst_addr = 0xfe00 + dst_offset as u16;
             let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
