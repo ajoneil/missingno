@@ -138,7 +138,18 @@ impl Cpu {
                 }
             }
             CpuPhase::Halted(HaltPhase::SetupMiss) => {
-                Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
+                // yoii captured on this M-cycle's opening CLK9↑; mcyc is still
+                // parked at 0b111 from HALT, so ctl_fetch=1 drives the post-halt
+                // opcode read on this same M-cycle's data_phase. Only the IME=1
+                // dispatch path needs a separate WakeIntake M-cycle (to capture
+                // dispatch_active.q before dispatch M1).
+                let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
+                let dispatch_pending = ime_enabled && !self.dispatch.latched().is_empty();
+                if dispatch_pending {
+                    Some(self.mcycle_halted_entry(HaltPhase::WakeIntake))
+                } else {
+                    self.enter_post_halt_fetch()
+                }
             }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
