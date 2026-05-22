@@ -198,10 +198,8 @@ impl PulseSweepChannel {
     }
 
     pub fn tcycle(&mut self) {
-        if self.prescaler.tcycle() && self.enabled.enabled {
-            if self.divider.tick(self.period.0) {
-                self.wave_duty_position = (self.wave_duty_position + 1) % 8;
-            }
+        if self.prescaler.tcycle() && self.enabled.enabled && self.divider.tick(self.period.0) {
+            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
         }
     }
 
