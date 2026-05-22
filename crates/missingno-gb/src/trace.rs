@@ -541,9 +541,7 @@ impl Tracer {
                 Emitter::ExtPpuScanClock => w.set_bool(col, ppu_sigs.scan_clock),
                 Emitter::ExtPpuLx => w.set_u8(col, gb.ppu().lx()),
                 Emitter::ExtPpuMode2Active => w.set_bool(col, ppu_sigs.mode2_active),
-                Emitter::ExtPpuEndOfVisibleLine => {
-                    w.set_bool(col, ppu_sigs.end_of_visible_line)
-                }
+                Emitter::ExtPpuEndOfVisibleLine => w.set_bool(col, ppu_sigs.end_of_visible_line),
                 Emitter::ExtPpuStatLine => w.set_bool(col, ppu_sigs.stat_line),
                 // IO / memory reads
                 Emitter::IoRead(addr) | Emitter::MemRead(addr) => {
@@ -551,14 +549,14 @@ impl Tracer {
                 }
                 // APU internal — channel 1
                 Emitter::Ch1Active => w.set_bool(col, channels.ch1.enabled.enabled),
-                Emitter::Ch1FreqCnt => w.set_u16(col, channels.ch1.frequency_timer),
+                Emitter::Ch1FreqCnt => w.set_u16(col, channels.ch1.divider.counter),
                 Emitter::Ch1EnvVol => w.set_u8(col, channels.ch1.current_volume),
                 Emitter::Ch1Phase => w.set_u8(col, channels.ch1.wave_duty_position),
                 Emitter::Ch1SweepShadow => w.set_u16(col, channels.ch1.shadow_frequency),
                 Emitter::Ch1LenCnt => w.set_u8(col, channels.ch1.length_counter as u8),
                 // APU internal — channel 2
                 Emitter::Ch2Active => w.set_bool(col, channels.ch2.enabled.enabled),
-                Emitter::Ch2FreqCnt => w.set_u16(col, channels.ch2.frequency_timer),
+                Emitter::Ch2FreqCnt => w.set_u16(col, channels.ch2.divider.counter),
                 Emitter::Ch2EnvVol => w.set_u8(col, channels.ch2.current_volume),
                 Emitter::Ch2Phase => w.set_u8(col, channels.ch2.wave_duty_position),
                 Emitter::Ch2LenCnt => w.set_u8(col, channels.ch2.length_counter as u8),

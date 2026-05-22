@@ -153,7 +153,9 @@ impl Audio {
     #[cfg(feature = "gbtrace")]
     pub fn from_snapshot(snap: &gbtrace::snapshot::ApuSnapshot, wave_ram: [u8; 16]) -> Self {
         use channels::noise::FrequencyAndRandomness;
-        use channels::registers::{Signed11, VolumeAndEnvelope, WaveformAndInitialLength};
+        use channels::registers::{
+            PeriodDivider, Prescaler, Signed11, VolumeAndEnvelope, WaveformAndInitialLength,
+        };
         use channels::wave::Volume as WaveVolume;
         use channels::{
             Enabled,
@@ -175,7 +177,8 @@ impl Audio {
                 volume_and_envelope: VolumeAndEnvelope(snap.ch1_vol_env),
                 length_enabled: snap.ch1_length_enabled,
                 period: Signed11(snap.ch1_period),
-                frequency_timer: 0,
+                prescaler: Prescaler::default(),
+                divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 current_volume: 0,
                 envelope_timer: snap.ch1_envelope_timer,
@@ -195,7 +198,8 @@ impl Audio {
                 volume_and_envelope: VolumeAndEnvelope(snap.ch2_vol_env),
                 length_enabled: snap.ch2_length_enabled,
                 period: Signed11(snap.ch2_period),
-                frequency_timer: 0,
+                prescaler: Prescaler::default(),
+                divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 current_volume: 0,
                 envelope_timer: snap.ch2_envelope_timer,

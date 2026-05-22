@@ -1,8 +1,8 @@
 use super::{
     Enabled,
     registers::{
-        EnvelopeDirection, PeriodHighAndControl, Signed11, VolumeAndEnvelope,
-        WaveformAndInitialLength,
+        EnvelopeDirection, PeriodDivider, PeriodHighAndControl, Prescaler, Signed11,
+        VolumeAndEnvelope, WaveformAndInitialLength,
     },
 };
 
@@ -29,7 +29,8 @@ pub struct PulseChannel {
     pub length_enabled: bool,
     pub period: Signed11,
 
-    pub frequency_timer: u16,
+    pub prescaler: Prescaler,
+    pub divider: PeriodDivider,
     pub wave_duty_position: u8,
     pub current_volume: u8,
     pub envelope_timer: u8,
@@ -49,7 +50,8 @@ impl Default for PulseChannel {
             length_enabled: false,
             period: (-1).into(),
 
-            frequency_timer: 0,
+            prescaler: Prescaler::default(),
+            divider: PeriodDivider::default(),
             wave_duty_position: 0,
             current_volume: 0,
             envelope_timer: 0,
@@ -68,7 +70,8 @@ impl PulseChannel {
             length_enabled: false,
             period: (0).into(),
 
-            frequency_timer: 0,
+            prescaler: Prescaler::default(),
+            divider: PeriodDivider::default(),
             wave_duty_position: 0,
             current_volume: 0,
             envelope_timer: 0,
@@ -135,7 +138,7 @@ impl PulseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.frequency_timer = (2048 - self.period.0) * 4;
+        self.divider.trigger_reload(self.period.0);
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
 
@@ -146,12 +149,10 @@ impl PulseChannel {
     }
 
     pub fn tcycle(&mut self) {
-        if self.frequency_timer > 0 {
-            self.frequency_timer -= 1;
-        }
-        if self.frequency_timer == 0 {
-            self.frequency_timer = (2048 - self.period.0) * 4;
-            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+        if self.prescaler.tcycle() && self.enabled.enabled {
+            if self.divider.tick(self.period.0) {
+                self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            }
         }
     }
 
