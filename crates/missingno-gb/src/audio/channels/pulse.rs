@@ -48,7 +48,7 @@ impl Default for PulseChannel {
             waveform_and_initial_length: WaveformAndInitialLength(0x3f),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
-            period: (-1).into(),
+            period: Signed11(0x7FF),
 
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),

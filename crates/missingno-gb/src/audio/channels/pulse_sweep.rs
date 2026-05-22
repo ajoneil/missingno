@@ -55,7 +55,7 @@ impl Default for PulseSweepChannel {
             waveform_and_initial_length: WaveformAndInitialLength(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0xf3),
             length_enabled: false,
-            period: (-1).into(),
+            period: Signed11(0x7FF),
 
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
