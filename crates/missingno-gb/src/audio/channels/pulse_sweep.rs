@@ -34,6 +34,14 @@ pub struct PulseSweepChannel {
     pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
+    /// DUWO — duty PWM latch captured on each natural-overflow `ch1_frst↑`.
+    /// Holds the channel's emitted bit between overflows. Spec §14.6.1.
+    pub pwm_latch: bool,
+    /// Trigger reload synchroniser: NR14 writes set this to 1, the next
+    /// prescaler wrap promotes it to 2, the wrap after that applies the
+    /// reload. Models the `ch1_restart` DFF that captures at the next
+    /// `ch1_1mhz↑` after the NR14 write. Spec §14.5 / §14.5.1.
+    pub pending_trigger_sync: u8,
     pub current_volume: u8,
     pub envelope_timer: u8,
     pub length_counter: u16,
@@ -64,6 +72,8 @@ impl Default for PulseSweepChannel {
             prescaler: Prescaler { counter: 1 },     // (calo, ajer) = (0, 1)
             divider: PeriodDivider { counter: 0x7F9 }, // 6 ticks below natural overflow
             wave_duty_position: 2,                   // duty step counter (dape, eros, esut) = 010
+            pwm_latch: false,                        // duwo: boot ROM's last overflow captured pattern[1] = 0 (50%)
+            pending_trigger_sync: 0,
             current_volume: 0,                       // envelope decayed
             envelope_timer: 0,
             length_counter: 0,
@@ -89,6 +99,8 @@ impl PulseSweepChannel {
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
+            pwm_latch: false,
+            pending_trigger_sync: 0,
             current_volume: 0,
             envelope_timer: 0,
             length_counter,
@@ -168,7 +180,11 @@ impl PulseSweepChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.divider.trigger_reload(self.period.0);
+        // ch1_restart synchroniser: don't reload the divider directly.
+        // The reload happens at the next prescaler wrap (= next chN_1mhz↑
+        // edge). If a natural overflow lands on the same wrap, it fires
+        // first (spec §14.5.1 — pos_1 vs pos_2 asymmetry).
+        self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
 
@@ -202,8 +218,33 @@ impl PulseSweepChannel {
     }
 
     pub fn tcycle(&mut self) {
-        if self.prescaler.tcycle() && self.enabled.enabled && self.divider.tick(self.period.0) {
+        if !self.prescaler.tcycle() || !self.enabled.enabled {
+            return;
+        }
+        // Prescaler wrapped: this is the chN_1mhz↑ equivalent.
+        // One divider operation per wrap — either a trigger reload, a
+        // natural overflow, or a plain count.
+        if self.pending_trigger_sync >= 2 {
+            // ch1_restart synchroniser fires this wrap.
+            // dyru async-resets COMY before cala can clock, suppressing
+            // any natural-overflow capture this wrap (spec §14.5.1).
+            self.divider.counter = (self.period.0) & 0x7FF;
+            self.pending_trigger_sync = 0;
+        } else if self.divider.counter >= 0x7FF {
+            // Natural overflow: capture duwo at pre-advance counter,
+            // then advance the duty step counter and reload divider.
+            let duty = self.waveform_and_initial_length.waveform() as usize;
+            self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.divider.counter = (self.period.0) & 0x7FF;
+        } else {
+            self.divider.counter += 1;
+        }
+        // Advance the trigger synchroniser one stage: NR14 writes set
+        // pending=1 during the M-cycle's CPU phase; the wrap that fired
+        // this tcycle promotes it to 2; the NEXT wrap applies it.
+        if self.pending_trigger_sync == 1 {
+            self.pending_trigger_sync = 2;
         }
     }
 
@@ -275,8 +316,11 @@ impl PulseSweepChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        let duty = self.waveform_and_initial_length.waveform() as usize;
-        let output = DUTY_TABLE[duty][self.wave_duty_position as usize];
+        // DUWO holds the duty pattern bit captured at the last natural
+        // overflow (spec §14.6.1). The combinational chN_pwm output that
+        // reflects the current counter position is NOT what feeds the
+        // DAC — only the latched value does.
+        let output = if self.pwm_latch { 1u8 } else { 0 };
         output as f32 * self.current_volume as f32 / 15.0
     }
 }

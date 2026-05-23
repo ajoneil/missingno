@@ -32,6 +32,11 @@ pub struct PulseChannel {
     pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
+    /// DOME — CH2 mirror of CH1's DUWO PWM latch. Spec §14.6.2.
+    pub pwm_latch: bool,
+    /// CH2's ch2_restart synchroniser stage; mirror of CH1's
+    /// `pending_trigger_sync`. Spec §14.5.1.
+    pub pending_trigger_sync: u8,
     pub current_volume: u8,
     pub envelope_timer: u8,
     pub length_counter: u16,
@@ -56,6 +61,8 @@ impl Default for PulseChannel {
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
+            pwm_latch: false,
+            pending_trigger_sync: 0,
             current_volume: 0,
             envelope_timer: 0,
             length_counter: 0,
@@ -76,6 +83,8 @@ impl PulseChannel {
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
+            pwm_latch: false,
+            pending_trigger_sync: 0,
             current_volume: 0,
             envelope_timer: 0,
             length_counter,
@@ -141,7 +150,8 @@ impl PulseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.divider.trigger_reload(self.period.0);
+        // ch2_restart synchroniser: see CH1 trigger() / spec §14.5.1.
+        self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
 
@@ -152,8 +162,22 @@ impl PulseChannel {
     }
 
     pub fn tcycle(&mut self) {
-        if self.prescaler.tcycle() && self.enabled.enabled && self.divider.tick(self.period.0) {
+        if !self.prescaler.tcycle() || !self.enabled.enabled {
+            return;
+        }
+        if self.pending_trigger_sync >= 2 {
+            self.divider.counter = (self.period.0) & 0x7FF;
+            self.pending_trigger_sync = 0;
+        } else if self.divider.counter >= 0x7FF {
+            let duty = self.waveform_and_initial_length.waveform() as usize;
+            self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.divider.counter = (self.period.0) & 0x7FF;
+        } else {
+            self.divider.counter += 1;
+        }
+        if self.pending_trigger_sync == 1 {
+            self.pending_trigger_sync = 2;
         }
     }
 
@@ -196,8 +220,8 @@ impl PulseChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        let duty = self.waveform_and_initial_length.waveform() as usize;
-        let output = DUTY_TABLE[duty][self.wave_duty_position as usize];
+        // DOME latch (§14.6.2 mirror of CH1 DUWO).
+        let output = if self.pwm_latch { 1u8 } else { 0 };
         output as f32 * self.current_volume as f32 / 15.0
     }
 }
