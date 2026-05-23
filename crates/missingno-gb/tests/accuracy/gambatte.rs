@@ -277,6 +277,10 @@ fn extract_expected_audio(filename: &str) -> bool {
 /// quantization noise).
 fn run_gambatte_audio_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
+    // Discard any audio accumulated during boot ROM execution (e.g. the
+    // Nintendo chime). The test only cares about what the ROM itself
+    // produces during its TCYCLES budget.
+    let _ = run.gb.drain_audio_samples();
     common::run_for_tcycles(&mut run, TCYCLES);
 
     let samples = run.gb.drain_audio_samples();
