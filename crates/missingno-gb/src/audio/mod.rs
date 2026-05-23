@@ -32,6 +32,9 @@ pub struct Audio {
     pub(crate) prev_div_apu_bit: bool,
     pub(crate) frame_sequencer_step: u8,
     sample_counter: f32,
+    sample_accum_left: f32,
+    sample_accum_right: f32,
+    sample_accum_count: u32,
     sample_buffer: Vec<(f32, f32)>,
 }
 
@@ -47,6 +50,9 @@ impl Audio {
             prev_div_apu_bit: false, // matches initial internal_counter (0x2AF3) bit 10
             frame_sequencer_step: 0,
             sample_counter: 0.0,
+            sample_accum_left: 0.0,
+            sample_accum_right: 0.0,
+            sample_accum_count: 0,
             sample_buffer: Vec::new(),
         }
     }
@@ -62,6 +68,9 @@ impl Audio {
             prev_div_apu_bit: false, // internal_counter starts at 0, bit 12 = 0
             frame_sequencer_step: 0,
             sample_counter: 0.0,
+            sample_accum_left: 0.0,
+            sample_accum_right: 0.0,
+            sample_accum_count: 0,
             sample_buffer: Vec::new(),
         }
     }
@@ -90,12 +99,20 @@ impl Audio {
             return;
         }
 
-        // Advance channel frequency timers (4 T-cycles per M-cycle)
+        // Advance channel frequency timers (4 T-cycles per M-cycle) and
+        // accumulate mixer output once per T-cycle. Box-filter averaging
+        // over the output sample window band-limits the channel state
+        // transitions (which can change at T-cycle granularity) before
+        // the 44.1 kHz host rate sees them.
         for t in 0..4u8 {
             self.channels.ch1.tcycle();
             self.channels.ch2.tcycle();
             self.channels.ch3.tcycle(t);
             self.channels.ch4.tcycle();
+            let (l, r) = self.mix();
+            self.sample_accum_left += l;
+            self.sample_accum_right += r;
+            self.sample_accum_count += 1;
         }
 
         // Frame sequencer: driven by falling edge of bit 12 in system counter (DIV-APU)
@@ -105,12 +122,18 @@ impl Audio {
         }
         self.prev_div_apu_bit = div_apu_bit;
 
-        // Downsample to output rate
+        // Push the box-filtered average when the host sample window closes.
         self.sample_counter += 1.0;
         if self.sample_counter >= M_CYCLES_PER_SAMPLE {
             self.sample_counter -= M_CYCLES_PER_SAMPLE;
-            let sample = self.mix();
-            self.sample_buffer.push(sample);
+            let count = self.sample_accum_count as f32;
+            self.sample_buffer.push((
+                self.sample_accum_left / count,
+                self.sample_accum_right / count,
+            ));
+            self.sample_accum_left = 0.0;
+            self.sample_accum_right = 0.0;
+            self.sample_accum_count = 0;
         }
     }
 
@@ -247,6 +270,9 @@ impl Audio {
             prev_div_apu_bit: snap.prev_div_apu_bit,
             frame_sequencer_step: snap.frame_sequencer_step,
             sample_counter: 0.0,
+            sample_accum_left: 0.0,
+            sample_accum_right: 0.0,
+            sample_accum_count: 0,
             sample_buffer: Vec::new(),
         }
     }
