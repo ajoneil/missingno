@@ -39,16 +39,19 @@ pub struct PulseChannel {
 
 impl Default for PulseChannel {
     fn default() -> Self {
+        // Post-boot state at PC=0x0100, per spec §11.5. Boot ROM doesn't
+        // drive CH2: DAC off, channel disabled, all internal counters at
+        // their post-reset zero state.
         Self {
             enabled: Enabled {
-                enabled: false,
+                enabled: false, // ch2_fdis = 1 (channel disabled)
                 output_left: true,
                 output_right: true,
             },
             waveform_and_initial_length: WaveformAndInitialLength(0x3f),
             volume_and_envelope: VolumeAndEnvelope(0),
             length_enabled: false,
-            period: Signed11(0x7FF),
+            period: Signed11(0), // CH2 NR23/NR24 never written by boot ROM; acc_d = 0
 
             prescaler: Prescaler::default(),
             divider: PeriodDivider::default(),

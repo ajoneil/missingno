@@ -45,9 +45,13 @@ pub struct PulseSweepChannel {
 
 impl Default for PulseSweepChannel {
     fn default() -> Self {
+        // Post-boot state at PC=0x0100, per spec §11.5 (FST-anchored via
+        // dmg-sim with the production DMG boot ROM). The boot ROM's
+        // Nintendo chime triggered CH1, ran the envelope to 0, and left
+        // the period divider mid-period.
         Self {
             enabled: Enabled {
-                enabled: true,
+                enabled: true, // ch1_fdis = 0 (channel running)
                 output_left: true,
                 output_right: true,
             },
@@ -55,12 +59,12 @@ impl Default for PulseSweepChannel {
             waveform_and_initial_length: WaveformAndInitialLength(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0xf3),
             length_enabled: false,
-            period: Signed11(0x7FF),
+            period: Signed11(0x7C1), // acc_d at handoff (= {NR14[2:0], NR13[7:0]} = {7, 0xC1})
 
-            prescaler: Prescaler::default(),
-            divider: PeriodDivider::default(),
-            wave_duty_position: 0,
-            current_volume: 0,
+            prescaler: Prescaler { counter: 1 },     // (calo, ajer) = (0, 1)
+            divider: PeriodDivider { counter: 0x7F9 }, // 6 ticks below natural overflow
+            wave_duty_position: 2,                   // duty step counter (dape, eros, esut) = 010
+            current_volume: 0,                       // envelope decayed
             envelope_timer: 0,
             length_counter: 0,
             shadow_frequency: 0,
