@@ -139,6 +139,12 @@ impl GameBoyColor {
         let tcycle = self.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
 
+        // APU prescaler tick (apuv↑). One per T-cycle rise — spec §14.5.2
+        // anchors AJER toggling on every master-clock rise. Channel
+        // dividers fire on their CALO↑ / cery↑ wrap within these ticks.
+        self.audio
+            .tcycle(self.timers.internal_counter(), tcycle.as_u8());
+
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
         }
@@ -375,7 +381,6 @@ impl GameBoyColor {
         }
 
         self.external.tick_decay();
-        self.audio.mcycle(self.timers.internal_counter());
     }
 
     fn recapture_interrupts(&mut self) {

@@ -61,6 +61,9 @@ impl GameBoyColor {
                 const X_WINDOW: u8 = 0b0000_0111;
                 (snapshot & !X_WINDOW) | (snapshot & live & X_WINDOW)
             }
+            // CH3 wave RAM: re-read live at latch to catch CH3 reads
+            // between drive-enable (T=2 fall) and latch (T=3 fall).
+            0xFF30..=0xFF3F => self.read(address),
             _ => snapshot,
         }
     }
