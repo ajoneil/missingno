@@ -165,7 +165,7 @@ impl PulseChannel {
         if !self.prescaler.tcycle() || !self.enabled.enabled {
             return;
         }
-        if self.pending_trigger_sync >= 2 {
+        if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
         } else if self.divider.counter >= 0x7FF {
@@ -175,9 +175,6 @@ impl PulseChannel {
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
             self.divider.counter += 1;
-        }
-        if self.pending_trigger_sync == 1 {
-            self.pending_trigger_sync = 2;
         }
     }
 

@@ -163,6 +163,12 @@ impl GameBoy {
         let tcycle = self.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
 
+        // APU prescaler tick (apuv↑). One per T-cycle rise — spec §14.5.2
+        // anchors AJER toggling on every master-clock rise. Channel
+        // dividers fire on their CALO↑ / cery↑ wrap within these ticks.
+        self.audio
+            .tcycle(self.timers.internal_counter(), tcycle.as_u8());
+
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
         }
@@ -258,13 +264,6 @@ impl GameBoy {
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
         }
-
-        // APU runs at M-cycle boundary rise — per spec §14.5.2 the
-        // pulse-channel divider tick at ch1_1mhz↑ happens at T=1 atal↑
-        // (= start of M-cycle), BEFORE the M-cycle's CPU writes commit
-        // at T=3 fall. Running audio.mcycle here ensures the divider
-        // tick uses pre-write period for THIS M-cycle's tick.
-        self.audio.mcycle(self.timers.internal_counter());
 
         // Serial bit-5 fall lands IF.serial in this M-cycle's
         // data-phase window for same-M-cycle dispatch.

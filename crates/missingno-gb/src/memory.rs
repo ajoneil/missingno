@@ -340,6 +340,11 @@ impl GameBoy {
             // snapshot can be stale by the latch edge; re-read live.
             0xFF44 => self.read(address),
 
+            // CH3 wave RAM: bus briefly active when CH3 advances its
+            // wave_position. Re-read live at latch since CH3 may have
+            // ticked between drive-enable (T=2 fall) and latch (T=3 fall).
+            0xFF30..=0xFF3F => self.read(address),
+
             // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via
             // dmg_not_if1 cells with a bus-flux x-window during
             // mode-bit cascades. Resolve to AND of snapshot and live

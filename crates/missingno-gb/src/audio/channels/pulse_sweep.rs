@@ -221,13 +221,11 @@ impl PulseSweepChannel {
         if !self.prescaler.tcycle() || !self.enabled.enabled {
             return;
         }
-        // Prescaler wrapped: this is the chN_1mhz↑ equivalent.
-        // One divider operation per wrap — either a trigger reload, a
-        // natural overflow, or a plain count.
-        if self.pending_trigger_sync >= 2 {
-            // ch1_restart synchroniser fires this wrap.
-            // dyru async-resets COMY before cala can clock, suppressing
-            // any natural-overflow capture this wrap (spec §14.5.1).
+        // Prescaler wrapped (ch1_1mhz↑). Per spec §14.5.1, the trigger
+        // synchroniser ch1_restart and the divider reload both resolve
+        // on this same edge — dyru async-resets COMY before cala can
+        // clock, so a coincident natural overflow is suppressed.
+        if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
         } else if self.divider.counter >= 0x7FF {
@@ -239,12 +237,6 @@ impl PulseSweepChannel {
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
             self.divider.counter += 1;
-        }
-        // Advance the trigger synchroniser one stage: NR14 writes set
-        // pending=1 during the M-cycle's CPU phase; the wrap that fired
-        // this tcycle promotes it to 2; the NEXT wrap applies it.
-        if self.pending_trigger_sync == 1 {
-            self.pending_trigger_sync = 2;
         }
     }
 

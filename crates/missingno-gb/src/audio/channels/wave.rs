@@ -157,11 +157,10 @@ impl WaveChannel {
         if self.length_counter == 0 {
             self.length_counter = 256;
         }
-        // Extra delay on trigger before first sample read. Real hardware
-        // delays +6 T-cycles (SameBoy: +3 APU ticks). Our M-cycle batch model
-        // runs 4 T-cycles of audio in the same M-cycle as the trigger write,
-        // so the effective offset is +8 to compensate.
-        self.frequency_timer = (2048 - self.period.0) * 2 + 8;
+        // +6 T-cycle delay before CH3's frequency divider starts counting
+        // post-trigger. With per-T-cycle stepping, audio.tcycle on every
+        // rise() decrements the timer at the hardware rate.
+        self.frequency_timer = (2048 - self.period.0) * 2 + 6;
         self.wave_position = 0;
 
         if !self.dac_enabled {
@@ -229,61 +228,36 @@ impl Volume {
 }
 
 impl Audio {
-    /// Simulate T0 and T1 of the current M-cycle to check if CH3 reads a
-    /// sample on T1. On DMG, wave RAM is only accessible on the exact T-cycle
-    /// that CH3 reads. The CPU read/write happens at T1. Returns the byte
-    /// index into wave RAM if access succeeds, or None if it would return $FF.
-    fn ch3_wave_ram_access_byte(&self) -> Option<usize> {
-        let ch3 = &self.channels.ch3;
-        if !ch3.enabled.enabled {
-            return None;
-        }
-        let reload = (2048 - ch3.period.0) * 2;
-        let mut timer = ch3.frequency_timer;
-        let mut position = ch3.wave_position;
-        // T0: decrement
-        if timer > 0 {
-            timer -= 1;
-        }
-        if timer == 0 {
-            timer = reload;
-            position = (position + 1) % 32;
-        }
-        // T1: decrement — if it hits 0, CH3 reads on T1
-        if timer > 0 {
-            timer -= 1;
-        }
-        if timer == 0 {
-            // CH3 advances position and reads the byte at the new position.
-            position = (position + 1) % 32;
-            Some(position as usize / 2)
-        } else {
-            None
-        }
-    }
-
+    /// DMG wave RAM bus alignment. Best-effort approximation pending
+    /// §14.8 — the spec covers CH3's prescaler structure (single /2
+    /// stage, 2 MHz divider) but defers the read-enable T-cycle phase,
+    /// trigger-delay gate mechanism, and corruption rule to a separate
+    /// measurement. The model here: the wave RAM bus is driven briefly
+    /// around CH3's `wave_position` advance; the CPU's bus drive window
+    /// is T=2 fall (drive-enable) to T=3 fall (latch), so a CH3 read at
+    /// T=2 or T=3 falls within that window. `bus_value_at_latch`
+    /// re-evaluates so T=3 reads are visible at latch time.
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
         let ch3 = &self.channels.ch3;
-        if ch3.enabled.enabled {
-            // DMG: wave RAM can only be read on the same T-cycle CH3 reads.
-            if let Some(byte_idx) = self.ch3_wave_ram_access_byte() {
-                ch3.ram[byte_idx]
-            } else {
-                0xFF
-            }
+        if !ch3.enabled.enabled {
+            return ch3.ram[offset as usize];
+        }
+        if matches!(ch3.sample_read_tcycle, 2 | 3) {
+            ch3.ram[ch3.wave_position as usize / 2]
         } else {
-            ch3.ram[offset as usize]
+            0xFF
         }
     }
 
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        if self.channels.ch3.enabled.enabled {
-            // DMG: wave RAM can only be written on the same T-cycle CH3 reads.
-            if let Some(byte_idx) = self.ch3_wave_ram_access_byte() {
-                self.channels.ch3.ram[byte_idx] = value;
-            }
-        } else {
-            self.channels.ch3.ram[offset as usize] = value;
+        let ch3 = &mut self.channels.ch3;
+        if !ch3.enabled.enabled {
+            ch3.ram[offset as usize] = value;
+            return;
+        }
+        if matches!(ch3.sample_read_tcycle, 2 | 3) {
+            let byte_idx = ch3.wave_position as usize / 2;
+            ch3.ram[byte_idx] = value;
         }
     }
 }

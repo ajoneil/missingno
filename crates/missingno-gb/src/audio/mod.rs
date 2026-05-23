@@ -17,8 +17,8 @@ pub enum Register {
 }
 
 const SAMPLE_RATE: f32 = 44100.0;
-const M_CYCLES_PER_SECOND: f32 = 1_048_576.0;
-const M_CYCLES_PER_SAMPLE: f32 = M_CYCLES_PER_SECOND / SAMPLE_RATE;
+const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
+const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
 const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
 
 #[derive(Clone)]
@@ -91,7 +91,13 @@ impl Audio {
         self.volume_right
     }
 
-    pub fn mcycle(&mut self, div_counter: u16) {
+    /// One T-cycle of APU work, called at the master-clock rise of every
+    /// T-cycle. Channel prescalers advance one apuv↑ tick per call;
+    /// CH1/CH2 dividers fire on their CALO↑ wrap, CH3 on its cery↑ wrap,
+    /// CH4 on its frequency_timer expiry. Box-filter mixer output is
+    /// accumulated each call and pushed once per ~95 T-cycles to match
+    /// the 44.1 kHz host rate.
+    pub fn tcycle(&mut self, div_counter: u16, t_index: u8) {
         if !self.enabled {
             // Still track DIV-APU bit even when disabled, so we have the
             // correct previous state when APU is re-enabled.
@@ -99,23 +105,20 @@ impl Audio {
             return;
         }
 
-        // Advance channel frequency timers (4 T-cycles per M-cycle) and
-        // accumulate mixer output once per T-cycle. Box-filter averaging
-        // over the output sample window band-limits the channel state
-        // transitions (which can change at T-cycle granularity) before
-        // the 44.1 kHz host rate sees them.
-        for t in 0..4u8 {
-            self.channels.ch1.tcycle();
-            self.channels.ch2.tcycle();
-            self.channels.ch3.tcycle(t);
-            self.channels.ch4.tcycle();
-            let (l, r) = self.mix();
-            self.sample_accum_left += l;
-            self.sample_accum_right += r;
-            self.sample_accum_count += 1;
-        }
+        self.channels.ch1.tcycle();
+        self.channels.ch2.tcycle();
+        self.channels.ch3.tcycle(t_index);
+        self.channels.ch4.tcycle();
+        let (l, r) = self.mix();
+        self.sample_accum_left += l;
+        self.sample_accum_right += r;
+        self.sample_accum_count += 1;
 
-        // Frame sequencer: driven by falling edge of bit 12 in system counter (DIV-APU)
+        // Frame sequencer: driven by falling edge of bit 12 in system
+        // counter (DIV-APU). The timer counter only updates at T=0
+        // (timers.mcycle at boundary-rise), so the edge can only fire
+        // there — but checking every T-cycle is harmless since
+        // prev_div_apu_bit only changes when the bit does.
         let div_apu_bit = div_counter & DIV_APU_BIT != 0;
         if self.prev_div_apu_bit && !div_apu_bit {
             self.tick_frame_sequencer();
@@ -124,8 +127,8 @@ impl Audio {
 
         // Push the box-filtered average when the host sample window closes.
         self.sample_counter += 1.0;
-        if self.sample_counter >= M_CYCLES_PER_SAMPLE {
-            self.sample_counter -= M_CYCLES_PER_SAMPLE;
+        if self.sample_counter >= T_CYCLES_PER_SAMPLE {
+            self.sample_counter -= T_CYCLES_PER_SAMPLE;
             let count = self.sample_accum_count as f32;
             self.sample_buffer.push((
                 self.sample_accum_left / count,

@@ -119,11 +119,16 @@ pub struct Prescaler {
 }
 
 impl Prescaler {
-    /// Advance by one T-cycle. Returns true on the wrap edge — the
-    /// `chN_1mhz` rising edge that clocks the period divider.
+    /// Advance by one T-cycle (apuv↑ master clock rise). The counter
+    /// packs (CALO << 1) | AJER. AJER toggles every tick; CALO toggles
+    /// when AJER falls. Returns true on the CALO↑ edge — the
+    /// `chN_1mhz↑` rising edge that clocks the period divider. With
+    /// the post-boot counter=1 anchor ((calo, ajer)=(0,1) per §11.5),
+    /// the CALO↑ edge lands at T=0 atal↑ of each M-cycle (= spec
+    /// "T1 atal↑" under 1-indexed T-cycle naming).
     pub fn tcycle(&mut self) -> bool {
         self.counter = (self.counter + 1) & 0b11;
-        self.counter == 0
+        self.counter == 2
     }
 
     pub fn power_off(&mut self) {
