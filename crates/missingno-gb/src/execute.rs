@@ -259,6 +259,13 @@ impl GameBoy {
             self.interrupts.request(interrupt);
         }
 
+        // APU runs at M-cycle boundary rise — per spec §14.5.2 the
+        // pulse-channel divider tick at ch1_1mhz↑ happens at T=1 atal↑
+        // (= start of M-cycle), BEFORE the M-cycle's CPU writes commit
+        // at T=3 fall. Running audio.mcycle here ensures the divider
+        // tick uses pre-write period for THIS M-cycle's tick.
+        self.audio.mcycle(self.timers.internal_counter());
+
         // Serial bit-5 fall lands IF.serial in this M-cycle's
         // data-phase window for same-M-cycle dispatch.
         let counter = self.timers.internal_counter();
@@ -450,7 +457,7 @@ impl GameBoy {
     }
 
     /// M-cycle-boundary subsystems on the falling edge: OAM DMA byte
-    /// transfer, external-bus decay, audio mcycle.
+    /// transfer, external-bus decay. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
         // `matu` (DMA byte counter) is clocked by `dma_phi = NOT(data_phase)`.
         // While the halt RS-latch `ynkw` is set, `data_phase` is held LOW,
@@ -502,7 +509,6 @@ impl GameBoy {
         }
 
         self.external.tick_decay();
-        self.audio.mcycle(self.timers.internal_counter());
     }
 
     /// Re-capture interrupt state after bus writes and M-cycle
