@@ -175,6 +175,14 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
                 });
             respond_json(request, response);
         }
+        (&Method::Post, path) if path.starts_with("/trace-apu/") => {
+            let n: usize = path
+                .trim_start_matches("/trace-apu/")
+                .parse()
+                .unwrap_or(0);
+            let trace = trace_apu(debugger, n);
+            respond_json(request, trace);
+        }
         (&Method::Post, "/step-frame") => {
             debugger.step_frame();
             let mut response = serde_json::to_value(cpu_state(debugger.game_boy())).unwrap();
@@ -911,6 +919,58 @@ fn timers_state(gb: &GameBoy) -> TimersState {
         internal_counter: format!("{internal:04x}"),
         internal_counter_decimal: internal,
     }
+}
+
+fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
+    // Capture per-half-T CH3 state across `n` step-phase calls. Used
+    // by /trace-apu/{n} for side-by-side comparison against the
+    // dmg-sim FST. The first row records the state BEFORE any step
+    // (step=0). The remaining rows record state AFTER each successive
+    // step-phase, with `phase=high` meaning rise just ran.
+    fn snapshot(debugger: &Debugger, step: usize, phase: &str) -> serde_json::Value {
+        let gb = debugger.game_boy();
+        let cpu = gb.cpu();
+        let audio = gb.audio();
+        let ch3 = &audio.channels().ch3;
+        serde_json::json!({
+            "step": step,
+            "phase": phase,
+            "pc": cpu.bus_counter,
+            "master_enabled": audio.enabled(),
+            "ch3_2mhz": ch3.ch3_2mhz,
+            "gavu": ch3.gavu,
+            "foba": ch3.foba,
+            "ch3_restart": ch3.ch3_restart,
+            "gyta": ch3.gyta,
+            "ch3_frst": ch3.ch3_frst,
+            "ch3_fdis": ch3.ch3_fdis,
+            "busa": ch3.busa,
+            "bano": ch3.bano,
+            "azus": ch3.azus,
+            "azet": ch3.azet,
+            "wave_position": ch3.wave_position,
+            "frequency_timer": ch3.frequency_timer,
+            "period": ch3.period.0,
+            "enabled": ch3.enabled.enabled,
+            "dac_enabled": ch3.dac_enabled,
+        })
+    }
+
+    let mut rows = Vec::with_capacity(n + 1);
+    let initial_phase = match debugger.game_boy().clock_phase() {
+        ClockPhase::High => "boundary-high",
+        ClockPhase::Low => "boundary-low",
+    };
+    rows.push(snapshot(debugger, 0, initial_phase));
+    for step in 1..=n {
+        debugger.step_phase();
+        let phase = match debugger.game_boy().clock_phase() {
+            ClockPhase::High => "high",
+            ClockPhase::Low => "low",
+        };
+        rows.push(snapshot(debugger, step, phase));
+    }
+    serde_json::Value::Array(rows)
 }
 
 fn audio_state(gb: &GameBoy) -> serde_json::Value {
