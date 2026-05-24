@@ -197,6 +197,12 @@ impl GameBoy {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
+        // APU half-T-cycle work on apu_4mhz↑ (mid-T-cycle) — BUSA/AZUS
+        // DFFs in CH3's wave_data_latch synchroniser per §14.8.4. Must
+        // settle before the T=2 drive-enable so wave-RAM reads see the
+        // current wave_data_latch state.
+        self.audio.fall_sync();
+
         if tcycle.as_u8() == 2 {
             self.apply_read_drive_enable();
         }

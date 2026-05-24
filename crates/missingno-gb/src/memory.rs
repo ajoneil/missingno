@@ -340,9 +340,10 @@ impl GameBoy {
             // snapshot can be stale by the latch edge; re-read live.
             0xFF44 => self.read(address),
 
-            // CH3 wave RAM: bus briefly active when CH3 advances its
-            // wave_position. Re-read live at latch since CH3 may have
-            // ticked between drive-enable (T=2 fall) and latch (T=3 fall).
+            // CH3 wave RAM: the wave_data_latch synchroniser (§14.8.4)
+            // can transition between T=2 drive-enable and T=3 latch.
+            // Re-read live so windows opening late in the M-cycle are
+            // captured.
             0xFF30..=0xFF3F => self.read(address),
 
             // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via

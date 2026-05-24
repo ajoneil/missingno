@@ -164,6 +164,10 @@ impl GameBoyColor {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
+        // APU half-T-cycle work on apu_4mhz↑ — CH3 wave_data_latch
+        // synchroniser stages BUSA / AZUS (§14.8.4).
+        self.audio.fall_sync();
+
         if tcycle.as_u8() == 2 {
             self.apply_read_drive_enable();
         }

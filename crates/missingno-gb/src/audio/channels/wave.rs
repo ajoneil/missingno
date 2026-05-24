@@ -25,10 +25,23 @@ pub struct WaveChannel {
     pub frequency_timer: u16,
     pub wave_position: u8,
     pub length_counter: u16,
-    /// Which T-cycle (0-3) within the last M-cycle batch CH3 read a sample on.
-    /// Set to 0xFF if no read happened in the last M-cycle. Used for DMG wave
-    /// RAM access timing: CPU can only access wave RAM on the same T-cycle.
-    pub sample_read_tcycle: u8,
+    /// `ch3_frst` overflow capture pulse — high from `ch3_frst↑` to
+    /// `ch3_frst↓` (one `ch3_2mhz` cycle = 2 T-cycles). Drives the
+    /// BUSA/BANO/AZUS synchroniser. Spec §14.8.6.
+    pub ch3_frst: bool,
+    /// Countdown to `ch3_frst↓` after `ch3_frst↑` — 2 T-cycles of held
+    /// high (= one `ch3_2mhz` cycle). 0 = idle.
+    pub ch3_frst_remaining: u8,
+    /// `busa` DFF (§14.8.4) — captures `ch3_frst` on apu_4mhz↑ (our
+    /// fall edge). First synchroniser stage.
+    pub busa: bool,
+    /// `bano` DFF — captures `busa` on cozy↑ (our rise edge). Second
+    /// stage.
+    pub bano: bool,
+    /// `azus` DFF — captures `bano` on apu_4mhz↑ (our fall edge).
+    /// Buffered to `wave_data_latch`. Third stage; while true the
+    /// wave-RAM block drives the bus.
+    pub azus: bool,
 }
 
 impl Default for WaveChannel {
@@ -48,7 +61,11 @@ impl Default for WaveChannel {
             frequency_timer: 0,
             wave_position: 0,
             length_counter: 0,
-            sample_read_tcycle: 0xFF,
+            ch3_frst: false,
+            ch3_frst_remaining: 0,
+            busa: false,
+            bano: false,
+            azus: false,
         }
     }
 }
@@ -68,7 +85,11 @@ impl WaveChannel {
             frequency_timer: 0,
             wave_position: 0,
             length_counter,
-            sample_read_tcycle: 0xFF,
+            ch3_frst: false,
+            ch3_frst_remaining: 0,
+            busa: false,
+            bano: false,
+            azus: false,
         };
     }
 
@@ -133,15 +154,14 @@ impl WaveChannel {
     }
 
     pub fn trigger(&mut self) {
-        // DMG: triggering while CH3 is active corrupts wave RAM, but only
-        // when the re-trigger coincides with CH3's frequency timer having
-        // just expired. In SameBoy this is `sample_countdown == 0`. In our
-        // T-cycle model, the timer reloads immediately on expiry. A read on
-        // T3 (last T-cycle of the batch) means the timer reloaded and no
-        // further decrements happened, so frequency_timer == reload value.
-        let reload = (2048 - self.period.0) * 2;
-        if self.enabled.enabled && self.frequency_timer == reload {
-            let byte_pos = ((self.wave_position + 1) / 2) as usize & 0xF;
+        // DMG wave-RAM corruption (§14.8.5): ch3_restart↑ async-resets
+        // wave_position to 0, but if the SRAM bit-lines still hold the
+        // prior byte's value (wave_data_latch high), the wordline at
+        // address 0 captures the byte at the pre-reset position. Pan
+        // Docs Audio_details.html: byte_pos < 4 copies one byte; else
+        // a 4-byte aligned block.
+        if self.enabled.enabled && self.azus {
+            let byte_pos = (self.wave_position as usize) / 2;
             if byte_pos < 4 {
                 self.ram[0] = self.ram[byte_pos];
             } else {
@@ -157,29 +177,63 @@ impl WaveChannel {
         if self.length_counter == 0 {
             self.length_counter = 256;
         }
-        // +6 T-cycle delay before CH3's frequency divider starts counting
-        // post-trigger. With per-T-cycle stepping, audio.tcycle on every
-        // rise() decrements the timer at the hardware rate.
+        // ch3_restart synchroniser delay per §14.8.3: ~6 T-cycles from
+        // apu_wr↑ to ch3_restart↑, plus 2 T-cycles ch3_restart held →
+        // the divider starts counting ~8 T-cycles after the write,
+        // but apu_wr↑ leads our trigger() call site (T=3 fall =
+        // apu_wr↓) by 1.5 T-cycles. Net: +6 T-cycles before our
+        // frequency_timer begins natural countdown.
         self.frequency_timer = (2048 - self.period.0) * 2 + 6;
         self.wave_position = 0;
+        // ch3_frst / wave_data_latch chain is async-reset by ch3_restart
+        // — clear all synchroniser state.
+        self.ch3_frst = false;
+        self.ch3_frst_remaining = 0;
+        self.busa = false;
+        self.bano = false;
+        self.azus = false;
 
         if !self.dac_enabled {
             self.enabled.enabled = false;
         }
     }
 
-    pub fn tcycle(&mut self, t_index: u8) {
-        if t_index == 0 {
-            self.sample_read_tcycle = 0xFF; // reset at start of M-cycle
+    pub fn tcycle(&mut self, _t_index: u8) {
+        // BANO captures BUSA at cozy↑ (= apu_4mhz↓ = master-clock rise).
+        // Second of three apu_4mhz edges in the wave_data_latch chain.
+        self.bano = self.busa;
+
+        // ch3_frst self-clears one ch3_2mhz cycle (2 T-cycles) after
+        // ch3_frst↑ via the hupa = AND(huno, ch3_2mhz) self-clear.
+        if self.ch3_frst_remaining > 0 {
+            self.ch3_frst_remaining -= 1;
+            if self.ch3_frst_remaining == 0 {
+                self.ch3_frst = false;
+            }
         }
+
         if self.frequency_timer > 0 {
             self.frequency_timer -= 1;
         }
         if self.frequency_timer == 0 {
             self.frequency_timer = (2048 - self.period.0) * 2;
             self.wave_position = (self.wave_position + 1) % 32;
-            self.sample_read_tcycle = t_index;
+            // ch3_frst↑ — held until next ch3_2mhz↑ self-clear (§14.8.6).
+            // Phase-dependent (~1-2 T-cycles per FST trace); 1 rise-tick
+            // gives wave_data_latch the spec-anchored ~1 T-cycle width.
+            self.ch3_frst = true;
+            self.ch3_frst_remaining = 1;
         }
+    }
+
+    /// Half-T-cycle synchroniser step on master-clock fall edge
+    /// (= apu_4mhz↑ at mid-T-cycle). BUSA captures `ch3_frst`, AZUS
+    /// captures BANO. Together with BANO's rise-edge capture in
+    /// `tcycle()`, this implements the 3-stage `busa → bano → azus`
+    /// chain that gates `wave_data_latch` per §14.8.4.
+    pub fn fall_sync(&mut self) {
+        self.azus = self.bano;
+        self.busa = self.ch3_frst;
     }
 
     pub fn tick_length(&mut self) {
@@ -228,21 +282,20 @@ impl Volume {
 }
 
 impl Audio {
-    /// DMG wave RAM bus alignment. Best-effort approximation pending
-    /// §14.8 — the spec covers CH3's prescaler structure (single /2
-    /// stage, 2 MHz divider) but defers the read-enable T-cycle phase,
-    /// trigger-delay gate mechanism, and corruption rule to a separate
-    /// measurement. The model here: the wave RAM bus is driven briefly
-    /// around CH3's `wave_position` advance; the CPU's bus drive window
-    /// is T=2 fall (drive-enable) to T=3 fall (latch), so a CH3 read at
-    /// T=2 or T=3 falls within that window. `bus_value_at_latch`
-    /// re-evaluates so T=3 reads are visible at latch time.
+    /// DMG wave-RAM bus alignment per §14.8.4. The wave-RAM SRAM array
+    /// drives the bus only while `wave_data_latch` (= AZUS) is high.
+    /// The strobe rises ~1.5 T-cycles after `ch3_frst↑` (the BUSA →
+    /// BANO → AZUS synchroniser) and is ~1 T-cycle wide. Accesses
+    /// outside that window see a floating bus → 0xFF.
+    /// `bus_value_at_latch` re-evaluates so accesses landing late in
+    /// the M-cycle still see windows that opened after the
+    /// drive-enable snapshot was taken.
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
         let ch3 = &self.channels.ch3;
         if !ch3.enabled.enabled {
             return ch3.ram[offset as usize];
         }
-        if matches!(ch3.sample_read_tcycle, 2 | 3) {
+        if ch3.azus {
             ch3.ram[ch3.wave_position as usize / 2]
         } else {
             0xFF
@@ -255,7 +308,7 @@ impl Audio {
             ch3.ram[offset as usize] = value;
             return;
         }
-        if matches!(ch3.sample_read_tcycle, 2 | 3) {
+        if ch3.azus {
             let byte_idx = ch3.wave_position as usize / 2;
             ch3.ram[byte_idx] = value;
         }

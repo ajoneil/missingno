@@ -140,6 +140,16 @@ impl Audio {
         }
     }
 
+    /// Half-T-cycle audio work on master-clock fall (= apu_4mhz↑ at
+    /// mid-T-cycle). Currently used only for CH3's wave_data_latch
+    /// synchroniser stages BUSA and AZUS (§14.8.4).
+    pub fn fall_sync(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        self.channels.ch3.fall_sync();
+    }
+
     fn tick_frame_sequencer(&mut self) {
         if matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6) {
             self.channels.tick_length_all();
@@ -249,7 +259,11 @@ impl Audio {
                 frequency_timer: 0,
                 wave_position: 0,
                 length_counter: 0,
-                sample_read_tcycle: 0xFF,
+                ch3_frst: false,
+                ch3_frst_remaining: 0,
+                busa: false,
+                bano: false,
+                azus: false,
             },
             ch4: NoiseChannel {
                 enabled: Enabled {
