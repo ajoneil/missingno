@@ -77,6 +77,15 @@ pub struct WaveChannel {
     /// gate on `ch3_restart ↑` fires within this 1.5-T-cycle window
     /// per §14.8.5 (resolved 2026-05-24).
     pub azet: bool,
+    /// `ch3_fdis` nand_latch (§14.8.1) — gates the divider toggle
+    /// clock. Set high (= channel disabled, divider frozen) by DAC-off
+    /// (NR30 d7 = 0) or apu_reset. Cleared (= channel enabled) by a
+    /// trigger's gyta-derived `s_n` pulse — modelled here as the
+    /// `ch3_restart ↓` self-clear edge, matching the timing relation
+    /// in §14.8.8. While `ch3_fdis = 1`, `hefo = 0` → `juty = 1`
+    /// (constant) → no divider toggle edges → no overflows → the
+    /// `busa/bano/azus/azet` chain stays idle.
+    pub ch3_fdis: bool,
 }
 
 impl Default for WaveChannel {
@@ -107,6 +116,7 @@ impl Default for WaveChannel {
             bano: false,
             azus: false,
             azet: false,
+            ch3_fdis: true,
         }
     }
 }
@@ -137,6 +147,7 @@ impl WaveChannel {
             bano: false,
             azus: false,
             azet: false,
+            ch3_fdis: true,
         };
     }
 
@@ -166,6 +177,10 @@ impl WaveChannel {
                 self.dac_enabled = value & 0b1000_0000 != 0;
                 if !self.dac_enabled {
                     self.enabled.enabled = false;
+                    // §14.8.1: `ch3_amp_en_n = 1` (DAC off) sets the
+                    // `ch3_fdis` nand_latch high → divider toggle clock
+                    // gated low → no overflows while DAC is off.
+                    self.ch3_fdis = true;
                 }
             }
             Register::PeriodLow => self.period.set_low8(value),
@@ -270,8 +285,12 @@ impl WaveChannel {
         }
 
         // Divider clocks on `ch3_2mhz↑` while not in load mode (hera
-        // is high = NOR(ch3_frst, ch3_restart) = 1 means both low).
-        if ch3_2mhz_rising && !self.ch3_restart && !self.ch3_frst {
+        // is high = NOR(ch3_frst, ch3_restart) = 1 means both low),
+        // AND while `ch3_fdis = 0` (= channel enabled, juty active per
+        // §14.8.1). With ch3_fdis = 1, no toggle edges reach the
+        // divider, so no overflows fire and the wave_data_latch chain
+        // stays idle.
+        if ch3_2mhz_rising && !self.ch3_restart && !self.ch3_frst && !self.ch3_fdis {
             if self.divider_load_settle {
                 // First ch3_2mhz↑ after ch3_restart↓ — DFFs settle out
                 // of level-sensitive load mode but don't count yet.
@@ -294,10 +313,9 @@ impl WaveChannel {
     /// — wave-RAM byte-0 (or 4-byte block) corruption per §14.8.5.
     /// Releases happen on the gyta-driven async-reset path.
     fn on_ch3_restart_rise(&mut self) {
-        // DMG wave-RAM corruption per §14.8.5 (FST-anchored 2026-05-24
-        // under `SIMPLIFIED_WAVERAM=`): ch3_restart↑ while the SRAM
-        // bit-line precharge window (azus | azet) is open drives a
-        // 4-byte ROW copy — `ram[0..3] ← ram[row*4..]` where
+        // DMG wave-RAM corruption per §14.8.5: ch3_restart↑ while the
+        // SRAM bit-line precharge window (azus | azet) is open drives
+        // a 4-byte ROW copy — `ram[0..3] ← ram[row*4..]` where
         // `row = wave_position >> 3`. Source row 0 naturally no-ops
         // (ram[i] = ram[i]) — no `byte_pos < 4` special case. Pan
         // Docs's single-byte framing is incorrect.
@@ -322,8 +340,11 @@ impl WaveChannel {
     /// exits load mode. Set `divider_load_settle` so the very next
     /// `ch3_2mhz↑` is consumed by the DFFs' transition (no count yet);
     /// the count begins on the second `ch3_2mhz↑` after release.
+    /// `ch3_fdis` is cleared on the gyta-derived `s_n` pulse — same
+    /// fabo↑ edge as the self-clear, per §14.8.1 + §14.8.8.
     fn on_ch3_restart_fall(&mut self) {
         self.divider_load_settle = true;
+        self.ch3_fdis = false;
     }
 
     /// Half-T-cycle synchroniser step on master-clock fall edge
