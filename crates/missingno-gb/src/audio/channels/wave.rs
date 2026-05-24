@@ -294,23 +294,18 @@ impl WaveChannel {
     /// — wave-RAM byte-0 (or 4-byte block) corruption per §14.8.5.
     /// Releases happen on the gyta-driven async-reset path.
     fn on_ch3_restart_rise(&mut self) {
-        // DMG wave-RAM corruption: ch3_restart↑ resets wave_a[3:0]
-        // combinationally to 0, but the SRAM bit-lines may still be
-        // driving the prior byte's value while the read window
-        // (azus | azet) is open. wave_ram_bl_precharge = NOT(NOR(
-        // azus, azet)) per the §14.8.5 resolution — the ~1.5-T-cycle
-        // SRAM-read-active window extending past wave_data_latch ↓
-        // via azet's same-T-cycle hold.
+        // DMG wave-RAM corruption per §14.8.5 (FST-anchored 2026-05-24
+        // under `SIMPLIFIED_WAVERAM=`): ch3_restart↑ while the SRAM
+        // bit-line precharge window (azus | azet) is open drives a
+        // 4-byte ROW copy — `ram[0..3] ← ram[row*4..]` where
+        // `row = wave_position >> 3`. Source row 0 naturally no-ops
+        // (ram[i] = ram[i]) — no `byte_pos < 4` special case. Pan
+        // Docs's single-byte framing is incorrect.
         if self.azus || self.azet {
-            let byte_pos = (self.wave_position as usize) / 2;
-            if byte_pos < 4 {
-                self.ram[0] = self.ram[byte_pos];
-            } else {
-                let aligned = byte_pos & !3;
-                self.ram[0] = self.ram[aligned];
-                self.ram[1] = self.ram[aligned + 1];
-                self.ram[2] = self.ram[aligned + 2];
-                self.ram[3] = self.ram[aligned + 3];
+            let row = (self.wave_position as usize) >> 3;
+            let src = row * 4;
+            for i in 0..4 {
+                self.ram[i] = self.ram[src + i];
             }
         }
 
