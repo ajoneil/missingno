@@ -37,6 +37,9 @@ pub struct PulseChannel {
     /// CH2's ch2_restart synchroniser stage; mirror of CH1's
     /// `pending_trigger_sync`. Spec §14.5.1.
     pub pending_trigger_sync: u8,
+    /// CH2 mirror of CH1's `divider_load_settle` — first count after
+    /// trigger is on the second ch2_1mhz↑ post-reload (§14.5.1.1).
+    pub divider_load_settle: bool,
     pub current_volume: u8,
     pub envelope_timer: u8,
     pub length_counter: u16,
@@ -63,6 +66,7 @@ impl Default for PulseChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             pending_trigger_sync: 0,
+            divider_load_settle: false,
             current_volume: 0,
             envelope_timer: 0,
             length_counter: 0,
@@ -85,6 +89,7 @@ impl PulseChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             pending_trigger_sync: 0,
+            divider_load_settle: false,
             current_volume: 0,
             envelope_timer: 0,
             length_counter,
@@ -168,6 +173,10 @@ impl PulseChannel {
         if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
+            // §14.5.1.1 load-mode settle latency (mirror of CH1).
+            self.divider_load_settle = true;
+        } else if self.divider_load_settle {
+            self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
             let duty = self.waveform_and_initial_length.waveform() as usize;
             self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;

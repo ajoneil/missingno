@@ -218,6 +218,7 @@ impl Audio {
                 wave_duty_position: 0,
                 pwm_latch: false,
                 pending_trigger_sync: 0,
+                divider_load_settle: false,
                 current_volume: 0,
                 envelope_timer: snap.ch1_envelope_timer,
                 length_counter: 0,
@@ -241,6 +242,7 @@ impl Audio {
                 wave_duty_position: 0,
                 pwm_latch: false,
                 pending_trigger_sync: 0,
+                divider_load_settle: false,
                 current_volume: 0,
                 envelope_timer: snap.ch2_envelope_timer,
                 length_counter: 0,
@@ -264,6 +266,7 @@ impl Audio {
                 busa: false,
                 bano: false,
                 azus: false,
+                azet: false,
             },
             ch4: NoiseChannel {
                 enabled: Enabled {

@@ -70,6 +70,13 @@ pub struct WaveChannel {
     /// Buffered to `wave_data_latch`. Third stage; while true the
     /// wave-RAM block drives the bus.
     pub azus: bool,
+    /// `azet` DFF — captures `azus` on `apu_4mhz↓` (= T-cycle start
+    /// = our rise edge). Together with `azus`, `(azus | azet)` defines
+    /// the wave-RAM SRAM-read-active window driving
+    /// `wave_ram_bl_precharge = NOT(NOR(azus, azet))`. The corruption
+    /// gate on `ch3_restart ↑` fires within this 1.5-T-cycle window
+    /// per §14.8.5 (resolved 2026-05-24).
+    pub azet: bool,
 }
 
 impl Default for WaveChannel {
@@ -99,6 +106,7 @@ impl Default for WaveChannel {
             busa: false,
             bano: false,
             azus: false,
+            azet: false,
         }
     }
 }
@@ -128,6 +136,7 @@ impl WaveChannel {
             busa: false,
             bano: false,
             azus: false,
+            azet: false,
         };
     }
 
@@ -218,7 +227,12 @@ impl WaveChannel {
         let fabo_rising = ch3_2mhz_prev && !self.ch3_2mhz; // ch3_2mhz↓
 
         // BANO captures BUSA at `cozy↑` = our rise edge (§14.8.4).
+        // AZET captures AZUS on the same edge (apu_4mhz↓ = T-cycle
+        // start), holding the prior T-cycle's wave_data_latch value
+        // so the SRAM-read-active window `(azus | azet)` spans 1.5
+        // T-cycles (§14.8.5, §14.8.7).
         self.bano = self.busa;
+        self.azet = self.azus;
 
         // `foba` (§14.8.3 stage 2) — DFF clocked by `apu_phi`, which
         // rises at the M-cycle boundary. T=0 rise of every M-cycle.
@@ -282,10 +296,12 @@ impl WaveChannel {
     fn on_ch3_restart_rise(&mut self) {
         // DMG wave-RAM corruption: ch3_restart↑ resets wave_a[3:0]
         // combinationally to 0, but the SRAM bit-lines may still be
-        // driving the prior byte's value if `wave_data_latch` is in
-        // its ~1-T-cycle active window. The pre-reset position
-        // captures into ram[0] (or the 4-byte aligned block).
-        if self.azus {
+        // driving the prior byte's value while the read window
+        // (azus | azet) is open. wave_ram_bl_precharge = NOT(NOR(
+        // azus, azet)) per the §14.8.5 resolution — the ~1.5-T-cycle
+        // SRAM-read-active window extending past wave_data_latch ↓
+        // via azet's same-T-cycle hold.
+        if self.azus || self.azet {
             let byte_pos = (self.wave_position as usize) / 2;
             if byte_pos < 4 {
                 self.ram[0] = self.ram[byte_pos];
@@ -371,14 +387,15 @@ impl Volume {
 }
 
 impl Audio {
-    /// DMG wave-RAM bus alignment per §14.8.4. The wave-RAM SRAM array
-    /// drives the bus only while `wave_data_latch` (= AZUS) is high.
-    /// The strobe rises ~1.5 T-cycles after `ch3_frst↑` (the BUSA →
-    /// BANO → AZUS synchroniser) and is ~1 T-cycle wide. Accesses
-    /// outside that window see a floating bus → 0xFF.
-    /// `bus_value_at_latch` re-evaluates so accesses landing late in
-    /// the M-cycle still see windows that opened after the
-    /// drive-enable snapshot was taken.
+    /// DMG wave-RAM bus alignment per §14.8.4. CPU access succeeds
+    /// only while `wave_data_latch` (= AZUS) is high — its ~1-T-cycle
+    /// pulse, ~1.5 T-cycles after `ch3_frst↑`. Accesses outside that
+    /// window see a floating bus → 0xFF. `bus_value_at_latch`
+    /// re-evaluates so accesses landing late in the M-cycle still
+    /// see windows that opened after the drive-enable snapshot. The
+    /// wider `(azus | azet)` SRAM-read-active window is only consulted
+    /// by the corruption gate, not by CPU access — the CPU bus drive
+    /// is gated by `wave_data_latch` proper, not by `azet`'s hold.
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
         let ch3 = &self.channels.ch3;
         if !ch3.enabled.enabled {

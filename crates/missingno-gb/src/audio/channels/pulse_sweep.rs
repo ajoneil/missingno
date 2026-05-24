@@ -42,6 +42,12 @@ pub struct PulseSweepChannel {
     /// reload. Models the `ch1_restart` DFF that captures at the next
     /// `ch1_1mhz↑` after the NR14 write. Spec §14.5 / §14.5.1.
     pub pending_trigger_sync: u8,
+    /// Load-mode settle latency per §14.5.1.1 — after the trigger
+    /// reload, the divider DFFs need one full `ch1_1mhz` cycle to
+    /// settle out of load mode before they begin counting. Set on
+    /// the reload wrap; cleared (without counting) on the next wrap;
+    /// natural counting resumes on the wrap after.
+    pub divider_load_settle: bool,
     pub current_volume: u8,
     pub envelope_timer: u8,
     pub length_counter: u16,
@@ -74,6 +80,7 @@ impl Default for PulseSweepChannel {
             wave_duty_position: 2,                   // duty step counter (dape, eros, esut) = 010
             pwm_latch: false,                        // duwo: boot ROM's last overflow captured pattern[1] = 0 (50%)
             pending_trigger_sync: 0,
+            divider_load_settle: false,
             current_volume: 0,                       // envelope decayed
             envelope_timer: 0,
             length_counter: 0,
@@ -101,6 +108,7 @@ impl PulseSweepChannel {
             wave_duty_position: 0,
             pwm_latch: false,
             pending_trigger_sync: 0,
+            divider_load_settle: false,
             current_volume: 0,
             envelope_timer: 0,
             length_counter,
@@ -228,6 +236,13 @@ impl PulseSweepChannel {
         if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
+            // §14.5.1.1 load-mode settle: first count after a trigger
+            // is on the SECOND ch1_1mhz↑ after the reload, not the first.
+            self.divider_load_settle = true;
+        } else if self.divider_load_settle {
+            // Skip the count cycle so the divider DFFs settle out of
+            // level-sensitive load mode before counting resumes.
+            self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
             // Natural overflow: capture duwo at pre-advance counter,
             // then advance the duty step counter and reload divider.
