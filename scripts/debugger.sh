@@ -150,6 +150,17 @@ gb_timers() {
     '"DIV=\(.div) TIMA=\(.tima) TMA=\(.tma) TAC=\(.tac) enabled=\(.timer_enabled) freq=\(.frequency) internal=\(.internal_counter)"'
 }
 
+# gb_audio [channel]  — dump APU state. Without arg: master + all four channels.
+# With arg (ch1|ch2|ch3|ch4): just that channel. Returns raw JSON via jq.
+gb_audio() {
+  local ch="${1:-}"
+  if [ -z "$ch" ]; then
+    curl -s "$GB_URL/audio" | jq '.'
+  else
+    curl -s "$GB_URL/audio" | jq ".$ch"
+  fi
+}
+
 gb_screenshot() {
   local path="${1:?usage: gb_screenshot <path>}"
   curl -s "$GB_URL/screen/bitmap" -o "$path"

@@ -91,6 +91,18 @@ impl Audio {
         self.volume_right
     }
 
+    pub fn nr50(&self) -> u8 {
+        self.nr50
+    }
+
+    pub fn frame_sequencer_step(&self) -> u8 {
+        self.frame_sequencer_step
+    }
+
+    pub fn prev_div_apu_bit(&self) -> bool {
+        self.prev_div_apu_bit
+    }
+
     /// One T-cycle of APU work, called at the master-clock rise of every
     /// T-cycle. Channel prescalers advance one apuv↑ tick per call;
     /// CH1/CH2 dividers fire on their CALO↑ wrap, CH3 on its cery↑ wrap,

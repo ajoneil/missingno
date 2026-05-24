@@ -19,10 +19,9 @@ Use this skill when the question can be answered by inspecting state at instruct
 
 ## When this is NOT enough — stop and tell the user
 
-This API operates at half-phase, dot, and instruction granularity. With `step-phase`, `step-dot`, bus watchpoints, `/ppu` (including scan counter), and `/ppu/pipeline`, most mid-scanline observations are possible. It **cannot** observe:
+This API operates at half-phase, dot, and instruction granularity. With `step-phase`, `step-dot`, bus watchpoints, `/ppu` (including scan counter), `/ppu/pipeline`, and `/audio`, most mid-scanline / mid-M-cycle observations are possible. It **cannot** observe:
 
 - **Sub-dot timing** (what happens within a single dot tick — e.g., the order of operations inside one PPU clock)
-- **Audio channel internals** (sample values, timer counters, sweep state)
 - **Memory bus conflicts** (DMA bus contention, OAM/VRAM locking during specific modes)
 
 If the question you've been asked requires observing any of the above, you **must** stop immediately and report this to the user — do not attempt a partial answer, do not substitute a coarser measurement and hope it's "close enough", and do not silently return results that don't actually answer the question. The report must be specific:
@@ -169,6 +168,11 @@ A=145 B=0 C=19 D=0 E=216 H=1 L=77 PC=352 SP=65534 IME=false halted=false
 DIV=44 TIMA=0 TMA=0 TAC=0 enabled=false freq=4096 internal=00b0
 ```
 
+**`gb_audio [channel]`** — Read APU state. Calls GET `/audio`. Without args, returns master + all four channels as JSON. With `ch1`/`ch2`/`ch3`/`ch4`, returns just that channel. Use this to observe per-channel internals: divider/prescaler state, wave-position counter, trigger synchroniser DFFs, wave_data_latch chain. Example:
+```bash
+gb_audio ch3   # full CH3 state including ch3_2mhz, ch3_restart, busa/bano/azus/azet
+```
+
 **`gb_screenshot <path>`** — Save the screen as a BMP file. Calls GET `/screen/bitmap` and writes to the given path. Use this to visually compare test output. Example: `gb_screenshot /tmp/lcdon_test.bmp`. The file can then be read with the Read tool (which can display images).
 
 **`gb_screen_row <row>`** — Read one screen row. Calls GET `/screen`. Output: space-separated color indices (0-3), 160 values.
@@ -241,6 +245,12 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 
 **`/timers`**: `div`, `tima`, `tma`, `tac`, `timer_enabled` (bool), `clock_select` (int 0-3), `frequency` (int Hz), `internal_counter` (hex string), `internal_counter_decimal` (int)
 
+**`/audio`**: `master_enabled` (bool, NR52 bit 7), `nr50`, `frame_sequencer_step` (0-7), `prev_div_apu_bit` (bool), and four channel objects:
+- `ch1`: `enabled` (`{enabled, output_left, output_right}`), `sweep` / `waveform_and_initial_length` / `volume_and_envelope` (NR10..NR12 raw bytes), `length_enabled`, `length_counter`, `period` (11-bit), `prescaler_counter` (2-bit AJER+CALO), `divider_counter` (11-bit GAXE..COPU), `wave_duty_position` (0-7), `pwm_latch` (DUWO), `pending_trigger_sync`, `divider_load_settle`, `current_volume`, `envelope_timer`, `shadow_frequency`, `sweep_timer`, `sweep_enabled`, `sweep_negate_used`
+- `ch2`: same as ch1 minus sweep fields
+- `ch3`: `enabled`, `dac_enabled`, `volume`, `length_enabled`, `length_counter`, `period`, `frequency_timer`, `wave_position` (0-31), `ch3_2mhz` (CERY), `divider_load_settle`, `gavu` / `foba` / `ch3_restart` / `gyta` (trigger synchroniser chain), `ch3_frst` (overflow capture), `busa` / `bano` / `azus` / `azet` (wave_data_latch chain), `ch3_fdis` (NAND-latch gate), `ram` (16 hex strings)
+- `ch4`: `enabled`, `volume_and_envelope`, `length_enabled`, `length_counter`, `frequency_and_randomness`, `frequency_timer`, `lfsr` (hex string), `current_volume`, `envelope_timer`
+
 ### Endpoints
 
 | Endpoint | Method | Returns |
@@ -256,6 +266,7 @@ These are the exact field names in API responses. Use these in `jq` filters — 
 | `/tilemap/1/bitmap` | GET | Tile map 1 as 256×256 greyscale BMP (32×32 tiles). |
 | `/sprites` | GET | All 40 OAM entries (bare array) |
 | `/timers` | GET | Timer registers (DIV, TIMA, TMA, TAC) and internal counter |
+| `/audio` | GET | APU master + per-channel internal state (divider/prescaler/sync DFFs/etc.) |
 | `/interrupts` | GET | IE and IF values + per-interrupt enabled/requested flags |
 | `/instructions` | GET | 20 disassembled instructions from current PC |
 | `/memory/{hex_addr}` | GET | Single byte: value + hex |

@@ -140,6 +140,9 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
         (&Method::Get, "/timers") => {
             respond_json(request, timers_state(debugger.game_boy()));
         }
+        (&Method::Get, "/audio") => {
+            respond_json(request, audio_state(debugger.game_boy()));
+        }
         (&Method::Get, "/interrupts") => {
             respond_json(request, interrupts_state(debugger.game_boy()));
         }
@@ -908,6 +911,105 @@ fn timers_state(gb: &GameBoy) -> TimersState {
         internal_counter: format!("{internal:04x}"),
         internal_counter_decimal: internal,
     }
+}
+
+fn audio_state(gb: &GameBoy) -> serde_json::Value {
+    let audio = gb.audio();
+    let channels = audio.channels();
+    let ch1 = &channels.ch1;
+    let ch2 = &channels.ch2;
+    let ch3 = &channels.ch3;
+    let ch4 = &channels.ch4;
+
+    let enabled_json = |e: &missingno_gb::audio::channels::Enabled| {
+        serde_json::json!({
+            "enabled": e.enabled,
+            "output_left": e.output_left,
+            "output_right": e.output_right,
+        })
+    };
+
+    serde_json::json!({
+        "master_enabled": audio.enabled(),
+        "nr50": audio.nr50(),
+        "frame_sequencer_step": audio.frame_sequencer_step(),
+        "prev_div_apu_bit": audio.prev_div_apu_bit(),
+
+        "ch1": {
+            "enabled": enabled_json(&ch1.enabled),
+            "sweep": ch1.sweep.0,
+            "waveform_and_initial_length": ch1.waveform_and_initial_length.0,
+            "volume_and_envelope": ch1.volume_and_envelope.0,
+            "length_enabled": ch1.length_enabled,
+            "length_counter": ch1.length_counter,
+            "period": ch1.period.0,
+            "prescaler_counter": ch1.prescaler.counter,
+            "divider_counter": ch1.divider.counter,
+            "wave_duty_position": ch1.wave_duty_position,
+            "pwm_latch": ch1.pwm_latch,
+            "pending_trigger_sync": ch1.pending_trigger_sync,
+            "divider_load_settle": ch1.divider_load_settle,
+            "current_volume": ch1.current_volume,
+            "envelope_timer": ch1.envelope_timer,
+            "shadow_frequency": ch1.shadow_frequency,
+            "sweep_timer": ch1.sweep_timer,
+            "sweep_enabled": ch1.sweep_enabled,
+            "sweep_negate_used": ch1.sweep_negate_used,
+        },
+
+        "ch2": {
+            "enabled": enabled_json(&ch2.enabled),
+            "waveform_and_initial_length": ch2.waveform_and_initial_length.0,
+            "volume_and_envelope": ch2.volume_and_envelope.0,
+            "length_enabled": ch2.length_enabled,
+            "length_counter": ch2.length_counter,
+            "period": ch2.period.0,
+            "prescaler_counter": ch2.prescaler.counter,
+            "divider_counter": ch2.divider.counter,
+            "wave_duty_position": ch2.wave_duty_position,
+            "pwm_latch": ch2.pwm_latch,
+            "pending_trigger_sync": ch2.pending_trigger_sync,
+            "divider_load_settle": ch2.divider_load_settle,
+            "current_volume": ch2.current_volume,
+            "envelope_timer": ch2.envelope_timer,
+        },
+
+        "ch3": {
+            "enabled": enabled_json(&ch3.enabled),
+            "dac_enabled": ch3.dac_enabled,
+            "volume": ch3.volume.0,
+            "length_enabled": ch3.length_enabled,
+            "length_counter": ch3.length_counter,
+            "period": ch3.period.0,
+            "frequency_timer": ch3.frequency_timer,
+            "wave_position": ch3.wave_position,
+            "ch3_2mhz": ch3.ch3_2mhz,
+            "divider_load_settle": ch3.divider_load_settle,
+            "gavu": ch3.gavu,
+            "foba": ch3.foba,
+            "ch3_restart": ch3.ch3_restart,
+            "gyta": ch3.gyta,
+            "ch3_frst": ch3.ch3_frst,
+            "busa": ch3.busa,
+            "bano": ch3.bano,
+            "azus": ch3.azus,
+            "azet": ch3.azet,
+            "ch3_fdis": ch3.ch3_fdis,
+            "ram": ch3.ram.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>(),
+        },
+
+        "ch4": {
+            "enabled": enabled_json(&ch4.enabled),
+            "volume_and_envelope": ch4.volume_and_envelope.0,
+            "length_enabled": ch4.length_enabled,
+            "length_counter": ch4.length_counter,
+            "frequency_and_randomness": ch4.frequency_and_randomness.0,
+            "frequency_timer": ch4.frequency_timer,
+            "lfsr": format!("{:04x}", ch4.lfsr),
+            "current_volume": ch4.current_volume,
+            "envelope_timer": ch4.envelope_timer,
+        },
+    })
 }
 
 fn respond_json(request: tiny_http::Request, body: impl Serialize) {
