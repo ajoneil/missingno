@@ -34,12 +34,6 @@ pub struct WaveChannel {
     /// on every `cybo↑` (= master-clock rise, = our `rise()` edge).
     /// Free-running, reset only by `apu_reset`.
     pub ch3_2mhz: bool,
-    /// Set on `ch3_restart↓` to skip the first `ch3_2mhz↑` after the
-    /// load window closes — the divider DFFs settle out of load mode
-    /// on the first edge but only begin counting on the second.
-    /// Accounts for the "2 T-cycles divider count" entry in §14.8.3's
-    /// trigger-delay decomposition.
-    pub divider_load_settle: bool,
 
     /// Captures NR34 d7 at `apu_wr↑` (in our model: at trigger() time,
     /// the commit_write edge). Held until consumed by `foba` at the
@@ -106,7 +100,6 @@ impl Default for WaveChannel {
             wave_position: 0,
             length_counter: 0,
             ch3_2mhz: false,
-            divider_load_settle: false,
             gavu: false,
             foba: false,
             ch3_restart: false,
@@ -137,7 +130,6 @@ impl WaveChannel {
             wave_position: 0,
             length_counter,
             ch3_2mhz: false,
-            divider_load_settle: false,
             gavu: false,
             foba: false,
             ch3_restart: false,
@@ -288,28 +280,26 @@ impl WaveChannel {
         }
 
         // ch3_frst is held high for one `ch3_2mhz` cycle — clears on
-        // the next `ch3_2mhz↑` via hupa = AND(huno, ch3_2mhz) (§14.8.6).
+        // the next `ch3_2mhz↑` via hupa = AND(huno, ch3_2mhz). The
+        // wave-position counter advances on this `ch3_frst↓` edge
+        // (= dero↑), one ch3_2mhz cycle AFTER the overflow.
         if ch3_2mhz_rising && self.ch3_frst {
             self.ch3_frst = false;
+            self.wave_position = (self.wave_position + 1) % 32;
         }
 
         // Divider clocks on `ch3_2mhz↑` while not in load mode (hera
         // is high = NOR(ch3_frst, ch3_restart) = 1 means both low),
-        // AND while `ch3_fdis = 0` (= channel enabled, juty active per
-        // §14.8.1). With ch3_fdis = 1, no toggle edges reach the
-        // divider, so no overflows fire and the wave_data_latch chain
-        // stays idle.
+        // AND while `ch3_fdis = 0` (= channel enabled, juty active).
+        // With ch3_fdis = 1, no toggle edges reach the divider, so no
+        // overflows fire and the wave_data_latch chain stays idle.
         if ch3_2mhz_rising && !self.ch3_restart && !self.ch3_frst && !self.ch3_fdis {
-            if self.divider_load_settle {
-                // First ch3_2mhz↑ after ch3_restart↓ — DFFs settle out
-                // of level-sensitive load mode but don't count yet.
-                self.divider_load_settle = false;
-            } else if self.frequency_timer > 0 {
+            if self.frequency_timer > 0 {
                 self.frequency_timer -= 1;
                 if self.frequency_timer == 0 {
-                    // Overflow → ch3_frst↑, reload, wave-position advance.
+                    // Overflow → ch3_frst↑, divider reload. Wave-position
+                    // advance happens on ch3_frst↓ one cycle later.
                     self.frequency_timer = 2048 - self.period.0 as u16;
-                    self.wave_position = (self.wave_position + 1) % 32;
                     self.ch3_frst = true;
                 }
             }
@@ -346,13 +336,12 @@ impl WaveChannel {
     }
 
     /// On `ch3_restart↓` (the gyta-driven self-clear): the divider
-    /// exits load mode. Set `divider_load_settle` so the very next
-    /// `ch3_2mhz↑` is consumed by the DFFs' transition (no count yet);
-    /// the count begins on the second `ch3_2mhz↑` after release.
-    /// `ch3_fdis` is cleared on the gyta-derived `s_n` pulse — same
-    /// fabo↑ edge as the self-clear, per §14.8.1 + §14.8.8.
+    /// exits load mode and begins counting on the next `ch3_2mhz↑`.
+    /// Per spec, CH3 has no separate load-settle cycle (unlike CH1/CH2
+    /// at §14.5.1.1) — the held cycle while ch3_restart is high IS
+    /// the settle. `ch3_fdis` is cleared on the gyta-derived `s_n`
+    /// pulse — same fabo↑ edge as the self-clear.
     fn on_ch3_restart_fall(&mut self) {
-        self.divider_load_settle = true;
         self.ch3_fdis = false;
     }
 
@@ -434,14 +423,17 @@ impl Audio {
     }
 
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
+        // Per §14.8.4, the SRAM accepts the write whenever `wave_ram_wr`
+        // is high — no gating by `wave_data_latch`. While the channel
+        // is active the target is `ram[wave_position[4:1]]` (byte being
+        // read); while inactive the target is the address-decoded
+        // `offset`.
         let ch3 = &mut self.channels.ch3;
-        if !ch3.enabled.enabled {
-            ch3.ram[offset as usize] = value;
-            return;
-        }
-        if ch3.azus {
-            let byte_idx = ch3.wave_position as usize / 2;
-            ch3.ram[byte_idx] = value;
-        }
+        let byte_idx = if ch3.enabled.enabled {
+            ch3.wave_position as usize / 2
+        } else {
+            offset as usize
+        };
+        ch3.ram[byte_idx] = value;
     }
 }

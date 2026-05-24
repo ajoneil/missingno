@@ -984,7 +984,6 @@ fn audio_state(gb: &GameBoy) -> serde_json::Value {
             "frequency_timer": ch3.frequency_timer,
             "wave_position": ch3.wave_position,
             "ch3_2mhz": ch3.ch3_2mhz,
-            "divider_load_settle": ch3.divider_load_settle,
             "gavu": ch3.gavu,
             "foba": ch3.foba,
             "ch3_restart": ch3.ch3_restart,
