@@ -110,6 +110,17 @@ impl Audio {
     /// accumulated each call and pushed once per ~95 T-cycles to match
     /// the 44.1 kHz host rate.
     pub fn tcycle(&mut self, div_counter: u16, t_index: u8) {
+        // `apu_reset_n` (= NR52 bit 7) gates the prescaler async-resets
+        // on CERY (CH3) and AJER/ATEP/CALO/CEMO (CH1/CH2) per §14.5.2 /
+        // §14.8.1. Each channel's tcycle honours this — they still run
+        // unconditionally so the apu_reset edge is observable inside
+        // the channel models (cery.q forced to 0, etc).
+        let apu_reset_n = self.enabled;
+        self.channels.ch1.tcycle(apu_reset_n);
+        self.channels.ch2.tcycle(apu_reset_n);
+        self.channels.ch3.tcycle(t_index, apu_reset_n);
+        self.channels.ch4.tcycle(apu_reset_n);
+
         if !self.enabled {
             // Still track DIV-APU bit even when disabled, so we have the
             // correct previous state when APU is re-enabled.
@@ -117,10 +128,6 @@ impl Audio {
             return;
         }
 
-        self.channels.ch1.tcycle();
-        self.channels.ch2.tcycle();
-        self.channels.ch3.tcycle(t_index);
-        self.channels.ch4.tcycle();
         let (l, r) = self.mix();
         self.sample_accum_left += l;
         self.sample_accum_right += r;

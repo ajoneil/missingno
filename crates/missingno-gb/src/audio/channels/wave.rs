@@ -232,7 +232,16 @@ impl WaveChannel {
         }
     }
 
-    pub fn tcycle(&mut self, t_index: u8) {
+    pub fn tcycle(&mut self, t_index: u8, apu_reset_n: bool) {
+        // `cery` is a dffr async-reset DFF (§14.8.1). While
+        // `apu_reset = 1` (NR52 bit 7 = 0), `r_n = 0` forces `cery.q`
+        // to 0 and `cybo↑` has no effect; the downstream divider /
+        // synchroniser chain is held inert via `ch3_fdis = 1`.
+        if !apu_reset_n {
+            self.ch3_2mhz = false;
+            return;
+        }
+
         // `cery` toggles on every `cybo↑` = master-clock rise. Drives
         // `ch3_2mhz`; under quickboot phase the rise lands at T=0 / T=2
         // atal↑ and the fall at T=1 / T=3 (§14.8.7).

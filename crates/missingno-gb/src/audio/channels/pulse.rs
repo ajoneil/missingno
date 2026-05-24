@@ -166,8 +166,8 @@ impl PulseChannel {
         }
     }
 
-    pub fn tcycle(&mut self) {
-        if !self.prescaler.tcycle() || !self.enabled.enabled {
+    pub fn tcycle(&mut self, apu_reset_n: bool) {
+        if !self.prescaler.tcycle(apu_reset_n) || !self.enabled.enabled {
             return;
         }
         if self.pending_trigger_sync != 0 {

@@ -126,7 +126,15 @@ impl Prescaler {
     /// the post-boot counter=1 anchor ((calo, ajer)=(0,1) per §11.5),
     /// the CALO↑ edge lands at T=0 atal↑ of each M-cycle (= spec
     /// "T1 atal↑" under 1-indexed T-cycle naming).
-    pub fn tcycle(&mut self) -> bool {
+    ///
+    /// `apu_reset_n` is the inverted apu_reset signal (= NR52 bit 7).
+    /// While low (= NR52 bit 7 = 0), the prescaler DFFs are held at 0
+    /// via the async-reset path on their `r_n` inputs; no wrap fires.
+    pub fn tcycle(&mut self, apu_reset_n: bool) -> bool {
+        if !apu_reset_n {
+            self.counter = 0;
+            return false;
+        }
         self.counter = (self.counter + 1) & 0b11;
         self.counter == 2
     }

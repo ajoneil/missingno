@@ -75,13 +75,13 @@ impl Default for PulseSweepChannel {
             length_enabled: false,
             period: Signed11(0x7C1), // acc_d at handoff (= {NR14[2:0], NR13[7:0]} = {7, 0xC1})
 
-            prescaler: Prescaler { counter: 1 },     // (calo, ajer) = (0, 1)
+            prescaler: Prescaler { counter: 1 }, // (calo, ajer) = (0, 1)
             divider: PeriodDivider { counter: 0x7F9 }, // 6 ticks below natural overflow
-            wave_duty_position: 2,                   // duty step counter (dape, eros, esut) = 010
-            pwm_latch: false,                        // duwo: boot ROM's last overflow captured pattern[1] = 0 (50%)
+            wave_duty_position: 2,               // duty step counter (dape, eros, esut) = 010
+            pwm_latch: false, // duwo: boot ROM's last overflow captured pattern[1] = 0 (50%)
             pending_trigger_sync: 0,
             divider_load_settle: false,
-            current_volume: 0,                       // envelope decayed
+            current_volume: 0, // envelope decayed
             envelope_timer: 0,
             length_counter: 0,
             shadow_frequency: 0,
@@ -225,8 +225,8 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn tcycle(&mut self) {
-        if !self.prescaler.tcycle() || !self.enabled.enabled {
+    pub fn tcycle(&mut self, apu_reset_n: bool) {
+        if !self.prescaler.tcycle(apu_reset_n) || !self.enabled.enabled {
             return;
         }
         // Prescaler wrapped (ch1_1mhz↑). Per spec §14.5.1, the trigger

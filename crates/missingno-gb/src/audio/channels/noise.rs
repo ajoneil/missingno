@@ -131,7 +131,10 @@ impl NoiseChannel {
         }
     }
 
-    pub fn tcycle(&mut self) {
+    pub fn tcycle(&mut self, apu_reset_n: bool) {
+        if !apu_reset_n {
+            return;
+        }
         if self.frequency_timer > 0 {
             self.frequency_timer -= 1;
         }
