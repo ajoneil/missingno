@@ -337,17 +337,35 @@ impl WaveChannel {
     /// — wave-RAM byte-0 (or 4-byte block) corruption per §14.8.5.
     /// Releases happen on the gyta-driven async-reset path.
     fn on_ch3_restart_rise(&mut self) {
-        // DMG wave-RAM corruption per §14.8.5: ch3_restart↑ while the
-        // SRAM bit-line precharge window (azus | azet) is open drives
-        // a 4-byte ROW copy — `ram[0..3] ← ram[row*4..]` where
-        // `row = wave_position >> 3`. Source row 0 naturally no-ops
-        // (ram[i] = ram[i]) — no `byte_pos < 4` special case. Pan
-        // Docs's single-byte framing is incorrect.
+        // DMG wave-RAM corruption on retrigger-during-active-read.
+        // `ch3_restart↑` while the SRAM bit-line precharge window
+        // (azus | azet) is open causes the SRAM cell to short-circuit
+        // wordlines, copying part of CH3's currently-read row into
+        // ram[0..3]. The granularity depends on `byte_pos = wave_position
+        // >> 1`:
+        //   - `byte_pos < 4` (CH3 reading row 0): only `ram[0]` is
+        //     overwritten, with the byte at `ram[byte_pos]`. This is
+        //     the Pan Docs "single byte" framing — measured by
+        //     `blargg::dmg_sound_10_wave_trigger_while_on`'s 69-iter
+        //     sweep (iterations land at byte_pos 1, 2, 3).
+        //   - `byte_pos >= 4`: 4-byte row copy from the addressed row
+        //     into ram[0..3]. This is the spec §14.8.5 row-copy rule,
+        //     measured by `ch3_corruption_sweep.fst` and friends
+        //     (12 retriggers, all byte_pos 4..8).
+        // The dichotomy follows from the SRAM topology: rows are
+        // 4 columns wide; corruption inside row 0 (= destination row)
+        // resolves to a single-cell short, while corruption between
+        // different rows enables 4 column wordlines simultaneously.
         if self.azus || self.azet {
-            let row = (self.wave_position as usize) >> 3;
-            let src = row * 4;
-            for i in 0..4 {
-                self.ram[i] = self.ram[src + i];
+            let byte_pos = (self.wave_position as usize) >> 1;
+            if byte_pos < 4 {
+                self.ram[0] = self.ram[byte_pos];
+            } else {
+                let row = byte_pos >> 2;
+                let src = row * 4;
+                for i in 0..4 {
+                    self.ram[i] = self.ram[src + i];
+                }
             }
         }
 
