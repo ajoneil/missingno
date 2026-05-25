@@ -403,8 +403,15 @@ impl Rendering {
     }
 
     /// CATU runs every XUPY cycle regardless of POPU so the DFF advances across the 153→0 boundary.
+    /// CATU's capture edge is the ATEJ pulse; ATEJ drives TADY low which async-resets PX bits
+    /// (and VOGA, scan counter — shared `h_reset_n` net). PX reset rides this edge rather than
+    /// firing synchronously in `reset_scanline`, matching the measured 1-dot delay between
+    /// RUTU.q↑ and WODU↓.
     pub(super) fn tick_scan_capture(&mut self, video: &VideoControl) {
-        self.scan.tick_scan_capture(video.scan_clock(), video.ly());
+        let atej_rising = self.scan.tick_scan_capture(video.scan_clock(), video.ly());
+        if atej_rising {
+            self.pixel_counter.reset();
+        }
     }
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
@@ -491,7 +498,8 @@ impl Rendering {
 
         self.tyfa = false;
         self.pany_slip_pending = false;
-        self.pixel_counter.reset();
+        // pixel_counter is async-reset by the ATEJ pulse — fires from `tick_scan_capture`
+        // when CATU.q rises, ~1 dot after RUTU.q rises here.
         self.lcd.reset(scanline);
         self.sprite_state = SpriteState::Idle;
         // SECA's ATEJ arm re-asserts TAKA at each scanline boundary; SOBU/SUDA free-run.

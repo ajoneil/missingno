@@ -119,9 +119,11 @@ impl SpriteScanner {
 
     /// Runs every XUPY cycle regardless of POPU (so the DFF advances across the 153→0 boundary).
     /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next scan_clock_rising.
-    pub(in crate::ppu) fn tick_scan_capture(&mut self, scan_clock_rising: bool, ly: u8) {
+    /// Returns true on the XUPY edge where CATU captures RUTU — the ATEJ-pulse-rising event that
+    /// asynchronously resets the shared `h_reset_n` consumers (PX bits, VOGA, scan counter via ANOM).
+    pub(in crate::ppu) fn tick_scan_capture(&mut self, scan_clock_rising: bool, ly: u8) -> bool {
         if !scan_clock_rising {
-            return;
+            return false;
         }
 
         // XYVO = LY bit 7 & bit 4 — true for LY 144..=153 in practice (i.e. VBlank lines).
@@ -142,6 +144,7 @@ impl SpriteScanner {
         }
 
         self.catu = catu_captures;
+        catu_captures
     }
 
     /// XUPY rising: counter tick + BYBA/DOBA capture + AVAP detection.
