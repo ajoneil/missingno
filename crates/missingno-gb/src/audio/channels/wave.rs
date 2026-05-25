@@ -449,17 +449,34 @@ impl Audio {
     }
 
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        // Per §14.8.4, the SRAM accepts the write whenever `wave_ram_wr`
-        // is high — no gating by `wave_data_latch`. While the channel
-        // is active the target is `ram[wave_position[4:1]]` (byte being
-        // read); while inactive the target is the address-decoded
-        // `offset`.
+        // While the channel is active, the wave-RAM SRAM commits the
+        // CPU write only when the wordline driver is enabled (= azus
+        // = 1) during the wave_ram_wr pulse. Hardware's wave_ram_wr
+        // pulse spans T=2..T=3 of M3 (= 4 half-T edges). The full-SRAM
+        // model commits the write if `wldrv_pch_n = 1` AND `wr = 1`
+        // at any of those edges (per `dmg_cpu_b/cells/generic_sram.sv`
+        // — its level-sensitive `always_latch` block).
+        //
+        // Our `commit_write` runs at T=3 fall. AZUS at that moment
+        // covers rise(T=3)+fall(T=3) via the (azus | azet) pair:
+        // AZET captures AZUS on every T-cycle-start rise, so at
+        // fall(T=3), AZET holds AZUS from rise(T=3). The (azus | azet)
+        // check therefore covers both half-T edges of T=3.
+        //
+        // The T=2 half of the wr pulse is NOT covered by this check
+        // alone — but in practice `azus` is a 1-T-cycle-wide pulse
+        // that extends through T=3 if it overlapped T=2, so the (azus
+        // | azet) at fall(T=3) catches every alignment that the test
+        // ROMs exercise. (Verified vs full-SRAM dmg-sim freq7fd_write
+        // traces.)
         let ch3 = &mut self.channels.ch3;
-        let byte_idx = if ch3.enabled.enabled {
-            ch3.wave_position as usize / 2
-        } else {
-            offset as usize
-        };
-        ch3.ram[byte_idx] = value;
+        if !ch3.enabled.enabled {
+            ch3.ram[offset as usize] = value;
+            return;
+        }
+        if ch3.azus || ch3.azet {
+            let byte_idx = ch3.wave_position as usize / 2;
+            ch3.ram[byte_idx] = value;
+        }
     }
 }

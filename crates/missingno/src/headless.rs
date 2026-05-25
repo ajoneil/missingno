@@ -954,6 +954,7 @@ fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
             "period": ch3.period.0,
             "enabled": ch3.enabled.enabled,
             "dac_enabled": ch3.dac_enabled,
+            "ram": ch3.ram.to_vec(),
         })
     }
 

@@ -31,10 +31,15 @@ ROM_PATH="$(cd "$(dirname "$ROM_PATH")" && pwd)/$(basename "$ROM_PATH")"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 
-# Compile if needed
+# Compile if needed. Build with SIMPLIFIED_WAVERAM= (empty) = full
+# `dmg_generic_sram` model for wave RAM. The makefile default uses
+# `dmg_simplified_sram`, which is a tractable approximation that
+# doesn't accurately model SRAM write / corruption behaviour. Verify:
+#   strings dmg_cpu_b_gameboy.vvp | grep -B1 dmg_generic_sram
+# Should show wave_ram_inst.sram_inst resolves to dmg_generic_sram.
 if [ ! -f "$DMG_SIM_DIR/dmg_cpu_b_gameboy.vvp" ]; then
-    echo "Compiling dmg-sim (first run only)..."
-    make -C "$DMG_SIM_DIR" dmg_cpu_b_gameboy.vvp TIMING=default 2>&1 | tail -3
+    echo "Compiling dmg-sim (first run only, full SRAM)..."
+    make -C "$DMG_SIM_DIR" dmg_cpu_b_gameboy.vvp SIMPLIFIED_WAVERAM= TIMING=default 2>&1 | tail -3
 fi
 
 echo "Running gate-level simulation: $ROM_NAME for ${SECS}s..."
