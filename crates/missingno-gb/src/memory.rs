@@ -340,11 +340,18 @@ impl GameBoy {
             // snapshot can be stale by the latch edge; re-read live.
             0xFF44 => self.read(address),
 
-            // CH3 wave RAM: the wave_data_latch synchroniser (§14.8.4)
-            // can transition between T=2 drive-enable and T=3 latch.
-            // Re-read live so windows opening late in the M-cycle are
-            // captured.
-            0xFF30..=0xFF3F => self.read(address),
+            // CH3 wave RAM: wave_data_latch (= AZUS) is a ~1-T-cycle
+            // pulse per §14.8.4. The bus is driven with the wave-RAM
+            // byte ONLY while wave_data_latch is high; outside that
+            // window the bus floats (0xFF). The CPU's effective sample
+            // captures whatever was driven during the T=2 drive-enable
+            // window, since wave_data_latch can close before T=3 latch.
+            // Use the snapshot (taken at T=2 fall) rather than re-reading
+            // live so a window that opened at T=2 and closed by T=3 is
+            // still seen by the CPU. Live re-read at T=3 would return
+            // 0xFF for sparser-period reads (freq7fd / freq7fe) where
+            // the window peaks at T=2 and falls by T=3.
+            0xFF30..=0xFF3F => snapshot,
 
             // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via
             // dmg_not_if1 cells with a bus-flux x-window during

@@ -281,6 +281,7 @@ impl Audio {
                 wave_position: 0,
                 length_counter: 0,
                 ch3_2mhz: false,
+                pending_overflow: false,
                 gavu: false,
                 foba: false,
                 ch3_restart: false,

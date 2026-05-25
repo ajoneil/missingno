@@ -936,6 +936,7 @@ fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
             "step": step,
             "phase": phase,
             "pc": cpu.bus_counter,
+            "a": cpu.a,
             "master_enabled": audio.enabled(),
             "ch3_2mhz": ch3.ch3_2mhz,
             "gavu": ch3.gavu,

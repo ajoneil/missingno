@@ -34,6 +34,13 @@ pub struct WaveChannel {
     /// on every `cybo↑` (= master-clock rise, = our `rise()` edge).
     /// Free-running, reset only by `apu_reset`.
     pub ch3_2mhz: bool,
+    /// One-edge delay between divider overflow and `ch3_frst` (huno)
+    /// capture, modelling the `ch3_ftick ↓ → hyfo ↑ → huno ↑ → hema ↓
+    /// → ch3_frst ↑` ripple chain. Set at the overflow rise, promoted
+    /// to `ch3_frst` on the NEXT rise (one master-clock edge later).
+    /// Without this delay the wave_data_latch active window peaks one
+    /// T-cycle ahead of the CPU LDH read on FF30..FF3F.
+    pub pending_overflow: bool,
 
     /// Captures NR34 d7 at `apu_wr↑` (in our model: at trigger() time,
     /// the commit_write edge). Held until consumed by `foba` at the
@@ -100,6 +107,7 @@ impl Default for WaveChannel {
             wave_position: 0,
             length_counter: 0,
             ch3_2mhz: false,
+            pending_overflow: false,
             gavu: false,
             foba: false,
             ch3_restart: false,
@@ -130,6 +138,7 @@ impl WaveChannel {
             wave_position: 0,
             length_counter,
             ch3_2mhz: false,
+            pending_overflow: false,
             gavu: false,
             foba: false,
             ch3_restart: false,
@@ -242,6 +251,15 @@ impl WaveChannel {
         let ch3_2mhz_rising = !ch3_2mhz_prev && self.ch3_2mhz;
         let fabo_rising = ch3_2mhz_prev && !self.ch3_2mhz; // ch3_2mhz↓
 
+        // huno DFF ripple delay: overflow set `pending_overflow` on the
+        // count edge; capture into `ch3_frst` here on the NEXT rise.
+        // Matches dmg-sim's 1-T-cycle delay between divider wrap and
+        // wave_data_latch chain activation.
+        if self.pending_overflow {
+            self.ch3_frst = true;
+            self.pending_overflow = false;
+        }
+
         // BANO captures BUSA at `cozy↑` = our rise edge (§14.8.4).
         // AZET captures AZUS on the same edge (apu_4mhz↓ = T-cycle
         // start), holding the prior T-cycle's wave_data_latch value
@@ -293,14 +311,21 @@ impl WaveChannel {
         // AND while `ch3_fdis = 0` (= channel enabled, juty active).
         // With ch3_fdis = 1, no toggle edges reach the divider, so no
         // overflows fire and the wave_data_latch chain stays idle.
-        if ch3_2mhz_rising && !self.ch3_restart && !self.ch3_frst && !self.ch3_fdis {
+        if ch3_2mhz_rising
+            && !self.ch3_restart
+            && !self.ch3_frst
+            && !self.pending_overflow
+            && !self.ch3_fdis
+        {
             if self.frequency_timer > 0 {
                 self.frequency_timer -= 1;
                 if self.frequency_timer == 0 {
-                    // Overflow → ch3_frst↑, divider reload. Wave-position
-                    // advance happens on ch3_frst↓ one cycle later.
+                    // Overflow → divider reload. `ch3_frst` rises one
+                    // rise edge later (huno DFF ripple delay).
+                    // Wave-position advance happens on `ch3_frst↓`,
+                    // one ch3_2mhz cycle after the rise.
                     self.frequency_timer = 2048 - self.period.0 as u16;
-                    self.ch3_frst = true;
+                    self.pending_overflow = true;
                 }
             }
         }
@@ -333,6 +358,7 @@ impl WaveChannel {
         self.frequency_timer = 2048 - self.period.0 as u16;
         // ch3_frst is async-cleared too; wave_data_latch chain follows.
         self.ch3_frst = false;
+        self.pending_overflow = false;
     }
 
     /// On `ch3_restart↓` (the gyta-driven self-clear): the divider
