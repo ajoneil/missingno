@@ -34,19 +34,15 @@ pub struct PulseSweepChannel {
     pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
-    /// DUWO — duty PWM latch captured on each natural-overflow `ch1_frst↑`.
-    /// Holds the channel's emitted bit between overflows. Spec §14.6.1.
+    /// `duwo` PWM latch — captures the duty-pattern bit on each
+    /// natural-overflow `ch1_frst ↑`; holds the emitted output
+    /// between overflows.
     pub pwm_latch: bool,
-    /// Trigger reload synchroniser: NR14 writes set this to 1, the next
-    /// prescaler wrap promotes it to 2, the wrap after that applies the
-    /// reload. Models the `ch1_restart` DFF that captures at the next
-    /// `ch1_1mhz↑` after the NR14 write. Spec §14.5 / §14.5.1.
+    /// `ch1_restart` sync stage; non-zero between NR14 trigger write
+    /// and the next ch1_1mhz↑ that applies the reload.
     pub pending_trigger_sync: u8,
-    /// Load-mode settle latency per §14.5.1.1 — after the trigger
-    /// reload, the divider DFFs need one full `ch1_1mhz` cycle to
-    /// settle out of load mode before they begin counting. Set on
-    /// the reload wrap; cleared (without counting) on the next wrap;
-    /// natural counting resumes on the wrap after.
+    /// Set on the reload edge; the first count is suppressed so the
+    /// divider DFFs settle out of load mode before counting resumes.
     pub divider_load_settle: bool,
     pub current_volume: u8,
     pub envelope_timer: u8,
@@ -59,13 +55,11 @@ pub struct PulseSweepChannel {
 
 impl Default for PulseSweepChannel {
     fn default() -> Self {
-        // Post-boot state at PC=0x0100, per spec §11.5 (FST-anchored via
-        // dmg-sim with the production DMG boot ROM). The boot ROM's
-        // Nintendo chime triggered CH1, ran the envelope to 0, and left
-        // the period divider mid-period.
+        // Post-boot state at PC=0x0100 (boot ROM's Nintendo chime ran
+        // CH1 to a known mid-period state with the envelope decayed).
         Self {
             enabled: Enabled {
-                enabled: true, // ch1_fdis = 0 (channel running)
+                enabled: true,
                 output_left: true,
                 output_right: true,
             },
@@ -73,15 +67,14 @@ impl Default for PulseSweepChannel {
             waveform_and_initial_length: WaveformAndInitialLength(0xbf),
             volume_and_envelope: VolumeAndEnvelope(0xf3),
             length_enabled: false,
-            period: Signed11(0x7C1), // acc_d at handoff (= {NR14[2:0], NR13[7:0]} = {7, 0xC1})
-
-            prescaler: Prescaler { counter: 1 }, // (calo, ajer) = (0, 1)
-            divider: PeriodDivider { counter: 0x7F9 }, // 6 ticks below natural overflow
-            wave_duty_position: 2,               // duty step counter (dape, eros, esut) = 010
-            pwm_latch: false, // duwo: boot ROM's last overflow captured pattern[1] = 0 (50%)
+            period: Signed11(0x7C1),
+            prescaler: Prescaler { counter: 1 },
+            divider: PeriodDivider { counter: 0x7F9 },
+            wave_duty_position: 2,
+            pwm_latch: false,
             pending_trigger_sync: 0,
             divider_load_settle: false,
-            current_volume: 0, // envelope decayed
+            current_volume: 0,
             envelope_timer: 0,
             length_counter: 0,
             shadow_frequency: 0,
@@ -188,10 +181,10 @@ impl PulseSweepChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // ch1_restart synchroniser: don't reload the divider directly.
-        // The reload happens at the next prescaler wrap (= next chN_1mhz↑
-        // edge). If a natural overflow lands on the same wrap, it fires
-        // first (spec §14.5.1 — pos_1 vs pos_2 asymmetry).
+        // Arm the ch1_restart sync: the reload applies at the next
+        // ch1_1mhz↑, not on this write edge. A coincident natural
+        // overflow on that wrap is suppressed (dyru async-resets
+        // comy before cala can clock).
         self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
@@ -229,23 +222,18 @@ impl PulseSweepChannel {
         if !self.prescaler.tcycle(apu_reset_n) || !self.enabled.enabled {
             return;
         }
-        // Prescaler wrapped (ch1_1mhz↑). Per spec §14.5.1, the trigger
-        // synchroniser ch1_restart and the divider reload both resolve
-        // on this same edge — dyru async-resets COMY before cala can
-        // clock, so a coincident natural overflow is suppressed.
+        // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
+        // overflow are mutually exclusive on the same edge — trigger
+        // wins via dyru's async-reset of comy.
         if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
-            // §14.5.1.1 load-mode settle: first count after a trigger
-            // is on the SECOND ch1_1mhz↑ after the reload, not the first.
             self.divider_load_settle = true;
         } else if self.divider_load_settle {
-            // Skip the count cycle so the divider DFFs settle out of
-            // level-sensitive load mode before counting resumes.
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
-            // Natural overflow: capture duwo at pre-advance counter,
-            // then advance the duty step counter and reload divider.
+            // Natural overflow: capture duwo from the pre-advance
+            // duty step, then advance and reload.
             let duty = self.waveform_and_initial_length.waveform() as usize;
             self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
@@ -323,10 +311,8 @@ impl PulseSweepChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        // DUWO holds the duty pattern bit captured at the last natural
-        // overflow (spec §14.6.1). The combinational chN_pwm output that
-        // reflects the current counter position is NOT what feeds the
-        // DAC — only the latched value does.
+        // The DAC sees the latched duty bit from the previous
+        // overflow, not the combinational chN_pwm output.
         let output = if self.pwm_latch { 1u8 } else { 0 };
         output as f32 * self.current_volume as f32 / 15.0
     }

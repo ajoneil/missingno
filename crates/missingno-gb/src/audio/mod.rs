@@ -103,18 +103,11 @@ impl Audio {
         self.prev_div_apu_bit
     }
 
-    /// One T-cycle of APU work, called at the master-clock rise of every
-    /// T-cycle. Channel prescalers advance one apuv↑ tick per call;
-    /// CH1/CH2 dividers fire on their CALO↑ wrap, CH3 on its cery↑ wrap,
-    /// CH4 on its frequency_timer expiry. Box-filter mixer output is
-    /// accumulated each call and pushed once per ~95 T-cycles to match
-    /// the 44.1 kHz host rate.
+    /// One T-cycle of APU work, called at every master-clock rise.
+    /// `apu_reset_n` is NR52 bit 7 — the channels' prescaler DFFs
+    /// honour it as an async-reset, so we still call each tcycle
+    /// unconditionally to keep the reset edge observable.
     pub fn tcycle(&mut self, div_counter: u16, t_index: u8) {
-        // `apu_reset_n` (= NR52 bit 7) gates the prescaler async-resets
-        // on CERY (CH3) and AJER/ATEP/CALO/CEMO (CH1/CH2) per §14.5.2 /
-        // §14.8.1. Each channel's tcycle honours this — they still run
-        // unconditionally so the apu_reset edge is observable inside
-        // the channel models (cery.q forced to 0, etc).
         let apu_reset_n = self.enabled;
         self.channels.ch1.tcycle(apu_reset_n);
         self.channels.ch2.tcycle(apu_reset_n);
@@ -122,8 +115,8 @@ impl Audio {
         self.channels.ch4.tcycle(apu_reset_n);
 
         if !self.enabled {
-            // Still track DIV-APU bit even when disabled, so we have the
-            // correct previous state when APU is re-enabled.
+            // Keep tracking the DIV-APU bit so we have the right edge
+            // history when the APU is re-enabled.
             self.prev_div_apu_bit = div_counter & DIV_APU_BIT != 0;
             return;
         }
@@ -133,11 +126,7 @@ impl Audio {
         self.sample_accum_right += r;
         self.sample_accum_count += 1;
 
-        // Frame sequencer: driven by falling edge of bit 12 in system
-        // counter (DIV-APU). The timer counter only updates at T=0
-        // (timers.mcycle at boundary-rise), so the edge can only fire
-        // there — but checking every T-cycle is harmless since
-        // prev_div_apu_bit only changes when the bit does.
+        // Frame sequencer fires on falling edges of the DIV-APU bit.
         let div_apu_bit = div_counter & DIV_APU_BIT != 0;
         if self.prev_div_apu_bit && !div_apu_bit {
             self.tick_frame_sequencer();
@@ -159,9 +148,8 @@ impl Audio {
         }
     }
 
-    /// Half-T-cycle audio work on master-clock fall (= apu_4mhz↑ at
-    /// mid-T-cycle). Currently used only for CH3's wave_data_latch
-    /// synchroniser stages BUSA and AZUS (§14.8.4).
+    /// Half-T-cycle audio work on master-clock fall (= apu_4mhz ↑ at
+    /// mid-T-cycle). Drives CH3's BUSA and AZUS DFFs.
     pub fn fall_sync(&mut self) {
         if !self.enabled {
             return;

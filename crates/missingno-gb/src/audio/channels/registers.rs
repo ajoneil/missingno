@@ -108,28 +108,20 @@ impl From<i16> for Signed11 {
     }
 }
 
-/// CH1/CH2 prescaler: AJER + CALO (CH1) / ATEP + CEMO (CH2). Two
-/// toggle DFFs that divide `apu_4mhz` down to 1 MHz, free-running and
-/// reset only by APU power-off. NR14/NR24 trigger writes have no
-/// input to these stages — that's the silicon-level realisation of
-/// "low two bits of the frequency timer are NOT modified."
+/// CH1/CH2 /4 prescaler — two toggle DFFs (AJER + CALO on CH1, ATEP
+/// + CEMO on CH2) that divide apu_4mhz down to 1 MHz. Free-running;
+/// reset only by `apu_reset`. NR14/NR24 trigger writes have no input
+/// to these stages — the silicon-level realisation of "low two bits
+/// of the frequency timer are NOT modified".
 #[derive(Clone, Default)]
 pub struct Prescaler {
     pub counter: u8,
 }
 
 impl Prescaler {
-    /// Advance by one T-cycle (apuv↑ master clock rise). The counter
-    /// packs (CALO << 1) | AJER. AJER toggles every tick; CALO toggles
-    /// when AJER falls. Returns true on the CALO↑ edge — the
-    /// `chN_1mhz↑` rising edge that clocks the period divider. With
-    /// the post-boot counter=1 anchor ((calo, ajer)=(0,1) per §11.5),
-    /// the CALO↑ edge lands at T=0 atal↑ of each M-cycle (= spec
-    /// "T1 atal↑" under 1-indexed T-cycle naming).
-    ///
-    /// `apu_reset_n` is the inverted apu_reset signal (= NR52 bit 7).
-    /// While low (= NR52 bit 7 = 0), the prescaler DFFs are held at 0
-    /// via the async-reset path on their `r_n` inputs; no wrap fires.
+    /// Advance by one master-clock rise. Counter packs
+    /// `(CALO << 1) | AJER`; returns true on CALO↑ (= chN_1mhz↑) which
+    /// clocks the period divider. Held at 0 while `apu_reset_n = 0`.
     pub fn tcycle(&mut self, apu_reset_n: bool) -> bool {
         if !apu_reset_n {
             self.counter = 0;

@@ -22,70 +22,52 @@ pub struct WaveChannel {
     pub period: Signed11,
     pub ram: [u8; 16],
 
-    /// Divider counter — counts `ch3_2mhz↑` ticks remaining until the
-    /// next natural overflow. Reloaded to `(2048 - period)` on each
-    /// `ch3_frst↑`. Held at the loaded value while `ch3_restart` is
+    /// Divider down-counter; reloads `(2048 - period)` on each
+    /// `ch3_frst ↑`, held at the loaded value while `ch3_restart` is
     /// high (load mode via `hera = NOR(ch3_frst, ch3_restart)`).
     pub frequency_timer: u16,
     pub wave_position: u8,
     pub length_counter: u16,
 
-    /// `cery` DFF (§14.8.1) — `ch3_2mhz` prescaler /2 stage. Toggles
-    /// on every `cybo↑` (= master-clock rise, = our `rise()` edge).
-    /// Free-running, reset only by `apu_reset`.
+    /// `cery` /2 prescaler — toggles on every master-clock rise; held
+    /// at 0 while `apu_reset = 1`.
     pub ch3_2mhz: bool,
-    /// One-edge delay between divider overflow and `ch3_frst` (huno)
-    /// capture, modelling the `ch3_ftick ↓ → hyfo ↑ → huno ↑ → hema ↓
-    /// → ch3_frst ↑` ripple chain. Set at the overflow rise, promoted
-    /// to `ch3_frst` on the NEXT rise (one master-clock edge later).
-    /// Without this delay the wave_data_latch active window peaks one
-    /// T-cycle ahead of the CPU LDH read on FF30..FF3F.
+    /// `huno` DFF clock-to-q ripple: one master-clock edge between
+    /// divider wrap and `ch3_frst ↑`.
     pub pending_overflow: bool,
 
-    /// Captures NR34 d7 at `apu_wr↑` (in our model: at trigger() time,
-    /// the commit_write edge). Held until consumed by `foba` at the
-    /// next M-cycle boundary. Spec §14.8.3 stage 1.
+    /// Trigger sync stage 1 — captures NR34 d7 at `apu_wr ↑`.
     pub gavu: bool,
-    /// `foba` DFF — captures `gavu` at the next M-cycle boundary
-    /// (`apu_phi↑`, = T=0 rise of M+1). Spec §14.8.3 stage 2.
+    /// Trigger sync stage 2 — captures `gavu` at the M-cycle boundary
+    /// (`apu_phi ↑` = T=0 rise of M+1).
     pub foba: bool,
-    /// `gara` DFF (= `ch3_restart`) — captures the gofy_n-armed
-    /// trigger pulse on `fabo↑` (= `ch3_2mhz↓`). Held high for one
-    /// `ch3_2mhz` cycle (= 2 T-cycles). Spec §14.8.3 stages 4-5.
+    /// `gara` — captures the gofy_n-armed trigger pulse on `fabo ↑`
+    /// (= `ch3_2mhz ↓`). Held high for one `ch3_2mhz` cycle.
     pub ch3_restart: bool,
-    /// `gyta` DFF — samples `ch3_restart` on `fabo↑` to drive the
-    /// self-clear async-reset of `gara` on the following `fabo↑`.
+    /// Self-clear driver — samples `ch3_restart` on `fabo ↑` and on
+    /// the following `fabo ↑` async-resets `gara` via `fury`.
     pub gyta: bool,
 
-    /// `ch3_frst` overflow capture pulse — held high for one
-    /// `ch3_2mhz` cycle after the divider overflow. Drives the
-    /// BUSA/BANO/AZUS wave-RAM bus synchroniser. Spec §14.8.6.
+    /// Overflow capture pulse from `huno`; held one `ch3_2mhz` cycle
+    /// and cleared by `hupa = AND(huno, ch3_2mhz)`.
     pub ch3_frst: bool,
-    /// `busa` DFF (§14.8.4) — captures `ch3_frst` on `apu_4mhz↑`
-    /// (= our fall edge). First synchroniser stage.
+    /// First wave-data-latch sync stage — captures `ch3_frst` on
+    /// `apu_4mhz ↑` (= our fall edge).
     pub busa: bool,
-    /// `bano` DFF — captures `busa` on `cozy↑` (= our rise edge).
-    /// Second stage.
+    /// Second sync stage — captures `busa` on `cozy ↑` (= our rise).
     pub bano: bool,
-    /// `azus` DFF — captures `bano` on `apu_4mhz↑` (= our fall edge).
-    /// Buffered to `wave_data_latch`. Third stage; while true the
-    /// wave-RAM block drives the bus.
+    /// Third sync stage = `wave_data_latch` — captures `bano` on
+    /// `apu_4mhz ↑`. CPU reads of FF30..FF3F return the wave-RAM byte
+    /// while this is high; outside the window the bus floats to 0xFF.
     pub azus: bool,
-    /// `azet` DFF — captures `azus` on `apu_4mhz↓` (= T-cycle start
-    /// = our rise edge). Together with `azus`, `(azus | azet)` defines
-    /// the wave-RAM SRAM-read-active window driving
-    /// `wave_ram_bl_precharge = NOT(NOR(azus, azet))`. The corruption
-    /// gate on `ch3_restart ↑` fires within this 1.5-T-cycle window
-    /// per §14.8.5 (resolved 2026-05-24).
+    /// `azus` re-captured on `apu_4mhz ↓` to extend the SRAM-read-
+    /// active window. `(azus | azet) = 1` drives
+    /// `wave_ram_bl_precharge = 0` and is the corruption gate on
+    /// `ch3_restart ↑`.
     pub azet: bool,
-    /// `ch3_fdis` nand_latch (§14.8.1) — gates the divider toggle
-    /// clock. Set high (= channel disabled, divider frozen) by DAC-off
-    /// (NR30 d7 = 0) or apu_reset. Cleared (= channel enabled) by a
-    /// trigger's gyta-derived `s_n` pulse — modelled here as the
-    /// `ch3_restart ↓` self-clear edge, matching the timing relation
-    /// in §14.8.8. While `ch3_fdis = 1`, `hefo = 0` → `juty = 1`
-    /// (constant) → no divider toggle edges → no overflows → the
-    /// `busa/bano/azus/azet` chain stays idle.
+    /// NAND-latch gating `juty` (the divider toggle clock). Set by
+    /// DAC-off or `apu_reset`; cleared by the gyta-derived `s_n`
+    /// pulse on a trigger. While set, no divider overflows fire.
     pub ch3_fdis: bool,
 }
 
@@ -178,9 +160,8 @@ impl WaveChannel {
                 self.dac_enabled = value & 0b1000_0000 != 0;
                 if !self.dac_enabled {
                     self.enabled.enabled = false;
-                    // §14.8.1: `ch3_amp_en_n = 1` (DAC off) sets the
-                    // `ch3_fdis` nand_latch high → divider toggle clock
-                    // gated low → no overflows while DAC is off.
+                    // DAC-off raises `ch3_amp_en_n` which sets the
+                    // `ch3_fdis` NAND-latch — divider clock gated.
                     self.ch3_fdis = true;
                 }
             }
@@ -217,10 +198,8 @@ impl WaveChannel {
     }
 
     pub fn trigger(&mut self) {
-        // NR34 d7 latches into `gavu` at apu_wr↑ (§14.8.3 stage 1).
-        // In our model the trigger() call is at commit_write (= apu_wr↓
-        // edge); equivalent for capture since gavu is a level-sensitive
-        // drlatch that holds the value past apu_wr↓.
+        // `gavu` is a level-sensitive drlatch; capture from commit_write
+        // is equivalent to hardware's apu_wr↑ capture.
         self.gavu = true;
 
         self.enabled.enabled = true;
@@ -234,61 +213,48 @@ impl WaveChannel {
     }
 
     pub fn tcycle(&mut self, t_index: u8, apu_reset_n: bool) {
-        // `cery` is a dffr async-reset DFF (§14.8.1). While
-        // `apu_reset = 1` (NR52 bit 7 = 0), `r_n = 0` forces `cery.q`
-        // to 0 and `cybo↑` has no effect; the downstream divider /
-        // synchroniser chain is held inert via `ch3_fdis = 1`.
+        // `cery` async-reset: held at 0 while `apu_reset = 1`. The
+        // downstream divider / synchroniser chain is held inert via
+        // `ch3_fdis = 1` and so doesn't need separate gating.
         if !apu_reset_n {
             self.ch3_2mhz = false;
             return;
         }
 
-        // `cery` toggles on every `cybo↑` = master-clock rise. Drives
-        // `ch3_2mhz`; under quickboot phase the rise lands at T=0 / T=2
-        // atal↑ and the fall at T=1 / T=3 (§14.8.7).
         let ch3_2mhz_prev = self.ch3_2mhz;
         self.ch3_2mhz = !self.ch3_2mhz;
         let ch3_2mhz_rising = !ch3_2mhz_prev && self.ch3_2mhz;
         let fabo_rising = ch3_2mhz_prev && !self.ch3_2mhz; // ch3_2mhz↓
 
-        // huno DFF ripple delay: overflow set `pending_overflow` on the
-        // count edge; capture into `ch3_frst` here on the NEXT rise.
-        // Matches dmg-sim's 1-T-cycle delay between divider wrap and
-        // wave_data_latch chain activation.
+        // huno clock-to-q ripple: promote the pending overflow into
+        // `ch3_frst` on the rise AFTER the divider wrap.
         if self.pending_overflow {
             self.ch3_frst = true;
             self.pending_overflow = false;
         }
 
-        // BANO captures BUSA at `cozy↑` = our rise edge (§14.8.4).
-        // AZET captures AZUS on the same edge (apu_4mhz↓ = T-cycle
-        // start), holding the prior T-cycle's wave_data_latch value
-        // so the SRAM-read-active window `(azus | azet)` spans 1.5
-        // T-cycles (§14.8.5, §14.8.7).
+        // wave_data_latch sync chain: BANO captures BUSA on cozy↑
+        // (rise), AZET captures AZUS on apu_4mhz↓ (rise), so the
+        // `(azus | azet)` SRAM-read-active window spans 1.5 T-cycles.
         self.bano = self.busa;
         self.azet = self.azus;
 
-        // `foba` (§14.8.3 stage 2) — DFF clocked by `apu_phi`, which
-        // rises at the M-cycle boundary. T=0 rise of every M-cycle.
+        // foba captures gavu on apu_phi↑ (= M-cycle boundary, T=0).
         if t_index == 0 {
             self.foba = self.gavu;
         }
 
-        // `gara` / `gyta` synchroniser sample on `fabo↑` (§14.8.3
-        // stages 4-5). gyta captures the prior ch3_restart; if it
-        // becomes 1 then the async-reset path forces ch3_restart to 0.
         if fabo_rising {
+            // gara/gyta sample on fabo↑. gyta captures the prior
+            // ch3_restart; when high it async-resets gara via fury.
             let new_gyta = self.ch3_restart;
             if new_gyta {
-                // Self-clear via gyta→fury→gara.r_n. Also clears the
-                // gofy_n path so the next fabo↑ samples 0.
                 self.ch3_restart = false;
                 self.foba = false;
                 self.gavu = false;
                 self.gyta = true;
                 self.on_ch3_restart_fall();
             } else if self.foba {
-                // First fabo↑ with foba armed → ch3_restart↑.
                 self.gyta = false;
                 self.ch3_restart = true;
                 self.on_ch3_restart_rise();
@@ -297,103 +263,71 @@ impl WaveChannel {
             }
         }
 
-        // ch3_frst is held high for one `ch3_2mhz` cycle — clears on
-        // the next `ch3_2mhz↑` via hupa = AND(huno, ch3_2mhz). The
-        // wave-position counter advances on this `ch3_frst↓` edge
-        // (= dero↑), one ch3_2mhz cycle AFTER the overflow.
+        // hupa = AND(huno, ch3_2mhz): clears ch3_frst on the next
+        // ch3_2mhz↑. The wave-position counter advances on this edge
+        // (= dero↑), one ch3_2mhz cycle after the overflow.
         if ch3_2mhz_rising && self.ch3_frst {
             self.ch3_frst = false;
             self.wave_position = (self.wave_position + 1) % 32;
         }
 
-        // Divider clocks on `ch3_2mhz↑` while not in load mode (hera
-        // is high = NOR(ch3_frst, ch3_restart) = 1 means both low),
-        // AND while `ch3_fdis = 0` (= channel enabled, juty active).
-        // With ch3_fdis = 1, no toggle edges reach the divider, so no
-        // overflows fire and the wave_data_latch chain stays idle.
+        // Divider clocks on ch3_2mhz↑ when hera is high (= ch3_restart
+        // and ch3_frst both low — out of load mode) and juty is active
+        // (= ch3_fdis = 0, channel enabled).
         if ch3_2mhz_rising
             && !self.ch3_restart
             && !self.ch3_frst
             && !self.pending_overflow
             && !self.ch3_fdis
+            && self.frequency_timer > 0
         {
-            if self.frequency_timer > 0 {
-                self.frequency_timer -= 1;
-                if self.frequency_timer == 0 {
-                    // Overflow → divider reload. `ch3_frst` rises one
-                    // rise edge later (huno DFF ripple delay).
-                    // Wave-position advance happens on `ch3_frst↓`,
-                    // one ch3_2mhz cycle after the rise.
-                    self.frequency_timer = 2048 - self.period.0 as u16;
-                    self.pending_overflow = true;
-                }
+            self.frequency_timer -= 1;
+            if self.frequency_timer == 0 {
+                self.frequency_timer = 2048 - self.period.0 as u16;
+                self.pending_overflow = true;
             }
         }
     }
 
-    /// Effects of `ch3_restart↑` (§14.8.6): wave-position counter
-    /// async-reset via etan↓, divider load window opens via hera↓,
-    /// and — if `wave_data_latch` is still high from a prior overflow
-    /// — wave-RAM byte-0 (or 4-byte block) corruption per §14.8.5.
-    /// Releases happen on the gyta-driven async-reset path.
+    /// `ch3_restart ↑` effects: wave-RAM corruption if the SRAM
+    /// bit-lines are still driven (= `(azus | azet) = 1`), then
+    /// wave-position async-reset and divider load.
     fn on_ch3_restart_rise(&mut self) {
-        // DMG wave-RAM corruption on retrigger-during-active-read.
-        // `ch3_restart↑` while the SRAM bit-line precharge window
-        // (azus | azet) is open causes the SRAM cell to short-circuit
-        // wordlines, copying part of CH3's currently-read row into
-        // ram[0..3]. The granularity depends on `byte_pos = wave_position
-        // >> 1`:
-        //   - `byte_pos < 4` (CH3 reading row 0): only `ram[0]` is
-        //     overwritten, with the byte at `ram[byte_pos]`. This is
-        //     the Pan Docs "single byte" framing — measured by
-        //     `blargg::dmg_sound_10_wave_trigger_while_on`'s 69-iter
-        //     sweep (iterations land at byte_pos 1, 2, 3).
-        //   - `byte_pos >= 4`: 4-byte row copy from the addressed row
-        //     into ram[0..3]. This is the spec §14.8.5 row-copy rule,
-        //     measured by `ch3_corruption_sweep.fst` and friends
-        //     (12 retriggers, all byte_pos 4..8).
-        // The dichotomy follows from the SRAM topology: rows are
-        // 4 columns wide; corruption inside row 0 (= destination row)
-        // resolves to a single-cell short, while corruption between
-        // different rows enables 4 column wordlines simultaneously.
+        // Retrigger-during-active-read shorts SRAM wordlines, copying
+        // part of CH3's currently-read row into ram[0..3]. With
+        // byte_pos < 4 (source row == destination row 0) only one
+        // cell shorts, so just ram[0] gets ram[byte_pos]. With
+        // byte_pos >= 4, four column wordlines are enabled across
+        // both rows and the full 4-byte row copies through.
         if self.azus || self.azet {
             let byte_pos = (self.wave_position as usize) >> 1;
             if byte_pos < 4 {
                 self.ram[0] = self.ram[byte_pos];
             } else {
-                let row = byte_pos >> 2;
-                let src = row * 4;
+                let src = (byte_pos >> 2) * 4;
                 for i in 0..4 {
                     self.ram[i] = self.ram[src + i];
                 }
             }
         }
 
-        // Reset wave-position counter (etan↓ async-resets all 5 cells).
+        // etan ↓ async-resets the wave-position counter; hera ↓ opens
+        // the divider load window.
         self.wave_position = 0;
-
-        // Divider load window opens: counter level-sensitive on period.
         self.frequency_timer = 2048 - self.period.0 as u16;
-        // ch3_frst is async-cleared too; wave_data_latch chain follows.
         self.ch3_frst = false;
         self.pending_overflow = false;
     }
 
-    /// On `ch3_restart↓` (the gyta-driven self-clear): the divider
-    /// exits load mode and begins counting on the next `ch3_2mhz↑`.
-    /// Per spec, CH3 has no separate load-settle cycle (unlike CH1/CH2
-    /// at §14.5.1.1) — the held cycle while ch3_restart is high IS
-    /// the settle. `ch3_fdis` is cleared on the gyta-derived `s_n`
-    /// pulse — same fabo↑ edge as the self-clear.
+    /// `ch3_restart ↓` (gyta-driven self-clear): divider exits load
+    /// mode on the next cery↑; `ch3_fdis` is cleared on the same edge.
     fn on_ch3_restart_fall(&mut self) {
         self.ch3_fdis = false;
     }
 
-    /// Half-T-cycle synchroniser step on master-clock fall edge
-    /// (= apu_4mhz↑ at mid-T-cycle). BUSA captures `ch3_frst`, AZUS
-    /// captures BANO. Together with BANO's rise-edge capture in
-    /// `tcycle()`, this implements the 3-stage `busa → bano → azus`
-    /// chain that gates `wave_data_latch` per §14.8.4.
+    /// Half-T-cycle synchroniser step on master-clock fall (=
+    /// apu_4mhz ↑ at mid-T-cycle). Captures the two DFFs in the
+    /// `busa → bano → azus` chain that clock on apu_4mhz ↑.
     pub fn fall_sync(&mut self) {
         self.azus = self.bano;
         self.busa = self.ch3_frst;
@@ -445,15 +379,9 @@ impl Volume {
 }
 
 impl Audio {
-    /// DMG wave-RAM bus alignment per §14.8.4. CPU access succeeds
-    /// only while `wave_data_latch` (= AZUS) is high — its ~1-T-cycle
-    /// pulse, ~1.5 T-cycles after `ch3_frst↑`. Accesses outside that
-    /// window see a floating bus → 0xFF. `bus_value_at_latch`
-    /// re-evaluates so accesses landing late in the M-cycle still
-    /// see windows that opened after the drive-enable snapshot. The
-    /// wider `(azus | azet)` SRAM-read-active window is only consulted
-    /// by the corruption gate, not by CPU access — the CPU bus drive
-    /// is gated by `wave_data_latch` proper, not by `azet`'s hold.
+    /// Active-channel reads return the byte at the current wave
+    /// position only while `wave_data_latch` (= `azus`) is high —
+    /// outside that ~1-T-cycle pulse the bus floats to 0xFF.
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
         let ch3 = &self.channels.ch3;
         if !ch3.enabled.enabled {
@@ -466,27 +394,13 @@ impl Audio {
         }
     }
 
+    /// Active-channel writes target `ram[wave_position[4:1]]` (= the
+    /// byte CH3 is reading) but only commit when the SRAM wordline
+    /// driver is out of precharge, which tracks `azus`. The `(azus |
+    /// azet)` check at the T=3 fall commit edge covers both half-T
+    /// edges of T=3 of the `wave_ram_wr` pulse — sufficient for every
+    /// alignment the test ROMs exercise.
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        // While the channel is active, the wave-RAM SRAM commits the
-        // CPU write only when the wordline driver is enabled (= azus
-        // = 1) during the wave_ram_wr pulse. Hardware's wave_ram_wr
-        // pulse spans T=2..T=3 of M3 (= 4 half-T edges). The full-SRAM
-        // model commits the write if `wldrv_pch_n = 1` AND `wr = 1`
-        // at any of those edges (per `dmg_cpu_b/cells/generic_sram.sv`
-        // — its level-sensitive `always_latch` block).
-        //
-        // Our `commit_write` runs at T=3 fall. AZUS at that moment
-        // covers rise(T=3)+fall(T=3) via the (azus | azet) pair:
-        // AZET captures AZUS on every T-cycle-start rise, so at
-        // fall(T=3), AZET holds AZUS from rise(T=3). The (azus | azet)
-        // check therefore covers both half-T edges of T=3.
-        //
-        // The T=2 half of the wr pulse is NOT covered by this check
-        // alone — but in practice `azus` is a 1-T-cycle-wide pulse
-        // that extends through T=3 if it overlapped T=2, so the (azus
-        // | azet) at fall(T=3) catches every alignment that the test
-        // ROMs exercise. (Verified vs full-SRAM dmg-sim freq7fd_write
-        // traces.)
         let ch3 = &mut self.channels.ch3;
         if !ch3.enabled.enabled {
             ch3.ram[offset as usize] = value;

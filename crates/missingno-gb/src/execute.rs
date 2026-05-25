@@ -163,9 +163,7 @@ impl GameBoy {
         let tcycle = self.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
 
-        // APU prescaler tick (apuv↑). One per T-cycle rise — spec §14.5.2
-        // anchors AJER toggling on every master-clock rise. Channel
-        // dividers fire on their CALO↑ / cery↑ wrap within these ticks.
+        // APU prescaler tick (apuv ↑) on every master-clock rise.
         self.audio
             .tcycle(self.timers.internal_counter(), tcycle.as_u8());
 
@@ -197,10 +195,9 @@ impl GameBoy {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
-        // APU half-T-cycle work on apu_4mhz↑ (mid-T-cycle) — BUSA/AZUS
-        // DFFs in CH3's wave_data_latch synchroniser per §14.8.4. Must
-        // settle before the T=2 drive-enable so wave-RAM reads see the
-        // current wave_data_latch state.
+        // CH3's BUSA / AZUS DFFs latch on apu_4mhz ↑ (= our fall);
+        // settle before the T=2 drive-enable so wave-RAM reads see
+        // the current wave_data_latch.
         self.audio.fall_sync();
 
         if tcycle.as_u8() == 2 {

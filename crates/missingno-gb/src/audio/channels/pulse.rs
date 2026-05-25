@@ -32,13 +32,13 @@ pub struct PulseChannel {
     pub prescaler: Prescaler,
     pub divider: PeriodDivider,
     pub wave_duty_position: u8,
-    /// DOME — CH2 mirror of CH1's DUWO PWM latch. Spec §14.6.2.
+    /// `dome` PWM latch (CH2 mirror of CH1's `duwo`).
     pub pwm_latch: bool,
-    /// CH2's ch2_restart synchroniser stage; mirror of CH1's
-    /// `pending_trigger_sync`. Spec §14.5.1.
+    /// `ch2_restart` sync stage; non-zero between NR24 trigger write
+    /// and the next ch2_1mhz↑ that applies the reload.
     pub pending_trigger_sync: u8,
-    /// CH2 mirror of CH1's `divider_load_settle` — first count after
-    /// trigger is on the second ch2_1mhz↑ post-reload (§14.5.1.1).
+    /// Set on the reload edge; the first count is suppressed so the
+    /// divider DFFs settle out of load mode (CH1/CH2 mirror).
     pub divider_load_settle: bool,
     pub current_volume: u8,
     pub envelope_timer: u8,
@@ -47,9 +47,8 @@ pub struct PulseChannel {
 
 impl Default for PulseChannel {
     fn default() -> Self {
-        // Post-boot state at PC=0x0100, per spec §11.5. Boot ROM doesn't
-        // drive CH2: DAC off, channel disabled, all internal counters at
-        // their post-reset zero state.
+        // Post-boot state at PC=0x0100. Boot ROM doesn't drive CH2:
+        // DAC off, channel disabled, internal counters at reset.
         Self {
             enabled: Enabled {
                 enabled: false, // ch2_fdis = 1 (channel disabled)
@@ -155,7 +154,8 @@ impl PulseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // ch2_restart synchroniser: see CH1 trigger() / spec §14.5.1.
+        // Arm the ch2_restart sync: the reload applies at the next
+        // ch2_1mhz↑, not on this write edge.
         self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
@@ -173,7 +173,7 @@ impl PulseChannel {
         if self.pending_trigger_sync != 0 {
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
-            // §14.5.1.1 load-mode settle latency (mirror of CH1).
+            // First post-reload tick is consumed by load-mode settle.
             self.divider_load_settle = true;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
@@ -226,7 +226,6 @@ impl PulseChannel {
         if !self.enabled.enabled {
             return 0.0;
         }
-        // DOME latch (§14.6.2 mirror of CH1 DUWO).
         let output = if self.pwm_latch { 1u8 } else { 0 };
         output as f32 * self.current_volume as f32 / 15.0
     }

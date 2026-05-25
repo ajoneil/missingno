@@ -139,9 +139,7 @@ impl GameBoyColor {
         let tcycle = self.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
 
-        // APU prescaler tick (apuv↑). One per T-cycle rise — spec §14.5.2
-        // anchors AJER toggling on every master-clock rise. Channel
-        // dividers fire on their CALO↑ / cery↑ wrap within these ticks.
+        // APU prescaler tick (apuv ↑) on every master-clock rise.
         self.audio
             .tcycle(self.timers.internal_counter(), tcycle.as_u8());
 
@@ -164,8 +162,7 @@ impl GameBoyColor {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
 
-        // APU half-T-cycle work on apu_4mhz↑ — CH3 wave_data_latch
-        // synchroniser stages BUSA / AZUS (§14.8.4).
+        // CH3's BUSA / AZUS DFFs latch on apu_4mhz ↑ (= our fall).
         self.audio.fall_sync();
 
         if tcycle.as_u8() == 2 {
