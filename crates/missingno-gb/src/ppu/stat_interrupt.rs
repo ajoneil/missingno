@@ -80,11 +80,15 @@ impl StatInterrupt {
         self.enables = InterruptFlags::from_bits_truncate(value);
     }
 
-    /// LALU edge detect: fires if any SUKO source leg has a 0→1 transition since the last call.
+    /// LALU edge detect: SUKO produces a rising edge iff its OR output transitions through zero
+    /// on this step. That requires (a) at least one leg rising into the new state, AND (b) no
+    /// previously-active leg surviving to keep SUKO high. A surviving leg holds SUKO continuously
+    /// high (the "STAT IRQ blocking" case), so no LALU clock fires.
     pub(in crate::ppu) fn detect_leg_edges(&mut self, legs: InterruptFlags) -> bool {
         let rising = legs - self.legs_was_high;
+        let surviving = self.legs_was_high & legs;
         self.legs_was_high = legs;
-        !rising.is_empty()
+        !rising.is_empty() && surviving.is_empty()
     }
 
     /// Prime the per-leg baseline at LCD-enable or snapshot restore to avoid a spurious first edge.
