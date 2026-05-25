@@ -96,12 +96,12 @@ impl Ppu {
             Register::Status => {
                 // DMG STAT write glitch: all enables briefly high, then settle.
                 self.video.stat.set_enables(InterruptFlags::all());
-                let glitch_line = self.stat_line();
-                let glitch_edge = self.video.stat.detect_line_edge(glitch_line);
+                let glitch_legs = self.stat_legs();
+                let glitch_edge = self.video.stat.detect_leg_edges(glitch_legs);
 
                 self.video.stat.write_stat_bits(value);
-                let final_line = self.stat_line();
-                let final_edge = self.video.stat.detect_line_edge(final_line);
+                let final_legs = self.stat_legs();
+                let final_edge = self.video.stat.detect_leg_edges(final_legs);
 
                 return glitch_edge || final_edge;
             }

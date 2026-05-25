@@ -23,8 +23,8 @@ pub struct StatInterrupt {
     pub(in crate::ppu) comparison_latched: bool,
     /// FF41 bits 3-6 enables + DUMMY pull-up on bit 7.
     pub(in crate::ppu) enables: InterruptFlags,
-    /// LALU previous STAT line state.
-    pub(in crate::ppu) line_was_high: bool,
+    /// LALU per-leg previous values — one bit per SUKO source AND-term.
+    pub(in crate::ppu) legs_was_high: InterruptFlags,
 }
 
 impl StatInterrupt {
@@ -34,7 +34,7 @@ impl StatInterrupt {
             comparison_pending: true,
             comparison_latched: true,
             enables: InterruptFlags::DUMMY,
-            line_was_high: false,
+            legs_was_high: InterruptFlags::empty(),
         }
     }
 
@@ -62,8 +62,8 @@ impl StatInterrupt {
         self.enables
     }
 
-    pub(in crate::ppu) fn line_was_high(&self) -> bool {
-        self.line_was_high
+    pub(in crate::ppu) fn legs_was_high(&self) -> InterruptFlags {
+        self.legs_was_high
     }
 
     /// Used by the STAT write glitch path to install the transient all-bits-high state.
@@ -80,15 +80,15 @@ impl StatInterrupt {
         self.enables = InterruptFlags::from_bits_truncate(value);
     }
 
-    /// LALU edge detect: returns true on rising edge, updates `line_was_high`.
-    pub(in crate::ppu) fn detect_line_edge(&mut self, stat_line_high: bool) -> bool {
-        let edge = stat_line_high && !self.line_was_high;
-        self.line_was_high = stat_line_high;
-        edge
+    /// LALU edge detect: fires if any SUKO source leg has a 0→1 transition since the last call.
+    pub(in crate::ppu) fn detect_leg_edges(&mut self, legs: InterruptFlags) -> bool {
+        let rising = legs - self.legs_was_high;
+        self.legs_was_high = legs;
+        !rising.is_empty()
     }
 
-    /// Prime the edge detector at LCD-enable to avoid a spurious first edge.
-    pub(in crate::ppu) fn set_line_was_high(&mut self, value: bool) {
-        self.line_was_high = value;
+    /// Prime the per-leg baseline at LCD-enable or snapshot restore to avoid a spurious first edge.
+    pub(in crate::ppu) fn prime_legs(&mut self, legs: InterruptFlags) {
+        self.legs_was_high = legs;
     }
 }

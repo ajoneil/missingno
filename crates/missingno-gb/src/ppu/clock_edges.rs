@@ -74,9 +74,9 @@ impl Ppu {
             rendering.start_scanning();
         }
 
-        // Prime LALU previous-value to avoid a spurious first edge on VID_RST deassertion.
-        let stat_line = self.stat_line();
-        self.video.stat.set_line_was_high(stat_line);
+        // Prime LALU per-leg baseline to avoid a spurious first edge on VID_RST deassertion.
+        let legs = self.stat_legs();
+        self.video.stat.prime_legs(legs);
     }
 
     fn advance_dividers(&mut self, result: &mut PpuTickResult) {

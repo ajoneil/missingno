@@ -139,7 +139,7 @@ impl Ppu {
                     comparison_pending: false,
                     comparison_latched: true,
                     enables: InterruptFlags::empty(),
-                    line_was_high: false,
+                    legs_was_high: InterruptFlags::empty(),
                 },
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
@@ -217,7 +217,7 @@ impl Ppu {
                 comparison_pending: snap.ly == snap.lyc,
                 comparison_latched: snap.ly == snap.lyc,
                 enables,
-                line_was_high: snap.stat_line_was_high,
+                legs_was_high: InterruptFlags::empty(),
             },
             line_end: LineEndPipeline {
                 delayed_line_end: false,
@@ -318,9 +318,7 @@ impl Ppu {
     }
 
     pub fn oam_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .is_some_and(|r| r.oam_locked())
+        self.pixel_pipeline.as_ref().is_some_and(|r| r.oam_locked())
     }
 
     pub fn vram_locked(&self) -> bool {
@@ -367,42 +365,52 @@ impl Ppu {
 }
 
 impl Ppu {
-    /// Combinational STAT interrupt line.
-    pub fn stat_line(&self) -> bool {
-        let rendering = match &self.pixel_pipeline {
-            Some(r) => r,
-            None => return false,
+    /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
+    pub fn stat_legs(&self) -> InterruptFlags {
+        let Some(rendering) = &self.pixel_pipeline else {
+            return InterruptFlags::empty();
         };
 
         // vblank_or_holdover covers the NYPE→POPU DFF holdover at the 153→0 boundary.
         let vblank = self.video.vblank_or_holdover();
-        let mode2_active = if vblank {
-            false
-        } else {
-            rendering.mode2_interrupt_active(&self.video)
-        };
-
+        let mode2_active = !vblank && rendering.mode2_interrupt_active(&self.video);
         // Mode 2 STAT also fires at LX=0 of line 144.
         let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
         let sprites_enabled = self.registers.control.sprites_enabled();
-        (enables.contains(InterruptFlags::HORIZONTAL_BLANK)
+
+        let mut legs = InterruptFlags::empty();
+        if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
             && !vblank
-            && rendering.end_of_line_signal(sprites_enabled))
-            || (enables.contains(InterruptFlags::VERTICAL_BLANK) && vblank)
-            || (enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144))
-            || (enables.contains(InterruptFlags::CURRENT_LINE_COMPARE)
-                && self.video.stat.ly_eq_lyc())
+            && rendering.end_of_line_signal(sprites_enabled)
+        {
+            legs |= InterruptFlags::HORIZONTAL_BLANK;
+        }
+        if enables.contains(InterruptFlags::VERTICAL_BLANK) && vblank {
+            legs |= InterruptFlags::VERTICAL_BLANK;
+        }
+        if enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144) {
+            legs |= InterruptFlags::OAM_SCAN;
+        }
+        if enables.contains(InterruptFlags::CURRENT_LINE_COMPARE) && self.video.stat.ly_eq_lyc() {
+            legs |= InterruptFlags::CURRENT_LINE_COMPARE;
+        }
+        legs
     }
 
-    /// SUKO edge detect: fires on any inactive→active transition of an enabled condition.
+    /// SUKO combined output (= any leg active).
+    pub fn stat_line(&self) -> bool {
+        !self.stat_legs().is_empty()
+    }
+
+    /// LALU edge detect: fires on any per-leg 0→1 transition since the last call.
     pub fn check_stat_edge(&mut self) -> bool {
         if !self.control().video_enabled() {
             return false;
         }
-        let stat_line_high = self.stat_line();
-        self.video.stat.detect_line_edge(stat_line_high)
+        let legs = self.stat_legs();
+        self.video.stat.detect_leg_edges(legs)
     }
 }
 
@@ -439,7 +447,7 @@ impl Ppu {
     }
 
     pub fn stat_line_was_high(&self) -> bool {
-        self.video.stat.line_was_high()
+        !self.video.stat.legs_was_high().is_empty()
     }
 
     pub fn trace_signals(&self) -> TraceSignals {
