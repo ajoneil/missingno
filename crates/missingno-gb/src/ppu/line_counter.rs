@@ -108,10 +108,8 @@ impl LineCounterY {
         }
     }
 
-    /// Returns true if a 153→0 wrap occurred. POPU drops on the next TALU↑ via
-    /// `capture_vblank_on_nype_rise` once LY has wrapped to 0; the wrap itself does
-    /// not touch POPU (spec §8.5.1 — POPU.q↓ at TALU↑ + 1,536 ps, on the same TALU
-    /// edge that NYPE.q↑).
+    /// Returns true on 153→0 wrap. POPU drop is sequenced by the next NYPE capture,
+    /// not by this wrap.
     pub(in crate::ppu) fn advance_or_wrap(&mut self) -> bool {
         if self.value >= 153 {
             self.value = 0;

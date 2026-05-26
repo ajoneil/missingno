@@ -80,27 +80,17 @@ impl StatInterrupt {
         self.enables = InterruptFlags::from_bits_truncate(value);
     }
 
-    /// LALU edge detect: SUKO 0→1 fires, with pulse-width filtering on TALU↑ leg-swaps.
-    ///
-    /// Real silicon's LALU dffsr captures the SUKO rising edge only if the SUKO low pulse
-    /// preceding it exceeds the dffsr's effective minimum-pulse threshold. Sub-threshold
-    /// glitches (~1.5 ns from TOLU-stage TALU-edge swaps) are ignored. dmg-sim doesn't model
-    /// this; per-leg / two-phase logic over-fires on Case 4 (1,524 ps glitch).
-    ///
-    /// The filter applies only when a TALU↑ DFF capture happened in this evaluation — that's
-    /// the regime where multiple legs can transition within sub-ns of each other. Off-TALU
-    /// leg-swaps (register writes, WODU edges) are well-separated in time and use the boolean
-    /// SUKO rising-edge rule.
+    /// LALU dffsr SUKO 0→1 capture. On TALU↑ leg-swaps applies the AO2222 gate-prop
+    /// pulse-width filter; off-TALU evaluations use the boolean rising-edge rule.
     pub(in crate::ppu) fn detect_suko_edge(
         &mut self,
         legs: InterruptFlags,
-        talu_rising_in_this_eval: bool,
+        talu_rising: bool,
     ) -> bool {
         let prev = self.legs_was_high;
         self.legs_was_high = legs;
 
         let rising = legs - prev;
-        let falling = prev - legs;
         let surviving = prev & legs;
 
         if rising.is_empty() {
@@ -109,10 +99,11 @@ impl StatInterrupt {
         if !surviving.is_empty() {
             return false;
         }
-        if falling.is_empty() {
+        if !talu_rising {
             return true;
         }
-        if !talu_rising_in_this_eval {
+        let falling = prev - legs;
+        if falling.is_empty() {
             return true;
         }
         let min_falling_ps = falling
@@ -134,33 +125,37 @@ impl StatInterrupt {
     }
 }
 
-/// Gate-prop arrival time of each SUKO source leg at the AO2222 inputs, in ps from the
-/// triggering TALU↑. Constants come from spec §8.5.1 Cases 1, 3, 4.
+/// Gate-prop arrival time of each SUKO source leg at the AO2222 inputs, in ps from
+/// the triggering TALU↑.
 #[derive(Copy, Clone)]
 struct LegArrival {
     rising_ps: u16,
     falling_ps: u16,
 }
 
+/// LYC arm via ROPO.dff17 (TALU-clocked, 1 stage).
 const LYC_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 874,
     falling_ps: 874,
 };
+/// Mode 1 arm via NYPE + POPU.dffr + PARU.not_x1 (rising slower than falling — PMOS skew).
 const MODE_1_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 2_822,
     falling_ps: 2_300,
 };
+/// Mode 0 arm via NYPE + POPU + PARU + TOLU.not_x1 + TARU.AND2.
 const MODE_0_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 4_038,
     falling_ps: 4_038,
 };
+/// Mode 2 arm via NYPE + POPU + PARU + TOLU.not_x1 + TAPA.AND2.
 const MODE_2_ARRIVAL: LegArrival = LegArrival {
     rising_ps: 3_970,
     falling_ps: 3_970,
 };
 
-/// dffsr LALU capture threshold. Sits between Case 4 (1,524 ps, no fire) and Case 1
-/// (1,802 ps, fires); 1,700 ps is midway.
+/// LALU dffsr minimum captured SUKO low-pulse width. Cases 1 (1,802 ps) and 4
+/// (1,524 ps) bracket the empirical threshold.
 const SUKO_CAPTURE_THRESHOLD_PS: i32 = 1_700;
 
 fn arrival(leg: InterruptFlags) -> LegArrival {
@@ -173,9 +168,6 @@ fn arrival(leg: InterruptFlags) -> LegArrival {
     } else if leg == InterruptFlags::OAM_SCAN {
         MODE_2_ARRIVAL
     } else {
-        LegArrival {
-            rising_ps: 0,
-            falling_ps: 0,
-        }
+        unreachable!("arrival(): non-single-leg flags 0x{:02X}", leg.bits());
     }
 }
