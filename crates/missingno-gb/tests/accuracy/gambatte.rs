@@ -270,23 +270,28 @@ fn extract_expected_audio(filename: &str) -> bool {
 }
 
 /// Gambatte audio test. Filename contains `_outaudio0` (silent
-/// expected) or `_outaudio1` (audio expected). Drains samples after
-/// the cycle budget and checks whether any non-silent samples were
-/// produced. Threshold: |sample| > 0.005 (the APU outputs slowly-
-/// decaying DC offsets at zero amplitude; we want anything above
-/// quantization noise).
+/// expected) or `_outaudio1` (audio expected). Matches gambatte's
+/// testrunner convention (testrunner.cpp:263-268): pass if the LAST
+/// FRAME's samples are all equal to the first sample of that frame
+/// (`_outaudio0`) or NOT all equal (`_outaudio1`). Transient audio
+/// earlier in the run is expected on hardware (see spec §14.6.8) and
+/// tolerated. Tolerance 0.005 accounts for APU DC-offset drift.
 fn run_gambatte_audio_test(rom_path: &str) {
     let mut run = common::load_rom(rom_path);
-    // Discard any audio accumulated during boot ROM execution (e.g. the
-    // Nintendo chime). The test only cares about what the ROM itself
-    // produces during its TCYCLES budget.
     let _ = run.gb.drain_audio_samples();
     common::run_for_tcycles(&mut run, TCYCLES);
 
     let samples = run.gb.drain_audio_samples();
-    let any_audio = samples
-        .iter()
-        .any(|&(l, r)| l.abs() > 0.005 || r.abs() > 0.005);
+    let samples_per_frame = samples.len() / 15;
+    let last_frame_start = samples.len().saturating_sub(samples_per_frame);
+    let last_frame = &samples[last_frame_start..];
+    let any_audio = if let Some(&(l0, r0)) = last_frame.first() {
+        last_frame
+            .iter()
+            .any(|&(l, r)| (l - l0).abs() > 0.005 || (r - r0).abs() > 0.005)
+    } else {
+        false
+    };
 
     let filename = rom_path.rsplit('/').next().unwrap();
     let expect_audio = extract_expected_audio(filename);
