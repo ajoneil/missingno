@@ -21,8 +21,6 @@ pub struct LineCounterX {
 pub struct LineCounterY {
     pub(in crate::ppu) value: u8,
     pub(in crate::ppu) vblank: bool,
-    /// POPU's DFF holdover across the 153→0 wrap (NYPE→POPU propagation delay).
-    pub(in crate::ppu) vblank_holdover: bool,
     pub(in crate::ppu) frame_end_reset: bool,
 }
 
@@ -52,8 +50,7 @@ impl LineCounter {
         }
 
         if new_rutu && !prior_rutu {
-            let wrap_occurred = self.y.advance_or_wrap();
-            self.y.set_vblank_holdover_on_wrap(wrap_occurred);
+            self.y.advance_or_wrap();
             true
         } else {
             false
@@ -68,9 +65,6 @@ impl LineCounter {
     }
     pub(in crate::ppu) fn vblank(&self) -> bool {
         self.y.vblank
-    }
-    pub(in crate::ppu) fn vblank_or_holdover(&self) -> bool {
-        self.y.vblank_or_holdover()
     }
     pub(in crate::ppu) fn line_end_active(&self) -> bool {
         self.x.line_end_active
@@ -110,17 +104,18 @@ impl LineCounterY {
         Self {
             value: 153,
             vblank: true,
-            vblank_holdover: false,
             frame_end_reset: true,
         }
     }
 
-    /// Returns true if a 153→0 wrap occurred; on wrap MYTA-held window clears and POPU drops.
+    /// Returns true if a 153→0 wrap occurred. POPU drops on the next TALU↑ via
+    /// `capture_vblank_on_nype_rise` once LY has wrapped to 0; the wrap itself does
+    /// not touch POPU (spec §8.5.1 — POPU.q↓ at TALU↑ + 1,536 ps, on the same TALU
+    /// edge that NYPE.q↑).
     pub(in crate::ppu) fn advance_or_wrap(&mut self) -> bool {
         if self.value >= 153 {
             self.value = 0;
             self.frame_end_reset = false;
-            self.vblank = false;
             true
         } else {
             self.value += 1;
@@ -140,24 +135,9 @@ impl LineCounterY {
         }
     }
 
-    /// Models the NYPE→POPU DFF propagation delay across the 153→0 wrap.
-    pub(in crate::ppu) fn set_vblank_holdover_on_wrap(&mut self, wrap_occurred: bool) {
-        if wrap_occurred {
-            self.vblank_holdover = true;
-        }
-    }
-
-    pub(in crate::ppu) fn clear_vblank_holdover(&mut self) {
-        self.vblank_holdover = false;
-    }
-
     /// $FF44 read. MYTA drives LAMA low on line 153, so register reads as 0 while internal counter is still 153.
     pub(in crate::ppu) fn value_register(&self) -> u8 {
         if self.frame_end_reset { 0 } else { self.value }
-    }
-
-    pub(in crate::ppu) fn vblank_or_holdover(&self) -> bool {
-        self.vblank || self.vblank_holdover
     }
 
     pub(in crate::ppu) fn write_ly(&mut self, value: u8) {
@@ -167,7 +147,6 @@ impl LineCounterY {
     pub(in crate::ppu) fn vid_rst(&mut self) {
         self.value = 0;
         self.vblank = false;
-        self.vblank_holdover = false;
         self.frame_end_reset = false;
     }
 }

@@ -134,7 +134,6 @@ impl Ppu {
                     y: LineCounterY {
                         value: 0,
                         vblank: false,
-                        vblank_holdover: false,
                         frame_end_reset: false,
                     },
                 },
@@ -212,7 +211,6 @@ impl Ppu {
                 y: LineCounterY {
                     value: snap.ly,
                     vblank: snap.ly >= 144,
-                    vblank_holdover: false,
                     frame_end_reset: false,
                 },
             },
@@ -371,32 +369,21 @@ impl Ppu {
 impl Ppu {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     pub fn stat_legs(&self) -> InterruptFlags {
-        self.stat_legs_with_slow_vblank(self.video.vblank_or_holdover())
-    }
-
-    /// Per-leg SUKO source vector with TOLU gate-stage lag explicit. Mode 1 leg (PARU, 2 stages
-    /// from POPU.q) uses the live vblank; Mode 0 / Mode 2 legs (TARU / TAPA, 4 stages via TOLU)
-    /// use `vblank_for_slow_legs`. When POPU.q has just transitioned but TOLU hasn't settled,
-    /// pass the pre-transition vblank to model the 1-gate lag — Mode 1 leg follows immediately,
-    /// Mode 0 / Mode 2 legs follow one settle step later.
-    pub fn stat_legs_with_slow_vblank(&self, vblank_for_slow_legs: bool) -> InterruptFlags {
         let Some(rendering) = &self.pixel_pipeline else {
             return InterruptFlags::empty();
         };
 
-        let vblank = self.video.vblank_or_holdover();
-        let mode2_active =
-            !vblank_for_slow_legs && rendering.mode2_interrupt_active(&self.video);
+        let vblank = self.video.vblank();
+        let mode2_active = !vblank && rendering.mode2_interrupt_active(&self.video);
         // Mode 2 STAT also fires at LX=0 of line 144.
-        let vblank_line_144 =
-            vblank_for_slow_legs && self.video.ly() == 144 && self.video.line_end_active();
+        let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
         let sprites_enabled = self.registers.control.sprites_enabled();
 
         let mut legs = InterruptFlags::empty();
         if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !vblank_for_slow_legs
+            && !vblank
             && rendering.end_of_line_signal(sprites_enabled)
         {
             legs |= InterruptFlags::HORIZONTAL_BLANK;
@@ -418,13 +405,14 @@ impl Ppu {
         !self.stat_legs().is_empty()
     }
 
-    /// LALU edge detect: fires on any per-leg 0→1 transition since the last call.
+    /// LALU edge detect: fires on SUKO 0→1, with the pulse-width filter applied on
+    /// TALU↑ evaluations (callable off-TALU; pulse-width filter is skipped).
     pub fn check_stat_edge(&mut self) -> bool {
         if !self.control().video_enabled() {
             return false;
         }
         let legs = self.stat_legs();
-        self.video.stat.detect_leg_edges(legs)
+        self.video.stat.detect_suko_edge(legs, false)
     }
 }
 

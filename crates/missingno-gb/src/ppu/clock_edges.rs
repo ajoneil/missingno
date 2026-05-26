@@ -20,24 +20,15 @@ impl Ppu {
         }
 
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel = rendering.on_ppu_clock_rise(
-                &self.registers,
-                &self.video,
-                &self.oam,
-                oam_bus,
-                vram,
-            );
+            result.pixel =
+                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, oam_bus, vram);
         }
 
         result
     }
 
     /// ALET falls; XOTA rises, toggling WUVU/VENA/TALU; MYVO-clocked DFFs capture; SACU drives pixel output.
-    pub fn on_master_clock_fall(
-        &mut self,
-        is_mcycle: bool,
-        oam_bus: OamBusOwner,
-    ) -> PpuTickResult {
+    pub fn on_master_clock_fall(&mut self, is_mcycle: bool, oam_bus: OamBusOwner) -> PpuTickResult {
         let mut result = PpuTickResult::default();
 
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's first toggle.
@@ -56,22 +47,12 @@ impl Ppu {
         // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
         let scan_clock_rising = !self.video.tick_dot();
 
-        // Capture pre-advance vblank for the TOLU-lagged Mode 0 / Mode 2 leg evaluations.
-        // POPU.q → PARU is 2 gate stages (fast); POPU.q → TOLU → TARU / TAPA is 4 stages (slow).
-        let pre_advance_vblank = self.video.vblank_or_holdover();
-
-        self.advance_dividers(&mut result);
-        // Snapshot with Mode 1 leg already updated (live vblank) but Mode 0 / Mode 2 legs
-        // still seeing pre-advance vblank — models the 1-gate TOLU lag.
-        let post_fast = self.stat_legs_with_slow_vblank(pre_advance_vblank);
-
-        self.registers.tick_on_master_clock_fall(self.mode2_active());
+        let talu_rising = self.advance_dividers(&mut result);
+        self.registers
+            .tick_on_master_clock_fall(self.mode2_active());
         self.run_ppu_clock_fall(oam_bus, scan_clock_rising, &mut result);
-        // Final snapshot after TOLU has settled and CATU may have driven the slow Mode 0 drop.
-        let final_legs = self.stat_legs();
-        if self.control().video_enabled()
-            && self.video.stat.detect_two_phase_edge(post_fast, final_legs)
-        {
+        let legs = self.stat_legs();
+        if self.control().video_enabled() && self.video.stat.detect_suko_edge(legs, talu_rising) {
             result.request_stat = true;
         }
 
@@ -94,9 +75,11 @@ impl Ppu {
         self.video.stat.prime_legs(legs);
     }
 
-    fn advance_dividers(&mut self, result: &mut PpuTickResult) {
+    /// Returns `true` if a TALU↑ DFF capture happened in this fall (drives the SUKO
+    /// pulse-width filter regime in the caller).
+    fn advance_dividers(&mut self, result: &mut PpuTickResult) -> bool {
         if !self.video.dividers.half_mcycle_fell() {
-            return;
+            return false;
         }
 
         let vena_was = self.video.dividers.tick_mcycle();
@@ -104,7 +87,8 @@ impl Ppu {
         let popu_was = self.video.vblank();
 
         let mut scanline_boundary = false;
-        if !vena_was && vena_now {
+        let talu_rising = !vena_was && vena_now;
+        if talu_rising {
             // VENA↑ = TALU↑: ROPO captures PALY; NYPE captures POPU/MYTA; LX advances.
             self.video.update_ly_comparison();
             self.video.stat.latch_comparison();
@@ -117,9 +101,7 @@ impl Ppu {
             self.video.update_ly_comparison();
         }
 
-        if scanline_boundary
-            && let Some(rendering) = self.pixel_pipeline.as_mut()
-        {
+        if scanline_boundary && let Some(rendering) = self.pixel_pipeline.as_mut() {
             let ly = self.video.ly();
             if ly == screen::NUM_SCANLINES {
                 self.frame_number = self.frame_number.wrapping_add(1);
@@ -135,6 +117,8 @@ impl Ppu {
         if self.video.vblank() && !popu_was {
             result.request_vblank = true;
         }
+
+        talu_rising
     }
 
     fn run_ppu_clock_fall(

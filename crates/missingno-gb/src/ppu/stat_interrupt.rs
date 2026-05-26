@@ -4,7 +4,7 @@
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct InterruptFlags: u8 {
         const DUMMY                = 0b10000000;
         const CURRENT_LINE_COMPARE = 0b01000000;
@@ -80,39 +80,102 @@ impl StatInterrupt {
         self.enables = InterruptFlags::from_bits_truncate(value);
     }
 
-    /// LALU edge detect: SUKO produces a rising edge iff its OR output transitions through zero
-    /// on this step. That requires (a) at least one leg rising into the new state, AND (b) no
-    /// previously-active leg surviving to keep SUKO high. A surviving leg holds SUKO continuously
-    /// high (the "STAT IRQ blocking" case), so no LALU clock fires.
-    pub(in crate::ppu) fn detect_leg_edges(&mut self, legs: InterruptFlags) -> bool {
-        let rising = legs - self.legs_was_high;
-        let surviving = self.legs_was_high & legs;
-        self.legs_was_high = legs;
-        !rising.is_empty() && surviving.is_empty()
-    }
-
-    /// Two-phase SUKO edge detect using the fast-leg / slow-leg split.
-    /// `post_fast` is the leg state with Mode 1 (PARU, 2 stages) updated but Mode 0 / Mode 2
-    /// (TARU / TAPA, 4 stages via TOLU) still on their pre-transition vblank value.
-    /// `final_legs` is after the TOLU stage has settled.
-    /// Fire iff SUKO went through zero: rising vs prev non-empty, no surviving leg in either
-    /// the post-fast snapshot or the final snapshot. A leg that survives the fast updates covers
-    /// SUKO continuously through the slow drop — no glitch (§8.5.1 Case 3 / scenario 1).
-    pub(in crate::ppu) fn detect_two_phase_edge(
+    /// LALU edge detect: SUKO 0→1 fires, with pulse-width filtering on TALU↑ leg-swaps.
+    ///
+    /// Real silicon's LALU dffsr captures the SUKO rising edge only if the SUKO low pulse
+    /// preceding it exceeds the dffsr's effective minimum-pulse threshold. Sub-threshold
+    /// glitches (~1.5 ns from TOLU-stage TALU-edge swaps) are ignored. dmg-sim doesn't model
+    /// this; per-leg / two-phase logic over-fires on Case 4 (1,524 ps glitch).
+    ///
+    /// The filter applies only when a TALU↑ DFF capture happened in this evaluation — that's
+    /// the regime where multiple legs can transition within sub-ns of each other. Off-TALU
+    /// leg-swaps (register writes, WODU edges) are well-separated in time and use the boolean
+    /// SUKO rising-edge rule.
+    pub(in crate::ppu) fn detect_suko_edge(
         &mut self,
-        post_fast: InterruptFlags,
-        final_legs: InterruptFlags,
+        legs: InterruptFlags,
+        talu_rising_in_this_eval: bool,
     ) -> bool {
         let prev = self.legs_was_high;
-        self.legs_was_high = final_legs;
-        let rising = final_legs - prev;
-        let surviving_final = prev & final_legs;
-        let surviving_fast = prev & post_fast;
-        !rising.is_empty() && surviving_final.is_empty() && surviving_fast.is_empty()
+        self.legs_was_high = legs;
+
+        let rising = legs - prev;
+        let falling = prev - legs;
+        let surviving = prev & legs;
+
+        if rising.is_empty() {
+            return false;
+        }
+        if !surviving.is_empty() {
+            return false;
+        }
+        if falling.is_empty() {
+            return true;
+        }
+        if !talu_rising_in_this_eval {
+            return true;
+        }
+        let min_falling_ps = falling
+            .iter()
+            .map(|l| arrival(l).falling_ps as i32)
+            .min()
+            .unwrap();
+        let max_rising_ps = rising
+            .iter()
+            .map(|l| arrival(l).rising_ps as i32)
+            .max()
+            .unwrap();
+        max_rising_ps - min_falling_ps >= SUKO_CAPTURE_THRESHOLD_PS
     }
 
     /// Prime the per-leg baseline at LCD-enable or snapshot restore to avoid a spurious first edge.
     pub(in crate::ppu) fn prime_legs(&mut self, legs: InterruptFlags) {
         self.legs_was_high = legs;
+    }
+}
+
+/// Gate-prop arrival time of each SUKO source leg at the AO2222 inputs, in ps from the
+/// triggering TALU↑. Constants come from spec §8.5.1 Cases 1, 3, 4.
+#[derive(Copy, Clone)]
+struct LegArrival {
+    rising_ps: u16,
+    falling_ps: u16,
+}
+
+const LYC_ARRIVAL: LegArrival = LegArrival {
+    rising_ps: 874,
+    falling_ps: 874,
+};
+const MODE_1_ARRIVAL: LegArrival = LegArrival {
+    rising_ps: 2_822,
+    falling_ps: 2_300,
+};
+const MODE_0_ARRIVAL: LegArrival = LegArrival {
+    rising_ps: 4_038,
+    falling_ps: 4_038,
+};
+const MODE_2_ARRIVAL: LegArrival = LegArrival {
+    rising_ps: 3_970,
+    falling_ps: 3_970,
+};
+
+/// dffsr LALU capture threshold. Sits between Case 4 (1,524 ps, no fire) and Case 1
+/// (1,802 ps, fires); 1,700 ps is midway.
+const SUKO_CAPTURE_THRESHOLD_PS: i32 = 1_700;
+
+fn arrival(leg: InterruptFlags) -> LegArrival {
+    if leg == InterruptFlags::CURRENT_LINE_COMPARE {
+        LYC_ARRIVAL
+    } else if leg == InterruptFlags::VERTICAL_BLANK {
+        MODE_1_ARRIVAL
+    } else if leg == InterruptFlags::HORIZONTAL_BLANK {
+        MODE_0_ARRIVAL
+    } else if leg == InterruptFlags::OAM_SCAN {
+        MODE_2_ARRIVAL
+    } else {
+        LegArrival {
+            rising_ps: 0,
+            falling_ps: 0,
+        }
     }
 }

@@ -38,10 +38,6 @@ impl VideoControl {
         self.lines.vblank()
     }
 
-    pub fn vblank_or_holdover(&self) -> bool {
-        self.lines.vblank_or_holdover()
-    }
-
     pub fn line_end_active(&self) -> bool {
         self.lines.line_end_active()
     }
@@ -64,11 +60,9 @@ impl VideoControl {
         self.stat.write_lyc(value, ly);
     }
 
-    /// XOTA rising: toggle WUVU and clear vblank holdover. Returns previous WUVU.Q.
+    /// XOTA rising: toggle WUVU. Returns previous WUVU.Q.
     pub fn tick_dot(&mut self) -> bool {
-        let wuvu_was = self.dividers.tick_dot();
-        self.lines.y.clear_vblank_holdover();
-        wuvu_was
+        self.dividers.tick_dot()
     }
 
     /// TALU rising: NYPE captures; LineCounter dispatches POPU (Rising) or MYTA (Falling); LX advances + SANU decodes.

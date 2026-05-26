@@ -97,11 +97,11 @@ impl Ppu {
                 // DMG STAT write glitch: all enables briefly high, then settle.
                 self.video.stat.set_enables(InterruptFlags::all());
                 let glitch_legs = self.stat_legs();
-                let glitch_edge = self.video.stat.detect_leg_edges(glitch_legs);
+                let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs, false);
 
                 self.video.stat.write_stat_bits(value);
                 let final_legs = self.stat_legs();
-                let final_edge = self.video.stat.detect_leg_edges(final_legs);
+                let final_edge = self.video.stat.detect_suko_edge(final_legs, false);
 
                 return glitch_edge || final_edge;
             }
