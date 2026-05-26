@@ -221,7 +221,9 @@ impl GameBoy {
         if video_result.request_vblank {
             self.interrupts.request(Interrupt::VideoBetweenFrames);
         }
-        if self.ppu.check_stat_edge() {
+        // STAT IF: PPU's two-phase SUKO check (post-advance + post-tick_scan_capture, with
+        // TOLU lag modelled via the post-fast snapshot) folds into request_stat.
+        if video_result.request_stat {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 

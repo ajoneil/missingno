@@ -56,9 +56,24 @@ impl Ppu {
         // XUPY = WUVU.Q; tick_dot returns previous WUVU.Q so scan_clock_rising = !was.
         let scan_clock_rising = !self.video.tick_dot();
 
+        // Capture pre-advance vblank for the TOLU-lagged Mode 0 / Mode 2 leg evaluations.
+        // POPU.q → PARU is 2 gate stages (fast); POPU.q → TOLU → TARU / TAPA is 4 stages (slow).
+        let pre_advance_vblank = self.video.vblank_or_holdover();
+
         self.advance_dividers(&mut result);
+        // Snapshot with Mode 1 leg already updated (live vblank) but Mode 0 / Mode 2 legs
+        // still seeing pre-advance vblank — models the 1-gate TOLU lag.
+        let post_fast = self.stat_legs_with_slow_vblank(pre_advance_vblank);
+
         self.registers.tick_on_master_clock_fall(self.mode2_active());
         self.run_ppu_clock_fall(oam_bus, scan_clock_rising, &mut result);
+        // Final snapshot after TOLU has settled and CATU may have driven the slow Mode 0 drop.
+        let final_legs = self.stat_legs();
+        if self.control().video_enabled()
+            && self.video.stat.detect_two_phase_edge(post_fast, final_legs)
+        {
+            result.request_stat = true;
+        }
 
         result
     }

@@ -91,6 +91,26 @@ impl StatInterrupt {
         !rising.is_empty() && surviving.is_empty()
     }
 
+    /// Two-phase SUKO edge detect using the fast-leg / slow-leg split.
+    /// `post_fast` is the leg state with Mode 1 (PARU, 2 stages) updated but Mode 0 / Mode 2
+    /// (TARU / TAPA, 4 stages via TOLU) still on their pre-transition vblank value.
+    /// `final_legs` is after the TOLU stage has settled.
+    /// Fire iff SUKO went through zero: rising vs prev non-empty, no surviving leg in either
+    /// the post-fast snapshot or the final snapshot. A leg that survives the fast updates covers
+    /// SUKO continuously through the slow drop — no glitch (§8.5.1 Case 3 / scenario 1).
+    pub(in crate::ppu) fn detect_two_phase_edge(
+        &mut self,
+        post_fast: InterruptFlags,
+        final_legs: InterruptFlags,
+    ) -> bool {
+        let prev = self.legs_was_high;
+        self.legs_was_high = final_legs;
+        let rising = final_legs - prev;
+        let surviving_final = prev & final_legs;
+        let surviving_fast = prev & post_fast;
+        !rising.is_empty() && surviving_final.is_empty() && surviving_fast.is_empty()
+    }
+
     /// Prime the per-leg baseline at LCD-enable or snapshot restore to avoid a spurious first edge.
     pub(in crate::ppu) fn prime_legs(&mut self, legs: InterruptFlags) {
         self.legs_was_high = legs;

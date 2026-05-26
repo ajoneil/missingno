@@ -52,6 +52,10 @@ pub struct PpuTickResult {
     /// LCDC.7 went 1→0 mid-pipeline; caller should blank the screen.
     pub lcd_disabled: bool,
     pub request_vblank: bool,
+    /// SUKO 0→1 detected by the two-phase rule: post-fast snapshot uses pre-advance vblank
+    /// for Mode 0 / Mode 2 legs (TOLU 1-gate lag); final snapshot uses live vblank. Fires
+    /// only if SUKO actually transitions through zero across the two snapshots.
+    pub request_stat: bool,
 }
 
 /// Internal PPU DFF/latch signals exposed for gbtrace capture.
@@ -367,22 +371,32 @@ impl Ppu {
 impl Ppu {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     pub fn stat_legs(&self) -> InterruptFlags {
+        self.stat_legs_with_slow_vblank(self.video.vblank_or_holdover())
+    }
+
+    /// Per-leg SUKO source vector with TOLU gate-stage lag explicit. Mode 1 leg (PARU, 2 stages
+    /// from POPU.q) uses the live vblank; Mode 0 / Mode 2 legs (TARU / TAPA, 4 stages via TOLU)
+    /// use `vblank_for_slow_legs`. When POPU.q has just transitioned but TOLU hasn't settled,
+    /// pass the pre-transition vblank to model the 1-gate lag — Mode 1 leg follows immediately,
+    /// Mode 0 / Mode 2 legs follow one settle step later.
+    pub fn stat_legs_with_slow_vblank(&self, vblank_for_slow_legs: bool) -> InterruptFlags {
         let Some(rendering) = &self.pixel_pipeline else {
             return InterruptFlags::empty();
         };
 
-        // vblank_or_holdover covers the NYPE→POPU DFF holdover at the 153→0 boundary.
         let vblank = self.video.vblank_or_holdover();
-        let mode2_active = !vblank && rendering.mode2_interrupt_active(&self.video);
+        let mode2_active =
+            !vblank_for_slow_legs && rendering.mode2_interrupt_active(&self.video);
         // Mode 2 STAT also fires at LX=0 of line 144.
-        let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
+        let vblank_line_144 =
+            vblank_for_slow_legs && self.video.ly() == 144 && self.video.line_end_active();
 
         let enables = self.video.stat.enables();
         let sprites_enabled = self.registers.control.sprites_enabled();
 
         let mut legs = InterruptFlags::empty();
         if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !vblank
+            && !vblank_for_slow_legs
             && rendering.end_of_line_signal(sprites_enabled)
         {
             legs |= InterruptFlags::HORIZONTAL_BLANK;
