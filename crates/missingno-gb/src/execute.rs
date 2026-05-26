@@ -158,7 +158,13 @@ impl GameBoy {
         }
 
         self.cpu.next_tcycle();
-        self.apply_vector_resolve();
+        // cpu_irq_ack1↑ at +2.993 dots into the dispatching M-cycle —
+        // tcycle 3 rise in our half-phase resolution. Deferring to
+        // tcycle 3 also lets M4's bus write commit (tcycle 2 fall)
+        // before vector resolution reads IE (IE-push-bug semantics).
+        if self.cpu.last_tcycle().as_u8() == 3 {
+            self.apply_vector_resolve();
+        }
 
         let tcycle = self.cpu.last_tcycle();
         self.step_dispatch_logic(tcycle);
@@ -223,7 +229,8 @@ impl GameBoy {
         }
         // STAT IF: PPU's two-phase SUKO check (post-advance + post-tick_scan_capture, with
         // TOLU lag modelled via the post-fast snapshot) folds into request_stat.
-        if video_result.request_stat {
+        // Gated by cpu_irq_ack1_pulse: LALU.r_n=0 absorbs same-M-cycle SUKO rises.
+        if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
             self.interrupts.request(Interrupt::VideoStatus);
         }
 
@@ -242,6 +249,11 @@ impl GameBoy {
     /// capture, dispatch update, IME promotion, bus clear, timer/serial
     /// mcycle, and the boundary PPU rise.
     fn tick_mcycle_boundary_rise(&mut self) -> (bool, Option<ppu::PixelOutput>) {
+        // cpu_irq_ack1↓ at +3.992 dots — hardware releases LALU.r_n
+        // ~8 ps before this CLK9↑. Clear at boundary entry so
+        // check_stat_edge below sees r_n released.
+        self.cpu.irq.cpu_irq_ack1_pulse = false;
+
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
         // through the prior M-cycle's data phase.
@@ -355,6 +367,9 @@ impl GameBoy {
                 self.cpu.bus_counter = 0x0000;
             }
             self.cpu.dispatch.clear_dispatch();
+            // cpu_irq_ack1↑: LALU.r_n driven LOW via lety/movu until next
+            // M-cycle boundary. Absorbs same-M-cycle SUKO rises.
+            self.cpu.irq.cpu_irq_ack1_pulse = true;
         }
     }
 

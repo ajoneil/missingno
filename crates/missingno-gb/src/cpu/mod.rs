@@ -2,7 +2,7 @@ use commit::Commit;
 use dff::Dff;
 use flags::{Flag, Flags};
 use mcycle::{BusAction, CpuPhase, MCycleAction, Phase, TCycle};
-use registers::{Register8, Register16};
+use registers::{Register16, Register8};
 
 pub mod commit;
 pub mod dff;
@@ -90,6 +90,11 @@ pub struct IrqContext {
     pub ime_delay: bool,
     /// IE-push-bug flag — set during dispatch's M3 vector-resolve window.
     pub(super) pending_vector_resolve: bool,
+    /// `cpu_irq_ack1` HIGH pulse — LALU.r_n driven LOW via lety/movu AND-tree.
+    /// Rises with apply_vector_resolve at tcycle 3 of the dispatching M-cycle;
+    /// falls at the next M-cycle boundary entry. While HIGH, same-M-cycle
+    /// SUKO rising edges are absorbed (LALU.q forced to 0).
+    pub(super) cpu_irq_ack1_pulse: bool,
     /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
     /// gbtrace adapter; dispatch reads the data-phase-gated
     /// `dispatch.latched()` instead.
@@ -106,6 +111,7 @@ impl IrqContext {
             ime: Dff::new(InterruptMasterEnable::Disabled),
             ime_delay: false,
             pending_vector_resolve: false,
+            cpu_irq_ack1_pulse: false,
             irq_pending: false,
             irq_latched: Dff::new(false),
         }
