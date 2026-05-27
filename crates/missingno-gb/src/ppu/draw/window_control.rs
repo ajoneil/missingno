@@ -79,19 +79,23 @@ impl WindowControl {
         }
     }
 
-    /// SARY captures on master rise; REJO re-evaluates against new SARY + vblank.
-    /// Always-clocked path independent of rendering mode (hardware: hclk-driven DFFs).
-    pub(in crate::ppu) fn tick_wy_match_rising(
-        &mut self,
-        regs: &PipelineRegisters,
-        video: &VideoControl,
-    ) {
-        self.capture_sary(regs, video);
+    /// REJO re-evaluates against current SARY + vblank on every PPU rise (handles vblank↑).
+    /// SARY itself only captures on TALU↑ — see `tick_wy_match_falling`.
+    pub(in crate::ppu) fn update_rejo_on_rise(&mut self, video: &VideoControl) {
         self.update_rejo(video);
     }
 
-    /// REJO re-evaluates against current SARY + vblank — handles vblank↓ on master fall.
-    pub(in crate::ppu) fn tick_wy_match_falling(&mut self, video: &VideoControl) {
+    /// TALU↑ (hclk rising) lands on a PPU fall in the emulator's clock model. SARY captures
+    /// wy_match on that edge; REJO re-evaluates on every fall to handle vblank↓.
+    pub(in crate::ppu) fn tick_wy_match_falling(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        talu_rising: bool,
+    ) {
+        if talu_rising {
+            self.capture_sary(regs, video);
+        }
         self.update_rejo(video);
     }
 
@@ -112,6 +116,10 @@ impl WindowControl {
 
     fn compute_nuko(&self, pixel_counter: u8) -> bool {
         self.rejo.output() && pixel_counter == self.nuko_wx
+    }
+
+    fn nuny(&self) -> bool {
+        self.pynu.output() && self.nopa.output() == 0
     }
 
     /// Live NUKO (pixel_counter == WX). Two netlist consumers: PYCO (this chain) and PANY
@@ -151,13 +159,13 @@ impl WindowControl {
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
         fetcher_ready: bool,
-        sprite_fetch_running: bool,
+        fepo: bool,
         regs: &PipelineRegisters,
     ) -> bool {
         let nuko = self.compute_nuko(pixel_counter);
 
-        // PYCO holds when ROCO is halted (POKY=0 = data not ready, or TAKA=1 = sprite fetch with FEPO=1).
-        if fetcher_ready && !sprite_fetch_running {
+        // PYCO holds when FEPO=1: VYBO=NOR3(MYVO,FEPO,WODU)=0 → TYFA=0 halts ROCO, one ALET before TAKA latches.
+        if fetcher_ready && !fepo {
             self.pyco.write(if nuko { 1 } else { 0 });
             self.pyco.tick();
         }
@@ -186,7 +194,7 @@ impl WindowControl {
             self.pynu.set();
         }
 
-        let nuny = self.pynu.output() && self.nopa.output() == 0;
+        let nuny = self.nuny();
         let mosu_rising = nuny && !self.prev_nuny;
         self.prev_nuny = nuny;
 
@@ -212,8 +220,7 @@ impl WindowControl {
         self.window_rendered = false;
     }
 
-    /// PYCO/NUNU/PYNU/NOPA persist across scanlines on hardware. Force the WAZY increment
-    /// for end-of-mode-3 ATEJ↑ when no explicit LCDC.5 toggle is fed.
+    /// Models ATEJ↑'s XOFO pulse on PYNU: clear briefly, re-set from NUNU carryover, NOPA captures.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.rydy.clear();
         if self.pynu.output() && self.window_rendered {
@@ -221,13 +228,12 @@ impl WindowControl {
             self.window_rendered = false;
         }
         self.pynu.clear();
-        self.pyco.write(0);
-        self.pyco.tick();
-        self.nunu.write(0);
-        self.nunu.tick();
-        self.nopa.write(0);
+        if self.nunu.output() != 0 {
+            self.pynu.set();
+        }
+        self.nopa.write(if self.pynu.output() { 1 } else { 0 });
         self.nopa.tick();
-        self.prev_nuny = false;
+        self.prev_nuny = self.nuny();
         self.nuko_wx = 0xFF;
     }
 

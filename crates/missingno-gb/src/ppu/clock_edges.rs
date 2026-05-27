@@ -50,7 +50,7 @@ impl Ppu {
         let talu_rising = self.advance_dividers(&mut result);
         self.registers
             .tick_on_master_clock_fall(self.mode2_active());
-        self.run_ppu_clock_fall(oam_bus, scan_clock_rising, &mut result);
+        self.run_ppu_clock_fall(oam_bus, scan_clock_rising, talu_rising, &mut result);
         let legs = self.stat_legs();
         if self.control().video_enabled() && self.video.stat.detect_suko_edge(legs, talu_rising) {
             result.request_stat = true;
@@ -125,6 +125,7 @@ impl Ppu {
         &mut self,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
+        talu_rising: bool,
         result: &mut PpuTickResult,
     ) {
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -134,6 +135,7 @@ impl Ppu {
                 &self.oam,
                 oam_bus,
                 scan_clock_rising,
+                talu_rising,
             );
             if result.pixel.is_some() {
                 self.registers.palettes.note_bg_pixel_emit();
