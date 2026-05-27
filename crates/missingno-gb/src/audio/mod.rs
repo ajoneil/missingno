@@ -173,7 +173,9 @@ impl Audio {
             self.channels.tick_length_all();
         }
         if matches!(self.frame_sequencer_step, 2 | 6) {
-            self.channels.ch1.tick_sweep();
+            // cate_128hz↓: arm coze; BEXA samples at next ajer↑ inside
+            // pulse_sweep::tcycle.
+            self.channels.ch1.tick_sweep_counter();
         }
         if self.frame_sequencer_step == 7 {
             // kene↓: CH4 stays atomic; CH1/CH2 split the counter

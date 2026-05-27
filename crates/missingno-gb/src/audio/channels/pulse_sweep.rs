@@ -55,6 +55,11 @@ pub struct PulseSweepChannel {
     pub sweep_timer: u8,
     pub sweep_enabled: bool,
     pub sweep_negate_used: bool,
+    /// `coze` (sweep-counter saturation). Set at cate_128hz↓ when the
+    /// sweep counter reaches 0; sampled into BEXA on the next ajer↑.
+    /// An NR10 pace=0 write in the intervening T-cycles clears it via
+    /// the hafe async-reset path.
+    pub coze: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -86,6 +91,7 @@ impl Default for PulseSweepChannel {
             sweep_timer: 0,
             sweep_enabled: false,
             sweep_negate_used: false,
+            coze: false,
         }
     }
 }
@@ -115,6 +121,7 @@ impl PulseSweepChannel {
             sweep_timer: 0,
             sweep_enabled: false,
             sweep_negate_used: false,
+            coze: false,
         }
     }
 
@@ -153,6 +160,11 @@ impl PulseSweepChannel {
                 // Clearing negate bit after a negate calculation disables the channel
                 if self.sweep_negate_used && old_negate && !new_negate {
                     self.enabled.enabled = false;
+                }
+                // pace=0 raises bury → hafe=0 → BEXA async-reset; any
+                // armed coze is dropped before the next ajer↑.
+                if self.sweep.pace() == 0 {
+                    self.coze = false;
                 }
             }
             Register::PeriodLow => self.period.set_low8(value),
@@ -209,6 +221,8 @@ impl PulseSweepChannel {
         let pace = self.sweep.pace();
         self.sweep_timer = if pace != 0 { pace } else { 8 };
         self.sweep_enabled = pace != 0 || self.sweep.step() != 0;
+        // ch1_restart resets BEXA: any prior coze arm is dropped.
+        self.coze = false;
 
         // If step is non-zero, do overflow check
         if self.sweep.step() != 0 && self.calculate_sweep_frequency() > 2047 {
@@ -233,7 +247,15 @@ impl PulseSweepChannel {
     }
 
     pub fn tcycle(&mut self, apu_reset_n: bool) {
-        if !self.prescaler.tcycle(apu_reset_n) || !self.enabled.enabled {
+        let calo_rose = self.prescaler.tcycle(apu_reset_n);
+        // BEXA samples coze at the first ajer↑ of each M-cycle —
+        // prescaler counter == 1 after the advance. Sample even when
+        // the channel is disabled so a same-cycle re-trigger window
+        // sees the cleared coze.
+        if apu_reset_n && self.prescaler.counter == 1 {
+            self.sample_sweep_bexa();
+        }
+        if !calo_rose || !self.enabled.enabled {
             return;
         }
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
@@ -310,31 +332,48 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn tick_sweep(&mut self) {
+    /// cate_128hz↓ edge (fs steps 2 and 6). Decrements the sweep
+    /// counter; when it reaches 0 it reloads to pace and arms `coze`
+    /// for sampling by the next ajer↑. The actual overflow check /
+    /// period update / channel-disable are deferred to BEXA's sample
+    /// so an NR10 pace=0 write in the intervening T-cycle window can
+    /// suppress the fire via the bury async-reset path.
+    pub fn tick_sweep_counter(&mut self) {
         if !self.sweep_enabled {
             return;
         }
-
         if self.sweep_timer > 0 {
             self.sweep_timer -= 1;
         }
         if self.sweep_timer == 0 {
             let pace = self.sweep.pace();
             self.sweep_timer = if pace != 0 { pace } else { 8 };
-
             if pace != 0 {
-                let new_frequency = self.calculate_sweep_frequency();
-                if new_frequency > 2047 {
-                    self.enabled.enabled = false;
-                } else if self.sweep.step() != 0 {
-                    self.shadow_frequency = new_frequency;
-                    self.period.0 = new_frequency;
+                self.coze = true;
+            }
+        }
+    }
 
-                    // Overflow check again with new frequency
-                    if self.calculate_sweep_frequency() > 2047 {
-                        self.enabled.enabled = false;
-                    }
-                }
+    /// ajer↑ edge (CALO|AJER prescaler counter = 1 = first ajer↑ in
+    /// the M-cycle). Drains `coze`: runs the overflow check and the
+    /// shadow / period update; if the overflow result would set the
+    /// channel-disable, do so. Cleared without firing when pace=0.
+    pub fn sample_sweep_bexa(&mut self) {
+        if !self.coze {
+            return;
+        }
+        self.coze = false;
+        if self.sweep.pace() == 0 {
+            return;
+        }
+        let new_frequency = self.calculate_sweep_frequency();
+        if new_frequency > 2047 {
+            self.enabled.enabled = false;
+        } else if self.sweep.step() != 0 {
+            self.shadow_frequency = new_frequency;
+            self.period.0 = new_frequency;
+            if self.calculate_sweep_frequency() > 2047 {
+                self.enabled.enabled = false;
             }
         }
     }
