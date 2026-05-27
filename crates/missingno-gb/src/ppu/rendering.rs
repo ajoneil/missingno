@@ -362,6 +362,9 @@ impl Rendering {
         oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> Option<PixelOutput> {
+        // WY-match unit (SARY/REJO) ticks every PPU rise regardless of mode — hardware's hclk-driven DFFs.
+        self.window.tick_wy_match_rising(regs, video);
+
         // BYBA/AVAP have moved to on_ppu_clock_fall; here ALET-clocked DFFs and AJUJ close fire.
         self.hblank.tick_ajuj_pulse_on_rise();
 
@@ -423,6 +426,9 @@ impl Rendering {
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
     ) -> Option<PixelOutput> {
+        // WY-match unit (REJO) re-evaluates every PPU fall — captures vblank↓ at the master fall where NYPE↑ fires.
+        self.window.tick_wy_match_falling(video);
+
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();
 
@@ -436,9 +442,6 @@ impl Rendering {
             self.window.init_nuko_wx(regs.window.x.output());
             self.fetcher.load_into(&mut self.bg_shifter);
         }
-
-        // SARY/REJO: sample WY==LY in all modes (TALU-rising-derived clock).
-        self.window.sample_wy_match(regs, video);
 
         // Mode 3 pixel output runs in two sub-phases: fetcher DFFs (MYVO-clocked, depth 16-22ge),
         // then pixel pipeline (SACU-driven, depth 63.8ge).
@@ -554,7 +557,6 @@ impl Rendering {
             &mut self.cascade,
             &mut self.fine_scroll,
             regs,
-            video,
         );
 
         // SABE clock fires on ALET rising. Placed before the TEKY/RYCE block so a newly
@@ -697,12 +699,9 @@ impl Rendering {
         self.hblank
             .latch_end_of_line(self.pixel_counter.terminal(), post_advance_fepo);
 
-        let (_toba, pixel_out) = self.lcd.on_ppu_clock_fall(
-            sacu,
-            pixel,
-            fine_scroll_match,
-            self.pixel_counter.value(),
-        );
+        let (_toba, pixel_out) =
+            self.lcd
+                .on_ppu_clock_fall(sacu, pixel, fine_scroll_match, self.pixel_counter.value());
 
         if tyfa {
             self.fine_scroll.tick();
