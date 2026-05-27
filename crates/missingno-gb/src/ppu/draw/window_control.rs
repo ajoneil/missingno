@@ -79,6 +79,22 @@ impl WindowControl {
         }
     }
 
+    /// SARY captures on master rise; REJO re-evaluates against new SARY + vblank.
+    /// Always-clocked path independent of rendering mode (hardware: hclk-driven DFFs).
+    pub(in crate::ppu) fn tick_wy_match_rising(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+    ) {
+        self.capture_sary(regs, video);
+        self.update_rejo(video);
+    }
+
+    /// REJO re-evaluates against current SARY + vblank — handles vblank↓ on master fall.
+    pub(in crate::ppu) fn tick_wy_match_falling(&mut self, video: &VideoControl) {
+        self.update_rejo(video);
+    }
+
     /// Releases the window-hit latch (RYDY) when the fetcher-idle DFF (PORY) signals the
     /// cascade restart. Returns true on the RYDY 1→0 edge — SUZU fires, which triggers TEVO's
     /// load-window pulse.
@@ -118,11 +134,7 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         regs: &PipelineRegisters,
-        video: &VideoControl,
     ) -> bool {
-        self.capture_sary(regs, video);
-        self.update_rejo(video);
-
         // NOPA captures BEFORE the PYNU update so it observes PYNU's prior-fall value.
         self.nopa.write(if self.pynu.output() { 1 } else { 0 });
         self.nopa.tick();
@@ -141,9 +153,7 @@ impl WindowControl {
         fetcher_ready: bool,
         sprite_fetch_running: bool,
         regs: &PipelineRegisters,
-        video: &VideoControl,
     ) -> bool {
-        self.update_rejo(video);
         let nuko = self.compute_nuko(pixel_counter);
 
         // PYCO holds when ROCO is halted (POKY=0 = data not ready, or TAKA=1 = sprite fetch with FEPO=1).

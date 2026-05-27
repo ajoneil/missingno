@@ -362,6 +362,9 @@ impl Rendering {
         oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> Option<PixelOutput> {
+        // WY-match unit (SARY/REJO) ticks every PPU rise regardless of mode — hardware's hclk-driven DFFs.
+        self.window.tick_wy_match_rising(regs, video);
+
         // BYBA/AVAP have moved to on_ppu_clock_fall; here ALET-clocked DFFs and AJUJ close fire.
         self.hblank.tick_ajuj_pulse_on_rise();
 
@@ -423,6 +426,9 @@ impl Rendering {
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
     ) -> Option<PixelOutput> {
+        // WY-match unit (REJO) re-evaluates every PPU fall — captures vblank↓ at the master fall where NYPE↑ fires.
+        self.window.tick_wy_match_falling(video);
+
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();
 
@@ -458,7 +464,6 @@ impl Rendering {
                 poky_for_window,
                 fetch_running_for_window,
                 regs,
-                video,
             );
 
             // SUZU is a TEVO OR3 input alongside SEKO/TAVE; drives NYXU low (LOZE holds BG shifter).
@@ -552,7 +557,6 @@ impl Rendering {
             &mut self.cascade,
             &mut self.fine_scroll,
             regs,
-            video,
         );
 
         // SABE clock fires on ALET rising. Placed before the TEKY/RYCE block so a newly
