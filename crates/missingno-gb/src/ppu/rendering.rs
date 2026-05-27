@@ -362,8 +362,8 @@ impl Rendering {
         oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> Option<PixelOutput> {
-        // WY-match unit (SARY/REJO) ticks every PPU rise regardless of mode — hardware's hclk-driven DFFs.
-        self.window.tick_wy_match_rising(regs, video);
+        // REJO re-evaluates on every PPU rise (vblank↑ etc.); SARY captures only on TALU↑ (in fall).
+        self.window.update_rejo_on_rise(video);
 
         // BYBA/AVAP have moved to on_ppu_clock_fall; here ALET-clocked DFFs and AJUJ close fire.
         self.hblank.tick_ajuj_pulse_on_rise();
@@ -425,9 +425,11 @@ impl Rendering {
         oam: &Oam,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
+        talu_rising: bool,
     ) -> Option<PixelOutput> {
-        // WY-match unit (REJO) re-evaluates every PPU fall — captures vblank↓ at the master fall where NYPE↑ fires.
-        self.window.tick_wy_match_falling(video);
+        // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
+        self.window
+            .tick_wy_match_falling(regs, video, talu_rising);
 
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();

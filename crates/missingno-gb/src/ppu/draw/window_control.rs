@@ -79,19 +79,23 @@ impl WindowControl {
         }
     }
 
-    /// SARY captures on master rise; REJO re-evaluates against new SARY + vblank.
-    /// Always-clocked path independent of rendering mode (hardware: hclk-driven DFFs).
-    pub(in crate::ppu) fn tick_wy_match_rising(
-        &mut self,
-        regs: &PipelineRegisters,
-        video: &VideoControl,
-    ) {
-        self.capture_sary(regs, video);
+    /// REJO re-evaluates against current SARY + vblank on every PPU rise (handles vblank↑).
+    /// SARY itself only captures on TALU↑ — see `tick_wy_match_falling`.
+    pub(in crate::ppu) fn update_rejo_on_rise(&mut self, video: &VideoControl) {
         self.update_rejo(video);
     }
 
-    /// REJO re-evaluates against current SARY + vblank — handles vblank↓ on master fall.
-    pub(in crate::ppu) fn tick_wy_match_falling(&mut self, video: &VideoControl) {
+    /// TALU↑ (hclk rising) lands on a PPU fall in the emulator's clock model. SARY captures
+    /// wy_match on that edge; REJO re-evaluates on every fall to handle vblank↓.
+    pub(in crate::ppu) fn tick_wy_match_falling(
+        &mut self,
+        regs: &PipelineRegisters,
+        video: &VideoControl,
+        talu_rising: bool,
+    ) {
+        if talu_rising {
+            self.capture_sary(regs, video);
+        }
         self.update_rejo(video);
     }
 
