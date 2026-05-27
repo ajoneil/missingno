@@ -225,6 +225,10 @@ pub(crate) enum CpuPhase {
         pc_lo: u8,
         step: u8,
     },
+
+    /// CPU is hard-locked by an illegal opcode. Hardware continues
+    /// to tick; the CPU never resumes and never checks for interrupts.
+    Locked,
 }
 
 /// Halt-sequencer sub-states. During HALT, `mcyc` is parked at `m7` by

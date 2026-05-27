@@ -177,6 +177,14 @@ impl Cpu {
                 .expect("next_mcycle must return Some after dispatch arm");
         }
 
+        if self.halt.state == HaltState::Locked {
+            self.phase = CpuPhase::Locked;
+            self.exec_step = 0;
+            return MCycleAction::Internal {
+                address: self.bus_counter,
+            };
+        }
+
         if self.halt.state == HaltState::Halting {
             // Defer the halt-bug-vs-halt-state decision to M_h start
             // (the boundary at the end of HALT's body M-cycle). The

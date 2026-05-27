@@ -10,12 +10,12 @@ use gbtrace::snapshot::{
     TimerSnapshot, build_memory_payload,
 };
 
+use crate::GameBoy;
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
-use crate::GameBoy;
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -84,6 +84,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
             HaltState::Running => 0,
             HaltState::Halting => 1,
             HaltState::Halted => 2,
+            HaltState::Locked => 3,
         },
         // gbtrace's ei_delay column expects a "cycles until IME enables"
         // counter; missingno's model is a single shadow flag, so report
