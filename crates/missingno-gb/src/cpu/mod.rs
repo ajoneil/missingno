@@ -2,7 +2,7 @@ use commit::Commit;
 use dff::Dff;
 use flags::{Flag, Flags};
 use mcycle::{BusAction, CpuPhase, MCycleAction, Phase, TCycle};
-use registers::{Register16, Register8};
+use registers::{Register8, Register16};
 
 pub mod commit;
 pub mod dff;
@@ -18,9 +18,10 @@ pub enum InterruptMasterEnable {
     Enabled,
 }
 
-/// CPU execution state w.r.t. the HALT instruction. Halt-release
-/// fires combinationally via g43 → g49 once `irq_latched` (yoii)
-/// captures `(IF & IE) != 0`.
+/// CPU execution state w.r.t. the HALT instruction and illegal-opcode
+/// lockup. Halt-release fires combinationally via g43 → g49 once
+/// `irq_latched` (yoii) captures `(IF & IE) != 0`; lockup has no
+/// release path.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum HaltState {
     /// Normal execution — CPU fetches and executes instructions.
@@ -30,6 +31,10 @@ pub enum HaltState {
     Halting,
     /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
     Halted,
+    /// Illegal-opcode hard-lock — ticking hardware, never wakes.
+    /// Reached only via `Commit::Invalid` (opcodes $D3, $DB, $DD,
+    /// $E3, $E4, $EB, $EC, $ED, $F4, $FC, $FD).
+    Locked,
 }
 
 /// All halt-related state on the CPU: the high-level execution mode
@@ -383,6 +388,7 @@ impl Cpu {
             mcycle::CpuPhase::Execute { step, .. } => *step as u8,
             mcycle::CpuPhase::InterruptDispatch { step, .. } => *step as u8,
             mcycle::CpuPhase::Halted(_) => 0,
+            mcycle::CpuPhase::Locked => 0,
         }
     }
 

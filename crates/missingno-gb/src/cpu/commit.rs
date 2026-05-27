@@ -24,9 +24,8 @@ pub(super) enum Commit {
     /// conditional branches, and multi-M-cycle instructions whose work
     /// has already executed at decode-edge inline sites.
     NoOperation,
-    /// Invalid opcode — enters halt_state = Halting per current emulator
-    /// behaviour. Not a hardware signal; the SM83 locks up on invalid
-    /// opcodes.
+    /// Invalid opcode — enters `HaltState::Locked` (hard-lock until
+    /// power-off). Hardware continues to tick; the CPU never resumes.
     Invalid,
 
     // ── 8-bit register writes ──

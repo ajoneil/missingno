@@ -18,7 +18,7 @@ impl Cpu {
         match commit {
             Commit::NoOperation => {}
             Commit::Invalid => {
-                cpu.halt.state = HaltState::Halting;
+                cpu.halt.state = HaltState::Locked;
             }
 
             Commit::LoadR8 { reg, value } => cpu.set_register8(reg, value),

@@ -151,6 +151,12 @@ impl Cpu {
                     self.enter_post_halt_fetch()
                 }
             }
+            CpuPhase::Locked => {
+                self.boundary_flag = true;
+                Some(MCycleAction::Internal {
+                    address: self.bus_counter,
+                })
+            }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
                 // and routes the next M-cycle to dispatch M1. The IME=0
