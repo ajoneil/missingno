@@ -151,13 +151,14 @@ impl WindowControl {
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
         fetcher_ready: bool,
-        sprite_fetch_running: bool,
+        fepo: bool,
         regs: &PipelineRegisters,
     ) -> bool {
         let nuko = self.compute_nuko(pixel_counter);
 
-        // PYCO holds when ROCO is halted (POKY=0 = data not ready, or TAKA=1 = sprite fetch with FEPO=1).
-        if fetcher_ready && !sprite_fetch_running {
+        // PYCO holds when ROCO is halted: TYFA = AND3(POKY, SOCY, VYBO=NOR3(MYVO, FEPO, WODU)).
+        // FEPO=1 freezes PYCO via VYBO=0 before TAKA latches (one ALET period earlier).
+        if fetcher_ready && !fepo {
             self.pyco.write(if nuko { 1 } else { 0 });
             self.pyco.tick();
         }
@@ -212,8 +213,11 @@ impl WindowControl {
         self.window_rendered = false;
     }
 
-    /// PYCO/NUNU/PYNU/NOPA persist across scanlines on hardware. Force the WAZY increment
-    /// for end-of-mode-3 ATEJ↑ when no explicit LCDC.5 toggle is fed.
+    /// ATEJ↑ at HBlank entry pulses XOFO=1, clearing PYNU; XOFO↓ re-sets PYNU from carryover
+    /// NUNU=1. PYCO/NUNU persist across the boundary so the post-pulse state is observable.
+    /// General case has NUNU=0 (PYCO decayed when pix moved past WX with FEPO=0); right-edge
+    /// has NUNU=1 (PYCO frozen at 1 via FEPO-gated ROCO halt). NOPA captures the post-pulse
+    /// PYNU on the equivalent ALET edge.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.rydy.clear();
         if self.pynu.output() && self.window_rendered {
@@ -221,13 +225,12 @@ impl WindowControl {
             self.window_rendered = false;
         }
         self.pynu.clear();
-        self.pyco.write(0);
-        self.pyco.tick();
-        self.nunu.write(0);
-        self.nunu.tick();
-        self.nopa.write(0);
+        if self.nunu.output() != 0 {
+            self.pynu.set();
+        }
+        self.nopa.write(if self.pynu.output() { 1 } else { 0 });
         self.nopa.tick();
-        self.prev_nuny = false;
+        self.prev_nuny = self.pynu.output() && self.nopa.output() == 0;
         self.nuko_wx = 0xFF;
     }
 

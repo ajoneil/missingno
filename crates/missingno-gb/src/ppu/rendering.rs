@@ -455,14 +455,16 @@ impl Rendering {
             // MOSU↑ arming runs before mode3_advance_fetcher so the counter=0 VRAM read sees
             // fetching_window=true. When MOSU↑ fires, advance_fetcher is gated out for this dot.
             let poky_for_window = self.cascade.poky();
-            let fetch_running_for_window = self.sprite_trigger.fetch_running();
+            // FEPO gates PYCO updates: hardware's ROCO halt fires at FEPO↑ via VYBO=NOR3(MYVO,FEPO,WODU),
+            // one ALET period before TAKA latches. Pre-CUPA snapshot matches `mode3_rising`'s FEPO read.
+            let fepo_for_window = self.fepo(regs.sprites_enabled_pre_cupa);
             let mosu_fired = self.window.tick_falling(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
                 pixel_counter_before_sacu,
                 poky_for_window,
-                fetch_running_for_window,
+                fepo_for_window,
                 regs,
             );
 
