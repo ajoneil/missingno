@@ -437,9 +437,6 @@ impl Rendering {
             self.fetcher.load_into(&mut self.bg_shifter);
         }
 
-        // SARY/REJO: sample WY==LY in all modes (TALU-rising-derived clock).
-        self.window.sample_wy_match(regs, video);
-
         // Mode 3 pixel output runs in two sub-phases: fetcher DFFs (MYVO-clocked, depth 16-22ge),
         // then pixel pipeline (SACU-driven, depth 63.8ge).
         // mode3_advance_fetcher is gated on was_rendering so the AVAP-reaction rise leaves LAXU at 0.
@@ -461,6 +458,7 @@ impl Rendering {
                 poky_for_window,
                 fetch_running_for_window,
                 regs,
+                video,
             );
 
             // SUZU is a TEVO OR3 input alongside SEKO/TAVE; drives NYXU low (LOZE holds BG shifter).
@@ -697,12 +695,9 @@ impl Rendering {
         self.hblank
             .latch_end_of_line(self.pixel_counter.terminal(), post_advance_fepo);
 
-        let (_toba, pixel_out) = self.lcd.on_ppu_clock_fall(
-            sacu,
-            pixel,
-            fine_scroll_match,
-            self.pixel_counter.value(),
-        );
+        let (_toba, pixel_out) =
+            self.lcd
+                .on_ppu_clock_fall(sacu, pixel, fine_scroll_match, self.pixel_counter.value());
 
         if tyfa {
             self.fine_scroll.tick();
