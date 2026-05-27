@@ -162,9 +162,11 @@ impl Audio {
     }
 
     fn tick_frame_sequencer(&mut self) {
-        // horu_512hz↑ runs first so CH2's JOPA samples any kyvo armed
-        // by the previous step=7 call — an NR22 pace=0 write in the
-        // intervening M-cycles clears kyvo and suppresses the fire.
+        // horu_512hz↑ runs first so CH1/CH2 envelope-fire latches
+        // (KOZY/JOPA) sample any kyvo armed by the previous step=7
+        // call — an NRx2 pace=0 write in the intervening M-cycles
+        // clears kyvo and suppresses the fire.
+        self.channels.ch1.sample_envelope_jopa();
         self.channels.ch2.sample_envelope_jopa();
 
         if matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6) {
@@ -174,9 +176,9 @@ impl Audio {
             self.channels.ch1.tick_sweep();
         }
         if self.frame_sequencer_step == 7 {
-            // kene↓: CH1/CH4 still fire atomically; CH2 splits the
-            // counter-advance from the JOPA sample above.
-            self.channels.ch1.tick_envelope();
+            // kene↓: CH4 stays atomic; CH1/CH2 split the counter
+            // advance from the JOPA sample above.
+            self.channels.ch1.tick_envelope_counter();
             self.channels.ch2.tick_envelope_counter();
             self.channels.ch4.tick_envelope();
         }
