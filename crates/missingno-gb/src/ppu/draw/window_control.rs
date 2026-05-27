@@ -4,14 +4,16 @@ use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
 
-/// WX-match capture chain (PYCO → NUNU → PYNU → NOPA), RYDY/PUKU NOR-latch, REJO WY-match,
-/// and the WAZY/VYNO window-line counter clocked by `wy_clk = NOT(PYNU)`.
+/// WY-match SARY/REJO/REPU, WX-match capture chain (PYCO → NUNU → PYNU → NOPA), RYDY/PUKU
+/// NOR-latch, and the WAZY/VYNO window-line counter clocked by `wy_clk = NOT(PYNU)`.
 ///
 /// Each DFF captures on its hardware-correct edge:
+/// - SARY captures `wy_match` on master rise (hclk rising).
 /// - PYCO captures NUKO on PPU rise (ROCO is TYFA/SEGU-derived).
 /// - NOPA captures PYNU on PPU rise.
 /// - NUNU captures PYCO on PPU fall (MEHE).
 /// - PYNU nor_latch: S=NUNU, R=XOFO; re-evaluated on both edges.
+/// - REJO nor_latch: S=SARY.q, R=REPU (vblank); re-evaluated on both edges.
 /// - NUNY = AND2(PYNU, NOPA_n). MOSU↑ fires on NUNY 0→1.
 pub(in crate::ppu) struct WindowControl {
     /// Window-hit (RYDY nor3 + PUKU feedback). Set on NUNY rise; cleared by PORY during cascade restart.
@@ -32,8 +34,10 @@ pub(in crate::ppu) struct WindowControl {
     nuko_wx: u8,
     /// WAZY → VYNO ripple, clocked by PYNU 1→0 transitions during rendering.
     window_line_counter: u8,
-    /// REJO WY-match frame latch.
-    wy_matched: bool,
+    /// SARY: hclk-clocked DFF sampling `wy_match = LCDC.5 ∧ (LY == WY)`.
+    sary: DffLatch,
+    /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
+    rejo: NorLatch,
 }
 
 impl WindowControl {
@@ -48,7 +52,8 @@ impl WindowControl {
             window_rendered: false,
             nuko_wx: 0xFF,
             window_line_counter: 0,
-            wy_matched: false,
+            sary: DffLatch::new(0),
+            rejo: NorLatch::new(false),
         }
     }
 
@@ -60,14 +65,34 @@ impl WindowControl {
         self.nuko_wx = wx;
     }
 
-    pub(in crate::ppu) fn sample_wy_match(
+    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
+        let wy_match = regs.control.window_enabled() && video.ly() == regs.window.y;
+        self.sary.write(if wy_match { 1 } else { 0 });
+        self.sary.tick();
+    }
+
+    fn update_rejo(&mut self, video: &VideoControl) {
+        if video.vblank() {
+            self.rejo.clear();
+        } else if self.sary.output() != 0 {
+            self.rejo.set();
+        }
+    }
+
+    /// SARY captures on master rise; REJO re-evaluates against new SARY + vblank.
+    /// Always-clocked path independent of rendering mode (hardware: hclk-driven DFFs).
+    pub(in crate::ppu) fn tick_wy_match_rising(
         &mut self,
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) {
-        if !self.wy_matched && regs.control.window_enabled() && video.ly() == regs.window.y {
-            self.wy_matched = true;
-        }
+        self.capture_sary(regs, video);
+        self.update_rejo(video);
+    }
+
+    /// REJO re-evaluates against current SARY + vblank — handles vblank↓ on master fall.
+    pub(in crate::ppu) fn tick_wy_match_falling(&mut self, video: &VideoControl) {
+        self.update_rejo(video);
     }
 
     /// Releases the window-hit latch (RYDY) when the fetcher-idle DFF (PORY) signals the
@@ -86,7 +111,7 @@ impl WindowControl {
     }
 
     fn compute_nuko(&self, pixel_counter: u8) -> bool {
-        self.wy_matched && pixel_counter == self.nuko_wx
+        self.rejo.output() && pixel_counter == self.nuko_wx
     }
 
     /// Live NUKO (pixel_counter == WX). Two netlist consumers: PYCO (this chain) and PANY
@@ -109,10 +134,7 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         regs: &PipelineRegisters,
-        video: &VideoControl,
     ) -> bool {
-        self.sample_wy_match(regs, video);
-
         // NOPA captures BEFORE the PYNU update so it observes PYNU's prior-fall value.
         self.nopa.write(if self.pynu.output() { 1 } else { 0 });
         self.nopa.tick();
@@ -188,7 +210,6 @@ impl WindowControl {
     pub(in crate::ppu) fn reset_frame(&mut self) {
         self.window_line_counter = 0;
         self.window_rendered = false;
-        self.wy_matched = false;
     }
 
     /// PYCO/NUNU/PYNU/NOPA persist across scanlines on hardware. Force the WAZY increment

@@ -250,6 +250,8 @@ impl Audio {
                 sweep_timer: snap.ch1_sweep_timer,
                 sweep_enabled: snap.ch1_sweep_enabled,
                 sweep_negate_used: snap.ch1_sweep_negate_used,
+                kyvo: false,
+                coze: false,
             },
             ch2: PulseChannel {
                 enabled: Enabled {
@@ -270,6 +272,7 @@ impl Audio {
                 current_volume: 0,
                 envelope_timer: snap.ch2_envelope_timer,
                 length_counter: 0,
+                kyvo: false,
             },
             ch3: WaveChannel {
                 enabled: Enabled {
