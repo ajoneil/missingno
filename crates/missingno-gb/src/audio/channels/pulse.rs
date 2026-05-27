@@ -42,6 +42,11 @@ pub struct PulseChannel {
     pub divider_load_settle: bool,
     pub current_volume: u8,
     pub envelope_timer: u8,
+    /// `kyvo` (envelope-counter saturation). Set at kene↓ when the
+    /// envelope counter reaches 0. Sampled into JOPA on the next
+    /// horu_512hz↑; that's the deferred edge that actually advances
+    /// the volume counter on hardware.
+    pub kyvo: bool,
     pub length_counter: u16,
 }
 
@@ -68,6 +73,7 @@ impl Default for PulseChannel {
             divider_load_settle: false,
             current_volume: 0,
             envelope_timer: 0,
+            kyvo: false,
             length_counter: 0,
         }
     }
@@ -91,6 +97,7 @@ impl PulseChannel {
             divider_load_settle: false,
             current_volume: 0,
             envelope_timer: 0,
+            kyvo: false,
             length_counter,
         };
     }
@@ -112,6 +119,11 @@ impl PulseChannel {
             }
             Register::VolumeAndEnvelope => {
                 self.volume_and_envelope = VolumeAndEnvelope(value);
+                // pace=0 raises jupu → hafe=0 → JOPA async-reset; any
+                // armed kyvo is dropped before the next horu_512hz↑.
+                if self.volume_and_envelope.sweep_pace() == 0 {
+                    self.kyvo = false;
+                }
                 // Disabling the DAC immediately disables the channel
                 if value & 0xf8 == 0 {
                     self.enabled.enabled = false;
@@ -159,6 +171,9 @@ impl PulseChannel {
         self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
+        // ch2_restart pulls hafe low → JOPA reset → any prior kyvo
+        // arm from the previous trigger window is dropped.
+        self.kyvo = false;
 
         // DAC check: if upper 5 bits of volume register are 0, channel is disabled
         if self.volume_and_envelope.0 & 0xf8 == 0 {
@@ -196,27 +211,45 @@ impl PulseChannel {
         }
     }
 
-    pub fn tick_envelope(&mut self) {
+    /// kene↓ edge (fs step 7→0). Advances the envelope counter and
+    /// arms `kyvo` on saturation; the volume update is deferred to the
+    /// next horu_512hz↑ sample so a same-step NR22 pace=0 write can
+    /// clear `kyvo` and suppress the fire.
+    pub fn tick_envelope_counter(&mut self) {
         let pace = self.volume_and_envelope.sweep_pace();
         if pace == 0 {
             return;
         }
-
         if self.envelope_timer > 0 {
             self.envelope_timer -= 1;
         }
         if self.envelope_timer == 0 {
             self.envelope_timer = pace;
-            match self.volume_and_envelope.direction() {
-                EnvelopeDirection::Increase => {
-                    if self.current_volume < 15 {
-                        self.current_volume += 1;
-                    }
+            self.kyvo = true;
+        }
+    }
+
+    /// horu_512hz↑ edge (every fs step transition). Drains `kyvo` into
+    /// the volume counter when `hafe` is asserted; otherwise consumes
+    /// `kyvo` without firing (= dropped sample).
+    pub fn sample_envelope_jopa(&mut self) {
+        if !self.kyvo {
+            return;
+        }
+        self.kyvo = false;
+        let pace = self.volume_and_envelope.sweep_pace();
+        if pace == 0 || !self.enabled.enabled {
+            return;
+        }
+        match self.volume_and_envelope.direction() {
+            EnvelopeDirection::Increase => {
+                if self.current_volume < 15 {
+                    self.current_volume += 1;
                 }
-                EnvelopeDirection::Decrease => {
-                    if self.current_volume > 0 {
-                        self.current_volume -= 1;
-                    }
+            }
+            EnvelopeDirection::Decrease => {
+                if self.current_volume > 0 {
+                    self.current_volume -= 1;
                 }
             }
         }
