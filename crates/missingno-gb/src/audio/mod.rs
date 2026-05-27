@@ -39,7 +39,11 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn post_boot() -> Self {
+    /// Post-boot state at PC=0x0100. `internal_counter` is the M-cycle
+    /// `reg_div16` (UKUP..UPOF) — fs_step and prev_div_apu_bit derive
+    /// from it so the frame sequencer is in phase with hardware's
+    /// kene/byfe_128hz divider chain at the §11.1 anchor.
+    pub fn post_boot(internal_counter: u16) -> Self {
         Self {
             enabled: true,
             channels: Channels::default(),
@@ -47,8 +51,8 @@ impl Audio {
             volume_right: Volume::max(),
             nr50: 0x77,
 
-            prev_div_apu_bit: false, // matches initial internal_counter (0x2AF3) bit 10
-            frame_sequencer_step: 0,
+            prev_div_apu_bit: internal_counter & DIV_APU_BIT != 0,
+            frame_sequencer_step: ((internal_counter >> 11) & 0x7) as u8,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
