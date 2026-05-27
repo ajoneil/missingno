@@ -127,11 +127,6 @@ impl GameBoy {
         } else {
             Ppu::post_boot()
         };
-        self.audio = if has_boot_rom {
-            Audio::new()
-        } else {
-            Audio::post_boot()
-        };
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
         self.serial = serial_transfer::Serial::new();
@@ -139,6 +134,11 @@ impl GameBoy {
             timers::Timers::new()
         } else {
             timers::Timers::post_boot()
+        };
+        self.audio = if has_boot_rom {
+            Audio::new()
+        } else {
+            Audio::post_boot(self.timers.internal_counter)
         };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();

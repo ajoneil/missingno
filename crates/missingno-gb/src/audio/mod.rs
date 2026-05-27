@@ -39,7 +39,11 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn post_boot() -> Self {
+    /// Post-boot state at PC=0x0100. `internal_counter` is the M-cycle
+    /// `reg_div16` (UKUP..UPOF) — fs_step and prev_div_apu_bit derive
+    /// from it so the frame sequencer is in phase with hardware's
+    /// kene/byfe_128hz divider chain at the §11.1 anchor.
+    pub fn post_boot(internal_counter: u16) -> Self {
         Self {
             enabled: true,
             channels: Channels::default(),
@@ -47,8 +51,8 @@ impl Audio {
             volume_right: Volume::max(),
             nr50: 0x77,
 
-            prev_div_apu_bit: false, // matches initial internal_counter (0x2AF3) bit 10
-            frame_sequencer_step: 0,
+            prev_div_apu_bit: internal_counter & DIV_APU_BIT != 0,
+            frame_sequencer_step: ((internal_counter >> 11) & 0x7) as u8,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
@@ -158,14 +162,27 @@ impl Audio {
     }
 
     fn tick_frame_sequencer(&mut self) {
+        // horu_512hz↑ runs first so CH1/CH2 envelope-fire latches
+        // (KOZY/JOPA) sample any kyvo armed by the previous step=7
+        // call — an NRx2 pace=0 write in the intervening M-cycles
+        // clears kyvo and suppresses the fire.
+        self.channels.ch1.sample_envelope_jopa();
+        self.channels.ch2.sample_envelope_jopa();
+
         if matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6) {
             self.channels.tick_length_all();
         }
         if matches!(self.frame_sequencer_step, 2 | 6) {
-            self.channels.ch1.tick_sweep();
+            // cate_128hz↓: arm coze; BEXA samples at next ajer↑ inside
+            // pulse_sweep::tcycle.
+            self.channels.ch1.tick_sweep_counter();
         }
         if self.frame_sequencer_step == 7 {
-            self.channels.tick_envelope_all();
+            // kene↓: CH4 stays atomic; CH1/CH2 split the counter
+            // advance from the JOPA sample above.
+            self.channels.ch1.tick_envelope_counter();
+            self.channels.ch2.tick_envelope_counter();
+            self.channels.ch4.tick_envelope();
         }
         self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
     }
