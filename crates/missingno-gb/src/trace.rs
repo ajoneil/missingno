@@ -4,7 +4,7 @@ use std::path::Path;
 use gbtrace::format::SnapshotType;
 use gbtrace::format::read::derive_groups_pub;
 use gbtrace::format::write::GbtraceWriter;
-use gbtrace::header::{ExtensionField, TraceHeader};
+use gbtrace::header::{ExtensionField, PixFormat, TraceHeader};
 use gbtrace::profile::{FieldType, field_nullable, field_type};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
@@ -456,6 +456,14 @@ impl Tracer {
             }
         }
 
+        // CGB/AGB output is colour, so the pix field stores RGB555; DMG stays
+        // 2-bit greyscale. `push_pixel` / `push_pixel_rgb555` must match this.
+        let pix_format = if model.starts_with("CGB") || model.starts_with("AGB") {
+            PixFormat::Rgb555
+        } else {
+            PixFormat::Shade2
+        };
+
         let header = TraceHeader {
             _header: true,
             format_version: "0.1.0".into(),
@@ -467,6 +475,7 @@ impl Tracer {
             profile: profile.name.clone(),
             fields: all_fields,
             trigger: profile.trigger.clone(),
+            pix_format,
             extension_fields,
             notes: String::new(),
         };
@@ -506,6 +515,13 @@ impl Tracer {
 
     pub fn push_pixel(&mut self, shade: u8) {
         self.pix_buffer.push((b'0' + (shade & 3)) as char);
+    }
+
+    /// Push a CGB pixel as 4 hex chars (15-bit RGB555). Use this when the
+    /// trace's `pix_format` is `Rgb555` (CGB/AGB models); `push_pixel` otherwise.
+    pub fn push_pixel_rgb555(&mut self, value: u16) {
+        use std::fmt::Write;
+        let _ = write!(self.pix_buffer, "{:04X}", value & 0x7FFF);
     }
 
     pub fn push_vram_write(&mut self, addr: u16, data: u8) {
