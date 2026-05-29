@@ -30,6 +30,10 @@ pub(in crate::ppu) struct SpriteFetch {
     tile_data_high: u8,
     /// OAM bank-A attributes latched at fetch time and held through the merge dot.
     attributes: sprites::Attributes,
+    /// (tile-index, attribute) = (OAM[K*4+2], OAM[K*4+3]) — the byte-pair this
+    /// fetch latches into the Stage-1 dlatches (XYKY/YDYV) shared with the
+    /// Mode-2 scan; becomes the held value into a following DMA-overlapped Mode 2.
+    stage1_capture: (u8, u8),
 }
 
 impl SpriteFetch {
@@ -42,11 +46,17 @@ impl SpriteFetch {
             tile_data_low: 0,
             tile_data_high: 0,
             attributes: sprites::Attributes(0),
+            stage1_capture: (0, 0),
         }
     }
 
     pub(in crate::ppu) fn tile_data(&self) -> (u8, u8) {
         (self.tile_data_low, self.tile_data_high)
+    }
+
+    /// The (tile-index, attribute) OAM byte-pair this fetch latched into Stage-1.
+    pub(in crate::ppu) fn stage1_capture(&self) -> (u8, u8) {
+        self.stage1_capture
     }
 
     pub(in crate::ppu) fn fetch_counter(&self) -> u8 {
@@ -76,6 +86,7 @@ impl SpriteFetch {
             }
         };
         self.attributes = attributes;
+        self.stage1_capture = (tile.0, attributes.0);
 
         let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
             TileIndex(tile.0 & 0xFE)

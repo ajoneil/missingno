@@ -122,6 +122,14 @@ impl ScanCounter {
         }
     }
 
+    /// A Mode-3 sprite fetch latches its (tile-index, attribute) byte-pair into
+    /// the shared Stage-1 dlatches, overwriting the Mode-2 scan value. This is
+    /// the held value carried into a following DMA-overlapped Mode 2.
+    pub(in crate::ppu) fn set_stage1_held(&mut self, y: u8, x: u8) {
+        self.stage1_y = y;
+        self.stage1_x = x;
+    }
+
     pub(in crate::ppu) fn scan_done(&self) -> bool {
         self.entry & FETO_SCAN_DONE_DECODE == FETO_SCAN_DONE_DECODE
     }

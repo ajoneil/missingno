@@ -236,6 +236,13 @@ impl GameBoy {
 
         let (new_screen, pixel) = self.apply_ppu_result(&video_result);
 
+        // OAM DMA control gates clock on dma_phi = !data_phase; tick
+        // every master-clock edge so the engage (dma_phi rising) and arm
+        // (dma_phi_n rising) edges are both seen. data_phase is held LOW
+        // during halt-spin, freezing the engine (matu/counter get no edge).
+        let data_phase = !self.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
+        self.drive_dma(data_phase);
+
         if is_mcycle_boundary {
             self.tick_mcycle_boundary_fall();
         }
@@ -475,15 +482,12 @@ impl GameBoy {
         }
     }
 
-    /// M-cycle-boundary subsystems on the falling edge: OAM DMA byte
-    /// transfer, external-bus decay. (Audio mcycle is at boundary rise.)
+    /// M-cycle-boundary work on the falling edge (data phase): commit the
+    /// OAM DMA byte for this M-cycle, plus external-bus decay. A CPU write
+    /// that collided with DMA on the source bus open-drains at the OAM
+    /// slot DMA deposits. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
-        // `matu` (DMA byte counter) is clocked by `dma_phi = NOT(data_phase)`.
-        // While the halt RS-latch `ynkw` is set, `data_phase` is held LOW,
-        // so `dma_phi` stays HIGH and the counter freezes on the in-flight
-        // byte. `dma_run` stays asserted, so bus arbitration is unaffected.
-        let halt_paused = self.cpu.halt.rs_latched;
-        if !halt_paused && let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+        if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
             let byte = self.read_dma_source(src_addr);
             let dst_addr = 0xfe00 + dst_offset as u16;
             let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
@@ -528,6 +532,13 @@ impl GameBoy {
         }
 
         self.external.tick_decay();
+    }
+
+    /// Advance the OAM-DMA control gates one master-clock edge (engage/
+    /// release/counter). The byte transfer itself commits at the M-cycle
+    /// data phase in `tick_mcycle_boundary_fall`.
+    fn drive_dma(&mut self, data_phase: bool) {
+        self.dma.tick(data_phase);
     }
 
     /// Re-capture interrupt state after bus writes and M-cycle
