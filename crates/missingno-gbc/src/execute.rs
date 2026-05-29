@@ -188,6 +188,12 @@ impl GameBoyColor {
 
         let (new_screen, pixel) = self.apply_ppu_result(&video_result);
 
+        // OAM DMA control gates clock on dma_phi = !data_phase; tick every
+        // master-clock edge so the engage/arm edges are both seen. data_phase
+        // is held LOW during halt-spin, freezing the engine.
+        let data_phase = !self.cpu.halt_rs_latched() && matches!(tcycle.as_u8(), 2 | 3);
+        self.drive_dma(data_phase);
+
         if is_mcycle_boundary {
             self.tick_mcycle_boundary_fall();
         }
@@ -356,7 +362,7 @@ impl GameBoyColor {
     }
 
     fn tick_mcycle_boundary_fall(&mut self) {
-        if let Some((src_addr, dst_offset)) = self.dma.mcycle() {
+        if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
             let byte = self.read_dma_source(src_addr);
             let dst_addr = 0xfe00 + dst_offset as u16;
             let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
@@ -382,6 +388,12 @@ impl GameBoyColor {
         }
 
         self.external.tick_decay();
+    }
+
+    /// Advance the OAM-DMA control gates one master-clock edge. The byte
+    /// transfer commits at the M-cycle data phase in `tick_mcycle_boundary_fall`.
+    fn drive_dma(&mut self, data_phase: bool) {
+        self.dma.tick(data_phase);
     }
 
     fn recapture_interrupts(&mut self) {

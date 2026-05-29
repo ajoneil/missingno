@@ -186,25 +186,21 @@ pub fn capture_timer(gb: &GameBoy) -> TimerSnapshot {
 }
 
 pub fn capture_dma(gb: &GameBoy) -> DmaSnapshot {
-    use crate::dma::DmaDelay;
     let dma = gb.dma();
-    match &dma.transfer {
-        None => DmaSnapshot {
+    if dma.dma_run() {
+        DmaSnapshot {
+            active: true,
+            source: (dma.source_register() as u16) << 8,
+            byte_index: dma.byte_index(),
+            delay_remaining: 0,
+        }
+    } else {
+        DmaSnapshot {
             active: false,
             source: 0,
             byte_index: 0,
             delay_remaining: 0,
-        },
-        Some(t) => DmaSnapshot {
-            active: true,
-            source: t.source,
-            byte_index: t.byte_index,
-            delay_remaining: match &t.delay {
-                None => 0,
-                Some(DmaDelay::Startup(n)) => 0x80 | n,
-                Some(DmaDelay::Transfer(n)) => *n,
-            },
-        },
+        }
     }
 }
 
