@@ -570,11 +570,14 @@ impl Rendering {
                     let slot_index = sf.slot_index;
                     let done = sf.advance(regs, oam, oam_bus, vram);
                     if done {
+                        let (s1y, s1x) = sf.stage1_capture();
                         sf.merge_into(&mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
                         self.scan.sprites_mut().fetched |= 1 << slot_index;
+                        // The fetch latched (tile-index, attribute) into the shared Stage-1 dlatches.
+                        self.scan.set_stage1_held(s1y, s1x);
                         fepo_pre_cupa = self.fepo(regs.control.sprites_enabled());
                     }
                 }

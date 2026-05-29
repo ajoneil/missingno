@@ -117,6 +117,12 @@ impl SpriteScanner {
         &mut self.sprites
     }
 
+    /// Overwrite the held Stage-1 byte-pair (a Mode-3 sprite fetch latching its
+    /// (tile-index, attribute) into the dlatches shared with the Mode-2 scan).
+    pub(in crate::ppu) fn set_stage1_held(&mut self, y: u8, x: u8) {
+        self.counter.set_stage1_held(y, x);
+    }
+
     /// Runs every XUPY cycle regardless of POPU (so the DFF advances across the 153→0 boundary).
     /// CATU captures atomically here; the first compare+tick runs in `advance_scan` next scan_clock_rising.
     /// Returns true on the XUPY edge where CATU captures RUTU — the ATEJ-pulse-rising event that
