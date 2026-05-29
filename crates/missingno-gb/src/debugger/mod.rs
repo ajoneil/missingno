@@ -328,7 +328,7 @@ impl Debugger {
         let profile = Profile::parse(FRAME_CAPTURE_PROFILE)
             .map_err(|e| format!("Failed to parse trace profile: {e}"))?;
 
-        let mut tracer = Tracer::create(path, &profile, &self.game_boy, BootRom::Skip)
+        let mut tracer = Tracer::create(path, &profile, &self.game_boy, BootRom::Skip, "DMG-B")
             .map_err(|e| format!("Failed to create tracer: {e}"))?;
 
         // Mark frame boundary at entry 0 so all entries belong to this frame.

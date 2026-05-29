@@ -274,7 +274,7 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
 
     eprintln!("gbtrace: writing {}", output_path.display());
 
-    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom)
+    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom, "DMG-B")
         .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
 
     tracer.mark_frame().unwrap();

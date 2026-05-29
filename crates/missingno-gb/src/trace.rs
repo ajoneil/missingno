@@ -10,7 +10,41 @@ pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
 use crate::GameBoy;
-use crate::ppu::PpuTraceSnapshot;
+use crate::audio::Audio;
+use crate::cartridge::Cartridge;
+use crate::cpu::Cpu;
+use crate::ppu::{Ppu, PpuTraceSnapshot};
+
+/// Abstraction over a Game Boy–family console that the [`Tracer`] can
+/// capture state from. Implemented by `GameBoy` (DMG) here and by
+/// `GameBoyColor` in the `missingno-gbc` crate, so a single tracer
+/// serves both systems. Every accessor yields a shared `missingno-gb`
+/// type, so the capture logic is identical regardless of console.
+pub trait Traceable {
+    fn cpu(&self) -> &Cpu;
+    fn ppu(&self) -> &Ppu;
+    fn audio(&self) -> &Audio;
+    fn peek(&self, address: u16) -> u8;
+    fn cartridge(&self) -> &Cartridge;
+}
+
+impl Traceable for GameBoy {
+    fn cpu(&self) -> &Cpu {
+        GameBoy::cpu(self)
+    }
+    fn ppu(&self) -> &Ppu {
+        GameBoy::ppu(self)
+    }
+    fn audio(&self) -> &Audio {
+        GameBoy::audio(self)
+    }
+    fn peek(&self, address: u16) -> u8 {
+        GameBoy::peek(self, address)
+    }
+    fn cartridge(&self) -> &Cartridge {
+        GameBoy::cartridge(self)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Extension fields — emulator-internal debugging state
@@ -372,11 +406,12 @@ fn resolve_emitter(field: &str, memory: &BTreeMap<String, u16>) -> Emitter {
 }
 
 impl Tracer {
-    pub fn create(
+    pub fn create<T: Traceable>(
         path: impl AsRef<Path>,
         profile: &Profile,
-        gb: &GameBoy,
+        gb: &T,
         boot_rom: BootRom,
+        model: &str,
     ) -> Result<Self, gbtrace::Error> {
         let rom_sha256 = {
             let mut hasher = Sha256::new();
@@ -427,7 +462,7 @@ impl Tracer {
             emulator: "missingno".into(),
             emulator_version: env!("CARGO_PKG_VERSION").into(),
             rom_sha256,
-            model: "DMG-B".into(),
+            model: model.into(),
             boot_rom,
             profile: profile.name.clone(),
             fields: all_fields,
@@ -492,7 +527,7 @@ impl Tracer {
         self.writer.write_snapshot(snapshot_type, payload)
     }
 
-    pub fn capture(&mut self, gb: &GameBoy) -> Result<(), gbtrace::Error> {
+    pub fn capture<T: Traceable>(&mut self, gb: &T) -> Result<(), gbtrace::Error> {
         let ppu_snap = if self.needs_ppu_snapshot {
             gb.ppu().trace_snapshot()
         } else {

@@ -24,6 +24,8 @@
 pub mod execute;
 pub mod memory;
 pub mod screen;
+#[cfg(feature = "gbtrace")]
+pub mod trace;
 
 use missingno_gb::{
     ClockPhase,
