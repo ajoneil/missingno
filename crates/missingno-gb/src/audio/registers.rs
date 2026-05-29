@@ -114,7 +114,7 @@ impl Audio {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, internal_counter: u16) {
         if !self.enabled {
             match register {
                 Register::Control => {} // always writable
@@ -153,10 +153,11 @@ impl Audio {
             Register::Control => {
                 if ControlFlags::from_bits_retain(value).contains(ControlFlags::AUDIO_ENABLE) {
                     if !self.enabled {
-                        // APU power-on: reset frame sequencer step only.
-                        // The DIV-APU bit tracking is NOT reset — the frame
-                        // sequencer picks up wherever DIV currently is.
-                        self.frame_sequencer_step = 0;
+                        // caru/bylu/JYNA ripple re-locks from the power-on bure↑:
+                        // it catches the sub-step-1023 edge (counter→1) only when
+                        // powered on below it; at/above, the edge is missed (stays 0).
+                        self.frame_sequencer_step =
+                            if (internal_counter & 0x7FF) < 1023 { 1 } else { 0 };
                     }
                     self.enabled = true;
                 } else {

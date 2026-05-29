@@ -215,7 +215,10 @@ impl GameBoyColor {
                     self.timers.write_register(register, value);
                 }
             }
-            MappedAddress::AudioRegister(register) => self.audio.write_register(register, value),
+            MappedAddress::AudioRegister(register) => {
+                self.audio
+                    .write_register(register, value, self.timers.internal_counter())
+            }
             MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
