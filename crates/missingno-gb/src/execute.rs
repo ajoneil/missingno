@@ -222,6 +222,13 @@ impl GameBoy {
         self.commit_read_latch();
         self.commit_write();
 
+        // cpu_irq_ack1 holds LALU.r_n LOW across the dispatch window, so a
+        // PC-push that wrote FF0F can't re-set the serviced IF bit — re-assert
+        // the held reset after the push commits.
+        if let Some(interrupt) = self.cpu.irq.irq_ack_held {
+            self.interrupts.clear(interrupt);
+        }
+
         // VBlank IF: POPU transitions happen here since the divider
         // chain runs in fall().
         if video_result.request_vblank {
@@ -260,6 +267,7 @@ impl GameBoy {
         // ~8 ps before this CLK9↑. Clear at boundary entry so
         // check_stat_edge below sees r_n released.
         self.cpu.irq.cpu_irq_ack1_pulse = false;
+        self.cpu.irq.irq_ack_held = None;
 
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
@@ -369,6 +377,7 @@ impl GameBoy {
         if self.cpu.take_pending_vector_resolve() {
             if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
+                self.cpu.irq.irq_ack_held = Some(interrupt);
                 self.cpu.bus_counter = interrupt.vector();
             } else {
                 self.cpu.bus_counter = 0x0000;

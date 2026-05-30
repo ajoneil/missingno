@@ -4,6 +4,8 @@ use flags::{Flag, Flags};
 use mcycle::{BusAction, CpuPhase, MCycleAction, Phase, TCycle};
 use registers::{Register8, Register16};
 
+use crate::interrupts::Interrupt;
+
 pub mod commit;
 pub mod dff;
 pub mod dispatch_chain;
@@ -100,6 +102,10 @@ pub struct IrqContext {
     /// falls at the next M-cycle boundary entry. While HIGH, same-M-cycle
     /// SUKO rising edges are absorbed (LALU.q forced to 0).
     pub(super) cpu_irq_ack1_pulse: bool,
+    /// The serviced IF bit held in reset while `cpu_irq_ack1` is HIGH (the
+    /// LALU.r_n target). The reset is held across the dispatch window, so a
+    /// PC-push that writes FF0F cannot re-set this bit.
+    pub(super) irq_ack_held: Option<Interrupt>,
     /// Combinational `(IF & IE) != 0`. Coarse signal kept for the
     /// gbtrace adapter; dispatch reads the data-phase-gated
     /// `dispatch.latched()` instead.
@@ -117,6 +123,7 @@ impl IrqContext {
             ime_delay: false,
             pending_vector_resolve: false,
             cpu_irq_ack1_pulse: false,
+            irq_ack_held: None,
             irq_pending: false,
             irq_latched: Dff::new(false),
         }
