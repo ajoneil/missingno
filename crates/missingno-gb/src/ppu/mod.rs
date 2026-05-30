@@ -369,19 +369,26 @@ impl Ppu {
 impl Ppu {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     pub fn stat_legs(&self) -> InterruptFlags {
+        let enables = self.video.stat.enables();
+        let mut legs = InterruptFlags::empty();
+
+        // RUGU & ROPO: ROPO is frozen across LCD-off, so the LYC leg stays live
+        // while the LCD is off — only the mode legs go quiet.
+        if enables.contains(InterruptFlags::CURRENT_LINE_COMPARE) && self.video.stat.ly_eq_lyc() {
+            legs |= InterruptFlags::CURRENT_LINE_COMPARE;
+        }
+
+        // Mode legs need the pixel pipeline, which is held in reset while LCD off.
         let Some(rendering) = &self.pixel_pipeline else {
-            return InterruptFlags::empty();
+            return legs;
         };
 
         let vblank = self.video.vblank();
         let mode2_active = !vblank && rendering.mode2_interrupt_active(&self.video);
         // Mode 2 STAT also fires at LX=0 of line 144.
         let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
-
-        let enables = self.video.stat.enables();
         let sprites_enabled = self.registers.control.sprites_enabled();
 
-        let mut legs = InterruptFlags::empty();
         if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
             && !vblank
             && rendering.end_of_line_signal(sprites_enabled)
@@ -393,9 +400,6 @@ impl Ppu {
         }
         if enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144) {
             legs |= InterruptFlags::OAM_SCAN;
-        }
-        if enables.contains(InterruptFlags::CURRENT_LINE_COMPARE) && self.video.stat.ly_eq_lyc() {
-            legs |= InterruptFlags::CURRENT_LINE_COMPARE;
         }
         legs
     }
