@@ -157,7 +157,7 @@ impl WaveChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
         match register {
             Register::Volume => self.volume = Volume(value),
             Register::Length => {
@@ -177,15 +177,12 @@ impl WaveChannel {
                 let ctrl = PeriodHighAndControl(value);
                 self.period.set_high3(ctrl.period_high());
 
-                // Extra length clocking on NRx4 write
-                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                // doda = NOR(fugo, bufy_256hz, ff23_d6_n): length-enable
+                // 0→1 rises doda (one extra length count) iff caru is low.
                 let was_length_enabled = self.length_enabled;
                 self.length_enabled = ctrl.enable_length();
 
-                if !next_step_clocks_length
-                    && !was_length_enabled
-                    && self.length_enabled
-                    && self.length_counter > 0
+                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
                 {
                     self.length_counter -= 1;
                     if self.length_counter == 0 && !ctrl.trigger() {
@@ -195,8 +192,7 @@ impl WaveChannel {
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 256
-                    {
+                    if caru_low && self.length_enabled && self.length_counter == 256 {
                         self.length_counter = 255;
                     }
                 }

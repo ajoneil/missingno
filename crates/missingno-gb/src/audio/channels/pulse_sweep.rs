@@ -135,7 +135,7 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
         match register {
             Register::WaveformAndInitialLength => {
                 self.waveform_and_initial_length = WaveformAndInitialLength(value);
@@ -172,15 +172,12 @@ impl PulseSweepChannel {
                 let ctrl = PeriodHighAndControl(value);
                 self.period.set_high3(ctrl.period_high());
 
-                // Extra length clocking on NRx4 write
-                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                // capy = NOR(cero, bufy_256hz, ff14_d6_n): length-enable
+                // 0→1 rises capy (one extra length count) iff caru is low.
                 let was_length_enabled = self.length_enabled;
                 self.length_enabled = ctrl.enable_length();
 
-                if !next_step_clocks_length
-                    && !was_length_enabled
-                    && self.length_enabled
-                    && self.length_counter > 0
+                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
                 {
                     self.length_counter -= 1;
                     if self.length_counter == 0 && !ctrl.trigger() {
@@ -190,8 +187,7 @@ impl PulseSweepChannel {
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 64
-                    {
+                    if caru_low && self.length_enabled && self.length_counter == 64 {
                         self.length_counter = 63;
                     }
                 }

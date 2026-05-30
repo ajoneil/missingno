@@ -103,6 +103,13 @@ impl Audio {
         self.frame_sequencer_step
     }
 
+    /// `bufy_256hz` LOW = `caru` (ripple bit 0) low = `C` even — the
+    /// deme NOR length-clock gate's level input that an NRx4 length-enable
+    /// 0→1 write reads to decide the extra clock.
+    fn caru_low(&self) -> bool {
+        self.frame_sequencer_step % 2 == 0
+    }
+
     pub fn prev_div_apu_bit(&self) -> bool {
         self.prev_div_apu_bit
     }
@@ -162,29 +169,34 @@ impl Audio {
     }
 
     fn tick_frame_sequencer(&mut self) {
-        // horu_512hz↑ runs first so CH1/CH2 envelope-fire latches
-        // (KOZY/JOPA) sample any kyvo armed by the previous step=7
-        // call — an NRx2 pace=0 write in the intervening M-cycles
-        // clears kyvo and suppresses the fire.
+        // horu_512hz↑ (Family A) runs first so CH1/CH2 envelope-fire
+        // latches (KOZY/JOPA) sample any kyvo armed by the previous
+        // kene↓ before this step re-arms it — an NRx2 pace=0 write in
+        // the intervening M-cycles clears kyvo and suppresses the fire.
         self.channels.ch1.sample_envelope_jopa();
         self.channels.ch2.sample_envelope_jopa();
 
-        if matches!(self.frame_sequencer_step, 0 | 2 | 4 | 6) {
+        // bure↑ advances the (caru, bylu, JYNA) ripple; the strobes are
+        // its bit-fall edges.
+        self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
+        let c = self.frame_sequencer_step;
+
+        // caru↓ (bufy_256hz↓ → deme↑): C entered an even value.
+        if c % 2 == 0 {
             self.channels.tick_length_all();
         }
-        if matches!(self.frame_sequencer_step, 2 | 6) {
-            // cate_128hz↓: arm coze; BEXA samples at next ajer↑ inside
-            // pulse_sweep::tcycle.
+        // bylu↓ (cate_128hz↓): arm coze; BEXA samples at next ajer↑
+        // inside pulse_sweep::tcycle.
+        if c == 0 || c == 4 {
             self.channels.ch1.tick_sweep_counter();
         }
-        if self.frame_sequencer_step == 7 {
-            // kene↓: CH4 stays atomic; CH1/CH2 split the counter
-            // advance from the JOPA sample above.
+        // JYNA↓ (kene↓, the 7→0 wrap): CH4 stays atomic; CH1/CH2 split
+        // the counter advance from the JOPA sample above.
+        if c == 0 {
             self.channels.ch1.tick_envelope_counter();
             self.channels.ch2.tick_envelope_counter();
             self.channels.ch4.tick_envelope();
         }
-        self.frame_sequencer_step = (self.frame_sequencer_step + 1) % 8;
     }
 
     /// Called when DIV is written (resetting internal counter to 0).

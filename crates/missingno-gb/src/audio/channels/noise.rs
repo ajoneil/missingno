@@ -70,7 +70,7 @@ impl NoiseChannel {
         }
     }
 
-    pub fn write_register(&mut self, register: Register, value: u8, frame_sequencer_step: u8) {
+    pub fn write_register(&mut self, register: Register, value: u8, caru_low: bool) {
         match register {
             Register::LengthTimer => {
                 self.length_counter = 64 - (value & 0x3f) as u16;
@@ -88,15 +88,12 @@ impl NoiseChannel {
             Register::Control => {
                 let ctrl = Control(value);
 
-                // Extra length clocking on NRx4 write
-                let next_step_clocks_length = matches!(frame_sequencer_step, 0 | 2 | 4 | 6);
+                // gepy = NOR(fexu, bufy_256hz, ff1e_d6_n): length-enable
+                // 0→1 rises gepy (one extra length count) iff caru is low.
                 let was_length_enabled = self.length_enabled;
                 self.length_enabled = ctrl.enable_length();
 
-                if !next_step_clocks_length
-                    && !was_length_enabled
-                    && self.length_enabled
-                    && self.length_counter > 0
+                if caru_low && !was_length_enabled && self.length_enabled && self.length_counter > 0
                 {
                     self.length_counter -= 1;
                     if self.length_counter == 0 && !ctrl.trigger() {
@@ -106,8 +103,7 @@ impl NoiseChannel {
 
                 if ctrl.trigger() {
                     self.trigger();
-                    if !next_step_clocks_length && self.length_enabled && self.length_counter == 64
-                    {
+                    if caru_low && self.length_enabled && self.length_counter == 64 {
                         self.length_counter = 63;
                     }
                 }

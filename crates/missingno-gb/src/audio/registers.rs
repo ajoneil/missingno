@@ -124,20 +124,13 @@ impl Audio {
                 Register::Channel1(pulse_sweep::Register::WaveformAndInitialLength)
                 | Register::Channel2(pulse::Register::WaveformAndInitialLength) => {
                     let length_only = value & 0x3F;
+                    let caru_low = self.caru_low();
                     match register {
                         Register::Channel1(r) => {
-                            self.channels.ch1.write_register(
-                                r,
-                                length_only,
-                                self.frame_sequencer_step,
-                            );
+                            self.channels.ch1.write_register(r, length_only, caru_low);
                         }
                         Register::Channel2(r) => {
-                            self.channels.ch2.write_register(
-                                r,
-                                length_only,
-                                self.frame_sequencer_step,
-                            );
+                            self.channels.ch2.write_register(r, length_only, caru_low);
                         }
                         _ => unreachable!(),
                     }
@@ -156,8 +149,11 @@ impl Audio {
                         // caru/bylu/JYNA ripple re-locks from the power-on bure↑:
                         // it catches the sub-step-1023 edge (counter→1) only when
                         // powered on below it; at/above, the edge is missed (stays 0).
-                        self.frame_sequencer_step =
-                            if (internal_counter & 0x7FF) < 1023 { 1 } else { 0 };
+                        self.frame_sequencer_step = if (internal_counter & 0x7FF) < 1023 {
+                            1
+                        } else {
+                            0
+                        };
                     }
                     self.enabled = true;
                 } else {
@@ -185,24 +181,20 @@ impl Audio {
                 self.volume_right = Volume(value & 0b111);
             }
             Register::Channel1(register) => {
-                self.channels
-                    .ch1
-                    .write_register(register, value, self.frame_sequencer_step)
+                let caru_low = self.caru_low();
+                self.channels.ch1.write_register(register, value, caru_low)
             }
             Register::Channel2(register) => {
-                self.channels
-                    .ch2
-                    .write_register(register, value, self.frame_sequencer_step)
+                let caru_low = self.caru_low();
+                self.channels.ch2.write_register(register, value, caru_low)
             }
             Register::Channel3(register) => {
-                self.channels
-                    .ch3
-                    .write_register(register, value, self.frame_sequencer_step)
+                let caru_low = self.caru_low();
+                self.channels.ch3.write_register(register, value, caru_low)
             }
             Register::Channel4(register) => {
-                self.channels
-                    .ch4
-                    .write_register(register, value, self.frame_sequencer_step)
+                let caru_low = self.caru_low();
+                self.channels.ch4.write_register(register, value, caru_low)
             }
         }
     }
