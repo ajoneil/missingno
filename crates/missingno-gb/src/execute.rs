@@ -222,13 +222,6 @@ impl GameBoy {
         self.commit_read_latch();
         self.commit_write();
 
-        // cpu_irq_ack1 holds LALU.r_n LOW across the dispatch window, so a
-        // PC-push that wrote FF0F can't re-set the serviced IF bit — re-assert
-        // the held reset after the push commits.
-        if let Some(interrupt) = self.cpu.irq.irq_ack_held {
-            self.interrupts.clear(interrupt);
-        }
-
         // VBlank IF: POPU transitions happen here since the divider
         // chain runs in fall().
         if video_result.request_vblank {
@@ -239,6 +232,14 @@ impl GameBoy {
         // Gated by cpu_irq_ack1_pulse: LALU.r_n=0 absorbs same-M-cycle SUKO rises.
         if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
             self.interrupts.request(Interrupt::VideoStatus);
+        }
+
+        // cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
+        // dispatch-ack window — re-assert it after every same-M-cycle setter
+        // (the FF0F PC-push commit above and the source requests) so a source
+        // rise inside the window is captured-but-suppressed.
+        if let Some(interrupt) = self.cpu.irq.irq_ack_held {
+            self.interrupts.clear(interrupt);
         }
 
         let (new_screen, pixel) = self.apply_ppu_result(&video_result);
