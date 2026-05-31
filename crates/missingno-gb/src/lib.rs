@@ -94,6 +94,13 @@ pub trait Model: Default {
         StopAction::Remain
     }
 
+    /// CPU T-cycles advanced per PPU dot. 1 = lockstep (DMG always; CGB
+    /// single speed); 2 = the CPU clock runs at twice the dot clock (CGB
+    /// double speed), so a full CPU T-cycle lands on each master-clock edge.
+    fn cpu_steps_per_dot(&self) -> u8 {
+        1
+    }
+
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
     /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI (and, later, banked

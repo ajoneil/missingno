@@ -94,6 +94,10 @@ impl Model for Cgb {
         }
     }
 
+    fn cpu_steps_per_dot(&self) -> u8 {
+        if self.double_speed { 2 } else { 1 }
+    }
+
     fn on_reset(&mut self, _cartridge: &Cartridge) {
         *self = Self::default();
     }

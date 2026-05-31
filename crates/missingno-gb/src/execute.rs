@@ -80,6 +80,10 @@ impl<M: Model> Console<M> {
         let mut phases_remaining = PHASE_BUDGET;
         let mut tcycles = 0u32;
 
+        // Single speed completes a T-cycle every two edges (at the fall back to
+        // Low); double speed completes a full T-cycle on each edge.
+        let double_speed = self.model.cpu_steps_per_dot() == 2;
+
         loop {
             assert!(
                 phases_remaining > 0,
@@ -90,9 +94,8 @@ impl<M: Model> Console<M> {
             let result = self.execute_phase();
             new_screen |= result.new_screen;
 
-            // Check for instruction boundary after completing a T-cycle
-            // (clock is Low = just finished fall() = T-cycle complete).
-            if self.clock_phase == ClockPhase::Low {
+            // Check for instruction boundary after completing a T-cycle.
+            if double_speed || self.clock_phase == ClockPhase::Low {
                 tcycles += 1;
                 if self.cpu.at_instruction_boundary() {
                     break;
@@ -137,13 +140,44 @@ impl<M: Model> Console<M> {
         new_screen
     }
 
-    /// Execute one phase (half-T-cycle) of hardware. When the clock is
-    /// Low, execute rise() (Low→High edge). When High, execute
-    /// fall() (High→Low edge).
+    /// Execute one master-clock edge. The PPU always advances one half-dot
+    /// per edge; the CPU advances a half T-cycle per edge in lockstep (single
+    /// speed) or a full T-cycle per edge (double speed — the CPU clock runs at
+    /// 2× the dot clock). In double speed the rise edge runs the rise half of
+    /// one T-cycle plus the fall half of that same T-cycle, and the fall edge
+    /// runs the rise half of the next T-cycle plus its fall half — so the CPU's
+    /// T-cycle-keyed bus events (drive at T2, commit at T3) land on consecutive
+    /// edges while the PPU still advances one dot per two edges.
     fn execute_phase(&mut self) -> PhaseResult {
+        let double_speed = self.model.cpu_steps_per_dot() == 2;
         match self.clock_phase {
-            ClockPhase::Low => self.rise(),
-            ClockPhase::High => self.fall(),
+            ClockPhase::Low => {
+                let (mut new_screen, mut pixel) = self.rise_work(true);
+                if double_speed {
+                    let (ns, px) = self.fall_work(false);
+                    new_screen |= ns;
+                    if pixel.is_none() {
+                        pixel = px;
+                    }
+                }
+                self.clock_phase = ClockPhase::High;
+                PhaseResult { new_screen, pixel }
+            }
+            ClockPhase::High => {
+                let (mut new_screen, mut pixel) = (false, None);
+                if double_speed {
+                    let (ns, px) = self.rise_work(false);
+                    new_screen |= ns;
+                    pixel = px;
+                }
+                let (ns, px) = self.fall_work(true);
+                new_screen |= ns;
+                if pixel.is_none() {
+                    pixel = px;
+                }
+                self.clock_phase = ClockPhase::Low;
+                PhaseResult { new_screen, pixel }
+            }
         }
     }
 
@@ -168,16 +202,22 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// Rising edge of the master clock.
-    fn rise(&mut self) -> PhaseResult {
+    /// CPU + PPU work for a rising master-clock edge. `advance_ppu` gates this
+    /// dot's PPU rise and the master-clock-domain APU tick: true on the edge
+    /// that owns the PPU rise, false on the extra double-speed CPU T-cycle that
+    /// shares the dot. Sets no clock phase — `execute_phase` owns that.
+    fn rise_work(&mut self, advance_ppu: bool) -> (bool, Option<ppu::PixelOutput>) {
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
         let mut new_screen = false;
         let mut pixel = None;
 
         if is_mcycle_boundary {
-            let (ns, pix) = self.tick_mcycle_boundary_rise();
-            new_screen |= ns;
-            pixel = pix;
+            self.tick_mcycle_boundary_rise();
+            if advance_ppu {
+                let (ns, pix) = self.ppu_rise_edge();
+                new_screen |= ns;
+                pixel = pix;
+            }
         }
 
         self.cpu.next_tcycle();
@@ -193,8 +233,10 @@ impl<M: Model> Console<M> {
         self.step_dispatch_logic(tcycle);
 
         // APU prescaler tick (apuv ↑) on every master-clock rise.
-        self.audio
-            .tcycle(self.timers.internal_counter(), tcycle.as_u8());
+        if advance_ppu {
+            self.audio
+                .tcycle(self.timers.internal_counter(), tcycle.as_u8());
+        }
 
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
@@ -203,11 +245,17 @@ impl<M: Model> Console<M> {
             self.arm_oam_bugs();
         }
         if !is_mcycle_boundary {
-            let (ns, pix) = self.tick_non_boundary_rise(tcycle);
-            new_screen |= ns;
-            if pixel.is_none() {
-                pixel = pix;
+            self.tick_non_boundary_rise(tcycle);
+            if advance_ppu {
+                let (ns, pix) = self.ppu_rise_edge();
+                new_screen |= ns;
+                if pixel.is_none() {
+                    pixel = pix;
+                }
             }
+            self.cpu
+                .dispatch
+                .update_latch(self.interrupts.enabled, self.interrupts.requested);
         }
 
         // MOPA-rising fires any armed OAM bug.
@@ -215,19 +263,42 @@ impl<M: Model> Console<M> {
             self.ppu.apply_pending_oam_bug();
         }
 
-        self.clock_phase = ClockPhase::High;
-        PhaseResult { new_screen, pixel }
+        (new_screen, pixel)
     }
 
-    /// Falling edge of the master clock.
-    fn fall(&mut self) -> PhaseResult {
+    /// PPU rising-edge advance and its interrupt readback: pixel output,
+    /// VBlank IF, the STAT edge, and the CPU's interrupt-state refresh.
+    fn ppu_rise_edge(&mut self) -> (bool, Option<ppu::PixelOutput>) {
+        let oam_bus = self.dma.oam_bus_owner();
+        let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
+        if ppu_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        let (new_screen, pixel) = self.apply_ppu_result(&ppu_result);
+        if self.ppu.check_stat_edge() {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+        let triggered = self.interrupts.triggered();
+        self.cpu.update_interrupt_state(triggered);
+        (new_screen, pixel)
+    }
+
+    /// CPU + PPU work for a falling master-clock edge. `advance_ppu` gates this
+    /// dot's PPU fall (and its IF requests) and the master-clock-domain APU
+    /// wave latch; false on the extra double-speed CPU T-cycle that shares the
+    /// dot. Sets no clock phase — `execute_phase` owns that.
+    fn fall_work(&mut self, advance_ppu: bool) -> (bool, Option<ppu::PixelOutput>) {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
+        let mut new_screen = false;
+        let mut pixel = None;
 
         // CH3's BUSA / AZUS DFFs latch on apu_4mhz ↑ (= our fall);
         // settle before the T=2 drive-enable so wave-RAM reads see
         // the current wave_data_latch.
-        self.audio.fall_sync();
+        if advance_ppu {
+            self.audio.fall_sync();
+        }
 
         if tcycle.as_u8() == 2 {
             self.apply_read_drive_enable();
@@ -235,8 +306,12 @@ impl<M: Model> Console<M> {
 
         // PPU master-clock fall: divider chain, CATU, scanline
         // boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let oam_bus = self.dma.oam_bus_owner();
-        let video_result = self.ppu.on_master_clock_fall(is_mcycle_boundary, oam_bus);
+        let video_result = if advance_ppu {
+            let oam_bus = self.dma.oam_bus_owner();
+            Some(self.ppu.on_master_clock_fall(is_mcycle_boundary, oam_bus))
+        } else {
+            None
+        };
 
         if tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
@@ -245,16 +320,18 @@ impl<M: Model> Console<M> {
         self.commit_read_latch();
         self.commit_write();
 
-        // VBlank IF: POPU transitions happen here since the divider
-        // chain runs in fall().
-        if video_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        // STAT IF: PPU's two-phase SUKO check (post-advance + post-tick_scan_capture, with
-        // TOLU lag modelled via the post-fast snapshot) folds into request_stat.
-        // Gated by cpu_irq_ack1_pulse: LALU.r_n=0 absorbs same-M-cycle SUKO rises.
-        if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
-            self.interrupts.request(Interrupt::VideoStatus);
+        if let Some(video_result) = &video_result {
+            // VBlank IF: POPU transitions happen here since the divider
+            // chain runs in fall().
+            if video_result.request_vblank {
+                self.interrupts.request(Interrupt::VideoBetweenFrames);
+            }
+            // STAT IF: PPU's two-phase SUKO check (post-advance + post-tick_scan_capture, with
+            // TOLU lag modelled via the post-fast snapshot) folds into request_stat.
+            // Gated by cpu_irq_ack1_pulse: LALU.r_n=0 absorbs same-M-cycle SUKO rises.
+            if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
+                self.interrupts.request(Interrupt::VideoStatus);
+            }
         }
 
         // cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
@@ -265,7 +342,11 @@ impl<M: Model> Console<M> {
             self.interrupts.clear(interrupt);
         }
 
-        let (new_screen, pixel) = self.apply_ppu_result(&video_result);
+        if let Some(video_result) = &video_result {
+            let (ns, px) = self.apply_ppu_result(video_result);
+            new_screen |= ns;
+            pixel = px;
+        }
 
         // OAM DMA control gates clock on dma_phi = !data_phase; tick
         // every master-clock edge so the engage (dma_phi rising) and arm
@@ -279,14 +360,13 @@ impl<M: Model> Console<M> {
         }
 
         self.recapture_interrupts();
-        self.clock_phase = ClockPhase::Low;
-        PhaseResult { new_screen, pixel }
+        (new_screen, pixel)
     }
 
-    /// M-cycle-boundary work that fires on the rising edge: irq_latched
-    /// capture, dispatch update, IME promotion, bus clear, timer/serial
-    /// mcycle, and the boundary PPU rise.
-    fn tick_mcycle_boundary_rise(&mut self) -> (bool, Option<ppu::PixelOutput>) {
+    /// M-cycle-boundary CPU work on the rising edge: irq_latched capture,
+    /// dispatch update, IME promotion, bus clear, timer/serial mcycle. The
+    /// boundary PPU rise follows in the caller via `ppu_rise_edge`.
+    fn tick_mcycle_boundary_rise(&mut self) {
         // cpu_irq_ack1↓ at +3.992 dots — hardware releases LALU.r_n
         // ~8 ps before this CLK9↑. Clear at boundary entry so
         // check_stat_edge below sees r_n released.
@@ -327,27 +407,12 @@ impl<M: Model> Console<M> {
         if let Some(interrupt) = self.serial.mcycle(counter) {
             self.interrupts.request(interrupt);
         }
-
-        let oam_bus = self.dma.oam_bus_owner();
-        let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
-        if ppu_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        let (new_screen, pixel) = self.apply_ppu_result(&ppu_result);
-
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
-
-        (new_screen, pixel)
     }
 
-    /// Non-boundary T-cycle rise work: pre-CUPA LCDC snapshot, staged
-    /// write apply at T-cycle 2, PPU rise, STAT edge, interrupt capture.
-    fn tick_non_boundary_rise(&mut self, tcycle: TCycle) -> (bool, Option<ppu::PixelOutput>) {
+    /// Non-boundary T-cycle rise CPU work: pre-CUPA LCDC snapshot and the
+    /// staged write apply at T-cycle 2. The PPU rise + STAT edge follow in
+    /// the caller via `ppu_rise_edge`.
+    fn tick_non_boundary_rise(&mut self, tcycle: TCycle) {
         // Snapshot LCDC.1 BEFORE the staged write applies — the
         // alet-rising DFF capture (SOBU on TEKY → FEPO → XYLO) beats
         // CUPA-rising's transparent-latch propagation by ~14 ns. Other
@@ -375,25 +440,6 @@ impl<M: Model> Console<M> {
             self.cpu_bus
                 .record_snapshot_lock(self.ppu.write_lock(address));
         }
-
-        let oam_bus = self.dma.oam_bus_owner();
-        let ppu_result = self.ppu.on_master_clock_rise(&self.vram_bus.vram, oam_bus);
-        if ppu_result.request_vblank {
-            self.interrupts.request(Interrupt::VideoBetweenFrames);
-        }
-        let (new_screen, pixel) = self.apply_ppu_result(&ppu_result);
-
-        if self.ppu.check_stat_edge() {
-            self.interrupts.request(Interrupt::VideoStatus);
-        }
-
-        let triggered = self.interrupts.triggered();
-        self.cpu.update_interrupt_state(triggered);
-        self.cpu
-            .dispatch
-            .update_latch(self.interrupts.enabled, self.interrupts.requested);
-
-        (new_screen, pixel)
     }
 
     /// Vector resolve (ISR M3→M4): clear zkog/zloz + the dispatched IF
