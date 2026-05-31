@@ -84,7 +84,10 @@ impl TileFetcher {
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> (u8, u8) {
-        let scx = regs.background_viewport.x.output();
+        // The tilemap fetch samples SCX after the CUPA capture relative to a mid-Mode-3
+        // write, so it sees the value live; the fine-scroll discard (earlier ROXO↑) reads
+        // the committed output.
+        let scx = regs.background_viewport.x.live();
         let scy = regs.background_viewport.y.output();
         let effective_pix = if sacu_active {
             pixel_counter.wrapping_add(1)

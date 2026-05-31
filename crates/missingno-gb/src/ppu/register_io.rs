@@ -81,6 +81,10 @@ impl Ppu {
                 self.registers.window.x.write(value);
                 false
             }
+            Register::BackgroundViewportX if is_drawing => {
+                self.registers.background_viewport.x.write(value);
+                false
+            }
             _ => self.apply_register_write(&register, value),
         }
     }

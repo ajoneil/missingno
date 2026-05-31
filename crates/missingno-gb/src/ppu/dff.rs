@@ -21,6 +21,12 @@ impl DffLatch {
         self.pending
     }
 
+    /// Value a combinational reader sees while a staged write is still transparent —
+    /// the staged value if present, else the committed output.
+    pub fn live(&self) -> u8 {
+        self.pending.unwrap_or(self.output)
+    }
+
     /// Returns true if a pending value was captured to output.
     pub(super) fn tick(&mut self) -> bool {
         if let Some(value) = self.pending.take() {
