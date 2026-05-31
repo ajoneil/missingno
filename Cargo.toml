@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/missingno", "crates/missingno-gb", "crates/missingno-gbc"]
 
 [workspace.dependencies]
-bitflags = "2.11.0"
+bitflags = "2.11.1"
 rgb = "0.8.53"
 
 [profile.dev]
