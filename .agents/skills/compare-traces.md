@@ -38,23 +38,27 @@ GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <te
 The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
 
 ### Reference traces from manifests
-Reference traces are hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/). Each suite has a `manifest.json` listing tests with per-system, per-emulator pass/fail status.
+**Manifests** are on GitHub Pages; **trace blobs** are on a DigitalOcean Spaces CDN (the full set exceeds the Pages 1 GB limit). Two different hosts:
+- Manifest: `https://ajoneil.github.io/gbtrace/tests/{suite}/manifest.json`
+- Trace blob: `https://gbtrace.syd1.cdn.digitaloceanspaces.com/tests/{suite}/{test}_{emulator}_{system}_{status}.gbtrace`
+
+**Suite-name gotcha:** `{suite}` is the *web* suite name. It usually matches the local `test-suites/` folder, **except gambatte: the folder is `gambatte` but the web suite is `gambatte-tests`**. Authoritative list of web suite names: `receipts/resources/gbtrace/web/src/components/test-picker.js`.
 
 **Fetch a manifest to find available traces:**
 ```bash
-curl -s https://ajoneil.github.io/gbtrace/tests/gbmicrotest/manifest.json | jq '.[0]'
-# → {"name": "div_inc_timing_a", "rom": "div_inc_timing_a.gb",
-#    "systems": {"dmg": {"sameboy": "pass", "docboy": "pass", "gambatte": "pass", "missingno": "pass"}}}
+curl -s https://ajoneil.github.io/gbtrace/tests/gambatte-tests/manifest.json | jq '.[0]'
+# → {"name": "...", "rom": "....gbc",
+#    "systems": {"cgb": {"sameboy": "pass", "docboy": "pass", "gambatte": "pass", "missingno": "fail"}}}
 ```
 
 Status lives under `systems.{dmg,cgb}.{emulator}` — pick the system matching the core under test (`cgb` for `missingno-gbc`, `dmg` for `missingno-gb`). A suite may carry only one system.
 
-**Download a reference trace:**
+**Download a reference trace** (note the `_{system}_` segment — `cgb` or `dmg`):
 ```bash
-curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_sameboy_pass.gbtrace
+curl -fLO https://gbtrace.syd1.cdn.digitaloceanspaces.com/tests/gambatte-tests/<test>_sameboy_cgb_pass.gbtrace
 ```
 
-URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
+URL pattern: blob `{TRACE_CDN}/tests/{suite}/{test}_{emulator}_{system}_{status}.gbtrace`, manifest `{PAGES}/tests/{suite}/manifest.json`.
 
 Tracked emulators: **sameboy, docboy, gambatte, missingno** — all behavioural; prefer SameBoy, then DocBoy (T-cycle granularity, useful for sub-M-cycle visibility on non-PPU behaviour), then gambatte. 17 suites — see `receipts/resources/gbtrace/test-suites/` for the current set.
 
