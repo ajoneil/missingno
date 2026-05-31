@@ -20,6 +20,9 @@ const SAMPLE_RATE: f32 = 44100.0;
 const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
 const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
 const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
+// In double speed the M-cycle counter runs at 2× the dot clock, so the tap
+// shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
+const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
 
 #[derive(Clone)]
 pub struct Audio {
@@ -118,7 +121,12 @@ impl Audio {
     /// `apu_reset_n` is NR52 bit 7 — the channels' prescaler DFFs
     /// honour it as an async-reset, so we still call each tcycle
     /// unconditionally to keep the reset edge observable.
-    pub fn tcycle(&mut self, div_counter: u16, t_index: u8) {
+    pub fn tcycle(&mut self, div_counter: u16, t_index: u8, double_speed: bool) {
+        let div_apu_bit = if double_speed {
+            DIV_APU_BIT_DOUBLE
+        } else {
+            DIV_APU_BIT
+        };
         let apu_reset_n = self.enabled;
         self.channels.ch1.tcycle(apu_reset_n);
         self.channels.ch2.tcycle(apu_reset_n);
@@ -128,7 +136,7 @@ impl Audio {
         if !self.enabled {
             // Keep tracking the DIV-APU bit so we have the right edge
             // history when the APU is re-enabled.
-            self.prev_div_apu_bit = div_counter & DIV_APU_BIT != 0;
+            self.prev_div_apu_bit = div_counter & div_apu_bit != 0;
             return;
         }
 
@@ -138,11 +146,11 @@ impl Audio {
         self.sample_accum_count += 1;
 
         // Frame sequencer fires on falling edges of the DIV-APU bit.
-        let div_apu_bit = div_counter & DIV_APU_BIT != 0;
-        if self.prev_div_apu_bit && !div_apu_bit {
+        let div_apu_high = div_counter & div_apu_bit != 0;
+        if self.prev_div_apu_bit && !div_apu_high {
             self.tick_frame_sequencer();
         }
-        self.prev_div_apu_bit = div_apu_bit;
+        self.prev_div_apu_bit = div_apu_high;
 
         // Push the box-filtered average when the host sample window closes.
         self.sample_counter += 1.0;
