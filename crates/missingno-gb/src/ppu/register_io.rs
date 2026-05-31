@@ -116,9 +116,27 @@ impl Ppu {
             Register::InterruptOnScanline => {
                 self.video.write_lyc(value);
             }
-            Register::BackgroundPalette => self.registers.palettes.background.write(value),
-            Register::Sprite0Palette => self.registers.palettes.sprite0.write(value),
-            Register::Sprite1Palette => self.registers.palettes.sprite1.write(value),
+            Register::BackgroundPalette => {
+                if self.registers.control.video_enabled() {
+                    self.registers.palettes.background.write(value)
+                } else {
+                    self.registers.palettes.background.write_immediate(value)
+                }
+            }
+            Register::Sprite0Palette => {
+                if self.registers.control.video_enabled() {
+                    self.registers.palettes.sprite0.write(value)
+                } else {
+                    self.registers.palettes.sprite0.write_immediate(value)
+                }
+            }
+            Register::Sprite1Palette => {
+                if self.registers.control.video_enabled() {
+                    self.registers.palettes.sprite1.write(value)
+                } else {
+                    self.registers.palettes.sprite1.write_immediate(value)
+                }
+            }
             Register::CurrentScanline => {}
         }
         false
