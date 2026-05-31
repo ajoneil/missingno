@@ -45,6 +45,19 @@ impl Screen {
     }
 }
 
+impl crate::ScreenBuffer for Screen {
+    type Pixel = PaletteIndex;
+    fn draw_pixel(&mut self, x: u8, y: u8, pixel: PaletteIndex) {
+        Screen::draw_pixel(self, x, y, pixel);
+    }
+    fn present(&mut self) -> bool {
+        Screen::present(self)
+    }
+    fn blank(&mut self) {
+        Screen::blank(self);
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Framebuffer {
     pub pixels: [[PaletteIndex; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],

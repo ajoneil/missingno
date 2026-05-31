@@ -1,26 +1,52 @@
 //! CGB color LCD framebuffer.
 //!
-//! Stores RGB pixels (15-bit hardware output is currently widened to
-//! 8-bit per channel for the fixed greyscale palette). Until proper
-//! CGB palette memory lands, the PPU emits a 2-bit shade index per
-//! pixel and `GameBoyColor::apply_ppu_result` maps it through
-//! [`GREYSCALE_PALETTE`] before drawing.
+//! Stores 15-bit RGB555 pixels packed as `0b_bbbbb_ggggg_rrrrr` — the
+//! format the CGB PPU emits and CRAM (BCPD/OCPD) holds. Until the color
+//! pipeline lands, the PPU emits a 2-bit shade index per pixel and
+//! `Cgb::map_pixel` maps it through [`GREYSCALE`] to an RGB555 grey.
+//!
+//! `missingno_gb::sgb::Rgb555` is the same 15-bit packing for the SGB; the
+//! two stay separate because CGB and SGB apply different display gamma. When
+//! the CGB color pipeline + CRAM land, factor the shared packing/channel
+//! accessors into one primitive and keep the gamma per-system.
 
-use rgb::RGB8;
+use missingno_gb::ScreenBuffer;
 
 pub const NUM_SCANLINES: u8 = 144;
 pub const PIXELS_PER_LINE: u8 = 160;
 
-/// Default shade-to-RGB mapping used while CGB palette memory and the
-/// CGB-PPU palette path don't exist yet. Matches the DMG greyscale
-/// reference (0xFF / 0xAA / 0x55 / 0x00) so the existing screenshot
-/// test references work without re-rendering.
-pub const GREYSCALE_PALETTE: [RGB8; 4] = [
-    RGB8 { r: 0xFF, g: 0xFF, b: 0xFF },
-    RGB8 { r: 0xAA, g: 0xAA, b: 0xAA },
-    RGB8 { r: 0x55, g: 0x55, b: 0x55 },
-    RGB8 { r: 0x00, g: 0x00, b: 0x00 },
+/// A 15-bit RGB555 color, packed `0b_bbbbb_ggggg_rrrrr` (5 bits per
+/// channel), as stored in CGB palette RAM.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Color555(pub u16);
+
+impl Color555 {
+    /// A neutral grey at the given 5-bit intensity (`0..=31`).
+    pub const fn grey(level: u8) -> Self {
+        let l = level as u16;
+        Self(l | (l << 5) | (l << 10))
+    }
+
+    pub const fn red(self) -> u8 {
+        (self.0 & 0x1F) as u8
+    }
+}
+
+/// Placeholder shade→RGB555 mapping used while the CGB color pipeline
+/// doesn't exist yet. The four greys are the canonical GB grey levels
+/// (0x7FFF/0x56B5/0x294A/0x0000) and reverse-map exactly to the DMG
+/// reference bytes in [`Screen::to_greyscale_bytes`], so the existing
+/// greyscale screenshot references still match.
+pub const GREYSCALE: [Color555; 4] = [
+    Color555::grey(31),
+    Color555::grey(21),
+    Color555::grey(10),
+    Color555::grey(0),
 ];
+
+/// The DMG-reference greyscale byte for each [`GREYSCALE`] level, indexed
+/// by shade — the single source of truth shared with `to_greyscale_bytes`.
+const GREYSCALE_BYTE: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
 
 #[derive(Clone, Debug)]
 pub struct Screen {
@@ -38,24 +64,8 @@ impl Default for Screen {
 }
 
 impl Screen {
-    pub fn pixel(&self, x: u8, y: u8) -> RGB8 {
+    pub fn pixel(&self, x: u8, y: u8) -> Color555 {
         self.front.pixels[y as usize][x as usize]
-    }
-
-    pub fn draw_pixel(&mut self, x: u8, y: u8, pixel: RGB8) {
-        self.back.pixels[y as usize][x as usize] = pixel;
-    }
-
-    /// Swap back→front and clear back. Returns true for callers tracking `new_screen`.
-    pub fn present(&mut self) -> bool {
-        std::mem::swap(&mut self.front, &mut self.back);
-        *self.back = Framebuffer::default();
-        true
-    }
-
-    pub fn blank(&mut self) {
-        *self.front = Framebuffer::default();
-        *self.back = Framebuffer::default();
     }
 
     pub fn front(&self) -> &Framebuffer {
@@ -63,26 +73,54 @@ impl Screen {
     }
 
     /// Read the current front buffer as a flat greyscale byte buffer
-    /// (160 × 144 = 23040 bytes, values 0x00-0xFF). Pixels are assumed
-    /// to be R==G==B (true under the fixed greyscale palette); samples
-    /// the red channel.
+    /// (160 × 144 = 23040 bytes). The placeholder greys reverse-map to the
+    /// DMG reference levels; any future non-grey pixel falls back to the
+    /// 5→8-bit expansion of the red channel.
     pub fn to_greyscale_bytes(&self) -> Vec<u8> {
         (0..NUM_SCANLINES)
-            .flat_map(|y| (0..PIXELS_PER_LINE).map(move |x| self.pixel(x, y).r))
+            .flat_map(|y| {
+                (0..PIXELS_PER_LINE).map(move |x| {
+                    let c = self.pixel(x, y);
+                    match GREYSCALE.iter().position(|&grey| grey == c) {
+                        Some(shade) => GREYSCALE_BYTE[shade],
+                        None => (c.red() << 3) | (c.red() >> 2),
+                    }
+                })
+            })
             .collect()
+    }
+}
+
+impl ScreenBuffer for Screen {
+    type Pixel = Color555;
+
+    fn draw_pixel(&mut self, x: u8, y: u8, pixel: Color555) {
+        self.back.pixels[y as usize][x as usize] = pixel;
+    }
+
+    fn present(&mut self) -> bool {
+        std::mem::swap(&mut self.front, &mut self.back);
+        *self.back = Framebuffer::default();
+        true
+    }
+
+    fn blank(&mut self) {
+        *self.front = Framebuffer::default();
+        *self.back = Framebuffer::default();
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Framebuffer {
-    pub pixels: [[RGB8; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
+    pub pixels: [[Color555; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
 }
 
 impl Default for Framebuffer {
     fn default() -> Self {
+        // A powered LCD with nothing drawn reads white, matching the DMG
+        // screen's PaletteIndex(0). GREYSCALE[0] is the white grey.
         Self {
-            pixels: [[RGB8 { r: 0xFF, g: 0xFF, b: 0xFF };
-                PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
+            pixels: [[GREYSCALE[0]; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
         }
     }
 }

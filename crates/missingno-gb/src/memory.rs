@@ -1,5 +1,5 @@
 use crate::{
-    GameBoy, audio,
+    Console, Model, audio,
     cpu_bus::{BusAccess, BusAccessKind},
     dmg_sram,
     interrupts::{self, InterruptFlags},
@@ -276,7 +276,7 @@ impl MappedAddress {
     }
 }
 
-impl GameBoy {
+impl<M: Model> Console<M> {
     /// Apply the side effects of a CPU bus read whose value was already
     /// captured into `cpu_bus.data` at the driver-enable edge: drive
     /// the appropriate physical bus latch and record the read in the
@@ -300,6 +300,16 @@ impl GameBoy {
         if self.ppu.read_locked(address) {
             return 0xFF;
         }
+        self.read_addr(address)
+    }
+
+    /// Resolve an address to a value: this console's own memory map (the
+    /// model's CGB registers) first, then the shared `MappedAddress` map.
+    /// The single chokepoint for the model-before-shared-map contract.
+    fn read_addr(&self, address: u16) -> u8 {
+        if let Some(value) = self.model.map_read(address) {
+            return value;
+        }
         self.read_mapped(MappedAddress::map(address))
     }
 
@@ -307,7 +317,7 @@ impl GameBoy {
     /// Used by the debugger to inspect memory that would normally be
     /// hidden.
     pub fn peek(&self, address: u16) -> u8 {
-        self.read_mapped(MappedAddress::map(address))
+        self.read_addr(address)
     }
 
     /// Value the addressed peripheral first drives onto the CPU bus at
@@ -319,7 +329,7 @@ impl GameBoy {
         if let Some(value) = self.dma_read_conflict(address) {
             return value;
         }
-        self.read_mapped(MappedAddress::map(address))
+        self.read_addr(address)
     }
 
     /// Value the CPU latches from the bus at `data_phase_n↑` (near the
@@ -411,19 +421,7 @@ impl GameBoy {
             MappedAddress::HighRam(offset) => self.high_ram.read(offset),
             MappedAddress::Vram(address) => self.vram_bus.vram.read(address),
             MappedAddress::Oam(address) => self.ppu.read_oam(address),
-            MappedAddress::JoypadRegister => {
-                let mut value = self.joypad.read_register();
-                if let Some(sgb) = &self.sgb {
-                    if sgb.player_count > 1 {
-                        let p14_selected = value & 0x10 == 0;
-                        let p15_selected = value & 0x20 == 0;
-                        if !p14_selected && !p15_selected {
-                            value = (value & 0xF0) | (0x0F - sgb.current_player);
-                        }
-                    }
-                }
-                value
-            }
+            MappedAddress::JoypadRegister => self.model.read_joypad(self.joypad.read_register()),
             MappedAddress::SerialTransferRegister(register) => match register {
                 serial_transfer::Register::Data => self.serial.registers.data,
                 serial_transfer::Register::Control => self.serial.registers.control.bits() | 0x7E,
@@ -524,6 +522,10 @@ impl GameBoy {
         // regardless of whether the target device stores it.
         self.drive_bus(address, value);
 
+        if self.model.map_write(address, value) {
+            return;
+        }
+
         let mapped = MappedAddress::map(address);
         if !matches!(mapped, MappedAddress::PpuRegister(_)) {
             self.write_mapped(mapped, value);
@@ -537,9 +539,7 @@ impl GameBoy {
             MappedAddress::Vram(address) => self.vram_bus.vram.write(address, value),
             MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
-                if let Some(sgb) = &mut self.sgb {
-                    sgb.write_joypad(value);
-                }
+                self.model.on_joypad_write(value);
                 let before = self.joypad.input_lines();
                 self.joypad.write_register(value);
                 if before & !self.joypad.input_lines() != 0 {

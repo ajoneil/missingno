@@ -1,10 +1,10 @@
 use super::{
-    ClockPhase, GameBoy,
+    ClockPhase, Console, Model, ScreenBuffer,
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
     memory::Bus,
-    ppu::{self, PpuTickResult, types::palette::PaletteIndex},
+    ppu::{self, PpuTickResult},
 };
 
 /// Result of executing one instruction.
@@ -25,7 +25,7 @@ pub struct PhaseResult {
     pub pixel: Option<ppu::PixelOutput>,
 }
 
-impl GameBoy {
+impl<M: Model> Console<M> {
     pub fn step(&mut self) -> StepResult {
         self.step_traced(false).0
     }
@@ -176,7 +176,7 @@ impl GameBoy {
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
         }
-        if tcycle.as_u8() == 0 {
+        if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
             self.arm_oam_bugs();
         }
         if !is_mcycle_boundary {
@@ -188,7 +188,7 @@ impl GameBoy {
         }
 
         // MOPA-rising fires any armed OAM bug.
-        if tcycle.as_u8() == 2 {
+        if M::HAS_OAM_BUG && tcycle.as_u8() == 2 {
             self.ppu.apply_pending_oam_bug();
         }
 
@@ -334,7 +334,9 @@ impl GameBoy {
         // Apply staged write at CUPA-rising (T-cycle 2). PPU registers
         // latch combinationally during CUPA-high; memory commits at
         // CUPA-falling in fall().
-        if tcycle.as_u8() == 2 && let Some(address) = self.cpu_bus.pending_write() {
+        if tcycle.as_u8() == 2
+            && let Some(address) = self.cpu_bus.pending_write()
+        {
             let value = self
                 .cpu
                 .pending_bus_write()
@@ -571,23 +573,19 @@ impl GameBoy {
         if let Some(pixel) = result.pixel {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
                 self.screen
-                    .draw_pixel(pixel.x, pixel.y, PaletteIndex(pixel.shade));
+                    .draw_pixel(pixel.x, pixel.y, M::map_pixel(pixel));
             }
         }
         if result.new_frame {
             if self.ppu.control().video_enabled() && self.ppu.vsync_committed() {
                 self.screen.present();
-                if let Some(sgb) = &mut self.sgb {
-                    sgb.update_screen(&self.screen);
-                }
+                self.model.on_present(&self.screen);
             }
             return (true, result.pixel);
         }
         if result.lcd_disabled {
             self.screen.blank();
-            if let Some(sgb) = &mut self.sgb {
-                sgb.update_screen(&self.screen);
-            }
+            self.model.on_present(&self.screen);
         }
         (false, result.pixel)
     }

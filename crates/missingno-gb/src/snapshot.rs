@@ -10,12 +10,12 @@ use gbtrace::snapshot::{
     TimerSnapshot, build_memory_payload,
 };
 
-use crate::GameBoy;
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cartridge::mbc::Mbc;
 use crate::cpu::HaltState;
 use crate::interrupts::InterruptFlags;
+use crate::{Console, GameBoy};
 
 /// A typed snapshot payload ready to be written.
 pub struct SnapshotRecord {
@@ -345,7 +345,7 @@ impl GameBoy {
             None
         };
 
-        GameBoy {
+        Console {
             cpu: crate::cpu::Cpu::from_snapshot(&snap.cpu),
             screen: Screen::default(),
             ppu: crate::ppu::Ppu::from_snapshot(
@@ -371,7 +371,7 @@ impl GameBoy {
                 .map(crate::memory::HighRam::from_bytes)
                 .unwrap_or_else(crate::memory::HighRam::new),
             external,
-            sgb,
+            model: crate::Dmg { sgb },
             bus_trace: crate::cpu_bus::BusTrace::new(),
             clock_phase: crate::ClockPhase::Low,
             cpu_bus: crate::cpu_bus::CpuBus::new(),

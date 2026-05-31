@@ -9,11 +9,11 @@ use gbtrace::profile::{FieldType, field_nullable, field_type};
 pub use gbtrace::{BootRom, Profile, Trigger};
 use sha2::{Digest, Sha256};
 
-use crate::GameBoy;
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::ppu::{Ppu, PpuTraceSnapshot};
+use crate::{Console, Model};
 
 /// Abstraction over a Game Boy–family console that the [`Tracer`] can
 /// capture state from. Implemented by `GameBoy` (DMG) here and by
@@ -28,21 +28,21 @@ pub trait Traceable {
     fn cartridge(&self) -> &Cartridge;
 }
 
-impl Traceable for GameBoy {
+impl<M: Model> Traceable for Console<M> {
     fn cpu(&self) -> &Cpu {
-        GameBoy::cpu(self)
+        Console::<M>::cpu(self)
     }
     fn ppu(&self) -> &Ppu {
-        GameBoy::ppu(self)
+        Console::<M>::ppu(self)
     }
     fn audio(&self) -> &Audio {
-        GameBoy::audio(self)
+        Console::<M>::audio(self)
     }
     fn peek(&self, address: u16) -> u8 {
-        GameBoy::peek(self, address)
+        Console::<M>::peek(self, address)
     }
     fn cartridge(&self) -> &Cartridge {
-        GameBoy::cartridge(self)
+        Console::<M>::cartridge(self)
     }
 }
 

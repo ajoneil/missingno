@@ -29,11 +29,65 @@ use cpu_bus::CpuBus;
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
-use ppu::{Ppu, screen::Screen};
+use ppu::{Ppu, types::palette::PaletteIndex};
 
 pub use master_clock::ClockPhase;
+pub use ppu::PixelOutput;
 
-pub struct GameBoy {
+/// Double-buffered LCD framebuffer, abstracted over its pixel storage so
+/// the shared core can drive a DMG shade buffer or a CGB color buffer.
+pub trait ScreenBuffer: Default {
+    type Pixel: Copy;
+    fn draw_pixel(&mut self, x: u8, y: u8, pixel: Self::Pixel);
+    /// Swap back→front and clear back. Returns true for `new_screen` tracking.
+    fn present(&mut self) -> bool;
+    fn blank(&mut self);
+}
+
+/// The per-console divergences from the shared SM83 silicon — the entire
+/// catalogue of how DMG and CGB differ in the step loop and memory map.
+/// Everything not listed here is the same silicon and lives in [`Console`].
+pub trait Model: Default {
+    /// Framebuffer storage: DMG = `PaletteIndex` shades, CGB = RGB555.
+    type Screen: ScreenBuffer;
+
+    /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
+    const HAS_OAM_BUG: bool = false;
+
+    /// Map a finished PPU pixel into this console's framebuffer pixel.
+    fn map_pixel(pixel: PixelOutput) -> <Self::Screen as ScreenBuffer>::Pixel;
+
+    /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
+    fn on_present(&mut self, _screen: &Self::Screen) {}
+
+    /// Post-process a JOYP read. DMG applies SGB player multiplexing.
+    fn read_joypad(&self, value: u8) -> u8 {
+        value
+    }
+
+    /// Side effect of a JOYP write. DMG forwards the pulse to the SGB.
+    fn on_joypad_write(&mut self, _value: u8) {}
+
+    /// Re-create model-specific state on power-cycle. DMG (re)builds the
+    /// SGB co-processor from the cartridge header.
+    fn on_reset(&mut self, _cartridge: &Cartridge) {}
+
+    /// This console's own memory map: the registers/regions its map defines
+    /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
+    /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI (and, later, banked
+    /// WRAM/VRAM resolution). Consulted before the shared `MappedAddress` map.
+    fn map_read(&self, _address: u16) -> Option<u8> {
+        None
+    }
+    fn map_write(&mut self, _address: u16, _value: u8) -> bool {
+        false
+    }
+}
+
+/// A Game Boy–family console: the SM83 CPU, the shared PPU/APU/timer/DMA
+/// silicon, and the step loop + memory map that drive them. The handful of
+/// DMG/CGB divergences are supplied by the [`Model`] parameter `M`.
+pub struct Console<M: Model> {
     cpu: Cpu,
 
     external: ExternalBus,
@@ -41,14 +95,13 @@ pub struct GameBoy {
     vram_bus: VramBus,
 
     ppu: Ppu,
-    screen: Screen,
+    screen: M::Screen,
     audio: Audio,
     joypad: Joypad,
     interrupts: interrupts::Registers,
     serial: serial_transfer::Serial,
     timers: timers::Timers,
     dma: Dma,
-    sgb: Option<sgb::Sgb>,
 
     /// Master clock signal level. Toggles each half-T-cycle.
     clock_phase: ClockPhase,
@@ -63,31 +116,81 @@ pub struct GameBoy {
     /// the OAM write phase. Set in `write_byte_with_cupa_lock`, drained
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_write_pending: Option<(u8, u8, u8)>,
+
+    model: M,
 }
 
-impl GameBoy {
-    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> GameBoy {
-        let mut gb = GameBoy {
+/// The original Game Boy (DMG): SGB co-processor support, the OAM
+/// corruption bug, and a 2-bit shade framebuffer.
+#[derive(Default)]
+pub struct Dmg {
+    sgb: Option<sgb::Sgb>,
+}
+
+impl Model for Dmg {
+    type Screen = ppu::screen::Screen;
+    const HAS_OAM_BUG: bool = true;
+
+    fn map_pixel(pixel: PixelOutput) -> PaletteIndex {
+        PaletteIndex(pixel.shade)
+    }
+
+    fn on_present(&mut self, screen: &ppu::screen::Screen) {
+        if let Some(sgb) = &mut self.sgb {
+            sgb.update_screen(screen);
+        }
+    }
+
+    fn read_joypad(&self, value: u8) -> u8 {
+        if let Some(sgb) = &self.sgb
+            && sgb.player_count > 1
+        {
+            let p14_selected = value & 0x10 == 0;
+            let p15_selected = value & 0x20 == 0;
+            if !p14_selected && !p15_selected {
+                return (value & 0xF0) | (0x0F - sgb.current_player);
+            }
+        }
+        value
+    }
+
+    fn on_joypad_write(&mut self, value: u8) {
+        if let Some(sgb) = &mut self.sgb {
+            sgb.write_joypad(value);
+        }
+    }
+
+    fn on_reset(&mut self, cartridge: &Cartridge) {
+        self.sgb = cartridge.supports_sgb().then(sgb::Sgb::new);
+    }
+}
+
+/// The original Game Boy.
+pub type GameBoy = Console<Dmg>;
+
+impl<M: Model> Console<M> {
+    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> Self {
+        let mut console = Console {
             cpu: Cpu::new(),
             external: ExternalBus::new(cartridge, boot_rom),
             high_ram: HighRam::new(),
             vram_bus: VramBus::new(),
             ppu: Ppu::new(),
-            screen: Screen::default(),
+            screen: M::Screen::default(),
             audio: Audio::new(),
             joypad: Joypad::new(),
             interrupts: interrupts::Registers::new(),
             serial: serial_transfer::Serial::new(),
             timers: timers::Timers::new(),
             dma: Dma::new(),
-            sgb: None,
             clock_phase: ClockPhase::Low,
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
+            model: M::default(),
         };
-        gb.rebuild_state();
-        gb
+        console.rebuild_state();
+        console
     }
 
     /// Power-cycle the console: re-create all volatile state while
@@ -113,14 +216,13 @@ impl GameBoy {
     fn rebuild_state(&mut self) {
         let has_boot_rom = self.external.has_boot_rom();
         let header_checksum = self.external.cartridge.header_checksum();
-        let supports_sgb = self.external.cartridge.supports_sgb();
 
         self.cpu = if has_boot_rom {
             Cpu::new()
         } else {
             Cpu::post_boot(header_checksum)
         };
-        self.screen = Screen::default();
+        self.screen = M::Screen::default();
         self.high_ram = HighRam::new();
         self.ppu = if has_boot_rom {
             Ppu::new()
@@ -142,7 +244,7 @@ impl GameBoy {
         };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();
-        self.sgb = supports_sgb.then(sgb::Sgb::new);
+        self.model.on_reset(&self.external.cartridge);
 
         if !has_boot_rom {
             let logo: [u8; 0x30] =
@@ -194,7 +296,7 @@ impl GameBoy {
         self.clock_phase
     }
 
-    pub fn screen(&self) -> &Screen {
+    pub fn screen(&self) -> &M::Screen {
         &self.screen
     }
 
@@ -238,15 +340,17 @@ impl GameBoy {
         &self.high_ram
     }
 
-    pub fn sgb(&self) -> Option<&sgb::Sgb> {
-        self.sgb.as_ref()
-    }
-
     pub fn drain_serial_output(&mut self) -> Vec<u8> {
         self.serial.drain_output()
     }
 
     pub fn set_link(&mut self, link: Box<dyn serial_transfer::SerialLink>) {
         self.serial.set_link(link);
+    }
+}
+
+impl Console<Dmg> {
+    pub fn sgb(&self) -> Option<&sgb::Sgb> {
+        self.model.sgb.as_ref()
     }
 }

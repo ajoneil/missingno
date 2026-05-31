@@ -13,7 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    GameBoy, cartridge::Cartridge, cpu::Cpu, execute::StepResult, interrupts, ppu::screen::Screen,
+    Console, GameBoy, Model, cartridge::Cartridge, cpu::Cpu, execute::StepResult, interrupts,
+    ppu::screen::Screen,
 };
 
 #[cfg(feature = "gbtrace")]
@@ -46,30 +47,30 @@ pub trait System {
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)>;
 }
 
-impl System for GameBoy {
+impl<M: Model> System for Console<M> {
     fn step(&mut self) -> StepResult {
-        GameBoy::step(self)
+        Console::<M>::step(self)
     }
     fn read(&self, address: u16) -> u8 {
-        GameBoy::read(self, address)
+        Console::<M>::read(self, address)
     }
     fn cpu(&self) -> &Cpu {
-        GameBoy::cpu(self)
+        Console::<M>::cpu(self)
     }
     fn cpu_mut(&mut self) -> &mut Cpu {
-        GameBoy::cpu_mut(self)
+        Console::<M>::cpu_mut(self)
     }
     fn drain_serial_output(&mut self) -> Vec<u8> {
-        GameBoy::drain_serial_output(self)
+        Console::<M>::drain_serial_output(self)
     }
     fn interrupts(&self) -> &interrupts::Registers {
-        GameBoy::interrupts(self)
+        Console::<M>::interrupts(self)
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
-        GameBoy::peek_range(self, start, len)
+        Console::<M>::peek_range(self, start, len)
     }
     fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
-        GameBoy::drain_audio_samples(self)
+        Console::<M>::drain_audio_samples(self)
     }
 }
 
@@ -449,7 +450,9 @@ pub fn is_infinite_loop<S: System>(s: &S) -> bool {
     if s.read(pc.wrapping_sub(1)) == 0x18 && s.read(pc) == 0xFE {
         return true;
     }
-    if s.read(pc) == 0x40 && s.read(pc.wrapping_add(1)) == 0x18 && s.read(pc.wrapping_add(2)) == 0xFE
+    if s.read(pc) == 0x40
+        && s.read(pc.wrapping_add(1)) == 0x18
+        && s.read(pc.wrapping_add(2)) == 0xFE
     {
         return true;
     }
