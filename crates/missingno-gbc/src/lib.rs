@@ -24,20 +24,50 @@
 
 pub mod screen;
 
-use missingno_gb::{Console, Model, PixelOutput, cpu::Cpu};
+use missingno_gb::{Console, Model, PixelOutput, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
 
-/// The Game Boy Color [`Model`]. Remaining CGB registers (VBK, SVBK, CRAM,
-/// HDMA) and the color pixel pipeline attach here as features land.
-#[derive(Default)]
+/// The Game Boy Color [`Model`]. Remaining CGB features (VBK, CRAM, HDMA) and
+/// the color pixel pipeline attach here as they land.
 pub struct Cgb {
+    /// 8 × 4 KiB work-RAM banks. C000-CFFF is fixed bank 0; D000-DFFF is the
+    /// SVBK-selected bank.
+    wram: Box<[u8; 0x8000]>,
+    /// SVBK ($FF70) bits 0-2 as written; the effective D000 bank is `max(svbk, 1)`.
+    svbk: u8,
     /// KEY1 ($FF4D) bit 0 — speed-switch arm. The switch itself lands with
     /// double-speed support.
     key1_armed: bool,
     /// OPRI ($FF6C) bit 0 — object priority mode (0 = by OAM index). The
     /// priority effect lands with the color PPU.
     opri: bool,
+}
+
+impl Default for Cgb {
+    fn default() -> Self {
+        Self {
+            wram: Box::new([0; 0x8000]),
+            svbk: 1,
+            key1_armed: false,
+            opri: false,
+        }
+    }
+}
+
+impl Cgb {
+    /// Index into `wram` for a work-RAM or echo-RAM address, else `None`.
+    fn wram_index(&self, address: u16) -> Option<usize> {
+        let bank = if self.svbk == 0 { 1 } else { self.svbk } as usize;
+        let banked = |within: u16| bank * 0x1000 + within as usize;
+        match address {
+            0xC000..=0xCFFF => Some((address - 0xC000) as usize),
+            0xD000..=0xDFFF => Some(banked(address - 0xD000)),
+            0xE000..=0xEFFF => Some((address - 0xE000) as usize),
+            0xF000..=0xFDFF => Some(banked(address - 0xF000)),
+            _ => None,
+        }
+    }
 }
 
 impl Model for Cgb {
@@ -55,16 +85,28 @@ impl Model for Cgb {
         self.key1_armed
     }
 
+    fn on_reset(&mut self, _cartridge: &Cartridge) {
+        *self = Self::default();
+    }
+
     fn map_read(&self, address: u16) -> Option<u8> {
+        if let Some(i) = self.wram_index(address) {
+            return Some(self.wram[i]);
+        }
         match address {
             0xFF4C => Some(0xFF),                         // KEY0: boot-locked
             0xFF4D => Some(0x7E | self.key1_armed as u8), // KEY1: bit7 speed=0, bits1-6=1, bit0 arm
             0xFF6C => Some(0xFE | self.opri as u8),       // OPRI: bit0
+            0xFF70 => Some(self.svbk | 0xF8),             // SVBK: bits 0-2
             _ => None,
         }
     }
 
     fn map_write(&mut self, address: u16, value: u8) -> bool {
+        if let Some(i) = self.wram_index(address) {
+            self.wram[i] = value;
+            return true;
+        }
         match address {
             0xFF4C => true, // KEY0: boot-locked, ignore
             0xFF4D => {
@@ -73,6 +115,10 @@ impl Model for Cgb {
             }
             0xFF6C => {
                 self.opri = value & 0x01 != 0;
+                true
+            }
+            0xFF70 => {
+                self.svbk = value & 0x07;
                 true
             }
             _ => false,

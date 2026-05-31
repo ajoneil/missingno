@@ -375,6 +375,9 @@ impl<M: Model> Console<M> {
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {
+        if let Some(value) = self.model.map_read(address) {
+            return value;
+        }
         let mapped = match Bus::of(address) {
             Some(_) => MappedAddress::map(address),
             None => MappedAddress::External(ExternalAddress::WorkRam(address.wrapping_sub(0xE000))),
