@@ -166,7 +166,9 @@ impl SpriteScanner {
             return ScanSignals { avap: false };
         }
 
-        if self.scanning {
+        // CARE (sprite save) requires BESU; on the LCD-on first line BESU never
+        // sets, so the store stays empty though the counter still advances.
+        if self.mode2_active {
             self.counter
                 .compare_and_store(ly, &mut self.sprites, regs, oam, oam_bus);
         }
