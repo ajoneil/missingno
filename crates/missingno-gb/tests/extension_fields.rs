@@ -69,7 +69,7 @@ fn missingno_extension_field_roundtrip() {
     let mut gb = GameBoy::new(cartridge, None);
 
     {
-        let mut tracer = Tracer::create(&path, &profile, &gb, BootRom::Skip).unwrap();
+        let mut tracer = Tracer::create(&path, &profile, &gb, BootRom::Skip, "DMG-B").unwrap();
         for _ in 0..16 {
             tracer.capture(&gb).unwrap();
             let _ = gb.step();
@@ -136,7 +136,7 @@ fn unknown_extension_name_is_rejected() {
     let cartridge = Cartridge::new(minimal_rom(), None);
     let gb = GameBoy::new(cartridge, None);
 
-    let result = Tracer::create(&path, &profile, &gb, BootRom::Skip);
+    let result = Tracer::create(&path, &profile, &gb, BootRom::Skip, "DMG-B");
     assert!(
         result.is_err(),
         "tracer should reject unknown extension name"
