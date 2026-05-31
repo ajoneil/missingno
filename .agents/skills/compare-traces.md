@@ -1,15 +1,10 @@
 # Compare Traces
 
-Compare and inspect execution traces between missingno and reference emulators (GateBoy, Gambatte, SameBoy, DocBoy) to find the exact divergence point in a test failure, or inspect individual traces to understand emulator behavior.
+Compare and inspect execution traces between missingno and reference emulators (SameBoy, DocBoy, Gambatte) to find the exact divergence point in a test failure, or inspect individual traces to understand emulator behavior.
 
 ## Adapter preference
 
-**Always prefer the GateBoy adapter.** GateBoy is die-photo-derived and the closest available approximation of the real hardware. Only fall back to Gambatte / SameBoy / DocBoy when:
-
-- GateBoy doesn't pass the test (so there's no pass trace to diff against), or
-- No GateBoy trace exists for the suite/test in the manifests.
-
-When falling back, state the reason explicitly in the measurement receipt (e.g. "no GateBoy pass trace for blargg/halt_bug; using SameBoy as reference"). Don't silently pick a non-GateBoy reference.
+The reference emulators (SameBoy, DocBoy, gambatte) are all **behavioural** — none is die-derived, so none is ground truth. They show *where* execution diverges; *why* comes from the hardware (PPU timing spec, gb-ctr, race pairs), never from matching another emulator. **Prefer SameBoy**, then DocBoy, then gambatte — the same order for DMG and CGB (see *AGENTS.md → CGB Core — Methodology Deltas*). Fall back down the order when the preferred emulator has no passing trace for the test, and state the reason in the receipt (e.g. "no SameBoy pass trace for blargg/halt_bug; using DocBoy"). Don't silently treat any single emulator's behaviour as the hardware's.
 
 ## When to use
 
@@ -42,35 +37,26 @@ GBTRACE_PROFILE=gbmicrotest cargo test -p missingno-gb --features gbtrace -- <te
 
 The test runner captures state at every T-cycle (for tcycle profiles) or every instruction (for instruction profiles). Traces are written even when tests fail.
 
-### GateBoy trace (fresh, with fixed adapter)
-```bash
-receipts/resources/gbtrace/adapters/gateboy/gbtrace-gateboy \
-  --rom receipts/resources/gbtrace/test-suites/gbmicrotest/<test>.gb \
-  --profile receipts/resources/gbtrace/test-suites/gbmicrotest/profile.toml \
-  --output <output_path> \
-  --stop-when FF82=01 --stop-when FF82=FF \
-  --frames 5
-```
-
-The GateBoy adapter uses `bit_pack()` for IO registers and reconstructs STAT from gate-level state (mode from XYMU/ACYL/LY, LYC from RUPO, enables from reg_stat DFFs).
-
 ### Reference traces from manifests
-Reference traces for ~700 tests across 6 suites are hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/). Each suite has a `manifest.json` listing tests with per-emulator pass/fail status.
+Reference traces are hosted at [ajoneil.github.io/gbtrace](https://ajoneil.github.io/gbtrace/). Each suite has a `manifest.json` listing tests with per-system, per-emulator pass/fail status.
 
 **Fetch a manifest to find available traces:**
 ```bash
 curl -s https://ajoneil.github.io/gbtrace/tests/gbmicrotest/manifest.json | jq '.[0]'
-# → {"name": "div_inc_timing_a", "rom": "div_inc_timing_a.gb", "emulators": {"gambatte": "pass", "gateboy": "pass", ...}}
+# → {"name": "div_inc_timing_a", "rom": "div_inc_timing_a.gb",
+#    "systems": {"dmg": {"sameboy": "pass", "docboy": "pass", "gambatte": "pass", "missingno": "pass"}}}
 ```
+
+Status lives under `systems.{dmg,cgb}.{emulator}` — pick the system matching the core under test (`cgb` for `missingno-gbc`, `dmg` for `missingno-gb`). A suite may carry only one system.
 
 **Download a reference trace:**
 ```bash
-curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_gateboy_pass.gbtrace
+curl -LO https://ajoneil.github.io/gbtrace/tests/gbmicrotest/div_inc_timing_a_sameboy_pass.gbtrace
 ```
 
 URL pattern: `tests/{suite}/{test}_{emulator}_{status}.gbtrace`
 
-Tracked emulators: gambatte, gateboy, docboy, missingno, sameboy. **Prefer GateBoy** (die-photo-derived, closest to hardware). DocBoy provides T-cycle granularity traces — useful when you need sub-M-cycle visibility on non-PPU behaviour, but GateBoy is still first choice when a passing GateBoy trace exists. Suites: gbmicrotest, blargg, mooneye, gambatte-tests, mealybug-tearoom, dmg-acid2, age, mooneye-wilbertpol, samesuite, scribbltests, bully, little-things, mbc3-tester, strikethrough, turtle-tests.
+Tracked emulators: **sameboy, docboy, gambatte, missingno** — all behavioural; prefer SameBoy, then DocBoy (T-cycle granularity, useful for sub-M-cycle visibility on non-PPU behaviour), then gambatte. 17 suites — see `receipts/resources/gbtrace/test-suites/` for the current set.
 
 Reference traces are also available locally in `receipts/resources/gbtrace/test-suites/` if the gbtrace repo has them built.
 
@@ -131,7 +117,7 @@ Common noise fields: `div` (phase-dependent), `tac` (init differs), `if_` (upper
 
 **Persistent PC offset (e.g. missingno=0x0150 vs reference=0x0151):** This is a 4-dot (1 M-cycle) timing offset, usually from initial state divergence. Not a bug in the code under test — it's the starting position within the frame being different.
 
-**STAT divergence throughout:** GateBoy's STAT reconstruction from gate state is approximate (mode bits derived from XYMU/ACYL/LY, enable bits from reg_stat DFFs). Small STAT differences between GateBoy and missingno may be adapter artifacts, not real bugs.
+**STAT divergence throughout:** Adapters reconstruct STAT differently and may sample its mode/enable bits at slightly different points. Small persistent STAT differences between a reference and missingno may be adapter sampling artifacts, not real bugs — verify against the PPU timing spec before treating one as a divergence.
 
 ## Visual comparison with `render`
 

@@ -66,6 +66,35 @@ $(echo "$FAILED" | while read -r t; do [ -n "$t" ] && echo "- $t"; done)
 "
 fi
 
+# CGB core-diff partition: classify gbc failures against the DMG baseline.
+# A gbc failure that passes on the DMG core is a shared-behaviour integration
+# suspect (the DMG model is the reference); one with no DMG counterpart is
+# genuinely CGB-specific. This is the spine of CGB triage — see AGENTS.md.
+GB_BASELINE="$(dirname "$BASELINE_FILE")/.test-baseline-gb"
+if [ "$CRATE_LABEL" = "gbc" ] && [ "$FAIL_COUNT" -gt 0 ] && [ -f "$GB_BASELINE" ]; then
+    gb_ok=$(sed -n 's/=ok$//p' "$GB_BASELINE" | sort)
+    gb_failed=$(sed -n 's/=FAILED$//p' "$GB_BASELINE" | sort)
+    # Tests with a pass/fail DMG result; a DMG-ignored counterpart gives no
+    # reference signal, so it falls into P2 like a test with no counterpart.
+    gb_known=$(printf '%s\n%s\n' "$gb_ok" "$gb_failed" | sort)
+
+    P1=$(comm -12 <(echo "$FAILED") <(echo "$gb_ok"))     # passes DMG core, fails CGB core
+    P3=$(comm -12 <(echo "$FAILED") <(echo "$gb_failed")) # fails both cores
+    P2=$(comm -23 <(echo "$FAILED") <(echo "$gb_known"))  # no usable DMG counterpart
+
+    P1_COUNT=$(echo "$P1" | grep -c . || true)
+    P2_COUNT=$(echo "$P2" | grep -c . || true)
+    P3_COUNT=$(echo "$P3" | grep -c . || true)
+
+    REPORT+="
+## CGB Core-Diff Partition
+Classifying the $FAIL_COUNT failures against the DMG baseline (\`$(basename "$GB_BASELINE")\`):
+- **P1 shared regression** ($P1_COUNT) — passes DMG core, fails CGB core; most approachable, DMG model is the reference
+- **P2 CGB-specific** ($P2_COUNT) — no DMG counterpart; genuinely new behaviour
+- **P3 fails both cores** ($P3_COUNT) — underlying DMG bug
+"
+fi
+
 # Diff against baseline if requested and baseline exists
 if [ "$MODE" = "--diff" ] && [ -f "$BASELINE_FILE" ]; then
     BASELINE=$(cat "$BASELINE_FILE")
