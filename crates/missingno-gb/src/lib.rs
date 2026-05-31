@@ -332,6 +332,11 @@ impl<M: Model> Console<M> {
         self.clock_phase
     }
 
+    /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).
+    pub fn cpu_steps_per_dot(&self) -> u8 {
+        self.model.cpu_steps_per_dot()
+    }
+
     pub fn screen(&self) -> &M::Screen {
         &self.screen
     }

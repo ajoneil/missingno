@@ -144,11 +144,31 @@ impl<M: Model> TestRun<M> {
 
         self.gb.cpu_mut().take_instruction_boundary();
 
+        // A CPU T-cycle is two master edges in single speed (rise+fall) but a
+        // single edge in double speed (the CPU clock runs at 2× the dot clock).
+        // Capture once per T-cycle in both, so the trace stays T-cycle-granular.
+        let double_speed = self.gb.cpu_steps_per_dot() == 2;
+
         loop {
             let rise = self.gb.step_phase();
             new_screen |= rise.new_screen;
             if let Some(pixel) = rise.pixel {
                 self.tracer.as_mut().unwrap().push_pixel(pixel.shade);
+            }
+
+            if double_speed {
+                // This edge already completed a full CPU T-cycle.
+                let tracer = self.tracer.as_mut().unwrap();
+                if rise.new_screen {
+                    tracer.mark_frame().unwrap();
+                }
+                tracer.capture(&self.gb).unwrap();
+                tracer.advance_dot();
+                tcycles += 1;
+                if self.gb.cpu().at_instruction_boundary() {
+                    break;
+                }
+                continue;
             }
 
             let fall = self.gb.step_phase();
