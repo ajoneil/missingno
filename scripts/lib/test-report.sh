@@ -21,6 +21,12 @@ mkdir -p "$REPORT_DIR"
 # Run tests and capture output
 RAW_OUTPUT=$(cargo test -p "$CRATE" 2>&1 || true)
 
+# Optional: expose the raw cargo output for callers (the /test-report skill) that
+# need per-test got/expected detail without re-running the whole suite.
+if [ -n "${TEST_REPORT_RAW_OUT:-}" ]; then
+    printf '%s\n' "$RAW_OUTPUT" > "$TEST_REPORT_RAW_OUT"
+fi
+
 # Extract test lines (ok/FAILED/ignored) and sort for stable diffing.
 # Uses sed -n /p (always exits 0) so an empty set doesn't trip pipefail.
 PASSED=$(echo "$RAW_OUTPUT" | sed -n 's/^[[:space:]]*test \(.*\) \.\.\. ok$/\1/p' | sort)
@@ -146,8 +152,9 @@ fi
 
 echo "$REPORT"
 
-# Save to file
-REPORT_FILE="$REPORT_DIR/$(date +%Y-%m-%d-%H%M%S).md"
+# Save to a single rolling file. These reports are regenerable and were
+# previously accumulating one timestamped file per run; overwrite instead.
+REPORT_FILE="$REPORT_DIR/latest.md"
 echo "$REPORT" > "$REPORT_FILE"
 echo "---"
 echo "Report saved to: $REPORT_FILE"
