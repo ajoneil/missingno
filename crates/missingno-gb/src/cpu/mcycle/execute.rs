@@ -299,9 +299,10 @@ impl Cpu {
 
             Phase::CondJump { taken, target } => {
                 if current_step == 0 && *taken {
-                    // PC stays at post-operand address during this M-cycle.
-                    // Target is consumed by the next fetch.
-                    self.wz = Some(*target);
+                    // PC stays at the post-operand address this M-cycle; the
+                    // target waits in wz until the retiring PC ← WZ copy.
+                    self.wz = *target;
+                    self.wz_to_pc = true;
                     (
                         Some(MCycleAction::Internal {
                             address: 0x0000,
@@ -309,9 +310,6 @@ impl Cpu {
                         true,
                     )
                 } else {
-                    if let Some(target) = self.wz.take() {
-                        self.pc = target;
-                    }
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
             }
@@ -345,12 +343,7 @@ impl Cpu {
                             true,
                         )
                     }
-                    _ => {
-                        if let Some(target) = self.wz.take() {
-                            self.pc = target;
-                        }
-                        (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
-                    }
+                    _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
             }
 

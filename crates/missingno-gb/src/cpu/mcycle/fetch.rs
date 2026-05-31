@@ -154,8 +154,9 @@ impl Cpu {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
-        if let Some(target) = self.wz.take() {
-            self.pc = target;
+        if self.wz_to_pc {
+            self.pc = self.wz;
+            self.wz_to_pc = false;
         }
         self.boundary_flag = true;
 

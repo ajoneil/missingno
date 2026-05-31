@@ -415,14 +415,16 @@ impl Cpu {
                     // JP HL: no internal M-cycle; the overlapped fetch reads
                     // at HL. Stage HL in wz so the install drives the fetch.
                     if taken {
-                        cpu.wz = Some(address);
+                        cpu.wz = address;
+                        cpu.wz_to_pc = true;
                     }
                     (Phase::Empty, Commit::NoOperation)
                 } else if is_relative && taken {
                     // JR taken: stage target in wz; the internal cycle drives
                     // PCH (high byte of the post-operand PC) on the bus.
                     let internal_addr = cpu.pc;
-                    cpu.wz = Some(address);
+                    cpu.wz = address;
+                    cpu.wz_to_pc = true;
                     (
                         Phase::InternalOamBug {
                             address: internal_addr,
@@ -449,7 +451,8 @@ impl Cpu {
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
-                    cpu.wz = Some(address);
+                    cpu.wz = address;
+                    cpu.wz_to_pc = true;
                     (
                         Phase::CondCall {
                             taken: true,
@@ -500,7 +503,8 @@ impl Cpu {
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
-                cpu.wz = Some(*address as u16);
+                cpu.wz = *address as u16;
+                cpu.wz_to_pc = true;
                 (
                     Phase::Push {
                         sp,

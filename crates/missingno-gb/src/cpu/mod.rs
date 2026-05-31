@@ -193,12 +193,16 @@ pub struct Cpu {
     current_action: Option<mcycle::MCycleAction>,
     /// Step counter for Fetch / Halted phases (tracks M-cycle sub-steps).
     pub(super) exec_step: u8,
-    /// WZ staging temp. `Some(addr)` holds an assembled new-PC value
-    /// (jump/call target, restart vector, or address popped from the
-    /// stack) awaiting the `PC ← WZ` copy at the instruction's retiring
-    /// cycle. Every control-flow op routes its new PC through here so
-    /// `pc` never holds the target before the install.
-    pub(super) wz: Option<u16>,
+    /// WZ temp register. Holds an assembled new-PC value (jump/call
+    /// target, restart vector, or address popped from the stack) until
+    /// the `PC ← WZ` copy at the instruction's retiring cycle. Every
+    /// control-flow op routes its new PC through here so `pc` never holds
+    /// the target before the install.
+    pub(super) wz: u16,
+    /// The `PC ← WZ` misc-op: set when a control-flow op has assembled a
+    /// new PC in `wz`, consumed (and cleared) by the copy at the retiring
+    /// M-cycle. Distinct from `wz` itself, which always holds a value.
+    pub(super) wz_to_pc: bool,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
     /// T-cycle that produced the last `BusAction` — the executor reads
@@ -327,7 +331,8 @@ impl Cpu {
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
-            wz: None,
+            wz: 0,
+            wz_to_pc: false,
             scratch: 0,
             last_tcycle: TCycle::ZERO,
             last_bus_action: BusAction::Idle,
