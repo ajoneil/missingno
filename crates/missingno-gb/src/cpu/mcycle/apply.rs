@@ -190,9 +190,8 @@ impl Cpu {
             }
 
             Commit::EnterStop => {
-                cpu.halt.state = HaltState::Halting;
+                cpu.halt.state = HaltState::Stopped;
                 cpu.halt.wake_active = false;
-                cpu.halt.entered_stop = true;
             }
         }
     }

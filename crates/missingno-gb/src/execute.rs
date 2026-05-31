@@ -1,5 +1,5 @@
 use super::{
-    ClockPhase, Console, Model, ScreenBuffer,
+    ClockPhase, Console, Model, ScreenBuffer, StopAction,
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
@@ -49,6 +49,8 @@ impl<M: Model> Console<M> {
         let r = self.step_instruction();
         new_screen |= r.new_screen;
         tcycles += r.tcycles;
+
+        self.resolve_stop();
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
         (
@@ -139,17 +141,31 @@ impl<M: Model> Console<M> {
     /// Low, execute rise() (Low→High edge). When High, execute
     /// fall() (High→Low edge).
     fn execute_phase(&mut self) -> PhaseResult {
-        let result = match self.clock_phase {
+        match self.clock_phase {
             ClockPhase::Low => self.rise(),
             ClockPhase::High => self.fall(),
-        };
-        if self.cpu.halt.entered_stop {
-            self.cpu.halt.entered_stop = false;
-            if self.model.speed_switch_armed() {
-                unimplemented!("CGB double-speed switch (KEY1 + STOP) is not yet implemented");
-            }
         }
-        result
+    }
+
+    /// Resolve a STOP the CPU has settled into (called at the M-cycle
+    /// boundary). The model decides: a CGB armed speed switch re-engages
+    /// the CPU (and the divider resets); otherwise the CPU stays stopped.
+    fn resolve_stop(&mut self) {
+        if !self.cpu.is_stopped() {
+            return;
+        }
+        match self.model.resolve_stop() {
+            StopAction::SpeedSwitch => {
+                // Hardware resets DIV across the switch. (The ~0x20000-cycle
+                // blackout and the 2× cadence land in the cadence pass.)
+                let old_counter = self.timers.internal_counter();
+                self.timers
+                    .write_register(crate::timers::Register::Divider, 0);
+                self.audio.on_div_write(old_counter);
+                self.cpu.resume_from_stop();
+            }
+            StopAction::Remain => {}
+        }
     }
 
     /// Rising edge of the master clock.

@@ -4,7 +4,7 @@ use super::super::commit::Commit;
 use super::super::instructions::Instruction;
 use super::super::instructions::Interrupt as InterruptInstruction;
 use super::super::{Cpu, HaltState};
-use super::types::{CpuPhase, MCycleAction, Phase};
+use super::types::{CpuPhase, HaltPhase, MCycleAction, Phase};
 
 /// Number of operand bytes following a given opcode (0, 1, or 2).
 pub(super) fn operand_count(opcode: u8) -> u8 {
@@ -181,6 +181,12 @@ impl Cpu {
             self.phase = CpuPhase::Locked;
             self.exec_step = 0;
             return MCycleAction::Internal { address: self.pc };
+        }
+
+        if self.halt.state == HaltState::Stopped {
+            // STOP idles in the spin machinery with no halt-bug and no
+            // interrupt-wake; the system re-engages via `resume_from_stop`.
+            return self.mcycle_halted_entry(HaltPhase::Spin);
         }
 
         if self.halt.state == HaltState::Halting {

@@ -44,6 +44,15 @@ pub trait ScreenBuffer: Default {
     fn blank(&mut self);
 }
 
+/// What a STOP the CPU has settled into resolves to (decided by the model).
+pub enum StopAction {
+    /// Stay stopped — DMG stop-mode, or CGB STOP with no armed speed switch.
+    Remain,
+    /// CGB double-speed switch: the model has toggled its speed; the system
+    /// resets the divider and re-engages the CPU.
+    SpeedSwitch,
+}
+
 /// The per-console divergences from the shared SM83 silicon — the entire
 /// catalogue of how DMG and CGB differ in the step loop and memory map.
 /// Everything not listed here is the same silicon and lives in [`Console`].
@@ -78,10 +87,11 @@ pub trait Model: Default {
         Cpu::post_boot(checksum)
     }
 
-    /// Whether a STOP should perform a CGB double-speed switch (KEY1 armed)
-    /// rather than entering stop-mode. DMG never switches.
-    fn speed_switch_armed(&self) -> bool {
-        false
+    /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
+    /// CGB performs a double-speed switch when KEY1 is armed (toggling its
+    /// own speed bit) and otherwise stays stopped.
+    fn resolve_stop(&mut self) -> StopAction {
+        StopAction::Remain
     }
 
     /// This console's own memory map: the registers/regions its map defines

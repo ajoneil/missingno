@@ -24,7 +24,7 @@
 
 pub mod screen;
 
-use missingno_gb::{Console, Model, PixelOutput, cartridge::Cartridge, cpu::Cpu};
+use missingno_gb::{Console, Model, PixelOutput, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
 
@@ -36,9 +36,11 @@ pub struct Cgb {
     wram: Box<[u8; 0x8000]>,
     /// SVBK ($FF70) bits 0-2 as written; the effective D000 bank is `max(svbk, 1)`.
     svbk: u8,
-    /// KEY1 ($FF4D) bit 0 — speed-switch arm. The switch itself lands with
-    /// double-speed support.
+    /// KEY1 ($FF4D) bit 0 — speed-switch arm.
     key1_armed: bool,
+    /// KEY1 ($FF4D) bit 7 — current speed (false = normal, true = double).
+    /// The switch toggles it; the 2× clock cadence itself lands later.
+    double_speed: bool,
     /// OPRI ($FF6C) bit 0 — object priority mode (0 = by OAM index). The
     /// priority effect lands with the color PPU.
     opri: bool,
@@ -50,6 +52,7 @@ impl Default for Cgb {
             wram: Box::new([0; 0x8000]),
             svbk: 1,
             key1_armed: false,
+            double_speed: false,
             opri: false,
         }
     }
@@ -81,8 +84,14 @@ impl Model for Cgb {
         Cpu::post_boot_cgb()
     }
 
-    fn speed_switch_armed(&self) -> bool {
-        self.key1_armed
+    fn resolve_stop(&mut self) -> StopAction {
+        if self.key1_armed {
+            self.double_speed = !self.double_speed;
+            self.key1_armed = false;
+            StopAction::SpeedSwitch
+        } else {
+            StopAction::Remain
+        }
     }
 
     fn on_reset(&mut self, _cartridge: &Cartridge) {
@@ -94,10 +103,10 @@ impl Model for Cgb {
             return Some(self.wram[i]);
         }
         match address {
-            0xFF4C => Some(0xFF),                         // KEY0: boot-locked
-            0xFF4D => Some(0x7E | self.key1_armed as u8), // KEY1: bit7 speed=0, bits1-6=1, bit0 arm
-            0xFF6C => Some(0xFE | self.opri as u8),       // OPRI: bit0
-            0xFF70 => Some(self.svbk | 0xF8),             // SVBK: bits 0-2
+            0xFF4C => Some(0xFF), // KEY0: boot-locked
+            0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
+            0xFF6C => Some(0xFE | self.opri as u8), // OPRI: bit0
+            0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             _ => None,
         }
     }

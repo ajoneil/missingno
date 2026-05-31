@@ -83,7 +83,7 @@ pub fn capture_cpu(gb: &GameBoy) -> CpuSnapshot {
         halt_state: match cpu.halt.state {
             HaltState::Running => 0,
             HaltState::Halting => 1,
-            HaltState::Halted => 2,
+            HaltState::Halted | HaltState::Stopped => 2,
             HaltState::Locked => 3,
         },
         // gbtrace's ei_delay column expects a "cycles until IME enables"

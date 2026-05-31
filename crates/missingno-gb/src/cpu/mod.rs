@@ -33,6 +33,10 @@ pub enum HaltState {
     Halting,
     /// HALT idle loop — ticking hardware, waiting for `(IF & IE) != 0`.
     Halted,
+    /// STOP idle — ticking hardware, no interrupt-wake. Distinct from HALT:
+    /// the CPU resumes only when the system re-engages it (CGB speed switch
+    /// completing, or a joypad wake). Driven externally via `resume_from_stop`.
+    Stopped,
     /// Illegal-opcode hard-lock — ticking hardware, never wakes.
     /// Reached only via `Commit::Invalid` (opcodes $D3, $DB, $DD,
     /// $E3, $E4, $EB, $EC, $ED, $F4, $FC, $FD).
@@ -64,9 +68,6 @@ pub struct HaltContext {
     /// columns later than the running-CPU path. Behavioural; no
     /// gate-level anchor.
     pub wake_active: bool,
-    /// One-shot: a STOP instruction just committed (vs HALT). The
-    /// console loop reads it to decide CGB speed-switch vs stop-mode.
-    pub entered_stop: bool,
 }
 
 impl HaltContext {
@@ -77,7 +78,6 @@ impl HaltContext {
             bug_check_pending: false,
             rs_latched: false,
             wake_active: false,
-            entered_stop: false,
         }
     }
 }
@@ -494,6 +494,22 @@ impl Cpu {
 
     pub fn is_halted(&self) -> bool {
         self.halt.state == HaltState::Halted
+    }
+
+    /// Whether the CPU is idling in STOP (awaiting an external re-engage).
+    pub fn is_stopped(&self) -> bool {
+        self.halt.state == HaltState::Stopped
+    }
+
+    /// Re-engage the CPU after STOP: resume at the instruction following
+    /// STOP. Called by the system when a CGB speed switch (or a joypad
+    /// wake) completes. Must be called at an M-cycle boundary.
+    pub fn resume_from_stop(&mut self) {
+        self.halt.state = HaltState::Running;
+        self.halt.rs_latched = false;
+        self.phase = CpuPhase::Fetch;
+        self.exec_step = 0;
+        self.boundary_flag = true;
     }
 
     pub fn halt_rs_latched(&self) -> bool {

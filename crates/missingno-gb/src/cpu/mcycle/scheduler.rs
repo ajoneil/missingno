@@ -123,6 +123,10 @@ impl Cpu {
             CpuPhase::Execute { .. } => self.mcycle_execute(),
             CpuPhase::InterruptDispatch { .. } => self.mcycle_isr(),
             CpuPhase::Halted(HaltPhase::Spin) => {
+                if self.halt.state == HaltState::Stopped {
+                    // STOP idle: no interrupt-wake; resume is external.
+                    return Some(self.mcycle_halted_entry(HaltPhase::Spin));
+                }
                 if self.irq.irq_latched.output() {
                     let ime_enabled = self.irq.ime.output() == InterruptMasterEnable::Enabled;
                     let dispatch_pending = ime_enabled && !self.dispatch.latched().is_empty();
