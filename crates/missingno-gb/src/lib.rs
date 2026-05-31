@@ -72,6 +72,18 @@ pub trait Model: Default {
     /// SGB co-processor from the cartridge header.
     fn on_reset(&mut self, _cartridge: &Cartridge) {}
 
+    /// Post-boot CPU state when no boot ROM is present. DMG seeds the flags
+    /// from the header checksum; CGB uses a fixed register file (A=$11).
+    fn cpu_post_boot(checksum: u8) -> Cpu {
+        Cpu::post_boot(checksum)
+    }
+
+    /// Whether a STOP should perform a CGB double-speed switch (KEY1 armed)
+    /// rather than entering stop-mode. DMG never switches.
+    fn speed_switch_armed(&self) -> bool {
+        false
+    }
+
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
     /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI (and, later, banked
@@ -220,7 +232,7 @@ impl<M: Model> Console<M> {
         self.cpu = if has_boot_rom {
             Cpu::new()
         } else {
-            Cpu::post_boot(header_checksum)
+            M::cpu_post_boot(header_checksum)
         };
         self.screen = M::Screen::default();
         self.high_ram = HighRam::new();

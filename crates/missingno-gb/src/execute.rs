@@ -139,10 +139,17 @@ impl<M: Model> Console<M> {
     /// Low, execute rise() (Low→High edge). When High, execute
     /// fall() (High→Low edge).
     fn execute_phase(&mut self) -> PhaseResult {
-        match self.clock_phase {
+        let result = match self.clock_phase {
             ClockPhase::Low => self.rise(),
             ClockPhase::High => self.fall(),
+        };
+        if self.cpu.halt.entered_stop {
+            self.cpu.halt.entered_stop = false;
+            if self.model.speed_switch_armed() {
+                unimplemented!("CGB double-speed switch (KEY1 + STOP) is not yet implemented");
+            }
         }
+        result
     }
 
     /// Rising edge of the master clock.

@@ -64,6 +64,9 @@ pub struct HaltContext {
     /// columns later than the running-CPU path. Behavioural; no
     /// gate-level anchor.
     pub wake_active: bool,
+    /// One-shot: a STOP instruction just committed (vs HALT). The
+    /// console loop reads it to decide CGB speed-switch vs stop-mode.
+    pub entered_stop: bool,
 }
 
 impl HaltContext {
@@ -74,6 +77,7 @@ impl HaltContext {
             bug_check_pending: false,
             rs_latched: false,
             wake_active: false,
+            entered_stop: false,
         }
     }
 }
@@ -230,24 +234,37 @@ impl Cpu {
     /// opening CLK9↑'s boundary work fired in the boot ROM's domain
     /// before simulator t=0.
     pub fn post_boot(checksum: u8) -> Cpu {
+        let flags = if checksum == 0 {
+            Flags::ZERO
+        } else {
+            Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
+        };
+        Self::post_boot_with(0x01, 0x00, 0x13, 0x00, 0xd8, 0x01, 0x4d, flags)
+    }
+
+    /// CGB (CPU-CGB-C) post-boot register file. A=$11 signals CGB hardware
+    /// to the cartridge; unlike DMG, the flags don't depend on the header
+    /// checksum.
+    pub fn post_boot_cgb() -> Cpu {
+        Self::post_boot_with(0x11, 0x00, 0x00, 0x00, 0x08, 0x00, 0x7c, Flags::ZERO)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn post_boot_with(a: u8, b: u8, c: u8, d: u8, e: u8, h: u8, l: u8, flags: Flags) -> Cpu {
         Cpu {
-            a: 0x01,
-            b: 0x00,
-            c: 0x13,
-            d: 0x00,
-            e: 0xd8,
-            h: 0x01,
-            l: 0x4d,
+            a,
+            b,
+            c,
+            d,
+            e,
+            h,
+            l,
 
             stack_pointer: 0xfffe,
             pc: 0x0100,
             ir_address: 0x0100,
 
-            flags: if checksum == 0 {
-                Flags::ZERO
-            } else {
-                Flags::ZERO | Flags::CARRY | Flags::HALF_CARRY
-            },
+            flags,
 
             // ── In-flight M-cycle: opening m1 fetch of cartridge code ──
             phase: CpuPhase::Execute {

@@ -184,9 +184,15 @@ impl Cpu {
                 cpu.irq.ime_delay = true;
             }
 
-            Commit::EnterHalt | Commit::EnterStop => {
+            Commit::EnterHalt => {
                 cpu.halt.state = HaltState::Halting;
                 cpu.halt.wake_active = false;
+            }
+
+            Commit::EnterStop => {
+                cpu.halt.state = HaltState::Halting;
+                cpu.halt.wake_active = false;
+                cpu.halt.entered_stop = true;
             }
         }
     }
