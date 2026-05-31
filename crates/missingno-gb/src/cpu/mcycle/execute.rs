@@ -214,12 +214,7 @@ impl Cpu {
 
             Phase::InternalOp { count } => {
                 if current_step < *count {
-                    (
-                        Some(MCycleAction::Internal {
-                            address: 0x0000,
-                        }),
-                        true,
-                    )
+                    (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
@@ -248,17 +243,10 @@ impl Cpu {
                     }
                     2 => {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
-                        let has_trailing = matches!(
-                            action,
-                            PopAction::SetPc | PopAction::SetPcEnableInterrupts
-                        );
+                        let has_trailing =
+                            matches!(action, PopAction::SetPc | PopAction::SetPcEnableInterrupts);
                         if has_trailing {
-                            (
-                                Some(MCycleAction::Internal {
-                                    address: 0x0000,
-                                }),
-                                true,
-                            )
+                            (Some(MCycleAction::Internal { address: 0x0000 }), true)
                         } else {
                             (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                         }
@@ -303,12 +291,7 @@ impl Cpu {
                     // target waits in wz until the retiring PC ← WZ copy.
                     self.wz = *target;
                     self.wz_to_pc = true;
-                    (
-                        Some(MCycleAction::Internal {
-                            address: 0x0000,
-                        }),
-                        true,
-                    )
+                    (Some(MCycleAction::Internal { address: 0x0000 }), true)
                 } else {
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
@@ -351,12 +334,7 @@ impl Cpu {
                 let sp = *sp;
                 let taken = *taken;
                 match current_step {
-                    0 => (
-                        Some(MCycleAction::Internal {
-                            address: 0x0000,
-                        }),
-                        true,
-                    ),
+                    0 => (Some(MCycleAction::Internal { address: 0x0000 }), true),
                     1 if !taken => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                     1 => (Some(MCycleAction::Read { address: sp }), true),
                     2 => {
@@ -370,12 +348,7 @@ impl Cpu {
                     }
                     3 => {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
-                        (
-                            Some(MCycleAction::Internal {
-                                address: 0x0000,
-                            }),
-                            true,
-                        )
+                        (Some(MCycleAction::Internal { address: 0x0000 }), true)
                     }
                     _ => (Some(self.enter_fetch_overlap(Commit::NoOperation)), false),
                 }
@@ -383,4 +356,3 @@ impl Cpu {
         }
     }
 }
-

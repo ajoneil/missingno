@@ -1,4 +1,4 @@
-use super::{sprites::SpriteSize, tiles::TileMapId, tiles::TileAddressMode};
+use super::{sprites::SpriteSize, tiles::TileAddressMode, tiles::TileMapId};
 
 use bitflags::bitflags;
 

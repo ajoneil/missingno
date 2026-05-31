@@ -10,8 +10,7 @@ use crate::app::{
     texture_renderer::TextureRenderer,
 };
 use missingno_gb::ppu::{
-    Ppu, memory::Vram, types::control::Control, types::palette::Palette,
-    types::tiles::TileMapId,
+    Ppu, memory::Vram, types::control::Control, types::palette::Palette, types::tiles::TileMapId,
 };
 
 mod viewport_overlay;

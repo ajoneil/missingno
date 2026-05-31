@@ -19,9 +19,9 @@ mod isr;
 mod scheduler;
 mod types;
 
+pub(super) use types::{AluOp, PopAction, ReadAction, RmwOp};
 pub use types::{BusAction, TCycle};
 pub(crate) use types::{CpuPhase, MCycleAction, Phase};
-pub(super) use types::{AluOp, PopAction, ReadAction, RmwOp};
 
 impl Cpu {
     /// The T-cycle that produced the most recent `BusAction`.

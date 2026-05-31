@@ -150,12 +150,8 @@ impl Oam {
 
     pub fn write(&mut self, address: OamAddress, value: u8) {
         match address.byte {
-            SpriteByte::PositionY => {
-                self.sprites[address.sprite.0 as usize].position.y = value
-            }
-            SpriteByte::PositionX => {
-                self.sprites[address.sprite.0 as usize].position.x = value
-            }
+            SpriteByte::PositionY => self.sprites[address.sprite.0 as usize].position.y = value,
+            SpriteByte::PositionX => self.sprites[address.sprite.0 as usize].position.x = value,
             SpriteByte::Tile => self.sprites[address.sprite.0 as usize].tile = TileIndex(value),
             SpriteByte::Attributes => {
                 self.sprites[address.sprite.0 as usize].attributes = sprites::Attributes(value)

@@ -428,8 +428,7 @@ impl Rendering {
         talu_rising: bool,
     ) -> Option<PixelOutput> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
-        self.window
-            .tick_wy_match_falling(regs, video, talu_rising);
+        self.window.tick_wy_match_falling(regs, video, talu_rising);
 
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();

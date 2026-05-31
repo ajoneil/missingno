@@ -14,10 +14,7 @@ pub struct Sprite {
 impl Default for Sprite {
     fn default() -> Self {
         Self {
-            position: Position {
-                x: 0,
-                y: 0,
-            },
+            position: Position { x: 0, y: 0 },
             tile: TileIndex(0),
             attributes: Attributes::empty(),
         }

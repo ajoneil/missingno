@@ -41,7 +41,10 @@ fn check_screen(gbc: &GameBoyColor, reference: &str) {
             mismatches += 1;
         }
     }
-    assert_eq!(mismatches, 0, "rtc3test: {mismatches} pixel mismatches vs {reference}");
+    assert_eq!(
+        mismatches, 0,
+        "rtc3test: {mismatches} pixel mismatches vs {reference}"
+    );
 }
 
 #[test]

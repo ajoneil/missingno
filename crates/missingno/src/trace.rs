@@ -39,10 +39,11 @@ pub fn run(
         PathBuf::from(format!("{stem}.gbtrace"))
     });
 
-    let mut tracer = Tracer::create(&output_path, &profile, &gb, boot, "DMG-B").unwrap_or_else(|e| {
-        eprintln!("error: failed to create trace file: {e}");
-        process::exit(1);
-    });
+    let mut tracer =
+        Tracer::create(&output_path, &profile, &gb, boot, "DMG-B").unwrap_or_else(|e| {
+            eprintln!("error: failed to create trace file: {e}");
+            process::exit(1);
+        });
     tracer.mark_frame().unwrap();
 
     let mut gb = gb;

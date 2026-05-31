@@ -19,7 +19,10 @@ enum Activity {
     /// Peripheral drives the bus at T-cycle 2; CPU latches at end of
     /// T-cycle 3. `applied` flips true once the T-cycle 2 drive has
     /// fired.
-    Read { address: u16, applied: bool },
+    Read {
+        address: u16,
+        applied: bool,
+    },
     /// CPU drives the bus at CUPA-rising (T-cycle 2). Memory commits
     /// at fall of T-cycle 3 / CUPA-falling.
     Write {

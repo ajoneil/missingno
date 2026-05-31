@@ -75,7 +75,10 @@ fn run_screen_shared(rom_file: &str, reference_file: &str) {
             mismatches += 1;
         }
     }
-    assert_eq!(mismatches, 0, "AGE test {rom_file}: {mismatches} pixel mismatches");
+    assert_eq!(
+        mismatches, 0,
+        "AGE test {rom_file}: {mismatches} pixel mismatches"
+    );
 }
 
 fn run_screen_cgb(rom_file: &str, reference_file: &str) {
@@ -99,7 +102,10 @@ fn run_screen_cgb(rom_file: &str, reference_file: &str) {
             mismatches += 1;
         }
     }
-    assert_eq!(mismatches, 0, "AGE test {rom_file}: {mismatches} pixel mismatches");
+    assert_eq!(
+        mismatches, 0,
+        "AGE test {rom_file}: {mismatches} pixel mismatches"
+    );
 }
 
 // halt/ — DMG+CGB shared (already in gb crate, ROMs loaded from there)

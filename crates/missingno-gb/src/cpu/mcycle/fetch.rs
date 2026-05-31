@@ -48,9 +48,7 @@ impl Cpu {
 
         if step == 0 {
             self.ir_address = self.pc;
-            return Some(MCycleAction::Read {
-                address: self.pc,
-            });
+            return Some(MCycleAction::Read { address: self.pc });
         }
 
         // Step 1: opcode just arrived. PC advances (unless HALT-bug
@@ -182,9 +180,7 @@ impl Cpu {
         if self.halt.state == HaltState::Locked {
             self.phase = CpuPhase::Locked;
             self.exec_step = 0;
-            return MCycleAction::Internal {
-                address: self.pc,
-            };
+            return MCycleAction::Internal { address: self.pc };
         }
 
         if self.halt.state == HaltState::Halting {
@@ -204,8 +200,6 @@ impl Cpu {
         };
         self.exec_step = 1;
         self.ir_address = self.pc;
-        MCycleAction::Read {
-            address: self.pc,
-        }
+        MCycleAction::Read { address: self.pc }
     }
 }

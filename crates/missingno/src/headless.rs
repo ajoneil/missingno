@@ -176,10 +176,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             respond_json(request, response);
         }
         (&Method::Post, path) if path.starts_with("/trace-apu/") => {
-            let n: usize = path
-                .trim_start_matches("/trace-apu/")
-                .parse()
-                .unwrap_or(0);
+            let n: usize = path.trim_start_matches("/trace-apu/").parse().unwrap_or(0);
             let trace = trace_apu(debugger, n);
             respond_json(request, trace);
         }

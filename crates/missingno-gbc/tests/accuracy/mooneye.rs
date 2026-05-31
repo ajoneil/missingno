@@ -182,7 +182,10 @@ mooneye_test!(
 
 // acceptance/timer/ — all no-suffix
 mooneye_test!(timer_div_write, "mooneye/acceptance/timer/div_write.gb");
-mooneye_test!(timer_rapid_toggle, "mooneye/acceptance/timer/rapid_toggle.gb");
+mooneye_test!(
+    timer_rapid_toggle,
+    "mooneye/acceptance/timer/rapid_toggle.gb"
+);
 mooneye_test!(timer_tim00, "mooneye/acceptance/timer/tim00.gb");
 mooneye_test!(
     timer_tim00_div_trigger,

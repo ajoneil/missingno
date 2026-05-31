@@ -110,12 +110,18 @@ shared!(
 shared!(ei_delay_halt, "samesuite/interrupt/ei_delay_halt.gb");
 
 // apu/channel_1
-cgb!(channel_1_align, "samesuite/apu/channel_1/channel_1_align.gb");
+cgb!(
+    channel_1_align,
+    "samesuite/apu/channel_1/channel_1_align.gb"
+);
 cgb!(
     channel_1_align_cpu,
     "samesuite/apu/channel_1/channel_1_align_cpu.gb"
 );
-cgb!(channel_1_delay, "samesuite/apu/channel_1/channel_1_delay.gb");
+cgb!(
+    channel_1_delay,
+    "samesuite/apu/channel_1/channel_1_delay.gb"
+);
 cgb!(channel_1_duty, "samesuite/apu/channel_1/channel_1_duty.gb");
 cgb!(
     channel_1_duty_delay,
@@ -153,7 +159,10 @@ cgb!(
     channel_1_stop_restart,
     "samesuite/apu/channel_1/channel_1_stop_restart.gb"
 );
-cgb!(channel_1_sweep, "samesuite/apu/channel_1/channel_1_sweep.gb");
+cgb!(
+    channel_1_sweep,
+    "samesuite/apu/channel_1/channel_1_sweep.gb"
+);
 cgb!(
     channel_1_sweep_restart,
     "samesuite/apu/channel_1/channel_1_sweep_restart.gb"
@@ -162,19 +171,28 @@ cgb!(
     channel_1_sweep_restart_2,
     "samesuite/apu/channel_1/channel_1_sweep_restart_2.gb"
 );
-cgb!(channel_1_volume, "samesuite/apu/channel_1/channel_1_volume.gb");
+cgb!(
+    channel_1_volume,
+    "samesuite/apu/channel_1/channel_1_volume.gb"
+);
 cgb!(
     channel_1_volume_div,
     "samesuite/apu/channel_1/channel_1_volume_div.gb"
 );
 
 // apu/channel_2
-cgb!(channel_2_align, "samesuite/apu/channel_2/channel_2_align.gb");
+cgb!(
+    channel_2_align,
+    "samesuite/apu/channel_2/channel_2_align.gb"
+);
 cgb!(
     channel_2_align_cpu,
     "samesuite/apu/channel_2/channel_2_align_cpu.gb"
 );
-cgb!(channel_2_delay, "samesuite/apu/channel_2/channel_2_delay.gb");
+cgb!(
+    channel_2_delay,
+    "samesuite/apu/channel_2/channel_2_delay.gb"
+);
 cgb!(channel_2_duty, "samesuite/apu/channel_2/channel_2_duty.gb");
 cgb!(
     channel_2_duty_delay,
@@ -208,7 +226,10 @@ cgb!(
     channel_2_stop_restart,
     "samesuite/apu/channel_2/channel_2_stop_restart.gb"
 );
-cgb!(channel_2_volume, "samesuite/apu/channel_2/channel_2_volume.gb");
+cgb!(
+    channel_2_volume,
+    "samesuite/apu/channel_2/channel_2_volume.gb"
+);
 cgb!(
     channel_2_volume_div,
     "samesuite/apu/channel_2/channel_2_volume_div.gb"
@@ -219,7 +240,10 @@ cgb!(
     channel_3_and_glitch,
     "samesuite/apu/channel_3/channel_3_and_glitch.gb"
 );
-cgb!(channel_3_delay, "samesuite/apu/channel_3/channel_3_delay.gb");
+cgb!(
+    channel_3_delay,
+    "samesuite/apu/channel_3/channel_3_delay.gb"
+);
 cgb!(
     channel_3_first_sample,
     "samesuite/apu/channel_3/channel_3_first_sample.gb"
@@ -262,8 +286,14 @@ cgb!(
 );
 
 // apu/channel_4
-cgb!(channel_4_align, "samesuite/apu/channel_4/channel_4_align.gb");
-cgb!(channel_4_delay, "samesuite/apu/channel_4/channel_4_delay.gb");
+cgb!(
+    channel_4_align,
+    "samesuite/apu/channel_4/channel_4_align.gb"
+);
+cgb!(
+    channel_4_delay,
+    "samesuite/apu/channel_4/channel_4_delay.gb"
+);
 cgb!(
     channel_4_equivalent_frequencies,
     "samesuite/apu/channel_4/channel_4_equivalent_frequencies.gb"
@@ -277,7 +307,10 @@ cgb!(
     "samesuite/apu/channel_4/channel_4_frequency_alignment.gb"
 );
 cgb!(channel_4_lfsr, "samesuite/apu/channel_4/channel_4_lfsr.gb");
-cgb!(channel_4_lfsr15, "samesuite/apu/channel_4/channel_4_lfsr15.gb");
+cgb!(
+    channel_4_lfsr15,
+    "samesuite/apu/channel_4/channel_4_lfsr15.gb"
+);
 cgb!(
     channel_4_lfsr_15_7,
     "samesuite/apu/channel_4/channel_4_lfsr_15_7.gb"
@@ -301,7 +334,10 @@ cgb!(
 
 // apu/ — div tests
 cgb!(div_write_trigger, "samesuite/apu/div_write_trigger.gb");
-cgb!(div_write_trigger_10, "samesuite/apu/div_write_trigger_10.gb");
+cgb!(
+    div_write_trigger_10,
+    "samesuite/apu/div_write_trigger_10.gb"
+);
 cgb!(
     div_write_trigger_volume,
     "samesuite/apu/div_write_trigger_volume.gb"
@@ -322,4 +358,7 @@ cgb!(hdma_lcd_off, "samesuite/dma/hdma_lcd_off.gb");
 cgb!(hdma_mode0, "samesuite/dma/hdma_mode0.gb");
 
 // ppu — CGB-only ($FF68 BGPI)
-cgb!(blocking_bgpi_increase, "samesuite/ppu/blocking_bgpi_increase.gb");
+cgb!(
+    blocking_bgpi_increase,
+    "samesuite/ppu/blocking_bgpi_increase.gb"
+);

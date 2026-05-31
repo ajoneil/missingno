@@ -153,9 +153,7 @@ impl Cpu {
             }
             CpuPhase::Locked => {
                 self.boundary_flag = true;
-                Some(MCycleAction::Internal {
-                    address: self.pc,
-                })
+                Some(MCycleAction::Internal { address: self.pc })
             }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
                 // IME=1 dispatch capture: zacw captures `dispatch_active.q = 1`
@@ -193,8 +191,6 @@ impl Cpu {
         self.phase = CpuPhase::Halted(phase);
         self.exec_step = 0;
         self.boundary_flag = true;
-        MCycleAction::Internal {
-            address: self.pc,
-        }
+        MCycleAction::Internal { address: self.pc }
     }
 }

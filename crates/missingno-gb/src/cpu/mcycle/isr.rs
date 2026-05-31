@@ -36,9 +36,7 @@ impl Cpu {
                     .ime
                     .write_immediate(InterruptMasterEnable::Disabled);
                 self.irq.ime_delay = false;
-                Some(MCycleAction::Internal {
-                    address: self.pc,
-                })
+                Some(MCycleAction::Internal { address: self.pc })
             }
             1 => Some(MCycleAction::InternalOamBug { address: sp }),
             2 => {
