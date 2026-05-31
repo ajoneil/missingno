@@ -102,7 +102,7 @@ impl Sidebar {
         cpu: &'a Cpu,
         game_boy: &'a missingno_gb::GameBoy,
     ) -> Element<'a, app::Message> {
-        let summary = format!("pc {:04X} · sp {:04X}", cpu.pc, cpu.stack_pointer,);
+        let summary = format!("pc {:04X} · sp {:04X}", cpu.ir_address, cpu.stack_pointer,);
         let collapsed = self.is_collapsed(Section::Cpu);
 
         let body = column![
@@ -283,7 +283,7 @@ fn pointers(cpu: &Cpu) -> Element<'_, app::Message> {
             .font(fonts::monospace())
             .size(REG)
             .color(palette::MUTED),
-        text(format!("{:04X}", cpu.pc))
+        text(format!("{:04X}", cpu.ir_address))
             .font(fonts::monospace())
             .size(20.0)
             .color(pc_color),

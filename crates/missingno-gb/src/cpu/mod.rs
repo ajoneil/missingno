@@ -148,11 +148,17 @@ pub struct Cpu {
     pub l: u8,
 
     pub stack_pointer: u16,
-    /// IDU address counter. Drives the address bus during fetch and
-    /// operand reads; advances by 1 per fetched byte. Functions as
-    /// the working PC; the hardware-truthful split into `reg.pc` DFF
-    /// vs IDU output isn't modelled (no observable consumer yet).
+    /// Program counter. Drives the address bus during fetch and operand
+    /// reads and advances by 1 per fetched byte. New values for jumps,
+    /// calls and returns are assembled in `wz` first, then copied here.
     pub pc: u16,
+
+    /// Address the opcode currently in IR was fetched from — the
+    /// instruction address. Captured on the opcode fetch and held for
+    /// the whole instruction. `pc` advances through operand reads; this
+    /// stays pinned, so it is the value disassembly, breakpoints, and
+    /// the debugger key on.
+    pub ir_address: u16,
 
     /// Bus data latch — the byte the SM83 captured off `cpu_port_d`
     /// near the end of T-cycle 3 of a read M-cycle. Holds until the
@@ -187,10 +193,12 @@ pub struct Cpu {
     current_action: Option<mcycle::MCycleAction>,
     /// Step counter for Fetch / Halted phases (tracks M-cycle sub-steps).
     pub(super) exec_step: u8,
-    /// Pending jump target. Set by CondJump's internal M-cycle,
-    /// consumed by the next `enter_fetch()` to issue the fetch Read
-    /// from the target instead of `pc`.
-    pub(super) pending_jump_target: Option<u16>,
+    /// WZ staging temp. `Some(addr)` holds an assembled new-PC value
+    /// (jump/call target, restart vector, or address popped from the
+    /// stack) awaiting the `PC ← WZ` copy at the instruction's retiring
+    /// cycle. Every control-flow op routes its new PC through here so
+    /// `pc` never holds the target before the install.
+    pub(super) wz: Option<u16>,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
     /// T-cycle that produced the last `BusAction` — the executor reads
@@ -229,6 +237,7 @@ impl Cpu {
 
             stack_pointer: 0xfffe,
             pc: 0x0100,
+            ir_address: 0x0100,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -268,6 +277,7 @@ impl Cpu {
             l: snap.l,
             stack_pointer: snap.sp,
             pc: snap.pc,
+            ir_address: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
             irq: IrqContext {
                 ime: Dff::new(if snap.ime {
@@ -305,6 +315,7 @@ impl Cpu {
             l: 0,
             stack_pointer: 0,
             pc: 0,
+            ir_address: 0,
             data_latch: 0,
             flags: Flags::empty(),
             irq: IrqContext::new(),
@@ -316,7 +327,7 @@ impl Cpu {
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
-            pending_jump_target: None,
+            wz: None,
             scratch: 0,
             last_tcycle: TCycle::ZERO,
             last_bus_action: BusAction::Idle,

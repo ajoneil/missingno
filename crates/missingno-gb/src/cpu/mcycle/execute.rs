@@ -216,7 +216,7 @@ impl Cpu {
                 if current_step < *count {
                     (
                         Some(MCycleAction::Internal {
-                            address: self.pc,
+                            address: 0x0000,
                         }),
                         true,
                     )
@@ -255,7 +255,7 @@ impl Cpu {
                         if has_trailing {
                             (
                                 Some(MCycleAction::Internal {
-                                    address: self.pc,
+                                    address: 0x0000,
                                 }),
                                 true,
                             )
@@ -301,15 +301,15 @@ impl Cpu {
                 if current_step == 0 && *taken {
                     // PC stays at post-operand address during this M-cycle.
                     // Target is consumed by the next fetch.
-                    self.pending_jump_target = Some(*target);
+                    self.wz = Some(*target);
                     (
                         Some(MCycleAction::Internal {
-                            address: self.pc,
+                            address: 0x0000,
                         }),
                         true,
                     )
                 } else {
-                    if let Some(target) = self.pending_jump_target.take() {
+                    if let Some(target) = self.wz.take() {
                         self.pc = target;
                     }
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
@@ -346,7 +346,7 @@ impl Cpu {
                         )
                     }
                     _ => {
-                        if let Some(target) = self.pending_jump_target.take() {
+                        if let Some(target) = self.wz.take() {
                             self.pc = target;
                         }
                         (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
@@ -360,7 +360,7 @@ impl Cpu {
                 match current_step {
                     0 => (
                         Some(MCycleAction::Internal {
-                            address: self.pc,
+                            address: 0x0000,
                         }),
                         true,
                     ),
@@ -379,7 +379,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         (
                             Some(MCycleAction::Internal {
-                                address: self.pc,
+                                address: 0x0000,
                             }),
                             true,
                         )

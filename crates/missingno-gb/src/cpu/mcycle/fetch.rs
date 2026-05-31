@@ -47,6 +47,7 @@ impl Cpu {
         self.exec_step += 1;
 
         if step == 0 {
+            self.ir_address = self.pc;
             return Some(MCycleAction::Read {
                 address: self.pc,
             });
@@ -153,7 +154,7 @@ impl Cpu {
         Self::apply_commit(self, commit);
         let deferred = Commit::NoOperation;
 
-        if let Some(target) = self.pending_jump_target.take() {
+        if let Some(target) = self.wz.take() {
             self.pc = target;
         }
         self.boundary_flag = true;
@@ -201,6 +202,7 @@ impl Cpu {
             step: 1,
         };
         self.exec_step = 1;
+        self.ir_address = self.pc;
         MCycleAction::Read {
             address: self.pc,
         }

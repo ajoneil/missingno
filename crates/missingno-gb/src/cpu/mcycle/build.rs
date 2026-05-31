@@ -412,21 +412,23 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if matches!(location, jump::Location::RegisterHl) {
-                    // JP HL: no internal M-cycle. The bus address driver
-                    // mux selects HL combinationally on IR for the next
-                    // fetch cell — modelled by writing pc at
-                    // decode time so the trailing FetchOverlap's Read
-                    // uses HL.
+                    // JP HL: no internal M-cycle; the overlapped fetch reads
+                    // at HL. Stage HL in wz so the install drives the fetch.
                     if taken {
-                        cpu.pc = address;
+                        cpu.wz = Some(address);
                     }
                     (Phase::Empty, Commit::NoOperation)
                 } else if is_relative && taken {
-                    // JR taken: decode-edge pc write
-                    // (multi-cycle — Phase::InternalOamBug shows target
-                    // on bus).
-                    cpu.pc = address;
-                    (Phase::InternalOamBug { address }, Commit::NoOperation)
+                    // JR taken: stage target in wz; the internal cycle drives
+                    // PCH (high byte of the post-operand PC) on the bus.
+                    let internal_addr = cpu.pc;
+                    cpu.wz = Some(address);
+                    (
+                        Phase::InternalOamBug {
+                            address: internal_addr,
+                        },
+                        Commit::NoOperation,
+                    )
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
                     // M-cycle.
@@ -447,7 +449,7 @@ impl Cpu {
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
-                    cpu.pc = address;
+                    cpu.wz = Some(address);
                     (
                         Phase::CondCall {
                             taken: true,
@@ -498,7 +500,7 @@ impl Cpu {
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
-                cpu.pc = *address as u16;
+                cpu.wz = Some(*address as u16);
                 (
                     Phase::Push {
                         sp,

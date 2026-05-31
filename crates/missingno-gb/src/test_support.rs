@@ -266,7 +266,7 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
         .to_string_lossy();
     let output_path = output_dir.join(format!("{rom_stem}.gbtrace"));
 
-    let boot_rom = if gb.cpu().pc == 0x0000 {
+    let boot_rom = if gb.cpu().ir_address == 0x0000 {
         gbtrace::BootRom::Skip
     } else {
         gbtrace::BootRom::Skip
@@ -311,12 +311,12 @@ pub fn try_load_boot_rom() -> Option<Box<[u8; 256]>> {
 }
 
 fn run_boot_rom(gb: &mut GameBoy) {
-    if gb.cpu().pc != 0x0000 {
+    if gb.cpu().ir_address != 0x0000 {
         return;
     }
     for _ in 0..10_000_000 {
         gb.step();
-        if gb.cpu().pc == 0x0100 {
+        if gb.cpu().ir_address == 0x0100 {
             return;
         }
     }
@@ -391,7 +391,7 @@ pub fn run_until_infinite_loop<S: System>(s: &mut S, timeout_frames: u32) -> boo
 pub fn run_until_breakpoint<S: System>(s: &mut S, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
-            let pc = s.cpu().pc;
+            let pc = s.cpu().ir_address;
             if s.read(pc) == 0x40 {
                 return true;
             }
@@ -408,7 +408,7 @@ pub fn run_until_breakpoint<S: System>(s: &mut S, timeout_frames: u32) -> bool {
 pub fn run_until_undefined_opcode<S: System>(s: &mut S, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
-            let pc = s.cpu().pc;
+            let pc = s.cpu().ir_address;
             if s.read(pc) == 0xED {
                 return true;
             }
@@ -442,7 +442,7 @@ pub fn run_until_infinite_loop_no_lcd<S: System>(s: &mut S, max_instructions: u3
 
 /// Check if the CPU is stuck in a known completion loop.
 pub fn is_infinite_loop<S: System>(s: &S) -> bool {
-    let pc = s.cpu().pc;
+    let pc = s.cpu().ir_address;
     if s.read(pc) == 0x18 && s.read(pc.wrapping_add(1)) == 0xFE {
         return true;
     }
