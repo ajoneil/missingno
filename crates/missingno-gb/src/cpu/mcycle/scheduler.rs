@@ -88,9 +88,9 @@ impl Cpu {
                 if ime_enabled {
                     // Collapse HALT-IDU+1 + dispatch's universal -1
                     // step: PC HALT+1 → HALT_addr.
-                    self.bus_counter = self.bus_counter.wrapping_sub(1);
+                    self.pc = self.pc.wrapping_sub(1);
                     if self.dispatch.dispatch_active() {
-                        let pc = self.bus_counter;
+                        let pc = self.pc;
                         self.phase = CpuPhase::InterruptDispatch {
                             sp: self.stack_pointer,
                             pc_hi: (pc >> 8) as u8,
@@ -154,7 +154,7 @@ impl Cpu {
             CpuPhase::Locked => {
                 self.boundary_flag = true;
                 Some(MCycleAction::Internal {
-                    address: self.bus_counter,
+                    address: self.pc,
                 })
             }
             CpuPhase::Halted(HaltPhase::WakeIntake) => {
@@ -168,7 +168,7 @@ impl Cpu {
                     self.halt.state = HaltState::Running;
                     self.halt.rs_latched = false;
                     self.halt.wake_active = true;
-                    let pc = self.bus_counter;
+                    let pc = self.pc;
                     self.phase = CpuPhase::InterruptDispatch {
                         sp: self.stack_pointer,
                         pc_hi: (pc >> 8) as u8,
@@ -194,7 +194,7 @@ impl Cpu {
         self.exec_step = 0;
         self.boundary_flag = true;
         MCycleAction::Internal {
-            address: self.bus_counter,
+            address: self.pc,
         }
     }
 }

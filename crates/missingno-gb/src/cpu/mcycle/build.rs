@@ -36,8 +36,8 @@ impl Cpu {
             jump::Location::Address(address) => match address {
                 Address::Fixed(addr) => *addr,
                 Address::Relative(offset) => match offset {
-                    0.. => cpu.bus_counter + offset.unsigned_abs() as u16,
-                    ..0 => cpu.bus_counter - offset.unsigned_abs() as u16,
+                    0.. => cpu.pc + offset.unsigned_abs() as u16,
+                    ..0 => cpu.pc - offset.unsigned_abs() as u16,
                 },
                 _ => unreachable!(),
             },
@@ -414,18 +414,18 @@ impl Cpu {
                 if matches!(location, jump::Location::RegisterHl) {
                     // JP HL: no internal M-cycle. The bus address driver
                     // mux selects HL combinationally on IR for the next
-                    // fetch cell — modelled by writing bus_counter at
+                    // fetch cell — modelled by writing pc at
                     // decode time so the trailing FetchOverlap's Read
                     // uses HL.
                     if taken {
-                        cpu.bus_counter = address;
+                        cpu.pc = address;
                     }
                     (Phase::Empty, Commit::NoOperation)
                 } else if is_relative && taken {
-                    // JR taken: decode-edge bus_counter write
+                    // JR taken: decode-edge pc write
                     // (multi-cycle — Phase::InternalOamBug shows target
                     // on bus).
-                    cpu.bus_counter = address;
+                    cpu.pc = address;
                     (Phase::InternalOamBug { address }, Commit::NoOperation)
                 } else {
                     // JP nn / JP cc,nn: defer PC update to the internal
@@ -443,11 +443,11 @@ impl Cpu {
                 let address = Self::resolve_jump(cpu, location);
                 let taken = Self::check_condition(cpu, condition);
                 if taken {
-                    let pc = cpu.bus_counter;
+                    let pc = cpu.pc;
                     let pc_hi = (pc >> 8) as u8;
                     let pc_lo = (pc & 0xff) as u8;
                     let sp = cpu.stack_pointer;
-                    cpu.bus_counter = address;
+                    cpu.pc = address;
                     (
                         Phase::CondCall {
                             taken: true,
@@ -494,11 +494,11 @@ impl Cpu {
                 Commit::NoOperation,
             ),
             Jump::Restart(address) => {
-                let pc = cpu.bus_counter;
+                let pc = cpu.pc;
                 let pc_hi = (pc >> 8) as u8;
                 let pc_lo = (pc & 0xff) as u8;
                 let sp = cpu.stack_pointer;
-                cpu.bus_counter = *address as u16;
+                cpu.pc = *address as u16;
                 (
                     Phase::Push {
                         sp,

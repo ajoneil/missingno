@@ -48,7 +48,7 @@ impl Cpu {
 
         if step == 0 {
             return Some(MCycleAction::Read {
-                address: self.bus_counter,
+                address: self.pc,
             });
         }
 
@@ -57,12 +57,12 @@ impl Cpu {
         let opcode = self.data_latch;
         let fetch_addr = match &self.current_action {
             Some(MCycleAction::Read { address }) => *address,
-            _ => self.bus_counter,
+            _ => self.pc,
         };
         if self.halt.bug {
             self.halt.bug = false;
         } else {
-            self.bus_counter = fetch_addr.wrapping_add(1);
+            self.pc = fetch_addr.wrapping_add(1);
         }
 
         let needed = operand_count(opcode);
@@ -82,7 +82,7 @@ impl Cpu {
         } else {
             self.phase = CpuPhase::Execute {
                 phase: Phase::Operands {
-                    pc: self.bus_counter,
+                    pc: self.pc,
                     bytes: [opcode, 0, 0],
                     bytes_read: 1,
                     bytes_needed: 1 + needed,
@@ -154,7 +154,7 @@ impl Cpu {
         let deferred = Commit::NoOperation;
 
         if let Some(target) = self.pending_jump_target.take() {
-            self.bus_counter = target;
+            self.pc = target;
         }
         self.boundary_flag = true;
 
@@ -163,7 +163,7 @@ impl Cpu {
             // resolve), driven by pending_vector_resolve in execute.rs.
             self.halt.state = HaltState::Running;
             self.halt.rs_latched = false;
-            let pc = self.bus_counter;
+            let pc = self.pc;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
@@ -181,7 +181,7 @@ impl Cpu {
             self.phase = CpuPhase::Locked;
             self.exec_step = 0;
             return MCycleAction::Internal {
-                address: self.bus_counter,
+                address: self.pc,
             };
         }
 
@@ -202,7 +202,7 @@ impl Cpu {
         };
         self.exec_step = 1;
         MCycleAction::Read {
-            address: self.bus_counter,
+            address: self.pc,
         }
     }
 }

@@ -372,16 +372,16 @@ impl GameBoy {
     }
 
     /// Vector resolve (ISR M3→M4): clear zkog/zloz + the dispatched IF
-    /// bit, latch the vector into bus_counter. Reads the priority chain
+    /// bit, latch the vector into pc. Reads the priority chain
     /// output (post-latch), matching the IE-push-bug timing.
     fn apply_vector_resolve(&mut self) {
         if self.cpu.take_pending_vector_resolve() {
             if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
                 self.cpu.irq.irq_ack_held = Some(interrupt);
-                self.cpu.bus_counter = interrupt.vector();
+                self.cpu.pc = interrupt.vector();
             } else {
-                self.cpu.bus_counter = 0x0000;
+                self.cpu.pc = 0x0000;
             }
             self.cpu.dispatch.clear_dispatch();
             // cpu_irq_ack1↑: LALU.r_n driven LOW via lety/movu until next

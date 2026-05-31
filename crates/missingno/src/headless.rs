@@ -502,7 +502,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
         h: cpu.h,
         l: cpu.l,
         sp: cpu.stack_pointer,
-        pc: cpu.bus_counter,
+        pc: cpu.pc,
         flags: FlagsState {
             zero: cpu.flags.contains(Flags::ZERO),
             negative: cpu.flags.contains(Flags::NEGATIVE),
@@ -515,7 +515,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
 }
 
 fn disassemble(gb: &GameBoy, count: usize) -> Vec<InstructionEntry> {
-    let pc = gb.cpu().bus_counter;
+    let pc = gb.cpu().pc;
     let mut it = InstructionsIterator::new(pc, gb);
     let mut entries = Vec::new();
 
@@ -935,7 +935,7 @@ fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
         serde_json::json!({
             "step": step,
             "phase": phase,
-            "pc": cpu.bus_counter,
+            "pc": cpu.pc,
             "a": cpu.a,
             "master_enabled": audio.enabled(),
             "ch3_2mhz": ch3.ch3_2mhz,

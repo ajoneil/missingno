@@ -288,9 +288,9 @@ impl GameBoyColor {
         if self.cpu.take_pending_vector_resolve() {
             if let Some(interrupt) = self.cpu.dispatch.vector() {
                 self.interrupts.clear(interrupt);
-                self.cpu.bus_counter = interrupt.vector();
+                self.cpu.pc = interrupt.vector();
             } else {
-                self.cpu.bus_counter = 0x0000;
+                self.cpu.pc = 0x0000;
             }
             self.cpu.dispatch.clear_dispatch();
         }

@@ -421,7 +421,7 @@ impl Cpu {
                 cpu.set_register16(*reg, value);
             }
             PopAction::SetPc => {
-                cpu.bus_counter = value;
+                cpu.pc = value;
             }
             PopAction::SetPcEnableInterrupts => {
                 // RETI re-enables IME immediately (no delay, unlike EI).
@@ -429,7 +429,7 @@ impl Cpu {
                 // ime ← ime_delay copy preserves Enabled.
                 cpu.irq.ime.write_immediate(InterruptMasterEnable::Enabled);
                 cpu.irq.ime_delay = true;
-                cpu.bus_counter = value;
+                cpu.pc = value;
                 cpu.halt.wake_active = false;
             }
         }

@@ -152,7 +152,7 @@ pub struct Cpu {
     /// operand reads; advances by 1 per fetched byte. Functions as
     /// the working PC; the hardware-truthful split into `reg.pc` DFF
     /// vs IDU output isn't modelled (no observable consumer yet).
-    pub bus_counter: u16,
+    pub pc: u16,
 
     /// Bus data latch — the byte the SM83 captured off `cpu_port_d`
     /// near the end of T-cycle 3 of a read M-cycle. Holds until the
@@ -189,7 +189,7 @@ pub struct Cpu {
     pub(super) exec_step: u8,
     /// Pending jump target. Set by CondJump's internal M-cycle,
     /// consumed by the next `enter_fetch()` to issue the fetch Read
-    /// from the target instead of `bus_counter`.
+    /// from the target instead of `pc`.
     pub(super) pending_jump_target: Option<u16>,
     /// Scratch byte for multi-read phases (Pop, CondReturn).
     pub(super) scratch: u8,
@@ -228,7 +228,7 @@ impl Cpu {
             l: 0x4d,
 
             stack_pointer: 0xfffe,
-            bus_counter: 0x0100,
+            pc: 0x0100,
 
             flags: if checksum == 0 {
                 Flags::ZERO
@@ -267,7 +267,7 @@ impl Cpu {
             h: snap.h,
             l: snap.l,
             stack_pointer: snap.sp,
-            bus_counter: snap.pc,
+            pc: snap.pc,
             flags: Flags::from_bits_retain(snap.f),
             irq: IrqContext {
                 ime: Dff::new(if snap.ime {
@@ -304,7 +304,7 @@ impl Cpu {
             h: 0,
             l: 0,
             stack_pointer: 0,
-            bus_counter: 0,
+            pc: 0,
             data_latch: 0,
             flags: Flags::empty(),
             irq: IrqContext::new(),

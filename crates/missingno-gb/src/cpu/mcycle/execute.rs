@@ -51,7 +51,7 @@ impl Cpu {
                 bytes[*bytes_read as usize] = self.data_latch;
                 *bytes_read += 1;
                 *pc = pc.wrapping_add(1);
-                self.bus_counter = *pc;
+                self.pc = *pc;
 
                 if *bytes_read >= *bytes_needed {
                     let b = *bytes;
@@ -87,7 +87,7 @@ impl Cpu {
                 let opcode = self.data_latch;
                 let fetch_addr = match &self.current_action {
                     Some(MCycleAction::Read { address }) => *address,
-                    _ => self.bus_counter,
+                    _ => self.pc,
                 };
 
                 // zacw captures dispatch_active.q HIGH at this M-cycle's
@@ -104,14 +104,14 @@ impl Cpu {
                     self.exec_step = 0;
                     self.irq.pending_vector_resolve = false;
                     self.boundary_flag = true;
-                    self.bus_counter = pc;
+                    self.pc = pc;
                     return (self.next_mcycle(), false);
                 }
 
                 if self.halt.bug {
                     self.halt.bug = false;
                 } else {
-                    self.bus_counter = fetch_addr.wrapping_add(1);
+                    self.pc = fetch_addr.wrapping_add(1);
                 }
 
                 let needed = operand_count(opcode);
@@ -132,7 +132,7 @@ impl Cpu {
                 } else {
                     self.phase = CpuPhase::Execute {
                         phase: Phase::Operands {
-                            pc: self.bus_counter,
+                            pc: self.pc,
                             bytes: [opcode, 0, 0],
                             bytes_read: 1,
                             bytes_needed: 1 + needed,
@@ -216,7 +216,7 @@ impl Cpu {
                 if current_step < *count {
                     (
                         Some(MCycleAction::Internal {
-                            address: self.bus_counter,
+                            address: self.pc,
                         }),
                         true,
                     )
@@ -255,7 +255,7 @@ impl Cpu {
                         if has_trailing {
                             (
                                 Some(MCycleAction::Internal {
-                                    address: self.bus_counter,
+                                    address: self.pc,
                                 }),
                                 true,
                             )
@@ -304,13 +304,13 @@ impl Cpu {
                     self.pending_jump_target = Some(*target);
                     (
                         Some(MCycleAction::Internal {
-                            address: self.bus_counter,
+                            address: self.pc,
                         }),
                         true,
                     )
                 } else {
                     if let Some(target) = self.pending_jump_target.take() {
-                        self.bus_counter = target;
+                        self.pc = target;
                     }
                     (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                 }
@@ -347,7 +347,7 @@ impl Cpu {
                     }
                     _ => {
                         if let Some(target) = self.pending_jump_target.take() {
-                            self.bus_counter = target;
+                            self.pc = target;
                         }
                         (Some(self.enter_fetch_overlap(Commit::NoOperation)), false)
                     }
@@ -360,7 +360,7 @@ impl Cpu {
                 match current_step {
                     0 => (
                         Some(MCycleAction::Internal {
-                            address: self.bus_counter,
+                            address: self.pc,
                         }),
                         true,
                     ),
@@ -379,7 +379,7 @@ impl Cpu {
                         Self::apply_pop(self, action, self.scratch, self.data_latch, sp);
                         (
                             Some(MCycleAction::Internal {
-                                address: self.bus_counter,
+                                address: self.pc,
                             }),
                             true,
                         )
