@@ -7,6 +7,12 @@ use super::{
     ppu::{self, PpuTickResult},
 };
 
+/// CPU T-cycles the CGB holds the CPU `Stopped` during a double-speed switch
+/// (the ~0x20000-T-cycle blackout). The divider and PPU run throughout; the CPU
+/// re-engages at the new speed when this drains. Tuned against the age `spsw-*`
+/// expected values.
+const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
+
 /// Result of executing one instruction.
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
@@ -50,7 +56,7 @@ impl<M: Model> Console<M> {
         new_screen |= r.new_screen;
         tcycles += r.tcycles;
 
-        self.resolve_stop();
+        self.resolve_stop(tcycles);
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
         (
@@ -182,21 +188,34 @@ impl<M: Model> Console<M> {
     }
 
     /// Resolve a STOP the CPU has settled into (called at the M-cycle
-    /// boundary). The model decides: a CGB armed speed switch re-engages
-    /// the CPU (and the divider resets); otherwise the CPU stays stopped.
-    fn resolve_stop(&mut self) {
+    /// boundary). The model decides: a CGB armed speed switch starts the
+    /// blackout (the CPU stays stopped while the divider/PPU run, then
+    /// re-engages at the new speed); otherwise the CPU stays stopped.
+    /// `elapsed_tcycles` is the CPU T-cycle count of the step that just ran.
+    fn resolve_stop(&mut self, elapsed_tcycles: u32) {
         if !self.cpu.is_stopped() {
             return;
         }
+
+        // Mid-blackout: drain the switch penalty, then re-engage. The divider
+        // and PPU advanced through `elapsed_tcycles` while the CPU spun.
+        if self.speed_switch_blackout > 0 {
+            self.speed_switch_blackout = self.speed_switch_blackout.saturating_sub(elapsed_tcycles);
+            if self.speed_switch_blackout == 0 {
+                self.cpu.resume_from_stop();
+            }
+            return;
+        }
+
         match self.model.resolve_stop() {
             StopAction::SpeedSwitch => {
-                // Hardware resets DIV across the switch. (The ~0x20000-cycle
-                // blackout and the 2× cadence land in the cadence pass.)
+                // Hardware resets DIV across the switch and holds the CPU for
+                // the blackout (the model has already toggled its speed bit).
                 let old_counter = self.timers.internal_counter();
                 self.timers
                     .write_register(crate::timers::Register::Divider, 0);
                 self.audio.on_div_write(old_counter);
-                self.cpu.resume_from_stop();
+                self.speed_switch_blackout = SPEED_SWITCH_BLACKOUT_TCYCLES;
             }
             StopAction::Remain => {}
         }

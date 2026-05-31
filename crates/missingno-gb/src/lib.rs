@@ -146,6 +146,11 @@ pub struct Console<M: Model> {
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_write_pending: Option<(u8, u8, u8)>,
 
+    /// Remaining CPU T-cycles of the CGB double-speed switch blackout. The
+    /// CPU stays `Stopped` (the divider and PPU keep running) until this
+    /// drains, then re-engages at the new speed. 0 = not switching.
+    speed_switch_blackout: u32,
+
     model: M,
 }
 
@@ -216,6 +221,7 @@ impl<M: Model> Console<M> {
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
+            speed_switch_blackout: 0,
             model: M::default(),
         };
         console.rebuild_state();
@@ -285,6 +291,7 @@ impl<M: Model> Console<M> {
         self.clock_phase = ClockPhase::Low;
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
+        self.speed_switch_blackout = 0;
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);
         } else if let Some(address) = self.cpu.pending_bus_read() {
