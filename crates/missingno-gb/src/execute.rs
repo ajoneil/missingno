@@ -192,7 +192,7 @@ impl<M: Model> Console<M> {
     /// blackout (the CPU stays stopped while the divider/PPU run, then
     /// re-engages at the new speed); otherwise the CPU stays stopped.
     /// `elapsed_tcycles` is the CPU T-cycle count of the step that just ran.
-    fn resolve_stop(&mut self, elapsed_tcycles: u32) {
+    pub(crate) fn resolve_stop(&mut self, elapsed_tcycles: u32) {
         if !self.cpu.is_stopped() {
             return;
         }

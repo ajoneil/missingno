@@ -46,6 +46,24 @@ pub fn load_cgb_rom(relative: &str) -> GameBoyColor {
     GameBoyColor::new(Cartridge::new(rom, None), None)
 }
 
+#[cfg(feature = "gbtrace")]
+pub use missingno_gb::test_support::TestRun;
+
+/// Wrap a CGB-only ROM in a [`TestRun`] for execution-trace capture. With the
+/// `gbtrace` feature and `GBTRACE_PROFILE` set, the run writes a `.gbtrace`
+/// under `receipts/traces/`. Mirrors the gb crate's traced `load_rom`.
+#[cfg(feature = "gbtrace")]
+pub fn load_cgb_rom_traced(relative: &str) -> TestRun<missingno_gbc::Cgb> {
+    let path = cgb_rom_path(relative);
+    let rom = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
+    TestRun::new(
+        GameBoyColor::new(Cartridge::new(rom, None), None),
+        relative,
+        "CGB-C",
+    )
+}
+
 /// Load a reference PNG from the gbc crate's own roms dir.
 pub fn load_cgb_reference_png(relative: &str) -> Vec<u8> {
     let path = cgb_rom_path(relative);

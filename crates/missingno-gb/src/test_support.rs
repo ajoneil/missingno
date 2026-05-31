@@ -85,16 +85,18 @@ pub fn rom_path(relative: &str) -> PathBuf {
 /// When the `gbtrace` feature is enabled and the `GBTRACE_PROFILE` env var
 /// is set (to a profile name like `cpu_basic`), each `step()` captures state
 /// into a parquet trace file under `receipts/traces/`.
-pub struct TestRun {
-    pub gb: GameBoy,
+pub struct TestRun<M: Model = crate::Dmg> {
+    pub gb: Console<M>,
     #[cfg(feature = "gbtrace")]
     tracer: Option<Tracer>,
 }
 
-impl TestRun {
-    fn new(gb: GameBoy, _rom_relative: &str) -> Self {
+impl<M: Model> TestRun<M> {
+    /// Wrap a console for a traced run. `model_label` is the hardware-model
+    /// string written into the trace metadata (e.g. "DMG-B", "CGB-C").
+    pub fn new(gb: Console<M>, _rom_relative: &str, _model_label: &str) -> Self {
         #[cfg(feature = "gbtrace")]
-        let tracer = try_create_tracer(&gb, _rom_relative);
+        let tracer = try_create_tracer(&gb, _rom_relative, _model_label);
 
         Self {
             gb,
@@ -169,6 +171,10 @@ impl TestRun {
             }
         }
 
+        // Mirror `step_traced`: resolve a settled STOP (CGB speed-switch
+        // blackout) so traced runs progress past STOP like untraced ones.
+        self.gb.resolve_stop(tcycles);
+
         StepResult {
             new_screen,
             tcycles,
@@ -186,7 +192,7 @@ impl TestRun {
 }
 
 #[cfg(feature = "gbtrace")]
-impl Drop for TestRun {
+impl<M: Model> Drop for TestRun<M> {
     fn drop(&mut self) {
         if let Some(tracer) = self.tracer.take() {
             let _ = tracer.finish();
@@ -194,7 +200,7 @@ impl Drop for TestRun {
     }
 }
 
-impl System for TestRun {
+impl<M: Model> System for TestRun<M> {
     fn step(&mut self) -> StepResult {
         TestRun::step(self)
     }
@@ -222,7 +228,11 @@ impl System for TestRun {
 }
 
 #[cfg(feature = "gbtrace")]
-fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
+fn try_create_tracer<M: Model>(
+    gb: &Console<M>,
+    rom_relative: &str,
+    model_label: &str,
+) -> Option<Tracer> {
     let profile_name = std::env::var("GBTRACE_PROFILE").ok()?;
 
     let gbtrace_root =
@@ -275,7 +285,7 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
 
     eprintln!("gbtrace: writing {}", output_path.display());
 
-    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom, "DMG-B")
+    let mut tracer = Tracer::create(&output_path, &profile, gb, boot_rom, model_label)
         .unwrap_or_else(|e| panic!("Failed to create tracer: {e}"));
 
     tracer.mark_frame().unwrap();
@@ -283,22 +293,22 @@ fn try_create_tracer(gb: &GameBoy, rom_relative: &str) -> Option<Tracer> {
     Some(tracer)
 }
 
-pub fn load_rom(relative: &str) -> TestRun {
+pub fn load_rom(relative: &str) -> TestRun<crate::Dmg> {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
     let boot_rom = try_load_boot_rom();
     let mut gb = GameBoy::new(Cartridge::new(rom, None), boot_rom);
     run_boot_rom(&mut gb);
-    TestRun::new(gb, relative)
+    TestRun::new(gb, relative, "DMG-B")
 }
 
-pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun {
+pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun<crate::Dmg> {
     let gb = GameBoy::new(
         Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None),
         Some(boot_rom),
     );
-    TestRun::new(gb, relative)
+    TestRun::new(gb, relative, "DMG-B")
 }
 
 /// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.

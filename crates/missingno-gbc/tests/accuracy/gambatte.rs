@@ -111,6 +111,19 @@ fn run_gambatte_hex_test_cgb(rom_path: &str) {
     check_screen(&gbc, rom_path);
 }
 
+/// Capture an execution trace for the ROM named by `GBTRACE_CAPTURE_ROM`
+/// (relative to the gbc roms dir). Requires the `gbtrace` feature and
+/// `GBTRACE_PROFILE`; writes to `receipts/traces/`. Not a pass/fail test.
+#[cfg(feature = "gbtrace")]
+#[test]
+fn gbtrace_capture() {
+    let rom = std::env::var("GBTRACE_CAPTURE_ROM")
+        .expect("set GBTRACE_CAPTURE_ROM to a ROM path relative to the gbc roms dir");
+    let mut run = common::load_cgb_rom_traced(&rom);
+    common::run_for_tcycles(&mut run, TCYCLES);
+    run.finish();
+}
+
 macro_rules! gambatte_audio_test {
     ($name:ident, $path:literal) => {
         #[test]
