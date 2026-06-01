@@ -289,6 +289,11 @@ impl PulseSweepChannel {
     /// next horu_512hz↑ sample so a same-step NR12 pace=0 write can
     /// clear `kyvo` and suppress the fire (CH1 mirror of CH2).
     pub fn tick_envelope_counter(&mut self) {
+        // dmg_tffnl holds the counter while the divider load window is open
+        // (CH1 mirror of CH2).
+        if self.divider_load_settle {
+            return;
+        }
         let pace = self.volume_and_envelope.sweep_pace();
         if pace == 0 {
             return;
@@ -335,6 +340,11 @@ impl PulseSweepChannel {
     /// so an NR10 pace=0 write in the intervening T-cycle window can
     /// suppress the fire via the bury async-reset path.
     pub fn tick_sweep_counter(&mut self) {
+        // dmg_tffnl holds the counter while the divider load window is open —
+        // a cate_128hz↓ inside the window is skipped.
+        if self.divider_load_settle {
+            return;
+        }
         if !self.sweep_enabled {
             return;
         }

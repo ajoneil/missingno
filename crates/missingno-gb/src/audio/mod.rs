@@ -34,6 +34,9 @@ pub struct Audio {
 
     pub(crate) prev_div_apu_bit: bool,
     pub(crate) frame_sequencer_step: u8,
+    // DIV-APU bit-10 fell last tcycle; the (caru, bylu, JYNA) ripple strobes
+    // land one tcycle later (kylo/kene_inst buffer delay) — kene↓ in T1, not T0.
+    pub(crate) fs_edge_pending: bool,
     sample_counter: f32,
     sample_accum_left: f32,
     sample_accum_right: f32,
@@ -56,6 +59,7 @@ impl Audio {
 
             prev_div_apu_bit: internal_counter & DIV_APU_BIT != 0,
             frame_sequencer_step: ((internal_counter >> 11) & 0x7) as u8,
+            fs_edge_pending: false,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
@@ -74,6 +78,7 @@ impl Audio {
             nr50: 0x00,
             prev_div_apu_bit: false, // internal_counter starts at 0, bit 12 = 0
             frame_sequencer_step: 0,
+            fs_edge_pending: false,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
@@ -135,8 +140,10 @@ impl Audio {
 
         if !self.enabled {
             // Keep tracking the DIV-APU bit so we have the right edge
-            // history when the APU is re-enabled.
+            // history when the APU is re-enabled. Power-off resets the
+            // frame sequencer, so drop any armed ripple edge.
             self.prev_div_apu_bit = div_counter & div_apu_bit != 0;
+            self.fs_edge_pending = false;
             return;
         }
 
@@ -145,10 +152,18 @@ impl Audio {
         self.sample_accum_right += r;
         self.sample_accum_count += 1;
 
-        // Frame sequencer fires on falling edges of the DIV-APU bit.
+        // Fire the ripple edge armed last tcycle (the strobes land one tcycle
+        // after the bit-10 fall). It runs after the prescaler consume above set
+        // divider_load_settle, so a kene↓ inside the open load window is held.
+        if self.fs_edge_pending {
+            self.fs_edge_pending = false;
+            self.tick_frame_sequencer();
+        }
+
+        // DIV-APU bit-10 fall arms the ripple advance for next tcycle.
         let div_apu_high = div_counter & div_apu_bit != 0;
         if self.prev_div_apu_bit && !div_apu_high {
-            self.tick_frame_sequencer();
+            self.fs_edge_pending = true;
         }
         self.prev_div_apu_bit = div_apu_high;
 
@@ -214,6 +229,7 @@ impl Audio {
             self.tick_frame_sequencer();
         }
         self.prev_div_apu_bit = false; // counter is now 0, bit 10 is clear
+        self.fs_edge_pending = false; // divider reset supersedes any armed tap edge
     }
 
     fn mix(&self) -> (f32, f32) {
@@ -340,6 +356,7 @@ impl Audio {
             nr50: snap.master_vol,
             prev_div_apu_bit: snap.prev_div_apu_bit,
             frame_sequencer_step: snap.frame_sequencer_step,
+            fs_edge_pending: false,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,

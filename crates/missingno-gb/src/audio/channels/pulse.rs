@@ -212,6 +212,12 @@ impl PulseChannel {
     /// next horu_512hz↑ sample so a same-step NR22 pace=0 write can
     /// clear `kyvo` and suppress the fire.
     pub fn tick_envelope_counter(&mut self) {
+        // dmg_tffnl holds the counter (ignores tclk_n) while the divider load
+        // window is open — a kene↓ inside the window is skipped, slipping the
+        // first fire one 64 Hz period.
+        if self.divider_load_settle {
+            return;
+        }
         let pace = self.volume_and_envelope.sweep_pace();
         if pace == 0 {
             return;
