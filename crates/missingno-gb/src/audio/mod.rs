@@ -45,10 +45,11 @@ pub struct Audio {
 }
 
 impl Audio {
-    /// Post-boot state at PC=0x0100. `internal_counter` is the M-cycle
-    /// `reg_div16` (UKUP..UPOF) — fs_step and prev_div_apu_bit derive
-    /// from it so the frame sequencer is in phase with hardware's
-    /// kene/byfe_128hz divider chain at the §11.1 anchor.
+    /// Post-boot state at PC=0x0100. `prev_div_apu_bit` derives from the
+    /// M-cycle `reg_div16` (the ripple advance stays divider-locked). The
+    /// (caru, bylu, JYNA) frame-sequencer ripple is apu_reset-reset, so its
+    /// phase is the boot ROM's leftover — kene↓ fires at reg_div16≡0x1800,
+    /// not at the divider phase (reg_div16>>11)&7.
     pub fn post_boot(internal_counter: u16) -> Self {
         Self {
             enabled: true,
@@ -58,7 +59,9 @@ impl Audio {
             nr50: 0x77,
 
             prev_div_apu_bit: internal_counter & DIV_APU_BIT != 0,
-            frame_sequencer_step: ((internal_counter >> 11) & 0x7) as u8,
+            // Boot ROM leftover ripple phase: step 0 (kene↓) lands at
+            // reg_div16≡0x1800, three advances past the divider's 0.
+            frame_sequencer_step: 2,
             fs_edge_pending: false,
             sample_counter: 0.0,
             sample_accum_left: 0.0,
