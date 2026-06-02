@@ -38,6 +38,9 @@ pub(in crate::ppu) struct WindowControl {
     sary: DffLatch,
     /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
     rejo: NorLatch,
+    /// REJO.q as PYCO's ROCO edge sees it: sampled before this fall's hclk/SARY→REJO update,
+    /// since ROCO precedes the late hclk edge within the PX==WX pixel.
+    rejo_at_roco: bool,
 }
 
 impl WindowControl {
@@ -54,6 +57,7 @@ impl WindowControl {
             window_line_counter: 0,
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
+            rejo_at_roco: false,
         }
     }
 
@@ -93,6 +97,7 @@ impl WindowControl {
         video: &VideoControl,
         talu_rising: bool,
     ) {
+        self.rejo_at_roco = self.rejo.output();
         if talu_rising {
             self.capture_sary(regs, video);
         }
@@ -115,7 +120,7 @@ impl WindowControl {
     }
 
     fn compute_nuko(&self, pixel_counter: u8) -> bool {
-        self.rejo.output() && pixel_counter == self.nuko_wx
+        self.rejo_at_roco && pixel_counter == self.nuko_wx
     }
 
     fn nuny(&self) -> bool {
