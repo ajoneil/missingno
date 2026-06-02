@@ -391,7 +391,7 @@ impl Ppu {
 
         if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
             && !vblank
-            && rendering.end_of_line_signal(sprites_enabled)
+            && (rendering.end_of_line_signal(sprites_enabled) || rendering.terminal_wodu_pulse())
         {
             legs |= InterruptFlags::HORIZONTAL_BLANK;
         }

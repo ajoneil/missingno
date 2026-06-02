@@ -143,6 +143,11 @@ pub struct Rendering {
     /// (LCDC.5 restore drops XOFO while NUNU=1); consumed on the following fall to hold
     /// the BG fetch counter at 0 via NYXU's reset pulse.
     pending_window_trigger: bool,
+    /// WODU early pulse: at the advance onto terminal PX the shallow XANO decode settles
+    /// before the deeper FEPO comparator, so WODU glitches high for the settling window.
+    /// One-shot — set at the advance fall, cleared on the next rise — so the fall SUKO eval
+    /// catches it but off-edge reads (the STAT-write glitch) see settled WODU.
+    terminal_wodu_pulse: bool,
 }
 
 impl Rendering {
@@ -163,6 +168,7 @@ impl Rendering {
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
             pending_window_trigger: false,
+            terminal_wodu_pulse: false,
         }
     }
 
@@ -183,6 +189,7 @@ impl Rendering {
             sprite_trigger: SpriteTrigger::new(),
             pany_slip_pending: false,
             pending_window_trigger: false,
+            terminal_wodu_pulse: false,
         }
     }
 
@@ -202,6 +209,12 @@ impl Rendering {
             self.pixel_counter.terminal(),
             self.fepo(sprites_enabled),
         )
+    }
+
+    /// Early WODU↑ pulse at the advance onto terminal PX (XANO settles before FEPO); ORed
+    /// into the Mode-0 STAT leg. One-shot, cleared on the next rise.
+    pub(super) fn terminal_wodu_pulse(&self) -> bool {
+        self.terminal_wodu_pulse
     }
 
     /// LCD-enable first line — no prior scanline boundary, so RUTU is suppressed.
@@ -362,6 +375,9 @@ impl Rendering {
         oam_bus: OamBusOwner,
         vram: &Vram,
     ) -> Option<PixelOutput> {
+        // Terminal WODU pulse is a fall-edge transient; clear it so rise / off-edge reads see settled WODU.
+        self.terminal_wodu_pulse = false;
+
         // REJO re-evaluates on every PPU rise (vblank↑ etc.); SARY captures only on TALU↑ (in fall).
         self.window.update_rejo_on_rise(video);
 
@@ -650,6 +666,9 @@ impl Rendering {
         advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
     ) -> Option<PixelOutput> {
+        // FEPO before the pixel advance, for the terminal WODU pulse (FEPO settles after XANO).
+        let pre_advance_fepo = self.fepo(regs.control.sprites_enabled());
+
         // TYFA snapshot from the prior rise; captures pre-MOSU RYDY so in-flight pre-window SACU fires on MOSU↑.
         let tyfa = self.tyfa;
         self.tyfa = false;
@@ -703,6 +722,10 @@ impl Rendering {
         let post_advance_fepo = self.fepo(regs.control.sprites_enabled());
         self.hblank
             .latch_end_of_line(self.pixel_counter.terminal(), post_advance_fepo);
+
+        // Early WODU pulse: the post-advance XANO terminal decode settles before the FEPO
+        // comparator, so an advance onto terminal PX pulses WODU before a terminal sprite's FEPO.
+        self.terminal_wodu_pulse = self.pixel_counter.terminal() && !pre_advance_fepo;
 
         let (_toba, pixel_out) =
             self.lcd
