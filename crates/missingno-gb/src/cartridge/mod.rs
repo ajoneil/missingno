@@ -87,6 +87,13 @@ impl Cartridge {
         self.sgb_flag
     }
 
+    /// CGB flag (header $0143): bit 7 set ($80 enhanced, $C0 CGB-only) marks a
+    /// CGB-aware cartridge. Any other value is a DMG cartridge, which the CGB
+    /// runs in DMG-compatibility mode.
+    pub fn is_cgb(&self) -> bool {
+        self.rom[0x143] & 0x80 != 0
+    }
+
     pub fn ram(&self) -> Option<Vec<u8>> {
         self.mbc.ram()
     }

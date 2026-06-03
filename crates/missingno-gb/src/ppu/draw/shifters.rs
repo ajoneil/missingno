@@ -1,26 +1,35 @@
 // 8-bit per-bitplane SACU-clocked shift registers; parallel-loaded by SEKO at tile boundaries.
 
 /// Two 8-bit BgwPipeA/BgwPipeB shifters; zero fills in from bit 0 on every SACU edge.
-pub(in crate::ppu) struct BgShifter {
+/// `cell` is the per-tile BG attribute (CGB) held across the tile's 8 pixels — the
+/// bitplanes shift, the cell does not. `()` on the DMG carries nothing.
+pub(in crate::ppu) struct BgShifter<C> {
     low: u8,
     high: u8,
+    cell: C,
 }
 
-impl BgShifter {
+impl<C: Copy + Default> BgShifter<C> {
     pub(in crate::ppu) fn new() -> Self {
-        Self { low: 0, high: 0 }
+        Self {
+            low: 0,
+            high: 0,
+            cell: C::default(),
+        }
     }
 
-    /// SEKO async parallel-load.
-    pub(in crate::ppu) fn load(&mut self, low: u8, high: u8) {
+    /// SEKO async parallel-load. The planes are loaded pre-flipped; the cell rides
+    /// the tile.
+    pub(in crate::ppu) fn load(&mut self, low: u8, high: u8, cell: C) {
         self.low = low;
         self.high = high;
+        self.cell = cell;
     }
 
-    pub(in crate::ppu) fn read(&self) -> (u8, u8) {
+    pub(in crate::ppu) fn read(&self) -> (u8, u8, C) {
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
-        (lo, hi)
+        (lo, hi, self.cell)
     }
 
     pub(in crate::ppu) fn shift(&mut self) {

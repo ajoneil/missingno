@@ -22,10 +22,13 @@ pub enum ColorRegister {
     ObjectData,
 }
 
-/// The BG/OBJ shifter outputs feeding the pixel mux on a given dot.
-pub struct PixelMux {
+/// The BG/OBJ shifter outputs feeding the pixel mux on a given dot. `bg_cell`
+/// is the per-tile BG data riding the shifter beyond the two bitplanes — `()`
+/// on the DMG, the BG map attribute on the CGB (palette / priority / bank).
+pub struct PixelMux<C> {
     pub bg_lo: u8,
     pub bg_hi: u8,
+    pub bg_cell: C,
     pub spr_lo: u8,
     pub spr_hi: u8,
     pub spr_pal: u8,
@@ -39,12 +42,33 @@ pub trait PpuModel: Default {
     /// This console's video RAM: DMG one bank, CGB two (VBK-banked).
     type Vram: Vram;
 
+    /// Per-tile BG data riding the shifter beyond the two bitplanes: `()` on the
+    /// DMG (the BG map has no attribute), the BG map attribute byte on the CGB.
+    type BgCell: Copy + Default;
+
     /// The framebuffer pixel this PPU emits — DMG a 2-bit shade index, CGB RGB555.
     type Pixel: Copy;
 
+    /// Read the BG map attribute for a tile-map cell. The CGB attribute lives in
+    /// VRAM bank 1 at the same offset as the bank-0 tile index. DMG: `()`.
+    fn bg_attribute(vram: &Self::Vram, map_offset: u16) -> Self::BgCell;
+
+    /// VRAM bank + fine-Y row for a BG tile-data read. The CGB applies the
+    /// attribute's bank-select (bit 3) and Y-flip (bit 6); DMG: bank 0, row as-is.
+    fn bg_tile_source(cell: Self::BgCell, fine_y: u8) -> (u8, u8);
+
+    /// X-flip the loaded BG bitplanes (CGB attribute bit 5); DMG: unchanged.
+    fn flip_bg_planes(cell: Self::BgCell, low: u8, high: u8) -> (u8, u8);
+
+    /// Post-boot cartridge configuration (HLE of the boot ROM's handoff state).
+    /// The CGB enters DMG-compatibility mode — installing the boot compat
+    /// palette into CRAM and routing the DMG palette registers through it — when
+    /// a DMG cartridge is inserted. DMG hardware: nothing to configure.
+    fn init_post_boot(&mut self, _cartridge_is_cgb: bool) {}
+
     /// Resolve the BG/OBJ mux to a final framebuffer pixel. Palette state and
     /// LCDC are read live from `regs`.
-    fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> Self::Pixel;
+    fn resolve(&self, mux: &PixelMux<Self::BgCell>, regs: &PipelineRegisters) -> Self::Pixel;
 
     /// The 2-bit shade a gbtrace pixel stream records for this pixel.
     fn trace_shade(pixel: Self::Pixel) -> u8;
@@ -62,7 +86,7 @@ pub trait PpuModel: Default {
 /// Shared BG/OBJ → shade mux: the BGP/OBP-mapped 2-bit colour. This is the value
 /// the DMG screen stores directly, and the index the CGB greyscale fallback maps
 /// while its colour pipeline is unbuilt. (XULA/WOXA → NULY → POKA priority.)
-pub fn resolve_shade(mux: &PixelMux, regs: &PipelineRegisters) -> u8 {
+pub fn resolve_shade<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> u8 {
     let bgp = regs.palettes.background_for_bg_resolve();
     let obp0 = regs.palettes.sprite0.output();
     let obp1 = regs.palettes.sprite1.output();
@@ -92,9 +116,20 @@ pub struct DmgPpu;
 
 impl PpuModel for DmgPpu {
     type Vram = VramBank;
+    type BgCell = ();
     type Pixel = PaletteIndex;
 
-    fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> PaletteIndex {
+    fn bg_attribute(_vram: &VramBank, _map_offset: u16) {}
+
+    fn bg_tile_source(_cell: (), fine_y: u8) -> (u8, u8) {
+        (0, fine_y)
+    }
+
+    fn flip_bg_planes(_cell: (), low: u8, high: u8) -> (u8, u8) {
+        (low, high)
+    }
+
+    fn resolve(&self, mux: &PixelMux<()>, regs: &PipelineRegisters) -> PaletteIndex {
         PaletteIndex(resolve_shade(mux, regs))
     }
 

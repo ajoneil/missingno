@@ -25,7 +25,8 @@
 pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
-use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel, resolve_shade};
+use missingno_gb::ppu::types::palette::{PaletteIndex, PaletteMap};
+use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -73,10 +74,52 @@ impl ColorRam {
         self.advance();
     }
 
+    /// The RGB555 colour for (palette 0-7, colour index 0-3): a little-endian
+    /// 2-byte entry at `(palette*4 + index)*2`. Bit 15 is unused.
+    fn color(&self, palette: u8, index: u8) -> Color555 {
+        let base = (palette as usize * 4 + index as usize) * 2;
+        let value = self.data[base] as u16 | ((self.data[base + 1] as u16) << 8);
+        Color555(value & 0x7FFF)
+    }
+
+    /// Write a 4-colour RGB555 palette into one of the 8 slots (the boot ROM
+    /// installs the DMG-compatibility palette this way).
+    fn install(&mut self, palette: usize, colours: [u16; 4]) {
+        for (index, &colour) in colours.iter().enumerate() {
+            let base = (palette * 4 + index) * 2;
+            self.data[base] = colour as u8;
+            self.data[base + 1] = (colour >> 8) as u8;
+        }
+    }
+
     fn advance(&mut self) {
         if self.auto_increment {
             self.index = (self.index + 1) & 0x3F;
         }
+    }
+}
+
+/// A CGB BG map attribute byte (VRAM bank 1, one per tile-map cell): bits 2-0
+/// BG palette, bit 3 tile VRAM bank, bit 5 X-flip, bit 6 Y-flip, bit 7 BG-to-OBJ
+/// priority (bit 4 unused). Rides the BG shifter across its tile's 8 pixels.
+#[derive(Copy, Clone, Default)]
+pub struct BgAttribute(pub u8);
+
+impl BgAttribute {
+    fn palette(self) -> u8 {
+        self.0 & 0x07
+    }
+
+    fn tile_bank(self) -> u8 {
+        (self.0 >> 3) & 0x01
+    }
+
+    fn flip_x(self) -> bool {
+        self.0 & 0x20 != 0
+    }
+
+    fn flip_y(self) -> bool {
+        self.0 & 0x40 != 0
     }
 }
 
@@ -115,21 +158,110 @@ impl Vram for CgbVram {
     }
 }
 
-/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the colour mux and
-/// BG attributes attach as they land. Until the colour pipeline exists it
-/// resolves the shared DMG shade through the greyscale palette.
+/// The CGB boot ROM's default DMG-compatibility palette for a cartridge whose
+/// title does not match the boot ROM table (palette combination 0): BG palette
+/// 29, and OBJ palettes 0 and 1 both = palette 4. Little-endian RGB555.
+pub const DMG_COMPAT_BG: [u16; 4] = [0x7FFF, 0x1BEF, 0x6180, 0x0000];
+pub const DMG_COMPAT_OBJ: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000];
+
+/// Reverse-map a DMG-compatibility framebuffer colour to its DMG shade index
+/// (0-3), for shade-pattern screenshot comparison. The compat palette is a
+/// bijection over the four shades (white→0, BG green / OBJ pink →1, BG blue /
+/// OBJ red →2, black→3), so the shade pattern is recoverable independent of the
+/// tint. `None` for any off-palette colour.
+pub fn dmg_compat_shade(color: Color555) -> Option<u8> {
+    DMG_COMPAT_BG
+        .iter()
+        .chain(DMG_COMPAT_OBJ.iter())
+        .position(|&c| Color555(c & 0x7FFF) == color)
+        .map(|i| (i % 4) as u8)
+}
+
+/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the BG layer now
+/// resolves through the BG attribute + BG palette RAM to RGB555. Objects still
+/// resolve through the shared DMG OBP shade until the OBJ colour pipeline lands.
+///
+/// `dmg_compat` marks a DMG cartridge running on the CGB: the boot palette is
+/// installed in CRAM and the DMG palette registers (BGP/OBP) index it.
 #[derive(Default)]
 pub struct CgbPpu {
     bg_cram: ColorRam,
     obj_cram: ColorRam,
+    dmg_compat: bool,
 }
 
 impl PpuModel for CgbPpu {
     type Vram = CgbVram;
+    type BgCell = BgAttribute;
     type Pixel = Color555;
 
-    fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> Color555 {
-        GREYSCALE[(resolve_shade(mux, regs) & 0x3) as usize]
+    fn bg_attribute(vram: &CgbVram, map_offset: u16) -> BgAttribute {
+        BgAttribute(vram.bank(1).read_byte(map_offset))
+    }
+
+    fn bg_tile_source(cell: BgAttribute, fine_y: u8) -> (u8, u8) {
+        let row = if cell.flip_y() { 7 - fine_y } else { fine_y };
+        (cell.tile_bank(), row)
+    }
+
+    fn flip_bg_planes(cell: BgAttribute, low: u8, high: u8) -> (u8, u8) {
+        if cell.flip_x() {
+            (low.reverse_bits(), high.reverse_bits())
+        } else {
+            (low, high)
+        }
+    }
+
+    fn init_post_boot(&mut self, cartridge_is_cgb: bool) {
+        if !cartridge_is_cgb {
+            self.dmg_compat = true;
+            self.bg_cram.install(0, DMG_COMPAT_BG);
+            self.obj_cram.install(0, DMG_COMPAT_OBJ);
+            self.obj_cram.install(1, DMG_COMPAT_OBJ);
+        }
+    }
+
+    fn resolve(&self, mux: &PixelMux<BgAttribute>, regs: &PipelineRegisters) -> Color555 {
+        if self.dmg_compat {
+            return self.resolve_dmg_compat(mux, regs);
+        }
+
+        let bg_index = (mux.bg_hi << 1) | mux.bg_lo;
+
+        // OBJ resolves through the DMG OBP shade until the OBJ colour pipeline
+        // (OBJ palette RAM, 3-bit palette, full BG-vs-OBJ priority) lands. The
+        // BG-blocks-OBJ test mirrors the shared XULA/WOXA → NULY priority.
+        if regs.sprites_enabled_for_resolve() {
+            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
+            let bg_blocks_obj = regs.bg_window_enabled_for_resolve() && bg_index != 0;
+            if spr_index != 0 && (mux.spr_pri == 0 || !bg_blocks_obj) {
+                let palette = if mux.spr_pal == 0 {
+                    regs.palettes.sprite0.output()
+                } else {
+                    regs.palettes.sprite1.output()
+                };
+                let shade = PaletteMap(palette).map(PaletteIndex(spr_index)).0;
+                return GREYSCALE[shade as usize];
+            }
+        }
+
+        // BG/Window in colour: the CGB always draws the BG from its palette RAM
+        // (LCDC.0 is BG/OBJ master priority, not a BG blank).
+        self.bg_cram.color(mux.bg_cell.palette(), bg_index)
+    }
+
+    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+        if self.dmg_compat {
+            return 0xFF; // CRAM is locked to the boot palette in DMG-compat mode.
+        }
+        self.read_cram_register(register, rendering)
+    }
+
+    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+        if self.dmg_compat {
+            return; // CRAM is locked to the boot palette in DMG-compat mode.
+        }
+        self.write_cram_register(register, value, rendering);
     }
 
     fn trace_shade(pixel: Color555) -> u8 {
@@ -138,8 +270,43 @@ impl PpuModel for CgbPpu {
             .position(|&grey| grey == pixel)
             .unwrap_or(0) as u8
     }
+}
 
-    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+impl CgbPpu {
+    /// DMG-compatibility resolve: DMG-style BG-vs-OBJ priority picks the winning
+    /// pixel, then its DMG shade (BGP/OBP-mapped) indexes the boot palette held
+    /// in CRAM — BG palette 0, OBJ palette OBP0/OBP1 slot.
+    fn resolve_dmg_compat(
+        &self,
+        mux: &PixelMux<BgAttribute>,
+        regs: &PipelineRegisters,
+    ) -> Color555 {
+        let bg_index = if regs.bg_window_enabled_for_resolve() {
+            (mux.bg_hi << 1) | mux.bg_lo
+        } else {
+            0
+        };
+
+        if regs.sprites_enabled_for_resolve() {
+            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
+            if spr_index != 0 && (mux.spr_pri == 0 || bg_index == 0) {
+                let obp = if mux.spr_pal == 0 {
+                    regs.palettes.sprite0.output()
+                } else {
+                    regs.palettes.sprite1.output()
+                };
+                let shade = PaletteMap(obp).map(PaletteIndex(spr_index)).0;
+                return self.obj_cram.color(mux.spr_pal, shade);
+            }
+        }
+
+        let shade = PaletteMap(regs.palettes.background_for_bg_resolve())
+            .map(PaletteIndex(bg_index))
+            .0;
+        self.bg_cram.color(0, shade)
+    }
+
+    fn read_cram_register(&self, register: ColorRegister, rendering: bool) -> u8 {
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.read_index(),
             ColorRegister::ObjectIndex => self.obj_cram.read_index(),
@@ -150,7 +317,7 @@ impl PpuModel for CgbPpu {
         }
     }
 
-    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+    fn write_cram_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.write_index(value),
             ColorRegister::ObjectIndex => self.obj_cram.write_index(value),

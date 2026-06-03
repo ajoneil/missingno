@@ -285,6 +285,8 @@ impl<M: Model> Console<M> {
             let logo: [u8; 0x30] =
                 std::array::from_fn(|i| self.external.cartridge.read(0x0104 + i as u16));
             self.vram_bus.vram.init_post_boot(&logo);
+            self.ppu
+                .init_model_post_boot(self.external.cartridge.is_cgb());
         }
 
         self.bus_trace = cpu_bus::BusTrace::new();

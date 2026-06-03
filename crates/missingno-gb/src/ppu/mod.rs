@@ -113,7 +113,7 @@ pub enum Register {
 
 pub struct Ppu<P: PpuModel> {
     /// `None` while LCD is off (VID_RST asserted).
-    pub(super) pixel_pipeline: Option<Rendering>,
+    pub(super) pixel_pipeline: Option<Rendering<P>>,
     pub registers: PipelineRegisters,
     pub video: VideoControl,
     pub oam: Oam,
@@ -343,6 +343,12 @@ impl<P: PpuModel> Ppu<P> {
             (true, false) => Mode::OamScan,
             (true, true) => Mode::Drawing,
         }
+    }
+
+    /// Configure the PPU model from the cartridge at post-boot (DMG-compat on
+    /// the CGB). DMG is a no-op.
+    pub fn init_model_post_boot(&mut self, cartridge_is_cgb: bool) {
+        self.model.init_post_boot(cartridge_is_cgb);
     }
 
     /// CPU read of a CGB colour-palette register; the model applies the mode-3
