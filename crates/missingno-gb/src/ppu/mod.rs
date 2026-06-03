@@ -113,7 +113,7 @@ pub enum Register {
 
 pub struct Ppu<P: PpuModel> {
     /// `None` while LCD is off (VID_RST asserted).
-    pub(super) pixel_pipeline: Option<Rendering>,
+    pub(super) pixel_pipeline: Option<Rendering<P>>,
     pub registers: PipelineRegisters,
     pub video: VideoControl,
     pub oam: Oam,

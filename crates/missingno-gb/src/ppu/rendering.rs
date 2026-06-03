@@ -5,7 +5,7 @@ use core::fmt;
 use crate::dma::OamBusOwner;
 use crate::ppu::{
     DrawnPixel, PipelineRegisters, PpuModel, VideoControl,
-    memory::{Oam, Vram, VramBank},
+    memory::{Oam, Vram},
     types::sprites::SpriteId,
 };
 
@@ -112,14 +112,14 @@ pub struct PipelineSnapshot {
     pub scan_done_prev: bool,
 }
 
-pub struct Rendering {
+pub struct Rendering<P: PpuModel> {
     /// FEPO → WODU → VOGA → WEGO → clears XYMU.
     hblank: HblankPipeline,
     /// Scan counter, BESU latch, BYBA/DOBA pipeline, sprite store.
     scan: SpriteScanner,
-    bg_shifter: BgShifter,
+    bg_shifter: BgShifter<P::BgCell>,
     obj_shifter: ObjShifter,
-    fetcher: TileFetcher,
+    fetcher: TileFetcher<P>,
     /// LYRY → NYKA → PORY → PYGO → POKY.
     cascade: FetchCascade,
     /// Fine-scroll counter + ROXY pixel-clock gate.
@@ -150,7 +150,7 @@ pub struct Rendering {
     terminal_wodu_pulse: bool,
 }
 
-impl Rendering {
+impl<P: PpuModel> Rendering<P> {
     pub(super) fn new() -> Self {
         Rendering {
             hblank: HblankPipeline::new(),
@@ -367,7 +367,7 @@ impl Rendering {
     }
 
     /// ALET rising: ALET-clocked DFFs capture (NYKA, PYGO, VOGA); XUPY-derived logic and combinational signals settle.
-    pub(super) fn on_ppu_clock_rise<P: PpuModel>(
+    pub(super) fn on_ppu_clock_rise(
         &mut self,
         model: &P,
         regs: &PipelineRegisters,
@@ -393,7 +393,7 @@ impl Rendering {
         let was_rendering = self.hblank.rendering_active();
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram.bank(0));
+            self.mode3_rising(regs, video, oam, oam_bus, vram);
             // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
             // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
@@ -436,7 +436,7 @@ impl Rendering {
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn on_ppu_clock_fall<P: PpuModel>(
+    pub(super) fn on_ppu_clock_fall(
         &mut self,
         model: &P,
         regs: &PipelineRegisters,
@@ -544,7 +544,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &VramBank,
+        vram: &P::Vram,
     ) {
         // SOBU's ALET-rising DFF capture wins the TEKY→SOBU race vs CUPA's transparent-latch path —
         // SOBU sees the pre-write LCDC.1 value, so FEPO here uses pre-CUPA sprites_enabled.
@@ -587,7 +587,7 @@ impl Rendering {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
-                    let done = sf.advance(regs, oam, oam_bus, vram);
+                    let done = sf.advance(regs, oam, oam_bus, vram.bank(0));
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
                         sf.merge_into(&mut self.obj_shifter);
@@ -663,7 +663,7 @@ impl Rendering {
 
     /// SACU/CLKPIPE domain (depth ~63.8 ge); runs against settled fetcher state.
     /// Handles TYFA consumption, PUXA/POVA, pixel shifts, SEKO tile reload, LCD output, NUKO window trigger.
-    fn mode3_pixel_pipeline<P: PpuModel>(
+    fn mode3_pixel_pipeline(
         &mut self,
         model: &P,
         regs: &PipelineRegisters,

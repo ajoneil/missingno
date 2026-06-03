@@ -25,7 +25,8 @@
 pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
-use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel, resolve_shade};
+use missingno_gb::ppu::types::palette::{PaletteIndex, PaletteMap};
+use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -73,10 +74,42 @@ impl ColorRam {
         self.advance();
     }
 
+    /// The RGB555 colour for (palette 0-7, colour index 0-3): a little-endian
+    /// 2-byte entry at `(palette*4 + index)*2`. Bit 15 is unused.
+    fn color(&self, palette: u8, index: u8) -> Color555 {
+        let base = (palette as usize * 4 + index as usize) * 2;
+        let value = self.data[base] as u16 | ((self.data[base + 1] as u16) << 8);
+        Color555(value & 0x7FFF)
+    }
+
     fn advance(&mut self) {
         if self.auto_increment {
             self.index = (self.index + 1) & 0x3F;
         }
+    }
+}
+
+/// A CGB BG map attribute byte (VRAM bank 1, one per tile-map cell): bits 2-0
+/// BG palette, bit 3 tile VRAM bank, bit 5 X-flip, bit 6 Y-flip, bit 7 BG-to-OBJ
+/// priority (bit 4 unused). Rides the BG shifter across its tile's 8 pixels.
+#[derive(Copy, Clone, Default)]
+pub struct BgAttribute(pub u8);
+
+impl BgAttribute {
+    fn palette(self) -> u8 {
+        self.0 & 0x07
+    }
+
+    fn tile_bank(self) -> u8 {
+        (self.0 >> 3) & 0x01
+    }
+
+    fn flip_x(self) -> bool {
+        self.0 & 0x20 != 0
+    }
+
+    fn flip_y(self) -> bool {
+        self.0 & 0x40 != 0
     }
 }
 
@@ -115,9 +148,9 @@ impl Vram for CgbVram {
     }
 }
 
-/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the colour mux and
-/// BG attributes attach as they land. Until the colour pipeline exists it
-/// resolves the shared DMG shade through the greyscale palette.
+/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the BG layer now
+/// resolves through the BG attribute + BG palette RAM to RGB555. Objects still
+/// resolve through the shared DMG OBP shade until the OBJ colour pipeline lands.
 #[derive(Default)]
 pub struct CgbPpu {
     bg_cram: ColorRam,
@@ -126,10 +159,49 @@ pub struct CgbPpu {
 
 impl PpuModel for CgbPpu {
     type Vram = CgbVram;
+    type BgCell = BgAttribute;
     type Pixel = Color555;
 
-    fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> Color555 {
-        GREYSCALE[(resolve_shade(mux, regs) & 0x3) as usize]
+    fn bg_attribute(vram: &CgbVram, map_offset: u16) -> BgAttribute {
+        BgAttribute(vram.bank(1).read_byte(map_offset))
+    }
+
+    fn bg_tile_source(cell: BgAttribute, fine_y: u8) -> (u8, u8) {
+        let row = if cell.flip_y() { 7 - fine_y } else { fine_y };
+        (cell.tile_bank(), row)
+    }
+
+    fn flip_bg_planes(cell: BgAttribute, low: u8, high: u8) -> (u8, u8) {
+        if cell.flip_x() {
+            (low.reverse_bits(), high.reverse_bits())
+        } else {
+            (low, high)
+        }
+    }
+
+    fn resolve(&self, mux: &PixelMux<BgAttribute>, regs: &PipelineRegisters) -> Color555 {
+        let bg_index = (mux.bg_hi << 1) | mux.bg_lo;
+
+        // OBJ resolves through the DMG OBP shade until the OBJ colour pipeline
+        // (OBJ palette RAM, 3-bit palette, full BG-vs-OBJ priority) lands. The
+        // BG-blocks-OBJ test mirrors the shared XULA/WOXA → NULY priority.
+        if regs.sprites_enabled_for_resolve() {
+            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
+            let bg_blocks_obj = regs.bg_window_enabled_for_resolve() && bg_index != 0;
+            if spr_index != 0 && (mux.spr_pri == 0 || !bg_blocks_obj) {
+                let palette = if mux.spr_pal == 0 {
+                    regs.palettes.sprite0.output()
+                } else {
+                    regs.palettes.sprite1.output()
+                };
+                let shade = PaletteMap(palette).map(PaletteIndex(spr_index)).0;
+                return GREYSCALE[shade as usize];
+            }
+        }
+
+        // BG/Window in colour: the CGB always draws the BG from its palette RAM
+        // (LCDC.0 is BG/OBJ master priority, not a BG blank).
+        self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 
     fn trace_shade(pixel: Color555) -> u8 {

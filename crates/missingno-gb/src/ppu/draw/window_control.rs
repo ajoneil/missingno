@@ -1,4 +1,4 @@
-use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, VideoControl};
+use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
 
 use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
@@ -141,9 +141,9 @@ impl WindowControl {
 
     /// PPU rise: NOPA captures prior-fall PYNU; PYNU re-evaluates; MOSU↑ fires if NUNY rises.
     /// Catches the deferred-completion case (LCDC.5 restore drops XOFO while NUNU=1 from prior fall).
-    pub(in crate::ppu) fn tick_rising(
+    pub(in crate::ppu) fn tick_rising<P: PpuModel>(
         &mut self,
-        fetcher: &mut TileFetcher,
+        fetcher: &mut TileFetcher<P>,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         regs: &PipelineRegisters,
@@ -157,9 +157,9 @@ impl WindowControl {
 
     /// PPU fall: PYCO and NUNU both capture on this edge (ROCO and MEHE are both NOT(ALET)-phase).
     /// NUNU captures the just-written PYCO value.
-    pub(in crate::ppu) fn tick_falling(
+    pub(in crate::ppu) fn tick_falling<P: PpuModel>(
         &mut self,
-        fetcher: &mut TileFetcher,
+        fetcher: &mut TileFetcher<P>,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
         pixel_counter: u8,
@@ -183,10 +183,10 @@ impl WindowControl {
     }
 
     /// PYNU/NUNY/MOSU update. Runs on every edge since PYNU is combinational on NUNU/XOFO.
-    fn update_pynu_and_check_mosu(
+    fn update_pynu_and_check_mosu<P: PpuModel>(
         &mut self,
         regs: &PipelineRegisters,
-        fetcher: &mut TileFetcher,
+        fetcher: &mut TileFetcher<P>,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
     ) -> bool {

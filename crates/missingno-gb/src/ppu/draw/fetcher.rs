@@ -1,15 +1,18 @@
-use crate::ppu::{PipelineRegisters, VideoControl, memory::VramBank};
+use crate::ppu::{PipelineRegisters, PpuModel, VideoControl, memory::Vram};
 
 use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
 
-pub(in crate::ppu) struct TileFetcher {
+pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     /// LAXU/MESU/NYVA 3-bit ripple counter (0-5). Clocked by LEBO on PPU rise; saturates at 5 (MOCE freezes LEBO).
     /// VRAM reads happen on the PPU fall at counter 0/2/4. Reset by TAVE (pipe load) or window trigger.
     pub(in crate::ppu) fetch_counter: u8,
     /// win_x.map: increments per window tile fetched.
     pub(in crate::ppu) window_tile_x: u8,
     tile_index: u8,
+    /// The BG map attribute fetched alongside the tile index at counter 0; held
+    /// through the cycle so the data reads and the shifter load see one cell.
+    bg_cell: P::BgCell,
     tile_data_low: u8,
     tile_data_high: u8,
     /// Resampled from PYNU at counter=0 and held through the cycle so all VRAM accesses see the same selection.
@@ -28,7 +31,7 @@ fn tile_data_offset(block_id: TileBlockId, mapped_idx: TileIndex, fine_y: u8, hi
     base + mapped_idx.0 as u16 * 16 + fine_y as u16 * 2 + high as u16
 }
 
-impl TileFetcher {
+impl<P: PpuModel> TileFetcher<P> {
     /// LYRY = NOT(MOCE) = counter >= 5 (combinational). True when the BG tile fetch is ready
     /// to load into the shifter on the next NYXU.
     pub(in crate::ppu) fn bg_fetch_done(&self) -> bool {
@@ -48,6 +51,7 @@ impl TileFetcher {
             fetch_counter: 0,
             window_tile_x: 0,
             tile_index: 0,
+            bg_cell: P::BgCell::default(),
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -60,6 +64,7 @@ impl TileFetcher {
             fetch_counter: 5,
             window_tile_x: 0,
             tile_index: 0,
+            bg_cell: P::BgCell::default(),
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -72,6 +77,7 @@ impl TileFetcher {
         self.fetch_counter = 0;
         self.window_tile_x = 0;
         self.tile_index = 0;
+        self.bg_cell = P::BgCell::default();
         self.fetching_window = false;
         self.vram_address = 0;
     }
@@ -134,22 +140,24 @@ impl TileFetcher {
         window_line_counter % 8
     }
 
-    /// Reads LCDC.4 (TILE_SEL) live each fetch.
+    /// Reads LCDC.4 (TILE_SEL) live each fetch. Returns the VRAM bank (the CGB
+    /// attribute may redirect the tile data to bank 1) and the byte offset.
     fn tile_data_address(
         &self,
         window_line_counter: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
         high: bool,
-    ) -> u16 {
+    ) -> (u8, u16) {
         let tile_index = TileIndex(self.tile_index);
         let (block_id, mapped_idx) = regs.control.tile_address_mode().tile(tile_index);
-        let fine_y = if self.fetching_window {
+        let raw_fine_y = if self.fetching_window {
             Self::window_fine_y(window_line_counter)
         } else {
             Self::bg_fine_y(regs, video)
         };
-        tile_data_offset(block_id, mapped_idx, fine_y, high)
+        let (bank, fine_y) = P::bg_tile_source(self.bg_cell, raw_fine_y);
+        (bank, tile_data_offset(block_id, mapped_idx, fine_y, high))
     }
 
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
@@ -161,7 +169,7 @@ impl TileFetcher {
         window_mode_active: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        vram: &VramBank,
+        vram: &P::Vram,
     ) {
         match self.fetch_counter {
             0 => {
@@ -174,15 +182,22 @@ impl TileFetcher {
                     regs,
                     video,
                 );
-                self.tile_index = vram.read_byte(self.vram_address);
+                // CGB reads the tile index (bank 0) and the map attribute (bank 1)
+                // at the same offset on the same dot.
+                self.tile_index = vram.bank(0).read_byte(self.vram_address);
+                self.bg_cell = P::bg_attribute(vram, self.vram_address);
             }
             2 => {
-                self.vram_address = self.tile_data_address(window_line_counter, regs, video, false);
-                self.tile_data_low = vram.read_byte(self.vram_address);
+                let (bank, address) =
+                    self.tile_data_address(window_line_counter, regs, video, false);
+                self.vram_address = address;
+                self.tile_data_low = vram.bank(bank).read_byte(address);
             }
             4 => {
-                self.vram_address = self.tile_data_address(window_line_counter, regs, video, true);
-                self.tile_data_high = vram.read_byte(self.vram_address);
+                let (bank, address) =
+                    self.tile_data_address(window_line_counter, regs, video, true);
+                self.vram_address = address;
+                self.tile_data_high = vram.bank(bank).read_byte(address);
             }
             _ => {}
         }
@@ -195,9 +210,11 @@ impl TileFetcher {
         }
     }
 
-    /// NYXU pipe load — bg shifter parallel-load + counter reset.
-    pub(in crate::ppu) fn load_into(&mut self, bg_shifter: &mut BgShifter) {
-        bg_shifter.load(self.tile_data_low, self.tile_data_high);
+    /// NYXU pipe load — bg shifter parallel-load + counter reset. The model
+    /// applies the CGB X-flip before the planes enter the shifter.
+    pub(in crate::ppu) fn load_into(&mut self, bg_shifter: &mut BgShifter<P::BgCell>) {
+        let (low, high) = P::flip_bg_planes(self.bg_cell, self.tile_data_low, self.tile_data_high);
+        bg_shifter.load(low, high, self.bg_cell);
         if self.fetching_window {
             self.window_tile_x = self.window_tile_x.wrapping_add(1);
         }
