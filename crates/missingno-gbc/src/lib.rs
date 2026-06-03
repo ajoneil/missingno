@@ -25,9 +25,10 @@
 pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
-use missingno_gb::ppu::types::palette::{PaletteIndex, PaletteMap};
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
-use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, Ppu, PpuModel};
+use missingno_gb::ppu::{
+    ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel, resolve_dmg_pixel,
+};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -402,10 +403,14 @@ impl PpuModel for CgbPpu {
     }
 
     fn trace_shade(pixel: Color555) -> u8 {
+        // Greyscale fallback, then the DMG-compat boot palette (matching
+        // `Screen::to_greyscale_bytes`); full-CGB colours have no 2-bit shade.
         GREYSCALE
             .iter()
             .position(|&grey| grey == pixel)
-            .unwrap_or(0) as u8
+            .map(|i| i as u8)
+            .or_else(|| dmg_compat_shade(pixel))
+            .unwrap_or(0)
     }
 }
 
@@ -418,29 +423,12 @@ impl CgbPpu {
         mux: &PixelMux<BgAttribute>,
         regs: &PipelineRegisters,
     ) -> Color555 {
-        let bg_index = if regs.bg_window_enabled_for_resolve() {
-            (mux.bg_hi << 1) | mux.bg_lo
-        } else {
-            0
-        };
-
-        if regs.sprites_enabled_for_resolve() {
-            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
-            if spr_index != 0 && (mux.spr_pri == 0 || bg_index == 0) {
-                let obp = if mux.spr_pal == 0 {
-                    regs.palettes.sprite0.output()
-                } else {
-                    regs.palettes.sprite1.output()
-                };
-                let shade = PaletteMap(obp).map(PaletteIndex(spr_index)).0;
-                return self.obj_cram.color(mux.spr_pal, shade);
-            }
+        // The DMG resolve picks the layer + shade; DMG-compat indexes that layer's
+        // boot palette in CRAM (OBJ palette = OBP0/OBP1 slot).
+        match resolve_dmg_pixel(mux, regs) {
+            DmgPixel::Object { palette, shade } => self.obj_cram.color(palette, shade),
+            DmgPixel::Background { shade } => self.bg_cram.color(0, shade),
         }
-
-        let shade = PaletteMap(regs.palettes.background_for_bg_resolve())
-            .map(PaletteIndex(bg_index))
-            .0;
-        self.bg_cram.color(0, shade)
     }
 
     fn read_cram_register(&self, register: ColorRegister, rendering: bool) -> u8 {

@@ -127,31 +127,50 @@ pub trait PpuModel: Default {
     fn write_color_register(&mut self, _reg: ColorRegister, _value: u8, _rendering: bool) {}
 }
 
-/// Shared BG/OBJ → shade mux: the BGP/OBP-mapped 2-bit colour. This is the value
-/// the DMG screen stores directly, and the index the CGB greyscale fallback maps
-/// while its colour pipeline is unbuilt. (XULA/WOXA → NULY → POKA priority.)
-pub fn resolve_shade<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> u8 {
-    let bgp = regs.palettes.background_for_bg_resolve();
-    let obp0 = regs.palettes.sprite0.output();
-    let obp1 = regs.palettes.sprite1.output();
-    let bg_window_enabled = regs.bg_window_enabled_for_resolve();
-    let sprites_enabled = regs.sprites_enabled_for_resolve();
+/// Which layer wins the shared DMG BG-vs-OBJ resolve, carrying its BGP/OBP-mapped
+/// 2-bit shade. The DMG screen stores `shade` directly; the CGB DMG-compatibility
+/// path indexes the winning layer's CRAM palette by it (OBJ uses `palette` as the
+/// OBP0/OBP1 slot). (XULA/WOXA → NULY → POKA priority.)
+pub enum DmgPixel {
+    Background { shade: u8 },
+    Object { palette: u8, shade: u8 },
+}
 
-    let bg_color = if bg_window_enabled {
+/// Shared DMG pixel resolve: BG-vs-OBJ priority + the BGP/OBP shade map.
+pub fn resolve_dmg_pixel<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> DmgPixel {
+    let bg_color = if regs.bg_window_enabled_for_resolve() {
         (mux.bg_hi << 1) | mux.bg_lo
     } else {
         0
     };
 
-    if sprites_enabled {
+    if regs.sprites_enabled_for_resolve() {
         let spr_color = (mux.spr_hi << 1) | mux.spr_lo;
         if spr_color != 0 && (mux.spr_pri == 0 || bg_color == 0) {
-            let palette = if mux.spr_pal == 0 { obp0 } else { obp1 };
-            return PaletteMap(palette).map(PaletteIndex(spr_color)).0;
+            let obp = if mux.spr_pal == 0 {
+                regs.palettes.sprite0.output()
+            } else {
+                regs.palettes.sprite1.output()
+            };
+            return DmgPixel::Object {
+                palette: mux.spr_pal,
+                shade: PaletteMap(obp).map(PaletteIndex(spr_color)).0,
+            };
         }
     }
 
-    PaletteMap(bgp).map(PaletteIndex(bg_color)).0
+    DmgPixel::Background {
+        shade: PaletteMap(regs.palettes.background_for_bg_resolve())
+            .map(PaletteIndex(bg_color))
+            .0,
+    }
+}
+
+/// The DMG screen's 2-bit shade for this mux (the winning layer's mapped colour).
+pub fn resolve_shade<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> u8 {
+    match resolve_dmg_pixel(mux, regs) {
+        DmgPixel::Background { shade } | DmgPixel::Object { shade, .. } => shade,
+    }
 }
 
 /// The original Game Boy PPU: a 2-bit shade per pixel, no colour memory.

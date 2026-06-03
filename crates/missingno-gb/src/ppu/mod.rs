@@ -11,7 +11,7 @@ use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
-pub use model::{ColorRegister, PixelMux, PpuModel, resolve_shade};
+pub use model::{ColorRegister, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade};
 pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
