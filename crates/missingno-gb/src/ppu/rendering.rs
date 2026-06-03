@@ -14,7 +14,7 @@ use super::draw::hblank_pipeline::HblankPipeline;
 use super::draw::lcd_control::LcdControl;
 use super::draw::pixel_counter::PixelCounter;
 use super::draw::pixel_output;
-use super::draw::shifters::{BgShifter, ObjShifter};
+use super::draw::shifters::BgShifter;
 use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
 use super::draw::sprite_trigger::SpriteTrigger;
 use super::draw::window_control::WindowControl;
@@ -116,7 +116,7 @@ pub struct Rendering<P: PpuModel> {
     /// Scan counter, BESU latch, BYBA/DOBA pipeline, sprite store.
     scan: SpriteScanner,
     bg_shifter: BgShifter<P::BgCell>,
-    obj_shifter: ObjShifter,
+    obj_fifo: P::ObjFifo,
     fetcher: TileFetcher<P>,
     /// LYRY → NYKA → PORY → PYGO → POKY.
     cascade: FetchCascade,
@@ -154,7 +154,7 @@ impl<P: PpuModel> Rendering<P> {
             hblank: HblankPipeline::new(),
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
-            obj_shifter: ObjShifter::new(),
+            obj_fifo: P::ObjFifo::default(),
             fetcher: TileFetcher::new(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
@@ -175,7 +175,7 @@ impl<P: PpuModel> Rendering<P> {
             hblank: HblankPipeline::post_boot(),
             scan: SpriteScanner::post_boot(),
             bg_shifter: BgShifter::new(),
-            obj_shifter: ObjShifter::new(),
+            obj_fifo: P::ObjFifo::default(),
             fetcher: TileFetcher::post_boot(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
@@ -277,7 +277,7 @@ impl<P: PpuModel> Rendering<P> {
         }
 
         let (bg_low, bg_high) = self.bg_shifter.registers();
-        let (obj_low, obj_high, obj_palette, _obj_priority) = self.obj_shifter.registers();
+        let (obj_low, obj_high, obj_palette, _obj_priority) = P::obj_trace(&self.obj_fifo);
 
         let sfetch_state = match &self.sprite_state {
             SpriteState::Fetching(sf) => sf.fetch_counter(),
@@ -312,7 +312,7 @@ impl<P: PpuModel> Rendering<P> {
         regs: &PipelineRegisters,
     ) -> PipelineSnapshot {
         let (bg_low, bg_high) = self.bg_shifter.registers();
-        let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
+        let (obj_low, obj_high, obj_palette, obj_priority) = P::obj_trace(&self.obj_fifo);
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
             SpriteState::Fetching(sf) => {
                 (Some(SpriteFetchPhase::FetchingData), Some(sf.tile_data()))
@@ -403,7 +403,7 @@ impl<P: PpuModel> Rendering<P> {
         // `end_of_line` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
         let end_of_line = self.hblank.commit_end_of_line_on_rise();
 
-        let mux = pixel_output::current_mux(&self.bg_shifter, &self.obj_shifter);
+        let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
         let post_shift_pixel = model.resolve(&mux, regs);
         let pixel = self.lcd.on_ppu_clock_rise(
             self.hblank.end_of_line_latched(),
@@ -513,7 +513,7 @@ impl<P: PpuModel> Rendering<P> {
         self.scan.reset();
         self.scan.arm_scan_capture();
         self.bg_shifter = BgShifter::new();
-        self.obj_shifter = ObjShifter::new();
+        self.obj_fifo = P::ObjFifo::default();
         self.fetcher.reset_scanline();
         self.cascade.reset();
         self.fine_scroll = FineScroll::new();
@@ -589,7 +589,7 @@ impl<P: PpuModel> Rendering<P> {
                     let done = sf.advance::<P>(regs, oam, oam_bus, vram);
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
-                        sf.merge_into(model, &mut self.obj_shifter);
+                        sf.merge_into(model, &mut self.obj_fifo);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
@@ -707,7 +707,7 @@ impl<P: PpuModel> Rendering<P> {
 
         let nyxu_pulse = seko_fire || advance_nyxu_pulse;
 
-        let mux = pixel_output::current_mux(&self.bg_shifter, &self.obj_shifter);
+        let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
         let pixel = model.resolve(&mux, regs);
 
         if seko_fire {
@@ -719,7 +719,7 @@ impl<P: PpuModel> Rendering<P> {
             if !nyxu_pulse {
                 self.bg_shifter.shift();
             }
-            self.obj_shifter.shift();
+            P::obj_shift(&mut self.obj_fifo);
             self.pixel_counter.advance();
         }
 

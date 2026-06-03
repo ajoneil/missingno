@@ -219,10 +219,6 @@ pub enum MappedAddress {
     PpuRegister(ppu::Register),
     BeginDmaTransfer,
     BootRomUnmap,
-    /// VBK ($FF4F): VRAM bank select. CGB-only — DMG VRAM has no bank, reads 0xFF.
-    VramBankSelect,
-    /// CGB colour-palette registers BCPS/BCPD/OCPS/OCPD ($FF68–$FF6B).
-    ColorPaletteRegister(ppu::ColorRegister),
     Unmapped,
 }
 
@@ -271,15 +267,11 @@ impl MappedAddress {
             0xff49 => Self::PpuRegister(ppu::Register::Sprite1Palette),
             0xff4a => Self::PpuRegister(ppu::Register::WindowY),
             0xff4b => Self::PpuRegister(ppu::Register::WindowX),
-            0xff4c..=0xff4e => Self::Unmapped,
-            0xff4f => Self::VramBankSelect,
+            // $FF4F (VBK), $FF68-6B (CRAM), $FF6C (OPRI) are CGB registers — the
+            // CGB model map resolves them; the DMG base map leaves them unmapped.
+            0xff4c..=0xff4f => Self::Unmapped,
             0xff50 => Self::BootRomUnmap,
-            0xff51..=0xff67 => Self::Unmapped,
-            0xff68 => Self::ColorPaletteRegister(ppu::ColorRegister::BackgroundIndex),
-            0xff69 => Self::ColorPaletteRegister(ppu::ColorRegister::BackgroundData),
-            0xff6a => Self::ColorPaletteRegister(ppu::ColorRegister::ObjectIndex),
-            0xff6b => Self::ColorPaletteRegister(ppu::ColorRegister::ObjectData),
-            0xff6c..=0xff7f => Self::Unmapped,
+            0xff51..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
         }
@@ -317,7 +309,7 @@ impl<M: Model> Console<M> {
     /// model's CGB registers) first, then the shared `MappedAddress` map.
     /// The single chokepoint for the model-before-shared-map contract.
     fn read_addr(&self, address: u16) -> u8 {
-        if let Some(value) = self.model.map_read(address) {
+        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
             return value;
         }
         self.read_mapped(MappedAddress::map(address))
@@ -385,7 +377,7 @@ impl<M: Model> Console<M> {
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {
-        if let Some(value) = self.model.map_read(address) {
+        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
             return value;
         }
         let mapped = match Bus::of(address) {
@@ -457,8 +449,6 @@ impl<M: Model> Console<M> {
                     0xFF
                 }
             }
-            MappedAddress::VramBankSelect => self.vram_bus.vram.read_bank_select(),
-            MappedAddress::ColorPaletteRegister(register) => self.ppu.read_color_register(register),
             MappedAddress::OamExtra => 0x00,
             MappedAddress::Unmapped => 0xFF,
         }
@@ -537,7 +527,10 @@ impl<M: Model> Console<M> {
         // regardless of whether the target device stores it.
         self.drive_bus(address, value);
 
-        if self.model.map_write(address, value) {
+        if self
+            .model
+            .map_write(address, value, &mut self.ppu, &mut self.vram_bus.vram)
+        {
             return;
         }
 
@@ -606,10 +599,6 @@ impl<M: Model> Console<M> {
                 }
             },
 
-            MappedAddress::VramBankSelect => self.vram_bus.vram.write_bank_select(value),
-            MappedAddress::ColorPaletteRegister(register) => {
-                self.ppu.write_color_register(register, value)
-            }
             MappedAddress::OamExtra => {}
             MappedAddress::Unmapped => {}
         }

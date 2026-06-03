@@ -106,12 +106,25 @@ pub trait Model: Default {
 
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
-    /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI (and, later, banked
-    /// WRAM/VRAM resolution). Consulted before the shared `MappedAddress` map.
-    fn map_read(&self, _address: u16) -> Option<u8> {
+    /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI, and banked WRAM. Consulted
+    /// before the shared `MappedAddress` map. The PPU and VRAM are passed so the
+    /// map can resolve its registers that those generic components back (VBK on
+    /// VRAM; CRAM/OPRI on the PPU) — keeping their addresses out of the shared map.
+    fn map_read(
+        &self,
+        _address: u16,
+        _ppu: &Ppu<Self::Ppu>,
+        _vram: &<Self::Ppu as PpuModel>::Vram,
+    ) -> Option<u8> {
         None
     }
-    fn map_write(&mut self, _address: u16, _value: u8) -> bool {
+    fn map_write(
+        &mut self,
+        _address: u16,
+        _value: u8,
+        _ppu: &mut Ppu<Self::Ppu>,
+        _vram: &mut <Self::Ppu as PpuModel>::Vram,
+    ) -> bool {
         false
     }
 }

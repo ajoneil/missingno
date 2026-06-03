@@ -351,6 +351,15 @@ impl<P: PpuModel> Ppu<P> {
         self.model.init_post_boot(cartridge_is_cgb);
     }
 
+    /// CPU read/write of OPRI ($FF6C). DMG has no such register (reads 0xFF).
+    pub fn read_object_priority(&self) -> u8 {
+        self.model.object_priority_register()
+    }
+
+    pub fn write_object_priority(&mut self, value: u8) {
+        self.model.set_object_priority_register(value);
+    }
+
     /// CPU read of a CGB colour-palette register; the model applies the mode-3
     /// data-port lock from the PPU's current mode.
     pub fn read_color_register(&self, register: ColorRegister) -> u8 {

@@ -27,7 +27,7 @@ pub mod screen;
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::types::palette::{PaletteIndex, PaletteMap};
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
-use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel};
+use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, Ppu, PpuModel};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -183,17 +183,93 @@ pub fn dmg_compat_shade(color: Color555) -> Option<u8> {
         .map(|i| (i % 4) as u8)
 }
 
-/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the BG layer now
-/// resolves through the BG attribute + BG palette RAM to RGB555. Objects still
-/// resolve through the shared DMG OBP shade until the OBJ colour pipeline lands.
+/// The CGB object FIFO: colour planes, a 3-bit palette (OBP0-7), priority, and a
+/// per-pixel source slot (the OAM-scan store index = OAM-priority rank). When OPRI
+/// selects CGB priority, a lower-slot object's pixel overwrites a higher one;
+/// otherwise stages fill only when transparent (DMG fetch-order).
+#[derive(Default)]
+pub struct CgbObjShifter {
+    low: u8,
+    high: u8,
+    palette: [u8; 3],
+    priority: u8,
+    slot: [u8; 8],
+}
+
+impl CgbObjShifter {
+    fn shift(&mut self) {
+        self.low <<= 1;
+        self.high <<= 1;
+        for plane in &mut self.palette {
+            *plane <<= 1;
+        }
+        self.priority <<= 1;
+        self.slot.copy_within(0..7, 1);
+        self.slot[0] = 0;
+    }
+
+    fn pixel(&self) -> (u8, u8, u8, u8) {
+        let lo = (self.low >> 7) & 1;
+        let hi = (self.high >> 7) & 1;
+        let pal = (0..3).fold(0, |acc, p| acc | (((self.palette[p] >> 7) & 1) << p));
+        let pri = (self.priority >> 7) & 1;
+        (lo, hi, pal, pri)
+    }
+
+    fn registers(&self) -> (u8, u8, u8, u8) {
+        (self.low, self.high, self.palette[0], self.priority)
+    }
+
+    fn merge(
+        &mut self,
+        low: u8,
+        high: u8,
+        palette: u8,
+        priority_bit: u8,
+        slot: u8,
+        by_index: bool,
+    ) {
+        for bit_pos in 0..8u8 {
+            let lo = (low >> bit_pos) & 1;
+            let hi = (high >> bit_pos) & 1;
+            let color = (hi << 1) | lo;
+            if color == 0 {
+                continue;
+            }
+
+            let existing_lo = (self.low >> bit_pos) & 1;
+            let existing_hi = (self.high >> bit_pos) & 1;
+            let existing_color = (existing_hi << 1) | existing_lo;
+            let pos = bit_pos as usize;
+            if existing_color != 0 && !(by_index && slot < self.slot[pos]) {
+                continue;
+            }
+
+            let mask = 1 << bit_pos;
+            self.low = (self.low & !mask) | (lo << bit_pos);
+            self.high = (self.high & !mask) | (hi << bit_pos);
+            for (p, plane) in self.palette.iter_mut().enumerate() {
+                *plane = (*plane & !mask) | (((palette >> p) & 1) << bit_pos);
+            }
+            self.priority = (self.priority & !mask) | (priority_bit << bit_pos);
+            self.slot[pos] = slot;
+        }
+    }
+}
+
+/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM and the object FIFO;
+/// the BG layer resolves through the BG attribute + BG palette RAM to RGB555 and
+/// objects through OBJ palette RAM.
 ///
 /// `dmg_compat` marks a DMG cartridge running on the CGB: the boot palette is
-/// installed in CRAM and the DMG palette registers (BGP/OBP) index it.
+/// installed in CRAM and the DMG palette registers (BGP/OBP) index it. `opri`
+/// is OPRI ($FF6C): false = CGB object priority (by OAM index), true = DMG (by X).
 #[derive(Default)]
 pub struct CgbPpu {
     bg_cram: ColorRam,
     obj_cram: ColorRam,
     dmg_compat: bool,
+    opri: bool,
 }
 
 impl PpuModel for CgbPpu {
@@ -218,9 +294,46 @@ impl PpuModel for CgbPpu {
         }
     }
 
+    type ObjFifo = CgbObjShifter;
+
+    fn obj_shift(fifo: &mut CgbObjShifter) {
+        fifo.shift();
+    }
+
+    fn obj_merge(&self, fifo: &mut CgbObjShifter, low: u8, high: u8, attr: ObjAttr, slot: u8) {
+        // CGB object priority (OPRI=0) resolves overlaps by OAM index; DMG-style
+        // (OPRI=1, and DMG-compat) resolves by fetch order.
+        fifo.merge(
+            low,
+            high,
+            attr.palette,
+            attr.priority as u8,
+            slot,
+            !self.opri,
+        );
+    }
+
+    fn obj_pixel(fifo: &CgbObjShifter) -> (u8, u8, u8, u8) {
+        fifo.pixel()
+    }
+
+    fn obj_trace(fifo: &CgbObjShifter) -> (u8, u8, u8, u8) {
+        fifo.registers()
+    }
+
+    fn object_priority_register(&self) -> u8 {
+        0xFE | self.opri as u8
+    }
+
+    fn set_object_priority_register(&mut self, value: u8) {
+        self.opri = value & 0x01 != 0;
+    }
+
     fn init_post_boot(&mut self, cartridge_is_cgb: bool) {
         if !cartridge_is_cgb {
             self.dmg_compat = true;
+            // The boot ROM selects DMG object priority (OPRI=1) for a DMG cart.
+            self.opri = true;
             self.bg_cram.install(0, DMG_COMPAT_BG);
             self.obj_cram.install(0, DMG_COMPAT_OBJ);
             self.obj_cram.install(1, DMG_COMPAT_OBJ);
@@ -362,9 +475,6 @@ pub struct Cgb {
     /// KEY1 ($FF4D) bit 7 — current speed (false = normal, true = double).
     /// The switch toggles it; the 2× clock cadence itself lands later.
     double_speed: bool,
-    /// OPRI ($FF6C) bit 0 — object priority mode (0 = by OAM index). The
-    /// priority effect lands with the color PPU.
-    opri: bool,
 }
 
 impl Default for Cgb {
@@ -374,7 +484,6 @@ impl Default for Cgb {
             svbk: 1,
             key1_armed: false,
             double_speed: false,
-            opri: false,
         }
     }
 }
@@ -420,20 +529,31 @@ impl Model for Cgb {
         *self = Self::default();
     }
 
-    fn map_read(&self, address: u16) -> Option<u8> {
+    fn map_read(&self, address: u16, ppu: &Ppu<CgbPpu>, vram: &CgbVram) -> Option<u8> {
         if let Some(i) = self.wram_index(address) {
             return Some(self.wram[i]);
         }
         match address {
             0xFF4C => Some(0xFF), // KEY0: boot-locked
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
-            0xFF6C => Some(0xFE | self.opri as u8), // OPRI: bit0
+            0xFF4F => Some(vram.read_bank_select()), // VBK
+            0xFF68 => Some(ppu.read_color_register(ColorRegister::BackgroundIndex)), // BCPS
+            0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)), // BCPD
+            0xFF6A => Some(ppu.read_color_register(ColorRegister::ObjectIndex)), // OCPS
+            0xFF6B => Some(ppu.read_color_register(ColorRegister::ObjectData)), // OCPD
+            0xFF6C => Some(ppu.read_object_priority()), // OPRI
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             _ => None,
         }
     }
 
-    fn map_write(&mut self, address: u16, value: u8) -> bool {
+    fn map_write(
+        &mut self,
+        address: u16,
+        value: u8,
+        ppu: &mut Ppu<CgbPpu>,
+        vram: &mut CgbVram,
+    ) -> bool {
         if let Some(i) = self.wram_index(address) {
             self.wram[i] = value;
             return true;
@@ -444,8 +564,28 @@ impl Model for Cgb {
                 self.key1_armed = value & 0x01 != 0;
                 true
             }
+            0xFF4F => {
+                vram.write_bank_select(value); // VBK
+                true
+            }
+            0xFF68 => {
+                ppu.write_color_register(ColorRegister::BackgroundIndex, value); // BCPS
+                true
+            }
+            0xFF69 => {
+                ppu.write_color_register(ColorRegister::BackgroundData, value); // BCPD
+                true
+            }
+            0xFF6A => {
+                ppu.write_color_register(ColorRegister::ObjectIndex, value); // OCPS
+                true
+            }
+            0xFF6B => {
+                ppu.write_color_register(ColorRegister::ObjectData, value); // OCPD
+                true
+            }
             0xFF6C => {
-                self.opri = value & 0x01 != 0;
+                ppu.write_object_priority(value); // OPRI
                 true
             }
             0xFF70 => {

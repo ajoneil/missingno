@@ -7,7 +7,6 @@ use crate::ppu::{
 use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::super::types::sprites::{self, SpriteId, SpriteSize};
 use super::super::types::tiles::{TileAddressMode, TileIndex};
-use super::shifters::ObjShifter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteFetchPhase {
@@ -138,9 +137,10 @@ impl SpriteFetch {
         false
     }
 
-    /// Merge fetched bytes into ObjShifter via sprite_onN transparency gating; X-flip reverses bits.
-    /// The model extracts the per-pixel palette (DMG OBP-select / CGB OBP0-7).
-    pub(in crate::ppu) fn merge_into<P: PpuModel>(&self, model: &P, obj_shifter: &mut ObjShifter) {
+    /// Merge fetched bytes into the model's OBJ FIFO (transparency-gated; X-flip
+    /// reverses bits). The model extracts the per-pixel attribute and resolves the
+    /// overlap (DMG fetch-order / CGB OAM-index) — the FIFO is opaque here.
+    pub(in crate::ppu) fn merge_into<P: PpuModel>(&self, model: &P, fifo: &mut P::ObjFifo) {
         let sprite_low = if self.attributes.flip_x() {
             self.tile_data_low.reverse_bits()
         } else {
@@ -153,7 +153,7 @@ impl SpriteFetch {
         };
 
         let attr = model.obj_attr(self.attributes);
-        obj_shifter.merge(sprite_low, sprite_high, attr.palette, attr.priority as u8);
+        model.obj_merge(fifo, sprite_low, sprite_high, attr, self.slot_index);
     }
 }
 

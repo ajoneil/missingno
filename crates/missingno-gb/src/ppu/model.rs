@@ -7,6 +7,7 @@
 //! conditional-free code, and the CGB colour hardware (CRAM, attributes, the
 //! colour resolve) lives in `missingno-gbc`'s impl rather than behind a flag.
 
+use super::draw::shifters::ObjShifter;
 use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
 use super::types::palette::{PaletteIndex, PaletteMap};
@@ -70,6 +71,31 @@ pub trait PpuModel: Default {
     /// method: the CGB reads its 3-bit palette (OAM bits 0-2) in full-CGB mode
     /// but the DMG OBP-select (bit 4) in DMG-compatibility mode.
     fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr;
+
+    /// The console's object FIFO. The DMG resolves overlaps by fetch order with a
+    /// 1-bit OBP-select; the CGB resolves by OAM index with a 3-bit palette. The
+    /// whole FIFO is opaque to the shared pipeline — only the neutral operations
+    /// below cross the seam.
+    type ObjFifo: Default;
+
+    /// SACU shift toward the LCD.
+    fn obj_shift(fifo: &mut Self::ObjFifo);
+
+    /// WUTY load of a fetched sprite's 8 pixels (transparency-gated). `slot` is the
+    /// sprite's OAM-scan store index — its identity, which the CGB ranks priority by.
+    fn obj_merge(&self, fifo: &mut Self::ObjFifo, low: u8, high: u8, attr: ObjAttr, slot: u8);
+
+    /// Stage-7 Q output for the pixel mux: (lo, hi, palette, priority).
+    fn obj_pixel(fifo: &Self::ObjFifo) -> (u8, u8, u8, u8);
+
+    /// gbtrace shift-register state: (lo, hi, palette, priority).
+    fn obj_trace(fifo: &Self::ObjFifo) -> (u8, u8, u8, u8);
+
+    /// OPRI ($FF6C): object-priority mode. DMG has no such register.
+    fn object_priority_register(&self) -> u8 {
+        0xFF
+    }
+    fn set_object_priority_register(&mut self, _value: u8) {}
 
     /// Post-boot cartridge configuration (HLE of the boot ROM's handoff state).
     /// The CGB enters DMG-compatibility mode — installing the boot compat
@@ -145,6 +171,24 @@ impl PpuModel for DmgPpu {
             palette: attrs.dmg_palette(),
             priority: attrs.behind_background(),
         }
+    }
+
+    type ObjFifo = ObjShifter;
+
+    fn obj_shift(fifo: &mut ObjShifter) {
+        fifo.shift();
+    }
+
+    fn obj_merge(&self, fifo: &mut ObjShifter, low: u8, high: u8, attr: ObjAttr, _slot: u8) {
+        fifo.merge(low, high, attr.palette, attr.priority as u8);
+    }
+
+    fn obj_pixel(fifo: &ObjShifter) -> (u8, u8, u8, u8) {
+        fifo.pixel()
+    }
+
+    fn obj_trace(fifo: &ObjShifter) -> (u8, u8, u8, u8) {
+        fifo.registers()
     }
 
     fn resolve(&self, mux: &PixelMux<()>, regs: &PipelineRegisters) -> PaletteIndex {
