@@ -26,6 +26,7 @@ pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::types::palette::{PaletteIndex, PaletteMap};
+use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
@@ -120,6 +121,11 @@ impl BgAttribute {
 
     fn flip_y(self) -> bool {
         self.0 & 0x40 != 0
+    }
+
+    /// BG-to-OBJ priority (bit 7): BG colour indices 1-3 of this tile draw over OBJ.
+    fn priority(self) -> bool {
+        self.0 & 0x80 != 0
     }
 }
 
@@ -221,6 +227,22 @@ impl PpuModel for CgbPpu {
         }
     }
 
+    fn obj_data_bank(attrs: Attributes) -> u8 {
+        attrs.cgb_bank()
+    }
+
+    fn obj_attr(&self, attrs: Attributes) -> ObjAttr {
+        ObjAttr {
+            // DMG-compat objects select OBP0/OBP1 (bit 4); full-CGB select OBP0-7.
+            palette: if self.dmg_compat {
+                attrs.dmg_palette()
+            } else {
+                attrs.cgb_palette()
+            },
+            priority: attrs.behind_background(),
+        }
+    }
+
     fn resolve(&self, mux: &PixelMux<BgAttribute>, regs: &PipelineRegisters) -> Color555 {
         if self.dmg_compat {
             return self.resolve_dmg_compat(mux, regs);
@@ -228,25 +250,23 @@ impl PpuModel for CgbPpu {
 
         let bg_index = (mux.bg_hi << 1) | mux.bg_lo;
 
-        // OBJ resolves through the DMG OBP shade until the OBJ colour pipeline
-        // (OBJ palette RAM, 3-bit palette, full BG-vs-OBJ priority) lands. The
-        // BG-blocks-OBJ test mirrors the shared XULA/WOXA → NULY priority.
         if regs.sprites_enabled_for_resolve() {
-            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
-            let bg_blocks_obj = regs.bg_window_enabled_for_resolve() && bg_index != 0;
-            if spr_index != 0 && (mux.spr_pri == 0 || !bg_blocks_obj) {
-                let palette = if mux.spr_pal == 0 {
-                    regs.palettes.sprite0.output()
-                } else {
-                    regs.palettes.sprite1.output()
-                };
-                let shade = PaletteMap(palette).map(PaletteIndex(spr_index)).0;
-                return GREYSCALE[shade as usize];
+            let obj_index = (mux.spr_hi << 1) | mux.spr_lo;
+            if obj_index != 0 {
+                // CGB BG-vs-OBJ priority: LCDC.0 is the BG/Window master-priority
+                // override (not a BG blank); BG-attr b7 and OAM b7 each (when set,
+                // with LCDC.0) let a non-zero BG colour draw over the object.
+                let master_priority = regs.bg_window_enabled_for_resolve();
+                let bg_over_obj = mux.bg_cell.priority();
+                let oam_behind = mux.spr_pri != 0;
+                let obj_wins = bg_index == 0 || !master_priority || (!bg_over_obj && !oam_behind);
+                if obj_wins {
+                    return self.obj_cram.color(mux.spr_pal, obj_index);
+                }
             }
         }
 
-        // BG/Window in colour: the CGB always draws the BG from its palette RAM
-        // (LCDC.0 is BG/OBJ master priority, not a BG blank).
+        // BG/Window: the CGB always draws the BG from its palette RAM.
         self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 

@@ -70,6 +70,14 @@ pub enum Priority {
     Background,
 }
 
+/// The per-pixel OBJ attribute riding the sprite shifter: the palette selector
+/// (DMG OBP0/OBP1 ∈ {0,1}; CGB OBP0-7 ∈ 0..8) and the BG-priority bit.
+#[derive(Clone, Copy, Default)]
+pub struct ObjAttr {
+    pub palette: u8,
+    pub priority: bool,
+}
+
 impl Attributes {
     pub fn priority(&self) -> Priority {
         if self.contains(Attributes::PRIORITY) {
@@ -77,6 +85,26 @@ impl Attributes {
         } else {
             Priority::Sprite
         }
+    }
+
+    pub fn behind_background(&self) -> bool {
+        self.contains(Attributes::PRIORITY)
+    }
+
+    /// DMG OBP-select (OAM attr bit 4): palette OBP0 (0) or OBP1 (1). Also the
+    /// CGB DMG-compatibility OBJ palette selector.
+    pub fn dmg_palette(&self) -> u8 {
+        self.contains(Attributes::PALETTE) as u8
+    }
+
+    /// CGB OBJ palette (OAM attr bits 0-2): one of OBP0-7.
+    pub fn cgb_palette(&self) -> u8 {
+        self.0 & 0x07
+    }
+
+    /// CGB OBJ tile VRAM bank (OAM attr bit 3).
+    pub fn cgb_bank(&self) -> u8 {
+        (self.0 >> 3) & 0x01
     }
 
     pub fn flip_y(&self) -> bool {

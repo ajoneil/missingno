@@ -42,11 +42,13 @@ impl<C: Copy + Default> BgShifter<C> {
     }
 }
 
-/// Four parallel 8-bit dffsr chains (plane A, plane B, palette, priority) collapsed into u8 fields.
+/// Parallel 8-bit dffsr chains (plane A, plane B, the 3 palette planes, priority)
+/// collapsed into u8 fields. DMG uses only palette plane 0 (OBP-select); the CGB
+/// drives all three (OBP0-7).
 pub(in crate::ppu) struct ObjShifter {
     low: u8,
     high: u8,
-    palette: u8,
+    palette: [u8; 3],
     priority: u8,
 }
 
@@ -55,16 +57,16 @@ impl ObjShifter {
         Self {
             low: 0,
             high: 0,
-            palette: 0,
+            palette: [0; 3],
             priority: 0,
         }
     }
 
-    /// Stage-7 Q outputs.
+    /// Stage-7 Q outputs (palette as the assembled 3-bit selector).
     pub(in crate::ppu) fn read(&self) -> (u8, u8, u8, u8) {
         let lo = (self.low >> 7) & 1;
         let hi = (self.high >> 7) & 1;
-        let pal = (self.palette >> 7) & 1;
+        let pal = (0..3).fold(0, |acc, p| acc | (((self.palette[p] >> 7) & 1) << p));
         let pri = (self.priority >> 7) & 1;
         (lo, hi, pal, pri)
     }
@@ -72,12 +74,14 @@ impl ObjShifter {
     pub(in crate::ppu) fn shift(&mut self) {
         self.low <<= 1;
         self.high <<= 1;
-        self.palette <<= 1;
+        for plane in &mut self.palette {
+            *plane <<= 1;
+        }
         self.priority <<= 1;
     }
 
     pub(in crate::ppu) fn registers(&self) -> (u8, u8, u8, u8) {
-        (self.low, self.high, self.palette, self.priority)
+        (self.low, self.high, self.palette[0], self.priority)
     }
 
     /// WUTY-pulse parallel-load, transparency-gated per stage.
@@ -85,7 +89,7 @@ impl ObjShifter {
         &mut self,
         sprite_low: u8,
         sprite_high: u8,
-        palette_bit: u8,
+        palette: u8,
         priority_bit: u8,
     ) {
         for bit_pos in 0..8u8 {
@@ -106,7 +110,9 @@ impl ObjShifter {
             let mask = 1 << bit_pos;
             self.low = (self.low & !mask) | (lo << bit_pos);
             self.high = (self.high & !mask) | (hi << bit_pos);
-            self.palette = (self.palette & !mask) | (palette_bit << bit_pos);
+            for (p, plane) in self.palette.iter_mut().enumerate() {
+                *plane = (*plane & !mask) | (((palette >> p) & 1) << bit_pos);
+            }
             self.priority = (self.priority & !mask) | (priority_bit << bit_pos);
         }
     }

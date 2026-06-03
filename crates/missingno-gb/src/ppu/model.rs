@@ -10,6 +10,7 @@
 use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
 use super::types::palette::{PaletteIndex, PaletteMap};
+use super::types::sprites::{self, ObjAttr};
 
 /// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;
 /// OCPS/OCPD ($FF6A/B) address OBJ palettes. Index ports are always accessible;
@@ -59,6 +60,16 @@ pub trait PpuModel: Default {
 
     /// X-flip the loaded BG bitplanes (CGB attribute bit 5); DMG: unchanged.
     fn flip_bg_planes(cell: Self::BgCell, low: u8, high: u8) -> (u8, u8);
+
+    /// VRAM bank for an object's tile-data read (CGB OAM attr bit 3). DMG: 0.
+    fn obj_data_bank(_attrs: sprites::Attributes) -> u8 {
+        0
+    }
+
+    /// The per-pixel OBJ attribute carried on the sprite shifter. Instance
+    /// method: the CGB reads its 3-bit palette (OAM bits 0-2) in full-CGB mode
+    /// but the DMG OBP-select (bit 4) in DMG-compatibility mode.
+    fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr;
 
     /// Post-boot cartridge configuration (HLE of the boot ROM's handoff state).
     /// The CGB enters DMG-compatibility mode — installing the boot compat
@@ -127,6 +138,13 @@ impl PpuModel for DmgPpu {
 
     fn flip_bg_planes(_cell: (), low: u8, high: u8) -> (u8, u8) {
         (low, high)
+    }
+
+    fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr {
+        ObjAttr {
+            palette: attrs.dmg_palette(),
+            priority: attrs.behind_background(),
+        }
     }
 
     fn resolve(&self, mux: &PixelMux<()>, regs: &PipelineRegisters) -> PaletteIndex {

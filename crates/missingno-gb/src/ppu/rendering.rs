@@ -4,9 +4,7 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, VideoControl,
-    memory::{Oam, Vram},
-    types::sprites::SpriteId,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam, types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -393,7 +391,7 @@ impl<P: PpuModel> Rendering<P> {
         let was_rendering = self.hblank.rendering_active();
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram);
+            self.mode3_rising(model, regs, video, oam, oam_bus, vram);
             // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
             // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
@@ -540,6 +538,7 @@ impl<P: PpuModel> Rendering<P> {
     /// ALET rising: fetcher VRAM reads, cascade DFFs (NYKA, PYGO), POKY, TYFA, SABE, PUXA.
     fn mode3_rising(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
@@ -587,10 +586,10 @@ impl<P: PpuModel> Rendering<P> {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
-                    let done = sf.advance(regs, oam, oam_bus, vram.bank(0));
+                    let done = sf.advance::<P>(regs, oam, oam_bus, vram);
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
-                        sf.merge_into(&mut self.obj_shifter);
+                        sf.merge_into(model, &mut self.obj_shifter);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
