@@ -690,8 +690,10 @@ impl<P: PpuModel> Rendering<P> {
 
         // PANY drain-detector slip: NUKO=1 lands when SEKO would fire (count==7), truncating
         // PANY's high pulse — RYFA captures the second half, slipping SEKO→TEVO→NYXU by 1 dot.
+        // The CGB's NUKO→PANY coupling needs WIN_EN; the DMG's fires while armed-but-disabled.
         let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
-        let window_x_hit = self.window.window_x_reached(pixel_counter_before_sacu);
+        let window_x_hit = self.window.window_x_reached(pixel_counter_before_sacu)
+            && (P::WINDOW_DRAIN_SLIP_WHILE_DISABLED || regs.control.window_enabled());
         let pany_slip_now = proposed_seko && window_x_hit;
         let raw_seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
         self.pany_slip_pending = pany_slip_now;

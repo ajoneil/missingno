@@ -41,6 +41,13 @@ pub struct PixelMux<C> {
 /// resolves a pixel by calling [`PpuModel::resolve`]; the result is the final
 /// framebuffer pixel for that console.
 pub trait PpuModel: Default {
+    /// The DMG window-X comparator (NUKO) drives the §6.1 PANY BG drain-detector
+    /// slip whenever the window is armed (REJO), even with WIN_EN off — an
+    /// armed-but-disabled 1-dot BG slip. The CGB suppresses that coupling: its
+    /// NUKO→PANY path requires the window enabled. (Confirmed by dmg-sim; the
+    /// enabled-window slip is unaffected on both.)
+    const WINDOW_DRAIN_SLIP_WHILE_DISABLED: bool = true;
+
     /// This console's video RAM: DMG one bank, CGB two (VBK-banked).
     type Vram: Vram;
 

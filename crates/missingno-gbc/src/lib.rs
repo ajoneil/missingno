@@ -273,6 +273,10 @@ pub struct CgbPpu {
 }
 
 impl PpuModel for CgbPpu {
+    // The CGB suppresses the DMG armed-but-disabled window-X → BG drain-detector
+    // slip (its NUKO→PANY coupling requires the window enabled).
+    const WINDOW_DRAIN_SLIP_WHILE_DISABLED: bool = false;
+
     type Vram = CgbVram;
     type BgCell = BgAttribute;
     type Pixel = Color555;
