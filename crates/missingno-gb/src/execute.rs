@@ -4,7 +4,7 @@ use super::{
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
     memory::Bus,
-    ppu,
+    ppu::{self, memory::Vram},
 };
 
 /// CPU T-cycles the CGB holds the CPU `Stopped` during a double-speed switch
@@ -57,6 +57,7 @@ impl<M: Model> Console<M> {
         tcycles += r.tcycles;
 
         self.resolve_stop(tcycles);
+        self.manage_dma_hold();
 
         let sram_dirty = self.external.cartridge.take_sram_dirty();
         (
@@ -197,6 +198,12 @@ impl<M: Model> Console<M> {
             return;
         }
 
+        // A VRAM-DMA bus hold parks the CPU in `Stopped` too; it is released by
+        // `manage_dma_hold`, not here, and must not drain a blackout or switch speed.
+        if self.dma_cpu_hold {
+            return;
+        }
+
         // Mid-blackout: drain the switch penalty, then re-engage. The divider
         // and PPU advanced through `elapsed_tcycles` while the CPU spun.
         if self.speed_switch_blackout > 0 {
@@ -218,6 +225,50 @@ impl<M: Model> Console<M> {
                 self.speed_switch_blackout = SPEED_SWITCH_BLACKOUT_TCYCLES;
             }
             StopAction::Remain => {}
+        }
+    }
+
+    /// Engage or release the CPU-clock hold a VRAM DMA asserts. While the DMA
+    /// holds the bus the CPU spins (`Stopped`) and its bytes flow per M-cycle in
+    /// `tick_mcycle_boundary_fall`; the PPU/timers keep running. Distinct from a
+    /// real STOP via `dma_cpu_hold`, which `resolve_stop` guards on. Called at the
+    /// instruction boundary.
+    fn manage_dma_hold(&mut self) {
+        let holds = self.model.vram_dma_holds_cpu();
+        if holds && !self.dma_cpu_hold {
+            self.dma_cpu_hold = true;
+            self.cpu.begin_stop_hold();
+        } else if !holds && self.dma_cpu_hold {
+            self.dma_cpu_hold = false;
+            self.cpu.resume_from_stop();
+        }
+    }
+
+    /// Move one DMA byte: read the bus source, write the mapped destination
+    /// (OAM or the VBK-selected VRAM bank), trace both, decay the source bus.
+    /// The single byte-transfer OAM DMA and the CGB VRAM DMA share.
+    fn dma_move(&mut self, source: u16, dest: u16) {
+        let byte = self.read_dma_source(source);
+        match ppu::memory::MappedAddress::map(dest) {
+            ppu::memory::MappedAddress::Oam(address) => self.ppu.write_oam(address, byte),
+            ppu::memory::MappedAddress::Vram(address) => {
+                self.vram_bus.vram.cpu_write(address, byte)
+            }
+        }
+        self.bus_trace.record(BusAccess {
+            address: source,
+            value: byte,
+            kind: BusAccessKind::DmaRead,
+        });
+        self.bus_trace.record(BusAccess {
+            address: dest,
+            value: byte,
+            kind: BusAccessKind::DmaWrite,
+        });
+        match Bus::of(source) {
+            Some(Bus::External) => self.external.drive(byte),
+            Some(Bus::Vram) => self.vram_bus.drive(byte),
+            None => {}
         }
     }
 
@@ -589,27 +640,18 @@ impl<M: Model> Console<M> {
     /// slot DMA deposits. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
         if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
-            let byte = self.read_dma_source(src_addr);
-            let dst_addr = 0xfe00 + dst_offset as u16;
-            let oam_addr = match ppu::memory::MappedAddress::map(dst_addr) {
-                ppu::memory::MappedAddress::Oam(addr) => addr,
-                _ => unreachable!(),
-            };
-            self.ppu.write_oam(oam_addr, byte);
-            self.bus_trace.record(BusAccess {
-                address: src_addr,
-                value: byte,
-                kind: BusAccessKind::DmaRead,
-            });
-            self.bus_trace.record(BusAccess {
-                address: dst_addr,
-                value: byte,
-                kind: BusAccessKind::DmaWrite,
-            });
-            match Bus::of(src_addr) {
-                Some(Bus::External) => self.external.drive(byte),
-                Some(Bus::Vram) => self.vram_bus.drive(byte),
-                None => {}
+            self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
+        }
+
+        // CGB VRAM DMA: advance one M-cycle (so an H-Blank transfer can watch the
+        // mode), then commit the bytes it moves while it actually holds the bus —
+        // gating on the hold keeps the transfer from overlapping the arming
+        // instruction. Idle (no-op) on the DMG.
+        let mode = self.ppu.mode();
+        self.model.vram_dma_tick(mode);
+        if self.dma_cpu_hold {
+            while let Some((src, dst)) = self.model.vram_dma_next_byte() {
+                self.dma_move(src, dst);
             }
         }
 
