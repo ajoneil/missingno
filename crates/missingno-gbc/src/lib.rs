@@ -24,10 +24,46 @@
 
 pub mod screen;
 
+use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::{PipelineRegisters, PixelMux, PpuModel, resolve_shade};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
+
+/// CGB video RAM: two 8 KiB banks selected by VBK ($FF4F). Bank 1 additionally
+/// carries the BG map attributes (read by the colour fetch as it lands).
+#[derive(Default)]
+pub struct CgbVram {
+    banks: [VramBank; 2],
+    /// VBK bit 0 — the bank the CPU sees at $8000-$9FFF.
+    selected: u8,
+}
+
+impl Vram for CgbVram {
+    fn cpu_read(&self, address: VramAddress) -> u8 {
+        self.banks[self.selected as usize].read(address)
+    }
+
+    fn cpu_write(&mut self, address: VramAddress, value: u8) {
+        self.banks[self.selected as usize].write(address, value);
+    }
+
+    fn bank(&self, bank: u8) -> &VramBank {
+        &self.banks[bank as usize]
+    }
+
+    fn read_bank_select(&self) -> u8 {
+        0xFE | self.selected
+    }
+
+    fn write_bank_select(&mut self, value: u8) {
+        self.selected = value & 0x01;
+    }
+
+    fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
+        self.banks[0].seed_post_boot(logo);
+    }
+}
 
 /// The CGB colour PPU. Its colour hardware (CRAM, BG attributes, the colour mux)
 /// attaches here as it lands; until then it resolves the shared DMG shade and
@@ -36,6 +72,7 @@ use crate::screen::{Color555, GREYSCALE, Screen};
 pub struct CgbPpu;
 
 impl PpuModel for CgbPpu {
+    type Vram = CgbVram;
     type Pixel = Color555;
 
     fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> Color555 {

@@ -2,7 +2,6 @@
 
 use crate::dma::OamBusOwner;
 
-use super::memory::Vram;
 use super::{Ppu, PpuModel, PpuTickResult, screen};
 
 impl<P: PpuModel> Ppu<P> {
@@ -14,7 +13,7 @@ impl<P: PpuModel> Ppu<P> {
     /// ALET rises; ALET-clocked DFFs capture (NYKA, LYZU, PYGO, RENE, DOBA, NOPA, VOGA).
     pub fn on_master_clock_rise(
         &mut self,
-        vram: &Vram,
+        vram: &P::Vram,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();

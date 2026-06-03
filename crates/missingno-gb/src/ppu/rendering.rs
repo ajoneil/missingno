@@ -5,7 +5,7 @@ use core::fmt;
 use crate::dma::OamBusOwner;
 use crate::ppu::{
     DrawnPixel, PipelineRegisters, PpuModel, VideoControl,
-    memory::{Oam, Vram},
+    memory::{Oam, Vram, VramBank},
     types::sprites::SpriteId,
 };
 
@@ -374,7 +374,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &P::Vram,
     ) -> Option<DrawnPixel<P::Pixel>> {
         // Terminal WODU pulse is a fall-edge transient; clear it so rise / off-edge reads see settled WODU.
         self.terminal_wodu_pulse = false;
@@ -393,7 +393,7 @@ impl Rendering {
         let was_rendering = self.hblank.rendering_active();
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram);
+            self.mode3_rising(regs, video, oam, oam_bus, vram.bank(0));
             // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
             // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
@@ -544,7 +544,7 @@ impl Rendering {
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &VramBank,
     ) {
         // SOBU's ALET-rising DFF capture wins the TEKY→SOBU race vs CUPA's transparent-latch path —
         // SOBU sees the pre-write LCDC.1 value, so FEPO here uses pre-CUPA sprites_enabled.

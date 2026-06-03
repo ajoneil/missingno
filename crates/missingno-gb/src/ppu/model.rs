@@ -7,6 +7,7 @@
 //! conditional-free code, and the CGB colour hardware (CRAM, attributes, the
 //! colour resolve) lives in `missingno-gbc`'s impl rather than behind a flag.
 
+use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
 use super::types::palette::{PaletteIndex, PaletteMap};
 
@@ -24,6 +25,9 @@ pub struct PixelMux {
 /// resolves a pixel by calling [`PpuModel::resolve`]; the result is the final
 /// framebuffer pixel for that console.
 pub trait PpuModel: Default {
+    /// This console's video RAM: DMG one bank, CGB two (VBK-banked).
+    type Vram: Vram;
+
     /// The framebuffer pixel this PPU emits — DMG a 2-bit shade index, CGB RGB555.
     type Pixel: Copy;
 
@@ -67,6 +71,7 @@ pub fn resolve_shade(mux: &PixelMux, regs: &PipelineRegisters) -> u8 {
 pub struct DmgPpu;
 
 impl PpuModel for DmgPpu {
+    type Vram = VramBank;
     type Pixel = PaletteIndex;
 
     fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> PaletteIndex {

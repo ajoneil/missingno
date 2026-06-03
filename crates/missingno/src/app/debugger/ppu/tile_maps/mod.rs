@@ -10,7 +10,7 @@ use crate::app::{
     texture_renderer::TextureRenderer,
 };
 use missingno_gb::ppu::{
-    Ppu, memory::Vram, model::DmgPpu, types::control::Control, types::palette::Palette,
+    Ppu, memory::VramBank, model::DmgPpu, types::control::Control, types::palette::Palette,
     types::tiles::TileMapId,
 };
 
@@ -32,7 +32,7 @@ impl TileMapPane {
     pub fn content(
         &self,
         ppu: &Ppu<DmgPpu>,
-        vram: &Vram,
+        vram: &VramBank,
         palette: &Palette,
     ) -> pane_grid::Content<'_, Message> {
         let control = ppu.control();
@@ -54,7 +54,7 @@ impl TileMapPane {
             None
         };
 
-        // Pre-render tile map pixels so the closure doesn't need Vram
+        // Pre-render tile map pixels so the closure doesn't need VramBank
         let pixels = render_tile_map(vram.tile_map(tile_map_id), control, vram, palette);
 
         let overlay = viewport_overlay::ViewportOverlay {
@@ -95,7 +95,7 @@ impl TileMapPane {
 fn render_tile_map(
     tile_map: &missingno_gb::ppu::types::tiles::TileMap,
     control: Control,
-    vram: &Vram,
+    vram: &VramBank,
     palette: &Palette,
 ) -> Vec<u8> {
     let mut pixels = Vec::with_capacity(256 * 256 * 4);

@@ -22,7 +22,7 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
-    memory::Vram,
+    memory::VramBank,
     model::DmgPpu,
     types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
@@ -60,7 +60,7 @@ impl SpritesPane {
     pub fn content<'a>(
         &'a self,
         ppu: &'a Ppu<DmgPpu>,
-        vram: &'a Vram,
+        vram: &'a VramBank,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
         let size = ppu.control().sprite_size();
@@ -97,7 +97,7 @@ impl SpritesPane {
     fn sprites<'a>(
         &'a self,
         ppu: &'a Ppu<DmgPpu>,
-        vram: &'a Vram,
+        vram: &'a VramBank,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0u8..40)
@@ -129,7 +129,7 @@ impl SpritesPane {
         &'a self,
         index: u8,
         ppu: &'a Ppu<DmgPpu>,
-        vram: &'a Vram,
+        vram: &'a VramBank,
         sprite: &Sprite,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
@@ -156,7 +156,7 @@ impl SpritesPane {
     fn tiles(
         &self,
         sprite: &Sprite,
-        vram: &Vram,
+        vram: &VramBank,
         ppu: &Ppu<DmgPpu>,
         palette: &Palette,
     ) -> Element<'_, app::Message> {

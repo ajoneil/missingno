@@ -1,7 +1,7 @@
 use crate::dma::OamBusOwner;
 use crate::ppu::{
     PipelineRegisters,
-    memory::{Oam, Vram},
+    memory::{Oam, VramBank},
 };
 
 use super::super::scan::oam_scan::SpriteStoreEntry;
@@ -69,7 +69,7 @@ impl SpriteFetch {
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &VramBank,
         high: bool,
     ) -> u8 {
         let (tile, attributes) = match oam_bus {
@@ -117,7 +117,7 @@ impl SpriteFetch {
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &VramBank,
     ) -> bool {
         match self.fetch_counter {
             2 => {
