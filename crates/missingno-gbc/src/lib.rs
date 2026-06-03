@@ -460,19 +460,32 @@ impl CgbPpu {
 /// continues where the last left off. The step loop ticks it each M-cycle: GDMA
 /// (general-purpose) flows `quota` bytes per M-cycle while it holds the CPU,
 /// until `remaining` reaches zero.
+/// How the active VRAM DMA is paced. GDMA holds the CPU and flows continuously;
+/// HDMA copies one 16-byte block per HBlank, releasing the CPU between blocks.
+#[derive(Default, PartialEq)]
+enum TransferMode {
+    #[default]
+    Idle,
+    General,
+    HBlank,
+}
+
 #[derive(Default)]
 struct VramDma {
     /// Running source pointer, 16-byte aligned (HDMA1/HDMA2).
     source: u16,
     /// Running destination, a VRAM address $8000..=$9FF0 (HDMA3/HDMA4).
     dest: u16,
-    /// Bytes left in the active GDMA. >0 means it is holding the CPU.
+    mode: TransferMode,
+    /// Bytes left in the whole transfer.
     remaining: u16,
+    /// Bytes left in the current HBlank block (HBlank mode). The CPU is held
+    /// while this is >0.
+    block_remaining: u8,
     /// Bytes still movable this M-cycle (refilled per tick: 2 single, 1 double).
     quota: u8,
-    /// An H-Blank transfer is armed. A bit-7=0 HDMA5 write stops it rather than
-    /// starting a GDMA. (The transfer itself lands with the H-Blank machinery.)
-    hdma_armed: bool,
+    /// The PPU was in HBlank last tick — to fire one block on the mode-0 entry edge.
+    prev_hblank: bool,
 }
 
 /// The Game Boy Color [`Model`]. Remaining CGB features (the color pixel
@@ -553,9 +566,16 @@ impl Model for Cgb {
             0xFF4C => Some(0xFF), // KEY0: boot-locked
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
             0xFF4F => Some(vram.read_bank_select()), // VBK
-            // HDMA1-4 are write-only; HDMA5 has no observable active GDMA (the
-            // CPU is held for its whole duration). HDMA status lands with HDMA.
-            0xFF51..=0xFF55 => Some(0xFF),
+            // HDMA1-4 are write-only.
+            0xFF51..=0xFF54 => Some(0xFF),
+            // HDMA5 status: bit 7 = 0 while an HDMA is active, blocks-left-minus-1
+            // in bits 6-0. Idle/done/stopped reads bit 7 = 1 (done = $FF). A GDMA
+            // is never observable here — it holds the CPU for its whole duration.
+            0xFF55 => {
+                let active = self.vram_dma.mode == TransferMode::HBlank;
+                let blocks = self.vram_dma.remaining / 16;
+                Some(((!active as u8) << 7) | (blocks.wrapping_sub(1) & 0x7F) as u8)
+            }
             0xFF68 => Some(ppu.read_color_register(ColorRegister::BackgroundIndex)), // BCPS
             0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)),  // BCPD
             0xFF6A => Some(ppu.read_color_register(ColorRegister::ObjectIndex)),     // OCPS
@@ -606,15 +626,21 @@ impl Model for Cgb {
                 true
             }
             0xFF55 => {
+                let length = ((value & 0x7F) as u16 + 1) * 16;
                 if value & 0x80 != 0 {
-                    // HDMA arm; transfer is inert until the H-Blank machinery lands.
-                    self.vram_dma.hdma_armed = true;
-                } else if self.vram_dma.hdma_armed {
-                    // bit 7 = 0 while armed stops the HDMA — it does not start a GDMA.
-                    self.vram_dma.hdma_armed = false;
+                    // Arm HDMA: one 16-byte block per HBlank.
+                    self.vram_dma.mode = TransferMode::HBlank;
+                    self.vram_dma.remaining = length;
+                    self.vram_dma.block_remaining = 0;
+                } else if self.vram_dma.mode == TransferMode::HBlank {
+                    // bit 7 = 0 while an HDMA runs stops it (does not start a GDMA);
+                    // `remaining` is kept so the status read shows how far it got.
+                    self.vram_dma.mode = TransferMode::Idle;
+                    self.vram_dma.block_remaining = 0;
                 } else {
                     // GDMA: copy the whole length while holding the CPU.
-                    self.vram_dma.remaining = ((value & 0x7F) as u16 + 1) * 16;
+                    self.vram_dma.mode = TransferMode::General;
+                    self.vram_dma.remaining = length;
                 }
                 true
             }
@@ -646,10 +672,26 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, _mode: Mode) {
-        // Refill this M-cycle's byte budget: 2 bytes/M-cycle single speed,
-        // 1 in double speed. Zero when no transfer is running.
-        self.vram_dma.quota = if self.vram_dma.remaining > 0 {
+    fn vram_dma_tick(&mut self, mode: Mode) {
+        // HDMA fires one 16-byte block on each HBlank-entry edge.
+        let in_hblank = mode == Mode::HorizontalBlank;
+        if self.vram_dma.mode == TransferMode::HBlank
+            && in_hblank
+            && !self.vram_dma.prev_hblank
+            && self.vram_dma.remaining > 0
+        {
+            self.vram_dma.block_remaining = 16;
+        }
+        self.vram_dma.prev_hblank = in_hblank;
+
+        // Refill this M-cycle's byte budget while the transfer is moving bytes:
+        // 2/M-cycle single speed, 1 in double speed.
+        let moving = match self.vram_dma.mode {
+            TransferMode::General => self.vram_dma.remaining > 0,
+            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
+            TransferMode::Idle => false,
+        };
+        self.vram_dma.quota = if moving {
             if self.double_speed { 1 } else { 2 }
         } else {
             0
@@ -657,7 +699,12 @@ impl Model for Cgb {
     }
 
     fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {
-        if self.vram_dma.quota == 0 || self.vram_dma.remaining == 0 {
+        let moving = match self.vram_dma.mode {
+            TransferMode::General => self.vram_dma.remaining > 0,
+            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
+            TransferMode::Idle => false,
+        };
+        if self.vram_dma.quota == 0 || !moving {
             return None;
         }
         let pair = (self.vram_dma.source, self.vram_dma.dest);
@@ -667,11 +714,21 @@ impl Model for Cgb {
         self.vram_dma.dest = 0x8000 | (self.vram_dma.dest.wrapping_add(1) & 0x1FFF);
         self.vram_dma.remaining -= 1;
         self.vram_dma.quota -= 1;
+        if self.vram_dma.mode == TransferMode::HBlank {
+            self.vram_dma.block_remaining -= 1;
+        }
+        if self.vram_dma.remaining == 0 {
+            self.vram_dma.mode = TransferMode::Idle;
+        }
         Some(pair)
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {
-        self.vram_dma.remaining > 0
+        match self.vram_dma.mode {
+            TransferMode::General => self.vram_dma.remaining > 0,
+            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
+            TransferMode::Idle => false,
+        }
     }
 }
 
