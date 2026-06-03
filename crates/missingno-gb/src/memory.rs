@@ -155,16 +155,16 @@ impl ExternalBus {
 
 /// The VRAM data bus connects the SoC to video RAM (0x8000–0x9FFF).
 /// The bus retains its last driven value as a latch (no decay).
-pub struct VramBus {
-    pub vram: Vram,
+pub struct VramBus<V: Vram> {
+    pub vram: V,
     /// Retained value on the VRAM data bus.
     pub latch: u8,
 }
 
-impl VramBus {
+impl<V: Vram> VramBus<V> {
     pub fn new() -> Self {
         Self {
-            vram: Vram::default(),
+            vram: V::default(),
             latch: 0xFF,
         }
     }
@@ -219,6 +219,8 @@ pub enum MappedAddress {
     PpuRegister(ppu::Register),
     BeginDmaTransfer,
     BootRomUnmap,
+    /// VBK ($FF4F): VRAM bank select. CGB-only — DMG VRAM has no bank, reads 0xFF.
+    VramBankSelect,
     Unmapped,
 }
 
@@ -267,7 +269,8 @@ impl MappedAddress {
             0xff49 => Self::PpuRegister(ppu::Register::Sprite1Palette),
             0xff4a => Self::PpuRegister(ppu::Register::WindowY),
             0xff4b => Self::PpuRegister(ppu::Register::WindowX),
-            0xff4c..=0xff4f => Self::Unmapped,
+            0xff4c..=0xff4e => Self::Unmapped,
+            0xff4f => Self::VramBankSelect,
             0xff50 => Self::BootRomUnmap,
             0xff51..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
@@ -422,7 +425,7 @@ impl<M: Model> Console<M> {
         match address {
             MappedAddress::External(addr) => self.external.read(addr),
             MappedAddress::HighRam(offset) => self.high_ram.read(offset),
-            MappedAddress::Vram(address) => self.vram_bus.vram.read(address),
+            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_read(address),
             MappedAddress::Oam(address) => self.ppu.read_oam(address),
             MappedAddress::JoypadRegister => self.model.read_joypad(self.joypad.read_register()),
             MappedAddress::SerialTransferRegister(register) => match register {
@@ -447,6 +450,7 @@ impl<M: Model> Console<M> {
                     0xFF
                 }
             }
+            MappedAddress::VramBankSelect => self.vram_bus.vram.read_bank_select(),
             MappedAddress::OamExtra => 0x00,
             MappedAddress::Unmapped => 0xFF,
         }
@@ -539,7 +543,7 @@ impl<M: Model> Console<M> {
         match address {
             MappedAddress::External(addr) => self.external.write(addr, value),
             MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
-            MappedAddress::Vram(address) => self.vram_bus.vram.write(address, value),
+            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_write(address, value),
             MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 self.model.on_joypad_write(value);
@@ -594,6 +598,7 @@ impl<M: Model> Console<M> {
                 }
             },
 
+            MappedAddress::VramBankSelect => self.vram_bus.vram.write_bank_select(value),
             MappedAddress::OamExtra => {}
             MappedAddress::Unmapped => {}
         }

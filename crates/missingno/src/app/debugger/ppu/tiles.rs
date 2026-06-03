@@ -12,7 +12,7 @@ use crate::app::{
     },
     ui::sizes::m,
 };
-use missingno_gb::ppu::{memory::Vram, types::palette::Palette, types::tiles::TileBlockId};
+use missingno_gb::ppu::{memory::VramBank, types::palette::Palette, types::tiles::TileBlockId};
 
 pub struct TilesPane;
 
@@ -21,7 +21,7 @@ impl TilesPane {
         Self
     }
 
-    pub fn content(&self, vram: &Vram, palette: &Palette) -> pane_grid::Content<'_, Message> {
+    pub fn content(&self, vram: &VramBank, palette: &Palette) -> pane_grid::Content<'_, Message> {
         pane(
             title_bar("Tiles"),
             scrollable(
@@ -40,7 +40,7 @@ impl TilesPane {
     }
 }
 
-fn tile_block(vram: &Vram, block: TileBlockId, palette: &Palette) -> Element<'static, Message> {
+fn tile_block(vram: &VramBank, block: TileBlockId, palette: &Palette) -> Element<'static, Message> {
     column![
         text(block.to_string()),
         tile_block_atlas(vram.tile_block(block), palette)

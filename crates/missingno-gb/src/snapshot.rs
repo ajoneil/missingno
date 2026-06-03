@@ -306,7 +306,7 @@ impl GameBoy {
     pub fn from_snapshot(cartridge: Cartridge, snap: Snapshot) -> GameBoy {
         use crate::memory::{ExternalBus, VramBus};
         use crate::ppu::{
-            memory::{Oam, Vram},
+            memory::{Oam, VramBank},
             screen::Screen,
         };
 
@@ -363,7 +363,7 @@ impl GameBoy {
             },
             vram_bus: VramBus {
                 vram: find_region(0x8000)
-                    .map(Vram::from_bytes)
+                    .map(VramBank::from_bytes)
                     .unwrap_or_default(),
                 latch: 0xFF,
             },

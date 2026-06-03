@@ -30,6 +30,7 @@ use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
 use ppu::Ppu;
+use ppu::memory::Vram;
 use ppu::model::PpuModel;
 
 pub use master_clock::ClockPhase;
@@ -123,7 +124,7 @@ pub struct Console<M: Model> {
 
     external: ExternalBus,
     high_ram: HighRam,
-    vram_bus: VramBus,
+    vram_bus: VramBus<<M::Ppu as PpuModel>::Vram>,
 
     ppu: Ppu<M::Ppu>,
     screen: M::Screen,
@@ -314,7 +315,7 @@ impl<M: Model> Console<M> {
         &self.ppu
     }
 
-    pub fn vram(&self) -> &ppu::memory::Vram {
+    pub fn vram(&self) -> &<M::Ppu as PpuModel>::Vram {
         &self.vram_bus.vram
     }
 

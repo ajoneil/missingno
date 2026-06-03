@@ -1,4 +1,4 @@
-use crate::ppu::{PipelineRegisters, VideoControl, memory::Vram};
+use crate::ppu::{PipelineRegisters, VideoControl, memory::VramBank};
 
 use super::super::types::tiles::{TileBlockId, TileIndex};
 use super::shifters::BgShifter;
@@ -161,7 +161,7 @@ impl TileFetcher {
         window_mode_active: bool,
         regs: &PipelineRegisters,
         video: &VideoControl,
-        vram: &Vram,
+        vram: &VramBank,
     ) {
         match self.fetch_counter {
             0 => {
