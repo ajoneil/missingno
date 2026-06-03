@@ -11,7 +11,7 @@ use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
-pub use model::{PixelMux, PpuModel, resolve_shade};
+pub use model::{ColorRegister, PixelMux, PpuModel, resolve_shade};
 pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
@@ -343,6 +343,19 @@ impl<P: PpuModel> Ppu<P> {
             (true, false) => Mode::OamScan,
             (true, true) => Mode::Drawing,
         }
+    }
+
+    /// CPU read of a CGB colour-palette register; the model applies the mode-3
+    /// data-port lock from the PPU's current mode.
+    pub fn read_color_register(&self, register: ColorRegister) -> u8 {
+        self.model
+            .read_color_register(register, self.mode() == Mode::Drawing)
+    }
+
+    /// CPU write of a CGB colour-palette register.
+    pub fn write_color_register(&mut self, register: ColorRegister, value: u8) {
+        let rendering = self.mode() == Mode::Drawing;
+        self.model.write_color_register(register, value, rendering);
     }
 
     pub fn oam_locked(&self) -> bool {
