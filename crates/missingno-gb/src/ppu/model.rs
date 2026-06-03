@@ -11,6 +11,17 @@ use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
 use super::types::palette::{PaletteIndex, PaletteMap};
 
+/// A CGB colour-palette RAM port. BCPS/BCPD ($FF68/9) address BG palettes;
+/// OCPS/OCPD ($FF6A/B) address OBJ palettes. Index ports are always accessible;
+/// data ports are blocked while the PPU renders (mode 3).
+#[derive(Clone, Copy, Debug)]
+pub enum ColorRegister {
+    BackgroundIndex,
+    BackgroundData,
+    ObjectIndex,
+    ObjectData,
+}
+
 /// The BG/OBJ shifter outputs feeding the pixel mux on a given dot.
 pub struct PixelMux {
     pub bg_lo: u8,
@@ -37,6 +48,15 @@ pub trait PpuModel: Default {
 
     /// The 2-bit shade a gbtrace pixel stream records for this pixel.
     fn trace_shade(pixel: Self::Pixel) -> u8;
+
+    /// Read a CGB colour-palette register. `rendering` is true in mode 3, when
+    /// the data ports are locked. DMG has no colour RAM — reads 0xFF.
+    fn read_color_register(&self, _reg: ColorRegister, _rendering: bool) -> u8 {
+        0xFF
+    }
+
+    /// Write a CGB colour-palette register. DMG has no colour RAM — ignored.
+    fn write_color_register(&mut self, _reg: ColorRegister, _value: u8, _rendering: bool) {}
 }
 
 /// Shared BG/OBJ → shade mux: the BGP/OBP-mapped 2-bit colour. This is the value

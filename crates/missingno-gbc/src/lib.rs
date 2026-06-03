@@ -25,10 +25,60 @@
 pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
-use missingno_gb::ppu::{PipelineRegisters, PixelMux, PpuModel, resolve_shade};
+use missingno_gb::ppu::{ColorRegister, PipelineRegisters, PixelMux, PpuModel, resolve_shade};
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
+
+/// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
+/// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
+/// bit 7). Data writes during mode 3 are dropped but still advance the index.
+pub struct ColorRam {
+    data: [u8; 64],
+    index: u8,
+    auto_increment: bool,
+}
+
+impl Default for ColorRam {
+    fn default() -> Self {
+        Self {
+            data: [0; 64],
+            index: 0,
+            auto_increment: false,
+        }
+    }
+}
+
+impl ColorRam {
+    fn read_index(&self) -> u8 {
+        0x40 | ((self.auto_increment as u8) << 7) | self.index
+    }
+
+    fn write_index(&mut self, value: u8) {
+        self.index = value & 0x3F;
+        self.auto_increment = value & 0x80 != 0;
+    }
+
+    fn read_data(&self) -> u8 {
+        self.data[self.index as usize]
+    }
+
+    fn write_data(&mut self, value: u8) {
+        self.data[self.index as usize] = value;
+        self.advance();
+    }
+
+    /// Mode-3 blocked write: the colour byte is dropped, but the index still advances.
+    fn skip_data(&mut self) {
+        self.advance();
+    }
+
+    fn advance(&mut self) {
+        if self.auto_increment {
+            self.index = (self.index + 1) & 0x3F;
+        }
+    }
+}
 
 /// CGB video RAM: two 8 KiB banks selected by VBK ($FF4F). Bank 1 additionally
 /// carries the BG map attributes (read by the colour fetch as it lands).
@@ -65,11 +115,14 @@ impl Vram for CgbVram {
     }
 }
 
-/// The CGB colour PPU. Its colour hardware (CRAM, BG attributes, the colour mux)
-/// attaches here as it lands; until then it resolves the shared DMG shade and
-/// maps it through the greyscale palette, matching the DMG reference levels.
+/// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the colour mux and
+/// BG attributes attach as they land. Until the colour pipeline exists it
+/// resolves the shared DMG shade through the greyscale palette.
 #[derive(Default)]
-pub struct CgbPpu;
+pub struct CgbPpu {
+    bg_cram: ColorRam,
+    obj_cram: ColorRam,
+}
 
 impl PpuModel for CgbPpu {
     type Vram = CgbVram;
@@ -84,6 +137,28 @@ impl PpuModel for CgbPpu {
             .iter()
             .position(|&grey| grey == pixel)
             .unwrap_or(0) as u8
+    }
+
+    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+        match register {
+            ColorRegister::BackgroundIndex => self.bg_cram.read_index(),
+            ColorRegister::ObjectIndex => self.obj_cram.read_index(),
+            ColorRegister::BackgroundData if rendering => 0xFF,
+            ColorRegister::ObjectData if rendering => 0xFF,
+            ColorRegister::BackgroundData => self.bg_cram.read_data(),
+            ColorRegister::ObjectData => self.obj_cram.read_data(),
+        }
+    }
+
+    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+        match register {
+            ColorRegister::BackgroundIndex => self.bg_cram.write_index(value),
+            ColorRegister::ObjectIndex => self.obj_cram.write_index(value),
+            ColorRegister::BackgroundData if rendering => self.bg_cram.skip_data(),
+            ColorRegister::ObjectData if rendering => self.obj_cram.skip_data(),
+            ColorRegister::BackgroundData => self.bg_cram.write_data(value),
+            ColorRegister::ObjectData => self.obj_cram.write_data(value),
+        }
     }
 }
 

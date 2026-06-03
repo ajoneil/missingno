@@ -221,6 +221,8 @@ pub enum MappedAddress {
     BootRomUnmap,
     /// VBK ($FF4F): VRAM bank select. CGB-only — DMG VRAM has no bank, reads 0xFF.
     VramBankSelect,
+    /// CGB colour-palette registers BCPS/BCPD/OCPS/OCPD ($FF68–$FF6B).
+    ColorPaletteRegister(ppu::ColorRegister),
     Unmapped,
 }
 
@@ -272,7 +274,12 @@ impl MappedAddress {
             0xff4c..=0xff4e => Self::Unmapped,
             0xff4f => Self::VramBankSelect,
             0xff50 => Self::BootRomUnmap,
-            0xff51..=0xff7f => Self::Unmapped,
+            0xff51..=0xff67 => Self::Unmapped,
+            0xff68 => Self::ColorPaletteRegister(ppu::ColorRegister::BackgroundIndex),
+            0xff69 => Self::ColorPaletteRegister(ppu::ColorRegister::BackgroundData),
+            0xff6a => Self::ColorPaletteRegister(ppu::ColorRegister::ObjectIndex),
+            0xff6b => Self::ColorPaletteRegister(ppu::ColorRegister::ObjectData),
+            0xff6c..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
         }
@@ -451,6 +458,7 @@ impl<M: Model> Console<M> {
                 }
             }
             MappedAddress::VramBankSelect => self.vram_bus.vram.read_bank_select(),
+            MappedAddress::ColorPaletteRegister(register) => self.ppu.read_color_register(register),
             MappedAddress::OamExtra => 0x00,
             MappedAddress::Unmapped => 0xFF,
         }
@@ -599,6 +607,9 @@ impl<M: Model> Console<M> {
             },
 
             MappedAddress::VramBankSelect => self.vram_bus.vram.write_bank_select(value),
+            MappedAddress::ColorPaletteRegister(register) => {
+                self.ppu.write_color_register(register, value)
+            }
             MappedAddress::OamExtra => {}
             MappedAddress::Unmapped => {}
         }
