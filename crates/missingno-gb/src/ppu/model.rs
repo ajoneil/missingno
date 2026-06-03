@@ -60,6 +60,12 @@ pub trait PpuModel: Default {
     /// X-flip the loaded BG bitplanes (CGB attribute bit 5); DMG: unchanged.
     fn flip_bg_planes(cell: Self::BgCell, low: u8, high: u8) -> (u8, u8);
 
+    /// Post-boot cartridge configuration (HLE of the boot ROM's handoff state).
+    /// The CGB enters DMG-compatibility mode — installing the boot compat
+    /// palette into CRAM and routing the DMG palette registers through it — when
+    /// a DMG cartridge is inserted. DMG hardware: nothing to configure.
+    fn init_post_boot(&mut self, _cartridge_is_cgb: bool) {}
+
     /// Resolve the BG/OBJ mux to a final framebuffer pixel. Palette state and
     /// LCDC are read live from `regs`.
     fn resolve(&self, mux: &PixelMux<Self::BgCell>, regs: &PipelineRegisters) -> Self::Pixel;

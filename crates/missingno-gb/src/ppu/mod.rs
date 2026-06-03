@@ -345,6 +345,12 @@ impl<P: PpuModel> Ppu<P> {
         }
     }
 
+    /// Configure the PPU model from the cartridge at post-boot (DMG-compat on
+    /// the CGB). DMG is a no-op.
+    pub fn init_model_post_boot(&mut self, cartridge_is_cgb: bool) {
+        self.model.init_post_boot(cartridge_is_cgb);
+    }
+
     /// CPU read of a CGB colour-palette register; the model applies the mode-3
     /// data-port lock from the PPU's current mode.
     pub fn read_color_register(&self, register: ColorRegister) -> u8 {

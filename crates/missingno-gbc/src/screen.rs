@@ -73,8 +73,9 @@ impl Screen {
     }
 
     /// Read the current front buffer as a flat greyscale byte buffer
-    /// (160 × 144 = 23040 bytes). The placeholder greys reverse-map to the
-    /// DMG reference levels; any future non-grey pixel falls back to the
+    /// (160 × 144 = 23040 bytes), reverse-mapping each pixel to its DMG shade so
+    /// shade-pattern references match independent of the palette tint: the
+    /// placeholder/full-CGB greys, then the DMG-compat boot palette, else the
     /// 5→8-bit expansion of the red channel.
     pub fn to_greyscale_bytes(&self) -> Vec<u8> {
         (0..NUM_SCANLINES)
@@ -83,7 +84,10 @@ impl Screen {
                     let c = self.pixel(x, y);
                     match GREYSCALE.iter().position(|&grey| grey == c) {
                         Some(shade) => GREYSCALE_BYTE[shade],
-                        None => (c.red() << 3) | (c.red() >> 2),
+                        None => match crate::dmg_compat_shade(c) {
+                            Some(shade) => GREYSCALE_BYTE[shade as usize],
+                            None => (c.red() << 3) | (c.red() >> 2),
+                        },
                     }
                 })
             })

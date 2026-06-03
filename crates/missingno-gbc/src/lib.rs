@@ -82,6 +82,16 @@ impl ColorRam {
         Color555(value & 0x7FFF)
     }
 
+    /// Write a 4-colour RGB555 palette into one of the 8 slots (the boot ROM
+    /// installs the DMG-compatibility palette this way).
+    fn install(&mut self, palette: usize, colours: [u16; 4]) {
+        for (index, &colour) in colours.iter().enumerate() {
+            let base = (palette * 4 + index) * 2;
+            self.data[base] = colour as u8;
+            self.data[base + 1] = (colour >> 8) as u8;
+        }
+    }
+
     fn advance(&mut self) {
         if self.auto_increment {
             self.index = (self.index + 1) & 0x3F;
@@ -148,13 +158,36 @@ impl Vram for CgbVram {
     }
 }
 
+/// The CGB boot ROM's default DMG-compatibility palette for a cartridge whose
+/// title does not match the boot ROM table (palette combination 0): BG palette
+/// 29, and OBJ palettes 0 and 1 both = palette 4. Little-endian RGB555.
+pub const DMG_COMPAT_BG: [u16; 4] = [0x7FFF, 0x1BEF, 0x6180, 0x0000];
+pub const DMG_COMPAT_OBJ: [u16; 4] = [0x7FFF, 0x421F, 0x1CF2, 0x0000];
+
+/// Reverse-map a DMG-compatibility framebuffer colour to its DMG shade index
+/// (0-3), for shade-pattern screenshot comparison. The compat palette is a
+/// bijection over the four shades (white→0, BG green / OBJ pink →1, BG blue /
+/// OBJ red →2, black→3), so the shade pattern is recoverable independent of the
+/// tint. `None` for any off-palette colour.
+pub fn dmg_compat_shade(color: Color555) -> Option<u8> {
+    DMG_COMPAT_BG
+        .iter()
+        .chain(DMG_COMPAT_OBJ.iter())
+        .position(|&c| Color555(c & 0x7FFF) == color)
+        .map(|i| (i % 4) as u8)
+}
+
 /// The CGB colour PPU. Holds the BG/OBJ colour-palette RAM; the BG layer now
 /// resolves through the BG attribute + BG palette RAM to RGB555. Objects still
 /// resolve through the shared DMG OBP shade until the OBJ colour pipeline lands.
+///
+/// `dmg_compat` marks a DMG cartridge running on the CGB: the boot palette is
+/// installed in CRAM and the DMG palette registers (BGP/OBP) index it.
 #[derive(Default)]
 pub struct CgbPpu {
     bg_cram: ColorRam,
     obj_cram: ColorRam,
+    dmg_compat: bool,
 }
 
 impl PpuModel for CgbPpu {
@@ -179,7 +212,20 @@ impl PpuModel for CgbPpu {
         }
     }
 
+    fn init_post_boot(&mut self, cartridge_is_cgb: bool) {
+        if !cartridge_is_cgb {
+            self.dmg_compat = true;
+            self.bg_cram.install(0, DMG_COMPAT_BG);
+            self.obj_cram.install(0, DMG_COMPAT_OBJ);
+            self.obj_cram.install(1, DMG_COMPAT_OBJ);
+        }
+    }
+
     fn resolve(&self, mux: &PixelMux<BgAttribute>, regs: &PipelineRegisters) -> Color555 {
+        if self.dmg_compat {
+            return self.resolve_dmg_compat(mux, regs);
+        }
+
         let bg_index = (mux.bg_hi << 1) | mux.bg_lo;
 
         // OBJ resolves through the DMG OBP shade until the OBJ colour pipeline
@@ -204,14 +250,63 @@ impl PpuModel for CgbPpu {
         self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 
+    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+        if self.dmg_compat {
+            return 0xFF; // CRAM is locked to the boot palette in DMG-compat mode.
+        }
+        self.read_cram_register(register, rendering)
+    }
+
+    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+        if self.dmg_compat {
+            return; // CRAM is locked to the boot palette in DMG-compat mode.
+        }
+        self.write_cram_register(register, value, rendering);
+    }
+
     fn trace_shade(pixel: Color555) -> u8 {
         GREYSCALE
             .iter()
             .position(|&grey| grey == pixel)
             .unwrap_or(0) as u8
     }
+}
 
-    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+impl CgbPpu {
+    /// DMG-compatibility resolve: DMG-style BG-vs-OBJ priority picks the winning
+    /// pixel, then its DMG shade (BGP/OBP-mapped) indexes the boot palette held
+    /// in CRAM — BG palette 0, OBJ palette OBP0/OBP1 slot.
+    fn resolve_dmg_compat(
+        &self,
+        mux: &PixelMux<BgAttribute>,
+        regs: &PipelineRegisters,
+    ) -> Color555 {
+        let bg_index = if regs.bg_window_enabled_for_resolve() {
+            (mux.bg_hi << 1) | mux.bg_lo
+        } else {
+            0
+        };
+
+        if regs.sprites_enabled_for_resolve() {
+            let spr_index = (mux.spr_hi << 1) | mux.spr_lo;
+            if spr_index != 0 && (mux.spr_pri == 0 || bg_index == 0) {
+                let obp = if mux.spr_pal == 0 {
+                    regs.palettes.sprite0.output()
+                } else {
+                    regs.palettes.sprite1.output()
+                };
+                let shade = PaletteMap(obp).map(PaletteIndex(spr_index)).0;
+                return self.obj_cram.color(mux.spr_pal, shade);
+            }
+        }
+
+        let shade = PaletteMap(regs.palettes.background_for_bg_resolve())
+            .map(PaletteIndex(bg_index))
+            .0;
+        self.bg_cram.color(0, shade)
+    }
+
+    fn read_cram_register(&self, register: ColorRegister, rendering: bool) -> u8 {
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.read_index(),
             ColorRegister::ObjectIndex => self.obj_cram.read_index(),
@@ -222,7 +317,7 @@ impl PpuModel for CgbPpu {
         }
     }
 
-    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+    fn write_cram_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
         match register {
             ColorRegister::BackgroundIndex => self.bg_cram.write_index(value),
             ColorRegister::ObjectIndex => self.obj_cram.write_index(value),
