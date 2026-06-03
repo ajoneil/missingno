@@ -345,8 +345,12 @@ impl PpuModel for CgbPpu {
         }
     }
 
-    fn obj_data_bank(attrs: Attributes) -> u8 {
-        attrs.cgb_bank()
+    fn obj_data_bank(&self, attrs: Attributes) -> u8 {
+        if self.dmg_compat {
+            0
+        } else {
+            attrs.cgb_bank()
+        }
     }
 
     fn obj_attr(&self, attrs: Attributes) -> ObjAttr {
