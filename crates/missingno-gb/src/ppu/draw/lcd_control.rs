@@ -1,7 +1,6 @@
 //! WUSA clock gating, POVA trigger, and LCD pixel push.
 
-use crate::ppu::PixelOutput;
-use crate::ppu::types::palette::PaletteIndex;
+use crate::ppu::DrawnPixel;
 
 /// TOBA = AND2(WUSA, SACU) gates pixel emit; cp_pad waveform (SEMU = OR2(TOBA, POVA)) is not modelled.
 pub(in crate::ppu) struct LcdControl {
@@ -34,13 +33,13 @@ impl LcdControl {
     }
 
     /// PPU fall: XAJO sets WUSA, TOBA pushes screen_x=0..158. Caller passes post-advance `px_value`.
-    pub(in crate::ppu) fn on_ppu_clock_fall(
+    pub(in crate::ppu) fn on_ppu_clock_fall<Pix: Copy>(
         &mut self,
         sacu: bool,
-        pixel: PaletteIndex,
+        pixel: Pix,
         fine_scroll_match: bool,
         px_value: u8,
-    ) -> (bool, Option<PixelOutput>) {
+    ) -> (bool, Option<DrawnPixel<Pix>>) {
         // XAJO = AND2(PX bit0, PX bit3); first fires at PX=9.
         if !self.pixel_gate && (px_value & 0b1001 == 0b1001) {
             self.pixel_gate = true;
@@ -52,10 +51,10 @@ impl LcdControl {
             && self.lcd_push_count < 159
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
         {
-            let out = PixelOutput {
+            let out = DrawnPixel {
                 x: self.lcd_push_count,
                 y: self.scanline,
-                shade: pixel.0,
+                color: pixel,
             };
             self.lcd_push_count += 1;
             Some(out)
@@ -69,20 +68,20 @@ impl LcdControl {
     }
 
     /// PPU rise: VOGA clears WUSA; WODU dot pushes screen_x=159 from the post-fall-shift shifter MSB.
-    pub(in crate::ppu) fn on_ppu_clock_rise(
+    pub(in crate::ppu) fn on_ppu_clock_rise<Pix: Copy>(
         &mut self,
         end_of_line_latched: bool,
         end_of_line: bool,
-        post_shift_pixel: PaletteIndex,
-    ) -> Option<PixelOutput> {
+        post_shift_pixel: Pix,
+    ) -> Option<DrawnPixel<Pix>> {
         let pixel_out = if end_of_line
             && self.lcd_push_count < crate::ppu::screen::PIXELS_PER_LINE
             && self.scanline < crate::ppu::screen::NUM_SCANLINES
         {
-            let out = PixelOutput {
+            let out = DrawnPixel {
                 x: self.lcd_push_count,
                 y: self.scanline,
-                shade: post_shift_pixel.0,
+                color: post_shift_pixel,
             };
             self.lcd_push_count += 1;
             Some(out)

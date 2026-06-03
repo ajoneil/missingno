@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl,
     memory::{Oam, Vram},
     types::sprites::SpriteId,
 };
@@ -367,14 +367,15 @@ impl Rendering {
     }
 
     /// ALET rising: ALET-clocked DFFs capture (NYKA, PYGO, VOGA); XUPY-derived logic and combinational signals settle.
-    pub(super) fn on_ppu_clock_rise(
+    pub(super) fn on_ppu_clock_rise<P: PpuModel>(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &Vram,
-    ) -> Option<PixelOutput> {
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // Terminal WODU pulse is a fall-edge transient; clear it so rise / off-edge reads see settled WODU.
         self.terminal_wodu_pulse = false;
 
@@ -404,8 +405,8 @@ impl Rendering {
         // `end_of_line` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
         let end_of_line = self.hblank.commit_end_of_line_on_rise();
 
-        let post_shift_pixel =
-            pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let mux = pixel_output::current_mux(&self.bg_shifter, &self.obj_shifter);
+        let post_shift_pixel = model.resolve(&mux, regs);
         let pixel = self.lcd.on_ppu_clock_rise(
             self.hblank.end_of_line_latched(),
             end_of_line,
@@ -434,15 +435,17 @@ impl Rendering {
     }
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
-    pub(super) fn on_ppu_clock_fall(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn on_ppu_clock_fall<P: PpuModel>(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
         talu_rising: bool,
-    ) -> Option<PixelOutput> {
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
         self.window.tick_wy_match_falling(regs, video, talu_rising);
 
@@ -496,6 +499,7 @@ impl Rendering {
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
             self.mode3_pixel_pipeline(
+                model,
                 regs,
                 rydy_before_pory,
                 advance_nyxu_pulse,
@@ -659,13 +663,14 @@ impl Rendering {
 
     /// SACU/CLKPIPE domain (depth ~63.8 ge); runs against settled fetcher state.
     /// Handles TYFA consumption, PUXA/POVA, pixel shifts, SEKO tile reload, LCD output, NUKO window trigger.
-    fn mode3_pixel_pipeline(
+    fn mode3_pixel_pipeline<P: PpuModel>(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         rydy_before_pory: bool,
         advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
-    ) -> Option<PixelOutput> {
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // FEPO before the pixel advance, for the terminal WODU pulse (FEPO settles after XANO).
         let pre_advance_fepo = self.fepo(regs.control.sprites_enabled());
 
@@ -703,7 +708,8 @@ impl Rendering {
 
         let nyxu_pulse = seko_fire || advance_nyxu_pulse;
 
-        let pixel = pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let mux = pixel_output::current_mux(&self.bg_shifter, &self.obj_shifter);
+        let pixel = model.resolve(&mux, regs);
 
         if seko_fire {
             self.fetcher.load_into(&mut self.bg_shifter);

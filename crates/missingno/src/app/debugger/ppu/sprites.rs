@@ -23,6 +23,7 @@ use crate::app::{
 use missingno_gb::ppu::{
     Ppu,
     memory::Vram,
+    model::DmgPpu,
     types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     types::tiles::{TileAddressMode, TileIndex},
@@ -58,7 +59,7 @@ impl SpritesPane {
 
     pub fn content<'a>(
         &'a self,
-        ppu: &'a Ppu,
+        ppu: &'a Ppu<DmgPpu>,
         vram: &'a Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
@@ -95,7 +96,7 @@ impl SpritesPane {
 
     fn sprites<'a>(
         &'a self,
-        ppu: &'a Ppu,
+        ppu: &'a Ppu<DmgPpu>,
         vram: &'a Vram,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
@@ -127,7 +128,7 @@ impl SpritesPane {
     fn sprite<'a>(
         &'a self,
         index: u8,
-        ppu: &'a Ppu,
+        ppu: &'a Ppu<DmgPpu>,
         vram: &'a Vram,
         sprite: &Sprite,
         palette: &Palette,
@@ -156,7 +157,7 @@ impl SpritesPane {
         &self,
         sprite: &Sprite,
         vram: &Vram,
-        ppu: &Ppu,
+        ppu: &Ppu<DmgPpu>,
         palette: &Palette,
     ) -> Element<'_, app::Message> {
         let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);

@@ -24,9 +24,31 @@
 
 pub mod screen;
 
-use missingno_gb::{Console, Model, PixelOutput, StopAction, cartridge::Cartridge, cpu::Cpu};
+use missingno_gb::ppu::{PipelineRegisters, PixelMux, PpuModel, resolve_shade};
+use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
+
+/// The CGB colour PPU. Its colour hardware (CRAM, BG attributes, the colour mux)
+/// attaches here as it lands; until then it resolves the shared DMG shade and
+/// maps it through the greyscale palette, matching the DMG reference levels.
+#[derive(Default)]
+pub struct CgbPpu;
+
+impl PpuModel for CgbPpu {
+    type Pixel = Color555;
+
+    fn resolve(&self, mux: &PixelMux, regs: &PipelineRegisters) -> Color555 {
+        GREYSCALE[(resolve_shade(mux, regs) & 0x3) as usize]
+    }
+
+    fn trace_shade(pixel: Color555) -> u8 {
+        GREYSCALE
+            .iter()
+            .position(|&grey| grey == pixel)
+            .unwrap_or(0) as u8
+    }
+}
 
 /// The Game Boy Color [`Model`]. Remaining CGB features (VBK, CRAM, HDMA) and
 /// the color pixel pipeline attach here as they land.
@@ -74,11 +96,8 @@ impl Cgb {
 }
 
 impl Model for Cgb {
+    type Ppu = CgbPpu;
     type Screen = Screen;
-
-    fn map_pixel(pixel: PixelOutput) -> Color555 {
-        GREYSCALE[(pixel.shade & 0x3) as usize]
-    }
 
     fn cpu_post_boot(_checksum: u8) -> Cpu {
         Cpu::post_boot_cgb()

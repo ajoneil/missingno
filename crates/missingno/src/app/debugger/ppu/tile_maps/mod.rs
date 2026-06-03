@@ -10,7 +10,8 @@ use crate::app::{
     texture_renderer::TextureRenderer,
 };
 use missingno_gb::ppu::{
-    Ppu, memory::Vram, types::control::Control, types::palette::Palette, types::tiles::TileMapId,
+    Ppu, memory::Vram, model::DmgPpu, types::control::Control, types::palette::Palette,
+    types::tiles::TileMapId,
 };
 
 mod viewport_overlay;
@@ -30,7 +31,7 @@ impl TileMapPane {
 
     pub fn content(
         &self,
-        ppu: &Ppu,
+        ppu: &Ppu<DmgPpu>,
         vram: &Vram,
         palette: &Palette,
     ) -> pane_grid::Content<'_, Message> {
