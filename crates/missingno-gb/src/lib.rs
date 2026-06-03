@@ -127,6 +127,24 @@ pub trait Model: Default {
     ) -> bool {
         false
     }
+
+    /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
+    /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
+    /// DMG: no VRAM DMA.
+    fn vram_dma_tick(&mut self, _mode: ppu::rendering::Mode) {}
+
+    /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
+    /// resolved addresses — advancing its cursor. `None` once this M-cycle's
+    /// quota is spent. DMG: never.
+    fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {
+        None
+    }
+
+    /// Whether the VRAM DMA is holding the CPU clock right now (mid transfer or
+    /// mid H-Blank block). DMG: never.
+    fn vram_dma_holds_cpu(&self) -> bool {
+        false
+    }
 }
 
 /// A Game Boy–family console: the SM83 CPU, the shared PPU/APU/timer/DMA
@@ -166,6 +184,11 @@ pub struct Console<M: Model> {
     /// CPU stays `Stopped` (the divider and PPU keep running) until this
     /// drains, then re-engages at the new speed. 0 = not switching.
     speed_switch_blackout: u32,
+
+    /// A CGB VRAM DMA is holding the CPU clock this M-cycle (bus master owns the
+    /// bus). The CPU spins in `Stopped` and the DMA's bytes flow per M-cycle;
+    /// `manage_dma_hold` releases it when the DMA stops asserting the hold.
+    dma_cpu_hold: bool,
 
     model: M,
 }
@@ -235,6 +258,7 @@ impl<M: Model> Console<M> {
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
             speed_switch_blackout: 0,
+            dma_cpu_hold: false,
             model: M::default(),
         };
         console.rebuild_state();
@@ -307,6 +331,7 @@ impl<M: Model> Console<M> {
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
         self.speed_switch_blackout = 0;
+        self.dma_cpu_hold = false;
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);
         } else if let Some(address) = self.cpu.pending_bus_read() {

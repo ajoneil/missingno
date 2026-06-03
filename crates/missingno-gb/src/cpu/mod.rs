@@ -1,7 +1,7 @@
 use commit::Commit;
 use dff::Dff;
 use flags::{Flag, Flags};
-use mcycle::{BusAction, CpuPhase, MCycleAction, Phase, TCycle};
+use mcycle::{BusAction, CpuPhase, HaltPhase, MCycleAction, Phase, TCycle};
 use registers::{Register8, Register16};
 
 use crate::interrupts::Interrupt;
@@ -510,6 +510,16 @@ impl Cpu {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
+    }
+
+    /// Hold the CPU in the STOP idle spin until `resume_from_stop`. Models a bus
+    /// master pausing the CPU clock while the peripherals keep running — the CGB
+    /// VRAM DMA. Call at an M-cycle boundary; the inverse of `resume_from_stop`.
+    pub fn begin_stop_hold(&mut self) {
+        self.halt.state = HaltState::Stopped;
+        self.halt.rs_latched = true;
+        self.phase = CpuPhase::Halted(HaltPhase::Spin);
+        self.exec_step = 0;
     }
 
     pub fn halt_rs_latched(&self) -> bool {

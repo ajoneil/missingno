@@ -25,6 +25,7 @@
 pub mod screen;
 
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
+use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
     ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel, resolve_dmg_pixel,
@@ -346,11 +347,7 @@ impl PpuModel for CgbPpu {
     }
 
     fn obj_data_bank(&self, attrs: Attributes) -> u8 {
-        if self.dmg_compat {
-            0
-        } else {
-            attrs.cgb_bank()
-        }
+        if self.dmg_compat { 0 } else { attrs.cgb_bank() }
     }
 
     fn obj_attr(&self, attrs: Attributes) -> ObjAttr {
@@ -458,8 +455,28 @@ impl CgbPpu {
     }
 }
 
-/// The Game Boy Color [`Model`]. Remaining CGB features (VBK, CRAM, HDMA) and
-/// the color pixel pipeline attach here as they land.
+/// CGB VRAM DMA ($FF51-55) controller. The source and destination pointers run
+/// as bytes are copied and persist after a transfer, so a follow-on transfer
+/// continues where the last left off. The step loop ticks it each M-cycle: GDMA
+/// (general-purpose) flows `quota` bytes per M-cycle while it holds the CPU,
+/// until `remaining` reaches zero.
+#[derive(Default)]
+struct VramDma {
+    /// Running source pointer, 16-byte aligned (HDMA1/HDMA2).
+    source: u16,
+    /// Running destination, a VRAM address $8000..=$9FF0 (HDMA3/HDMA4).
+    dest: u16,
+    /// Bytes left in the active GDMA. >0 means it is holding the CPU.
+    remaining: u16,
+    /// Bytes still movable this M-cycle (refilled per tick: 2 single, 1 double).
+    quota: u8,
+    /// An H-Blank transfer is armed. A bit-7=0 HDMA5 write stops it rather than
+    /// starting a GDMA. (The transfer itself lands with the H-Blank machinery.)
+    hdma_armed: bool,
+}
+
+/// The Game Boy Color [`Model`]. Remaining CGB features (the color pixel
+/// pipeline) attach here as they land.
 pub struct Cgb {
     /// 8 × 4 KiB work-RAM banks. C000-CFFF is fixed bank 0; D000-DFFF is the
     /// SVBK-selected bank.
@@ -471,6 +488,8 @@ pub struct Cgb {
     /// KEY1 ($FF4D) bit 7 — current speed (false = normal, true = double).
     /// The switch toggles it; the 2× clock cadence itself lands later.
     double_speed: bool,
+    /// VRAM DMA ($FF51-55).
+    vram_dma: VramDma,
 }
 
 impl Default for Cgb {
@@ -480,6 +499,7 @@ impl Default for Cgb {
             svbk: 1,
             key1_armed: false,
             double_speed: false,
+            vram_dma: VramDma::default(),
         }
     }
 }
@@ -533,11 +553,14 @@ impl Model for Cgb {
             0xFF4C => Some(0xFF), // KEY0: boot-locked
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
             0xFF4F => Some(vram.read_bank_select()), // VBK
+            // HDMA1-4 are write-only; HDMA5 has no observable active GDMA (the
+            // CPU is held for its whole duration). HDMA status lands with HDMA.
+            0xFF51..=0xFF55 => Some(0xFF),
             0xFF68 => Some(ppu.read_color_register(ColorRegister::BackgroundIndex)), // BCPS
-            0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)), // BCPD
-            0xFF6A => Some(ppu.read_color_register(ColorRegister::ObjectIndex)), // OCPS
-            0xFF6B => Some(ppu.read_color_register(ColorRegister::ObjectData)), // OCPD
-            0xFF6C => Some(ppu.read_object_priority()), // OPRI
+            0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)),  // BCPD
+            0xFF6A => Some(ppu.read_color_register(ColorRegister::ObjectIndex)),     // OCPS
+            0xFF6B => Some(ppu.read_color_register(ColorRegister::ObjectData)),      // OCPD
+            0xFF6C => Some(ppu.read_object_priority()),                              // OPRI
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             _ => None,
         }
@@ -562,6 +585,37 @@ impl Model for Cgb {
             }
             0xFF4F => {
                 vram.write_bank_select(value); // VBK
+                true
+            }
+            0xFF51 => {
+                self.vram_dma.source = (self.vram_dma.source & 0x00FF) | ((value as u16) << 8);
+                true
+            }
+            0xFF52 => {
+                self.vram_dma.source = (self.vram_dma.source & 0xFF00) | (value & 0xF0) as u16;
+                true
+            }
+            0xFF53 => {
+                let low = self.vram_dma.dest & 0x00FF;
+                self.vram_dma.dest = 0x8000 | ((((value as u16) << 8) | low) & 0x1FF0);
+                true
+            }
+            0xFF54 => {
+                self.vram_dma.dest =
+                    0x8000 | ((self.vram_dma.dest & 0x1F00) | (value & 0xF0) as u16);
+                true
+            }
+            0xFF55 => {
+                if value & 0x80 != 0 {
+                    // HDMA arm; transfer is inert until the H-Blank machinery lands.
+                    self.vram_dma.hdma_armed = true;
+                } else if self.vram_dma.hdma_armed {
+                    // bit 7 = 0 while armed stops the HDMA — it does not start a GDMA.
+                    self.vram_dma.hdma_armed = false;
+                } else {
+                    // GDMA: copy the whole length while holding the CPU.
+                    self.vram_dma.remaining = ((value & 0x7F) as u16 + 1) * 16;
+                }
                 true
             }
             0xFF68 => {
@@ -590,6 +644,34 @@ impl Model for Cgb {
             }
             _ => false,
         }
+    }
+
+    fn vram_dma_tick(&mut self, _mode: Mode) {
+        // Refill this M-cycle's byte budget: 2 bytes/M-cycle single speed,
+        // 1 in double speed. Zero when no transfer is running.
+        self.vram_dma.quota = if self.vram_dma.remaining > 0 {
+            if self.double_speed { 1 } else { 2 }
+        } else {
+            0
+        };
+    }
+
+    fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {
+        if self.vram_dma.quota == 0 || self.vram_dma.remaining == 0 {
+            return None;
+        }
+        let pair = (self.vram_dma.source, self.vram_dma.dest);
+        // Pointers advance per byte and persist for any follow-on transfer; the
+        // destination wraps within VRAM.
+        self.vram_dma.source = self.vram_dma.source.wrapping_add(1);
+        self.vram_dma.dest = 0x8000 | (self.vram_dma.dest.wrapping_add(1) & 0x1FFF);
+        self.vram_dma.remaining -= 1;
+        self.vram_dma.quota -= 1;
+        Some(pair)
+    }
+
+    fn vram_dma_holds_cpu(&self) -> bool {
+        self.vram_dma.remaining > 0
     }
 }
 
