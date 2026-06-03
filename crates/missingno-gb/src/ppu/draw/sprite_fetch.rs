@@ -1,13 +1,12 @@
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    PipelineRegisters,
+    PipelineRegisters, PpuModel,
     memory::{Oam, Vram},
 };
 
 use super::super::scan::oam_scan::SpriteStoreEntry;
 use super::super::types::sprites::{self, SpriteId, SpriteSize};
 use super::super::types::tiles::{TileAddressMode, TileIndex};
-use super::shifters::ObjShifter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpriteFetchPhase {
@@ -64,12 +63,12 @@ impl SpriteFetch {
     }
 
     /// Reads `sprite_size` live at fetch time, matching the combinational gejy/XYMO path on hardware.
-    fn read_tile_data(
+    fn read_tile_data<P: PpuModel>(
         &mut self,
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &P::Vram,
         high: bool,
     ) -> u8 {
         let (tile, attributes) = match oam_bus {
@@ -107,24 +106,27 @@ impl SpriteFetch {
             SpriteSize::Double => (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8),
         };
 
-        let block = vram.tile_block(final_block);
+        // CGB objects select their tile-data VRAM bank from OAM attr bit 3.
+        let block = vram
+            .bank(P::obj_data_bank(self.attributes))
+            .tile_block(final_block);
         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
     }
 
     /// Returns true on completion (counter==5).
-    pub(in crate::ppu) fn advance(
+    pub(in crate::ppu) fn advance<P: PpuModel>(
         &mut self,
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &P::Vram,
     ) -> bool {
         match self.fetch_counter {
             2 => {
-                self.tile_data_low = self.read_tile_data(regs, oam, oam_bus, vram, false);
+                self.tile_data_low = self.read_tile_data::<P>(regs, oam, oam_bus, vram, false);
             }
             4 => {
-                self.tile_data_high = self.read_tile_data(regs, oam, oam_bus, vram, true);
+                self.tile_data_high = self.read_tile_data::<P>(regs, oam, oam_bus, vram, true);
             }
             5 => {
                 return true;
@@ -135,8 +137,10 @@ impl SpriteFetch {
         false
     }
 
-    /// Merge fetched bytes into ObjShifter via sprite_onN transparency gating; X-flip reverses bits.
-    pub(in crate::ppu) fn merge_into(&self, obj_shifter: &mut ObjShifter) {
+    /// Merge fetched bytes into the model's OBJ FIFO (transparency-gated; X-flip
+    /// reverses bits). The model extracts the per-pixel attribute and resolves the
+    /// overlap (DMG fetch-order / CGB OAM-index) — the FIFO is opaque here.
+    pub(in crate::ppu) fn merge_into<P: PpuModel>(&self, model: &P, fifo: &mut P::ObjFifo) {
         let sprite_low = if self.attributes.flip_x() {
             self.tile_data_low.reverse_bits()
         } else {
@@ -148,18 +152,8 @@ impl SpriteFetch {
             self.tile_data_high
         };
 
-        let palette_bit = if self.attributes.contains(sprites::Attributes::PALETTE) {
-            1
-        } else {
-            0
-        };
-        let priority_bit = if self.attributes.contains(sprites::Attributes::PRIORITY) {
-            1
-        } else {
-            0
-        };
-
-        obj_shifter.merge(sprite_low, sprite_high, palette_bit, priority_bit);
+        let attr = model.obj_attr(self.attributes);
+        model.obj_merge(fifo, sprite_low, sprite_high, attr, self.slot_index);
     }
 }
 

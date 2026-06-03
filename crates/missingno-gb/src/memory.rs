@@ -155,16 +155,16 @@ impl ExternalBus {
 
 /// The VRAM data bus connects the SoC to video RAM (0x8000–0x9FFF).
 /// The bus retains its last driven value as a latch (no decay).
-pub struct VramBus {
-    pub vram: Vram,
+pub struct VramBus<V: Vram> {
+    pub vram: V,
     /// Retained value on the VRAM data bus.
     pub latch: u8,
 }
 
-impl VramBus {
+impl<V: Vram> VramBus<V> {
     pub fn new() -> Self {
         Self {
-            vram: Vram::default(),
+            vram: V::default(),
             latch: 0xFF,
         }
     }
@@ -267,6 +267,8 @@ impl MappedAddress {
             0xff49 => Self::PpuRegister(ppu::Register::Sprite1Palette),
             0xff4a => Self::PpuRegister(ppu::Register::WindowY),
             0xff4b => Self::PpuRegister(ppu::Register::WindowX),
+            // $FF4F (VBK), $FF68-6B (CRAM), $FF6C (OPRI) are CGB registers — the
+            // CGB model map resolves them; the DMG base map leaves them unmapped.
             0xff4c..=0xff4f => Self::Unmapped,
             0xff50 => Self::BootRomUnmap,
             0xff51..=0xff7f => Self::Unmapped,
@@ -307,7 +309,7 @@ impl<M: Model> Console<M> {
     /// model's CGB registers) first, then the shared `MappedAddress` map.
     /// The single chokepoint for the model-before-shared-map contract.
     fn read_addr(&self, address: u16) -> u8 {
-        if let Some(value) = self.model.map_read(address) {
+        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
             return value;
         }
         self.read_mapped(MappedAddress::map(address))
@@ -375,7 +377,7 @@ impl<M: Model> Console<M> {
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {
-        if let Some(value) = self.model.map_read(address) {
+        if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
             return value;
         }
         let mapped = match Bus::of(address) {
@@ -422,7 +424,7 @@ impl<M: Model> Console<M> {
         match address {
             MappedAddress::External(addr) => self.external.read(addr),
             MappedAddress::HighRam(offset) => self.high_ram.read(offset),
-            MappedAddress::Vram(address) => self.vram_bus.vram.read(address),
+            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_read(address),
             MappedAddress::Oam(address) => self.ppu.read_oam(address),
             MappedAddress::JoypadRegister => self.model.read_joypad(self.joypad.read_register()),
             MappedAddress::SerialTransferRegister(register) => match register {
@@ -525,7 +527,10 @@ impl<M: Model> Console<M> {
         // regardless of whether the target device stores it.
         self.drive_bus(address, value);
 
-        if self.model.map_write(address, value) {
+        if self
+            .model
+            .map_write(address, value, &mut self.ppu, &mut self.vram_bus.vram)
+        {
             return;
         }
 
@@ -539,7 +544,7 @@ impl<M: Model> Console<M> {
         match address {
             MappedAddress::External(addr) => self.external.write(addr, value),
             MappedAddress::HighRam(offset) => self.high_ram.write(offset, value),
-            MappedAddress::Vram(address) => self.vram_bus.vram.write(address, value),
+            MappedAddress::Vram(address) => self.vram_bus.vram.cpu_write(address, value),
             MappedAddress::Oam(address) => self.ppu.write_oam(address, value),
             MappedAddress::JoypadRegister => {
                 self.model.on_joypad_write(value);

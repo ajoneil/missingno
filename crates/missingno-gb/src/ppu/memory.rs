@@ -3,16 +3,17 @@ use super::types::{
     tiles::{TileBlock, TileBlockId, TileIndex, TileMap, TileMapId},
 };
 
-/// VRAM data bus (0x8000–0x9FFF): tile data and tile maps.
+/// One 8 KiB VRAM bank (0x8000–0x9FFF): tile data and tile maps. The DMG has a
+/// single bank; the CGB has two (the second carrying BG map attributes).
 #[derive(Default)]
-pub struct Vram {
+pub struct VramBank {
     pub(crate) tiles: [TileBlock; 3],
     pub(crate) tile_maps: [TileMap; 2],
 }
 
-impl Vram {
+impl VramBank {
     pub fn from_bytes(data: &[u8]) -> Self {
-        let mut vram = Vram::default();
+        let mut vram = VramBank::default();
         let len = data.len().min(0x2000);
         for i in 0..len {
             if i < 0x1800 {
@@ -74,10 +75,10 @@ impl Vram {
         }
     }
 
-    /// Populate VRAM with the state the DMG boot ROM leaves behind: decompressed
+    /// Populate this bank with the state the DMG boot ROM leaves behind: decompressed
     /// Nintendo logo tiles (1-24), ® (tile 25), and tile-map entries. `logo` is
     /// the 48-byte logo region of the cartridge header (0x0104-0x0133).
-    pub fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
+    pub fn seed_post_boot(&mut self, logo: &[u8; 0x30]) {
         // Each nibble's bits are doubled horizontally (1 bit → 2 pixels) and the row is doubled vertically.
         let mut vram_offset: usize = 0x10;
         for &logo_byte in logo {
@@ -107,6 +108,43 @@ impl Vram {
             let map_offset = (9 * 32 + 4 + col) as usize;
             self.tile_maps[0].data[map_offset] = TileIndex((col + 13) as u8);
         }
+    }
+}
+
+/// A console's video RAM: the DMG's single [`VramBank`], or the CGB's two banks
+/// behind a VBK ($FF4F) bank select. The CPU sees the VBK-selected bank; the
+/// pixel fetch addresses banks explicitly.
+pub trait Vram: Default {
+    /// CPU read of $8000–$9FFF (the VBK-selected bank on the CGB).
+    fn cpu_read(&self, address: VramAddress) -> u8;
+    /// CPU write of $8000–$9FFF (the VBK-selected bank on the CGB).
+    fn cpu_write(&mut self, address: VramAddress, value: u8);
+    /// The bank the pixel fetch reads. The DMG ignores `bank` (one bank only).
+    fn bank(&self, bank: u8) -> &VramBank;
+    /// VBK ($FF4F). The DMG has no bank select — reads 0xFF, writes ignored.
+    fn read_bank_select(&self) -> u8 {
+        0xFF
+    }
+    fn write_bank_select(&mut self, _value: u8) {}
+    /// Seed bank 0 with the post-boot logo state.
+    fn init_post_boot(&mut self, logo: &[u8; 0x30]);
+}
+
+impl Vram for VramBank {
+    fn cpu_read(&self, address: VramAddress) -> u8 {
+        self.read(address)
+    }
+
+    fn cpu_write(&mut self, address: VramAddress, value: u8) {
+        self.write(address, value);
+    }
+
+    fn bank(&self, _bank: u8) -> &VramBank {
+        self
+    }
+
+    fn init_post_boot(&mut self, logo: &[u8; 0x30]) {
+        self.seed_post_boot(logo);
     }
 }
 

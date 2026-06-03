@@ -29,7 +29,9 @@ use cpu_bus::CpuBus;
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
-use ppu::{Ppu, types::palette::PaletteIndex};
+use ppu::Ppu;
+use ppu::memory::Vram;
+use ppu::model::PpuModel;
 
 pub use master_clock::ClockPhase;
 pub use ppu::PixelOutput;
@@ -57,14 +59,15 @@ pub enum StopAction {
 /// catalogue of how DMG and CGB differ in the step loop and memory map.
 /// Everything not listed here is the same silicon and lives in [`Console`].
 pub trait Model: Default {
-    /// Framebuffer storage: DMG = `PaletteIndex` shades, CGB = RGB555.
-    type Screen: ScreenBuffer;
+    /// The PPU's per-console hardware: DMG monochrome, CGB colour.
+    type Ppu: PpuModel;
+
+    /// Framebuffer storage; its pixel matches what `Self::Ppu` resolves
+    /// (DMG = `PaletteIndex` shades, CGB = RGB555).
+    type Screen: ScreenBuffer<Pixel = <Self::Ppu as PpuModel>::Pixel>;
 
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
-
-    /// Map a finished PPU pixel into this console's framebuffer pixel.
-    fn map_pixel(pixel: PixelOutput) -> <Self::Screen as ScreenBuffer>::Pixel;
 
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
     fn on_present(&mut self, _screen: &Self::Screen) {}
@@ -103,12 +106,25 @@ pub trait Model: Default {
 
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
-    /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI (and, later, banked
-    /// WRAM/VRAM resolution). Consulted before the shared `MappedAddress` map.
-    fn map_read(&self, _address: u16) -> Option<u8> {
+    /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI, and banked WRAM. Consulted
+    /// before the shared `MappedAddress` map. The PPU and VRAM are passed so the
+    /// map can resolve its registers that those generic components back (VBK on
+    /// VRAM; CRAM/OPRI on the PPU) — keeping their addresses out of the shared map.
+    fn map_read(
+        &self,
+        _address: u16,
+        _ppu: &Ppu<Self::Ppu>,
+        _vram: &<Self::Ppu as PpuModel>::Vram,
+    ) -> Option<u8> {
         None
     }
-    fn map_write(&mut self, _address: u16, _value: u8) -> bool {
+    fn map_write(
+        &mut self,
+        _address: u16,
+        _value: u8,
+        _ppu: &mut Ppu<Self::Ppu>,
+        _vram: &mut <Self::Ppu as PpuModel>::Vram,
+    ) -> bool {
         false
     }
 }
@@ -121,9 +137,9 @@ pub struct Console<M: Model> {
 
     external: ExternalBus,
     high_ram: HighRam,
-    vram_bus: VramBus,
+    vram_bus: VramBus<<M::Ppu as PpuModel>::Vram>,
 
-    ppu: Ppu,
+    ppu: Ppu<M::Ppu>,
     screen: M::Screen,
     audio: Audio,
     joypad: Joypad,
@@ -162,12 +178,9 @@ pub struct Dmg {
 }
 
 impl Model for Dmg {
+    type Ppu = ppu::model::DmgPpu;
     type Screen = ppu::screen::Screen;
     const HAS_OAM_BUG: bool = true;
-
-    fn map_pixel(pixel: PixelOutput) -> PaletteIndex {
-        PaletteIndex(pixel.shade)
-    }
 
     fn on_present(&mut self, screen: &ppu::screen::Screen) {
         if let Some(sgb) = &mut self.sgb {
@@ -285,6 +298,8 @@ impl<M: Model> Console<M> {
             let logo: [u8; 0x30] =
                 std::array::from_fn(|i| self.external.cartridge.read(0x0104 + i as u16));
             self.vram_bus.vram.init_post_boot(&logo);
+            self.ppu
+                .init_model_post_boot(self.external.cartridge.is_cgb());
         }
 
         self.bus_trace = cpu_bus::BusTrace::new();
@@ -311,11 +326,11 @@ impl<M: Model> Console<M> {
         &mut self.cpu
     }
 
-    pub fn ppu(&self) -> &Ppu {
+    pub fn ppu(&self) -> &Ppu<M::Ppu> {
         &self.ppu
     }
 
-    pub fn vram(&self) -> &ppu::memory::Vram {
+    pub fn vram(&self) -> &<M::Ppu as PpuModel>::Vram {
         &self.vram_bus.vram
     }
 

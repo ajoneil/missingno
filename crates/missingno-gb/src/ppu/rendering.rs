@@ -4,9 +4,7 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    PipelineRegisters, PixelOutput, VideoControl,
-    memory::{Oam, Vram},
-    types::sprites::SpriteId,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam, types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -16,7 +14,7 @@ use super::draw::hblank_pipeline::HblankPipeline;
 use super::draw::lcd_control::LcdControl;
 use super::draw::pixel_counter::PixelCounter;
 use super::draw::pixel_output;
-use super::draw::shifters::{BgShifter, ObjShifter};
+use super::draw::shifters::BgShifter;
 use super::draw::sprite_fetch::{SpriteFetch, SpriteState};
 use super::draw::sprite_trigger::SpriteTrigger;
 use super::draw::window_control::WindowControl;
@@ -112,14 +110,14 @@ pub struct PipelineSnapshot {
     pub scan_done_prev: bool,
 }
 
-pub struct Rendering {
+pub struct Rendering<P: PpuModel> {
     /// FEPO → WODU → VOGA → WEGO → clears XYMU.
     hblank: HblankPipeline,
     /// Scan counter, BESU latch, BYBA/DOBA pipeline, sprite store.
     scan: SpriteScanner,
-    bg_shifter: BgShifter,
-    obj_shifter: ObjShifter,
-    fetcher: TileFetcher,
+    bg_shifter: BgShifter<P::BgCell>,
+    obj_fifo: P::ObjFifo,
+    fetcher: TileFetcher<P>,
     /// LYRY → NYKA → PORY → PYGO → POKY.
     cascade: FetchCascade,
     /// Fine-scroll counter + ROXY pixel-clock gate.
@@ -150,13 +148,13 @@ pub struct Rendering {
     terminal_wodu_pulse: bool,
 }
 
-impl Rendering {
+impl<P: PpuModel> Rendering<P> {
     pub(super) fn new() -> Self {
         Rendering {
             hblank: HblankPipeline::new(),
             scan: SpriteScanner::new(),
             bg_shifter: BgShifter::new(),
-            obj_shifter: ObjShifter::new(),
+            obj_fifo: P::ObjFifo::default(),
             fetcher: TileFetcher::new(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
@@ -177,7 +175,7 @@ impl Rendering {
             hblank: HblankPipeline::post_boot(),
             scan: SpriteScanner::post_boot(),
             bg_shifter: BgShifter::new(),
-            obj_shifter: ObjShifter::new(),
+            obj_fifo: P::ObjFifo::default(),
             fetcher: TileFetcher::post_boot(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
@@ -279,7 +277,7 @@ impl Rendering {
         }
 
         let (bg_low, bg_high) = self.bg_shifter.registers();
-        let (obj_low, obj_high, obj_palette, _obj_priority) = self.obj_shifter.registers();
+        let (obj_low, obj_high, obj_palette, _obj_priority) = P::obj_trace(&self.obj_fifo);
 
         let sfetch_state = match &self.sprite_state {
             SpriteState::Fetching(sf) => sf.fetch_counter(),
@@ -314,7 +312,7 @@ impl Rendering {
         regs: &PipelineRegisters,
     ) -> PipelineSnapshot {
         let (bg_low, bg_high) = self.bg_shifter.registers();
-        let (obj_low, obj_high, obj_palette, obj_priority) = self.obj_shifter.registers();
+        let (obj_low, obj_high, obj_palette, obj_priority) = P::obj_trace(&self.obj_fifo);
         let (sprite_fetch_phase, sprite_tile_data) = match &self.sprite_state {
             SpriteState::Fetching(sf) => {
                 (Some(SpriteFetchPhase::FetchingData), Some(sf.tile_data()))
@@ -369,12 +367,13 @@ impl Rendering {
     /// ALET rising: ALET-clocked DFFs capture (NYKA, PYGO, VOGA); XUPY-derived logic and combinational signals settle.
     pub(super) fn on_ppu_clock_rise(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
-    ) -> Option<PixelOutput> {
+        vram: &P::Vram,
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // Terminal WODU pulse is a fall-edge transient; clear it so rise / off-edge reads see settled WODU.
         self.terminal_wodu_pulse = false;
 
@@ -392,7 +391,7 @@ impl Rendering {
         let was_rendering = self.hblank.rendering_active();
 
         if was_rendering {
-            self.mode3_rising(regs, video, oam, oam_bus, vram);
+            self.mode3_rising(model, regs, video, oam, oam_bus, vram);
             // WODU is combinational on XANO/!FEPO. Re-evaluate post-WUTY so a same-rise
             // FEPO drop at a terminal pix latches VOGA without waiting for the next fall.
             let xano = self.pixel_counter.terminal();
@@ -404,8 +403,8 @@ impl Rendering {
         // `end_of_line` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
         let end_of_line = self.hblank.commit_end_of_line_on_rise();
 
-        let post_shift_pixel =
-            pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
+        let post_shift_pixel = model.resolve(&mux, regs);
         let pixel = self.lcd.on_ppu_clock_rise(
             self.hblank.end_of_line_latched(),
             end_of_line,
@@ -434,15 +433,17 @@ impl Rendering {
     }
 
     /// ALET falling: MYVO-clocked DFFs capture (PORY); LEBO advances BG fetch counter; SACU drives CLKPIPE.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn on_ppu_clock_fall(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
         talu_rising: bool,
-    ) -> Option<PixelOutput> {
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
         self.window.tick_wy_match_falling(regs, video, talu_rising);
 
@@ -496,6 +497,7 @@ impl Rendering {
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
             self.mode3_pixel_pipeline(
+                model,
                 regs,
                 rydy_before_pory,
                 advance_nyxu_pulse,
@@ -511,7 +513,7 @@ impl Rendering {
         self.scan.reset();
         self.scan.arm_scan_capture();
         self.bg_shifter = BgShifter::new();
-        self.obj_shifter = ObjShifter::new();
+        self.obj_fifo = P::ObjFifo::default();
         self.fetcher.reset_scanline();
         self.cascade.reset();
         self.fine_scroll = FineScroll::new();
@@ -536,11 +538,12 @@ impl Rendering {
     /// ALET rising: fetcher VRAM reads, cascade DFFs (NYKA, PYGO), POKY, TYFA, SABE, PUXA.
     fn mode3_rising(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         video: &VideoControl,
         oam: &Oam,
         oam_bus: OamBusOwner,
-        vram: &Vram,
+        vram: &P::Vram,
     ) {
         // SOBU's ALET-rising DFF capture wins the TEKY→SOBU race vs CUPA's transparent-latch path —
         // SOBU sees the pre-write LCDC.1 value, so FEPO here uses pre-CUPA sprites_enabled.
@@ -583,10 +586,10 @@ impl Rendering {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
-                    let done = sf.advance(regs, oam, oam_bus, vram);
+                    let done = sf.advance::<P>(regs, oam, oam_bus, vram);
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
-                        sf.merge_into(&mut self.obj_shifter);
+                        sf.merge_into(model, &mut self.obj_fifo);
                         self.sprite_state = SpriteState::Idle;
                         self.sprite_trigger.clear_fetch_running();
                         // Per-slot fetched-flag captures at WUTY↑ (fetch completion); FEPO drops for this slot.
@@ -661,11 +664,12 @@ impl Rendering {
     /// Handles TYFA consumption, PUXA/POVA, pixel shifts, SEKO tile reload, LCD output, NUKO window trigger.
     fn mode3_pixel_pipeline(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         rydy_before_pory: bool,
         advance_nyxu_pulse: bool,
         pixel_counter_before_sacu: u8,
-    ) -> Option<PixelOutput> {
+    ) -> Option<DrawnPixel<P::Pixel>> {
         // FEPO before the pixel advance, for the terminal WODU pulse (FEPO settles after XANO).
         let pre_advance_fepo = self.fepo(regs.control.sprites_enabled());
 
@@ -686,8 +690,10 @@ impl Rendering {
 
         // PANY drain-detector slip: NUKO=1 lands when SEKO would fire (count==7), truncating
         // PANY's high pulse — RYFA captures the second half, slipping SEKO→TEVO→NYXU by 1 dot.
+        // The CGB's NUKO→PANY coupling needs WIN_EN; the DMG's fires while armed-but-disabled.
         let proposed_seko = self.fine_scroll.count == 7 && !rydy_before_pory;
-        let window_x_hit = self.window.window_x_reached(pixel_counter_before_sacu);
+        let window_x_hit = self.window.window_x_reached(pixel_counter_before_sacu)
+            && (P::WINDOW_DRAIN_SLIP_WHILE_DISABLED || regs.control.window_enabled());
         let pany_slip_now = proposed_seko && window_x_hit;
         let raw_seko_fire = (proposed_seko && !pany_slip_now) || self.pany_slip_pending;
         self.pany_slip_pending = pany_slip_now;
@@ -703,7 +709,8 @@ impl Rendering {
 
         let nyxu_pulse = seko_fire || advance_nyxu_pulse;
 
-        let pixel = pixel_output::resolve_current_pixel(&self.bg_shifter, &self.obj_shifter, regs);
+        let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
+        let pixel = model.resolve(&mux, regs);
 
         if seko_fire {
             self.fetcher.load_into(&mut self.bg_shifter);
@@ -714,7 +721,7 @@ impl Rendering {
             if !nyxu_pulse {
                 self.bg_shifter.shift();
             }
-            self.obj_shifter.shift();
+            P::obj_shift(&mut self.obj_fifo);
             self.pixel_counter.advance();
         }
 

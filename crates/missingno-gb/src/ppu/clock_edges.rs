@@ -2,17 +2,20 @@
 
 use crate::dma::OamBusOwner;
 
-use super::memory::Vram;
-use super::{Ppu, PpuTickResult, screen};
+use super::{Ppu, PpuModel, PpuTickResult, screen};
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     /// Snapshot LCDC.1 (XYLO) before the CPU's staged bus write applies, for the SOBU/CUPA race in mode3_rising.
     pub fn snapshot_pre_cupa_lcdc(&mut self) {
         self.registers.sprites_enabled_pre_cupa = self.registers.control.sprites_enabled();
     }
 
     /// ALET rises; ALET-clocked DFFs capture (NYKA, LYZU, PYGO, RENE, DOBA, NOPA, VOGA).
-    pub fn on_master_clock_rise(&mut self, vram: &Vram, oam_bus: OamBusOwner) -> PpuTickResult {
+    pub fn on_master_clock_rise(
+        &mut self,
+        vram: &P::Vram,
+        oam_bus: OamBusOwner,
+    ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
         if !self.control().video_enabled() {
@@ -20,15 +23,25 @@ impl Ppu {
         }
 
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
-            result.pixel =
-                rendering.on_ppu_clock_rise(&self.registers, &self.video, &self.oam, oam_bus, vram);
+            result.pixel = rendering.on_ppu_clock_rise(
+                &self.model,
+                &self.registers,
+                &self.video,
+                &self.oam,
+                oam_bus,
+                vram,
+            );
         }
 
         result
     }
 
     /// ALET falls; XOTA rises, toggling WUVU/VENA/TALU; MYVO-clocked DFFs capture; SACU drives pixel output.
-    pub fn on_master_clock_fall(&mut self, is_mcycle: bool, oam_bus: OamBusOwner) -> PpuTickResult {
+    pub fn on_master_clock_fall(
+        &mut self,
+        is_mcycle: bool,
+        oam_bus: OamBusOwner,
+    ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
 
         // XODO↓ collapses to this fall; subsequent tick_dot is WUVU's first toggle.
@@ -77,7 +90,7 @@ impl Ppu {
 
     /// Returns `true` if a TALU↑ DFF capture happened in this fall (drives the SUKO
     /// pulse-width filter regime in the caller).
-    fn advance_dividers(&mut self, result: &mut PpuTickResult) -> bool {
+    fn advance_dividers(&mut self, result: &mut PpuTickResult<P::Pixel>) -> bool {
         if !self.video.dividers.half_mcycle_fell() {
             return false;
         }
@@ -126,10 +139,11 @@ impl Ppu {
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
         talu_rising: bool,
-        result: &mut PpuTickResult,
+        result: &mut PpuTickResult<P::Pixel>,
     ) {
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel = rendering.on_ppu_clock_fall(
+                &self.model,
                 &self.registers,
                 &self.video,
                 &self.oam,
@@ -148,7 +162,11 @@ impl Ppu {
         }
     }
 
-    fn handle_lcd_off(&mut self, is_mcycle: bool, mut result: PpuTickResult) -> PpuTickResult {
+    fn handle_lcd_off(
+        &mut self,
+        is_mcycle: bool,
+        mut result: PpuTickResult<P::Pixel>,
+    ) -> PpuTickResult<P::Pixel> {
         if !is_mcycle {
             return result;
         }

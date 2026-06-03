@@ -4,7 +4,7 @@ use super::{
     cpu_bus::{BusAccess, BusAccessKind},
     interrupts::Interrupt,
     memory::Bus,
-    ppu::{self, PpuTickResult},
+    ppu,
 };
 
 /// CPU T-cycles the CGB holds the CPU `Stopped` during a double-speed switch
@@ -658,24 +658,31 @@ impl<M: Model> Console<M> {
     /// MEDA has pulsed since LCD-on), blank on LCD-off. Returns
     /// `(new_screen, pixel)` — `new_screen` fires only on VSYNC, never
     /// on LCD-off blank.
-    fn apply_ppu_result(&mut self, result: &PpuTickResult) -> (bool, Option<ppu::PixelOutput>) {
-        if let Some(pixel) = result.pixel {
+    fn apply_ppu_result(
+        &mut self,
+        result: &ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>,
+    ) -> (bool, Option<ppu::PixelOutput>) {
+        let trace_pixel = result.pixel.map(|pixel| {
             if pixel.x < ppu::screen::PIXELS_PER_LINE && pixel.y < ppu::screen::NUM_SCANLINES {
-                self.screen
-                    .draw_pixel(pixel.x, pixel.y, M::map_pixel(pixel));
+                self.screen.draw_pixel(pixel.x, pixel.y, pixel.color);
             }
-        }
+            ppu::PixelOutput {
+                x: pixel.x,
+                y: pixel.y,
+                shade: <M::Ppu as ppu::PpuModel>::trace_shade(pixel.color),
+            }
+        });
         if result.new_frame {
             if self.ppu.control().video_enabled() && self.ppu.vsync_committed() {
                 self.screen.present();
                 self.model.on_present(&self.screen);
             }
-            return (true, result.pixel);
+            return (true, trace_pixel);
         }
         if result.lcd_disabled {
             self.screen.blank();
             self.model.on_present(&self.screen);
         }
-        (false, result.pixel)
+        (false, trace_pixel)
     }
 }

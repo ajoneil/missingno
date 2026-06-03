@@ -22,7 +22,8 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
-    memory::Vram,
+    memory::VramBank,
+    model::DmgPpu,
     types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     types::tiles::{TileAddressMode, TileIndex},
@@ -58,8 +59,8 @@ impl SpritesPane {
 
     pub fn content<'a>(
         &'a self,
-        ppu: &'a Ppu,
-        vram: &'a Vram,
+        ppu: &'a Ppu<DmgPpu>,
+        vram: &'a VramBank,
         palette: &Palette,
     ) -> pane_grid::Content<'a, app::Message> {
         let size = ppu.control().sprite_size();
@@ -95,8 +96,8 @@ impl SpritesPane {
 
     fn sprites<'a>(
         &'a self,
-        ppu: &'a Ppu,
-        vram: &'a Vram,
+        ppu: &'a Ppu<DmgPpu>,
+        vram: &'a VramBank,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0u8..40)
@@ -127,8 +128,8 @@ impl SpritesPane {
     fn sprite<'a>(
         &'a self,
         index: u8,
-        ppu: &'a Ppu,
-        vram: &'a Vram,
+        ppu: &'a Ppu<DmgPpu>,
+        vram: &'a VramBank,
         sprite: &Sprite,
         palette: &Palette,
     ) -> Element<'a, app::Message> {
@@ -155,8 +156,8 @@ impl SpritesPane {
     fn tiles(
         &self,
         sprite: &Sprite,
-        vram: &Vram,
-        ppu: &Ppu,
+        vram: &VramBank,
+        ppu: &Ppu<DmgPpu>,
         palette: &Palette,
     ) -> Element<'_, app::Message> {
         let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);

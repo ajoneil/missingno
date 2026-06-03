@@ -1,4 +1,6 @@
-//! Strikethrough — confirmed by c-sp howto to work on both DMG and CGB.
+//! Strikethrough — confirmed by c-sp howto to work on both DMG and CGB. The
+//! ROM detects the CGB (A=$11) and inverts the display, so the CGB run is
+//! compared against the CGB reference, not the DMG one.
 
 use crate::common;
 
@@ -8,7 +10,7 @@ fn strikethrough() {
     common::run_frames(&mut gbc, 30);
 
     let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_reference_png("strikethrough/strikethrough-dmg.png");
+    let expected = common::load_cgb_reference_png("strikethrough/strikethrough-cgb.png");
 
     let mut mismatches = 0;
     for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {

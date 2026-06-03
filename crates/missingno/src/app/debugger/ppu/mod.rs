@@ -15,6 +15,7 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
+    model::DmgPpu,
     types::{
         control::Control,
         palette::{Palette, PaletteMap},
@@ -35,7 +36,7 @@ const LABEL: f32 = 11.0;
 
 /// PPU section body for the left sidebar — returns the PPU state display as an Element.
 /// The section header is handled by the sidebar's collapsible section wrapper.
-pub fn ppu_sidebar<'a>(ppu: &'a Ppu, pal: &Palette) -> Element<'a, Message> {
+pub fn ppu_sidebar<'a>(ppu: &'a Ppu<DmgPpu>, pal: &Palette) -> Element<'a, Message> {
     let control = ppu.control();
     let palettes = ppu.palettes();
 
@@ -63,7 +64,7 @@ pub fn ppu_sidebar<'a>(ppu: &'a Ppu, pal: &Palette) -> Element<'a, Message> {
 fn background_section(
     control: Control,
     bgp: u8,
-    ppu: &Ppu,
+    ppu: &Ppu<DmgPpu>,
     pal: &Palette,
 ) -> Element<'static, Message> {
     let scx = ppu.read_register(missingno_gb::ppu::Register::BackgroundViewportX);
@@ -88,7 +89,7 @@ fn background_section(
     .into()
 }
 
-fn window_section(control: Control, ppu: &Ppu) -> Element<'static, Message> {
+fn window_section(control: Control, ppu: &Ppu<DmgPpu>) -> Element<'static, Message> {
     let wx = ppu.read_register(missingno_gb::ppu::Register::WindowX);
     let wy = ppu.read_register(missingno_gb::ppu::Register::WindowY);
 

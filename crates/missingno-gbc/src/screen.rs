@@ -1,14 +1,12 @@
 //! CGB color LCD framebuffer.
 //!
-//! Stores 15-bit RGB555 pixels packed as `0b_bbbbb_ggggg_rrrrr` — the
-//! format the CGB PPU emits and CRAM (BCPD/OCPD) holds. Until the color
-//! pipeline lands, the PPU emits a 2-bit shade index per pixel and
-//! `Cgb::map_pixel` maps it through [`GREYSCALE`] to an RGB555 grey.
+//! Stores 15-bit RGB555 pixels packed as `0b_bbbbb_ggggg_rrrrr` — the format
+//! the CGB PPU emits (`CgbPpu::resolve` → `Color555`) and CRAM (BCPD/OCPD) holds.
+//! [`GREYSCALE`] remains the DMG-reference grey ramp that `to_greyscale_bytes`
+//! reverse-maps for the shade-pattern screenshot tests.
 //!
-//! `missingno_gb::sgb::Rgb555` is the same 15-bit packing for the SGB; the
-//! two stay separate because CGB and SGB apply different display gamma. When
-//! the CGB color pipeline + CRAM land, factor the shared packing/channel
-//! accessors into one primitive and keep the gamma per-system.
+//! `missingno_gb::sgb::Rgb555` is the same 15-bit packing for the SGB; the two
+//! stay separate because CGB and SGB apply different display gamma.
 
 use missingno_gb::ScreenBuffer;
 
@@ -73,8 +71,9 @@ impl Screen {
     }
 
     /// Read the current front buffer as a flat greyscale byte buffer
-    /// (160 × 144 = 23040 bytes). The placeholder greys reverse-map to the
-    /// DMG reference levels; any future non-grey pixel falls back to the
+    /// (160 × 144 = 23040 bytes), reverse-mapping each pixel to its DMG shade so
+    /// shade-pattern references match independent of the palette tint: the
+    /// placeholder/full-CGB greys, then the DMG-compat boot palette, else the
     /// 5→8-bit expansion of the red channel.
     pub fn to_greyscale_bytes(&self) -> Vec<u8> {
         (0..NUM_SCANLINES)
@@ -83,7 +82,10 @@ impl Screen {
                     let c = self.pixel(x, y);
                     match GREYSCALE.iter().position(|&grey| grey == c) {
                         Some(shade) => GREYSCALE_BYTE[shade],
-                        None => (c.red() << 3) | (c.red() >> 2),
+                        None => match crate::dmg_compat_shade(c) {
+                            Some(shade) => GREYSCALE_BYTE[shade as usize],
+                            None => (c.red() << 3) | (c.red() >> 2),
+                        },
                     }
                 })
             })
