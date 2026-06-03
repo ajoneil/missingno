@@ -11,6 +11,7 @@ use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
+pub use model::{PixelMux, PpuModel, resolve_shade};
 pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
@@ -26,6 +27,7 @@ mod draw;
 mod line_counter;
 mod line_end_pipeline;
 pub mod memory;
+pub mod model;
 mod oam_corruption;
 mod register_io;
 pub mod registers;
@@ -36,7 +38,16 @@ pub mod stat_interrupt;
 pub mod types;
 pub mod video_control;
 
-/// A pixel pushed to the LCD on a SACU edge.
+/// A finished pixel pushed to the LCD on a SACU edge, carrying the console's
+/// resolved framebuffer pixel (DMG shade / CGB RGB555).
+#[derive(Clone, Copy, Debug)]
+pub struct DrawnPixel<Pix> {
+    pub x: u8,
+    pub y: u8,
+    pub color: Pix,
+}
+
+/// A pixel pushed to the LCD, as a 2-bit shade for the gbtrace pixel stream.
 #[derive(Clone, Copy, Debug)]
 pub struct PixelOutput {
     pub x: u8,
@@ -44,9 +55,8 @@ pub struct PixelOutput {
     pub shade: u8,
 }
 
-#[derive(Default)]
-pub struct PpuTickResult {
-    pub pixel: Option<PixelOutput>,
+pub struct PpuTickResult<Pix> {
+    pub pixel: Option<DrawnPixel<Pix>>,
     /// MEDA VSYNC pulse — LY wrapped at end of line 153.
     pub new_frame: bool,
     /// LCDC.7 went 1→0 mid-pipeline; caller should blank the screen.
@@ -56,6 +66,18 @@ pub struct PpuTickResult {
     /// for Mode 0 / Mode 2 legs (TOLU 1-gate lag); final snapshot uses live vblank. Fires
     /// only if SUKO actually transitions through zero across the two snapshots.
     pub request_stat: bool,
+}
+
+impl<Pix> Default for PpuTickResult<Pix> {
+    fn default() -> Self {
+        Self {
+            pixel: None,
+            new_frame: false,
+            lcd_disabled: false,
+            request_vblank: false,
+            request_stat: false,
+        }
+    }
 }
 
 /// Internal PPU DFF/latch signals exposed for gbtrace capture.
@@ -89,7 +111,7 @@ pub enum Register {
     Sprite1Palette,
 }
 
-pub struct Ppu {
+pub struct Ppu<P: PpuModel> {
     /// `None` while LCD is off (VID_RST asserted).
     pub(super) pixel_pipeline: Option<Rendering>,
     pub registers: PipelineRegisters,
@@ -99,9 +121,11 @@ pub struct Ppu {
     /// CUPA↑ → XODO↓: set on LCDC.7 0→1 in the rise-edge staged write, consumed in the same fall.
     pub(super) lcd_on_init_pending: bool,
     pub(super) oam_corruption: oam_corruption::OamCorruption,
+    /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
+    pub(super) model: P,
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     pub fn new() -> Self {
         Self {
             registers: PipelineRegisters {
@@ -156,6 +180,7 @@ impl Ppu {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
+            model: P::default(),
         }
     }
 
@@ -260,11 +285,12 @@ impl Ppu {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
+            model: P::default(),
         }
     }
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     pub fn lx(&self) -> u8 {
         self.video.dot_position()
     }
@@ -301,7 +327,7 @@ impl Ppu {
     }
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     /// STAT mode bits: bit0 = XYMU OR POPU, bit1 = ACYL OR XYMU.
     pub fn mode(&self) -> Mode {
         let rendering = match &self.pixel_pipeline {
@@ -366,7 +392,7 @@ impl Ppu {
     }
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     pub fn stat_legs(&self) -> InterruptFlags {
         let enables = self.video.stat.enables();
@@ -420,7 +446,7 @@ impl Ppu {
     }
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     pub fn palettes(&self) -> &Palettes {
         &self.registers.palettes
     }

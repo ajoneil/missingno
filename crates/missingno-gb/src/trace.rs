@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use crate::audio::Audio;
 use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
-use crate::ppu::{Ppu, PpuTraceSnapshot};
+use crate::ppu::{Ppu, PpuModel, PpuTraceSnapshot};
 use crate::{Console, Model};
 
 /// Abstraction over a Game Boy–family console that the [`Tracer`] can
@@ -21,18 +21,20 @@ use crate::{Console, Model};
 /// serves both systems. Every accessor yields a shared `missingno-gb`
 /// type, so the capture logic is identical regardless of console.
 pub trait Traceable {
+    type Ppu: PpuModel;
     fn cpu(&self) -> &Cpu;
-    fn ppu(&self) -> &Ppu;
+    fn ppu(&self) -> &Ppu<Self::Ppu>;
     fn audio(&self) -> &Audio;
     fn peek(&self, address: u16) -> u8;
     fn cartridge(&self) -> &Cartridge;
 }
 
 impl<M: Model> Traceable for Console<M> {
+    type Ppu = M::Ppu;
     fn cpu(&self) -> &Cpu {
         Console::<M>::cpu(self)
     }
-    fn ppu(&self) -> &Ppu {
+    fn ppu(&self) -> &Ppu<M::Ppu> {
         Console::<M>::ppu(self)
     }
     fn audio(&self) -> &Audio {

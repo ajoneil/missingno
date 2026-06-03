@@ -29,7 +29,8 @@ use cpu_bus::CpuBus;
 use dma::Dma;
 use joypad::{Button, Joypad};
 use memory::{ExternalBus, HighRam, VramBus};
-use ppu::{Ppu, types::palette::PaletteIndex};
+use ppu::Ppu;
+use ppu::model::PpuModel;
 
 pub use master_clock::ClockPhase;
 pub use ppu::PixelOutput;
@@ -57,14 +58,15 @@ pub enum StopAction {
 /// catalogue of how DMG and CGB differ in the step loop and memory map.
 /// Everything not listed here is the same silicon and lives in [`Console`].
 pub trait Model: Default {
-    /// Framebuffer storage: DMG = `PaletteIndex` shades, CGB = RGB555.
-    type Screen: ScreenBuffer;
+    /// The PPU's per-console hardware: DMG monochrome, CGB colour.
+    type Ppu: PpuModel;
+
+    /// Framebuffer storage; its pixel matches what `Self::Ppu` resolves
+    /// (DMG = `PaletteIndex` shades, CGB = RGB555).
+    type Screen: ScreenBuffer<Pixel = <Self::Ppu as PpuModel>::Pixel>;
 
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
-
-    /// Map a finished PPU pixel into this console's framebuffer pixel.
-    fn map_pixel(pixel: PixelOutput) -> <Self::Screen as ScreenBuffer>::Pixel;
 
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
     fn on_present(&mut self, _screen: &Self::Screen) {}
@@ -123,7 +125,7 @@ pub struct Console<M: Model> {
     high_ram: HighRam,
     vram_bus: VramBus,
 
-    ppu: Ppu,
+    ppu: Ppu<M::Ppu>,
     screen: M::Screen,
     audio: Audio,
     joypad: Joypad,
@@ -162,12 +164,9 @@ pub struct Dmg {
 }
 
 impl Model for Dmg {
+    type Ppu = ppu::model::DmgPpu;
     type Screen = ppu::screen::Screen;
     const HAS_OAM_BUG: bool = true;
-
-    fn map_pixel(pixel: PixelOutput) -> PaletteIndex {
-        PaletteIndex(pixel.shade)
-    }
 
     fn on_present(&mut self, screen: &ppu::screen::Screen) {
         if let Some(sgb) = &mut self.sgb {
@@ -311,7 +310,7 @@ impl<M: Model> Console<M> {
         &mut self.cpu
     }
 
-    pub fn ppu(&self) -> &Ppu {
+    pub fn ppu(&self) -> &Ppu<M::Ppu> {
         &self.ppu
     }
 

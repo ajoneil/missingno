@@ -1,11 +1,12 @@
 //! Memory-mapped register read/write.
 
 use super::Ppu;
+use super::PpuModel;
 use super::Register;
 use super::stat_interrupt::InterruptFlags;
 use super::types::control::{Control, ControlFlags};
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Control => self.registers.control.bits(),

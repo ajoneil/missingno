@@ -2,7 +2,7 @@
 // in the OAM range during Mode 2 clocks the SRAM while the scanner owns the buses.
 // Corruption formulas are empirical (Pan Docs / SameBoy); they depend on the SRAM cell layout.
 
-use super::Ppu;
+use super::{Ppu, PpuModel};
 
 /// Read corruption takes priority over write if both are armed in the same M-cycle.
 pub(super) enum OamBugKind {
@@ -18,7 +18,7 @@ pub(crate) struct OamCorruption {
 
 const OAM_RANGE: std::ops::RangeInclusive<u16> = 0xFE00..=0xFEFF;
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     pub(crate) fn arm_oam_bug_for_read(&mut self, address: u16) {
         if OAM_RANGE.contains(&address) {
             self.oam_corruption.armed = Some(OamBugKind::Read);
@@ -44,7 +44,7 @@ impl Ppu {
     }
 }
 
-impl Ppu {
+impl<P: PpuModel> Ppu<P> {
     fn oam_bug_write(&mut self) {
         let row = match self.corrupted_oam_row() {
             Some(row) if (8..160).contains(&row) => row,

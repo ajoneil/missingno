@@ -133,7 +133,7 @@ impl Sidebar {
 
     fn ppu_section<'a>(
         &self,
-        ppu: &'a missingno_gb::ppu::Ppu,
+        ppu: &'a missingno_gb::ppu::Ppu<missingno_gb::ppu::model::DmgPpu>,
         pal: &'a Palette,
     ) -> Element<'a, app::Message> {
         let mode = ppu.mode();
