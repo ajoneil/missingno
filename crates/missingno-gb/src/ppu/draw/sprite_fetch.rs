@@ -65,6 +65,7 @@ impl SpriteFetch {
     /// Reads `sprite_size` live at fetch time, matching the combinational gejy/XYMO path on hardware.
     fn read_tile_data<P: PpuModel>(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
@@ -108,7 +109,7 @@ impl SpriteFetch {
 
         // CGB objects select their tile-data VRAM bank from OAM attr bit 3.
         let block = vram
-            .bank(P::obj_data_bank(self.attributes))
+            .bank(model.obj_data_bank(self.attributes))
             .tile_block(final_block);
         block.data[final_idx.0 as usize * 16 + final_y as usize * 2 + high as usize]
     }
@@ -116,6 +117,7 @@ impl SpriteFetch {
     /// Returns true on completion (counter==5).
     pub(in crate::ppu) fn advance<P: PpuModel>(
         &mut self,
+        model: &P,
         regs: &PipelineRegisters,
         oam: &Oam,
         oam_bus: OamBusOwner,
@@ -123,10 +125,10 @@ impl SpriteFetch {
     ) -> bool {
         match self.fetch_counter {
             2 => {
-                self.tile_data_low = self.read_tile_data::<P>(regs, oam, oam_bus, vram, false);
+                self.tile_data_low = self.read_tile_data(model, regs, oam, oam_bus, vram, false);
             }
             4 => {
-                self.tile_data_high = self.read_tile_data::<P>(regs, oam, oam_bus, vram, true);
+                self.tile_data_high = self.read_tile_data(model, regs, oam, oam_bus, vram, true);
             }
             5 => {
                 return true;

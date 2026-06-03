@@ -69,8 +69,11 @@ pub trait PpuModel: Default {
     /// X-flip the loaded BG bitplanes (CGB attribute bit 5); DMG: unchanged.
     fn flip_bg_planes(cell: Self::BgCell, low: u8, high: u8) -> (u8, u8);
 
-    /// VRAM bank for an object's tile-data read (CGB OAM attr bit 3). DMG: 0.
-    fn obj_data_bank(_attrs: sprites::Attributes) -> u8 {
+    /// VRAM bank for an object's tile-data read (CGB OAM attr bit 3). Instance
+    /// method: DMG-compatibility mode reinterprets the OAM attribute byte
+    /// DMG-style, so bit 3 is not a bank-select there — objects stay in bank 0.
+    /// DMG: 0.
+    fn obj_data_bank(&self, _attrs: sprites::Attributes) -> u8 {
         0
     }
 

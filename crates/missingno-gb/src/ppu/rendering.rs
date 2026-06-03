@@ -586,7 +586,7 @@ impl<P: PpuModel> Rendering<P> {
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
-                    let done = sf.advance::<P>(regs, oam, oam_bus, vram);
+                    let done = sf.advance(model, regs, oam, oam_bus, vram);
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
                         sf.merge_into(model, &mut self.obj_fifo);
