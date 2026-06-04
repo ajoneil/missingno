@@ -377,6 +377,9 @@ impl<M: Model> Console<M> {
     /// Read a byte as the DMA controller would. Addresses not on either
     /// bus (OAM, IO, HRAM) are remapped to WRAM echo on the external bus.
     pub fn read_dma_source(&self, address: u16) -> u8 {
+        if let Some(value) = self.model.dma_source_open_bus(address) {
+            return value;
+        }
         if let Some(value) = self.model.map_read(address, &self.ppu, &self.vram_bus.vram) {
             return value;
         }
@@ -398,7 +401,7 @@ impl<M: Model> Console<M> {
         if (0xFE00..=0xFEFF).contains(&address) {
             return Some(0xFF);
         }
-        if Bus::of(address) != Some(bus) {
+        if !self.model.oam_dma_bus_conflict(address, self.dma.source()) {
             return None;
         }
         Some(match self.dma.peek_transfer() {
@@ -486,7 +489,7 @@ impl<M: Model> Console<M> {
             value,
             kind: BusAccessKind::Write,
         });
-        if let Some(bus) = self.dma.is_active_on_bus() {
+        if self.dma.is_active_on_bus().is_some() {
             // OAM is being written by DMA; CPU writes are ignored.
             if (0xFE00..=0xFE9F).contains(&address) {
                 return;
@@ -499,7 +502,7 @@ impl<M: Model> Console<M> {
             // ROM/SRAM source, AND-mix of source and CPU value for
             // WRAM source (where the WRAM driver stays live through
             // the OAM write phase). The CPU also drives the bus latch.
-            if Bus::of(address) == Some(bus) {
+            if self.model.oam_dma_bus_conflict(address, self.dma.source()) {
                 if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
                     let src_byte = self.read_dma_source(src_addr);
                     self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));

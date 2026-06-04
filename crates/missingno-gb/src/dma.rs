@@ -75,6 +75,11 @@ impl Dma {
         self.source_register
     }
 
+    /// Base source address of the transfer (`source_register << 8`).
+    pub fn source(&self) -> u16 {
+        self.source
+    }
+
     /// Whether the DMA source actively drives the data bus through the
     /// OAM-write half-cycle. True for any source where the on-package
     /// WRAM die's chip-select asserts under DMA — its CS is `!cs_n_pad

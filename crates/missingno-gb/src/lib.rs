@@ -28,7 +28,7 @@ use cpu::Cpu;
 use cpu_bus::CpuBus;
 use dma::Dma;
 use joypad::{Button, Joypad};
-use memory::{ExternalBus, HighRam, VramBus};
+use memory::{Bus, ExternalBus, HighRam, VramBus};
 use ppu::Ppu;
 use ppu::memory::Vram;
 use ppu::model::PpuModel;
@@ -102,6 +102,25 @@ pub trait Model: Default {
     /// double speed), so a full CPU T-cycle lands on each master-clock edge.
     fn cpu_steps_per_dot(&self) -> u8 {
         1
+    }
+
+    /// Does a CPU access at `cpu_addr` collide with the in-flight OAM-DMA
+    /// fetching from `dma_source` (base address)? The DMG rule (default) is
+    /// a collision iff both sit on the same external/video bus. CGB has a
+    /// separate WRAM bus and overrides this.
+    fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
+        let source_bus = Bus::of(dma_source).unwrap_or(Bus::External);
+        Bus::of(cpu_addr) == Some(source_bus)
+    }
+
+    /// The byte a DMA source read yields when the source address opens the
+    /// bus rather than addressing storage — shared by OAM DMA and CGB VRAM
+    /// DMA, which both fetch through `read_dma_source`. DMG never opens the
+    /// bus (it echo-folds WRAM); CGB floats the cartridge bus to `$FF` for
+    /// source `$E0–$FF`, past the cart-RAM `/CS` window, since its WRAM is
+    /// on a separate bus.
+    fn dma_source_open_bus(&self, _address: u16) -> Option<u8> {
+        None
     }
 
     /// This console's own memory map: the registers/regions its map defines
