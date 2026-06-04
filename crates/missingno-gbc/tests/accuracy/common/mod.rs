@@ -85,3 +85,36 @@ pub fn load_cgb_reference_png(relative: &str) -> Vec<u8> {
     };
     (0..width * height).map(|i| buf[i * stride]).collect()
 }
+
+/// Load a reference PNG from the gb crate's shared roms dir as flat RGB888
+/// bytes (width × height × 3). For colourised CGB-compat references where the
+/// red channel alone is insufficient (the greyscale loaders above collapse to
+/// one byte per pixel).
+pub fn load_reference_png_rgb(relative: &str) -> Vec<u8> {
+    let path = rom_path(relative);
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|e| panic!("Failed to open reference image {}: {e}", path.display()));
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut buf).unwrap();
+
+    let width = info.width as usize;
+    let height = info.height as usize;
+    let stride = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        other => panic!("Unsupported PNG color type: {other:?}"),
+    };
+    (0..width * height)
+        .flat_map(|i| {
+            let p = i * stride;
+            match info.color_type {
+                png::ColorType::Grayscale => [buf[p], buf[p], buf[p]],
+                _ => [buf[p], buf[p + 1], buf[p + 2]],
+            }
+        })
+        .collect()
+}
