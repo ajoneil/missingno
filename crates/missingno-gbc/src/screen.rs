@@ -28,6 +28,14 @@ impl Color555 {
     pub const fn red(self) -> u8 {
         (self.0 & 0x1F) as u8
     }
+
+    pub const fn green(self) -> u8 {
+        ((self.0 >> 5) & 0x1F) as u8
+    }
+
+    pub const fn blue(self) -> u8 {
+        ((self.0 >> 10) & 0x1F) as u8
+    }
 }
 
 /// Placeholder shade→RGB555 mapping used while the CGB color pipeline
@@ -87,6 +95,21 @@ impl Screen {
                             None => (c.red() << 3) | (c.red() >> 2),
                         },
                     }
+                })
+            })
+            .collect()
+    }
+
+    /// Read the current front buffer as flat RGB888 bytes (160 × 144 × 3),
+    /// each 5-bit channel expanded to 8 bits — the colourised form compared
+    /// against full-colour reference images.
+    pub fn to_rgb_bytes(&self) -> Vec<u8> {
+        let expand = |c: u8| (c << 3) | (c >> 2);
+        (0..NUM_SCANLINES)
+            .flat_map(|y| {
+                (0..PIXELS_PER_LINE).flat_map(move |x| {
+                    let c = self.pixel(x, y);
+                    [expand(c.red()), expand(c.green()), expand(c.blue())]
                 })
             })
             .collect()
