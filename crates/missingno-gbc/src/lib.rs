@@ -24,11 +24,14 @@
 
 pub mod screen;
 
+mod dmg_palette_data;
+
 use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
-    ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel, resolve_dmg_pixel,
+    CartridgeBootHeader, ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel,
+    resolve_dmg_pixel,
 };
 use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
 
@@ -185,6 +188,45 @@ pub fn dmg_compat_shade(color: Color555) -> Option<u8> {
         .map(|i| (i % 4) as u8)
 }
 
+/// The CGB boot ROM's DMG-compatibility palette selection: a Nintendo-licensee
+/// gate, then the title checksum (with a 4th-letter tiebreak for collisions)
+/// picks a palette combination. Returns the `(BG, OBJ0, OBJ1)` RGB555 palettes to
+/// install in CRAM. A non-Nintendo or unmatched title falls to combination 0 —
+/// the well-known green/blue-BG, pink/red-OBJ compatibility palette.
+fn dmg_compat_palettes(
+    title: &[u8; 16],
+    old_licensee: u8,
+    new_licensee: [u8; 2],
+) -> ([u16; 4], [u16; 4], [u16; 4]) {
+    use dmg_palette_data as data;
+
+    let is_nintendo =
+        old_licensee == 0x01 || (old_licensee == 0x33 && new_licensee == [b'0', b'1']);
+
+    let mut combo = 0u8;
+    if is_nintendo {
+        let checksum = title.iter().fold(0u8, |acc, &b| acc.wrapping_add(b));
+        for i in 0..data::TITLE_CHECKSUMS.len() {
+            // A collision-region match also has to agree on the 4th title letter,
+            // otherwise the search continues.
+            if data::TITLE_CHECKSUMS[i] == checksum
+                && (i < data::FIRST_DUP_INDEX
+                    || data::DUPS_4TH_LETTER[i - data::FIRST_DUP_INDEX] == title[3])
+            {
+                combo = data::PALETTE_PER_CHECKSUM[i] & 0x7F;
+                break;
+            }
+        }
+    }
+
+    let [obj0, obj1, bg] = data::PALETTE_COMBINATIONS[combo as usize];
+    (
+        data::PALETTES[bg as usize],
+        data::PALETTES[obj0 as usize],
+        data::PALETTES[obj1 as usize],
+    )
+}
+
 /// The CGB object FIFO: colour planes, a 3-bit palette (OBP0-7), priority, and a
 /// per-pixel source slot (the OAM-scan store index = OAM-priority rank). When OPRI
 /// selects CGB priority, a lower-slot object's pixel overwrites a higher one;
@@ -335,14 +377,16 @@ impl PpuModel for CgbPpu {
         self.opri = value & 0x01 != 0;
     }
 
-    fn init_post_boot(&mut self, cartridge_is_cgb: bool) {
-        if !cartridge_is_cgb {
+    fn init_post_boot(&mut self, header: &CartridgeBootHeader) {
+        if !header.is_cgb {
             self.dmg_compat = true;
             // The boot ROM selects DMG object priority (OPRI=1) for a DMG cart.
             self.opri = true;
-            self.bg_cram.install(0, DMG_COMPAT_BG);
-            self.obj_cram.install(0, DMG_COMPAT_OBJ);
-            self.obj_cram.install(1, DMG_COMPAT_OBJ);
+            let (bg, obj0, obj1) =
+                dmg_compat_palettes(&header.title, header.old_licensee, header.new_licensee);
+            self.bg_cram.install(0, bg);
+            self.obj_cram.install(0, obj0);
+            self.obj_cram.install(1, obj1);
         }
     }
 
@@ -512,6 +556,9 @@ pub struct Cgb {
     /// KEY1 ($FF4D) bit 7 — current speed (false = normal, true = double).
     /// The switch toggles it; the 2× clock cadence itself lands later.
     double_speed: bool,
+    /// A DMG cartridge is running in compatibility mode (KEY0 bit 2). Read back
+    /// from KEY0 ($FF4C) as $04.
+    dmg_compat: bool,
     /// VRAM DMA ($FF51-55).
     vram_dma: VramDma,
 }
@@ -523,6 +570,7 @@ impl Default for Cgb {
             svbk: 1,
             key1_armed: false,
             double_speed: false,
+            dmg_compat: false,
             vram_dma: VramDma::default(),
         }
     }
@@ -565,8 +613,10 @@ impl Model for Cgb {
         if self.double_speed { 2 } else { 1 }
     }
 
-    fn on_reset(&mut self, _cartridge: &Cartridge) {
+    fn on_reset(&mut self, cartridge: &Cartridge) {
         *self = Self::default();
+        // A DMG cartridge boots the CGB into compatibility mode (KEY0 bit 2).
+        self.dmg_compat = !cartridge.is_cgb();
     }
 
     fn map_read(&self, address: u16, ppu: &Ppu<CgbPpu>, vram: &CgbVram) -> Option<u8> {
@@ -574,9 +624,10 @@ impl Model for Cgb {
             return Some(self.wram[i]);
         }
         match address {
-            0xFF4C => Some(0xFF), // KEY0: boot-locked
+            // KEY0: boot-locked; reads the latched mode ($04 = DMG-compat, else $00).
+            0xFF4C => Some(if self.dmg_compat { 0x04 } else { 0x00 }),
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
-            0xFF4F => Some(vram.read_bank_select()), // VBK
+            0xFF4F => Some(vram.read_bank_select()),                                         // VBK
             // HDMA1-4 are write-only.
             0xFF51..=0xFF54 => Some(0xFF),
             // HDMA5 status: bit 7 = 0 while an HDMA is active, blocks-left-minus-1
@@ -731,3 +782,56 @@ impl Model for Cgb {
 
 /// The Game Boy Color.
 pub type GameBoyColor = Console<Cgb>;
+
+#[cfg(test)]
+mod dmg_palette_tests {
+    use super::*;
+
+    fn title(s: &str) -> [u8; 16] {
+        let mut t = [0u8; 16];
+        for (i, b) in s.bytes().take(16).enumerate() {
+            t[i] = b;
+        }
+        t
+    }
+
+    #[test]
+    fn non_nintendo_falls_to_compat_default() {
+        // Any non-Nintendo licensee gates to combination 0, regardless of title.
+        let (bg, obj0, obj1) = dmg_compat_palettes(&title("TETRIS"), 0x00, [0, 0]);
+        assert_eq!(bg, DMG_COMPAT_BG);
+        assert_eq!(obj0, DMG_COMPAT_OBJ);
+        assert_eq!(obj1, DMG_COMPAT_OBJ);
+    }
+
+    #[test]
+    fn nintendo_title_selects_its_palette() {
+        // TETRIS (old licensee $01, checksum $DB) selects combination 3 = palette 24.
+        let (bg, _, _) = dmg_compat_palettes(&title("TETRIS"), 0x01, [0, 0]);
+        assert_eq!(bg, dmg_palette_data::PALETTES[24]);
+        assert_ne!(bg, DMG_COMPAT_BG);
+    }
+
+    #[test]
+    fn fourth_letter_disambiguates_checksum_collision() {
+        // Two titles with the same checksum ($46) but different 4th letters resolve
+        // to different table entries (66 = 'E', 80 = 'R') via the tiebreak search.
+        let mut e = [0u8; 16];
+        e[0] = 0x01;
+        e[3] = b'E';
+        let mut r = [0u8; 16];
+        r[0] = 0xF4;
+        r[3] = b'R';
+        assert_eq!(e.iter().fold(0u8, |s, &x| s.wrapping_add(x)), 0x46);
+        assert_eq!(r.iter().fold(0u8, |s, &x| s.wrapping_add(x)), 0x46);
+
+        let bg_of = |combo: u8| {
+            dmg_palette_data::PALETTES
+                [dmg_palette_data::PALETTE_COMBINATIONS[combo as usize][2] as usize]
+        };
+        let combo_e = dmg_palette_data::PALETTE_PER_CHECKSUM[66] & 0x7F;
+        let combo_r = dmg_palette_data::PALETTE_PER_CHECKSUM[80] & 0x7F;
+        assert_eq!(dmg_compat_palettes(&e, 0x01, [0, 0]).0, bg_of(combo_e));
+        assert_eq!(dmg_compat_palettes(&r, 0x01, [0, 0]).0, bg_of(combo_r));
+    }
+}

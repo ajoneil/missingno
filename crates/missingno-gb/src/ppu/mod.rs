@@ -11,7 +11,10 @@ use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
-pub use model::{ColorRegister, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel, resolve_shade};
+pub use model::{
+    CartridgeBootHeader, ColorRegister, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel,
+    resolve_shade,
+};
 pub use registers::PipelineRegisters;
 pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
@@ -347,8 +350,8 @@ impl<P: PpuModel> Ppu<P> {
 
     /// Configure the PPU model from the cartridge at post-boot (DMG-compat on
     /// the CGB). DMG is a no-op.
-    pub fn init_model_post_boot(&mut self, cartridge_is_cgb: bool) {
-        self.model.init_post_boot(cartridge_is_cgb);
+    pub fn init_model_post_boot(&mut self, header: &model::CartridgeBootHeader) {
+        self.model.init_post_boot(header);
     }
 
     /// CPU read/write of OPRI ($FF6C). DMG has no such register (reads 0xFF).

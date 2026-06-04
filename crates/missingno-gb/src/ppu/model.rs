@@ -37,6 +37,18 @@ pub struct PixelMux<C> {
     pub spr_pri: u8,
 }
 
+/// Cartridge header bytes the boot-ROM handoff HLE consults: the CGB flag, and
+/// the title + licensee a CGB hashes to pick a DMG-compatibility palette.
+pub struct CartridgeBootHeader {
+    pub is_cgb: bool,
+    /// $0134-$0143.
+    pub title: [u8; 16],
+    /// $014B.
+    pub old_licensee: u8,
+    /// $0144-$0145.
+    pub new_licensee: [u8; 2],
+}
+
 /// The hardware that differs between the DMG and CGB PPUs. The shared pipeline
 /// resolves a pixel by calling [`PpuModel::resolve`]; the result is the final
 /// framebuffer pixel for that console.
@@ -108,10 +120,11 @@ pub trait PpuModel: Default {
     fn set_object_priority_register(&mut self, _value: u8) {}
 
     /// Post-boot cartridge configuration (HLE of the boot ROM's handoff state).
-    /// The CGB enters DMG-compatibility mode — installing the boot compat
-    /// palette into CRAM and routing the DMG palette registers through it — when
-    /// a DMG cartridge is inserted. DMG hardware: nothing to configure.
-    fn init_post_boot(&mut self, _cartridge_is_cgb: bool) {}
+    /// The CGB enters DMG-compatibility mode — installing a boot compat palette
+    /// into CRAM (selected from the title checksum) and routing the DMG palette
+    /// registers through it — when a DMG cartridge is inserted. DMG hardware:
+    /// nothing to configure.
+    fn init_post_boot(&mut self, _header: &CartridgeBootHeader) {}
 
     /// Resolve the BG/OBJ mux to a final framebuffer pixel. Palette state and
     /// LCDC are read live from `regs`.

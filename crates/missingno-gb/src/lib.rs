@@ -319,11 +319,16 @@ impl<M: Model> Console<M> {
         self.model.on_reset(&self.external.cartridge);
 
         if !has_boot_rom {
-            let logo: [u8; 0x30] =
-                std::array::from_fn(|i| self.external.cartridge.read(0x0104 + i as u16));
+            let read = |a: u16| self.external.cartridge.read(a);
+            let logo: [u8; 0x30] = std::array::from_fn(|i| read(0x0104 + i as u16));
             self.vram_bus.vram.init_post_boot(&logo);
-            self.ppu
-                .init_model_post_boot(self.external.cartridge.is_cgb());
+            let header = ppu::CartridgeBootHeader {
+                is_cgb: self.external.cartridge.is_cgb(),
+                title: std::array::from_fn(|i| read(0x0134 + i as u16)),
+                old_licensee: read(0x014B),
+                new_licensee: [read(0x0144), read(0x0145)],
+            };
+            self.ppu.init_model_post_boot(&header);
         }
 
         self.bus_trace = cpu_bus::BusTrace::new();
