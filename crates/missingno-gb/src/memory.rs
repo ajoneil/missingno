@@ -331,7 +331,18 @@ impl<M: Model> Console<M> {
         if let Some(value) = self.dma_read_conflict(address) {
             return value;
         }
-        self.read_addr(address)
+        self.read_addr(self.dma_read_remapped(address))
+    }
+
+    /// A WRAM-bus read taken during an active OAM-DMA sourcing from the cart
+    /// bus is address-remapped by the DMA driving the bus (CGB only).
+    fn dma_read_remapped(&self, address: u16) -> u16 {
+        if self.dma.is_active_on_bus().is_some()
+            && let Some(remapped) = self.model.oam_dma_read_remap(address, self.dma.source())
+        {
+            return remapped;
+        }
+        address
     }
 
     /// Value the CPU latches from the bus at `data_phase_n↑` (near the
