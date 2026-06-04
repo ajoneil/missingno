@@ -80,21 +80,6 @@ impl Dma {
         self.source
     }
 
-    /// Whether the DMA source actively drives the data bus through the
-    /// OAM-write half-cycle. True for any source where the on-package
-    /// WRAM die's chip-select asserts under DMA — its CS is `!cs_n_pad
-    /// && a[14]=1`, with no `a[13]` qualifier and no `fexx_ffxx_n`
-    /// qualifier (those exclusions live inside the CPU die's CS chain,
-    /// which `tyho_inst` bypasses during DMA). Pages $C0..$FF all
-    /// satisfy this, so the WRAM driver stays live through the OAM
-    /// write phase and a same-bus CPU strobe open-drains as
-    /// `src_byte AND cpu_byte`. False for cartridge ROM / SRAM / VRAM,
-    /// which latch and release before the write phase, letting the
-    /// CPU's value land cleanly.
-    pub fn source_drives_write_phase(&self) -> bool {
-        matches!(self.source_register, 0xC0..=0xFF)
-    }
-
     /// Bus that DMA is actively driving (`dma_run` asserted). `None`
     /// when idle or still arming.
     pub fn is_active_on_bus(&self) -> Option<Bus> {

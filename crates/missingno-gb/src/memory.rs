@@ -494,14 +494,11 @@ impl<M: Model> Console<M> {
             if (0xFE00..=0xFE9F).contains(&address) {
                 return;
             }
-            // Source-bus conflict: CPU's write strobe collides with
-            // DMA's on the source bus. Stash both the CPU value and
-            // the source byte DMA fetched this M-cycle so
-            // `tick_mcycle_boundary_fall` can land the right value at
-            // the OAM slot DMA is depositing — CPU value alone for
-            // ROM/SRAM source, AND-mix of source and CPU value for
-            // WRAM source (where the WRAM driver stays live through
-            // the OAM write phase). The CPU also drives the bus latch.
+            // Source-bus conflict: the CPU's write strobe collides with
+            // DMA's on the source bus. Stash the CPU value and the source
+            // byte DMA fetched this M-cycle so the M-cycle-boundary commit
+            // can land the model's resolved byte at the OAM slot DMA is
+            // depositing. The CPU also drives the bus latch.
             if self.model.oam_dma_bus_conflict(address, self.dma.source()) {
                 if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
                     let src_byte = self.read_dma_source(src_addr);

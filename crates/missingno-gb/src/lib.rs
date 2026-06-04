@@ -55,6 +55,18 @@ pub enum StopAction {
     SpeedSwitch,
 }
 
+/// OAM byte a write-conflict lands under the shared external-bus model: a WRAM
+/// source (`$C0–$FF`) keeps its driver live through the OAM write phase and
+/// AND-mixes with the CPU value; a ROM/SRAM source releases, so the CPU value
+/// lands. CGB overrides this for its separate WRAM bus.
+pub fn shared_oam_dma_write_conflict_byte(src_byte: u8, cpu_value: u8, dma_source: u16) -> u8 {
+    if matches!((dma_source >> 8) as u8, 0xC0..=0xFF) {
+        src_byte & cpu_value
+    } else {
+        cpu_value
+    }
+}
+
 /// The per-console divergences from the shared SM83 silicon — the entire
 /// catalogue of how DMG and CGB differ in the step loop and memory map.
 /// Everything not listed here is the same silicon and lives in [`Console`].
@@ -111,6 +123,13 @@ pub trait Model: Default {
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         let source_bus = Bus::of(dma_source).unwrap_or(Bus::External);
         Bus::of(cpu_addr) == Some(source_bus)
+    }
+
+    /// Byte deposited at the OAM slot the DMA is filling when a CPU write
+    /// collides with the DMA on the source bus. DMG uses the shared external-bus
+    /// rule; CGB's separate WRAM bus overrides it for WRAM-bus sources.
+    fn oam_dma_write_conflict_byte(&self, src_byte: u8, cpu_value: u8, dma_source: u16) -> u8 {
+        shared_oam_dma_write_conflict_byte(src_byte, cpu_value, dma_source)
     }
 
     /// The byte a DMA source read yields when the source address opens the

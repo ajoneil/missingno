@@ -661,11 +661,9 @@ impl<M: Model> Console<M> {
                 ppu::memory::MappedAddress::Oam(addr) => addr,
                 _ => unreachable!(),
             };
-            let value = if self.dma.source_drives_write_phase() {
-                src_byte & cpu_value
-            } else {
-                cpu_value
-            };
+            let value =
+                self.model
+                    .oam_dma_write_conflict_byte(src_byte, cpu_value, self.dma.source());
             self.ppu.write_oam(oam_addr, value);
             self.bus_trace.record(BusAccess {
                 address: dst_addr,

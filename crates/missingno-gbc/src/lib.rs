@@ -33,7 +33,9 @@ use missingno_gb::ppu::{
     CartridgeBootHeader, ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel,
     resolve_dmg_pixel,
 };
-use missingno_gb::{Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu};
+use missingno_gb::{
+    Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu, shared_oam_dma_write_conflict_byte,
+};
 
 use crate::screen::{Color555, GREYSCALE, Screen};
 
@@ -632,6 +634,17 @@ impl Model for Cgb {
 
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))
+    }
+
+    /// On the WRAM bus the colliding CPU write sits on a different bus from the
+    /// DMA source, so it never reaches the OAM write phase — the DMA deposits the
+    /// raw byte it fetched. Other source buses follow the shared model.
+    fn oam_dma_write_conflict_byte(&self, src_byte: u8, cpu_value: u8, dma_source: u16) -> u8 {
+        if cgb_dma_source_bus(dma_source) == CgbBus::WorkRam {
+            src_byte
+        } else {
+            shared_oam_dma_write_conflict_byte(src_byte, cpu_value, dma_source)
+        }
     }
 
     fn dma_source_open_bus(&self, address: u16) -> Option<u8> {
