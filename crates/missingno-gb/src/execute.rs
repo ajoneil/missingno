@@ -233,7 +233,7 @@ impl<M: Model> Console<M> {
     /// `tick_mcycle_boundary_fall`; the PPU/timers keep running. Distinct from a
     /// real STOP via `dma_cpu_hold`, which `resolve_stop` guards on. Called at the
     /// instruction boundary.
-    fn manage_dma_hold(&mut self) {
+    pub(crate) fn manage_dma_hold(&mut self) {
         let holds = self.model.vram_dma_holds_cpu();
         if holds && !self.dma_cpu_hold {
             self.dma_cpu_hold = true;

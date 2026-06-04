@@ -192,8 +192,10 @@ impl<M: Model> TestRun<M> {
         }
 
         // Mirror `step_traced`: resolve a settled STOP (CGB speed-switch
-        // blackout) so traced runs progress past STOP like untraced ones.
+        // blackout) and engage/release a VRAM-DMA CPU hold, so traced runs
+        // progress past STOP and run their DMAs like untraced ones.
         self.gb.resolve_stop(tcycles);
+        self.gb.manage_dma_hold();
 
         StepResult {
             new_screen,

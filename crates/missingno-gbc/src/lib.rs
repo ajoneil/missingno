@@ -455,11 +455,6 @@ impl CgbPpu {
     }
 }
 
-/// CGB VRAM DMA ($FF51-55) controller. The source and destination pointers run
-/// as bytes are copied and persist after a transfer, so a follow-on transfer
-/// continues where the last left off. The step loop ticks it each M-cycle: GDMA
-/// (general-purpose) flows `quota` bytes per M-cycle while it holds the CPU,
-/// until `remaining` reaches zero.
 /// How the active VRAM DMA is paced. GDMA holds the CPU and flows continuously;
 /// HDMA copies one 16-byte block per HBlank, releasing the CPU between blocks.
 #[derive(Default, PartialEq)]
@@ -470,6 +465,10 @@ enum TransferMode {
     HBlank,
 }
 
+/// CGB VRAM DMA ($FF51-55) controller. The source and destination pointers run
+/// as bytes are copied and persist after a transfer, so a follow-on transfer
+/// continues where the last left off. The step loop ticks it each M-cycle: a
+/// transfer flows `quota` bytes per M-cycle while it holds the CPU.
 #[derive(Default)]
 struct VramDma {
     /// Running source pointer, 16-byte aligned (HDMA1/HDMA2).
@@ -486,6 +485,18 @@ struct VramDma {
     quota: u8,
     /// The PPU was in HBlank last tick — to fire one block on the mode-0 entry edge.
     prev_hblank: bool,
+}
+
+impl VramDma {
+    /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; an
+    /// HDMA only while a block is open (it idles between HBlanks).
+    fn moving(&self) -> bool {
+        match self.mode {
+            TransferMode::General => self.remaining > 0,
+            TransferMode::HBlank => self.block_remaining > 0,
+            TransferMode::Idle => false,
+        }
+    }
 }
 
 /// The Game Boy Color [`Model`]. Remaining CGB features (the color pixel
@@ -686,12 +697,7 @@ impl Model for Cgb {
 
         // Refill this M-cycle's byte budget while the transfer is moving bytes:
         // 2/M-cycle single speed, 1 in double speed.
-        let moving = match self.vram_dma.mode {
-            TransferMode::General => self.vram_dma.remaining > 0,
-            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
-            TransferMode::Idle => false,
-        };
-        self.vram_dma.quota = if moving {
+        self.vram_dma.quota = if self.vram_dma.moving() {
             if self.double_speed { 1 } else { 2 }
         } else {
             0
@@ -699,12 +705,7 @@ impl Model for Cgb {
     }
 
     fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {
-        let moving = match self.vram_dma.mode {
-            TransferMode::General => self.vram_dma.remaining > 0,
-            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
-            TransferMode::Idle => false,
-        };
-        if self.vram_dma.quota == 0 || !moving {
+        if self.vram_dma.quota == 0 || !self.vram_dma.moving() {
             return None;
         }
         let pair = (self.vram_dma.source, self.vram_dma.dest);
@@ -724,11 +725,7 @@ impl Model for Cgb {
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {
-        match self.vram_dma.mode {
-            TransferMode::General => self.vram_dma.remaining > 0,
-            TransferMode::HBlank => self.vram_dma.block_remaining > 0,
-            TransferMode::Idle => false,
-        }
+        self.vram_dma.moving()
     }
 }
 
