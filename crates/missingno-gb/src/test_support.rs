@@ -37,6 +37,12 @@ pub trait System {
     fn cpu_mut(&mut self) -> &mut Cpu;
     fn drain_serial_output(&mut self) -> Vec<u8>;
     fn interrupts(&self) -> &interrupts::Registers;
+    /// True while a CGB double-speed switch holds the CPU stopped in its
+    /// settling blackout (a self-resuming STOP). Defaults false for systems
+    /// without a speed switch.
+    fn speed_switch_in_progress(&self) -> bool {
+        false
+    }
     /// Peek a contiguous range of memory, bypassing bus conflicts and
     /// PPU mode gating. Used by tests that decode assertion records
     /// from WRAM after the test has halted.
@@ -65,6 +71,9 @@ impl<M: Model> System for Console<M> {
     }
     fn interrupts(&self) -> &interrupts::Registers {
         Console::<M>::interrupts(self)
+    }
+    fn speed_switch_in_progress(&self) -> bool {
+        Console::<M>::speed_switch_in_progress(self)
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         Console::<M>::peek_range(self, start, len)
@@ -240,6 +249,9 @@ impl<M: Model> System for TestRun<M> {
     }
     fn interrupts(&self) -> &interrupts::Registers {
         self.gb.interrupts()
+    }
+    fn speed_switch_in_progress(&self) -> bool {
+        self.gb.speed_switch_in_progress()
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         self.gb.peek_range(start, len)
@@ -489,7 +501,7 @@ pub fn is_infinite_loop<S: System>(s: &S) -> bool {
         return true;
     }
 
-    if s.cpu().halt.state != crate::cpu::HaltState::Running {
+    if s.cpu().halt.state != crate::cpu::HaltState::Running && !s.speed_switch_in_progress() {
         if s.interrupts().enabled.is_empty() {
             return true;
         }
