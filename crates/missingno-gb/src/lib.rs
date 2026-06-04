@@ -410,6 +410,12 @@ impl<M: Model> Console<M> {
         &self.interrupts
     }
 
+    /// True while a CGB double-speed switch holds the CPU `Stopped` in the
+    /// settling blackout — a STOP that self-resumes, not a terminal halt.
+    pub fn speed_switch_in_progress(&self) -> bool {
+        self.speed_switch_blackout > 0
+    }
+
     pub fn dma(&self) -> &Dma {
         &self.dma
     }
