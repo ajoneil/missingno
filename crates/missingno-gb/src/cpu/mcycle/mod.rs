@@ -21,7 +21,7 @@ mod types;
 
 pub(super) use types::{AluOp, PopAction, ReadAction, RmwOp};
 pub use types::{BusAction, TCycle};
-pub(crate) use types::{CpuPhase, MCycleAction, Phase};
+pub(crate) use types::{CpuPhase, HaltPhase, MCycleAction, Phase};
 
 impl Cpu {
     /// The T-cycle that produced the most recent `BusAction`.
