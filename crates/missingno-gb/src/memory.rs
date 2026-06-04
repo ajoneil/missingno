@@ -513,8 +513,15 @@ impl<M: Model> Console<M> {
             // depositing. The CPU also drives the bus latch.
             if self.model.oam_dma_bus_conflict(address, self.dma.source()) {
                 if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
-                    let src_byte = self.read_dma_source(src_addr);
-                    self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));
+                    if self
+                        .model
+                        .oam_dma_conflict_zeroes_oam(address, self.dma.source())
+                    {
+                        self.dma_conflict_oam_zero = Some(dst_offset);
+                    } else {
+                        let src_byte = self.read_dma_source(src_addr);
+                        self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));
+                    }
                 }
                 self.drive_bus(address, value);
                 return;

@@ -140,6 +140,13 @@ pub trait Model: Default {
         shared_oam_dma_write_conflict_byte(src_byte, cpu_value, dma_source)
     }
 
+    /// Does a CPU access at `cpu_addr` conflicting with the OAM-DMA force the
+    /// byte the DMA deposits at OAM to `$00`? CGB: yes when the DMA sources from
+    /// VRAM and the CPU access is on the VRAM bus. DMG: never.
+    fn oam_dma_conflict_zeroes_oam(&self, _cpu_addr: u16, _dma_source: u16) -> bool {
+        false
+    }
+
     /// The byte a DMA source read yields when the source address opens the
     /// bus rather than addressing storage — shared by OAM DMA and CGB VRAM
     /// DMA, which both fetch through `read_dma_source`. DMG never opens the
@@ -226,6 +233,11 @@ pub struct Console<M: Model> {
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_write_pending: Option<(u8, u8, u8)>,
 
+    /// OAM offset whose DMA-deposited byte a VRAM-source bus conflict forces to
+    /// `$00` (CGB). Set by a conflicting read or write on the VRAM bus, drained
+    /// in `tick_mcycle_boundary_fall`.
+    dma_conflict_oam_zero: Option<u8>,
+
     /// Remaining CPU T-cycles of the CGB double-speed switch blackout. The
     /// CPU stays `Stopped` (the divider and PPU keep running) until this
     /// drains, then re-engages at the new speed. 0 = not switching.
@@ -303,6 +315,7 @@ impl<M: Model> Console<M> {
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
+            dma_conflict_oam_zero: None,
             speed_switch_blackout: 0,
             dma_cpu_hold: false,
             model: M::default(),
@@ -381,6 +394,7 @@ impl<M: Model> Console<M> {
         self.clock_phase = ClockPhase::Low;
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
+        self.dma_conflict_oam_zero = None;
         self.speed_switch_blackout = 0;
         self.dma_cpu_hold = false;
         if let Some((address, _value)) = self.cpu.pending_bus_write() {

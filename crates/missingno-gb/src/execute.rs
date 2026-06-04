@@ -594,6 +594,17 @@ impl<M: Model> Console<M> {
         if let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
             self.cpu_bus.drive(value);
+
+            // A VRAM-source bus conflict on a read forces the DMA's OAM deposit
+            // to $00, same as on a write.
+            if self.dma.is_active_on_bus().is_some()
+                && self
+                    .model
+                    .oam_dma_conflict_zeroes_oam(address, self.dma.source())
+                && let Some((_, dst_offset)) = self.dma.peek_transfer()
+            {
+                self.dma_conflict_oam_zero = Some(dst_offset);
+            }
         }
     }
 
@@ -670,6 +681,20 @@ impl<M: Model> Console<M> {
                 value,
                 kind: BusAccessKind::Write,
             });
+        }
+
+        if let Some(dst_offset) = self.dma_conflict_oam_zero.take() {
+            let dst_addr = 0xfe00 + dst_offset as u16;
+            if let ppu::memory::MappedAddress::Oam(oam_addr) =
+                ppu::memory::MappedAddress::map(dst_addr)
+            {
+                self.ppu.write_oam(oam_addr, 0);
+                self.bus_trace.record(BusAccess {
+                    address: dst_addr,
+                    value: 0,
+                    kind: BusAccessKind::Write,
+                });
+            }
         }
 
         self.external.tick_decay();

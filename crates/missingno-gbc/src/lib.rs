@@ -656,6 +656,10 @@ impl Model for Cgb {
         }
     }
 
+    fn oam_dma_conflict_zeroes_oam(&self, cpu_addr: u16, dma_source: u16) -> bool {
+        cgb_dma_source_bus(dma_source) == CgbBus::Video && cgb_bus(cpu_addr) == Some(CgbBus::Video)
+    }
+
     fn dma_source_open_bus(&self, address: u16) -> Option<u8> {
         (address >= 0xE000).then_some(0xFF)
     }
