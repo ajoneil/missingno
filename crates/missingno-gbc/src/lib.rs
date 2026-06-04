@@ -636,10 +636,10 @@ impl Model for Cgb {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))
     }
 
-    /// A WRAM-bus read taken while the DMA sources from the cart bus has its
+    /// A WRAM-bus access taken while the DMA sources from the cart bus has its
     /// `$C000`/`$D000` half-selector (A12) driven by the DMA source page; the low
-    /// 12 bits stay the CPU's. A VRAM or WRAM source leaves the read untouched.
-    fn oam_dma_read_remap(&self, cpu_addr: u16, dma_source: u16) -> Option<u16> {
+    /// 12 bits stay the CPU's. A VRAM or WRAM source leaves the access untouched.
+    fn oam_dma_wram_remap(&self, cpu_addr: u16, dma_source: u16) -> Option<u16> {
         (cgb_bus(cpu_addr) == Some(CgbBus::WorkRam)
             && cgb_dma_source_bus(dma_source) == CgbBus::Cartridge)
             .then(|| (dma_source & 0x1000) | (cpu_addr & 0x0FFF) | 0xC000)

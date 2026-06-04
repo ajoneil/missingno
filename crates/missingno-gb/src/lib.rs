@@ -125,10 +125,11 @@ pub trait Model: Default {
         Bus::of(cpu_addr) == Some(source_bus)
     }
 
-    /// During an OAM-DMA, a CPU read of this console's WRAM bus may be
-    /// address-remapped by the DMA driving the bus. DMG (one external bus)
-    /// never remaps; CGB does for a read taken while the DMA sources from cart.
-    fn oam_dma_read_remap(&self, _cpu_addr: u16, _dma_source: u16) -> Option<u16> {
+    /// During an OAM-DMA, a CPU access to this console's WRAM bus may be
+    /// address-remapped by the DMA driving the bus (reads and writes alike).
+    /// DMG (one external bus) never remaps; CGB does for an access while the
+    /// DMA sources from the cart bus.
+    fn oam_dma_wram_remap(&self, _cpu_addr: u16, _dma_source: u16) -> Option<u16> {
         None
     }
 

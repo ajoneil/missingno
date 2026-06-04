@@ -331,14 +331,15 @@ impl<M: Model> Console<M> {
         if let Some(value) = self.dma_read_conflict(address) {
             return value;
         }
-        self.read_addr(self.dma_read_remapped(address))
+        self.read_addr(self.dma_wram_remapped(address))
     }
 
-    /// A WRAM-bus read taken during an active OAM-DMA sourcing from the cart
-    /// bus is address-remapped by the DMA driving the bus (CGB only).
-    fn dma_read_remapped(&self, address: u16) -> u16 {
+    /// A WRAM-bus access taken during an active OAM-DMA sourcing from the cart
+    /// bus is address-remapped by the DMA driving the bus (CGB only). Shared by
+    /// the read (drive-enable) and write (commit) paths.
+    fn dma_wram_remapped(&self, address: u16) -> u16 {
         if self.dma.is_active_on_bus().is_some()
-            && let Some(remapped) = self.model.oam_dma_read_remap(address, self.dma.source())
+            && let Some(remapped) = self.model.oam_dma_wram_remap(address, self.dma.source())
         {
             return remapped;
         }
@@ -538,14 +539,18 @@ impl<M: Model> Console<M> {
         // regardless of whether the target device stores it.
         self.drive_bus(address, value);
 
+        // The byte stores into the DMA-remapped WRAM cell when the CPU writes
+        // the WRAM bus during a cart-source DMA; the bus drive above keeps the
+        // CPU's original address.
+        let store = self.dma_wram_remapped(address);
         if self
             .model
-            .map_write(address, value, &mut self.ppu, &mut self.vram_bus.vram)
+            .map_write(store, value, &mut self.ppu, &mut self.vram_bus.vram)
         {
             return;
         }
 
-        let mapped = MappedAddress::map(address);
+        let mapped = MappedAddress::map(store);
         if !matches!(mapped, MappedAddress::PpuRegister(_)) {
             self.write_mapped(mapped, value);
         }
