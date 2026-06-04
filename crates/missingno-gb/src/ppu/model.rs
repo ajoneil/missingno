@@ -60,6 +60,13 @@ pub trait PpuModel: Default {
     /// enabled-window slip is unaffected on both.)
     const WINDOW_DRAIN_SLIP_WHILE_DISABLED: bool = true;
 
+    /// The DMG "STAT write" glitch: a write to STAT ($FF41) momentarily drives every
+    /// mode/LYC source-enable high, so the write can raise the STAT line even when no
+    /// enabled condition is actually met. The CGB fixed this — its STAT write
+    /// re-evaluates the line with the written enables only (a matching-mode write can
+    /// still raise it).
+    const STAT_WRITE_ALL_ENABLES_GLITCH: bool = true;
+
     /// This console's video RAM: DMG one bank, CGB two (VBK-banked).
     type Vram: Vram;
 

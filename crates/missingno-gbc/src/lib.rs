@@ -321,6 +321,10 @@ impl PpuModel for CgbPpu {
     // slip (its NUKO→PANY coupling requires the window enabled).
     const WINDOW_DRAIN_SLIP_WHILE_DISABLED: bool = false;
 
+    // The CGB fixed the DMG STAT-write glitch — a STAT write re-evaluates with the
+    // written enables only, never all-enables-high.
+    const STAT_WRITE_ALL_ENABLES_GLITCH: bool = false;
+
     type Vram = CgbVram;
     type BgCell = BgAttribute;
     type Pixel = Color555;

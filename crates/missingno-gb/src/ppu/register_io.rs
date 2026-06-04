@@ -99,16 +99,26 @@ impl<P: PpuModel> Ppu<P> {
                 self.registers.control = Control::new(ControlFlags::from_bits_retain(value))
             }
             Register::Status => {
-                // DMG STAT write glitch: all enables briefly high, then settle.
-                self.video.stat.set_enables(InterruptFlags::all());
-                let glitch_legs = self.stat_legs();
-                let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs, false);
+                if P::STAT_WRITE_ALL_ENABLES_GLITCH {
+                    // DMG STAT write glitch: all enables briefly high, then settle.
+                    self.video.stat.set_enables(InterruptFlags::all());
+                    let glitch_legs = self.stat_legs();
+                    let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs, false);
 
+                    self.video.stat.write_stat_bits(value);
+                    let final_legs = self.stat_legs();
+                    let final_edge = self.video.stat.detect_suko_edge(final_legs, false);
+
+                    return glitch_edge || final_edge;
+                }
+
+                // CGB: the SUKO line is the OR of written enabled-and-met legs; a STAT
+                // write raises an IRQ only on its 0→1 edge (no DMG all-enables transient).
+                let prev_low = self.video.stat.legs_was_high().is_empty();
                 self.video.stat.write_stat_bits(value);
                 let final_legs = self.stat_legs();
-                let final_edge = self.video.stat.detect_suko_edge(final_legs, false);
-
-                return glitch_edge || final_edge;
+                self.video.stat.prime_legs(final_legs);
+                return prev_low && !final_legs.is_empty();
             }
             Register::BackgroundViewportY => {
                 self.registers.background_viewport.y.write_immediate(value)
