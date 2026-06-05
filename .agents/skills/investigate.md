@@ -77,7 +77,7 @@ The in-context skill files contain scope-discipline rules (e.g. "do not investig
 
 **Every 3-4 tool calls, check:**
 
-1. **Is summary.md current?** If context compacted now, could you continue from it alone?
+1. **Is summary.md a working understanding, or has it rotted into a log?** Could a fresh reader with zero history act from it alone in under a minute? If any section carries now-superseded content, a correction stapled on top of stale text (`⚠ now refuted`, `prior correction`, `update:`), two sections that contradict each other, or detail you'd keep only for chronology — **rewrite those sections to state only what is true now, this turn.** Revise in place; never append a correction beside the text it corrects. The how-we-got-here lives in receipts, not in summary.md.
 2. **Am I reading source code or doing research/analysis/design inline?** If your last 2+ tool calls weren't reading receipts/summary.md/skill files, you're doing subroutine work. Stop and delegate.
 3. **Am I tracing behavior in my head?** More than ~4 lines of state/timing reasoning = guessing. Invoke `/inspect`.
 4. **Am I making progress?** Same understanding as 3 tool calls ago with no changes = stuck. Invoke `/inspect` or `/research`.
@@ -246,7 +246,9 @@ General domain knowledge should already be in `receipts/research/` — you docum
 
 **Keep it short.** If summary.md is growing past ~60 lines, you're putting too much in it. Move detail into receipts and replace it with a link.
 
-**Update it before every subroutine invocation and after every subroutine return.** This is a blocking prerequisite — the subroutine invocation or next action does not happen until summary.md is written. The update should be a line or two — not paragraphs. The cadence is: every single action the investigate skill takes should be bracketed by summary.md writes. Read receipt → update summary → invoke next skill. Skill returns → read receipt → update summary → decide next step. If you're ever unsure whether to update, update.
+**Revise in place — never append.** summary.md is a *working understanding*, rewritten as the understanding changes — not a chronological record of how it changed. The dominant failure mode is appending: a new finding is bolted on, a correction is stapled on top of now-wrong text, refuted hypotheses keep their old detail, "prior correction" / "⚠ refuted" blocks pile up, and two sections end up contradicting each other. That rots the dashboard into an archive nobody can read in under a minute. **When something is superseded, rewrite the affected section so it states only what is true now** — including, when needed, deleting or replacing whole paragraphs, not annotating them. The chronology of how you got here is preserved in the receipts and in the RCA tree's one-line struck entries; it must not live in the prose sections. This applies to *every* section (Status, Hardware model, Model divergence, Current understanding), not just Current understanding. Litmus test: if reading a section requires knowing the investigation's history to parse what's currently true, rewrite it.
+
+**Update it before every subroutine invocation and after every subroutine return.** This is a blocking prerequisite — the subroutine invocation or next action does not happen until summary.md is written. Most updates are a line or two; but when a finding *supersedes* earlier content, the update is a **rewrite of the affected section**, not an addition beside it (see "Revise in place"). The cadence is: every single action the investigate skill takes should be bracketed by summary.md writes. Read receipt → revise summary → invoke next skill. Skill returns → read receipt → revise summary → decide next step. If you're ever unsure whether to update, update.
 
 ##### Format
 
