@@ -7,12 +7,6 @@ use super::{
     ppu::{self, memory::Vram},
 };
 
-/// CPU T-cycles the CGB holds the CPU `Stopped` during a double-speed switch
-/// (the ~0x20000-T-cycle blackout). The divider and PPU run throughout; the CPU
-/// re-engages at the new speed when this drains. Tuned against the age `spsw-*`
-/// expected values.
-const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
-
 /// Result of executing one instruction.
 pub struct StepResult {
     /// Whether a new video frame was produced during this instruction.
@@ -205,10 +199,10 @@ impl<M: Model> Console<M> {
         }
 
         // Mid-blackout: drain the switch penalty, then re-engage. The divider
-        // and PPU advanced through `elapsed_tcycles` while the CPU spun.
-        if self.speed_switch_blackout > 0 {
-            self.speed_switch_blackout = self.speed_switch_blackout.saturating_sub(elapsed_tcycles);
-            if self.speed_switch_blackout == 0 {
+        // and PPU advanced through `elapsed_tcycles` while the CPU spun. The
+        // model owns the blackout countdown (CGB-only).
+        if self.model.speed_switch_in_progress() {
+            if self.model.drain_speed_switch_blackout(elapsed_tcycles) {
                 self.cpu.resume_from_stop();
             }
             return;
@@ -216,13 +210,12 @@ impl<M: Model> Console<M> {
 
         match self.model.resolve_stop() {
             StopAction::SpeedSwitch => {
-                // Hardware resets DIV across the switch and holds the CPU for
-                // the blackout (the model has already toggled its speed bit).
+                // Hardware resets DIV across the switch (the model has already
+                // toggled its speed bit and armed its blackout).
                 let old_counter = self.timers.internal_counter();
                 self.timers
                     .write_register(crate::timers::Register::Divider, 0);
                 self.audio.on_div_write(old_counter);
-                self.speed_switch_blackout = SPEED_SWITCH_BLACKOUT_TCYCLES;
             }
             StopAction::Remain => {}
         }
@@ -280,6 +273,28 @@ impl<M: Model> Console<M> {
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
         let mut new_screen = false;
         let mut pixel = None;
+
+        // Pre-grid read view: the mode 3→0 XYMU.q↑ and the mode-2 OAM-lock
+        // onset both fire inside this dot's `ppu_rise_edge` below. Sample the
+        // STAT mode and a pending lockable read's pre-grid lock so a commit
+        // landing on the same phase (the double-speed Low arm) can latch the
+        // pre-transition view its `data_phase_n↑` actually saw. The two lock
+        // regions onset on different edges: VRAM (mode-3) on a fall, so its
+        // pre-grid view is the drive-enable sample; OAM (mode-2) on this rise,
+        // so its pre-grid view is the live lock sampled now (before the rise).
+        // Only the double-speed Low arm consumes this — skip the sampling cost
+        // when the CPU runs in lockstep (DMG and CGB single speed).
+        if advance_ppu && self.model.cpu_steps_per_dot() == 2 {
+            let read_lock = self
+                .cpu_bus
+                .read_address()
+                .and_then(|address| match address {
+                    0x8000..=0x9FFF => self.cpu_bus.read_drive_lock(),
+                    _ => self.ppu.read_lock(address),
+                });
+            self.model
+                .note_pre_grid_read_view(self.read(0xFF41), read_lock);
+        }
 
         if is_mcycle_boundary {
             self.tick_mcycle_boundary_rise();
@@ -593,6 +608,15 @@ impl<M: Model> Console<M> {
     fn apply_read_drive_enable(&mut self) {
         if let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
+            // VRAM's mode-3 lock onsets on a fall, so a double-speed read's
+            // pre-grid lock view is this drive-enable sample (before the onset),
+            // not the post-grid latch lock. OAM's mode-2 onset is rise-driven
+            // and resolved by the pre-`ppu_rise_edge` sample instead. Only
+            // double speed consumes the sample.
+            if self.model.cpu_steps_per_dot() == 2 {
+                let drive_lock = self.ppu.read_lock(address);
+                self.cpu_bus.record_read_drive_lock(drive_lock);
+            }
             self.cpu_bus.drive(value);
 
             // A VRAM-source bus conflict on a read forces the DMA's OAM deposit
@@ -623,7 +647,23 @@ impl<M: Model> Console<M> {
     fn commit_read_latch(&mut self) {
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
-            let value = self.bus_value_at_latch(address, self.cpu_bus.data);
+            let base = self.bus_value_at_latch(address, self.cpu_bus.data);
+            // On the double-speed Low arm the latch shares this phase with the
+            // ALET grid edge, one capture too far; the model resolves it back to
+            // the pre-grid view. DMG / single speed / High arm pass `base`
+            // through. A lockable read whose live lock floated `base` to 0xFF is
+            // offered the unfloated accessible byte so the model can pick the
+            // pre-grid lock outcome (float, or the accessible value).
+            let on_low_arm =
+                self.clock_phase == ClockPhase::Low && self.model.cpu_steps_per_dot() == 2;
+            let accessible = if on_low_arm && self.ppu.read_lock(address).is_some() {
+                self.cpu_bus.data
+            } else {
+                base
+            };
+            let value = self
+                .model
+                .resolve_read_latch(address, accessible, on_low_arm);
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }

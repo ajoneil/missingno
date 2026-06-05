@@ -39,6 +39,12 @@ use missingno_gb::{
 
 use crate::screen::{Color555, GREYSCALE, Screen};
 
+/// CPU T-cycles the CPU stays `Stopped` during a double-speed switch (the
+/// ~0x20000-T-cycle blackout). The divider and PPU run throughout; the CPU
+/// re-engages at the new speed when this drains. Tuned against the age `spsw-*`
+/// expected values.
+const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
+
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
 /// bit 7). Data writes during mode 3 are dropped but still advance the index.
@@ -567,6 +573,15 @@ pub struct Cgb {
     dmg_compat: bool,
     /// VRAM DMA ($FF51-55).
     vram_dma: VramDma,
+    /// Remaining CPU T-cycles of the double-speed switch blackout. The CPU
+    /// stays `Stopped` (the divider/PPU keep running) until this drains, then
+    /// re-engages at the new speed. 0 = not switching.
+    speed_switch_blackout: u32,
+    /// STAT (`$FF41`) and a pending OAM/VRAM read's lock, sampled before this
+    /// dot's ALET grid edge — the pre-transition view a double-speed Low-arm
+    /// `data_phase_n↑` latch actually saw (`resolve_read_latch` consumes them).
+    pre_grid_stat: u8,
+    pre_grid_read_lock: Option<bool>,
 }
 
 impl Default for Cgb {
@@ -578,6 +593,9 @@ impl Default for Cgb {
             double_speed: false,
             dmg_compat: false,
             vram_dma: VramDma::default(),
+            speed_switch_blackout: 0,
+            pre_grid_stat: 0,
+            pre_grid_read_lock: None,
         }
     }
 }
@@ -672,14 +690,61 @@ impl Model for Cgb {
         if self.key1_armed {
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
+            self.speed_switch_blackout = self.speed_switch_blackout_tcycles();
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain
         }
     }
 
+    fn speed_switch_in_progress(&self) -> bool {
+        self.speed_switch_blackout > 0
+    }
+
+    fn drain_speed_switch_blackout(&mut self, elapsed: u32) -> bool {
+        self.speed_switch_blackout = self.speed_switch_blackout.saturating_sub(elapsed);
+        self.speed_switch_blackout == 0
+    }
+
     fn cpu_steps_per_dot(&self) -> u8 {
         if self.double_speed { 2 } else { 1 }
+    }
+
+    fn speed_switch_blackout_tcycles(&self) -> u32 {
+        SPEED_SWITCH_BLACKOUT_TCYCLES
+    }
+
+    fn note_pre_grid_read_view(&mut self, stat_mode: u8, read_lock: Option<bool>) {
+        if self.double_speed {
+            self.pre_grid_stat = stat_mode;
+            self.pre_grid_read_lock = read_lock;
+        }
+    }
+
+    /// In double speed the read M-cycle is two dots, so a Low-arm latch runs in
+    /// the same phase as that dot's ALET grid edge: `ppu_rise_edge` applies the
+    /// mode 3→0 (XYMU.q↑) transition and the mode-2 OAM-lock onset before the
+    /// fall commits the read, but the read's `data_phase_n↑` precedes them.
+    /// Resolve such a read to the pre-grid view sampled before the rise.
+    fn resolve_read_latch(&self, address: u16, value: u8, on_low_arm: bool) -> u8 {
+        if !on_low_arm {
+            return value;
+        }
+        match address {
+            // STAT mode bits (SADU/XATY) latch the pre-transition mode; bit 2
+            // (ROPO/LYC) and bits 3-7 keep their live `data_phase_n↑` value.
+            0xFF41 => {
+                const MODE_BITS: u8 = 0b0000_0011;
+                (value & !MODE_BITS) | (self.pre_grid_stat & MODE_BITS)
+            }
+            // OAM/VRAM lock: the read floats (0xFF) iff the lock was asserted
+            // before the grid edge; otherwise it sees the accessible byte.
+            0xFE00..=0xFEFF | 0x8000..=0x9FFF => match self.pre_grid_read_lock {
+                Some(true) => 0xFF,
+                _ => value,
+            },
+            _ => value,
+        }
     }
 
     fn on_reset(&mut self, cartridge: &Cartridge, has_boot_rom: bool) {

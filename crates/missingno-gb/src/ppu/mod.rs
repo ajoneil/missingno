@@ -414,6 +414,16 @@ impl<P: PpuModel> Ppu<P> {
         }
     }
 
+    /// `Some(locked)` for the OAM/VRAM read-lock ranges, `None` elsewhere — the
+    /// pre-grid lock view the double-speed read latch resolves against.
+    pub fn read_lock(&self, address: u16) -> Option<bool> {
+        match address {
+            0xFE00..=0xFEFF => Some(self.oam_locked()),
+            0x8000..=0x9FFF => Some(self.vram_locked()),
+            _ => None,
+        }
+    }
+
     pub fn read_oam(&self, address: OamAddress) -> u8 {
         self.oam.read(address)
     }

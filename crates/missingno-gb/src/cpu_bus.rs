@@ -22,6 +22,11 @@ enum Activity {
     Read {
         address: u16,
         applied: bool,
+        /// OAM/VRAM read-lock at the T-cycle 2 drive-enable. VRAM's mode-3
+        /// lock onsets on a fall edge, so a double-speed read's pre-grid view
+        /// of it is this drive-enable sample, not the post-onset latch lock.
+        /// `None` outside OAM/VRAM or before the drive fires.
+        locked_at_drive: Option<bool>,
     },
     /// CPU drives the bus at CUPA-rising (T-cycle 2). Memory commits
     /// at fall of T-cycle 3 / CUPA-falling.
@@ -56,6 +61,7 @@ impl CpuBus {
         self.activity = Activity::Read {
             address,
             applied: false,
+            locked_at_drive: None,
         };
     }
 
@@ -74,7 +80,37 @@ impl CpuBus {
             Activity::Read {
                 address,
                 applied: false,
+                ..
             } => Some(address),
+            _ => None,
+        }
+    }
+
+    /// Record the OAM/VRAM read-lock at the drive-enable. No-op outside reads.
+    pub fn record_read_drive_lock(&mut self, lock: Option<bool>) {
+        if let Activity::Read {
+            locked_at_drive, ..
+        } = &mut self.activity
+        {
+            *locked_at_drive = lock;
+        }
+    }
+
+    /// This M-cycle's read-lock drive-enable sample (`None` outside reads or
+    /// before the drive fired).
+    pub fn read_drive_lock(&self) -> Option<bool> {
+        match self.activity {
+            Activity::Read {
+                locked_at_drive, ..
+            } => locked_at_drive,
+            _ => None,
+        }
+    }
+
+    /// Address of this M-cycle's read, staged or already driven.
+    pub fn read_address(&self) -> Option<u16> {
+        match self.activity {
+            Activity::Read { address, .. } => Some(address),
             _ => None,
         }
     }

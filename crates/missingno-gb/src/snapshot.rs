@@ -377,7 +377,6 @@ impl GameBoy {
             cpu_bus: crate::cpu_bus::CpuBus::new(),
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
-            speed_switch_blackout: 0,
             dma_cpu_hold: false,
         }
     }

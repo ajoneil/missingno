@@ -108,9 +108,21 @@ pub trait Model: Default {
 
     /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
     /// CGB performs a double-speed switch when KEY1 is armed (toggling its
-    /// own speed bit) and otherwise stays stopped.
+    /// own speed bit, arming its blackout) and otherwise stays stopped.
     fn resolve_stop(&mut self) -> StopAction {
         StopAction::Remain
+    }
+
+    /// Whether a double-speed switch blackout is draining (the CPU is held
+    /// `Stopped` while the divider/PPU run). DMG: never.
+    fn speed_switch_in_progress(&self) -> bool {
+        false
+    }
+
+    /// Drain `elapsed` CPU T-cycles from the switch blackout; returns true on
+    /// the M-cycle it empties (the CPU re-engages at the new speed). DMG: never.
+    fn drain_speed_switch_blackout(&mut self, _elapsed: u32) -> bool {
+        false
     }
 
     /// CPU T-cycles advanced per PPU dot. 1 = lockstep (DMG always; CGB
@@ -118,6 +130,30 @@ pub trait Model: Default {
     /// double speed), so a full CPU T-cycle lands on each master-clock edge.
     fn cpu_steps_per_dot(&self) -> u8 {
         1
+    }
+
+    /// CPU T-cycles the CPU stays `Stopped` across a double-speed switch (the
+    /// blackout while the divider/PPU keep running). DMG never switches speed.
+    fn speed_switch_blackout_tcycles(&self) -> u32 {
+        0
+    }
+
+    /// Sampled at the top of `rise_work`, before this dot's `ppu_rise_edge`
+    /// (the ALET-rising XYMU.q↑ / OAM-lock-onset grid edge). `stat_mode` is the
+    /// pre-grid STAT (`$FF41`) byte; `read_lock` is the pre-grid lock of a
+    /// pending OAM/VRAM read (`None` when no lockable read is staged). A model
+    /// whose CPU latch can land on the same phase as the grid edge stores these
+    /// to resolve that read's `data_phase_n↑` to the pre-grid view. DMG (the CPU
+    /// latch always lands after a separate-phase rise) ignores them.
+    fn note_pre_grid_read_view(&mut self, _stat_mode: u8, _read_lock: Option<bool>) {}
+
+    /// Resolve the value a CPU read latches, given the generic
+    /// `bus_value_at_latch` base value and whether the commit lands on the
+    /// double-speed Low master-arm. DMG returns the base unchanged. CGB double
+    /// speed overrides a Low-arm `$FF41`/lockable read with its pre-grid view
+    /// (the latch lands one ALET-grid capture too far on that arm).
+    fn resolve_read_latch(&self, _address: u16, value: u8, _on_low_arm: bool) -> u8 {
+        value
     }
 
     /// Does a CPU access at `cpu_addr` collide with the in-flight OAM-DMA
@@ -242,11 +278,6 @@ pub struct Console<M: Model> {
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_oam_zero: Option<u8>,
 
-    /// Remaining CPU T-cycles of the CGB double-speed switch blackout. The
-    /// CPU stays `Stopped` (the divider and PPU keep running) until this
-    /// drains, then re-engages at the new speed. 0 = not switching.
-    speed_switch_blackout: u32,
-
     /// A CGB VRAM DMA is holding the CPU clock this M-cycle (bus master owns the
     /// bus). The CPU spins in `Stopped` and the DMA's bytes flow per M-cycle;
     /// `manage_dma_hold` releases it when the DMA stops asserting the hold.
@@ -320,7 +351,6 @@ impl<M: Model> Console<M> {
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
-            speed_switch_blackout: 0,
             dma_cpu_hold: false,
             model: M::default(),
         };
@@ -399,7 +429,6 @@ impl<M: Model> Console<M> {
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
         self.dma_conflict_oam_zero = None;
-        self.speed_switch_blackout = 0;
         self.dma_cpu_hold = false;
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);
@@ -477,7 +506,7 @@ impl<M: Model> Console<M> {
     /// True while a CGB double-speed switch holds the CPU `Stopped` in the
     /// settling blackout — a STOP that self-resumes, not a terminal halt.
     pub fn speed_switch_in_progress(&self) -> bool {
-        self.speed_switch_blackout > 0
+        self.model.speed_switch_in_progress()
     }
 
     pub fn dma(&self) -> &Dma {
