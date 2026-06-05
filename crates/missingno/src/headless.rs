@@ -10,13 +10,13 @@ use missingno_gb::interrupts;
 use missingno_gb::ppu;
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, SpriteId};
-use missingno_gb::{ClockPhase, GameBoy};
+use missingno_gb::{BootRom, ClockPhase, GameBoy};
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
 pub fn run(
     rom_path: Option<PathBuf>,
-    boot_rom: Option<Box<[u8; 256]>>,
+    boot_rom: Option<BootRom>,
     link: Option<Box<dyn missingno_gb::serial_transfer::SerialLink>>,
 ) {
     let rom_path = rom_path.unwrap_or_else(|| {

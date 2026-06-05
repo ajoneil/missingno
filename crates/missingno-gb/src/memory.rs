@@ -50,6 +50,30 @@ pub enum ExternalAddress {
     WorkRam(u16),
 }
 
+/// A boot ROM and the address range it overlays over the cartridge while
+/// mapped. The variant carries the layout: the DMG boot ROM is 256 bytes
+/// over 0x0000–0x00FF; the CGB boot ROM is 2304 bytes over 0x0000–0x00FF
+/// AND 0x0200–0x08FF, leaving the 0x0100–0x01FF cartridge-header window
+/// visible so the boot ROM can read the header it inspects.
+pub enum BootRom {
+    Dmg(Box<[u8; 0x100]>),
+    Cgb(Box<[u8; 0x900]>),
+}
+
+impl BootRom {
+    /// The boot-ROM byte overlaying `addr`, or `None` if `addr` shows the
+    /// cartridge through (always, or the CGB header window).
+    fn overlay_byte(&self, addr: u16) -> Option<u8> {
+        match self {
+            BootRom::Dmg(rom) if addr <= 0x00FF => Some(rom[addr as usize]),
+            BootRom::Cgb(rom) if addr <= 0x00FF || (0x0200..=0x08FF).contains(&addr) => {
+                Some(rom[addr as usize])
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The external data bus connects the SoC to the cartridge and (on
 /// DMG) to work RAM. The bus retains its last driven value through
 /// parasitic capacitance, decaying toward 0xFF when idle.
@@ -63,17 +87,17 @@ pub struct ExternalBus {
     /// M-cycles remaining before `latch` decays to 0xFF.
     pub(crate) decay: u8,
 
-    /// DMG boot ROM (256 bytes). When present and `boot_rom_mapped` is
-    /// true, reads from 0x0000–0x00FF return boot ROM data instead of
+    /// Boot ROM (DMG or CGB). When present and `boot_rom_mapped` is true,
+    /// reads from the overlaid range return boot ROM data instead of
     /// cartridge ROM.
-    boot_rom: Option<Box<[u8; 256]>>,
+    boot_rom: Option<BootRom>,
     /// True while the boot ROM overlay is active. Cleared by writing
     /// to 0xFF50.
     boot_rom_mapped: bool,
 }
 
 impl ExternalBus {
-    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> Self {
+    pub fn new(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Self {
         let boot_rom_mapped = boot_rom.is_some();
         let mut work_ram = [0; 0x2000];
         dmg_sram::fill(&mut work_ram);
@@ -91,9 +115,11 @@ impl ExternalBus {
     /// update the latch — callers decide when to latch.
     pub fn read(&self, address: ExternalAddress) -> u8 {
         match address {
-            ExternalAddress::Cartridge(addr) if addr <= 0x00FF && self.boot_rom_mapped => {
-                self.boot_rom.as_ref().unwrap()[addr as usize]
-            }
+            ExternalAddress::Cartridge(addr) if self.boot_rom_mapped => self
+                .boot_rom
+                .as_ref()
+                .and_then(|rom| rom.overlay_byte(addr))
+                .unwrap_or_else(|| self.cartridge.read(addr)),
             ExternalAddress::Cartridge(addr) => self.cartridge.read(addr),
             ExternalAddress::WorkRam(addr) => self.work_ram[addr as usize],
         }

@@ -17,10 +17,19 @@ use missingno_gbc::GameBoyColor;
 #[allow(unused_imports)]
 pub use missingno_gb::test_support::{
     System, check_mooneye_pass, format_registers, format_wram_dump, is_infinite_loop,
-    load_reference_png, rom_path, run_for_tcycles, run_frames, run_until_breakpoint,
+    load_reference_png, rom_path, run_boot_rom, run_for_tcycles, run_frames, run_until_breakpoint,
     run_until_infinite_loop, run_until_infinite_loop_no_lcd, run_until_serial_match,
-    run_until_undefined_opcode, screen_to_greyscale,
+    run_until_undefined_opcode, screen_to_greyscale, try_load_cgb_boot_rom,
 };
+
+/// Build a `GameBoyColor`, loading the CGB boot ROM from `CGB_BOOT_ROM` if
+/// set (and driving it to the 0x0100 cartridge handoff). With the env unset
+/// the boot ROM is `None` and the core uses its skip-boot post-boot state.
+fn new_cgb(rom: Vec<u8>) -> GameBoyColor {
+    let mut gbc = GameBoyColor::new(Cartridge::new(rom, None), try_load_cgb_boot_rom());
+    run_boot_rom(&mut gbc);
+    gbc
+}
 
 /// Resolve a path relative to `missingno-gbc/tests/accuracy/roms/`.
 /// Use this for CGB-only test ROMs that live in the gbc crate.
@@ -35,7 +44,7 @@ pub fn load_rom(relative: &str) -> GameBoyColor {
     let path = rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
-    GameBoyColor::new(Cartridge::new(rom, None), None)
+    new_cgb(rom)
 }
 
 /// Load a CGB-only ROM from the gbc crate's own roms dir.
@@ -43,7 +52,7 @@ pub fn load_cgb_rom(relative: &str) -> GameBoyColor {
     let path = cgb_rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
-    GameBoyColor::new(Cartridge::new(rom, None), None)
+    new_cgb(rom)
 }
 
 #[cfg(feature = "gbtrace")]
@@ -57,11 +66,7 @@ pub fn load_cgb_rom_traced(relative: &str) -> TestRun<missingno_gbc::Cgb> {
     let path = cgb_rom_path(relative);
     let rom = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("Failed to read ROM {}: {e}", path.display()));
-    TestRun::new(
-        GameBoyColor::new(Cartridge::new(rom, None), None),
-        relative,
-        "CGB-C",
-    )
+    TestRun::new(new_cgb(rom), relative, "CGB-C")
 }
 
 /// Load a reference PNG from the gbc crate's own roms dir.

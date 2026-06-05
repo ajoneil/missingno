@@ -682,10 +682,14 @@ impl Model for Cgb {
         if self.double_speed { 2 } else { 1 }
     }
 
-    fn on_reset(&mut self, cartridge: &Cartridge) {
+    fn on_reset(&mut self, cartridge: &Cartridge, has_boot_rom: bool) {
         *self = Self::default();
         // A DMG cartridge boots the CGB into compatibility mode (KEY0 bit 2).
-        self.dmg_compat = !cartridge.is_cgb();
+        // With a real boot ROM that decision is the boot ROM's (via KEY0);
+        // only HLE it on the skip-boot path.
+        if !has_boot_rom {
+            self.dmg_compat = !cartridge.is_cgb();
+        }
     }
 
     fn map_read(&self, address: u16, ppu: &Ppu<CgbPpu>, vram: &CgbVram) -> Option<u8> {

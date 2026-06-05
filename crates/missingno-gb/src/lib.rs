@@ -34,6 +34,7 @@ use ppu::memory::Vram;
 use ppu::model::PpuModel;
 
 pub use master_clock::ClockPhase;
+pub use memory::BootRom;
 pub use ppu::PixelOutput;
 
 /// Double-buffered LCD framebuffer, abstracted over its pixel storage so
@@ -93,8 +94,11 @@ pub trait Model: Default {
     fn on_joypad_write(&mut self, _value: u8) {}
 
     /// Re-create model-specific state on power-cycle. DMG (re)builds the
-    /// SGB co-processor from the cartridge header.
-    fn on_reset(&mut self, _cartridge: &Cartridge) {}
+    /// SGB co-processor from the cartridge header. `has_boot_rom` is true
+    /// when a real boot ROM will run — the model must then skip any
+    /// post-boot HLE the boot ROM performs itself (CGB: the DMG-compat
+    /// KEY0/palette setup).
+    fn on_reset(&mut self, _cartridge: &Cartridge, _has_boot_rom: bool) {}
 
     /// Post-boot CPU state when no boot ROM is present. DMG seeds the flags
     /// from the header checksum; CGB uses a fixed register file (A=$11).
@@ -288,7 +292,7 @@ impl Model for Dmg {
         }
     }
 
-    fn on_reset(&mut self, cartridge: &Cartridge) {
+    fn on_reset(&mut self, cartridge: &Cartridge, _has_boot_rom: bool) {
         self.sgb = cartridge.supports_sgb().then(sgb::Sgb::new);
     }
 }
@@ -297,7 +301,7 @@ impl Model for Dmg {
 pub type GameBoy = Console<Dmg>;
 
 impl<M: Model> Console<M> {
-    pub fn new(cartridge: Cartridge, boot_rom: Option<Box<[u8; 256]>>) -> Self {
+    pub fn new(cartridge: Cartridge, boot_rom: Option<BootRom>) -> Self {
         let mut console = Console {
             cpu: Cpu::new(),
             external: ExternalBus::new(cartridge, boot_rom),
@@ -375,7 +379,7 @@ impl<M: Model> Console<M> {
         };
         self.dma = Dma::new();
         self.vram_bus = VramBus::new();
-        self.model.on_reset(&self.external.cartridge);
+        self.model.on_reset(&self.external.cartridge, has_boot_rom);
 
         if !has_boot_rom {
             let read = |a: u16| self.external.cartridge.read(a);

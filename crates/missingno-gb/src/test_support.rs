@@ -13,8 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    Console, GameBoy, Model, cartridge::Cartridge, cpu::Cpu, execute::StepResult, interrupts,
-    ppu::screen::Screen,
+    BootRom, Console, GameBoy, Model, cartridge::Cartridge, cpu::Cpu, execute::StepResult,
+    interrupts, ppu::screen::Screen,
 };
 
 #[cfg(feature = "gbtrace")]
@@ -340,7 +340,7 @@ pub fn load_rom(relative: &str) -> TestRun<crate::Dmg> {
 pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestRun<crate::Dmg> {
     let gb = GameBoy::new(
         Cartridge::new(std::fs::read(rom_path(relative)).unwrap(), None),
-        Some(boot_rom),
+        Some(BootRom::Dmg(boot_rom)),
     );
     TestRun::new(gb, relative, "DMG-B")
 }
@@ -348,14 +348,25 @@ pub fn load_rom_with_boot_rom(relative: &str, boot_rom: Box<[u8; 256]>) -> TestR
 /// Try to load the DMG boot ROM from the path in `DMG_BOOT_ROM`.
 /// Returns None if the env var is unset or the file can't be read.
 /// The boot ROM cannot be distributed with the repo for legal reasons.
-pub fn try_load_boot_rom() -> Option<Box<[u8; 256]>> {
+pub fn try_load_boot_rom() -> Option<BootRom> {
     let path = std::env::var("DMG_BOOT_ROM").ok()?;
     let data = std::fs::read(&path).ok()?;
     let boxed: Box<[u8; 256]> = data.into_boxed_slice().try_into().ok()?;
-    Some(boxed)
+    Some(BootRom::Dmg(boxed))
 }
 
-fn run_boot_rom(gb: &mut GameBoy) {
+/// Try to load the CGB boot ROM (2304 bytes) from the path in `CGB_BOOT_ROM`.
+/// Returns None if unset or unreadable. Proprietary — not distributed.
+pub fn try_load_cgb_boot_rom() -> Option<BootRom> {
+    let path = std::env::var("CGB_BOOT_ROM").ok()?;
+    let data = std::fs::read(&path).ok()?;
+    let boxed: Box<[u8; 0x900]> = data.into_boxed_slice().try_into().ok()?;
+    Some(BootRom::Cgb(boxed))
+}
+
+/// Drive a mapped boot ROM to the cartridge handoff at PC=0x0100. A no-op
+/// when no boot ROM is mapped (the CPU is already post-boot at 0x0100).
+pub fn run_boot_rom<M: Model>(gb: &mut Console<M>) {
     if gb.cpu().ir_address != 0x0000 {
         return;
     }

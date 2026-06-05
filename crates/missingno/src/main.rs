@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use missingno_gb::BootRom;
 
 mod app;
 mod cartridge_rw;
@@ -59,7 +60,7 @@ enum Command {
     },
 }
 
-fn load_boot_rom(path: Option<PathBuf>) -> Option<Box<[u8; 256]>> {
+fn load_boot_rom(path: Option<PathBuf>) -> Option<BootRom> {
     path.map(|path| {
         let data = std::fs::read(&path).unwrap_or_else(|e| {
             eprintln!("error: failed to read boot ROM {}: {e}", path.display());
@@ -67,10 +68,10 @@ fn load_boot_rom(path: Option<PathBuf>) -> Option<Box<[u8; 256]>> {
         });
         let len = data.len();
         let boxed: Box<[u8; 256]> = data.into_boxed_slice().try_into().unwrap_or_else(|_| {
-            eprintln!("error: boot ROM must be exactly 256 bytes (got {len})");
+            eprintln!("error: DMG boot ROM must be exactly 256 bytes (got {len})");
             std::process::exit(1);
         });
-        boxed
+        BootRom::Dmg(boxed)
     })
 }
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process;
 
+use missingno_gb::BootRom;
 use missingno_gb::GameBoy;
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::trace::{Profile, Tracer, Trigger};
@@ -10,7 +11,7 @@ pub fn run(
     profile_path: PathBuf,
     output: Option<PathBuf>,
     cycles: u64,
-    boot_rom: Option<Box<[u8; 256]>>,
+    boot_rom: Option<BootRom>,
 ) {
     let rom_data = std::fs::read(&rom_path).unwrap_or_else(|e| {
         eprintln!("error: failed to read ROM {}: {e}", rom_path.display());
