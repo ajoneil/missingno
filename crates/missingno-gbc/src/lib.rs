@@ -120,24 +120,24 @@ impl ColorRam {
 pub struct BgAttribute(pub u8);
 
 impl BgAttribute {
-    fn palette(self) -> u8 {
+    pub fn palette(self) -> u8 {
         self.0 & 0x07
     }
 
-    fn tile_bank(self) -> u8 {
+    pub fn tile_bank(self) -> u8 {
         (self.0 >> 3) & 0x01
     }
 
-    fn flip_x(self) -> bool {
+    pub fn flip_x(self) -> bool {
         self.0 & 0x20 != 0
     }
 
-    fn flip_y(self) -> bool {
+    pub fn flip_y(self) -> bool {
         self.0 & 0x40 != 0
     }
 
     /// BG-to-OBJ priority (bit 7): BG colour indices 1-3 of this tile draw over OBJ.
-    fn priority(self) -> bool {
+    pub fn priority(self) -> bool {
         self.0 & 0x80 != 0
     }
 }
@@ -472,6 +472,16 @@ impl PpuModel for CgbPpu {
 }
 
 impl CgbPpu {
+    /// Debug view of BG palette RAM: the RGB555 colour at (palette 0-7, index 0-3).
+    pub fn bg_color(&self, palette: u8, index: u8) -> Color555 {
+        self.bg_cram.color(palette, index)
+    }
+
+    /// Debug view of OBJ palette RAM: the RGB555 colour at (palette 0-7, index 0-3).
+    pub fn obj_color(&self, palette: u8, index: u8) -> Color555 {
+        self.obj_cram.color(palette, index)
+    }
+
     /// DMG-compatibility resolve: DMG-style BG-vs-OBJ priority picks the winning
     /// pixel, then its DMG shade (BGP/OBP-mapped) indexes the boot palette held
     /// in CRAM — BG palette 0, OBJ palette OBP0/OBP1 slot.
@@ -649,6 +659,7 @@ fn cgb_dma_source_bus(address: u16) -> CgbBus {
 impl Model for Cgb {
     type Ppu = CgbPpu;
     type Screen = Screen;
+    const TRACE_MODEL_NAME: &'static str = "CGB-C";
 
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))

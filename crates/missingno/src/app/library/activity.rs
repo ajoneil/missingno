@@ -99,12 +99,17 @@ pub enum EventKind {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FrameCapture {
     /// 160×144 shade values (0-3), flattened row-major from Framebuffer.
+    /// Empty for CGB captures.
     pub pixels: Vec<u8>,
     /// SGB palette and attribute map data, if the game has SGB support.
     /// Always captured regardless of whether SGB colours were active.
     pub sgb: Option<SgbCapture>,
     /// What was actually displayed at capture time.
     pub display_mode: DisplayMode,
+    /// CGB frames store display-corrected RGBA directly — there is no
+    /// palette to re-apply later.
+    #[serde(default)]
+    pub cgb_rgba: Option<Vec<u8>>,
 }
 
 /// How the screenshot was displayed at capture time.
@@ -114,6 +119,8 @@ pub enum DisplayMode {
     Palette(String),
     /// SGB colours were active.
     Sgb,
+    /// CGB colour output.
+    Cgb,
 }
 
 /// Serializable snapshot of SGB palette/attribute state.
@@ -167,6 +174,16 @@ impl FrameCapture {
             pixels,
             sgb,
             display_mode,
+            cgb_rgba: None,
+        }
+    }
+
+    pub fn capture_cgb(screen: &missingno_gbc::screen::Screen) -> Self {
+        Self {
+            pixels: Vec::new(),
+            sgb: None,
+            display_mode: DisplayMode::Cgb,
+            cgb_rgba: Some(screen.to_corrected_rgba()),
         }
     }
 
@@ -178,6 +195,10 @@ impl FrameCapture {
                 self.to_rgba_with_palette_choice(choice)
             }
             DisplayMode::Sgb => self.to_rgba_sgb(),
+            DisplayMode::Cgb => self
+                .cgb_rgba
+                .clone()
+                .unwrap_or_else(crate::app::screen::cgb_blank_rgba),
         }
     }
 

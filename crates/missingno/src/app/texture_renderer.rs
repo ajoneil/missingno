@@ -10,11 +10,12 @@ pub struct TextureRenderer {
     id: u64,
     width: u32,
     height: u32,
-    pixels: Vec<u8>,
+    pixels: Arc<[u8]>,
 }
 
 impl TextureRenderer {
-    pub fn with_pixels(width: u32, height: u32, pixels: Vec<u8>) -> Self {
+    pub fn with_pixels(width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) -> Self {
+        let pixels = pixels.into();
         assert_eq!(pixels.len(), (width * height * 4) as usize);
         Self {
             id: NEXT_TEXTURE_ID.fetch_add(1, Ordering::Relaxed),
@@ -57,7 +58,7 @@ enum PrimitiveState {
     Pending {
         width: u32,
         height: u32,
-        pixels: Vec<u8>,
+        pixels: Arc<[u8]>,
     },
     Prepared {
         width: u32,

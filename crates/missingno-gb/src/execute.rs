@@ -187,7 +187,9 @@ impl<M: Model> Console<M> {
     /// blackout (the CPU stays stopped while the divider/PPU run, then
     /// re-engages at the new speed); otherwise the CPU stays stopped.
     /// `elapsed_tcycles` is the CPU T-cycle count of the step that just ran.
-    pub(crate) fn resolve_stop(&mut self, elapsed_tcycles: u32) {
+    /// Public for external phase-stepping drivers (tracing), which must call
+    /// this at each instruction boundary like `step` does.
+    pub fn resolve_stop(&mut self, elapsed_tcycles: u32) {
         if !self.cpu.is_stopped() {
             return;
         }
@@ -225,8 +227,8 @@ impl<M: Model> Console<M> {
     /// holds the bus the CPU spins (`Stopped`) and its bytes flow per M-cycle in
     /// `tick_mcycle_boundary_fall`; the PPU/timers keep running. Distinct from a
     /// real STOP via `dma_cpu_hold`, which `resolve_stop` guards on. Called at the
-    /// instruction boundary.
-    pub(crate) fn manage_dma_hold(&mut self) {
+    /// instruction boundary (also by external phase-stepping drivers).
+    pub fn manage_dma_hold(&mut self) {
         let holds = self.model.vram_dma_holds_cpu();
         if holds && !self.dma_cpu_hold {
             self.dma_cpu_hold = true;

@@ -9,13 +9,14 @@ use iced::{
 
 use crate::app::{
     self,
-    screen::{GameBoyScreen, ScreenDisplay, ScreenView, SgbScreen},
+    console::AnyConsole,
+    screen::ScreenView,
     ui::{
         icons::{self, Icon},
         sizes::border_s,
     },
 };
-use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, sgb::MaskMode};
+use missingno_gb::{joypad::Button, ppu::types::palette::PaletteChoice};
 
 /// Frames of silence before we flush an SRAM save.
 /// Games often write SRAM across several consecutive frames during a save
@@ -23,7 +24,7 @@ use missingno_gb::{GameBoy, joypad::Button, ppu::types::palette::PaletteChoice, 
 const SRAM_DEBOUNCE_FRAMES: u32 = 30; // ~0.5 seconds at 60fps
 
 pub struct Emulator {
-    game_boy: GameBoy,
+    console: AnyConsole,
     screen_view: ScreenView,
     running: bool,
     screen_hovered: bool,
@@ -47,9 +48,9 @@ impl Into<app::Message> for Message {
 }
 
 impl Emulator {
-    pub fn new(game_boy: GameBoy, use_sgb_colors: bool) -> Self {
+    pub fn new(console: AnyConsole, use_sgb_colors: bool) -> Self {
         Self {
-            game_boy,
+            console,
             screen_view: ScreenView::new(),
             running: false,
             screen_hovered: false,
@@ -58,9 +59,13 @@ impl Emulator {
         }
     }
 
-    pub fn from_debugger(game_boy: GameBoy, screen_view: ScreenView, use_sgb_colors: bool) -> Self {
+    pub fn from_debugger(
+        console: AnyConsole,
+        screen_view: ScreenView,
+        use_sgb_colors: bool,
+    ) -> Self {
         Self {
-            game_boy,
+            console,
             screen_view,
             running: false,
             screen_hovered: false,
@@ -73,50 +78,37 @@ impl Emulator {
         self.use_sgb_colors = use_sgb;
     }
 
-    pub fn game_boy(&self) -> &GameBoy {
-        &self.game_boy
+    pub fn console(&self) -> &AnyConsole {
+        &self.console
     }
 
-    pub fn game_boy_mut(&mut self) -> &mut GameBoy {
-        &mut self.game_boy
+    pub fn console_mut(&mut self) -> &mut AnyConsole {
+        &mut self.console
     }
 
-    pub fn enable_debugger(self) -> app::debugger::Debugger {
-        app::debugger::Debugger::from_emulator(self.game_boy, self.screen_view)
+    pub fn enable_debugger(self) -> app::debugger::AnyDebugger {
+        app::debugger::AnyDebugger::from_emulator(self.console, self.screen_view)
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
         match message {
             Message::EmulateFrame => {
-                // A GB frame is ~70224 T-cycles. Allow 2x headroom to avoid
-                // hanging the UI if the PPU never produces a frame (e.g. LCD off).
-                const MAX_TCYCLES_PER_FRAME: u32 = 70224 * 2;
+                // A frame is ~70224 dots; the CPU runs 1 or 2 T-cycles per dot
+                // (CGB double speed). Allow 2x a frame to avoid hanging the UI
+                // if the PPU never produces a frame (e.g. LCD off).
+                let max_tcycles_per_frame = 70224 * 2 * self.console.cpu_tcycles_per_dot() as u32;
                 let mut tcycles = 0;
                 let mut sram_dirty = false;
                 loop {
-                    let result = self.game_boy.step();
+                    let result = self.console.step();
                     tcycles += result.tcycles;
                     sram_dirty |= result.sram_dirty;
-                    if result.new_screen || tcycles >= MAX_TCYCLES_PER_FRAME {
+                    if result.new_screen || tcycles >= max_tcycles_per_frame {
                         break;
                     }
                 }
-                let screen = self.game_boy.screen().clone();
-                let video_enabled = self.game_boy.ppu().control().video_enabled();
-                let display = if let Some(sgb) = self.game_boy.sgb() {
-                    let render_data = sgb.render_data(video_enabled);
-                    if !video_enabled || sgb.mask_mode == MaskMode::Freeze {
-                        ScreenDisplay::Sgb(SgbScreen::Freeze(render_data))
-                    } else {
-                        ScreenDisplay::Sgb(SgbScreen::Display(screen, render_data))
-                    }
-                } else if !video_enabled {
-                    ScreenDisplay::GameBoy(GameBoyScreen::Off)
-                } else {
-                    ScreenDisplay::GameBoy(GameBoyScreen::Display(screen))
-                };
                 self.screen_view.use_sgb_colors = self.use_sgb_colors;
-                self.screen_view.apply(display);
+                self.screen_view.apply(self.console.screen_display());
 
                 // Debounce SRAM saves: reset countdown on each dirty frame,
                 // fire SaveBattery after SRAM_DEBOUNCE_FRAMES of quiet.
@@ -221,15 +213,15 @@ impl Emulator {
     }
 
     pub fn reset(&mut self) {
-        self.game_boy.reset();
+        self.console.reset();
     }
 
     pub fn press_button(&mut self, button: Button) {
-        self.game_boy.press_button(button);
+        self.console.press_button(button);
     }
 
     pub fn release_button(&mut self, button: Button) {
-        self.game_boy.release_button(button);
+        self.console.release_button(button);
     }
 
     pub fn subscription(&self) -> Subscription<app::Message> {

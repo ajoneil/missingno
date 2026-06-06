@@ -6,13 +6,12 @@ use iced::{
 
 use crate::app::{
     Message,
+    console::ConsoleColors,
     debugger::panes::{pane, title_bar},
     texture_renderer::TextureRenderer,
 };
-use missingno_gb::ppu::{
-    Ppu, memory::VramBank, model::DmgPpu, types::control::Control, types::palette::Palette,
-    types::tiles::TileMapId,
-};
+use crate::render::{tile_map_rgba, tile_map_rgba_cgb};
+use missingno_gb::ppu::{Ppu, memory::Vram, model::PpuModel, types::tiles::TileMapId};
 
 mod viewport_overlay;
 
@@ -29,11 +28,11 @@ impl TileMapPane {
         }
     }
 
-    pub fn content(
+    pub fn content<P: PpuModel>(
         &self,
-        ppu: &Ppu<DmgPpu>,
-        vram: &VramBank,
-        palette: &Palette,
+        ppu: &Ppu<P>,
+        vram: &P::Vram,
+        colors: &ConsoleColors,
     ) -> pane_grid::Content<'_, Message> {
         let control = ppu.control();
         let tile_map_id = self.tile_map;
@@ -55,7 +54,15 @@ impl TileMapPane {
         };
 
         // Pre-render tile map pixels so the closure doesn't need VramBank
-        let pixels = render_tile_map(vram.tile_map(tile_map_id), control, vram, palette);
+        let pixels: std::sync::Arc<[u8]> = match colors {
+            ConsoleColors::Dmg { palette } => {
+                tile_map_rgba(vram.bank(0), tile_map_id, control, palette)
+            }
+            ConsoleColors::Cgb { background, .. } => {
+                tile_map_rgba_cgb(vram, tile_map_id, control, background)
+            }
+        }
+        .into();
 
         let overlay = viewport_overlay::ViewportOverlay {
             bg_viewport,
@@ -89,31 +96,4 @@ impl TileMapPane {
             .into(),
         )
     }
-}
-
-/// Pre-render tile map pixels as RGBA bytes.
-fn render_tile_map(
-    tile_map: &missingno_gb::ppu::types::tiles::TileMap,
-    control: Control,
-    vram: &VramBank,
-    palette: &Palette,
-) -> Vec<u8> {
-    let mut pixels = Vec::with_capacity(256 * 256 * 4);
-
-    for tile_row in 0..32 {
-        for pixel_y in 0..8 {
-            for tile_col in 0..32 {
-                let map_tile_index = tile_map.get_tile(tile_col, tile_row);
-                let (block, mapped_index) = control.tile_address_mode().tile(map_tile_index);
-                let tile = vram.tile_block(block).tile(mapped_index);
-
-                for pixel_x in 0..8 {
-                    let color = palette.color(tile.pixel(pixel_x, pixel_y));
-                    pixels.extend_from_slice(&[color.r, color.g, color.b, 255]);
-                }
-            }
-        }
-    }
-
-    pixels
 }

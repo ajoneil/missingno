@@ -9,6 +9,7 @@ use iced::{
 
 use crate::app::{
     self,
+    console::ConsoleColors,
     debugger::{
         panes::{self, pane, title_bar_with_detail},
         ppu::tile_widget::tile_flip,
@@ -22,8 +23,8 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
-    memory::VramBank,
-    model::DmgPpu,
+    memory::{Vram, VramBank},
+    model::PpuModel,
     types::palette::Palette,
     types::sprites::{Position, Priority, Sprite, SpriteId, SpriteSize},
     types::tiles::{TileAddressMode, TileIndex},
@@ -57,11 +58,11 @@ impl SpritesPane {
         }
     }
 
-    pub fn content<'a>(
+    pub fn content<'a, P: PpuModel>(
         &'a self,
-        ppu: &'a Ppu<DmgPpu>,
-        vram: &'a VramBank,
-        palette: &Palette,
+        ppu: &'a Ppu<P>,
+        vram: &'a P::Vram,
+        colors: &ConsoleColors,
     ) -> pane_grid::Content<'a, app::Message> {
         let size = ppu.control().sprite_size();
         let visible_count = (0..40)
@@ -84,7 +85,7 @@ impl SpritesPane {
                         .label("On-screen only")
                         .size(14.0)
                         .on_toggle(|on| Message::ToggleOnScreenOnly(on).into()),
-                    self.sprites(ppu, vram, palette)
+                    self.sprites(ppu, vram, colors)
                 ]
                 .width(Fill)
                 .spacing(s())
@@ -94,11 +95,11 @@ impl SpritesPane {
         )
     }
 
-    fn sprites<'a>(
+    fn sprites<'a, P: PpuModel>(
         &'a self,
-        ppu: &'a Ppu<DmgPpu>,
-        vram: &'a VramBank,
-        palette: &Palette,
+        ppu: &'a Ppu<P>,
+        vram: &'a P::Vram,
+        colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mut sprites = (0u8..40)
             .map(|i| (i, ppu.sprite(SpriteId(i))))
@@ -118,20 +119,20 @@ impl SpritesPane {
                 .color(palette::OVERLAY0)
                 .into()
         } else {
-            Row::with_children(sprites.map(|(i, s)| self.sprite(i, ppu, vram, s, palette)))
+            Row::with_children(sprites.map(|(i, s)| self.sprite(i, ppu, vram, s, colors)))
                 .spacing(s())
                 .wrap()
                 .into()
         }
     }
 
-    fn sprite<'a>(
+    fn sprite<'a, P: PpuModel>(
         &'a self,
         index: u8,
-        ppu: &'a Ppu<DmgPpu>,
-        vram: &'a VramBank,
+        ppu: &'a Ppu<P>,
+        vram: &'a P::Vram,
         sprite: &Sprite,
-        palette: &Palette,
+        colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let left = column![
             iced::widget::text(format!("{}", index))
@@ -144,7 +145,7 @@ impl SpritesPane {
         .align_x(iced::Alignment::Center);
 
         let right = column![
-            self.tiles(sprite, vram, ppu, palette),
+            self.tiles(sprite, vram, ppu, colors),
             self.position(&sprite.position, ppu.control().sprite_size()),
         ]
         .spacing(xs())
@@ -153,46 +154,38 @@ impl SpritesPane {
         row![left, right].spacing(xs()).into()
     }
 
-    fn tiles(
+    fn tiles<P: PpuModel>(
         &self,
         sprite: &Sprite,
-        vram: &VramBank,
-        ppu: &Ppu<DmgPpu>,
-        palette: &Palette,
+        vram: &P::Vram,
+        ppu: &Ppu<P>,
+        colors: &ConsoleColors,
     ) -> Element<'_, app::Message> {
-        let (tile_block_id, tile_id) = TileAddressMode::Block0Block1.tile(sprite.tile);
+        // CGB sprites carry their CRAM palette and tile bank in OAM attributes.
+        let (bank, palette): (&VramBank, &Palette) = match colors {
+            ConsoleColors::Dmg { palette } => (vram.bank(0), palette),
+            ConsoleColors::Cgb { objects, .. } => (
+                vram.bank(sprite.attributes.cgb_bank()),
+                &objects[sprite.attributes.cgb_palette() as usize],
+            ),
+        };
+
         let flip_x = sprite.attributes.flip_x();
         let flip_y = sprite.attributes.flip_y();
 
-        match ppu.control().sprite_size() {
-            SpriteSize::Single => tile_flip(
-                vram.tile_block(tile_block_id).tile(tile_id),
-                flip_x,
-                flip_y,
-                palette,
-            )
-            .width(40)
-            .height(40)
-            .into(),
-            SpriteSize::Double => {
-                let tile1 = tile_flip(
-                    vram.tile_block(tile_block_id).tile(tile_id),
-                    flip_x,
-                    flip_y,
-                    palette,
-                )
+        let sprite_tile = |index: TileIndex| {
+            let (block, tile) = TileAddressMode::Block0Block1.tile(index);
+            tile_flip(bank.tile_block(block).tile(tile), flip_x, flip_y, palette)
                 .width(40)
-                .height(40);
+                .height(40)
+        };
 
-                let tile2 = tile_flip(
-                    vram.tile_block(tile_block_id)
-                        .tile(TileIndex(tile_id.0 + 1)),
-                    flip_x,
-                    flip_y,
-                    palette,
-                )
-                .width(40)
-                .height(40);
+        match ppu.control().sprite_size() {
+            SpriteSize::Single => sprite_tile(sprite.tile).into(),
+            SpriteSize::Double => {
+                // Hardware ignores bit 0 of the index: top is tile&FE, bottom tile|01.
+                let tile1 = sprite_tile(TileIndex(sprite.tile.0 & 0xFE));
+                let tile2 = sprite_tile(TileIndex(sprite.tile.0 | 0x01));
 
                 if flip_y {
                     column![tile2, tile1]

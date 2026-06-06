@@ -15,6 +15,7 @@ use super::texture_renderer::TextureRenderer;
 pub enum ScreenDisplay {
     GameBoy(GameBoyScreen),
     Sgb(SgbScreen),
+    Cgb(CgbScreen),
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +28,13 @@ pub enum GameBoyScreen {
 pub enum SgbScreen {
     Display(Screen, SgbRenderData),
     Freeze(SgbRenderData),
+}
+
+/// CGB output, pre-corrected to display RGBA — no user palette applies.
+#[derive(Clone, Debug)]
+pub enum CgbScreen {
+    Display(Vec<u8>),
+    Off,
 }
 
 impl From<GameBoyScreen> for ScreenDisplay {
@@ -46,6 +54,8 @@ pub struct ScreenView {
     pub palette: PaletteChoice,
     pub sgb_render_data: Option<SgbRenderData>,
     pub use_sgb_colors: bool,
+    /// Pre-corrected CGB RGBA frame; bypasses the palette paths when set.
+    pub cgb_rgba: Option<std::sync::Arc<[u8]>>,
 }
 
 impl ScreenView {
@@ -55,6 +65,7 @@ impl ScreenView {
             palette: PaletteChoice::default(),
             sgb_render_data: None,
             use_sgb_colors: true,
+            cgb_rgba: None,
         }
     }
 
@@ -63,22 +74,39 @@ impl ScreenView {
             ScreenDisplay::GameBoy(GameBoyScreen::Display(screen)) => {
                 self.screen = screen;
                 self.sgb_render_data = None;
+                self.cgb_rgba = None;
             }
             ScreenDisplay::GameBoy(GameBoyScreen::Off) => {
                 // NOTE: On real hardware, LCD off produces a different shade than
                 // palette index 0. We currently render both the same way.
                 self.screen = Screen::default();
                 self.sgb_render_data = None;
+                self.cgb_rgba = None;
             }
             ScreenDisplay::Sgb(SgbScreen::Display(screen, sgb_data)) => {
                 self.screen = screen;
                 self.sgb_render_data = Some(sgb_data);
+                self.cgb_rgba = None;
             }
             ScreenDisplay::Sgb(SgbScreen::Freeze(sgb_data)) => {
                 self.sgb_render_data = Some(sgb_data);
+                self.cgb_rgba = None;
+            }
+            ScreenDisplay::Cgb(CgbScreen::Display(rgba)) => {
+                self.sgb_render_data = None;
+                self.cgb_rgba = Some(rgba.into());
+            }
+            ScreenDisplay::Cgb(CgbScreen::Off) => {
+                self.sgb_render_data = None;
+                self.cgb_rgba = Some(cgb_blank_rgba().into());
             }
         }
     }
+}
+
+/// A powered-but-blank CGB LCD: all white.
+pub fn cgb_blank_rgba() -> Vec<u8> {
+    vec![255; screen::PIXELS_PER_LINE as usize * screen::NUM_SCANLINES as usize * 4]
 }
 
 impl<Message> shader::Program<Message> for ScreenView {
@@ -91,12 +119,16 @@ impl<Message> shader::Program<Message> for ScreenView {
         cursor: iced::mouse::Cursor,
         bounds: iced::Rectangle,
     ) -> Self::Primitive {
-        let pixels = screen_to_pixels(
-            &self.screen,
-            self.palette.palette(),
-            self.sgb_render_data.as_ref(),
-            self.use_sgb_colors,
-        );
+        let pixels: std::sync::Arc<[u8]> = match &self.cgb_rgba {
+            Some(rgba) => rgba.clone(),
+            None => screen_to_pixels(
+                &self.screen,
+                self.palette.palette(),
+                self.sgb_render_data.as_ref(),
+                self.use_sgb_colors,
+            )
+            .into(),
+        };
         let renderer = TextureRenderer::with_pixels(
             screen::PIXELS_PER_LINE as u32,
             screen::NUM_SCANLINES as u32,

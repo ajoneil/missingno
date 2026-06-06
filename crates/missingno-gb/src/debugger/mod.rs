@@ -3,10 +3,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::{
-    GameBoy,
+    Console, Dmg, Model,
     cpu::instructions::Instruction,
     cpu_bus::{BusAccess, BusAccessKind},
-    ppu::{self, rendering::Mode, screen::Screen},
+    ppu::{self, rendering::Mode},
 };
 use instructions::InstructionsIterator;
 
@@ -65,8 +65,8 @@ impl WatchCondition {
     }
 }
 
-pub struct Debugger {
-    game_boy: GameBoy,
+pub struct Debugger<M: Model = Dmg> {
+    game_boy: Console<M>,
     breakpoints: BTreeSet<u16>,
     watchpoints: Vec<WatchCondition>,
     last_watchpoint_hit: Option<WatchCondition>,
@@ -75,8 +75,8 @@ pub struct Debugger {
     tcycle_count: u64,
 }
 
-impl Debugger {
-    pub fn new(game_boy: GameBoy) -> Self {
+impl<M: Model> Debugger<M> {
+    pub fn new(game_boy: Console<M>) -> Self {
         Self {
             game_boy,
             breakpoints: BTreeSet::new(),
@@ -86,15 +86,15 @@ impl Debugger {
         }
     }
 
-    pub fn game_boy(&self) -> &GameBoy {
+    pub fn game_boy(&self) -> &Console<M> {
         &self.game_boy
     }
 
-    pub fn game_boy_mut(&mut self) -> &mut GameBoy {
+    pub fn game_boy_mut(&mut self) -> &mut Console<M> {
         &mut self.game_boy
     }
 
-    pub fn game_boy_take(self) -> GameBoy {
+    pub fn game_boy_take(self) -> Console<M> {
         self.game_boy
     }
 
@@ -102,7 +102,7 @@ impl Debugger {
         self.tcycle_count
     }
 
-    pub fn step(&mut self) -> Option<Screen> {
+    pub fn step(&mut self) -> Option<M::Screen> {
         let result = self.game_boy.step();
         self.tcycle_count += result.tcycles as u64;
         if result.new_screen {
@@ -112,7 +112,7 @@ impl Debugger {
         }
     }
 
-    pub fn step_phase(&mut self) -> Option<Screen> {
+    pub fn step_phase(&mut self) -> Option<M::Screen> {
         if self.game_boy.step_phase().new_screen {
             Some(self.game_boy.screen().clone())
         } else {
@@ -120,7 +120,7 @@ impl Debugger {
         }
     }
 
-    pub fn step_tcycle(&mut self) -> Option<Screen> {
+    pub fn step_tcycle(&mut self) -> Option<M::Screen> {
         self.tcycle_count += 1;
         if self.game_boy.step_tcycle() {
             Some(self.game_boy.screen().clone())
@@ -129,7 +129,7 @@ impl Debugger {
         }
     }
 
-    pub fn step_over(&mut self) -> Option<Screen> {
+    pub fn step_over(&mut self) -> Option<M::Screen> {
         let mut it = InstructionsIterator::new(self.game_boy.cpu().ir_address, &self.game_boy);
         Instruction::decode(&mut it);
         let next_address = it.address.unwrap();
@@ -161,7 +161,7 @@ impl Debugger {
         last_screen
     }
 
-    pub fn step_frame(&mut self) -> Option<Screen> {
+    pub fn step_frame(&mut self) -> Option<M::Screen> {
         self.last_watchpoint_hit = None;
         if self.watchpoints.is_empty() {
             self.step_frame_simple()
@@ -170,7 +170,7 @@ impl Debugger {
         }
     }
 
-    fn step_frame_simple(&mut self) -> Option<Screen> {
+    fn step_frame_simple(&mut self) -> Option<M::Screen> {
         loop {
             let screen = self.step();
             if screen.is_some() || self.breakpoint_triggered() {
@@ -179,7 +179,7 @@ impl Debugger {
         }
     }
 
-    fn step_frame_watched(&mut self) -> Option<Screen> {
+    fn step_frame_watched(&mut self) -> Option<M::Screen> {
         if self.watchpoints.iter().any(|w| w.needs_bus_trace()) {
             self.step_frame_watched_traced()
         } else {
@@ -187,7 +187,7 @@ impl Debugger {
         }
     }
 
-    fn step_frame_watched_traced(&mut self) -> Option<Screen> {
+    fn step_frame_watched_traced(&mut self) -> Option<M::Screen> {
         loop {
             let (result, trace) = self.game_boy.step_traced(true);
             self.tcycle_count += result.tcycles as u64;
@@ -208,7 +208,7 @@ impl Debugger {
         }
     }
 
-    fn step_frame_watched_dots(&mut self) -> Option<Screen> {
+    fn step_frame_watched_dots(&mut self) -> Option<M::Screen> {
         loop {
             let screen = self.step_phase();
 
@@ -322,14 +322,20 @@ impl Debugger {
 
     /// Capture a full T-cycle trace of one frame to a .gbtrace file.
     #[cfg(feature = "gbtrace")]
-    pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<Screen, String> {
+    pub fn capture_frame(&mut self, path: impl AsRef<Path>) -> Result<M::Screen, String> {
         use crate::trace::{BootRom, Profile, Tracer};
 
         let profile = Profile::parse(FRAME_CAPTURE_PROFILE)
             .map_err(|e| format!("Failed to parse trace profile: {e}"))?;
 
-        let mut tracer = Tracer::create(path, &profile, &self.game_boy, BootRom::Skip, "DMG-B")
-            .map_err(|e| format!("Failed to create tracer: {e}"))?;
+        let mut tracer = Tracer::create(
+            path,
+            &profile,
+            &self.game_boy,
+            BootRom::Skip,
+            M::TRACE_MODEL_NAME,
+        )
+        .map_err(|e| format!("Failed to create tracer: {e}"))?;
 
         // Mark frame boundary at entry 0 so all entries belong to this frame.
         tracer

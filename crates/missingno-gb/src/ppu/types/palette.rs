@@ -2,6 +2,7 @@ use std::fmt;
 
 use rgb::RGB8;
 
+#[derive(Clone, Copy)]
 pub struct Palette {
     colors: [RGB8; 4],
 }
@@ -10,6 +11,10 @@ pub struct Palette {
 pub struct PaletteIndex(pub u8);
 
 impl Palette {
+    pub const fn new(colors: [RGB8; 4]) -> Self {
+        Self { colors }
+    }
+
     pub const MONOCHROME_GREEN: Self = Self {
         colors: [
             RGB8::new(0x7b, 0x82, 0x10),

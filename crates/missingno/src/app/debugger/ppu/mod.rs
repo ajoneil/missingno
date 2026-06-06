@@ -6,6 +6,7 @@ use iced::{
 
 use crate::app::{
     Message,
+    console::ConsoleColors,
     debugger::interrupts::pip,
     screen::iced_color,
     ui::{
@@ -15,7 +16,7 @@ use crate::app::{
 };
 use missingno_gb::ppu::{
     Ppu,
-    model::DmgPpu,
+    model::PpuModel,
     types::{
         control::Control,
         palette::{Palette, PaletteMap},
@@ -36,7 +37,10 @@ const LABEL: f32 = 11.0;
 
 /// PPU section body for the left sidebar — returns the PPU state display as an Element.
 /// The section header is handled by the sidebar's collapsible section wrapper.
-pub fn ppu_sidebar<'a>(ppu: &'a Ppu<DmgPpu>, pal: &Palette) -> Element<'a, Message> {
+pub fn ppu_sidebar<'a, P: PpuModel>(
+    ppu: &'a Ppu<P>,
+    colors: &ConsoleColors,
+) -> Element<'a, Message> {
     let control = ppu.control();
     let palettes = ppu.palettes();
 
@@ -48,11 +52,11 @@ pub fn ppu_sidebar<'a>(ppu: &'a Ppu<DmgPpu>, pal: &Palette) -> Element<'a, Messa
         .spacing(s())
         .align_y(Vertical::Center),
         rule::horizontal(1),
-        background_section(control, palettes.background.output(), ppu, pal),
+        background_section(control, palettes.background.output(), ppu, colors),
         rule::horizontal(1),
         window_section(control, ppu),
         rule::horizontal(1),
-        sprites_section(control, palettes, pal),
+        sprites_section(control, palettes, colors),
     ]
     .padding(s())
     .spacing(s())
@@ -61,16 +65,16 @@ pub fn ppu_sidebar<'a>(ppu: &'a Ppu<DmgPpu>, pal: &Palette) -> Element<'a, Messa
 
 // --- Subsystem sections ---
 
-fn background_section(
+fn background_section<P: PpuModel>(
     control: Control,
     bgp: u8,
-    ppu: &Ppu<DmgPpu>,
-    pal: &Palette,
+    ppu: &Ppu<P>,
+    colors: &ConsoleColors,
 ) -> Element<'static, Message> {
     let scx = ppu.read_register(missingno_gb::ppu::Register::BackgroundViewportX);
     let scy = ppu.read_register(missingno_gb::ppu::Register::BackgroundViewportY);
 
-    column![
+    let mut section = column![
         row![
             enable_pip("bg", control.background_and_window_enabled()),
             label_value("map", tile_map_addr(control.background_tile_map().0)),
@@ -83,13 +87,18 @@ fn background_section(
             label_value("scy", &format!("{:02X}", scy)),
         ]
         .spacing(s()),
-        palette_row("bgp", bgp, pal),
     ]
-    .spacing(xs())
-    .into()
+    .spacing(xs());
+
+    // BGP is a DMG register; CGB background colours live in CRAM.
+    if let ConsoleColors::Dmg { palette } = colors {
+        section = section.push(palette_row("bgp", bgp, palette));
+    }
+
+    section.into()
 }
 
-fn window_section(control: Control, ppu: &Ppu<DmgPpu>) -> Element<'static, Message> {
+fn window_section<P: PpuModel>(control: Control, ppu: &Ppu<P>) -> Element<'static, Message> {
     let wx = ppu.read_register(missingno_gb::ppu::Register::WindowX);
     let wy = ppu.read_register(missingno_gb::ppu::Register::WindowY);
 
@@ -113,11 +122,11 @@ fn window_section(control: Control, ppu: &Ppu<DmgPpu>) -> Element<'static, Messa
 fn sprites_section(
     control: Control,
     palettes: &missingno_gb::ppu::types::palette::Palettes,
-    pal: &Palette,
+    colors: &ConsoleColors,
 ) -> Element<'static, Message> {
     use missingno_gb::ppu::types::sprites::SpriteSize;
 
-    column![
+    let mut section = column![
         row![
             enable_pip("sprites", control.sprites_enabled()),
             label_value(
@@ -130,11 +139,17 @@ fn sprites_section(
         ]
         .spacing(s())
         .align_y(Vertical::Center),
-        palette_row("obp0", palettes.sprite0.output(), pal),
-        palette_row("obp1", palettes.sprite1.output(), pal),
     ]
-    .spacing(xs())
-    .into()
+    .spacing(xs());
+
+    // OBP0/OBP1 are DMG registers; CGB object colours live in CRAM.
+    if let ConsoleColors::Dmg { palette } = colors {
+        section = section
+            .push(palette_row("obp0", palettes.sprite0.output(), palette))
+            .push(palette_row("obp1", palettes.sprite1.output(), palette));
+    }
+
+    section.into()
 }
 
 // --- Shared helpers ---

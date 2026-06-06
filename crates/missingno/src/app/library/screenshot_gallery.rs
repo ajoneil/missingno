@@ -45,6 +45,8 @@ pub struct Screenshot {
 pub enum PaletteSelection {
     Sgb,
     Dmg(PaletteChoice),
+    /// CGB captures are fixed colour — no palette to choose.
+    Cgb,
 }
 
 impl PaletteSelection {
@@ -52,6 +54,7 @@ impl PaletteSelection {
     fn from_display_mode(mode: &DisplayMode) -> Self {
         match mode {
             DisplayMode::Sgb => Self::Sgb,
+            DisplayMode::Cgb => Self::Cgb,
             DisplayMode::Palette(name) => {
                 let choice = match name.as_str() {
                     "Green" => PaletteChoice::Green,
@@ -127,6 +130,7 @@ impl GalleryState {
         match &self.palette {
             PaletteSelection::Sgb => capture.to_rgba_sgb_or_fallback(),
             PaletteSelection::Dmg(choice) => capture.to_rgba_with_palette_choice(*choice),
+            PaletteSelection::Cgb => capture.to_rgba(),
         }
     }
 
@@ -196,27 +200,29 @@ fn controls_panel(state: &GalleryState) -> Element<'_, app::Message> {
     ]
     .spacing(m());
 
-    // Palette selection
-    col = col.push(app_text::label("Palette"));
+    // Palette selection — CGB captures are fixed colour, nothing to choose.
+    if !matches!(screenshot.capture.display_mode, DisplayMode::Cgb) {
+        col = col.push(app_text::label("Palette"));
 
-    let mut palette_col = column![].spacing(2);
-    for &choice in PaletteChoice::ALL {
-        let is_selected = state.palette == PaletteSelection::Dmg(choice);
-        palette_col = palette_col.push(palette_button(
-            &format!("{choice}"),
-            is_selected,
-            Message::SetPalette(PaletteSelection::Dmg(choice)).into(),
-        ));
+        let mut palette_col = column![].spacing(2);
+        for &choice in PaletteChoice::ALL {
+            let is_selected = state.palette == PaletteSelection::Dmg(choice);
+            palette_col = palette_col.push(palette_button(
+                &format!("{choice}"),
+                is_selected,
+                Message::SetPalette(PaletteSelection::Dmg(choice)).into(),
+            ));
+        }
+        if state.has_sgb() {
+            let is_selected = state.palette == PaletteSelection::Sgb;
+            palette_col = palette_col.push(palette_button(
+                "Super Game Boy",
+                is_selected,
+                Message::SetPalette(PaletteSelection::Sgb).into(),
+            ));
+        }
+        col = col.push(palette_col);
     }
-    if state.has_sgb() {
-        let is_selected = state.palette == PaletteSelection::Sgb;
-        palette_col = palette_col.push(palette_button(
-            "Super Game Boy",
-            is_selected,
-            Message::SetPalette(PaletteSelection::Sgb).into(),
-        ));
-    }
-    col = col.push(palette_col);
 
     // Scale selection
     col = col

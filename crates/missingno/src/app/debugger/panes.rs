@@ -12,6 +12,7 @@ use iced::{
 
 use crate::app::{
     self,
+    console::{ConsoleColors, ConsoleUi},
     debugger::{
         self,
         audio::AudioPane,
@@ -19,7 +20,7 @@ use crate::app::{
         ppu::{
             sprites::{self, SpritesPane},
             tile_maps::TileMapPane,
-            tiles::TilesPane,
+            tiles::{self, TilesPane},
         },
         screen::{self, ScreenPane},
     },
@@ -52,6 +53,7 @@ pub enum Message {
 pub enum PaneMessage {
     Screen(screen::Message),
     Sprites(sprites::Message),
+    Tiles(tiles::Message),
 }
 
 impl From<Message> for app::Message {
@@ -104,6 +106,7 @@ impl DebuggerPanes {
                         palette: view.palette,
                         sgb_render_data: view.sgb_render_data,
                         use_sgb_colors: view.use_sgb_colors,
+                        cgb_rgba: view.cgb_rgba.clone(),
                     };
                 }
             }
@@ -206,6 +209,13 @@ impl DebuggerPanes {
                                 }
                             });
                         }
+                        PaneMessage::Tiles(message) => {
+                            panes.iter_mut().for_each(|(_, pane)| {
+                                if let PaneInstance::Tiles(tiles_pane) = pane {
+                                    tiles_pane.update(*message);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -227,10 +237,10 @@ impl DebuggerPanes {
         }
     }
 
-    pub fn view<'a>(
+    pub fn view<'a, M: ConsoleUi>(
         &'a self,
-        debugger: &'a Debugger,
-        pal: &'a Palette,
+        debugger: &'a Debugger<M>,
+        colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         if let Some(panes) = &self.panes {
             pane_grid(panes, |_handle, instance, _is_maximized| match instance {
@@ -240,13 +250,17 @@ impl DebuggerPanes {
                     debugger.game_boy().cpu().ir_address,
                     debugger.breakpoints(),
                 ),
-                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), pal),
-                PaneInstance::TileMap(tile_map) => {
-                    tile_map.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                }
-                PaneInstance::Sprites(sprites) => {
-                    sprites.content(debugger.game_boy().ppu(), debugger.game_boy().vram(), pal)
-                }
+                PaneInstance::Tiles(tiles) => tiles.content(debugger.game_boy().vram(), colors),
+                PaneInstance::TileMap(tile_map) => tile_map.content(
+                    debugger.game_boy().ppu(),
+                    debugger.game_boy().vram(),
+                    colors,
+                ),
+                PaneInstance::Sprites(sprites) => sprites.content(
+                    debugger.game_boy().ppu(),
+                    debugger.game_boy().vram(),
+                    colors,
+                ),
                 PaneInstance::Audio(audio) => audio.content(debugger.game_boy().audio()),
             })
             .on_resize(10.0, |resize| Message::ResizePane(resize).into())

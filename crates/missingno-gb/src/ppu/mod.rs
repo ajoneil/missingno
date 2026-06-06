@@ -294,6 +294,10 @@ impl<P: PpuModel> Ppu<P> {
 }
 
 impl<P: PpuModel> Ppu<P> {
+    pub fn model(&self) -> &P {
+        &self.model
+    }
+
     pub fn lx(&self) -> u8 {
         self.video.dot_position()
     }

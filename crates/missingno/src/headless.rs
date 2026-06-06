@@ -8,9 +8,14 @@ use missingno_gb::debugger::instructions::InstructionsIterator;
 use missingno_gb::debugger::{Debugger, WatchCondition};
 use missingno_gb::interrupts;
 use missingno_gb::ppu;
+use missingno_gb::ppu::memory::Vram;
 use missingno_gb::ppu::rendering::Mode;
+use missingno_gb::ppu::types::palette::Palette;
 use missingno_gb::ppu::types::sprites::{Attributes, SpriteId};
-use missingno_gb::{BootRom, ClockPhase, GameBoy};
+use missingno_gb::{BootRom, ClockPhase, Console, Dmg, GameBoy, Model};
+use missingno_gbc::{Cgb, GameBoyColor};
+
+use crate::render;
 use serde::Serialize;
 use tiny_http::{Method, Response, StatusCode};
 
@@ -34,12 +39,23 @@ pub fn run(
 
     let cartridge = Cartridge::new(rom_data, save_data);
     let title = cartridge.title().to_string();
-    let mut game_boy = GameBoy::new(cartridge, boot_rom);
-    if let Some(link) = link {
-        game_boy.set_link(link);
-    }
-    let mut debugger = Debugger::new(game_boy);
 
+    if cartridge.is_cgb() {
+        let mut console = GameBoyColor::new(cartridge, boot_rom);
+        if let Some(link) = link {
+            console.set_link(link);
+        }
+        serve(&title, Debugger::new(console));
+    } else {
+        let mut game_boy = GameBoy::new(cartridge, boot_rom);
+        if let Some(link) = link {
+            game_boy.set_link(link);
+        }
+        serve(&title, Debugger::new(game_boy));
+    }
+}
+
+fn serve<M: HeadlessUi>(title: &str, mut debugger: Debugger<M>) {
     let server = tiny_http::Server::http("127.0.0.1:3333").unwrap_or_else(|e| {
         eprintln!("error: failed to bind 127.0.0.1:3333: {e}");
         process::exit(1);
@@ -53,7 +69,117 @@ pub fn run(
     }
 }
 
-fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
+/// The model-specific views the HTTP endpoints expose: the screen's pixel
+/// format, colour sources for the tile-map render, and CGB palette RAM.
+trait HeadlessUi: Model {
+    /// What `screen_values` pixels hold, reported in the /screen JSON.
+    const PIXEL_FORMAT: &'static str;
+    /// Raw per-pixel values: 2-bit shades on DMG, RGB555 on CGB.
+    fn screen_values(console: &Console<Self>) -> Vec<Vec<u16>>;
+    /// 160×144 RGB888 of the displayed frame.
+    fn screen_rgb(console: &Console<Self>) -> Vec<u8>;
+    /// 256×256 RGB888 of a tile map, colour-resolved per model.
+    fn tilemap_rgb(console: &Console<Self>, map_id: ppu::types::tiles::TileMapId) -> Vec<u8>;
+    /// CGB palette RAM; null on DMG.
+    fn cram_json(console: &Console<Self>) -> serde_json::Value;
+}
+
+impl HeadlessUi for Dmg {
+    const PIXEL_FORMAT: &'static str = "shade2";
+
+    fn screen_values(console: &Console<Self>) -> Vec<Vec<u16>> {
+        let screen = console.screen();
+        (0..144u8)
+            .map(|y| (0..160u8).map(|x| screen.pixel(x, y).0 as u16).collect())
+            .collect()
+    }
+
+    fn screen_rgb(console: &Console<Self>) -> Vec<u8> {
+        let screen = console.screen();
+        let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
+        let mut pixels = Vec::with_capacity(160 * 144 * 3);
+        for y in 0..144u8 {
+            for x in 0..160u8 {
+                let shade = greys[screen.pixel(x, y).0 as usize];
+                pixels.extend_from_slice(&[shade, shade, shade]);
+            }
+        }
+        pixels
+    }
+
+    fn tilemap_rgb(console: &Console<Self>, map_id: ppu::types::tiles::TileMapId) -> Vec<u8> {
+        rgba_to_rgb(&render::tile_map_rgba(
+            console.vram(),
+            map_id,
+            console.ppu().control(),
+            &Palette::CLASSIC,
+        ))
+    }
+
+    fn cram_json(_console: &Console<Self>) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+}
+
+impl HeadlessUi for Cgb {
+    const PIXEL_FORMAT: &'static str = "rgb555";
+
+    fn screen_values(console: &Console<Self>) -> Vec<Vec<u16>> {
+        let screen = console.screen();
+        (0..144u8)
+            .map(|y| (0..160u8).map(|x| screen.pixel(x, y).0).collect())
+            .collect()
+    }
+
+    fn screen_rgb(console: &Console<Self>) -> Vec<u8> {
+        let screen = console.screen();
+        let mut pixels = Vec::with_capacity(160 * 144 * 3);
+        for y in 0..144u8 {
+            for x in 0..160u8 {
+                let c = screen.pixel(x, y).to_corrected_rgb8();
+                pixels.extend_from_slice(&[c.r, c.g, c.b]);
+            }
+        }
+        pixels
+    }
+
+    fn tilemap_rgb(console: &Console<Self>, map_id: ppu::types::tiles::TileMapId) -> Vec<u8> {
+        let cgb_ppu = console.ppu().model();
+        let bg_palettes = render::cram_palettes(|palette, index| cgb_ppu.bg_color(palette, index));
+        rgba_to_rgb(&render::tile_map_rgba_cgb(
+            console.vram(),
+            map_id,
+            console.ppu().control(),
+            &bg_palettes,
+        ))
+    }
+
+    fn cram_json(console: &Console<Self>) -> serde_json::Value {
+        let cgb_ppu = console.ppu().model();
+        let palettes = |color: &dyn Fn(u8, u8) -> missingno_gbc::screen::Color555| {
+            (0..8u8)
+                .map(|palette| {
+                    (0..4u8)
+                        .map(|index| {
+                            let raw = color(palette, index);
+                            let rgb = raw.to_corrected_rgb8();
+                            serde_json::json!({
+                                "rgb555": format!("{:04x}", raw.0),
+                                "corrected": format!("#{:02x}{:02x}{:02x}", rgb.r, rgb.g, rgb.b),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        serde_json::json!({
+            "background": palettes(&|p, i| cgb_ppu.bg_color(p, i)),
+            "objects": palettes(&|p, i| cgb_ppu.obj_color(p, i)),
+        })
+    }
+}
+
+fn handle_request<M: HeadlessUi>(mut request: tiny_http::Request, debugger: &mut Debugger<M>) {
     let method = request.method().clone();
     let path = request.url().to_string();
 
@@ -68,46 +194,51 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             respond_json(request, pipeline_state(debugger.game_boy()));
         }
         (&Method::Get, "/screen") => {
-            respond_json(request, screen_state(debugger.game_boy()));
+            respond_json(
+                request,
+                serde_json::json!({
+                    "format": M::PIXEL_FORMAT,
+                    "pixels": M::screen_values(debugger.game_boy()),
+                }),
+            );
         }
         (&Method::Get, "/screen/ascii") => {
-            respond_json(request, screen_ascii(debugger.game_boy()));
+            let shades = [' ', '.', 'o', '#'];
+            let rgb = M::screen_rgb(debugger.game_boy());
+            let lines: Vec<String> = rgb
+                .chunks_exact(160 * 3)
+                .map(|row| {
+                    row.chunks_exact(3)
+                        .map(|c| {
+                            let luma =
+                                (c[0] as u32 * 299 + c[1] as u32 * 587 + c[2] as u32 * 114) / 1000;
+                            shades[3 - (luma / 64).min(3) as usize]
+                        })
+                        .collect()
+                })
+                .collect();
+            respond_json(request, ScreenAscii { lines });
         }
         (&Method::Get, "/screen/bitmap") => {
-            let bmp = screen_bitmap(debugger.game_boy());
-            let response = Response::from_data(bmp).with_header(
-                "Content-Type: image/bmp"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
+            let bmp = write_bmp(160, 144, &M::screen_rgb(debugger.game_boy()));
+            respond_bmp(request, bmp);
         }
         (&Method::Get, "/tiles/bitmap") => {
-            let bmp = tiles_bitmap(debugger.game_boy());
-            let response = Response::from_data(bmp).with_header(
-                "Content-Type: image/bmp"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
+            respond_bmp(request, tiles_bitmap(debugger.game_boy(), 0));
+        }
+        (&Method::Get, "/tiles/bitmap/1") => {
+            respond_bmp(request, tiles_bitmap(debugger.game_boy(), 1));
         }
         (&Method::Get, "/tilemap/0/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tiles::TileMapId(0));
-            let response = Response::from_data(bmp).with_header(
-                "Content-Type: image/bmp"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
+            let pixels = M::tilemap_rgb(debugger.game_boy(), ppu::types::tiles::TileMapId(0));
+            respond_bmp(request, write_bmp(256, 256, &pixels));
         }
         (&Method::Get, "/tilemap/1/bitmap") => {
-            let bmp = tilemap_bitmap(debugger.game_boy(), ppu::types::tiles::TileMapId(1));
-            let response = Response::from_data(bmp).with_header(
-                "Content-Type: image/bmp"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-            let _ = request.respond(response);
+            let pixels = M::tilemap_rgb(debugger.game_boy(), ppu::types::tiles::TileMapId(1));
+            respond_bmp(request, write_bmp(256, 256, &pixels));
+        }
+        (&Method::Get, "/cram") => {
+            respond_json(request, M::cram_json(debugger.game_boy()));
         }
         (&Method::Get, "/sprite-store") => match debugger.game_boy().ppu().sprite_store() {
             Some(store) => {
@@ -197,7 +328,13 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
             respond_json(request, cpu_state(debugger.game_boy()));
         }
         (&Method::Get, "/vram") => {
-            respond_json(request, vram_state(debugger.game_boy()));
+            respond_json(request, vram_state(debugger.game_boy(), 0));
+        }
+        (&Method::Get, "/vram/0") => {
+            respond_json(request, vram_state(debugger.game_boy(), 0));
+        }
+        (&Method::Get, "/vram/1") => {
+            respond_json(request, vram_state(debugger.game_boy(), 1));
         }
         _ if path.starts_with("/memory/") => {
             if method != Method::Get {
@@ -488,7 +625,7 @@ fn handle_request(mut request: tiny_http::Request, debugger: &mut Debugger) {
     }
 }
 
-fn cpu_state(gb: &GameBoy) -> CpuState {
+fn cpu_state<M: Model>(gb: &Console<M>) -> CpuState {
     let cpu = gb.cpu();
     CpuState {
         a: cpu.a,
@@ -511,7 +648,7 @@ fn cpu_state(gb: &GameBoy) -> CpuState {
     }
 }
 
-fn disassemble(gb: &GameBoy, count: usize) -> Vec<InstructionEntry> {
+fn disassemble<M: Model>(gb: &Console<M>, count: usize) -> Vec<InstructionEntry> {
     let pc = gb.cpu().ir_address;
     let mut it = InstructionsIterator::new(pc, gb);
     let mut entries = Vec::new();
@@ -532,7 +669,7 @@ fn disassemble(gb: &GameBoy, count: usize) -> Vec<InstructionEntry> {
     entries
 }
 
-fn ppu_state(gb: &GameBoy) -> PpuState {
+fn ppu_state<M: Model>(gb: &Console<M>) -> PpuState {
     let ppu = gb.ppu();
     let control = ppu.control();
     let mode = ppu.mode();
@@ -579,7 +716,7 @@ fn ppu_state(gb: &GameBoy) -> PpuState {
     }
 }
 
-fn pipeline_state(gb: &GameBoy) -> serde_json::Value {
+fn pipeline_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
     let ppu = gb.ppu();
     match ppu.pipeline_state() {
         Some(snap) => serde_json::json!({
@@ -626,31 +763,19 @@ fn palette_breakdown(raw: u8) -> PaletteState {
     }
 }
 
-fn screen_state(gb: &GameBoy) -> ScreenState {
-    let screen = gb.screen();
-    let mut lines = Vec::with_capacity(144);
-    for y in 0..144u8 {
-        let mut row = Vec::with_capacity(160);
-        for x in 0..160u8 {
-            row.push(screen.pixel(x, y).0);
-        }
-        lines.push(row);
-    }
-    ScreenState { pixels: lines }
+fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4)
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect()
 }
 
-fn screen_ascii(gb: &GameBoy) -> ScreenAscii {
-    let screen = gb.screen();
-    let shades = [' ', '.', 'o', '#'];
-    let mut lines = Vec::with_capacity(144);
-    for y in 0..144u8 {
-        let mut row = String::with_capacity(160);
-        for x in 0..160u8 {
-            row.push(shades[screen.pixel(x, y).0 as usize]);
-        }
-        lines.push(row);
-    }
-    ScreenAscii { lines }
+fn respond_bmp(request: tiny_http::Request, bmp: Vec<u8>) {
+    let response = Response::from_data(bmp).with_header(
+        "Content-Type: image/bmp"
+            .parse::<tiny_http::Header>()
+            .unwrap(),
+    );
+    let _ = request.respond(response);
 }
 
 fn write_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
@@ -693,26 +818,9 @@ fn write_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     bmp
 }
 
-fn screen_bitmap(gb: &GameBoy) -> Vec<u8> {
-    let screen = gb.screen();
-    let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
-
-    let mut pixels = Vec::with_capacity(160 * 144 * 3);
-    for y in 0..144u8 {
-        for x in 0..160u8 {
-            let shade = greys[screen.pixel(x, y).0 as usize];
-            pixels.push(shade);
-            pixels.push(shade);
-            pixels.push(shade);
-        }
-    }
-
-    write_bmp(160, 144, &pixels)
-}
-
 /// Renders all 384 tiles (3 blocks of 128) in a 16-wide grid.
-fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
-    let vram = gb.vram();
+fn tiles_bitmap<M: Model>(gb: &Console<M>, bank: u8) -> Vec<u8> {
+    let vram = gb.vram().bank(bank);
     let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
 
     // 16 tiles wide, 24 tiles tall (384 tiles total)
@@ -747,42 +855,7 @@ fn tiles_bitmap(gb: &GameBoy) -> Vec<u8> {
     write_bmp(w, h, &pixels)
 }
 
-/// Renders a 32x32 tile map as a 256x256 bitmap.
-fn tilemap_bitmap(gb: &GameBoy, map_id: ppu::types::tiles::TileMapId) -> Vec<u8> {
-    let vram = gb.vram();
-    let tile_map = vram.tile_map(map_id);
-    let addr_mode = gb.ppu().control().tile_address_mode();
-    let greys: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
-
-    let w = 256u32;
-    let h = 256u32;
-
-    let mut pixels = vec![0u8; (w * h * 3) as usize];
-
-    for map_y in 0..32u8 {
-        for map_x in 0..32u8 {
-            let tile_index = tile_map.get_tile(map_x, map_y);
-            let (block_id, block_index) = addr_mode.tile(tile_index);
-            let block = vram.tile_block(block_id);
-            let tile = block.tile(block_index);
-            for ty in 0..8u8 {
-                for tx in 0..8u8 {
-                    let shade = greys[tile.pixel(tx, ty).0 as usize];
-                    let px = (map_x as u32 * 8 + tx as u32) as usize;
-                    let py = (map_y as u32 * 8 + ty as u32) as usize;
-                    let offset = (py * w as usize + px) * 3;
-                    pixels[offset] = shade;
-                    pixels[offset + 1] = shade;
-                    pixels[offset + 2] = shade;
-                }
-            }
-        }
-    }
-
-    write_bmp(w, h, &pixels)
-}
-
-fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {
+fn sprites_state<M: Model>(gb: &Console<M>) -> Vec<SpriteState> {
     let ppu = gb.ppu();
     let sprite_size = ppu.control().sprite_size();
     (0..40)
@@ -807,13 +880,15 @@ fn sprites_state(gb: &GameBoy) -> Vec<SpriteState> {
                 } else {
                     "obp0"
                 },
+                cgb_palette: sprite.attributes.cgb_palette(),
+                cgb_bank: sprite.attributes.cgb_bank(),
                 visible: sprite.position.on_screen_x() && sprite.position.on_screen_y(sprite_size),
             }
         })
         .collect()
 }
 
-fn interrupts_state(gb: &GameBoy) -> InterruptsState {
+fn interrupts_state<M: Model>(gb: &Console<M>) -> InterruptsState {
     let regs = gb.interrupts();
     let check = |flag: interrupts::Interrupt| -> InterruptLine {
         InterruptLine {
@@ -832,8 +907,8 @@ fn interrupts_state(gb: &GameBoy) -> InterruptsState {
     }
 }
 
-fn vram_state(gb: &GameBoy) -> serde_json::Value {
-    let vram = gb.vram();
+fn vram_state<M: Model>(gb: &Console<M>, bank: u8) -> serde_json::Value {
+    let vram = gb.vram().bank(bank);
     let mut tile_blocks = Vec::with_capacity(3);
     for block_id in 0..3u8 {
         let block = vram.tile_block(ppu::types::tiles::TileBlockId(block_id));
@@ -891,7 +966,7 @@ fn vram_state(gb: &GameBoy) -> serde_json::Value {
     })
 }
 
-fn timers_state(gb: &GameBoy) -> TimersState {
+fn timers_state<M: Model>(gb: &Console<M>) -> TimersState {
     let timers = gb.timers();
     let div = timers.read_register(missingno_gb::timers::Register::Divider);
     let tima = timers.read_register(missingno_gb::timers::Register::Counter);
@@ -918,13 +993,13 @@ fn timers_state(gb: &GameBoy) -> TimersState {
     }
 }
 
-fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
+fn trace_apu<M: Model>(debugger: &mut Debugger<M>, n: usize) -> serde_json::Value {
     // Capture per-half-T CH3 state across `n` step-phase calls. Used
     // by /trace-apu/{n} for side-by-side comparison against the
     // dmg-sim FST. The first row records the state BEFORE any step
     // (step=0). The remaining rows record state AFTER each successive
     // step-phase, with `phase=high` meaning rise just ran.
-    fn snapshot(debugger: &Debugger, step: usize, phase: &str) -> serde_json::Value {
+    fn snapshot<M: Model>(debugger: &Debugger<M>, step: usize, phase: &str) -> serde_json::Value {
         let gb = debugger.game_boy();
         let cpu = gb.cpu();
         let audio = gb.audio();
@@ -972,7 +1047,7 @@ fn trace_apu(debugger: &mut Debugger, n: usize) -> serde_json::Value {
     serde_json::Value::Array(rows)
 }
 
-fn audio_state(gb: &GameBoy) -> serde_json::Value {
+fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
     let audio = gb.audio();
     let channels = audio.channels();
     let ch1 = &channels.ch1;
@@ -1281,11 +1356,6 @@ struct PaletteState {
 }
 
 #[derive(Serialize)]
-struct ScreenState {
-    pixels: Vec<Vec<u8>>,
-}
-
-#[derive(Serialize)]
 struct ScreenAscii {
     lines: Vec<String>,
 }
@@ -1300,6 +1370,8 @@ struct SpriteState {
     flip_x: bool,
     flip_y: bool,
     palette: &'static str,
+    cgb_palette: u8,
+    cgb_bank: u8,
     visible: bool,
 }
 

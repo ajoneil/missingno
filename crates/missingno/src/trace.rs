@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::process;
 
-use missingno_gb::BootRom;
-use missingno_gb::GameBoy;
 use missingno_gb::cartridge::Cartridge;
 use missingno_gb::trace::{Profile, Tracer, Trigger};
+use missingno_gb::{BootRom, Console, GameBoy, Model};
+use missingno_gbc::GameBoyColor;
 
 pub fn run(
     rom_path: PathBuf,
@@ -29,25 +29,49 @@ pub fn run(
     let save_path = rom_path.with_extension("sav");
     let save_data = std::fs::read(&save_path).ok();
     let cartridge = Cartridge::new(rom_data, save_data);
-    let title = cartridge.title().to_string();
-
-    let boot = missingno_gb::trace::BootRom::Skip;
-
-    let gb = GameBoy::new(cartridge, boot_rom);
 
     let output_path = output.unwrap_or_else(|| {
         let stem = rom_path.file_stem().unwrap().to_string_lossy();
         PathBuf::from(format!("{stem}.gbtrace"))
     });
 
-    let mut tracer =
-        Tracer::create(&output_path, &profile, &gb, boot, "DMG-B").unwrap_or_else(|e| {
+    eprintln!("profile: {}", profile_path.display());
+    eprintln!("output: {}", output_path.display());
+    eprintln!("limit: {cycles} T-cycles");
+
+    if cartridge.is_cgb() {
+        trace_console(
+            GameBoyColor::new(cartridge, boot_rom),
+            &profile,
+            &output_path,
+            cycles,
+        );
+    } else {
+        trace_console(
+            GameBoy::new(cartridge, boot_rom),
+            &profile,
+            &output_path,
+            cycles,
+        );
+    }
+}
+
+fn trace_console<M: Model>(
+    mut gb: Console<M>,
+    profile: &Profile,
+    output_path: &PathBuf,
+    cycles: u64,
+) {
+    let title = gb.cartridge().title().to_string();
+    let boot = missingno_gb::trace::BootRom::Skip;
+
+    let mut tracer = Tracer::create(output_path, profile, &gb, boot, M::TRACE_MODEL_NAME)
+        .unwrap_or_else(|e| {
             eprintln!("error: failed to create trace file: {e}");
             process::exit(1);
         });
     tracer.mark_frame().unwrap();
 
-    let mut gb = gb;
     let mut tcycles: u64 = 0;
     let mut frames = 0u64;
     let mut instructions = 0u64;
@@ -55,31 +79,15 @@ pub fn run(
     let is_tcycle = profile.trigger == Trigger::Tcycle;
 
     eprintln!("tracing: {title}");
-    eprintln!("profile: {}", profile_path.display());
-    eprintln!("output: {}", output_path.display());
-    eprintln!("limit: {cycles} T-cycles");
 
     if is_tcycle {
-        // T-cycle level tracing
-        gb.cpu_mut().take_instruction_boundary();
+        // T-cycle level tracing; may overshoot the limit by one instruction.
         while tcycles < cycles {
-            let rise = gb.step_phase();
-            if let Some(pixel) = rise.pixel {
-                tracer.push_pixel(pixel.shade);
-            }
-            let fall = gb.step_phase();
-            if let Some(pixel) = fall.pixel {
-                tracer.push_pixel(pixel.shade);
-            }
-            if rise.new_screen || fall.new_screen {
+            let result = missingno_gb::trace::step_instruction_tcycle(&mut gb, &mut tracer);
+            tcycles += result.tcycles as u64;
+            instructions += 1;
+            if result.new_screen {
                 frames += 1;
-                tracer.mark_frame().unwrap();
-            }
-            tracer.capture(&gb).unwrap();
-            tracer.advance_dot();
-            tcycles += 1;
-            if gb.cpu().at_instruction_boundary() {
-                instructions += 1;
             }
         }
     } else {

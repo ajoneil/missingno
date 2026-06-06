@@ -16,7 +16,7 @@ use crate::app::{
     ui::{fonts, palette, sizes::s},
 };
 use missingno_gb::debugger::instructions::{InstructionsIterator, addresses_before};
-use missingno_gb::{GameBoy, cpu::instructions::Instruction};
+use missingno_gb::{Console, Model, cpu::instructions::Instruction};
 
 // Syntax highlighting — mapped from palette colors.
 use palette::{
@@ -39,9 +39,9 @@ impl InstructionsPane {
         Self
     }
 
-    pub fn content(
+    pub fn content<M: Model>(
         &self,
-        memory: &GameBoy,
+        memory: &Console<M>,
         pc: u16,
         breakpoints: &BTreeSet<u16>,
     ) -> pane_grid::Content<'_, app::Message> {

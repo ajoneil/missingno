@@ -2984,6 +2984,7 @@ dependencies = [
  "jiff",
  "libc",
  "missingno-gb",
+ "missingno-gbc",
  "open",
  "replace_with",
  "rfd",

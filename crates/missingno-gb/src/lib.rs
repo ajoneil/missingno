@@ -39,7 +39,7 @@ pub use ppu::PixelOutput;
 
 /// Double-buffered LCD framebuffer, abstracted over its pixel storage so
 /// the shared core can drive a DMG shade buffer or a CGB color buffer.
-pub trait ScreenBuffer: Default {
+pub trait ScreenBuffer: Default + Clone {
     type Pixel: Copy;
     fn draw_pixel(&mut self, x: u8, y: u8, pixel: Self::Pixel);
     /// Swap back→front and clear back. Returns true for `new_screen` tracking.
@@ -81,6 +81,9 @@ pub trait Model: Default {
 
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
+
+    /// Hardware revision name recorded in gbtrace captures.
+    const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
     /// End-of-frame / LCD-off hook. DMG mirrors the screen to the SGB.
     fn on_present(&mut self, _screen: &Self::Screen) {}

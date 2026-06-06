@@ -4,8 +4,8 @@ use iced::Task;
 use jiff::Timestamp;
 use rfd::{AsyncFileDialog, FileHandle};
 
-use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, library};
-use missingno_gb::{GameBoy, cartridge::Cartridge};
+use crate::app::{self, App, CurrentGame, Game, LoadedGame, Screen, console::AnyConsole, library};
+use missingno_gb::cartridge::Cartridge;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -26,7 +26,7 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     match message {
         Message::Pick => {
             app.game = Game::Loading;
-            let mut dialog = AsyncFileDialog::new().add_filter("Game Boy ROM", &["gb"]);
+            let mut dialog = AsyncFileDialog::new().add_filter("Game Boy ROM", &["gb", "gbc"]);
             if let Some(dir) = app.recent_games.most_recent_dir() {
                 dialog = dialog.set_directory(dir);
             }
@@ -60,6 +60,27 @@ pub fn update(message: Message, app: &mut App) -> Task<app::Message> {
     }
 
     Task::none()
+}
+
+/// Build the console for a ROM and wrap it for the active mode (debugger or
+/// emulator), storing it in `app.game`.
+fn start_console(app: &mut App, cartridge: Cartridge) {
+    let mut console = AnyConsole::new(cartridge, None);
+    if let Some(link) = app.serial_link.take() {
+        console.set_link(link);
+    }
+    let palette = app.settings.palette;
+
+    if app.debugger_enabled {
+        let mut debugger = app::debugger::AnyDebugger::new(console);
+        debugger.set_palette(palette);
+        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
+    } else {
+        let mut emu = app::emulator::Emulator::new(console, app.settings.use_sgb_colors);
+        emu.set_palette(palette);
+        emu.run();
+        app.game = Game::Loaded(LoadedGame::Emulator(emu));
+    }
 }
 
 /// Select a game from the library by SHA1 and populate CurrentGame.
@@ -102,23 +123,7 @@ pub fn play_current_game(app: &mut App) -> Task<app::Message> {
 
     let save_data = library::activity::load_current_sram(&game_dir);
     let initial_sram = save_data.clone();
-    let cartridge = Cartridge::new(rom, save_data);
-    let mut game_boy = GameBoy::new(cartridge, None);
-    if let Some(link) = app.serial_link.take() {
-        game_boy.set_link(link);
-    }
-    let palette = app.settings.palette;
-
-    if app.debugger_enabled {
-        let mut debugger = app::debugger::Debugger::new(game_boy);
-        debugger.set_palette(palette);
-        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-    } else {
-        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
-        emu.set_palette(palette);
-        emu.run();
-        app.game = Game::Loaded(LoadedGame::Emulator(emu));
-    }
+    start_console(app, Cartridge::new(rom, save_data));
 
     // Start play session
     if let Some(current) = &mut app.current_game {
@@ -164,23 +169,7 @@ pub fn play_with_save(app: &mut App, activity_filename: &str) -> Task<app::Messa
 
     let save_data = library::activity::load_sram_from(&game_dir, activity_filename);
     let initial_sram = save_data.clone();
-    let cartridge = Cartridge::new(rom, save_data);
-    let mut game_boy = GameBoy::new(cartridge, None);
-    if let Some(link) = app.serial_link.take() {
-        game_boy.set_link(link);
-    }
-    let palette = app.settings.palette;
-
-    if app.debugger_enabled {
-        let mut debugger = app::debugger::Debugger::new(game_boy);
-        debugger.set_palette(palette);
-        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-    } else {
-        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
-        emu.set_palette(palette);
-        emu.run();
-        app.game = Game::Loaded(LoadedGame::Emulator(emu));
-    }
+    start_console(app, Cartridge::new(rom, save_data));
 
     if let Some(current) = &mut app.current_game {
         let session = library::activity::SessionFile::new(
@@ -253,23 +242,7 @@ pub fn setup_game(app: &mut App, rom_path: PathBuf, rom: Vec<u8>) -> Task<app::M
         library::load_cover(&game_dir).map(|bytes| iced::widget::image::Handle::from_bytes(bytes));
 
     // Create cartridge and start emulation
-    let cartridge = Cartridge::new(rom, save_data);
-    let mut game_boy = GameBoy::new(cartridge, None);
-    if let Some(link) = app.serial_link.take() {
-        game_boy.set_link(link);
-    }
-    let palette = app.settings.palette;
-
-    if app.debugger_enabled {
-        let mut debugger = app::debugger::Debugger::new(game_boy);
-        debugger.set_palette(palette);
-        app.game = Game::Loaded(LoadedGame::Debugger(debugger));
-    } else {
-        let mut emu = app::emulator::Emulator::new(game_boy, app.settings.use_sgb_colors);
-        emu.set_palette(palette);
-        emu.run();
-        app.game = Game::Loaded(LoadedGame::Emulator(emu));
-    }
+    start_console(app, Cartridge::new(rom, save_data));
 
     let session = library::activity::SessionFile::new(Timestamp::now(), None);
     library::activity::write_session(&game_dir, &session);

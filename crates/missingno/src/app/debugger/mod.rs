@@ -10,19 +10,16 @@ use iced::{
 
 use crate::app::{
     self,
+    console::{AnyConsole, ConsoleUi},
     emulator::Emulator,
-    screen::{GameBoyScreen, ScreenView, SgbScreen},
+    library::activity::FrameCapture,
+    screen::ScreenView,
     ui::{
         fonts, icons, palette,
         sizes::{s, xs},
     },
 };
-use missingno_gb::{
-    GameBoy,
-    joypad::Button,
-    ppu::types::palette::{Palette, PaletteChoice},
-    sgb::MaskMode,
-};
+use missingno_gb::{joypad::Button, ppu::types::palette::PaletteChoice};
 
 use panes::DebuggerPanes;
 use sidebar::Sidebar;
@@ -83,8 +80,132 @@ impl Into<super::Message> for Message {
     }
 }
 
-pub struct Debugger {
-    debugger: missingno_gb::debugger::Debugger,
+/// The wrapped console's debugger, dispatched to the matching [`Debugger<M>`].
+pub enum AnyDebugger {
+    Dmg(Debugger<missingno_gb::Dmg>),
+    Cgb(Debugger<missingno_gbc::Cgb>),
+}
+
+impl AnyDebugger {
+    pub fn new(console: AnyConsole) -> Self {
+        match console {
+            AnyConsole::Dmg(game_boy) => Self::Dmg(Debugger::new(game_boy)),
+            AnyConsole::Cgb(console) => Self::Cgb(Debugger::new(console)),
+        }
+    }
+
+    pub fn from_emulator(console: AnyConsole, screen_view: ScreenView) -> Self {
+        match console {
+            AnyConsole::Dmg(game_boy) => Self::Dmg(Debugger::from_console(game_boy, screen_view)),
+            AnyConsole::Cgb(console) => Self::Cgb(Debugger::from_console(console, screen_view)),
+        }
+    }
+
+    pub fn disable_debugger(self, use_sgb_colors: bool) -> Emulator {
+        match self {
+            Self::Dmg(debugger) => debugger.into_emulator(use_sgb_colors),
+            Self::Cgb(debugger) => debugger.into_emulator(use_sgb_colors),
+        }
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<app::Message> {
+        match self {
+            Self::Dmg(debugger) => debugger.update(message),
+            Self::Cgb(debugger) => debugger.update(message),
+        }
+    }
+
+    pub fn view(&self) -> Element<'_, app::Message> {
+        match self {
+            Self::Dmg(debugger) => debugger.view(),
+            Self::Cgb(debugger) => debugger.view(),
+        }
+    }
+
+    pub fn subscription(&self) -> Subscription<app::Message> {
+        match self {
+            Self::Dmg(debugger) => debugger.subscription(),
+            Self::Cgb(debugger) => debugger.subscription(),
+        }
+    }
+
+    pub fn set_palette(&mut self, palette: PaletteChoice) {
+        match self {
+            Self::Dmg(debugger) => debugger.set_palette(palette),
+            Self::Cgb(debugger) => debugger.set_palette(palette),
+        }
+    }
+
+    pub fn cartridge(&self) -> &missingno_gb::cartridge::Cartridge {
+        match self {
+            Self::Dmg(debugger) => debugger.game_boy().cartridge(),
+            Self::Cgb(debugger) => debugger.game_boy().cartridge(),
+        }
+    }
+
+    pub fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        match self {
+            Self::Dmg(debugger) => debugger.drain_audio_samples(),
+            Self::Cgb(debugger) => debugger.drain_audio_samples(),
+        }
+    }
+
+    pub fn capture_screenshot(&self, use_sgb_colors: bool, palette_name: &str) -> FrameCapture {
+        match self {
+            Self::Dmg(debugger) => {
+                missingno_gb::Dmg::capture_frame(debugger.game_boy(), use_sgb_colors, palette_name)
+            }
+            Self::Cgb(debugger) => {
+                missingno_gbc::Cgb::capture_frame(debugger.game_boy(), use_sgb_colors, palette_name)
+            }
+        }
+    }
+
+    pub fn running(&self) -> bool {
+        match self {
+            Self::Dmg(debugger) => debugger.running(),
+            Self::Cgb(debugger) => debugger.running(),
+        }
+    }
+
+    pub fn run(&mut self) {
+        match self {
+            Self::Dmg(debugger) => debugger.run(),
+            Self::Cgb(debugger) => debugger.run(),
+        }
+    }
+
+    pub fn pause(&mut self) {
+        match self {
+            Self::Dmg(debugger) => debugger.pause(),
+            Self::Cgb(debugger) => debugger.pause(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            Self::Dmg(debugger) => debugger.reset(),
+            Self::Cgb(debugger) => debugger.reset(),
+        }
+    }
+
+    pub fn press_button(&mut self, button: Button) {
+        match self {
+            Self::Dmg(debugger) => debugger.press_button(button),
+            Self::Cgb(debugger) => debugger.press_button(button),
+        }
+    }
+
+    pub fn release_button(&mut self, button: Button) {
+        match self {
+            Self::Dmg(debugger) => debugger.release_button(button),
+            Self::Cgb(debugger) => debugger.release_button(button),
+        }
+    }
+}
+
+pub struct Debugger<M: ConsoleUi> {
+    debugger: missingno_gb::debugger::Debugger<M>,
     sidebar: Sidebar,
     panes: DebuggerPanes,
     running: bool,
@@ -95,10 +216,10 @@ pub struct Debugger {
     breakpoint_input: String,
 }
 
-impl Debugger {
-    pub fn new(game_boy: GameBoy) -> Self {
+impl<M: ConsoleUi> Debugger<M> {
+    pub fn new(console: missingno_gb::Console<M>) -> Self {
         Self {
-            debugger: missingno_gb::debugger::Debugger::new(game_boy),
+            debugger: missingno_gb::debugger::Debugger::new(console),
             sidebar: Sidebar::new(),
             panes: DebuggerPanes::new(),
             running: false,
@@ -110,9 +231,9 @@ impl Debugger {
         }
     }
 
-    pub fn from_emulator(game_boy: GameBoy, screen_view: ScreenView) -> Self {
+    pub fn from_console(console: missingno_gb::Console<M>, screen_view: ScreenView) -> Self {
         Self {
-            debugger: missingno_gb::debugger::Debugger::new(game_boy),
+            debugger: missingno_gb::debugger::Debugger::new(console),
             sidebar: Sidebar::new(),
             panes: DebuggerPanes::with_screen(screen_view),
             running: false,
@@ -124,41 +245,31 @@ impl Debugger {
         }
     }
 
-    pub fn game_boy(&self) -> &GameBoy {
+    pub fn game_boy(&self) -> &missingno_gb::Console<M> {
         self.debugger.game_boy()
     }
 
-    pub fn game_boy_mut(&mut self) -> &mut GameBoy {
-        self.debugger.game_boy_mut()
+    fn drain_audio_samples(&mut self) -> Vec<(f32, f32)> {
+        self.debugger.game_boy_mut().drain_audio_samples()
     }
 
-    pub fn disable_debugger(self, use_sgb_colors: bool) -> Emulator {
+    fn into_emulator(self, use_sgb_colors: bool) -> Emulator
+    where
+        AnyConsole: From<missingno_gb::Console<M>>,
+    {
         let screen_view = self.panes.take_screen_view();
-        Emulator::from_debugger(self.debugger.game_boy_take(), screen_view, use_sgb_colors)
+        Emulator::from_debugger(
+            self.debugger.game_boy_take().into(),
+            screen_view,
+            use_sgb_colors,
+        )
     }
 
-    fn screen_update_task(
-        &self,
-        screen: Option<missingno_gb::ppu::screen::Screen>,
-    ) -> Task<app::Message> {
-        let video_enabled = self.debugger.game_boy().ppu().control().video_enabled();
-        let display = if let Some(sgb) = self.debugger.game_boy().sgb() {
-            let render_data = sgb.render_data(video_enabled);
-            if sgb.mask_mode == MaskMode::Freeze {
-                SgbScreen::Freeze(render_data).into()
-            } else if let Some(screen) = screen {
-                SgbScreen::Display(screen, render_data).into()
-            } else {
-                return Task::none();
-            }
-        } else if !video_enabled {
-            GameBoyScreen::Off.into()
-        } else if let Some(screen) = screen {
-            GameBoyScreen::Display(screen).into()
-        } else {
-            return Task::none();
-        };
-        Task::done(screen::Message::Update(display).into())
+    fn screen_update_task(&self, screen: Option<M::Screen>) -> Task<app::Message> {
+        match M::screen_display(self.debugger.game_boy(), screen) {
+            Some(display) => Task::done(screen::Message::Update(display).into()),
+            None => Task::none(),
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<app::Message> {
@@ -301,12 +412,12 @@ impl Debugger {
     }
 
     pub fn view(&self) -> Element<'_, app::Message> {
-        let pal = self.display_palette();
+        let colors = M::colors(self.debugger.game_boy(), self.panes.palette());
 
         let center: Element<'_, app::Message> = if let Some(split_state) = &self.main_split {
             pane_grid(split_state, |_handle, zone, _maximized| {
                 let content: Element<'_, app::Message> = match zone {
-                    MainSplit::Top => self.panes.view(&self.debugger, pal),
+                    MainSplit::Top => self.panes.view(&self.debugger, &colors),
                     MainSplit::Bottom => self.bottom_pane_grid(
                         self.bottom_panes
                             .as_ref()
@@ -319,11 +430,11 @@ impl Debugger {
             .spacing(s())
             .into()
         } else {
-            self.panes.view(&self.debugger, pal)
+            self.panes.view(&self.debugger, &colors)
         };
 
         row![
-            self.sidebar.view(&self.debugger, pal),
+            self.sidebar.view(&self.debugger, &colors),
             center,
             self.icon_rail(),
         ]
@@ -410,14 +521,6 @@ impl Debugger {
             .unwrap();
         state.resize(split, DEFAULT_SPLIT_RATIO);
         self.main_split = Some(state);
-    }
-
-    fn display_palette(&self) -> &Palette {
-        if self.debugger.game_boy().sgb().is_some() {
-            &Palette::CLASSIC
-        } else {
-            self.panes.palette()
-        }
     }
 
     pub fn subscription(&self) -> Subscription<app::Message> {

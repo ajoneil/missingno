@@ -26,31 +26,19 @@ impl App {
                 self.save();
             }
             Message::TakeScreenshot => {
-                // Grab the current framebuffer and SGB state from whichever game mode is active
-                let capture_data = match &self.game {
-                    Game::Loaded(LoadedGame::Emulator(emu)) => {
-                        let gb = emu.game_boy();
-                        let sgb_data = gb
-                            .sgb()
-                            .map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
-                        Some((gb.screen().clone(), sgb_data))
-                    }
-                    Game::Loaded(LoadedGame::Debugger(dbg)) => {
-                        let gb = dbg.game_boy();
-                        let sgb_data = gb
-                            .sgb()
-                            .map(|sgb| sgb.render_data(gb.ppu().control().video_enabled()));
-                        Some((gb.screen().clone(), sgb_data))
-                    }
-                    _ => None,
-                };
-                if let Some((screen, sgb_render_data)) = capture_data {
-                    let capture = library::activity::FrameCapture::capture(
-                        screen.front(),
-                        sgb_render_data.as_ref(),
+                // Grab the current framebuffer from whichever game mode is active
+                let capture = match &self.game {
+                    Game::Loaded(LoadedGame::Emulator(emu)) => Some(emu.console().capture_frame(
                         self.settings.use_sgb_colors,
                         &self.settings.palette.to_string(),
-                    );
+                    )),
+                    Game::Loaded(LoadedGame::Debugger(dbg)) => Some(dbg.capture_screenshot(
+                        self.settings.use_sgb_colors,
+                        &self.settings.palette.to_string(),
+                    )),
+                    _ => None,
+                };
+                if let Some(capture) = capture {
                     if let Some(current) = &mut self.current_game {
                         if let Some(session) = &mut current.session {
                             session.events.push(library::activity::SessionEvent {
@@ -177,21 +165,21 @@ impl App {
     pub(super) fn save(&mut self) {
         let (ram, cartridge_title) = match &self.game {
             Game::Loaded(LoadedGame::Debugger(debugger)) => {
-                if !debugger.game_boy().cartridge().has_battery() {
+                if !debugger.cartridge().has_battery() {
                     return;
                 }
                 (
-                    debugger.game_boy().cartridge().ram(),
-                    debugger.game_boy().cartridge().title().to_string(),
+                    debugger.cartridge().ram(),
+                    debugger.cartridge().title().to_string(),
                 )
             }
             Game::Loaded(LoadedGame::Emulator(emulator)) => {
-                if !emulator.game_boy().cartridge().has_battery() {
+                if !emulator.console().cartridge().has_battery() {
                     return;
                 }
                 (
-                    emulator.game_boy().cartridge().ram(),
-                    emulator.game_boy().cartridge().title().to_string(),
+                    emulator.console().cartridge().ram(),
+                    emulator.console().cartridge().title().to_string(),
                 )
             }
             _ => return,
@@ -221,12 +209,13 @@ impl App {
     }
 
     pub(super) fn drain_audio(&mut self) {
-        let game_boy = match &mut self.game {
-            Game::Loaded(LoadedGame::Emulator(emulator)) => emulator.game_boy_mut(),
-            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.game_boy_mut(),
+        let samples = match &mut self.game {
+            Game::Loaded(LoadedGame::Emulator(emulator)) => {
+                emulator.console_mut().drain_audio_samples()
+            }
+            Game::Loaded(LoadedGame::Debugger(debugger)) => debugger.drain_audio_samples(),
             _ => return,
         };
-        let samples = game_boy.drain_audio_samples();
         if let Some(audio) = &mut self.audio_output {
             audio.push_samples(&samples);
         }

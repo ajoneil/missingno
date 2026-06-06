@@ -8,6 +8,7 @@ use ui::fonts;
 
 mod action_bar;
 mod audio_output;
+mod console;
 mod controls;
 mod debugger;
 mod emulation;
@@ -229,7 +230,7 @@ enum Game {
 }
 
 enum LoadedGame {
-    Debugger(debugger::Debugger),
+    Debugger(debugger::AnyDebugger),
     Emulator(emulator::Emulator),
 }
 

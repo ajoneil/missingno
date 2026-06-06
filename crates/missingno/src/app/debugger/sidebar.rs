@@ -6,7 +6,9 @@ use iced::{
 };
 
 use crate::app::{
-    self, debugger,
+    self,
+    console::{ConsoleColors, ConsoleUi},
+    debugger,
     ui::{
         fonts, palette,
         sizes::{s, xs},
@@ -18,7 +20,8 @@ use missingno_gb::cpu::{
     registers::{Register8, Register16},
 };
 use missingno_gb::debugger::Debugger;
-use missingno_gb::ppu::types::palette::Palette;
+use missingno_gb::ppu::{Ppu, model::PpuModel};
+use missingno_gb::{Console, Model};
 
 use super::interrupts::interrupts;
 use super::ppu::ppu_sidebar;
@@ -80,16 +83,16 @@ impl Sidebar {
         }
     }
 
-    pub fn view<'a>(
+    pub fn view<'a, M: ConsoleUi>(
         &'a self,
-        debugger: &'a Debugger,
-        pal: &'a Palette,
+        debugger: &'a Debugger<M>,
+        colors: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let game_boy = debugger.game_boy();
 
         column![
             self.cpu_section(game_boy.cpu(), game_boy),
-            self.ppu_section(game_boy.ppu(), pal),
+            self.ppu_section(game_boy.ppu(), colors),
         ]
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Fill)
@@ -97,10 +100,10 @@ impl Sidebar {
         .into()
     }
 
-    fn cpu_section<'a>(
+    fn cpu_section<'a, M: Model>(
         &self,
         cpu: &'a Cpu,
-        game_boy: &'a missingno_gb::GameBoy,
+        game_boy: &'a Console<M>,
     ) -> Element<'a, app::Message> {
         let summary = format!("pc {:04X} · sp {:04X}", cpu.ir_address, cpu.stack_pointer,);
         let collapsed = self.is_collapsed(Section::Cpu);
@@ -131,10 +134,10 @@ impl Sidebar {
         )
     }
 
-    fn ppu_section<'a>(
+    fn ppu_section<'a, P: PpuModel>(
         &self,
-        ppu: &'a missingno_gb::ppu::Ppu<missingno_gb::ppu::model::DmgPpu>,
-        pal: &'a Palette,
+        ppu: &'a Ppu<P>,
+        pal: &ConsoleColors,
     ) -> Element<'a, app::Message> {
         let mode = ppu.mode();
         let (mode_text, mode_color) = mode_display(mode);
