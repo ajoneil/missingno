@@ -6,14 +6,22 @@
 #   ./scripts/pgo-build.sh                 # PGO build of the whole workspace (release)
 #   PROFILE=profiling ./scripts/pgo-build.sh
 #   TRAIN_FRAMES=300 ./scripts/pgo-build.sh
+#   PGO=0 ./scripts/pgo-build.sh           # escape hatch: plain build, no PGO
 #
-# Requires the rustup llvm-tools component (for llvm-profdata).
+# Requires llvm-profdata from the toolchain's sysroot (rustup: the llvm-tools
+# component; the Flatpak rust-stable SDK extension ships it already).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE="${PROFILE:-release}"
 TRAIN_FRAMES="${TRAIN_FRAMES:-600}"
 PGO_DIR="$(pwd)/target/pgo-profiles"
+
+if [ "${PGO:-1}" = "0" ]; then
+    echo "== PGO disabled: plain build =="
+    cargo build --profile "$PROFILE"
+    exit 0
+fi
 
 GB_ROMS=crates/missingno-gb/tests/accuracy/roms
 GBC_ROMS=crates/missingno-gbc/tests/accuracy/roms
@@ -32,7 +40,8 @@ TRAIN_CGB=(
     "$GBC_ROMS/age-test-roms/stat-mode-sprites-ds-cgbBCE.gb"
 )
 
-LLVM_PROFDATA="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata"
+HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+LLVM_PROFDATA="$(rustc --print sysroot)/lib/rustlib/$HOST_TRIPLE/bin/llvm-profdata"
 [ -x "$LLVM_PROFDATA" ] || LLVM_PROFDATA=llvm-profdata
 
 echo "== Stage 1/3: instrumented build =="
