@@ -176,19 +176,28 @@ impl ScreenBuffer for Screen {
 
     fn present(&mut self) -> bool {
         std::mem::swap(&mut self.front, &mut self.back);
-        *self.back = Framebuffer::default();
+        self.back.clear();
         true
     }
 
     fn blank(&mut self) {
-        *self.front = Framebuffer::default();
-        *self.back = Framebuffer::default();
+        self.front.clear();
+        self.back.clear();
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub struct Framebuffer {
     pub pixels: [[Color555; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
+}
+
+impl Framebuffer {
+    /// Clears in place — assigning `Framebuffer::default()` by value puts a
+    /// screen-sized temporary on the stack of every caller it inlines into.
+    fn clear(&mut self) {
+        self.pixels
+            .fill([GREYSCALE[0]; PIXELS_PER_LINE as usize]);
+    }
 }
 
 impl Default for Framebuffer {

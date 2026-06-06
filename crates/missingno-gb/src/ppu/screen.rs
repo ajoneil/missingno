@@ -31,13 +31,13 @@ impl Screen {
     /// Swap back→front and clear back. Returns true for callers tracking `new_screen`.
     pub fn present(&mut self) -> bool {
         std::mem::swap(&mut self.front, &mut self.back);
-        *self.back = Framebuffer::default();
+        self.back.clear();
         true
     }
 
     pub fn blank(&mut self) {
-        *self.front = Framebuffer::default();
-        *self.back = Framebuffer::default();
+        self.front.clear();
+        self.back.clear();
     }
 
     pub fn front(&self) -> &Framebuffer {
@@ -61,6 +61,15 @@ impl crate::ScreenBuffer for Screen {
 #[derive(Copy, Clone, Debug)]
 pub struct Framebuffer {
     pub pixels: [[PaletteIndex; PIXELS_PER_LINE as usize]; NUM_SCANLINES as usize],
+}
+
+impl Framebuffer {
+    /// Clears in place — assigning `Framebuffer::default()` by value puts a
+    /// screen-sized temporary on the stack of every caller it inlines into.
+    fn clear(&mut self) {
+        self.pixels
+            .fill([PaletteIndex(0); PIXELS_PER_LINE as usize]);
+    }
 }
 
 impl Default for Framebuffer {
