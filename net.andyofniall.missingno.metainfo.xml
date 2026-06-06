@@ -34,27 +34,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/library.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/library.png</image>
       <caption>Game library with cover art and play history</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/game-details.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/game-details.png</image>
       <caption>Game details with activity log and save and screenshot management</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/gameplay.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/gameplay.png</image>
       <caption>Playing a Game Boy game with Super Game Boy colours</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/homebrew.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/homebrew.png</image>
       <caption>Browse and download homebrew games from Homebrew Hub</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/cartridge.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/cartridge.png</image>
       <caption>Read and write physical Game Boy cartridges with a GBxCart RW</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.5/screenshots/debugger.png</image>
+      <image>https://raw.githubusercontent.com/ajoneil/missingno/v26.6/screenshots/debugger.png</image>
       <caption>The integrated debugger showing CPU state, disassembly, and sprites</caption>
     </screenshot>
   </screenshots>
@@ -71,6 +71,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="26.6" date="2026-06-06">
+      <description>
+        <ul>
+          <li>Game Boy Color support</li>
+          <li>Many emulation accuracy improvements, especially audio</li>
+          <li>Optimised builds for faster emulation</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.5" date="2026-05-07">
       <description>
         <ul>
