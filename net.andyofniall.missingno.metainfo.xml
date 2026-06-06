@@ -14,10 +14,10 @@
 
   <description>
     <p>
-      Missingno is a Game Boy emulator with an integrated debugger. Manage your
-      game library with automatic cover art, play history tracking, and save
-      management. Play with keyboard or controller support, fullscreen mode, and
-      multiple display palettes.
+      Missingno is a Game Boy and Game Boy Color emulator with an integrated
+      debugger. Manage your game library with automatic cover art, play history
+      tracking, and save management. Play with keyboard or controller support,
+      fullscreen mode, and multiple display palettes.
     </p>
     <p>
       The built-in debugger provides code disassembly with breakpoints, CPU state
