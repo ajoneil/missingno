@@ -6,6 +6,10 @@ members = ["crates/missingno", "crates/missingno-gb", "crates/missingno-gbc"]
 bitflags = "2.11.1"
 rgb = "0.8.53"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # Release codegen with debug symbols, for profiling.
 [profile.profiling]
 inherits = "release"
