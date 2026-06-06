@@ -269,3 +269,41 @@ impl Catalogue {
         results
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Catalogue::load() silently drops manifests that fail to deserialize,
+    // so parse the gamedb source tree directly to surface any bad files.
+    #[test]
+    fn all_gamedb_manifests_parse() {
+        let games =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../missingno-gamedb/games");
+        if !games.is_dir() {
+            return;
+        }
+
+        let mut checked = 0;
+        let mut failures = Vec::new();
+        for dir in std::fs::read_dir(&games).unwrap().flatten() {
+            let manifest = dir.path().join("manifest.ron");
+            if !manifest.is_file() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&manifest).unwrap();
+            if let Err(e) = ron::from_str::<GameManifest>(&content) {
+                failures.push(format!("{}: {e}", manifest.display()));
+            }
+            checked += 1;
+        }
+
+        assert!(checked > 0);
+        assert!(
+            failures.is_empty(),
+            "{} manifests failed to parse:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
