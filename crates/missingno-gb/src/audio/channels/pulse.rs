@@ -257,11 +257,14 @@ impl PulseChannel {
         }
     }
 
-    pub fn sample(&self) -> f32 {
+    pub fn digital_sample(&self) -> u8 {
         if !self.enabled.enabled {
-            return 0.0;
+            return 0;
         }
-        let output = if self.pwm_latch { 1u8 } else { 0 };
-        output as f32 * self.current_volume as f32 / 15.0
+        if self.pwm_latch {
+            self.current_volume
+        } else {
+            0
+        }
     }
 }

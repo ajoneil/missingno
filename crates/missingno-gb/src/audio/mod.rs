@@ -38,6 +38,11 @@ pub struct Audio {
     // land one tcycle later (kylo/kene_inst buffer delay) — kene↓ in T1, not T0.
     pub(crate) fs_edge_pending: bool,
     sample_counter: f32,
+    // Digital channel sums accumulate as integers; fold_pending() applies
+    // the DAC scale and NR50 volume when either changes or a window closes.
+    pending_left: u32,
+    pending_right: u32,
+    pending_count: u32,
     sample_accum_left: f32,
     sample_accum_right: f32,
     sample_accum_count: u32,
@@ -64,6 +69,9 @@ impl Audio {
             frame_sequencer_step: 2,
             fs_edge_pending: false,
             sample_counter: 0.0,
+            pending_left: 0,
+            pending_right: 0,
+            pending_count: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
@@ -83,6 +91,9 @@ impl Audio {
             frame_sequencer_step: 0,
             fs_edge_pending: false,
             sample_counter: 0.0,
+            pending_left: 0,
+            pending_right: 0,
+            pending_count: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
@@ -150,10 +161,10 @@ impl Audio {
             return;
         }
 
-        let (l, r) = self.mix();
-        self.sample_accum_left += l;
-        self.sample_accum_right += r;
-        self.sample_accum_count += 1;
+        let (l, r) = self.channels.mix_digital();
+        self.pending_left += l;
+        self.pending_right += r;
+        self.pending_count += 1;
 
         // Fire the ripple edge armed last tcycle (the strobes land one tcycle
         // after the bit-10 fall). It runs after the prescaler consume above set
@@ -174,6 +185,7 @@ impl Audio {
         self.sample_counter += 1.0;
         if self.sample_counter >= T_CYCLES_PER_SAMPLE {
             self.sample_counter -= T_CYCLES_PER_SAMPLE;
+            self.fold_pending();
             let count = self.sample_accum_count as f32;
             self.sample_buffer.push((
                 self.sample_accum_left / count,
@@ -183,6 +195,24 @@ impl Audio {
             self.sample_accum_right = 0.0;
             self.sample_accum_count = 0;
         }
+    }
+
+    /// Fold the pending digital sums into the f32 accumulators at the
+    /// current NR50 volume. Channels span 0–15 across four channels per
+    /// side, so full scale is 60.
+    pub(crate) fn fold_pending(&mut self) {
+        if self.pending_count == 0 {
+            return;
+        }
+        const FULL_SCALE: f32 = 1.0 / 60.0;
+        self.sample_accum_left +=
+            self.pending_left as f32 * FULL_SCALE * self.volume_left.percentage();
+        self.sample_accum_right +=
+            self.pending_right as f32 * FULL_SCALE * self.volume_right.percentage();
+        self.sample_accum_count += self.pending_count;
+        self.pending_left = 0;
+        self.pending_right = 0;
+        self.pending_count = 0;
     }
 
     /// Half-T-cycle audio work on master-clock fall (= apu_4mhz ↑ at
@@ -233,15 +263,6 @@ impl Audio {
         }
         self.prev_div_apu_bit = false; // counter is now 0, bit 10 is clear
         self.fs_edge_pending = false; // divider reset supersedes any armed tap edge
-    }
-
-    fn mix(&self) -> (f32, f32) {
-        let (left, right) = self.channels.mix();
-        // Normalize over four channels and scale by master volume.
-        (
-            left / 4.0 * self.volume_left.percentage(),
-            right / 4.0 * self.volume_right.percentage(),
-        )
     }
 
     pub fn drain_samples(&mut self) -> Vec<(f32, f32)> {
@@ -361,6 +382,9 @@ impl Audio {
             frame_sequencer_step: snap.frame_sequencer_step,
             fs_edge_pending: false,
             sample_counter: 0.0,
+            pending_left: 0,
+            pending_right: 0,
+            pending_count: 0,
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,

@@ -346,9 +346,9 @@ impl WaveChannel {
         }
     }
 
-    pub fn sample(&self) -> f32 {
+    pub fn digital_sample(&self) -> u8 {
         if !self.enabled.enabled {
-            return 0.0;
+            return 0;
         }
         let byte = self.ram[self.wave_position as usize / 2];
         let nibble = if self.wave_position.is_multiple_of(2) {
@@ -356,11 +356,10 @@ impl WaveChannel {
         } else {
             byte & 0x0f
         };
-        let volume_shift = self.volume.shift();
-        if volume_shift == 0 {
-            return 0.0;
+        match self.volume.shift() {
+            0 => 0,
+            shift => nibble >> (shift - 1),
         }
-        (nibble >> (volume_shift - 1)) as f32 / 15.0
     }
 }
 

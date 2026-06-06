@@ -159,6 +159,7 @@ impl Audio {
                 } else {
                     self.enabled = false;
                     self.channels.reset_all();
+                    self.fold_pending();
                     self.nr50 = 0;
                     self.volume_left = Volume(0);
                     self.volume_right = Volume(0);
@@ -176,6 +177,7 @@ impl Audio {
                 self.channels.ch4.enabled.output_right = value.contains(PanFlags::CHANNEL_4_RIGHT);
             }
             Register::Volume => {
+                self.fold_pending();
                 self.nr50 = value;
                 self.volume_left = Volume((value >> 4) & 0b111);
                 self.volume_right = Volume(value & 0b111);

@@ -38,22 +38,22 @@ impl Channels {
         self.ch4.reset();
     }
 
-    /// Mix all four channels into a `(left, right)` sample pair,
-    /// gated by each channel's left/right panning bits.
-    pub fn mix(&self) -> (f32, f32) {
-        let mut left = 0.0f32;
-        let mut right = 0.0f32;
+    /// Sum the four channels' digital outputs (0–15 each) into a
+    /// `(left, right)` pair, gated by each channel's panning bits.
+    pub fn mix_digital(&self) -> (u32, u32) {
+        let mut left = 0u32;
+        let mut right = 0u32;
         for (enabled, sample) in [
-            (self.ch1.enabled, self.ch1.sample()),
-            (self.ch2.enabled, self.ch2.sample()),
-            (self.ch3.enabled, self.ch3.sample()),
-            (self.ch4.enabled, self.ch4.sample()),
+            (self.ch1.enabled, self.ch1.digital_sample()),
+            (self.ch2.enabled, self.ch2.digital_sample()),
+            (self.ch3.enabled, self.ch3.digital_sample()),
+            (self.ch4.enabled, self.ch4.digital_sample()),
         ] {
             if enabled.output_left {
-                left += sample;
+                left += sample as u32;
             }
             if enabled.output_right {
-                right += sample;
+                right += sample as u32;
             }
         }
         (left, right)

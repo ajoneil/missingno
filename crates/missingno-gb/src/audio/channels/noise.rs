@@ -185,13 +185,16 @@ impl NoiseChannel {
         }
     }
 
-    pub fn sample(&self) -> f32 {
+    pub fn digital_sample(&self) -> u8 {
         if !self.enabled.enabled {
-            return 0.0;
+            return 0;
         }
         // Output is inverted bit 0 of LFSR
-        let output = (!self.lfsr & 1) as f32;
-        output * self.current_volume as f32 / 15.0
+        if self.lfsr & 1 == 0 {
+            self.current_volume
+        } else {
+            0
+        }
     }
 }
 
