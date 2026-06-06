@@ -195,8 +195,7 @@ impl Framebuffer {
     /// Clears in place — assigning `Framebuffer::default()` by value puts a
     /// screen-sized temporary on the stack of every caller it inlines into.
     fn clear(&mut self) {
-        self.pixels
-            .fill([GREYSCALE[0]; PIXELS_PER_LINE as usize]);
+        self.pixels.fill([GREYSCALE[0]; PIXELS_PER_LINE as usize]);
     }
 }
 

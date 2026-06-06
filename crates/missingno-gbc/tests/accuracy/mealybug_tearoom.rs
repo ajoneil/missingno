@@ -27,7 +27,11 @@ fn run_test(rom: GameBoyColor, rom_name: &str) {
     let expected = common::load_cgb_reference_png_rgb(&reference);
 
     let mut mismatches = 0;
-    for (i, (a, e)) in actual.chunks_exact(3).zip(expected.chunks_exact(3)).enumerate() {
+    for (i, (a, e)) in actual
+        .chunks_exact(3)
+        .zip(expected.chunks_exact(3))
+        .enumerate()
+    {
         if a != e {
             if mismatches < 10 {
                 let (x, y) = (i % 160, i / 160);

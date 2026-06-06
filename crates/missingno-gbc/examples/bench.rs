@@ -37,5 +37,8 @@ fn main() {
     let elapsed = start.elapsed().as_secs_f64();
 
     let fps = frames as f64 / elapsed;
-    println!("{frames} frames in {elapsed:.3}s = {fps:.1} fps ({:.2}x realtime)", fps / GB_FPS);
+    println!(
+        "{frames} frames in {elapsed:.3}s = {fps:.1} fps ({:.2}x realtime)",
+        fps / GB_FPS
+    );
 }
