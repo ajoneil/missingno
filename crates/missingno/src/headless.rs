@@ -1085,6 +1085,7 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "divider_load_settle": ch1.divider_load_settle,
             "current_volume": ch1.current_volume,
             "envelope_timer": ch1.envelope_timer,
+            "envelope_stopped": ch1.envelope_stopped,
             "shadow_frequency": ch1.shadow_frequency,
             "sweep_timer": ch1.sweep_timer,
             "sweep_enabled": ch1.sweep_enabled,
@@ -1106,6 +1107,7 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "divider_load_settle": ch2.divider_load_settle,
             "current_volume": ch2.current_volume,
             "envelope_timer": ch2.envelope_timer,
+            "envelope_stopped": ch2.envelope_stopped,
         },
 
         "ch3": {
@@ -1141,6 +1143,7 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "lfsr": format!("{:04x}", ch4.lfsr),
             "current_volume": ch4.current_volume,
             "envelope_timer": ch4.envelope_timer,
+            "envelope_stopped": ch4.envelope_stopped,
         },
     })
 }

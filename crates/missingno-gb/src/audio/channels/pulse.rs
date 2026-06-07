@@ -47,6 +47,9 @@ pub struct PulseChannel {
     /// horu_512hz↑; that's the deferred edge that actually advances
     /// the volume counter on hardware.
     pub kyvo: bool,
+    /// JEME stop latch: a fire that samples a saturated volume counter
+    /// latches it; pins HOFO until the next trigger clears it.
+    pub envelope_stopped: bool,
     pub length_counter: u16,
 }
 
@@ -74,6 +77,7 @@ impl Default for PulseChannel {
             current_volume: 0,
             envelope_timer: 0,
             kyvo: false,
+            envelope_stopped: false,
             length_counter: 0,
         }
     }
@@ -98,6 +102,7 @@ impl PulseChannel {
             current_volume: 0,
             envelope_timer: 0,
             kyvo: false,
+            envelope_stopped: false,
             length_counter,
         };
     }
@@ -118,6 +123,13 @@ impl PulseChannel {
                 self.length_counter = 64 - self.waveform_and_initial_length.initial_length() as u16;
             }
             Register::VolumeAndEnvelope => {
+                // Write-strobe transient: the pace bits read 1 while the
+                // cells settle, so JUPU dips iff the old pace was 0 and
+                // HOFO completes one pulse — one +1 volume clock, free
+                // 4-bit wrap (JEME never latches under pace 0).
+                if self.volume_and_envelope.sweep_pace() == 0 && !self.envelope_stopped {
+                    self.current_volume = (self.current_volume + 1) & 0xf;
+                }
                 self.volume_and_envelope = VolumeAndEnvelope(value);
                 // pace=0 raises jupu → hafe=0 → JOPA async-reset; any
                 // armed kyvo is dropped before the next horu_512hz↑.
@@ -167,6 +179,7 @@ impl PulseChannel {
         self.pending_trigger_sync = 1;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
+        self.envelope_stopped = false;
         // ch2_restart pulls hafe low → JOPA reset → any prior kyvo
         // arm from the previous trigger window is dropped.
         self.kyvo = false;
@@ -240,17 +253,23 @@ impl PulseChannel {
         }
         self.kyvo = false;
         let pace = self.volume_and_envelope.sweep_pace();
-        if pace == 0 || !self.enabled.enabled {
+        if pace == 0 || !self.enabled.enabled || self.envelope_stopped {
             return;
         }
+        // HEPO captures the saturation decode at the fire: a saturated
+        // counter latches JEME instead of stepping — no arithmetic clamp.
         match self.volume_and_envelope.direction() {
             EnvelopeDirection::Increase => {
-                if self.current_volume < 15 {
+                if self.current_volume == 15 {
+                    self.envelope_stopped = true;
+                } else {
                     self.current_volume += 1;
                 }
             }
             EnvelopeDirection::Decrease => {
-                if self.current_volume > 0 {
+                if self.current_volume == 0 {
+                    self.envelope_stopped = true;
+                } else {
                     self.current_volume -= 1;
                 }
             }
