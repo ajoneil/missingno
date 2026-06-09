@@ -34,8 +34,8 @@ use missingno_gb::ppu::{
     resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu, shared_oam_dma_write_conflict_byte,
-    timers::Timers,
+    Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu, dma::Dma, joypad::Joypad,
+    shared_oam_dma_write_conflict_byte, timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -401,6 +401,10 @@ impl PpuModel for CgbPpu {
             self.obj_cram.install(0, obj0);
             self.obj_cram.install(1, obj1);
         }
+        // The boot ROM's palette writes leave the CRAM index registers at
+        // $C8/$D0 (auto-increment on).
+        self.bg_cram.write_index(0xC8);
+        self.obj_cram.write_index(0xD0);
     }
 
     fn obj_data_bank(&self, attrs: Attributes) -> u8 {
@@ -447,15 +451,27 @@ impl PpuModel for CgbPpu {
     }
 
     fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
-        if self.dmg_compat {
-            return 0xFF; // CRAM is locked to the boot palette in DMG-compat mode.
+        // DMG-compat locks only the CRAM data port; the index registers
+        // stay live (boot leftovers read back).
+        if self.dmg_compat
+            && matches!(
+                register,
+                ColorRegister::BackgroundData | ColorRegister::ObjectData
+            )
+        {
+            return 0xFF;
         }
         self.read_cram_register(register, rendering)
     }
 
     fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
-        if self.dmg_compat {
-            return; // CRAM is locked to the boot palette in DMG-compat mode.
+        if self.dmg_compat
+            && matches!(
+                register,
+                ColorRegister::BackgroundData | ColorRegister::ObjectData
+            )
+        {
+            return;
         }
         self.write_cram_register(register, value, rendering);
     }
@@ -593,6 +609,11 @@ pub struct Cgb {
     /// `data_phase_n↑` latch actually saw (`resolve_read_latch` consumes them).
     pre_grid_stat: u8,
     pre_grid_read_lock: Option<bool>,
+    /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF75
+    /// bits 6-4 (the rest read 1).
+    ff72: u8,
+    ff73: u8,
+    ff75: u8,
 }
 
 impl Default for Cgb {
@@ -607,6 +628,9 @@ impl Default for Cgb {
             speed_switch_blackout: 0,
             pre_grid_stat: 0,
             pre_grid_read_lock: None,
+            ff72: 0,
+            ff73: 0,
+            ff75: 0,
         }
     }
 }
@@ -661,6 +685,7 @@ impl Model for Cgb {
     type Ppu = CgbPpu;
     type Screen = Screen;
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
+    const HAS_PCM_REGISTERS: bool = true;
 
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))
@@ -706,12 +731,30 @@ impl Model for Cgb {
 
     /// CGB boot-ROM handoff is mid-VBlank; the line depends on the boot
     /// duration (CGB cart: line 144, dot ~164; DMG cart: line 148, dot ~356).
+    /// The boot ROM also zeroes OBP0/OBP1 (DMG leaves them at $FF).
     fn ppu_post_boot(cgb_cart: bool) -> Ppu<CgbPpu> {
-        if cgb_cart {
+        let mut ppu = if cgb_cart {
             Ppu::post_boot_vblank_handoff(144, 41)
         } else {
             Ppu::post_boot_vblank_handoff(148, 88)
+        };
+        ppu.set_post_boot_object_palettes(0x00);
+        ppu
+    }
+
+    /// The CGB boot ROM hands off with both key-matrix lines deselected
+    /// (P1 reads $FF).
+    fn joypad_post_boot() -> Joypad {
+        Joypad {
+            read_buttons: false,
+            read_dpad: false,
+            pressed_buttons: Vec::new(),
         }
+    }
+
+    /// The CGB boot ROM leaves FF46 reading $00.
+    fn dma_post_boot() -> Dma {
+        Dma::with_source_register(0x00)
     }
 
     fn resolve_stop(&mut self) -> StopAction {
@@ -790,8 +833,11 @@ impl Model for Cgb {
             return Some(self.wram[i]);
         }
         match address {
-            // KEY0: boot-locked; reads the latched mode ($04 = DMG-compat, else $00).
-            0xFF4C => Some(if self.dmg_compat { 0x04 } else { 0x00 }),
+            // DMG-compat locks out the speed/banking/priority registers —
+            // they read as open bus for the rest of the session.
+            0xFF4C | 0xFF4D | 0xFF6C | 0xFF70 if self.dmg_compat => Some(0xFF),
+            // KEY0: boot-locked; reads the latched mode ($00 = CGB).
+            0xFF4C => Some(0x00),
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
             0xFF4F => Some(vram.read_bank_select()),                                         // VBK
             // HDMA1-4 are write-only.
@@ -810,6 +856,9 @@ impl Model for Cgb {
             0xFF6B => Some(ppu.read_color_register(ColorRegister::ObjectData)),      // OCPD
             0xFF6C => Some(ppu.read_object_priority()),                              // OPRI
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
+            0xFF72 => Some(self.ff72),
+            0xFF73 => Some(self.ff73),
+            0xFF75 => Some(0x8F | (self.ff75 & 0x70)),
             _ => None,
         }
     }
@@ -826,6 +875,8 @@ impl Model for Cgb {
             return true;
         }
         match address {
+            // DMG-compat locks out the speed/banking/priority/VRAM-DMA registers.
+            0xFF4D | 0xFF51..=0xFF55 | 0xFF6C | 0xFF70 if self.dmg_compat => true,
             0xFF4C => true, // KEY0: boot-locked, ignore
             0xFF4D => {
                 self.key1_armed = value & 0x01 != 0;
@@ -894,6 +945,18 @@ impl Model for Cgb {
             }
             0xFF70 => {
                 self.svbk = value & 0x07;
+                true
+            }
+            0xFF72 => {
+                self.ff72 = value;
+                true
+            }
+            0xFF73 => {
+                self.ff73 = value;
+                true
+            }
+            0xFF75 => {
+                self.ff75 = value;
                 true
             }
             _ => false,

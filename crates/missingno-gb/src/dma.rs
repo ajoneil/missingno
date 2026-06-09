@@ -70,6 +70,14 @@ impl Dma {
         }
     }
 
+    /// Idle DMA with a model-specific FF46 reset value.
+    pub fn with_source_register(source_register: u8) -> Self {
+        Self {
+            source_register,
+            ..Self::new()
+        }
+    }
+
     /// Last value written to the DMA register (0xFF46).
     pub fn source_register(&self) -> u8 {
         self.source_register

@@ -82,6 +82,9 @@ pub trait Model: Default {
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
 
+    /// CGB silicon exposes the APU channel DAC outputs at FF76/FF77.
+    const HAS_PCM_REGISTERS: bool = false;
+
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
@@ -121,6 +124,17 @@ pub trait Model: Default {
     /// boot duration depends on the cartridge's CGB header flag.
     fn ppu_post_boot(_cgb_cart: bool) -> Ppu<Self::Ppu> {
         Ppu::post_boot()
+    }
+
+    /// Post-boot joypad state — the CGB boot ROM deselects both key matrix
+    /// lines; the DMG boot ROM leaves both selected.
+    fn joypad_post_boot() -> Joypad {
+        Joypad::new()
+    }
+
+    /// Post-boot OAM-DMA state — the CGB boot ROM leaves FF46 reading 0.
+    fn dma_post_boot() -> Dma {
+        Dma::new()
     }
 
     /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
@@ -412,7 +426,11 @@ impl<M: Model> Console<M> {
         } else {
             M::ppu_post_boot(cgb_cart)
         };
-        self.joypad = Joypad::new();
+        self.joypad = if has_boot_rom {
+            Joypad::new()
+        } else {
+            M::joypad_post_boot()
+        };
         self.interrupts = interrupts::Registers::new();
         self.serial = serial_transfer::Serial::new();
         self.timers = if has_boot_rom {
@@ -425,7 +443,11 @@ impl<M: Model> Console<M> {
         } else {
             Audio::post_boot(self.timers.internal_counter)
         };
-        self.dma = Dma::new();
+        self.dma = if has_boot_rom {
+            Dma::new()
+        } else {
+            M::dma_post_boot()
+        };
         self.vram_bus = VramBus::new();
         self.model.on_reset(&self.external.cartridge, has_boot_rom);
 

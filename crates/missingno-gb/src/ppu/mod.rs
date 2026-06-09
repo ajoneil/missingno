@@ -219,6 +219,13 @@ impl<P: PpuModel> Ppu<P> {
         ppu
     }
 
+    /// Boot-ROM residue in the object palette latches (the CGB boot ROM
+    /// zeroes OBP0/OBP1; the DMG boot ROM leaves them at $FF).
+    pub fn set_post_boot_object_palettes(&mut self, value: u8) {
+        self.registers.palettes.sprite0 = DffLatch::new(value);
+        self.registers.palettes.sprite1 = DffLatch::new(value);
+    }
+
     /// Post-boot state with a model-specific handoff phase: mid-VBlank
     /// on line `ly` at horizontal counter `lx`.
     pub fn post_boot_vblank_handoff(ly: u8, lx: u8) -> Self {

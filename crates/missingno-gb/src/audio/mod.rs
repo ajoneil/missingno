@@ -105,6 +105,16 @@ impl Audio {
         self.enabled
     }
 
+    /// PCM12: CGB-only digital tap of the channel DACs — CH1 low nibble, CH2 high.
+    pub fn pcm12(&self) -> u8 {
+        self.channels.ch1.digital_sample() | (self.channels.ch2.digital_sample() << 4)
+    }
+
+    /// PCM34: CH3 low nibble, CH4 high.
+    pub fn pcm34(&self) -> u8 {
+        self.channels.ch3.digital_sample() | (self.channels.ch4.digital_sample() << 4)
+    }
+
     pub fn channels(&self) -> &Channels {
         &self.channels
     }

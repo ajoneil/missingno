@@ -242,6 +242,8 @@ pub enum MappedAddress {
     InterruptRegister(interrupts::Register),
     AudioRegister(audio::Register),
     AudioWaveRam(u8),
+    AudioPcm12,
+    AudioPcm34,
     PpuRegister(ppu::Register),
     BeginDmaTransfer,
     BootRomUnmap,
@@ -297,6 +299,9 @@ impl MappedAddress {
             // CGB model map resolves them; the DMG base map leaves them unmapped.
             0xff4c..=0xff4f => Self::Unmapped,
             0xff50 => Self::BootRomUnmap,
+            // PCM12/PCM34 exist only on CGB silicon (HAS_PCM_REGISTERS).
+            0xff76 => Self::AudioPcm12,
+            0xff77 => Self::AudioPcm34,
             0xff51..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
@@ -491,6 +496,20 @@ impl<M: Model> Console<M> {
                 }
             }
             MappedAddress::OamExtra => 0x00,
+            MappedAddress::AudioPcm12 => {
+                if M::HAS_PCM_REGISTERS {
+                    self.audio.pcm12()
+                } else {
+                    0xFF
+                }
+            }
+            MappedAddress::AudioPcm34 => {
+                if M::HAS_PCM_REGISTERS {
+                    self.audio.pcm34()
+                } else {
+                    0xFF
+                }
+            }
             MappedAddress::Unmapped => 0xFF,
         }
     }
@@ -649,6 +668,7 @@ impl<M: Model> Console<M> {
             },
 
             MappedAddress::OamExtra => {}
+            MappedAddress::AudioPcm12 | MappedAddress::AudioPcm34 => {}
             MappedAddress::Unmapped => {}
         }
     }
