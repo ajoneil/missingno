@@ -38,6 +38,16 @@ impl StatInterrupt {
         }
     }
 
+    /// Post-boot comparator settled against the live LY (LYC=0).
+    pub(in crate::ppu) fn post_boot_at_line(ly: u8) -> Self {
+        let matches = ly == 0;
+        Self {
+            comparison_pending: matches,
+            comparison_latched: matches,
+            ..Self::post_boot()
+        }
+    }
+
     /// PALY recompute: `pending = (ly == lyc)`.
     pub(in crate::ppu) fn update_comparison(&mut self, ly: u8) {
         self.comparison_pending = ly == self.lyc;

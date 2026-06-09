@@ -35,6 +35,7 @@ use missingno_gb::ppu::{
 };
 use missingno_gb::{
     Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu, shared_oam_dma_write_conflict_byte,
+    timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -695,6 +696,22 @@ impl Model for Cgb {
 
     fn cpu_post_boot(_checksum: u8) -> Cpu {
         Cpu::post_boot_cgb()
+    }
+
+    /// CGB boot-ROM handoff divider phase. The boot ROM runs longer for a
+    /// DMG cartridge (compat-palette setup): FF04 reads $1E / $26.
+    fn timers_post_boot(cgb_cart: bool) -> Timers {
+        Timers::post_boot_with_counter(if cgb_cart { 0x47A8 } else { 0x099F })
+    }
+
+    /// CGB boot-ROM handoff is mid-VBlank; the line depends on the boot
+    /// duration (CGB cart: line 144, dot ~164; DMG cart: line 148, dot ~356).
+    fn ppu_post_boot(cgb_cart: bool) -> Ppu<CgbPpu> {
+        if cgb_cart {
+            Ppu::post_boot_vblank_handoff(144, 41)
+        } else {
+            Ppu::post_boot_vblank_handoff(148, 88)
+        }
     }
 
     fn resolve_stop(&mut self) -> StopAction {

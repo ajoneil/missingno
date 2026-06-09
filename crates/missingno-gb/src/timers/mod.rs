@@ -41,6 +41,14 @@ impl Timers {
         }
     }
 
+    /// Post-boot state with a model-specific divider phase at handoff.
+    pub fn post_boot_with_counter(internal_counter: u16) -> Self {
+        Self {
+            internal_counter,
+            ..Self::post_boot()
+        }
+    }
+
     /// Power-on state at the SM83's first M-cycle. dmg-sim-aligned:
     /// 0x8001 reaches 0xEAF3 after the boot ROM's 5,860,082 M-cycles.
     /// UKUP=1 from the standard first-tick toggle (D=~Q on the boundary

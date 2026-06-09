@@ -109,6 +109,20 @@ pub trait Model: Default {
         Cpu::post_boot(checksum)
     }
 
+    /// Post-boot timer state when no boot ROM is present — each console's
+    /// boot ROM leaves a different divider phase at handoff, and the CGB
+    /// boot duration depends on the cartridge's CGB header flag.
+    fn timers_post_boot(_cgb_cart: bool) -> timers::Timers {
+        timers::Timers::post_boot()
+    }
+
+    /// Post-boot PPU state when no boot ROM is present — each console's
+    /// boot ROM hands off at a different point in the frame, and the CGB
+    /// boot duration depends on the cartridge's CGB header flag.
+    fn ppu_post_boot(_cgb_cart: bool) -> Ppu<Self::Ppu> {
+        Ppu::post_boot()
+    }
+
     /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
     /// CGB performs a double-speed switch when KEY1 is armed (toggling its
     /// own speed bit, arming its blackout) and otherwise stays stopped.
@@ -392,10 +406,11 @@ impl<M: Model> Console<M> {
         };
         self.screen = M::Screen::default();
         self.high_ram = HighRam::new();
+        let cgb_cart = self.external.cartridge.is_cgb();
         self.ppu = if has_boot_rom {
             Ppu::new()
         } else {
-            Ppu::post_boot()
+            M::ppu_post_boot(cgb_cart)
         };
         self.joypad = Joypad::new();
         self.interrupts = interrupts::Registers::new();
@@ -403,7 +418,7 @@ impl<M: Model> Console<M> {
         self.timers = if has_boot_rom {
             timers::Timers::new()
         } else {
-            timers::Timers::post_boot()
+            M::timers_post_boot(cgb_cart)
         };
         self.audio = if has_boot_rom {
             Audio::new()
