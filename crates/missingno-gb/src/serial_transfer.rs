@@ -181,28 +181,57 @@ impl Registers {
 
         // Internal clock maintenance: the serial clock phase is free-running,
         // toggling on counter edges regardless of transfer mode or state.
-        let clock_bit = if fast_clock_available && self.control.contains(Control::FAST_CLOCK) {
-            FAST_CLOCK_BIT
-        } else {
-            CLOCK_BIT
-        };
+        let clock_bit = self.clock_bit(fast_clock_available);
         let old = self.previous_counter;
         self.previous_counter = counter;
         let fell = (old & clock_bit) != 0 && (counter & clock_bit) == 0;
         if fell {
-            self.serial_clock = !self.serial_clock;
-
-            // Shift on the falling edge of serial_clock (just became false),
-            // but only in internal clock mode with an active transfer.
-            if !self.serial_clock
-                && self.bits_remaining > 0
-                && self.control.contains(Control::INTERNAL_CLOCK)
-            {
-                result = self.shift_bit(link);
-            }
+            result = self.clock_fall(link);
         }
 
         result
+    }
+
+    /// A DIV write zeroes the internal counter mid-M-cycle; if the tapped
+    /// bit was 1, the zeroing is a falling edge on it. Resetting
+    /// `previous_counter` keeps the next boundary from re-detecting the
+    /// same fall.
+    pub fn on_div_write(
+        &mut self,
+        old_counter: u16,
+        fast_clock_available: bool,
+        link: &mut dyn SerialLink,
+    ) -> Option<Interrupt> {
+        let clock_bit = self.clock_bit(fast_clock_available);
+        self.previous_counter = 0;
+        if old_counter & clock_bit != 0 {
+            self.clock_fall(link)
+        } else {
+            None
+        }
+    }
+
+    fn clock_bit(&self, fast_clock_available: bool) -> u16 {
+        if fast_clock_available && self.control.contains(Control::FAST_CLOCK) {
+            FAST_CLOCK_BIT
+        } else {
+            CLOCK_BIT
+        }
+    }
+
+    /// Falling edge of the tapped counter bit: toggle the free-running
+    /// serial clock, shifting on the toggle's own falling edge — but only
+    /// in internal clock mode with an active transfer.
+    fn clock_fall(&mut self, link: &mut dyn SerialLink) -> Option<Interrupt> {
+        self.serial_clock = !self.serial_clock;
+        if !self.serial_clock
+            && self.bits_remaining > 0
+            && self.control.contains(Control::INTERNAL_CLOCK)
+        {
+            self.shift_bit(link)
+        } else {
+            None
+        }
     }
 }
 
@@ -227,6 +256,16 @@ impl Serial {
     pub fn mcycle(&mut self, counter: u16, fast_clock_available: bool) -> Option<Interrupt> {
         self.registers
             .mcycle(counter, fast_clock_available, &mut *self.link)
+    }
+
+    /// DIV-write edge injection. See `Registers::on_div_write`.
+    pub fn on_div_write(
+        &mut self,
+        old_counter: u16,
+        fast_clock_available: bool,
+    ) -> Option<Interrupt> {
+        self.registers
+            .on_div_write(old_counter, fast_clock_available, &mut *self.link)
     }
 
     /// Arm a new transfer (called when SC is written with ENABLE).

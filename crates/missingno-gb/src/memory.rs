@@ -619,6 +619,12 @@ impl<M: Model> Console<M> {
                     let old_counter = self.timers.internal_counter();
                     self.timers.write_register(register, value);
                     self.audio.on_div_write(old_counter);
+                    if let Some(interrupt) = self
+                        .serial
+                        .on_div_write(old_counter, self.model.has_serial_fast_clock())
+                    {
+                        self.interrupts.request(interrupt);
+                    }
                 } else {
                     self.timers.write_register(register, value);
                 }
