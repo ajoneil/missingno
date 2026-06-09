@@ -118,6 +118,10 @@ pub struct IrqContext {
     /// phase-gated `dispatch.latched()`. Drives the HALT-release
     /// chain (yoii → ykua → ynkw).
     pub(super) irq_latched: Dff<bool>,
+    /// CGB halt-release presample: the wake comparator state captured
+    /// at the T2 rise, consumed by yoii's boundary capture while halted
+    /// (the CGB samples IF&IE two T-cycles earlier than the DMG).
+    pub(super) halt_wake_presample: bool,
 }
 
 impl IrqContext {
@@ -130,6 +134,7 @@ impl IrqContext {
             irq_ack_held: None,
             irq_pending: false,
             irq_latched: Dff::new(false),
+            halt_wake_presample: false,
         }
     }
 }

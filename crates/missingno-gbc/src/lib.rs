@@ -740,6 +740,10 @@ impl Model for Cgb {
         !self.dmg_compat
     }
 
+    fn halt_wake_samples_early(&self) -> bool {
+        !self.double_speed
+    }
+
     /// CGB boot-ROM handoff divider phase. The boot ROM runs longer for a
     /// DMG cartridge (compat-palette setup): FF04 reads $1E / $26.
     fn timers_post_boot(cgb_cart: bool) -> Timers {

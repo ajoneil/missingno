@@ -90,6 +90,14 @@ pub trait Model: Default {
     /// CGB silicon exposes the APU channel DAC outputs at FF76/FF77.
     const HAS_PCM_REGISTERS: bool = false;
 
+    /// CGB's halt-release comparator samples IF&IE two T-cycles before
+    /// the M-cycle boundary; DMG samples at the boundary. (CGB double
+    /// speed: sub-cycle placement is owned by the deferred DS clock-model
+    /// pass — the model reports false there for now.)
+    fn halt_wake_samples_early(&self) -> bool {
+        false
+    }
+
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 

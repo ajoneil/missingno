@@ -468,7 +468,8 @@ impl<M: Model> Console<M> {
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
         // through the prior M-cycle's data phase.
-        self.cpu.tick_irq_latched();
+        self.cpu
+            .tick_irq_latched(self.model.halt_wake_samples_early());
 
         // data_phase_n↑ reopens the per-bit irq_latch_inst<i> to
         // re-snapshot IF for this M-cycle's dispatch.
@@ -565,6 +566,11 @@ impl<M: Model> Console<M> {
         // transparent throughout.
         if tcycle.as_u8() == 2 && !self.cpu.halt_rs_latched() {
             self.cpu.dispatch.set_data_phase_n(false);
+        }
+
+        // T2 rise: the CGB halt-release chain's sample point.
+        if tcycle.as_u8() == 2 {
+            self.cpu.presample_halt_wake();
         }
 
         // step_zkog: zaij = ime ∧ data_phase ∧ int_take ∧ xogs. HALT

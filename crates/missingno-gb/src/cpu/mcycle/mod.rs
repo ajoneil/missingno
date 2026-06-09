@@ -72,13 +72,24 @@ impl Cpu {
         self.irq.irq_pending = triggered.is_some();
     }
 
+    /// Capture the wake comparator state at the T2 rise — the sample
+    /// the CGB's halt-release chain consumes at the next boundary.
+    pub fn presample_halt_wake(&mut self) {
+        self.irq.halt_wake_presample = !self.dispatch.latched().is_empty();
+    }
+
     /// Clock `irq_latched` (yoii). D is the data-phase-gated priority
     /// chain output (`dispatch.latched()`), not raw `irq_pending`.
-    /// Drives the HALT-release chain.
-    pub fn tick_irq_latched(&mut self) {
-        self.irq
-            .irq_latched
-            .write(!self.dispatch.latched().is_empty());
+    /// Drives the HALT-release chain. With `samples_early` (CGB), a
+    /// halted CPU's capture consumes the T2 presample instead, so an
+    /// IF edge in the final two T-cycles waits one more M-cycle.
+    pub fn tick_irq_latched(&mut self, samples_early: bool) {
+        let d = if samples_early && self.halt_rs_latched() {
+            self.irq.halt_wake_presample
+        } else {
+            !self.dispatch.latched().is_empty()
+        };
+        self.irq.irq_latched.write(d);
         self.irq.irq_latched.tick();
     }
 }
