@@ -480,7 +480,9 @@ impl<M: Model> Console<M> {
                 }
             },
             MappedAddress::AudioRegister(register) => self.audio.read_register(register),
-            MappedAddress::AudioWaveRam(offset) => self.audio.read_wave_ram(offset),
+            MappedAddress::AudioWaveRam(offset) => {
+                self.audio.read_wave_ram(offset, M::WAVE_RAM_COUPLING)
+            }
             MappedAddress::PpuRegister(register) => self.ppu.read_register(register),
             MappedAddress::BeginDmaTransfer => self.dma.source_register(),
             MappedAddress::BootRomUnmap => {
@@ -624,7 +626,10 @@ impl<M: Model> Console<M> {
                 self.audio
                     .write_register(register, value, self.timers.internal_counter())
             }
-            MappedAddress::AudioWaveRam(offset) => self.audio.write_wave_ram(offset, value),
+            MappedAddress::AudioWaveRam(offset) => {
+                self.audio
+                    .write_wave_ram(offset, value, M::WAVE_RAM_COUPLING)
+            }
             MappedAddress::PpuRegister(register) => {
                 let halt_wake_active = self.cpu.is_halt_wake_active();
                 if self.ppu.write_register(register, value, halt_wake_active) {

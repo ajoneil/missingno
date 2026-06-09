@@ -33,6 +33,7 @@ use ppu::Ppu;
 use ppu::memory::Vram;
 use ppu::model::PpuModel;
 
+pub use audio::channels::wave::WaveRamCoupling;
 pub use master_clock::ClockPhase;
 pub use memory::BootRom;
 pub use ppu::PixelOutput;
@@ -81,6 +82,10 @@ pub trait Model: Default {
 
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
+
+    /// How the CPU couples to CH3's wave SRAM while the channel is active:
+    /// DMG only during the fetch strobe, CGB always at the channel's byte.
+    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::FetchStrobe;
 
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";

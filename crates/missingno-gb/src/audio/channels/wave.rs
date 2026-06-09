@@ -4,6 +4,18 @@ use super::{
     registers::{PeriodHighAndControl, Signed11},
 };
 
+/// How the CPU couples to CH3's wave SRAM while the channel is active.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WaveRamCoupling {
+    /// DMG: the CPU reaches the SRAM only during CH3's own fetch
+    /// strobe (BUSA/AZUS window); outside it the bus floats to 0xFF,
+    /// and a retrigger inside it shorts wordlines (row corruption).
+    FetchStrobe,
+    /// CGB: arbitration grants the CPU the channel's current byte
+    /// unconditionally; no float window, no retrigger corruption.
+    ChannelPosition,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Register {
     Volume,
@@ -215,7 +227,7 @@ impl WaveChannel {
         }
     }
 
-    pub fn tcycle(&mut self, t_index: u8, apu_reset_n: bool) {
+    pub fn tcycle(&mut self, t_index: u8, apu_reset_n: bool, coupling: WaveRamCoupling) {
         // `cery` async-reset: held at 0 while `apu_reset = 1`. The
         // downstream divider / synchroniser chain is held inert via
         // `ch3_fdis = 1` and so doesn't need separate gating.
@@ -261,7 +273,7 @@ impl WaveChannel {
             } else if self.trigger_sync.armed {
                 self.trigger_sync.self_clear = false;
                 self.trigger_sync.restart = true;
-                self.on_ch3_restart_rise();
+                self.on_ch3_restart_rise(coupling);
             } else {
                 self.trigger_sync.self_clear = false;
             }
@@ -294,16 +306,18 @@ impl WaveChannel {
     }
 
     /// `ch3_restart ↑` effects: wave-RAM corruption if the SRAM
-    /// bit-lines are still driven, then wave-position async-reset
-    /// and divider load.
-    fn on_ch3_restart_rise(&mut self) {
+    /// bit-lines are still driven (DMG coupling only), then
+    /// wave-position async-reset and divider load.
+    fn on_ch3_restart_rise(&mut self, coupling: WaveRamCoupling) {
         // Retrigger-during-active-read shorts SRAM wordlines, copying
         // part of CH3's currently-read row into ram[0..3]. With
         // byte_pos < 4 (source row == destination row 0) only one
         // cell shorts, so just ram[0] gets ram[byte_pos]. With
         // byte_pos >= 4, four column wordlines are enabled across
         // both rows and the full 4-byte row copies through.
-        if self.wave_data_latch.latched || self.wave_data_latch.extended {
+        if coupling == WaveRamCoupling::FetchStrobe
+            && (self.wave_data_latch.latched || self.wave_data_latch.extended)
+        {
             let byte_pos = (self.wave_position as usize) >> 1;
             if byte_pos < 4 {
                 self.ram[0] = self.ram[byte_pos];
@@ -383,14 +397,15 @@ impl Volume {
 
 impl Audio {
     /// Active-channel reads return the byte at the current wave
-    /// position only while `wave_data_latch` is high — outside that
-    /// ~1-T-cycle pulse the bus floats to 0xFF.
-    pub fn read_wave_ram(&self, offset: u8) -> u8 {
+    /// position — under `FetchStrobe` coupling only while
+    /// `wave_data_latch` is high (outside that ~1-T-cycle pulse the
+    /// bus floats to 0xFF); under `ChannelPosition` coupling always.
+    pub fn read_wave_ram(&self, offset: u8, coupling: WaveRamCoupling) -> u8 {
         let ch3 = &self.channels.ch3;
         if !ch3.enabled.enabled {
             return ch3.ram[offset as usize];
         }
-        if ch3.wave_data_latch.latched {
+        if coupling == WaveRamCoupling::ChannelPosition || ch3.wave_data_latch.latched {
             ch3.ram[ch3.wave_position as usize / 2]
         } else {
             0xFF
@@ -398,18 +413,21 @@ impl Audio {
     }
 
     /// Active-channel writes target `ram[wave_position[4:1]]` (= the
-    /// byte CH3 is reading) but only commit when the SRAM wordline
-    /// driver is out of precharge. The `(latched | extended)` check
-    /// at the T=3 fall commit edge covers both half-T edges of T=3
-    /// of the `wave_ram_wr` pulse — sufficient for every alignment
-    /// the test ROMs exercise.
-    pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
+    /// byte CH3 is reading). Under `FetchStrobe` coupling they only
+    /// commit when the SRAM wordline driver is out of precharge: the
+    /// `(latched | extended)` check at the T=3 fall commit edge covers
+    /// both half-T edges of T=3 of the `wave_ram_wr` pulse. Under
+    /// `ChannelPosition` coupling they always commit.
+    pub fn write_wave_ram(&mut self, offset: u8, value: u8, coupling: WaveRamCoupling) {
         let ch3 = &mut self.channels.ch3;
         if !ch3.enabled.enabled {
             ch3.ram[offset as usize] = value;
             return;
         }
-        if ch3.wave_data_latch.latched || ch3.wave_data_latch.extended {
+        if coupling == WaveRamCoupling::ChannelPosition
+            || ch3.wave_data_latch.latched
+            || ch3.wave_data_latch.extended
+        {
             let byte_idx = ch3.wave_position as usize / 2;
             ch3.ram[byte_idx] = value;
         }

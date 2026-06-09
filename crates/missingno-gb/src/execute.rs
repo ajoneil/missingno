@@ -322,8 +322,12 @@ impl<M: Model> Console<M> {
         // APU prescaler tick (apuv ↑) on every master-clock rise.
         if advance_ppu {
             let double_speed = self.model.cpu_steps_per_dot() == 2;
-            self.audio
-                .tcycle(self.timers.internal_counter(), tcycle.as_u8(), double_speed);
+            self.audio.tcycle(
+                self.timers.internal_counter(),
+                tcycle.as_u8(),
+                double_speed,
+                M::WAVE_RAM_COUPLING,
+            );
         }
 
         if is_mcycle_boundary {

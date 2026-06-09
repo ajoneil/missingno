@@ -34,7 +34,8 @@ use missingno_gb::ppu::{
     resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, cartridge::Cartridge, cpu::Cpu, shared_oam_dma_write_conflict_byte,
+    Console, Model, StopAction, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu,
+    shared_oam_dma_write_conflict_byte,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -660,6 +661,7 @@ impl Model for Cgb {
     type Ppu = CgbPpu;
     type Screen = Screen;
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
+    const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::ChannelPosition;
 
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))

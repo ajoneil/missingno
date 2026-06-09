@@ -140,7 +140,13 @@ impl Audio {
     /// `apu_reset_n` is NR52 bit 7 — the channels' prescaler DFFs
     /// honour it as an async-reset, so we still call each tcycle
     /// unconditionally to keep the reset edge observable.
-    pub fn tcycle(&mut self, div_counter: u16, t_index: u8, double_speed: bool) {
+    pub fn tcycle(
+        &mut self,
+        div_counter: u16,
+        t_index: u8,
+        double_speed: bool,
+        wave_ram_coupling: wave::WaveRamCoupling,
+    ) {
         let div_apu_bit = if double_speed {
             DIV_APU_BIT_DOUBLE
         } else {
@@ -149,7 +155,9 @@ impl Audio {
         let apu_reset_n = self.enabled;
         self.channels.ch1.tcycle(apu_reset_n);
         self.channels.ch2.tcycle(apu_reset_n);
-        self.channels.ch3.tcycle(t_index, apu_reset_n);
+        self.channels
+            .ch3
+            .tcycle(t_index, apu_reset_n, wave_ram_coupling);
         self.channels.ch4.tcycle(apu_reset_n);
 
         if !self.enabled {
