@@ -614,6 +614,10 @@ pub struct Cgb {
     ff72: u8,
     ff73: u8,
     ff75: u8,
+    /// CGB ≤C extra OAM rows: 24 RAM bytes behind a decoder that ignores
+    /// address bits 3-4 (three 8-byte rows at $FEA0/$FEC0/$FEE0, each
+    /// aliased 4x in its block).
+    extra_oam: [u8; 24],
 }
 
 impl Default for Cgb {
@@ -631,11 +635,19 @@ impl Default for Cgb {
             ff72: 0,
             ff73: 0,
             ff75: 0,
+            extra_oam: [0; 24],
         }
     }
 }
 
 impl Cgb {
+    /// Index into `extra_oam` for a $FEA0-$FEFF address: row from address
+    /// bits 6-5, offset from bits 2-0 (bits 3-4 ignored by the decoder).
+    fn extra_oam_index(address: u16) -> usize {
+        let row = ((address >> 5) & 0x7) as usize - 5;
+        row * 8 + (address & 0x7) as usize
+    }
+
     /// Index into `wram` for a work-RAM or echo-RAM address, else `None`.
     fn wram_index(&self, address: u16) -> Option<usize> {
         let bank = if self.svbk == 0 { 1 } else { self.svbk } as usize;
@@ -838,6 +850,7 @@ impl Model for Cgb {
             return Some(self.wram[i]);
         }
         match address {
+            0xFEA0..=0xFEFF => Some(self.extra_oam[Self::extra_oam_index(address)]),
             // DMG-compat locks out the speed/banking/priority registers —
             // they read as open bus for the rest of the session.
             0xFF4C | 0xFF4D | 0xFF6C | 0xFF70 if self.dmg_compat => Some(0xFF),
@@ -880,6 +893,10 @@ impl Model for Cgb {
             return true;
         }
         match address {
+            0xFEA0..=0xFEFF => {
+                self.extra_oam[Self::extra_oam_index(address)] = value;
+                true
+            }
             // DMG-compat locks out the speed/banking/priority/VRAM-DMA registers.
             0xFF4D | 0xFF51..=0xFF55 | 0xFF6C | 0xFF70 if self.dmg_compat => true,
             0xFF4C => true, // KEY0: boot-locked, ignore

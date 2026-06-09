@@ -552,8 +552,9 @@ impl<M: Model> Console<M> {
             kind: BusAccessKind::Write,
         });
         if self.dma.is_active_on_bus().is_some() {
-            // OAM is being written by DMA; CPU writes are ignored.
-            if (0xFE00..=0xFE9F).contains(&address) {
+            // The OAM block (extra rows included) is being written by DMA;
+            // CPU writes are ignored.
+            if (0xFE00..=0xFEFF).contains(&address) {
                 return;
             }
             // Source-bus conflict: the CPU's write strobe collides with
