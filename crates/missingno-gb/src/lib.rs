@@ -87,6 +87,9 @@ pub trait Model: Default {
     /// DMG only during the fetch strobe, CGB always at the channel's byte.
     const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::FetchStrobe;
 
+    /// CGB silicon exposes the APU channel DAC outputs at FF76/FF77.
+    const HAS_PCM_REGISTERS: bool = false;
+
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
@@ -118,6 +121,31 @@ pub trait Model: Default {
     /// from the header checksum; CGB uses a fixed register file (A=$11).
     fn cpu_post_boot(checksum: u8) -> Cpu {
         Cpu::post_boot(checksum)
+    }
+
+    /// Post-boot timer state when no boot ROM is present — each console's
+    /// boot ROM leaves a different divider phase at handoff, and the CGB
+    /// boot duration depends on the cartridge's CGB header flag.
+    fn timers_post_boot(_cgb_cart: bool) -> timers::Timers {
+        timers::Timers::post_boot()
+    }
+
+    /// Post-boot PPU state when no boot ROM is present — each console's
+    /// boot ROM hands off at a different point in the frame, and the CGB
+    /// boot duration depends on the cartridge's CGB header flag.
+    fn ppu_post_boot(_cgb_cart: bool) -> Ppu<Self::Ppu> {
+        Ppu::post_boot()
+    }
+
+    /// Post-boot joypad state — the CGB boot ROM deselects both key matrix
+    /// lines; the DMG boot ROM leaves both selected.
+    fn joypad_post_boot() -> Joypad {
+        Joypad::new()
+    }
+
+    /// Post-boot OAM-DMA state — the CGB boot ROM leaves FF46 reading 0.
+    fn dma_post_boot() -> Dma {
+        Dma::new()
     }
 
     /// Resolve a STOP the CPU has settled into. DMG always stays stopped;
@@ -403,25 +431,34 @@ impl<M: Model> Console<M> {
         };
         self.screen = M::Screen::default();
         self.high_ram = HighRam::new();
+        let cgb_cart = self.external.cartridge.is_cgb();
         self.ppu = if has_boot_rom {
             Ppu::new()
         } else {
-            Ppu::post_boot()
+            M::ppu_post_boot(cgb_cart)
         };
-        self.joypad = Joypad::new();
+        self.joypad = if has_boot_rom {
+            Joypad::new()
+        } else {
+            M::joypad_post_boot()
+        };
         self.interrupts = interrupts::Registers::new();
         self.serial = serial_transfer::Serial::new();
         self.timers = if has_boot_rom {
             timers::Timers::new()
         } else {
-            timers::Timers::post_boot()
+            M::timers_post_boot(cgb_cart)
         };
         self.audio = if has_boot_rom {
             Audio::new()
         } else {
             Audio::post_boot(self.timers.internal_counter)
         };
-        self.dma = Dma::new();
+        self.dma = if has_boot_rom {
+            Dma::new()
+        } else {
+            M::dma_post_boot()
+        };
         self.vram_bus = VramBus::new();
         self.model.on_reset(&self.external.cartridge, has_boot_rom);
 

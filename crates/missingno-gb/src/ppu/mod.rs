@@ -219,6 +219,23 @@ impl<P: PpuModel> Ppu<P> {
         ppu
     }
 
+    /// Boot-ROM residue in the object palette latches (the CGB boot ROM
+    /// zeroes OBP0/OBP1; the DMG boot ROM leaves them at $FF).
+    pub fn set_post_boot_object_palettes(&mut self, value: u8) {
+        self.registers.palettes.sprite0 = DffLatch::new(value);
+        self.registers.palettes.sprite1 = DffLatch::new(value);
+    }
+
+    /// Post-boot state with a model-specific handoff phase: mid-VBlank
+    /// on line `ly` at horizontal counter `lx`.
+    pub fn post_boot_vblank_handoff(ly: u8, lx: u8) -> Self {
+        let mut ppu = Self::post_boot();
+        ppu.video.lines.x.value = lx;
+        ppu.video.lines.y = LineCounterY::vblank_handoff(ly);
+        ppu.video.stat = StatInterrupt::post_boot_at_line(ly);
+        ppu
+    }
+
     #[cfg(feature = "gbtrace")]
     pub fn from_snapshot(snap: &gbtrace::snapshot::PpuSnapshot, oam: Oam) -> Self {
         let control = Control::new(ControlFlags::from_bits_retain(snap.lcdc));

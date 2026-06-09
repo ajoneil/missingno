@@ -108,6 +108,15 @@ impl LineCounterY {
         }
     }
 
+    /// Mid-VBlank handoff on line `ly`: FF44 reads the counter directly.
+    pub(in crate::ppu) fn vblank_handoff(ly: u8) -> Self {
+        Self {
+            value: ly,
+            vblank: true,
+            frame_end_reset: false,
+        }
+    }
+
     /// Returns true on 153→0 wrap. POPU drop is sequenced by the next NYPE capture,
     /// not by this wrap.
     pub(in crate::ppu) fn advance_or_wrap(&mut self) -> bool {
