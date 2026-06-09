@@ -697,6 +697,10 @@ impl Model for Cgb {
         Cpu::post_boot_cgb()
     }
 
+    fn has_serial_fast_clock(&self) -> bool {
+        !self.dmg_compat
+    }
+
     fn resolve_stop(&mut self) -> StopAction {
         if self.key1_armed {
             self.double_speed = !self.double_speed;
