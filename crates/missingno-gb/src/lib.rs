@@ -101,6 +101,12 @@ pub trait Model: Default {
     /// Side effect of a JOYP write. DMG forwards the pulse to the SGB.
     fn on_joypad_write(&mut self, _value: u8) {}
 
+    /// CGB-mode SIO has the SC bit-1 fast-clock select (SIO_FAST); the bit
+    /// is unimplemented on DMG and in CGB DMG-compat mode (reads 1, no effect).
+    fn has_serial_fast_clock(&self) -> bool {
+        false
+    }
+
     /// Re-create model-specific state on power-cycle. DMG (re)builds the
     /// SGB co-processor from the cartridge header. `has_boot_rom` is true
     /// when a real boot ROM will run — the model must then skip any

@@ -496,7 +496,10 @@ impl<M: Model> Console<M> {
         // Serial bit-5 fall lands IF.serial in this M-cycle's
         // data-phase window for same-M-cycle dispatch.
         let counter = self.timers.internal_counter();
-        if let Some(interrupt) = self.serial.mcycle(counter) {
+        if let Some(interrupt) = self
+            .serial
+            .mcycle(counter, self.model.has_serial_fast_clock())
+        {
             self.interrupts.request(interrupt);
         }
     }

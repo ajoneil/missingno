@@ -6,6 +6,10 @@ use crate::interrupts::Interrupt;
 /// On DMG, this is bit 5 of the M-cycle counter, giving a base period of 256 T-cycles.
 const CLOCK_BIT: u16 = 1 << 5;
 
+/// CGB-mode SIO_FAST tap: bit 0 of the M-cycle counter, an 8-T-cycle
+/// half-period (262144 Hz bit clock).
+const FAST_CLOCK_BIT: u16 = 1 << 0;
+
 /// A device connected to the Game Boy's serial port (link cable).
 ///
 /// The Game Boy serial interface is a bidirectional shift register: on each
@@ -145,11 +149,23 @@ impl Registers {
         }
     }
 
+    /// Read SC. Unimplemented bits float high: bits 6-2 everywhere, and
+    /// bit 1 (SIO_FAST) too where the fast clock doesn't exist.
+    pub fn read_control(&self, fast_clock_available: bool) -> u8 {
+        let unimplemented = if fast_clock_available { 0x7C } else { 0x7E };
+        self.control.bits() | unimplemented
+    }
+
     /// Advance by one M-cycle. `counter` is the current internal 16-bit
     /// counter value, sampled at the M-cycle boundary rise just after
     /// `timers.mcycle()` increments it — the same edge on which
     /// `TAMA_DIV05p` transitions in hardware.
-    pub fn mcycle(&mut self, counter: u16, link: &mut dyn SerialLink) -> Option<Interrupt> {
+    pub fn mcycle(
+        &mut self,
+        counter: u16,
+        fast_clock_available: bool,
+        link: &mut dyn SerialLink,
+    ) -> Option<Interrupt> {
         let mut result = None;
 
         link.tick();
@@ -165,23 +181,57 @@ impl Registers {
 
         // Internal clock maintenance: the serial clock phase is free-running,
         // toggling on counter edges regardless of transfer mode or state.
+        let clock_bit = self.clock_bit(fast_clock_available);
         let old = self.previous_counter;
         self.previous_counter = counter;
-        let fell = (old & CLOCK_BIT) != 0 && (counter & CLOCK_BIT) == 0;
+        let fell = (old & clock_bit) != 0 && (counter & clock_bit) == 0;
         if fell {
-            self.serial_clock = !self.serial_clock;
-
-            // Shift on the falling edge of serial_clock (just became false),
-            // but only in internal clock mode with an active transfer.
-            if !self.serial_clock
-                && self.bits_remaining > 0
-                && self.control.contains(Control::INTERNAL_CLOCK)
-            {
-                result = self.shift_bit(link);
-            }
+            result = self.clock_fall(link);
         }
 
         result
+    }
+
+    /// A DIV write zeroes the internal counter mid-M-cycle; if the tapped
+    /// bit was 1, the zeroing is a falling edge on it. Resetting
+    /// `previous_counter` keeps the next boundary from re-detecting the
+    /// same fall.
+    pub fn on_div_write(
+        &mut self,
+        old_counter: u16,
+        fast_clock_available: bool,
+        link: &mut dyn SerialLink,
+    ) -> Option<Interrupt> {
+        let clock_bit = self.clock_bit(fast_clock_available);
+        self.previous_counter = 0;
+        if old_counter & clock_bit != 0 {
+            self.clock_fall(link)
+        } else {
+            None
+        }
+    }
+
+    fn clock_bit(&self, fast_clock_available: bool) -> u16 {
+        if fast_clock_available && self.control.contains(Control::FAST_CLOCK) {
+            FAST_CLOCK_BIT
+        } else {
+            CLOCK_BIT
+        }
+    }
+
+    /// Falling edge of the tapped counter bit: toggle the free-running
+    /// serial clock, shifting on the toggle's own falling edge — but only
+    /// in internal clock mode with an active transfer.
+    fn clock_fall(&mut self, link: &mut dyn SerialLink) -> Option<Interrupt> {
+        self.serial_clock = !self.serial_clock;
+        if !self.serial_clock
+            && self.bits_remaining > 0
+            && self.control.contains(Control::INTERNAL_CLOCK)
+        {
+            self.shift_bit(link)
+        } else {
+            None
+        }
     }
 }
 
@@ -203,8 +253,19 @@ impl Serial {
     }
 
     /// Advance by one M-cycle. See `Registers::mcycle`.
-    pub fn mcycle(&mut self, counter: u16) -> Option<Interrupt> {
-        self.registers.mcycle(counter, &mut *self.link)
+    pub fn mcycle(&mut self, counter: u16, fast_clock_available: bool) -> Option<Interrupt> {
+        self.registers
+            .mcycle(counter, fast_clock_available, &mut *self.link)
+    }
+
+    /// DIV-write edge injection. See `Registers::on_div_write`.
+    pub fn on_div_write(
+        &mut self,
+        old_counter: u16,
+        fast_clock_available: bool,
+    ) -> Option<Interrupt> {
+        self.registers
+            .on_div_write(old_counter, fast_clock_available, &mut *self.link)
     }
 
     /// Arm a new transfer (called when SC is written with ENABLE).
@@ -248,6 +309,8 @@ bitflags! {
     #[derive(Copy, Clone, Debug)]
     pub struct Control: u8 {
         const ENABLE         = 0b10000000;
+        /// SIO_FAST — CGB-mode only; unimplemented (reads 1) elsewhere.
+        const FAST_CLOCK     = 0b00000010;
         const INTERNAL_CLOCK = 0b00000001;
 
         const _OTHER = !0;
