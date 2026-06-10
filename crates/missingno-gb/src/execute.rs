@@ -327,10 +327,10 @@ impl<M: Model> Console<M> {
         }
 
         // The HDMA grant is M-boundary-quantized: bus ownership asserts and
-        // releases between M-cycles only. A dispatch sequence decided before
-        // this boundary holds the bus through its M-cycles (the grant
-        // defers); one decided at this boundary is picked after the sample
-        // and parks behind the block.
+        // releases between M-cycles only. A dispatch sequence already in
+        // flight when the transfer became ready holds the bus through its
+        // M-cycles (the grant defers); a dispatch starting with the transfer
+        // ready parks behind the block. Granted ownership is never revoked.
         if is_mcycle_boundary {
             self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
                 && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
@@ -764,8 +764,7 @@ impl<M: Model> Console<M> {
         // bus — gating on the hold keeps the transfer from overlapping the
         // arming instruction. (The trigger/quota tick ran before this edge's
         // write commit.) Idle (no-op) on the DMG.
-        let engine_gated = self.cpu.is_halted() || (self.cpu.is_stopped() && !self.dma_cpu_hold);
-        if (self.dma_cpu_hold || self.cpu.bus_suspended) && !engine_gated {
+        if self.dma_cpu_hold || self.cpu.bus_suspended {
             if !self.model.vram_dma_take_setup_cell() {
                 while let Some((src, dst)) = self.model.vram_dma_next_byte() {
                     self.dma_move(src, dst);
