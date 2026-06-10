@@ -219,10 +219,14 @@ impl<M: Model> Console<M> {
                 // edges; the dot domain stands still. Double→single carries no
                 // residue.
                 if self.model.cpu_steps_per_dot() == 2 {
-                    for _ in 0..2 {
+                    const SLIP_TCYCLES: u32 = 2;
+                    for _ in 0..SLIP_TCYCLES {
                         let _ = self.rise_work(false);
                         let _ = self.fall_work(false);
                     }
+                    // The slipped T-cycles are blackout progress: arm-to-resume
+                    // CPU time including the slip is the full blackout.
+                    let _ = self.model.drain_speed_switch_blackout(SLIP_TCYCLES);
                 }
                 // Hardware resets DIV across the switch (the model has already
                 // toggled its speed bit and armed its blackout).
