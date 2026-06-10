@@ -1,9 +1,10 @@
 //! Gambatte dual-target tests (CGB-C-compatible).
 //!
-//! All ROMs are tagged `_dmg08_cgb04c_out<HEX>.gbc`, meaning the test
-//! produces identical screen output on both DMG and CGB hardware. The
-//! 1,207 dual ROMs come from c-sp/game-boy-test-roms v7. Audio tests
-//! (`_outaudio0/1`) are excluded — no audio-output runner yet.
+//! ROMs are tagged with their expected output per model: shared
+//! `_dmg08_cgb04c_out<HEX>` (identical on both models) or model-split
+//! `_dmg08_out<X>_cgb04c_out<Y>`; this crate checks the `cgb04c`
+//! expectation. Audio tests use `outaudio0` (silent) / `outaudio1`
+//! (audible) markers. ROMs come from c-sp/game-boy-test-roms v7.
 //!
 //! ROMs are shared with the missingno-gb crate (same test scenarios,
 //! same expected outputs); loaded via `common::load_rom`.
@@ -81,16 +82,42 @@ fn check_screen(gbc: &missingno_gbc::GameBoyColor, rom_path: &str) {
     );
 }
 
+/// Extract the CGB-expected audio outcome from a Gambatte test
+/// filename. Both shared (`_dmg08_cgb04c_outaudioN`) and model-split
+/// (`_dmg08_outaudioN_cgb04c_outaudioM`) ROMs end with the
+/// `_cgb04c_outaudio` marker.
+fn extract_expected_audio(filename: &str) -> bool {
+    let marker = "_cgb04c_outaudio";
+    let pos = filename
+        .find(marker)
+        .expect("no _cgb04c_outaudio marker in filename");
+    filename.as_bytes()[pos + marker.len()] == b'1'
+}
+
+/// Gambatte audio test, matching gambatte's testrunner convention:
+/// pass if the LAST FRAME's samples are all equal to the first sample
+/// of that frame (`outaudio0`) or not all equal (`outaudio1`).
+/// Transient audio earlier in the run is expected on hardware and
+/// tolerated. Tolerance 0.005 accounts for APU DC-offset drift.
 fn run_gambatte_audio_test(rom_path: &str) {
     let mut gbc = common::load_rom(rom_path);
+    let _ = gbc.drain_audio_samples();
     common::run_for_tcycles(&mut gbc, TCYCLES);
 
     let samples = gbc.drain_audio_samples();
-    let any_audio = samples
-        .iter()
-        .any(|&(l, r)| l.abs() > 0.005 || r.abs() > 0.005);
+    let samples_per_frame = samples.len() / 15;
+    let last_frame_start = samples.len().saturating_sub(samples_per_frame);
+    let last_frame = &samples[last_frame_start..];
+    let any_audio = if let Some(&(l0, r0)) = last_frame.first() {
+        last_frame
+            .iter()
+            .any(|&(l, r)| (l - l0).abs() > 0.005 || (r - r0).abs() > 0.005)
+    } else {
+        false
+    };
 
-    let expect_audio = rom_path.contains("outaudio1");
+    let filename = rom_path.rsplit('/').next().unwrap();
+    let expect_audio = extract_expected_audio(filename);
     assert_eq!(
         any_audio,
         expect_audio,
@@ -11987,35 +12014,35 @@ gambatte_hex_test!(
     serial_start_wait_trigger_int8_read_if_2_dmg08_outE8_cgb04c_outE0,
     "gambatte/serial/start_wait_trigger_int8_read_if_2_dmg08_outE8_cgb04c_outE0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_pos_1_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch1_init_pos_1_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_pos_4_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch1_init_pos_4_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_pos_5_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch1_init_pos_5_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_pos_8_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch1_init_pos_8_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_reset_sweep_counter_timing_10_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch1_init_reset_sweep_counter_timing_10_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_reset_sweep_counter_timing_3_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch1_init_reset_sweep_counter_timing_3_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_reset_sweep_counter_timing_4_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch1_init_reset_sweep_counter_timing_4_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch1_init_reset_sweep_counter_timing_9_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch1_init_reset_sweep_counter_timing_9_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
@@ -12027,59 +12054,59 @@ gambatte_hex_test!(
     sound_ch1_init_reset_sweep_counter_timing_nr52_3_dmg08_out0_cgb04c_out1,
     "gambatte/sound/ch1_init_reset_sweep_counter_timing_nr52_3_dmg08_out0_cgb04c_out1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_env_counter_timing_2_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_env_counter_timing_2_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_env_counter_timing_3_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_env_counter_timing_3_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_10_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_env_counter_timing_10_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_11_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_env_counter_timing_11_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_14_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_env_counter_timing_14_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_15_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_env_counter_timing_15_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_2_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_env_counter_timing_2_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_4_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_env_counter_timing_4_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_5_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_env_counter_timing_5_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_env_counter_timing_7_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_env_counter_timing_7_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_length_counter_timing_2_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_length_counter_timing_2_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_length_counter_timing_3_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_length_counter_timing_3_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_length_counter_timing_6_dmg08_outaudio1_cgb04c_outaudio0,
     "gambatte/sound/ch2_init_reset_length_counter_timing_6_dmg08_outaudio1_cgb04c_outaudio0.gbc"
 );
-gambatte_hex_test!(
+gambatte_audio_test!(
     sound_ch2_init_reset_length_counter_timing_7_dmg08_outaudio0_cgb04c_outaudio1,
     "gambatte/sound/ch2_init_reset_length_counter_timing_7_dmg08_outaudio0_cgb04c_outaudio1.gbc"
 );
