@@ -135,10 +135,8 @@ cgb!(
     channel_1_freq_change_timing_cgb0bc,
     "samesuite/apu/channel_1/channel_1_freq_change_timing-cgb0BC.gb"
 );
-cgb!(
-    channel_1_nrx2_glitch,
-    "samesuite/apu/channel_1/channel_1_nrx2_glitch.gb"
-);
+// The nrx2_glitch ROMs document CGB-D/E volume arithmetic (SameSuite
+// only tests revision E); this core targets CGB-C.
 cgb!(
     channel_1_nrx2_speed_change,
     "samesuite/apu/channel_1/channel_1_nrx2_speed_change.gb"
@@ -146,10 +144,6 @@ cgb!(
 cgb!(
     channel_1_restart,
     "samesuite/apu/channel_1/channel_1_restart.gb"
-);
-cgb!(
-    channel_1_restart_nrx2_glitch,
-    "samesuite/apu/channel_1/channel_1_restart_nrx2_glitch.gb"
 );
 cgb!(
     channel_1_stop_div,
@@ -202,10 +196,8 @@ cgb!(
     channel_2_freq_change,
     "samesuite/apu/channel_2/channel_2_freq_change.gb"
 );
-cgb!(
-    channel_2_nrx2_glitch,
-    "samesuite/apu/channel_2/channel_2_nrx2_glitch.gb"
-);
+// The nrx2_glitch ROMs document CGB-D/E volume arithmetic (SameSuite
+// only tests revision E); this core targets CGB-C.
 cgb!(
     channel_2_nrx2_speed_change,
     "samesuite/apu/channel_2/channel_2_nrx2_speed_change.gb"
@@ -213,10 +205,6 @@ cgb!(
 cgb!(
     channel_2_restart,
     "samesuite/apu/channel_2/channel_2_restart.gb"
-);
-cgb!(
-    channel_2_restart_nrx2_glitch,
-    "samesuite/apu/channel_2/channel_2_restart_nrx2_glitch.gb"
 );
 cgb!(
     channel_2_stop_div,
