@@ -327,9 +327,13 @@ impl<M: Model> Console<M> {
         }
 
         // The HDMA grant is M-boundary-quantized: bus ownership asserts and
-        // releases between M-cycles only.
+        // releases between M-cycles only. A dispatch sequence decided before
+        // this boundary holds the bus through its M-cycles (the grant
+        // defers); one decided at this boundary is picked after the sample
+        // and parks behind the block.
         if is_mcycle_boundary {
-            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus();
+            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
+                && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
         }
 
         self.cpu.next_tcycle();

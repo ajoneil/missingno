@@ -517,6 +517,12 @@ impl Cpu {
         self.halt.state == HaltState::Stopped
     }
 
+    /// The CPU is inside its interrupt-dispatch sequence — one indivisible
+    /// bus tenure that a DMA grant waits behind.
+    pub(crate) fn in_dispatch(&self) -> bool {
+        matches!(self.phase, mcycle::CpuPhase::InterruptDispatch { .. })
+    }
+
     /// Re-engage the CPU after STOP: resume at the instruction following
     /// STOP. Called by the system when a CGB speed switch (or a joypad
     /// wake) completes. Must be called at an M-cycle boundary.
