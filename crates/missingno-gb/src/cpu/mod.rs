@@ -193,6 +193,13 @@ pub struct Cpu {
     pub(super) tcycle: TCycle,
     /// Whether an M-cycle is in flight.
     pub(super) mcycle_active: bool,
+    /// A bus master (CGB VRAM DMA) gates the CPU clock: the scheduler yields
+    /// passive spin M-cycles, deferring instruction progress without touching
+    /// its state. The ring keeps counting (timers/serial are free-running).
+    pub(crate) bus_suspended: bool,
+    /// Bus cycle in flight when the gate engaged mid-M: it stretches across
+    /// the burst — committed edges stand, remaining edges occur after release.
+    pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can
     /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
@@ -280,6 +287,8 @@ impl Cpu {
             },
             tcycle: TCycle::ONE,
             mcycle_active: true,
+            bus_suspended: false,
+            parked_action: None,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
@@ -350,6 +359,8 @@ impl Cpu {
             instruction: instructions::Instruction::NoOperation,
             tcycle: TCycle::ZERO,
             mcycle_active: false,
+            bus_suspended: false,
+            parked_action: None,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,

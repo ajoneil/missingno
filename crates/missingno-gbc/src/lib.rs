@@ -579,19 +579,31 @@ struct VramDma {
     block_remaining: u8,
     /// Bytes still movable this M-cycle (refilled per tick: 2 single, 1 double).
     quota: u8,
-    /// The PPU was in HBlank last tick — to fire one block on the mode-0 entry edge.
-    prev_hblank: bool,
+    /// This HBlank's block has been latched — one block per mode-0 period.
+    hblank_block_taken: bool,
+    /// Trigger pend stage: the previous fall's view showed armed ∧ mode 0;
+    /// commits to a cancel-immune block one fall later.
+    pend: bool,
+    /// The pend formed on the fall of the FF55 arm commit itself — the arm
+    /// strobe pre-loads the engine's working pointers, so no setup cell.
+    pend_from_arm: bool,
+    /// FF55 armed on this fall (set by the write path, consumed by the tick).
+    armed_this_fall: bool,
+    /// Leading no-data cells of the block: the engine loads its working
+    /// pointers from the HDMA1-4 holding registers on a PPU-triggered block.
+    setup_cells: u8,
+    /// Dots until a committed block claims the bus (the transfer readies two
+    /// dots after the commit).
+    ready_in: u8,
 }
 
 impl VramDma {
-    /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; an
-    /// HDMA only while a block is open (it idles between HBlanks).
+    /// Whether a byte may move this M-cycle: a GDMA runs while bytes remain; a
+    /// latched HBlank block runs to completion regardless of the live `mode`
+    /// (the block sequencer, once started, does not consult the arming flag).
     fn moving(&self) -> bool {
-        match self.mode {
-            TransferMode::General => self.remaining > 0,
-            TransferMode::HBlank => self.block_remaining > 0,
-            TransferMode::Idle => false,
-        }
+        (self.block_remaining > 0 && self.remaining > 0 && self.ready_in == 0)
+            || (self.mode == TransferMode::General && self.remaining > 0)
     }
 }
 
@@ -965,15 +977,18 @@ impl Model for Cgb {
             0xFF55 => {
                 let length = ((value & 0x7F) as u16 + 1) * 16;
                 if value & 0x80 != 0 {
-                    // Arm HDMA: one 16-byte block per HBlank.
+                    // Arm HDMA: one 16-byte block per HBlank. A block already
+                    // latched by the trigger is immune and keeps flowing; an
+                    // arm landing during mode 0 pends at this fall's trigger
+                    // evaluation.
                     self.vram_dma.mode = TransferMode::HBlank;
                     self.vram_dma.remaining = length;
-                    self.vram_dma.block_remaining = 0;
+                    self.vram_dma.armed_this_fall = true;
                 } else if self.vram_dma.mode == TransferMode::HBlank {
-                    // bit 7 = 0 while an HDMA runs stops it (does not start a GDMA);
-                    // `remaining` is kept so the status read shows how far it got.
+                    // bit 7 = 0 while an HDMA runs clears the arming only (no
+                    // GDMA starts); a latched block completes, and `remaining`
+                    // is kept so the status read shows how far it got.
                     self.vram_dma.mode = TransferMode::Idle;
-                    self.vram_dma.block_remaining = 0;
                 } else {
                     // GDMA: copy the whole length while holding the CPU.
                     self.vram_dma.mode = TransferMode::General;
@@ -1025,17 +1040,50 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, mode: Mode) {
-        // HDMA fires one 16-byte block on each HBlank-entry edge.
+    fn vram_dma_tick(&mut self, mode: Mode, cpu_gated: bool) {
         let in_hblank = mode == Mode::HorizontalBlank;
-        if self.vram_dma.mode == TransferMode::HBlank
-            && in_hblank
-            && !self.vram_dma.prev_hblank
-            && self.vram_dma.remaining > 0
-        {
-            self.vram_dma.block_remaining = 16;
+        // The taken flag tracks the PPU mode — it clears at mode-0 exit
+        // whether or not the CPU clock is gated.
+        if !in_hblank {
+            self.vram_dma.hblank_block_taken = false;
         }
-        self.vram_dma.prev_hblank = in_hblank;
+
+        // A gated CPU clock (HALT, STOP) freezes the trigger — no pend, no
+        // commit — but a block already latched keeps draining.
+        if cpu_gated {
+            self.vram_dma.pend = false;
+            self.vram_dma.quota = if self.vram_dma.moving() {
+                if self.double_speed { 1 } else { 2 }
+            } else {
+                0
+            };
+            return;
+        }
+
+        // Two-stage trigger, evaluated each fall on the post-rise mode view
+        // with this fall's FF55 commit visible: a pend commits to a
+        // cancel-immune block one fall later; an FF55 write at either fall
+        // kills the pend (armed is consulted at both stages).
+        let armed = self.vram_dma.mode == TransferMode::HBlank;
+        let committing = self.vram_dma.pend && armed && in_hblank;
+        if committing {
+            self.vram_dma.block_remaining = 16;
+            self.vram_dma.hblank_block_taken = true;
+            self.vram_dma.ready_in = 2;
+            self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm { 0 } else { 1 };
+        }
+        self.vram_dma.pend = !committing
+            && armed
+            && in_hblank
+            && !self.vram_dma.hblank_block_taken
+            && self.vram_dma.remaining > 0;
+        if self.vram_dma.pend {
+            self.vram_dma.pend_from_arm = self.vram_dma.armed_this_fall;
+        }
+        self.vram_dma.armed_this_fall = false;
+        if self.vram_dma.ready_in > 0 {
+            self.vram_dma.ready_in -= 1;
+        }
 
         // Refill this M-cycle's byte budget while the transfer is moving bytes:
         // 2/M-cycle single speed, 1 in double speed.
@@ -1057,7 +1105,7 @@ impl Model for Cgb {
         self.vram_dma.dest = 0x8000 | (self.vram_dma.dest.wrapping_add(1) & 0x1FFF);
         self.vram_dma.remaining -= 1;
         self.vram_dma.quota -= 1;
-        if self.vram_dma.mode == TransferMode::HBlank {
+        if self.vram_dma.block_remaining > 0 {
             self.vram_dma.block_remaining -= 1;
         }
         if self.vram_dma.remaining == 0 {
@@ -1067,7 +1115,22 @@ impl Model for Cgb {
     }
 
     fn vram_dma_holds_cpu(&self) -> bool {
-        self.vram_dma.moving()
+        self.vram_dma.mode == TransferMode::General && self.vram_dma.remaining > 0
+    }
+
+    fn vram_dma_seizes_bus(&self) -> bool {
+        self.vram_dma.ready_in == 0
+            && (self.vram_dma.setup_cells > 0
+                || (self.vram_dma.block_remaining > 0 && self.vram_dma.remaining > 0))
+    }
+
+    fn vram_dma_take_setup_cell(&mut self) -> bool {
+        if self.vram_dma.setup_cells > 0 {
+            self.vram_dma.setup_cells -= 1;
+            true
+        } else {
+            false
+        }
     }
 }
 

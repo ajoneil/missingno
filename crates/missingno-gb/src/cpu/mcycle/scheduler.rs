@@ -13,9 +13,33 @@ impl Cpu {
     /// deferred to the next call.
     pub fn next_tcycle(&mut self) -> BusAction {
         if !self.mcycle_active {
-            let action = self
-                .next_mcycle()
-                .expect("next_mcycle must always return Some (CPU chains at boundaries)");
+            // Bus arbitration, M-boundary-quantized: the grant takes effect
+            // between M-cycles, so a transaction in flight always completes;
+            // one STARTING while the DMA owns the VRAM/external buses waits
+            // for release. IO/HRAM/OAM and internal M-cycles proceed
+            // concurrently; the ring keeps counting throughout.
+            let mut action = if self.parked_action.is_some() {
+                if self.bus_suspended {
+                    MCycleAction::Internal { address: self.pc }
+                } else {
+                    self.parked_action.take().expect("checked is_some")
+                }
+            } else {
+                self.next_mcycle()
+                    .expect("next_mcycle must always return Some (CPU chains at boundaries)")
+            };
+            if self.bus_suspended && self.parked_action.is_none() {
+                let targets_bus = match &action {
+                    MCycleAction::Read { address } | MCycleAction::Write { address, .. } => {
+                        crate::memory::Bus::of(*address).is_some()
+                    }
+                    _ => false,
+                };
+                if targets_bus {
+                    self.parked_action = Some(action);
+                    action = MCycleAction::Internal { address: self.pc };
+                }
+            }
             self.current_action = Some(action);
             self.tcycle = TCycle::ZERO;
             self.mcycle_active = true;

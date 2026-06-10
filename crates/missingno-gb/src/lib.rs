@@ -283,7 +283,20 @@ pub trait Model: Default {
     /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
     /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
     /// DMG: no VRAM DMA.
-    fn vram_dma_tick(&mut self, _mode: ppu::rendering::Mode) {}
+    fn vram_dma_tick(&mut self, _mode: ppu::rendering::Mode, _cpu_halted: bool) {}
+
+    /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting
+    /// them stretch until release; the rest run concurrently. DMG: never.
+    fn vram_dma_seizes_bus(&self) -> bool {
+        false
+    }
+
+    /// An entry-triggered block spends one leading no-data cell — the engine
+    /// loading its working pointers from the HDMA1-4 holding registers (the
+    /// FF55 arm strobe performs that load itself). Consumed once per block.
+    fn vram_dma_take_setup_cell(&mut self) -> bool {
+        false
+    }
 
     /// The next byte the VRAM DMA moves this M-cycle — `(source, destination)`
     /// resolved addresses — advancing its cursor. `None` once this M-cycle's

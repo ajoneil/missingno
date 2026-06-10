@@ -243,6 +243,11 @@ impl<M: Model> Console<M> {
     /// real STOP via `dma_cpu_hold`, which `resolve_stop` guards on. Called at the
     /// instruction boundary (also by external phase-stepping drivers).
     pub fn manage_dma_hold(&mut self) {
+        // An HBlank block owning the bus finishes before a GDMA hold engages
+        // (the two cannot share the buses).
+        if self.cpu.bus_suspended {
+            return;
+        }
         let holds = self.model.vram_dma_holds_cpu();
         if holds && !self.dma_cpu_hold {
             self.dma_cpu_hold = true;
@@ -319,6 +324,12 @@ impl<M: Model> Console<M> {
                 new_screen |= ns;
                 pixel = pix;
             }
+        }
+
+        // The HDMA grant is M-boundary-quantized: bus ownership asserts and
+        // releases between M-cycles only.
+        if is_mcycle_boundary {
+            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus();
         }
 
         self.cpu.next_tcycle();
@@ -410,6 +421,8 @@ impl<M: Model> Console<M> {
             self.apply_read_drive_enable();
         }
 
+        let pre_fall_mode = self.ppu.mode();
+
         // PPU master-clock fall: divider chain, CATU, scanline
         // boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = if advance_ppu {
@@ -431,6 +444,15 @@ impl<M: Model> Console<M> {
 
         self.commit_read_latch();
         self.commit_write();
+
+        // HDMA trigger, evaluated each dot's fall with this fall's write
+        // commit visible: the pend forms on the post-rise mode view and
+        // commits to cancel-immunity one fall later (the pend pipeline
+        // lives in the model).
+        if advance_ppu {
+            let cpu_gated = self.cpu.is_halted() || (self.cpu.is_stopped() && !self.dma_cpu_hold);
+            self.model.vram_dma_tick(pre_fall_mode, cpu_gated);
+        }
 
         if let Some(video_result) = &video_result {
             // VBlank IF: POPU transitions happen here since the divider
@@ -734,15 +756,16 @@ impl<M: Model> Console<M> {
             self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
         }
 
-        // CGB VRAM DMA: advance one M-cycle (so an H-Blank transfer can watch the
-        // mode), then commit the bytes it moves while it actually holds the bus —
-        // gating on the hold keeps the transfer from overlapping the arming
-        // instruction. Idle (no-op) on the DMG.
-        let mode = self.ppu.mode();
-        self.model.vram_dma_tick(mode);
-        if self.dma_cpu_hold {
-            while let Some((src, dst)) = self.model.vram_dma_next_byte() {
-                self.dma_move(src, dst);
+        // CGB VRAM DMA: commit the bytes it moves while it actually holds the
+        // bus — gating on the hold keeps the transfer from overlapping the
+        // arming instruction. (The trigger/quota tick ran before this edge's
+        // write commit.) Idle (no-op) on the DMG.
+        let engine_gated = self.cpu.is_halted() || (self.cpu.is_stopped() && !self.dma_cpu_hold);
+        if (self.dma_cpu_hold || self.cpu.bus_suspended) && !engine_gated {
+            if !self.model.vram_dma_take_setup_cell() {
+                while let Some((src, dst)) = self.model.vram_dma_next_byte() {
+                    self.dma_move(src, dst);
+                }
             }
         }
 
