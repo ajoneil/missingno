@@ -12,8 +12,8 @@ use types::sprites::{Sprite, SpriteId};
 
 pub use dff::{DffLatch, NorLatch};
 pub use model::{
-    CartridgeBootHeader, ColorRegister, DmgPixel, PixelMux, PpuModel, resolve_dmg_pixel,
-    resolve_shade,
+    CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PixelMux, PpuModel,
+    resolve_dmg_pixel, resolve_shade,
 };
 pub use registers::PipelineRegisters;
 pub use rendering::{
@@ -164,13 +164,7 @@ impl<P: PpuModel> Ppu<P> {
                         frame_end_reset: false,
                     },
                 },
-                stat: StatInterrupt {
-                    lyc: 0,
-                    comparison_pending: false,
-                    comparison_latched: true,
-                    enables: InterruptFlags::empty(),
-                    legs_was_high: InterruptFlags::empty(),
-                },
+                stat: StatInterrupt::power_on(),
                 line_end: LineEndPipeline {
                     delayed_line_end: false,
                     line_end_pending: false,
@@ -265,6 +259,8 @@ impl<P: PpuModel> Ppu<P> {
                 comparison_latched: snap.ly == snap.lyc,
                 enables,
                 legs_was_high: InterruptFlags::empty(),
+                conditions_was: InterruptFlags::empty(),
+                irq_domain: stat_interrupt::StatIrqDomain::mirroring(enables, snap.lyc),
             },
             line_end: LineEndPipeline {
                 delayed_line_end: false,
@@ -384,13 +380,28 @@ impl<P: PpuModel> Ppu<P> {
         self.model.set_object_priority_register(value);
     }
 
-    /// M-cycle-boundary rise: the palette block's clock-domain sample of
-    /// the mode-3 latch.
-    pub fn tick_model_palette_clock(&mut self) {
-        if P::HAS_PALETTE_CLOCK {
-            let rendering = self.mode() == Mode::Drawing;
-            self.model.tick_palette_clock(rendering);
+    /// M-cycle-boundary rise: the CGB palette block's clock-domain sample
+    /// (CRAM mode-3 lock). The STAT register-file synchroniser captures on
+    /// the M-boundary fall instead — see `eval_synced` in the fall path.
+    pub fn tick_clock_domain_capture(&mut self) {
+        if P::HAS_CLOCK_DOMAIN_SYNC {
+            let drawing = self.mode() == Mode::Drawing;
+            self.model
+                .tick_clock_domain(model::DomainSamples { drawing });
         }
+    }
+
+    /// Double-speed M-boundary fall on the half-dot edge that carries no PPU
+    /// fall: the CPU-clocked register synchroniser still captures (the PPU
+    /// condition inputs are unchanged since the last dot's evaluation, so
+    /// only register-path edges can race here).
+    pub fn capture_register_sync_standalone(&mut self) -> bool {
+        if !P::HAS_CLOCK_DOMAIN_SYNC {
+            return false;
+        }
+        let conditions = self.stat_conditions();
+        let ly = self.video.ly();
+        self.video.stat.eval_synced(conditions, false, true, ly)
     }
 
     /// CPU read of a CGB colour-palette register; the model's clock-domain
@@ -463,41 +474,51 @@ impl<P: PpuModel> Ppu<P> {
 }
 
 impl<P: PpuModel> Ppu<P> {
-    /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
-    pub fn stat_legs(&self) -> InterruptFlags {
-        let enables = self.video.stat.enables();
-        let mut legs = InterruptFlags::empty();
+    /// SUKO condition vector — the per-source condition inputs (ROPO and the
+    /// TARU/PARU/TAPA terms), pre-enable. Shared DMG silicon on both
+    /// consoles. The mode-2 term is TAPA = TOLU AND SELA: the line-144 mode-2
+    /// IRQ comes from RUTU's line-end pulse landing before POPU rises (NYPE
+    /// lag), not from a vblank extension of the leg.
+    fn stat_conditions(&self) -> InterruptFlags {
+        let mut conditions = InterruptFlags::empty();
 
-        // RUGU & ROPO: ROPO is frozen across LCD-off, so the LYC leg stays live
-        // while the LCD is off — only the mode legs go quiet.
-        if enables.contains(InterruptFlags::CURRENT_LINE_COMPARE) && self.video.stat.ly_eq_lyc() {
-            legs |= InterruptFlags::CURRENT_LINE_COMPARE;
+        // ROPO is frozen across LCD-off, so the LYC condition stays live
+        // while the LCD is off — only the mode terms go quiet.
+        if self.video.stat.ly_eq_lyc() {
+            conditions |= InterruptFlags::CURRENT_LINE_COMPARE;
         }
 
-        // Mode legs need the pixel pipeline, which is held in reset while LCD off.
+        // Mode terms need the pixel pipeline, which is held in reset while LCD off.
         let Some(rendering) = &self.pixel_pipeline else {
-            return legs;
+            return conditions;
         };
 
         let vblank = self.video.vblank();
-        let mode2_active = !vblank && rendering.mode2_interrupt_active(&self.video);
-        // Mode 2 STAT also fires at LX=0 of line 144.
-        let vblank_line_144 = vblank && self.video.ly() == 144 && self.video.line_end_active();
         let sprites_enabled = self.registers.control.sprites_enabled();
 
-        if enables.contains(InterruptFlags::HORIZONTAL_BLANK)
-            && !vblank
+        if !vblank
             && (rendering.end_of_line_signal(sprites_enabled) || rendering.terminal_wodu_pulse())
         {
-            legs |= InterruptFlags::HORIZONTAL_BLANK;
+            conditions |= InterruptFlags::HORIZONTAL_BLANK;
         }
-        if enables.contains(InterruptFlags::VERTICAL_BLANK) && vblank {
-            legs |= InterruptFlags::VERTICAL_BLANK;
+        if vblank {
+            conditions |= InterruptFlags::VERTICAL_BLANK;
         }
-        if enables.contains(InterruptFlags::OAM_SCAN) && (mode2_active || vblank_line_144) {
-            legs |= InterruptFlags::OAM_SCAN;
+        if !vblank && rendering.mode2_interrupt_active(&self.video) {
+            conditions |= InterruptFlags::OAM_SCAN;
         }
-        legs
+        conditions
+    }
+
+    /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
+    /// The CGB reads the enables through the register-file synchroniser.
+    pub fn stat_legs(&self) -> InterruptFlags {
+        let enables = if P::HAS_CLOCK_DOMAIN_SYNC {
+            self.video.stat.synced_enables()
+        } else {
+            self.video.stat.enables()
+        };
+        self.stat_conditions() & enables
     }
 
     /// SUKO combined output (= any leg active).
@@ -511,8 +532,12 @@ impl<P: PpuModel> Ppu<P> {
         if !self.control().video_enabled() {
             return false;
         }
-        let legs = self.stat_legs();
-        self.video.stat.detect_suko_edge(legs, false)
+        let conditions = self.stat_conditions();
+        if P::HAS_CLOCK_DOMAIN_SYNC {
+            let ly = self.video.ly();
+            return self.video.stat.eval_synced(conditions, false, false, ly);
+        }
+        self.video.stat.eval_conditions(conditions, false)
     }
 }
 

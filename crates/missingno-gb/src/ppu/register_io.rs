@@ -103,22 +103,20 @@ impl<P: PpuModel> Ppu<P> {
                     // DMG STAT write glitch: all enables briefly high, then settle.
                     self.video.stat.set_enables(InterruptFlags::all());
                     let glitch_legs = self.stat_legs();
-                    let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs, false);
+                    let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs);
 
                     self.video.stat.write_stat_bits(value);
                     let final_legs = self.stat_legs();
-                    let final_edge = self.video.stat.detect_suko_edge(final_legs, false);
+                    let final_edge = self.video.stat.detect_suko_edge(final_legs);
 
                     return glitch_edge || final_edge;
                 }
 
-                // CGB: the SUKO line is the OR of written enabled-and-met legs; a STAT
-                // write raises an IRQ only on its 0→1 edge (no DMG all-enables transient).
-                let prev_low = self.video.stat.legs_was_high().is_empty();
-                self.video.stat.write_stat_bits(value);
-                let final_legs = self.stat_legs();
-                self.video.stat.prime_legs(final_legs);
-                return prev_low && !final_legs.is_empty();
+                // CGB: the cells update now (readback is write-time); the
+                // STAT-IRQ block sees them at the next sync-grid capture —
+                // a write never produces a same-tick edge.
+                self.video.stat.write_stat_bits_cell(value);
+                return false;
             }
             Register::BackgroundViewportY => {
                 self.registers.background_viewport.y.write_immediate(value)
@@ -129,7 +127,11 @@ impl<P: PpuModel> Ppu<P> {
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x.write_immediate(value),
             Register::InterruptOnScanline => {
-                self.video.write_lyc(value);
+                if P::HAS_CLOCK_DOMAIN_SYNC {
+                    self.video.stat.write_lyc_cell(value);
+                } else {
+                    self.video.write_lyc(value);
+                }
             }
             Register::BackgroundPalette => {
                 if self.registers.control.video_enabled() {

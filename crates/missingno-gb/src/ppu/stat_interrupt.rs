@@ -14,6 +14,26 @@ bitflags! {
     }
 }
 
+/// CGB synchroniser between the FF41/FF45 register cells and the STAT-IRQ
+/// block: DFF copies of the cells, captured on the CPU-clock M-cycle
+/// boundary. The cells themselves stay CPU-visible at write time; only the
+/// IRQ block reads the synced copies. On DMG the cells feed the legs
+/// combinationally and the copies just mirror the cells (read only through
+/// the comparator's LYC view, where mirror == cell).
+pub(in crate::ppu) struct StatIrqDomain {
+    synced_enables: InterruptFlags,
+    synced_lyc: u8,
+}
+
+impl StatIrqDomain {
+    pub(in crate::ppu) fn mirroring(enables: InterruptFlags, lyc: u8) -> Self {
+        Self {
+            synced_enables: enables,
+            synced_lyc: lyc,
+        }
+    }
+}
+
 pub struct StatInterrupt {
     /// LYC register ($FF45).
     pub(in crate::ppu) lyc: u8,
@@ -25,9 +45,26 @@ pub struct StatInterrupt {
     pub(in crate::ppu) enables: InterruptFlags,
     /// LALU per-leg previous values — one bit per SUKO source AND-term.
     pub(in crate::ppu) legs_was_high: InterruptFlags,
+    /// Condition-input values at the previous evaluation (per-source,
+    /// pre-enable) — the waveform scan's transition baseline on both cores.
+    pub(in crate::ppu) conditions_was: InterruptFlags,
+    pub(in crate::ppu) irq_domain: StatIrqDomain,
 }
 
 impl StatInterrupt {
+    /// SYS_RST state (LCD off, everything cleared; ROPO resets high).
+    pub(in crate::ppu) fn power_on() -> Self {
+        Self {
+            lyc: 0,
+            comparison_pending: false,
+            comparison_latched: true,
+            enables: InterruptFlags::empty(),
+            legs_was_high: InterruptFlags::empty(),
+            conditions_was: InterruptFlags::empty(),
+            irq_domain: StatIrqDomain::mirroring(InterruptFlags::empty(), 0),
+        }
+    }
+
     pub(in crate::ppu) fn post_boot() -> Self {
         Self {
             lyc: 0,
@@ -35,6 +72,8 @@ impl StatInterrupt {
             comparison_latched: true,
             enables: InterruptFlags::DUMMY,
             legs_was_high: InterruptFlags::empty(),
+            conditions_was: InterruptFlags::empty(),
+            irq_domain: StatIrqDomain::mirroring(InterruptFlags::DUMMY, 0),
         }
     }
 
@@ -48,9 +87,10 @@ impl StatInterrupt {
         }
     }
 
-    /// PALY recompute: `pending = (ly == lyc)`.
+    /// PALY recompute: `pending = (ly == lyc)`. PALY's LYC input is the IRQ
+    /// domain's view (on DMG the mirror keeps it equal to the cell).
     pub(in crate::ppu) fn update_comparison(&mut self, ly: u8) {
-        self.comparison_pending = ly == self.lyc;
+        self.comparison_pending = ly == self.irq_domain.synced_lyc;
     }
 
     /// ROPO captures comparison_pending on TALU rising.
@@ -83,55 +123,223 @@ impl StatInterrupt {
 
     pub(in crate::ppu) fn write_lyc(&mut self, value: u8, ly: u8) {
         self.lyc = value;
+        self.irq_domain.synced_lyc = value;
         self.update_comparison(ly);
     }
 
     pub(in crate::ppu) fn write_stat_bits(&mut self, value: u8) {
         self.enables = InterruptFlags::from_bits_truncate(value);
+        self.irq_domain.synced_enables = self.enables;
     }
 
-    /// LALU dffsr SUKO 0→1 capture. On TALU↑ leg-swaps applies the AO2222 gate-prop
-    /// pulse-width filter; off-TALU evaluations use the boolean rising-edge rule.
-    pub(in crate::ppu) fn detect_suko_edge(
+    /// CGB FF45 write: the cell updates now (readback is write-time); the IRQ
+    /// domain sees it at the next boundary capture.
+    pub(in crate::ppu) fn write_lyc_cell(&mut self, value: u8) {
+        self.lyc = value;
+    }
+
+    /// CGB FF41 write: cell-only, as `write_lyc_cell`.
+    pub(in crate::ppu) fn write_stat_bits_cell(&mut self, value: u8) {
+        self.enables = InterruptFlags::from_bits_truncate(value);
+    }
+
+    pub(in crate::ppu) fn synced_enables(&self) -> InterruptFlags {
+        self.irq_domain.synced_enables
+    }
+
+    /// DMG SUKO evaluation against the live enables (no synchroniser; the
+    /// cells feed the legs combinationally, so no register edge can occur
+    /// inside a TALU evaluation).
+    pub(in crate::ppu) fn eval_conditions(
         &mut self,
-        legs: InterruptFlags,
+        conditions: InterruptFlags,
         talu_rising: bool,
     ) -> bool {
+        let enables = self.enables;
+        self.eval_core(
+            conditions,
+            talu_rising,
+            enables,
+            enables,
+            InterruptFlags::empty(),
+        )
+    }
+
+    /// CGB SUKO evaluation against the synchronised register file. At an
+    /// M-boundary fall (`boundary_capture`) the synchroniser DFFs capture the
+    /// cells first; the resulting register-path edges race this fall's
+    /// condition edges within the SUKO waveform. ROPO has already captured on
+    /// this same edge, so the synced LYC feeds PALY for the *next* TALU↑ —
+    /// the standard same-edge DFF-to-DFF rule.
+    pub(in crate::ppu) fn eval_synced(
+        &mut self,
+        conditions: InterruptFlags,
+        talu_rising: bool,
+        boundary_capture: bool,
+        ly: u8,
+    ) -> bool {
+        let enables_before = self.irq_domain.synced_enables;
+        let register_edges = if boundary_capture {
+            let delta = enables_before ^ self.enables;
+            self.irq_domain.synced_enables = self.enables;
+            self.irq_domain.synced_lyc = self.lyc;
+            self.update_comparison(ly);
+            delta & !InterruptFlags::DUMMY
+        } else {
+            InterruptFlags::empty()
+        };
+        let enables_after = self.irq_domain.synced_enables;
+        self.eval_core(
+            conditions,
+            talu_rising,
+            enables_before,
+            enables_after,
+            register_edges,
+        )
+    }
+
+    fn eval_core(
+        &mut self,
+        conditions: InterruptFlags,
+        talu_rising: bool,
+        enables_before: InterruptFlags,
+        enables_after: InterruptFlags,
+        register_edges: InterruptFlags,
+    ) -> bool {
+        let conditions_before = self.conditions_was;
+        self.conditions_was = conditions;
+
+        // Off-TALU evaluations use the boolean rising-edge rule; so does any
+        // evaluation with no input transition — a flat SUKO waveform cannot
+        // produce a capturable 0→1.
+        if register_edges.is_empty() && (!talu_rising || conditions == conditions_before) {
+            let legs = conditions & enables_after;
+            return self.detect_suko_edge(legs);
+        }
+        self.detect_suko_waveform(
+            conditions_before,
+            conditions,
+            enables_before,
+            enables_after,
+            register_edges,
+        )
+    }
+
+    /// SUKO waveform scan for a TALU↑ or register-capture evaluation. Each
+    /// leg is the AND of its enable (transitioning at the shared
+    /// register-path arrival, CGB only) and its condition (transitioning at
+    /// the per-leg constant); SUKO is the OR of the legs. The LALU dffsr
+    /// captures a 0→1 only when the preceding low interval and the following
+    /// high interval both meet the capture threshold.
+    fn detect_suko_waveform(
+        &mut self,
+        conditions_before: InterruptFlags,
+        conditions_after: InterruptFlags,
+        enables_before: InterruptFlags,
+        enables_after: InterruptFlags,
+        register_edges: InterruptFlags,
+    ) -> bool {
+        const STEADY_PS: i32 = i32::MAX / 2;
+        self.legs_was_high = conditions_after & enables_after;
+
+        // Per-leg breakpoints: at most one enable edge and one condition edge.
+        let mut times = [0i32; 9];
+        let mut time_count = 1; // t = 0 (initial state)
+        for leg in (conditions_before ^ conditions_after).iter() {
+            let arrival = arrival(leg);
+            times[time_count] = if conditions_after.contains(leg) {
+                arrival.rising_ps as i32
+            } else {
+                arrival.falling_ps as i32
+            };
+            time_count += 1;
+        }
+        if !register_edges.is_empty() {
+            times[time_count] = REGISTER_PATH_ARRIVAL_PS as i32;
+            time_count += 1;
+        }
+        let times = &mut times[..time_count];
+        times.sort_unstable();
+
+        let level_at = |t: i32| -> bool {
+            for leg in InterruptFlags::all().iter() {
+                if leg == InterruptFlags::DUMMY {
+                    continue;
+                }
+                let cond_changed = (conditions_before ^ conditions_after).contains(leg);
+                let cond_arrival = if conditions_after.contains(leg) {
+                    arrival(leg).rising_ps as i32
+                } else {
+                    arrival(leg).falling_ps as i32
+                };
+                let cond = if cond_changed && t >= cond_arrival {
+                    conditions_after.contains(leg)
+                } else {
+                    conditions_before.contains(leg)
+                };
+                let enable = if register_edges.contains(leg) && t >= REGISTER_PATH_ARRIVAL_PS as i32
+                {
+                    enables_after.contains(leg)
+                } else {
+                    enables_before.contains(leg)
+                };
+                if cond && enable {
+                    return true;
+                }
+            }
+            false
+        };
+
+        // Scan segments for a captured 0→1: low for >= threshold, then high
+        // for >= threshold (or steady to the end of the evaluation).
+        let mut low_since = if level_at(0) {
+            None
+        } else {
+            Some(i32::MIN / 2)
+        };
+        for (i, &t) in times.iter().enumerate() {
+            let level = level_at(t);
+            match (low_since, level) {
+                (Some(since), true) => {
+                    if t - since >= SUKO_CAPTURE_THRESHOLD_PS {
+                        let high_until = times[i + 1..]
+                            .iter()
+                            .copied()
+                            .find(|&u| !level_at(u))
+                            .unwrap_or(STEADY_PS);
+                        if high_until - t >= SUKO_CAPTURE_THRESHOLD_PS {
+                            return true;
+                        }
+                    }
+                    low_since = None;
+                }
+                (None, false) => low_since = Some(t),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// LALU dffsr SUKO 0→1 capture, off-TALU boolean rule (write-time glitch
+    /// evaluations and rise-edge evaluations — no input arrives mid-eval).
+    pub(in crate::ppu) fn detect_suko_edge(&mut self, legs: InterruptFlags) -> bool {
         let prev = self.legs_was_high;
         self.legs_was_high = legs;
 
         let rising = legs - prev;
         let surviving = prev & legs;
-
-        if rising.is_empty() {
-            return false;
-        }
-        if !surviving.is_empty() {
-            return false;
-        }
-        if !talu_rising {
-            return true;
-        }
-        let falling = prev - legs;
-        if falling.is_empty() {
-            return true;
-        }
-        let min_falling_ps = falling
-            .iter()
-            .map(|l| arrival(l).falling_ps as i32)
-            .min()
-            .unwrap();
-        let max_rising_ps = rising
-            .iter()
-            .map(|l| arrival(l).rising_ps as i32)
-            .max()
-            .unwrap();
-        max_rising_ps - min_falling_ps >= SUKO_CAPTURE_THRESHOLD_PS
+        !rising.is_empty() && surviving.is_empty()
     }
 
-    /// Prime the per-leg baseline at LCD-enable or snapshot restore to avoid a spurious first edge.
-    pub(in crate::ppu) fn prime_legs(&mut self, legs: InterruptFlags) {
+    /// Prime the evaluation baselines at LCD-enable so the first evaluation
+    /// sees no synthetic transition.
+    pub(in crate::ppu) fn prime_baselines(
+        &mut self,
+        legs: InterruptFlags,
+        conditions: InterruptFlags,
+    ) {
         self.legs_was_high = legs;
+        self.conditions_was = conditions;
     }
 }
 
@@ -167,6 +375,12 @@ const MODE_2_ARRIVAL: LegArrival = LegArrival {
 /// LALU dffsr minimum captured SUKO low-pulse width. Cases 1 (1,802 ps) and 4
 /// (1,524 ps) bracket the empirical threshold.
 const SUKO_CAPTURE_THRESHOLD_PS: i32 = 1_700;
+
+/// CGB register-path propagation from the synchroniser DFF outputs to the
+/// leg AND-terms. No CGB netlist exists; the gambatte cgb04c corpus pins it
+/// to [2_574, 4_000) ps (fires need E−874 ≥ threshold; the m1-fall block
+/// needs E−2_300 < threshold).
+const REGISTER_PATH_ARRIVAL_PS: u16 = 3_300;
 
 fn arrival(leg: InterruptFlags) -> LegArrival {
     if leg == InterruptFlags::CURRENT_LINE_COMPARE {

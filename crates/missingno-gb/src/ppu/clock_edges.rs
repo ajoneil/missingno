@@ -64,9 +64,24 @@ impl<P: PpuModel> Ppu<P> {
         self.registers
             .tick_on_master_clock_fall(self.mode2_active());
         self.run_ppu_clock_fall(oam_bus, scan_clock_rising, talu_rising, &mut result);
-        let legs = self.stat_legs();
-        if self.control().video_enabled() && self.video.stat.detect_suko_edge(legs, talu_rising) {
-            result.request_stat = true;
+        if P::HAS_CLOCK_DOMAIN_SYNC {
+            // M-boundary fall: the register-file synchroniser captures here,
+            // racing this fall's condition edges (ROPO captured pre-edge
+            // PALY above, so the synced LYC lands in the next TALU(+)).
+            let conditions = self.stat_conditions();
+            let ly = self.video.ly();
+            if self
+                .video
+                .stat
+                .eval_synced(conditions, talu_rising, is_mcycle, ly)
+            {
+                result.request_stat = true;
+            }
+        } else {
+            let conditions = self.stat_conditions();
+            if self.video.stat.eval_conditions(conditions, talu_rising) {
+                result.request_stat = true;
+            }
         }
 
         result
@@ -83,9 +98,10 @@ impl<P: PpuModel> Ppu<P> {
             rendering.start_scanning();
         }
 
-        // Prime LALU per-leg baseline to avoid a spurious first edge on VID_RST deassertion.
+        // Prime the LALU baselines to avoid a spurious first edge on VID_RST deassertion.
         let legs = self.stat_legs();
-        self.video.stat.prime_legs(legs);
+        let conditions = self.stat_conditions();
+        self.video.stat.prime_baselines(legs, conditions);
     }
 
     /// Returns `true` if a TALU↑ DFF capture happened in this fall (drives the SUKO
@@ -177,6 +193,11 @@ impl<P: PpuModel> Ppu<P> {
         }
         // Hardware holds counters at 0 while LCD is off; comparison_latched freezes (clock stops).
         self.video.vid_rst();
+        // The CPU-clocked register synchroniser keeps capturing with the
+        // LCD off; the LYC leg stays live on frozen ROPO.
+        if self.capture_register_sync_standalone() {
+            result.request_stat = true;
+        }
         result
     }
 }

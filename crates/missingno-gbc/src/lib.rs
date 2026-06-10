@@ -30,8 +30,8 @@ use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
-    CartridgeBootHeader, ColorRegister, DmgPixel, PipelineRegisters, PixelMux, Ppu, PpuModel,
-    resolve_dmg_pixel,
+    CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PipelineRegisters, PixelMux, Ppu,
+    PpuModel, resolve_dmg_pixel,
 };
 use missingno_gb::{
     Console, Model, StopAction, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu, dma::Dma,
@@ -336,7 +336,7 @@ impl PpuModel for CgbPpu {
     // The CGB fixed the DMG STAT-write glitch — a STAT write re-evaluates with the
     // written enables only, never all-enables-high.
     const STAT_WRITE_ALL_ENABLES_GLITCH: bool = false;
-    const HAS_PALETTE_CLOCK: bool = true;
+    const HAS_CLOCK_DOMAIN_SYNC: bool = true;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;
@@ -454,8 +454,8 @@ impl PpuModel for CgbPpu {
         self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 
-    fn tick_palette_clock(&mut self, rendering: bool) {
-        self.cram_lock = rendering;
+    fn tick_clock_domain(&mut self, samples: DomainSamples) {
+        self.cram_lock = samples.drawing;
     }
 
     fn read_color_register(&self, register: ColorRegister) -> u8 {

@@ -410,6 +410,12 @@ impl<M: Model> Console<M> {
         } else {
             None
         };
+        // Double-speed boundary fall sharing a dot with no PPU fall: the
+        // CPU-clocked register synchroniser still captures; its request joins
+        // the fall path's gating below.
+        let standalone_stat = video_result.is_none()
+            && is_mcycle_boundary
+            && self.ppu.capture_register_sync_standalone();
 
         if tcycle.as_u8() == 2 {
             self.sample_mid_cupa_lock();
@@ -430,6 +436,9 @@ impl<M: Model> Console<M> {
             if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
                 self.interrupts.request(Interrupt::VideoStatus);
             }
+        }
+        if standalone_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
+            self.interrupts.request(Interrupt::VideoStatus);
         }
 
         // cpu_irq_ack1 holds the serviced IF bit's r_n LOW across the whole
@@ -495,7 +504,7 @@ impl<M: Model> Console<M> {
 
         self.cpu_bus.clear_activity();
 
-        self.ppu.tick_model_palette_clock();
+        self.ppu.tick_clock_domain_capture();
 
         self.timers.mcycle();
         if let Some(interrupt) = self.timers.take_pending_interrupt() {

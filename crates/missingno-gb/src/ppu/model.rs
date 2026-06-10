@@ -140,15 +140,20 @@ pub trait PpuModel: Default {
     /// The 2-bit shade a gbtrace pixel stream records for this pixel.
     fn trace_shade(pixel: Self::Pixel) -> u8;
 
-    /// The model has a palette block clocked on the 4-dot grid (CGB).
-    const HAS_PALETTE_CLOCK: bool = false;
+    /// The model has synchronisers capturing on the CPU-clock M-cycle
+    /// boundary (CGB): the palette block's mode-3 sample on the boundary
+    /// rise, and the FF41/FF45 register file crossing into the STAT-IRQ
+    /// block on the boundary fall. DMG couples its registers combinationally.
+    const HAS_CLOCK_DOMAIN_SYNC: bool = false;
 
-    /// The CGB palette block runs on a 4-dot clock; it samples the mode-3
-    /// latch there. Called at each M-cycle-boundary rise.
-    fn tick_palette_clock(&mut self, _rendering: bool) {}
+    /// M-cycle-boundary capture: the model's clock-domain synchronisers
+    /// sample their inputs. The CGB palette block samples the mode-3 latch
+    /// here. The one CGB synchroniser on a different edge is the halt-wake
+    /// comparator presample (T2 rise, `Model::halt_wake_samples_early`).
+    fn tick_clock_domain(&mut self, _samples: DomainSamples) {}
 
     /// Read a CGB colour-palette register. The data-port mode-3 lock is the
-    /// model's own clock-domain sample (`tick_palette_clock`), not the live
+    /// model's own clock-domain sample (`tick_clock_domain`), not the live
     /// mode. DMG has no colour RAM — reads 0xFF.
     fn read_color_register(&self, _reg: ColorRegister) -> u8 {
         0xFF
@@ -156,6 +161,13 @@ pub trait PpuModel: Default {
 
     /// Write a CGB colour-palette register. DMG has no colour RAM — ignored.
     fn write_color_register(&mut self, _reg: ColorRegister, _value: u8) {}
+}
+
+/// One boundary capture's worth of clock-domain samples — extend with a
+/// field per synchroniser as more CGB domain crossings are modelled.
+pub struct DomainSamples {
+    /// The mode-3 latch (XYMU view) the CGB palette block locks CRAM on.
+    pub drawing: bool,
 }
 
 /// Which layer wins the shared DMG BG-vs-OBJ resolve, carrying its BGP/OBP-mapped
