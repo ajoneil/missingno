@@ -188,6 +188,13 @@ pub trait Model: Default {
         0
     }
 
+    /// CPU-domain T-cycles the CPU clock train slips against the dot stream
+    /// when a STOP speed switch resolves — the clock-mux swap catching the new
+    /// train mid-period. Counted as blackout progress. DMG never switches.
+    fn speed_switch_phase_slip_tcycles(&self) -> u32 {
+        0
+    }
+
     /// Sampled at the top of `rise_work`, before this dot's `ppu_rise_edge`
     /// (the ALET-rising XYMU.q↑ / OAM-lock-onset grid edge). `stat_mode` is the
     /// pre-grid STAT (`$FF41`) byte; `read_lock` is the pre-grid lock of a

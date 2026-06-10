@@ -212,21 +212,19 @@ impl<M: Model> Console<M> {
 
         match self.model.resolve_stop() {
             StopAction::SpeedSwitch => {
-                // Switching into double speed, the 1×→2× clock-mux swap catches
-                // the 2× train half a 1×-period in: the CPU domain gains one dot
-                // of CPU time against the dot clock. Two CPU-domain-only spin
-                // T-cycles slip the T-ring half an M-cycle against the master
-                // edges; the dot domain stands still. Double→single carries no
-                // residue.
-                if self.model.cpu_steps_per_dot() == 2 {
-                    const SLIP_TCYCLES: u32 = 2;
-                    for _ in 0..SLIP_TCYCLES {
-                        let _ = self.rise_work(false);
-                        let _ = self.fall_work(false);
-                    }
-                    // The slipped T-cycles are blackout progress: arm-to-resume
-                    // CPU time including the slip is the full blackout.
-                    let _ = self.model.drain_speed_switch_blackout(SLIP_TCYCLES);
+                // The clock-mux swap can catch the new CPU clock train
+                // mid-period: the model's slip count of CPU-domain-only spin
+                // T-cycles advances the T-ring against the master edges while
+                // the dot domain stands still. The slipped T-cycles are
+                // blackout progress: arm-to-resume CPU time including the
+                // slip is the full blackout.
+                let slip = self.model.speed_switch_phase_slip_tcycles();
+                for _ in 0..slip {
+                    let _ = self.rise_work(false);
+                    let _ = self.fall_work(false);
+                }
+                if slip > 0 {
+                    let _ = self.model.drain_speed_switch_blackout(slip);
                 }
                 // Hardware resets DIV across the switch (the model has already
                 // toggled its speed bit and armed its blackout).

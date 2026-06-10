@@ -46,6 +46,12 @@ use crate::screen::{Color555, GREYSCALE, Screen};
 /// expected values.
 const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
 
+/// One LCD dot of CPU time at double speed (2 T-cycles): the 1×→2× clock-mux
+/// swap catches the 2× train half a 1×-period in, so the CPU domain gains one
+/// dot against the dot clock. The 2×→1× swap re-locks cleanly. Bracketed to
+/// exactly one dot by the gambatte m3stat scx `_ds` expected values.
+const SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES: u32 = 2;
+
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
 /// bit 7). Data writes during mode 3 are dropped but still advance the index.
@@ -816,6 +822,16 @@ impl Model for Cgb {
 
     fn speed_switch_blackout_tcycles(&self) -> u32 {
         SPEED_SWITCH_BLACKOUT_TCYCLES
+    }
+
+    fn speed_switch_phase_slip_tcycles(&self) -> u32 {
+        // `double_speed` already holds the new speed: the slip rides the
+        // 1×→2× leg only.
+        if self.double_speed {
+            SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES
+        } else {
+            0
+        }
     }
 
     fn note_pre_grid_read_view(&mut self, stat_mode: u8, read_lock: Option<bool>) {
