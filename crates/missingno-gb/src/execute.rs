@@ -218,6 +218,12 @@ impl<M: Model> Console<M> {
                 self.timers
                     .write_register(crate::timers::Register::Divider, 0);
                 self.audio.on_div_write(old_counter);
+                if let Some(interrupt) = self
+                    .serial
+                    .on_div_write(old_counter, self.model.has_serial_fast_clock())
+                {
+                    self.interrupts.request(interrupt);
+                }
             }
             StopAction::Remain => {}
         }
@@ -571,7 +577,7 @@ impl<M: Model> Console<M> {
         }
 
         // T2 rise: the CGB halt-release chain's sample point.
-        if tcycle.as_u8() == 2 {
+        if tcycle.as_u8() == 2 && self.model.halt_wake_samples_early() {
             self.cpu.presample_halt_wake();
         }
 

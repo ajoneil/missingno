@@ -336,6 +336,7 @@ impl PpuModel for CgbPpu {
     // The CGB fixed the DMG STAT-write glitch — a STAT write re-evaluates with the
     // written enables only, never all-enables-high.
     const STAT_WRITE_ALL_ENABLES_GLITCH: bool = false;
+    const HAS_PALETTE_CLOCK: bool = true;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;
@@ -457,7 +458,7 @@ impl PpuModel for CgbPpu {
         self.cram_lock = rendering;
     }
 
-    fn read_color_register(&self, register: ColorRegister, _rendering: bool) -> u8 {
+    fn read_color_register(&self, register: ColorRegister) -> u8 {
         // DMG-compat locks only the CRAM data port; the index registers
         // stay live (boot leftovers read back).
         if self.dmg_compat
@@ -471,7 +472,7 @@ impl PpuModel for CgbPpu {
         self.read_cram_register(register, self.cram_lock)
     }
 
-    fn write_color_register(&mut self, register: ColorRegister, value: u8, _rendering: bool) {
+    fn write_color_register(&mut self, register: ColorRegister, value: u8) {
         if self.dmg_compat
             && matches!(
                 register,
@@ -616,10 +617,11 @@ pub struct Cgb {
     /// `data_phase_n↑` latch actually saw (`resolve_read_latch` consumes them).
     pre_grid_stat: u8,
     pre_grid_read_lock: Option<bool>,
-    /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF75
-    /// bits 6-4 (the rest read 1).
+    /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF74
+    /// (CGB mode only; open bus in compat), $FF75 bits 6-4 (the rest read 1).
     ff72: u8,
     ff73: u8,
+    ff74: u8,
     ff75: u8,
     /// CGB ≤C extra OAM rows: 24 RAM bytes behind a decoder that ignores
     /// address bits 3-4 (three 8-byte rows at $FEA0/$FEC0/$FEE0, each
@@ -641,6 +643,7 @@ impl Default for Cgb {
             pre_grid_read_lock: None,
             ff72: 0,
             ff73: 0,
+            ff74: 0,
             ff75: 0,
             extra_oam: [0; 24],
         }
@@ -748,6 +751,8 @@ impl Model for Cgb {
     }
 
     fn halt_wake_samples_early(&self) -> bool {
+        // Double speed: emulator limitation, not hardware — the sample
+        // point's sub-cycle placement awaits the DS clock-model pass.
         !self.double_speed
     }
 
@@ -862,9 +867,9 @@ impl Model for Cgb {
         }
         match address {
             0xFEA0..=0xFEFF => Some(self.extra_oam[Self::extra_oam_index(address)]),
-            // DMG-compat locks out the speed/banking/priority registers —
-            // they read as open bus for the rest of the session.
-            0xFF4C | 0xFF4D | 0xFF6C | 0xFF70 if self.dmg_compat => Some(0xFF),
+            // DMG-compat locks out the speed/banking/priority registers and
+            // the $FF74 scratch byte — open bus for the rest of the session.
+            0xFF4C | 0xFF4D | 0xFF6C | 0xFF70 | 0xFF74 if self.dmg_compat => Some(0xFF),
             // KEY0: boot-locked; reads the latched mode ($00 = CGB).
             0xFF4C => Some(0x00),
             0xFF4D => Some(0x7E | ((self.double_speed as u8) << 7) | self.key1_armed as u8), // KEY1
@@ -887,7 +892,8 @@ impl Model for Cgb {
             0xFF70 => Some(self.svbk | 0xF8), // SVBK: bits 0-2
             0xFF72 => Some(self.ff72),
             0xFF73 => Some(self.ff73),
-            0xFF75 => Some(0x8F | (self.ff75 & 0x70)),
+            0xFF74 => Some(self.ff74),
+            0xFF75 => Some(0x8F | self.ff75),
             _ => None,
         }
     }
@@ -908,8 +914,9 @@ impl Model for Cgb {
                 self.extra_oam[Self::extra_oam_index(address)] = value;
                 true
             }
-            // DMG-compat locks out the speed/banking/priority/VRAM-DMA registers.
-            0xFF4D | 0xFF51..=0xFF55 | 0xFF6C | 0xFF70 if self.dmg_compat => true,
+            // DMG-compat locks out the speed/banking/priority/VRAM-DMA
+            // registers and the $FF74 scratch byte.
+            0xFF4D | 0xFF51..=0xFF55 | 0xFF6C | 0xFF70 | 0xFF74 if self.dmg_compat => true,
             0xFF4C => true, // KEY0: boot-locked, ignore
             0xFF4D => {
                 self.key1_armed = value & 0x01 != 0;
@@ -988,8 +995,12 @@ impl Model for Cgb {
                 self.ff73 = value;
                 true
             }
+            0xFF74 => {
+                self.ff74 = value;
+                true
+            }
             0xFF75 => {
-                self.ff75 = value;
+                self.ff75 = value & 0x70;
                 true
             }
             _ => false,

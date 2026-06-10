@@ -387,21 +387,21 @@ impl<P: PpuModel> Ppu<P> {
     /// M-cycle-boundary rise: the palette block's clock-domain sample of
     /// the mode-3 latch.
     pub fn tick_model_palette_clock(&mut self) {
-        let rendering = self.mode() == Mode::Drawing;
-        self.model.tick_palette_clock(rendering);
+        if P::HAS_PALETTE_CLOCK {
+            let rendering = self.mode() == Mode::Drawing;
+            self.model.tick_palette_clock(rendering);
+        }
     }
 
-    /// CPU read of a CGB colour-palette register; the model applies the mode-3
-    /// data-port lock from the PPU's current mode.
+    /// CPU read of a CGB colour-palette register; the model's clock-domain
+    /// sample supplies the data-port lock.
     pub fn read_color_register(&self, register: ColorRegister) -> u8 {
-        self.model
-            .read_color_register(register, self.mode() == Mode::Drawing)
+        self.model.read_color_register(register)
     }
 
     /// CPU write of a CGB colour-palette register.
     pub fn write_color_register(&mut self, register: ColorRegister, value: u8) {
-        let rendering = self.mode() == Mode::Drawing;
-        self.model.write_color_register(register, value, rendering);
+        self.model.write_color_register(register, value);
     }
 
     pub fn oam_locked(&self) -> bool {
@@ -428,7 +428,8 @@ impl<P: PpuModel> Ppu<P> {
 
     pub fn write_lock(&self, address: u16) -> Option<bool> {
         match address {
-            0xFE00..=0xFE9F => Some(self.oam_write_locked()),
+            // The OAM access gates cover the whole $FE page, extra rows included.
+            0xFE00..=0xFEFF => Some(self.oam_write_locked()),
             0x8000..=0x9FFF => Some(self.vram_write_locked()),
             _ => None,
         }

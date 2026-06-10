@@ -302,7 +302,7 @@ impl MappedAddress {
             // PCM12/PCM34 exist only on CGB silicon (HAS_PCM_REGISTERS).
             0xff76 => Self::AudioPcm12,
             0xff77 => Self::AudioPcm34,
-            0xff51..=0xff7f => Self::Unmapped,
+            0xff51..=0xff75 | 0xff78..=0xff7f => Self::Unmapped,
             0xff80..=0xfffe => Self::HighRam((address - 0xff80) as u8),
             0xffff => Self::InterruptRegister(interrupts::Register::EnabledInterrupts),
         }
@@ -395,11 +395,12 @@ impl<M: Model> Console<M> {
             // snapshot can be stale by the latch edge; re-read live.
             0xFF44 => self.read(address),
 
-            // CH3 wave RAM: `wave_data_latch` is a ~1-T-cycle pulse
-            // that can open and close within the T=2..T=3 read
-            // window. Use the T=2 drive-enable snapshot so a window
-            // that closes by T=3 is still captured — a live re-read
-            // at the latch would return 0xFF.
+            // CH3 wave RAM: under the DMG fetch-strobe coupling the
+            // `wave_data_latch` pulse can open and close within the
+            // T=2..T=3 read window, so the T=2 drive-enable snapshot
+            // captures it where a live latch re-read would float to
+            // 0xFF. Under the CGB channel-position coupling the same
+            // snapshot pins the read to the T=2 playback byte.
             0xFF30..=0xFF3F => snapshot,
 
             // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via

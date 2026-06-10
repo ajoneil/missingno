@@ -140,18 +140,22 @@ pub trait PpuModel: Default {
     /// The 2-bit shade a gbtrace pixel stream records for this pixel.
     fn trace_shade(pixel: Self::Pixel) -> u8;
 
+    /// The model has a palette block clocked on the 4-dot grid (CGB).
+    const HAS_PALETTE_CLOCK: bool = false;
+
     /// The CGB palette block runs on a 4-dot clock; it samples the mode-3
     /// latch there. Called at each M-cycle-boundary rise.
     fn tick_palette_clock(&mut self, _rendering: bool) {}
 
-    /// Read a CGB colour-palette register. `rendering` is true in mode 3, when
-    /// the data ports are locked. DMG has no colour RAM — reads 0xFF.
-    fn read_color_register(&self, _reg: ColorRegister, _rendering: bool) -> u8 {
+    /// Read a CGB colour-palette register. The data-port mode-3 lock is the
+    /// model's own clock-domain sample (`tick_palette_clock`), not the live
+    /// mode. DMG has no colour RAM — reads 0xFF.
+    fn read_color_register(&self, _reg: ColorRegister) -> u8 {
         0xFF
     }
 
     /// Write a CGB colour-palette register. DMG has no colour RAM — ignored.
-    fn write_color_register(&mut self, _reg: ColorRegister, _value: u8, _rendering: bool) {}
+    fn write_color_register(&mut self, _reg: ColorRegister, _value: u8) {}
 }
 
 /// Which layer wins the shared DMG BG-vs-OBJ resolve, carrying its BGP/OBP-mapped
