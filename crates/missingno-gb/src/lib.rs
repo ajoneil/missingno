@@ -190,7 +190,9 @@ pub trait Model: Default {
 
     /// CPU-domain T-cycles the CPU clock train slips against the dot stream
     /// when a STOP speed switch resolves — the clock-mux swap catching the new
-    /// train mid-period. Counted as blackout progress. DMG never switches.
+    /// train mid-period. Queried after `resolve_stop` returns `SpeedSwitch`,
+    /// so the model's speed bit already holds the new speed. DMG never
+    /// switches.
     fn speed_switch_phase_slip_tcycles(&self) -> u32 {
         0
     }

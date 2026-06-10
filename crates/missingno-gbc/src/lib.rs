@@ -47,9 +47,8 @@ use crate::screen::{Color555, GREYSCALE, Screen};
 const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
 
 /// One LCD dot of CPU time at double speed (2 T-cycles): the 1×→2× clock-mux
-/// swap catches the 2× train half a 1×-period in, so the CPU domain gains one
-/// dot against the dot clock. The 2×→1× swap re-locks cleanly. Bracketed to
-/// exactly one dot by the gambatte m3stat scx `_ds` expected values.
+/// swap leaves the CPU domain one dot ahead of the dot clock; the 2×→1× swap
+/// re-locks cleanly.
 const SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES: u32 = 2;
 
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
@@ -800,7 +799,10 @@ impl Model for Cgb {
         if self.key1_armed {
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
-            self.speed_switch_blackout = self.speed_switch_blackout_tcycles();
+            // The dispatcher's slip T-cycles count as blackout progress:
+            // arm-to-resume CPU time including the slip is the full blackout.
+            self.speed_switch_blackout =
+                self.speed_switch_blackout_tcycles() - self.speed_switch_phase_slip_tcycles();
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain
