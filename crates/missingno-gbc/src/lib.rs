@@ -323,6 +323,9 @@ pub struct CgbPpu {
     obj_cram: ColorRam,
     dmg_compat: bool,
     opri: bool,
+    /// The palette block's data-port lock: the mode-3 latch sampled into
+    /// the block's 4-dot clock domain.
+    cram_lock: bool,
 }
 
 impl PpuModel for CgbPpu {
@@ -450,7 +453,11 @@ impl PpuModel for CgbPpu {
         self.bg_cram.color(mux.bg_cell.palette(), bg_index)
     }
 
-    fn read_color_register(&self, register: ColorRegister, rendering: bool) -> u8 {
+    fn tick_palette_clock(&mut self, rendering: bool) {
+        self.cram_lock = rendering;
+    }
+
+    fn read_color_register(&self, register: ColorRegister, _rendering: bool) -> u8 {
         // DMG-compat locks only the CRAM data port; the index registers
         // stay live (boot leftovers read back).
         if self.dmg_compat
@@ -461,10 +468,10 @@ impl PpuModel for CgbPpu {
         {
             return 0xFF;
         }
-        self.read_cram_register(register, rendering)
+        self.read_cram_register(register, self.cram_lock)
     }
 
-    fn write_color_register(&mut self, register: ColorRegister, value: u8, rendering: bool) {
+    fn write_color_register(&mut self, register: ColorRegister, value: u8, _rendering: bool) {
         if self.dmg_compat
             && matches!(
                 register,
@@ -473,7 +480,7 @@ impl PpuModel for CgbPpu {
         {
             return;
         }
-        self.write_cram_register(register, value, rendering);
+        self.write_cram_register(register, value, self.cram_lock);
     }
 
     fn trace_shade(pixel: Color555) -> u8 {

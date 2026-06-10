@@ -140,6 +140,10 @@ pub trait PpuModel: Default {
     /// The 2-bit shade a gbtrace pixel stream records for this pixel.
     fn trace_shade(pixel: Self::Pixel) -> u8;
 
+    /// The CGB palette block runs on a 4-dot clock; it samples the mode-3
+    /// latch there. Called at each M-cycle-boundary rise.
+    fn tick_palette_clock(&mut self, _rendering: bool) {}
+
     /// Read a CGB colour-palette register. `rendering` is true in mode 3, when
     /// the data ports are locked. DMG has no colour RAM — reads 0xFF.
     fn read_color_register(&self, _reg: ColorRegister, _rendering: bool) -> u8 {

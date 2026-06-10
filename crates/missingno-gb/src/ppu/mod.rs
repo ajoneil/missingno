@@ -384,6 +384,13 @@ impl<P: PpuModel> Ppu<P> {
         self.model.set_object_priority_register(value);
     }
 
+    /// M-cycle-boundary rise: the palette block's clock-domain sample of
+    /// the mode-3 latch.
+    pub fn tick_model_palette_clock(&mut self) {
+        let rendering = self.mode() == Mode::Drawing;
+        self.model.tick_palette_clock(rendering);
+    }
+
     /// CPU read of a CGB colour-palette register; the model applies the mode-3
     /// data-port lock from the PPU's current mode.
     pub fn read_color_register(&self, register: ColorRegister) -> u8 {

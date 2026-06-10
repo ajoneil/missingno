@@ -489,6 +489,8 @@ impl<M: Model> Console<M> {
 
         self.cpu_bus.clear_activity();
 
+        self.ppu.tick_model_palette_clock();
+
         self.timers.mcycle();
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
