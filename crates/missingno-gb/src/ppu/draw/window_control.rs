@@ -41,6 +41,14 @@ pub(in crate::ppu) struct WindowControl {
     /// REJO.q as PYCO's ROCO edge sees it: sampled before this fall's hclk/SARY→REJO update,
     /// since ROCO precedes the late hclk edge within the PX==WX pixel.
     rejo_at_roco: bool,
+    /// CGB WY/LCDC.5 as the WY-match decode sees them: register cells cross
+    /// into the PPU domain at the CPU M-boundary, the same crossing as the
+    /// STAT register file. Unused on DMG (the decode reads the cells live).
+    synced_wy: u8,
+    synced_window_enabled: bool,
+    /// REPU (vblank) holds the crossing transparent: a capture during vblank
+    /// — and the first one after it — reads the cells live.
+    vblank_at_last_capture: bool,
 }
 
 impl WindowControl {
@@ -58,7 +66,15 @@ impl WindowControl {
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
             rejo_at_roco: false,
+            synced_wy: 0,
+            synced_window_enabled: false,
+            vblank_at_last_capture: true,
         }
+    }
+
+    pub(in crate::ppu) fn capture_register_sync(&mut self, wy: u8, enabled: bool) {
+        self.synced_wy = wy;
+        self.synced_window_enabled = enabled;
     }
 
     pub(in crate::ppu) fn init_nuko_wx(&mut self, wx: u8) {
@@ -69,8 +85,14 @@ impl WindowControl {
         self.nuko_wx = wx;
     }
 
-    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl) {
-        let wy_match = regs.control.window_enabled() && video.ly() == regs.window.y;
+    fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
+        let (wy, enabled) = if synced && !self.vblank_at_last_capture {
+            (self.synced_wy, self.synced_window_enabled)
+        } else {
+            (regs.window.y, regs.control.window_enabled())
+        };
+        let wy_match = enabled && video.ly() == wy;
+        self.vblank_at_last_capture = video.vblank();
         self.sary.write(if wy_match { 1 } else { 0 });
         self.sary.tick();
     }
@@ -96,10 +118,11 @@ impl WindowControl {
         regs: &PipelineRegisters,
         video: &VideoControl,
         talu_rising: bool,
+        register_sync: bool,
     ) {
         self.rejo_at_roco = self.rejo.output();
         if talu_rising {
-            self.capture_sary(regs, video);
+            self.capture_sary(regs, video, register_sync);
         }
         self.update_rejo(video);
     }

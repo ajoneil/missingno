@@ -196,6 +196,13 @@ impl<P: PpuModel> Rendering<P> {
         self.scan.start_scanning();
     }
 
+    /// CGB M-boundary register crossing into the window decode (with the
+    /// STAT register-file capture).
+    pub(super) fn capture_window_register_sync(&mut self, regs: &PipelineRegisters) {
+        self.window
+            .capture_register_sync(regs.window.y, regs.control.window_enabled());
+    }
+
     /// XYMU rendering latch; `true` during Mode 3 (opposite polarity to spec's active-low XYMU).
     pub(super) fn rendering_active(&self) -> bool {
         self.hblank.rendering_active()
@@ -445,7 +452,8 @@ impl<P: PpuModel> Rendering<P> {
         talu_rising: bool,
     ) -> Option<DrawnPixel<P::Pixel>> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
-        self.window.tick_wy_match_falling(regs, video, talu_rising);
+        self.window
+            .tick_wy_match_falling(regs, video, talu_rising, P::HAS_CLOCK_DOMAIN_SYNC);
 
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();

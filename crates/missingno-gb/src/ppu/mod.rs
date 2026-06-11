@@ -293,7 +293,7 @@ impl<P: PpuModel> Ppu<P> {
             sprites_enabled_pre_cupa: lcd_on,
         };
 
-        Ppu {
+        let mut ppu = Ppu {
             pixel_pipeline: if lcd_on { Some(Rendering::new()) } else { None },
             registers,
             video,
@@ -302,7 +302,11 @@ impl<P: PpuModel> Ppu<P> {
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
             model: P::default(),
+        };
+        if let Some(rendering) = ppu.pixel_pipeline.as_mut() {
+            rendering.capture_window_register_sync(&ppu.registers);
         }
+        ppu
     }
 }
 
@@ -398,6 +402,9 @@ impl<P: PpuModel> Ppu<P> {
     pub fn capture_register_sync_standalone(&mut self) -> bool {
         if !P::HAS_CLOCK_DOMAIN_SYNC {
             return false;
+        }
+        if let Some(rendering) = self.pixel_pipeline.as_mut() {
+            rendering.capture_window_register_sync(&self.registers);
         }
         let conditions = self.stat_conditions();
         let ly = self.video.ly();
