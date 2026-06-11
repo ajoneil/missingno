@@ -146,6 +146,19 @@ pub trait PpuModel: Default {
     /// block on the boundary fall. DMG couples its registers combinationally.
     const HAS_CLOCK_DOMAIN_SYNC: bool = false;
 
+    /// The CGB's revised OAM lock logic (the family that also removed the
+    /// OAM corruption bug): the write lock equals the read lock — it carries
+    /// the RUTU-pending term and has no AJUJ write-permit pulse. The DMG
+    /// keeps both artifacts.
+    const REVISED_OAM_LOCK: bool = false;
+
+    /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
+    /// combinationally; the CGB arbiter samples it in the M-grid clock
+    /// domain — the same captured sample as the CRAM lock.
+    fn vram_cpu_lock(&self, live: bool) -> bool {
+        live
+    }
+
     /// M-cycle-boundary capture: the model's clock-domain synchronisers
     /// sample their inputs. The CGB palette block samples the mode-3 latch
     /// here. The one CGB synchroniser on a different edge is the halt-wake

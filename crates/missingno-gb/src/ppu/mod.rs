@@ -420,21 +420,31 @@ impl<P: PpuModel> Ppu<P> {
     }
 
     pub fn vram_locked(&self) -> bool {
-        self.pixel_pipeline
+        let live = self
+            .pixel_pipeline
             .as_ref()
-            .is_some_and(|r| r.vram_locked())
+            .is_some_and(|r| r.vram_locked());
+        self.model.vram_cpu_lock(live)
     }
 
     pub fn oam_write_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .is_some_and(|r| r.oam_write_locked())
+        self.pixel_pipeline.as_ref().is_some_and(|r| {
+            if P::REVISED_OAM_LOCK {
+                r.oam_locked()
+            } else {
+                r.oam_write_locked()
+            }
+        })
     }
 
     pub fn vram_write_locked(&self) -> bool {
-        self.pixel_pipeline
-            .as_ref()
-            .is_some_and(|r| r.vram_write_locked())
+        if P::REVISED_OAM_LOCK {
+            self.vram_locked()
+        } else {
+            self.pixel_pipeline
+                .as_ref()
+                .is_some_and(|r| r.vram_write_locked())
+        }
     }
 
     pub fn write_lock(&self, address: u16) -> Option<bool> {
