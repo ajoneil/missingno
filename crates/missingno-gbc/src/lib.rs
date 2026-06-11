@@ -825,6 +825,17 @@ impl Model for Cgb {
 
     fn resolve_stop(&mut self) -> StopAction {
         if self.key1_armed {
+            // The clock-mux settle is bus-coupled: switching down, the
+            // trigger chain survives and a granted burst keeps the bus, so
+            // the settle waits for its release (retrying each boundary).
+            // Switching up, the chain reset drops the grant — nothing to
+            // wait for, and the in-flight block grades below.
+            if self.double_speed
+                && self.vram_dma.block_remaining > 0
+                && self.vram_dma.ready_in == 0
+            {
+                return StopAction::Remain;
+            }
             // Only the upward (single→double) swap disturbs the clock mux —
             // the same direction that slips the clock train — and resets the
             // trigger's request/commit chain; the CPU-written arming/length
