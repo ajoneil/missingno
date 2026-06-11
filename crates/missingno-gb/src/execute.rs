@@ -360,6 +360,15 @@ impl<M: Model> Console<M> {
 
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
+            // OAM read lock at the address phase: the decoder grants the read
+            // when cpu_rd asserts, before any mid-M-cycle RUTU onset. Only the
+            // double-speed latch resolution consumes the sample.
+            if self.model.cpu_steps_per_dot() == 2
+                && let Some(address @ 0xFE00..=0xFEFF) = self.cpu_bus.pending_read()
+            {
+                self.model
+                    .note_read_address_phase(self.ppu.read_lock(address));
+            }
         }
         if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
             self.arm_oam_bugs();

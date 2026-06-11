@@ -660,6 +660,10 @@ pub struct Cgb {
     /// `data_phase_n↑` latch actually saw (`resolve_read_latch` consumes them).
     pre_grid_stat: u8,
     pre_grid_read_lock: Option<bool>,
+    /// A pending OAM read's lock at the address phase (the read M-cycle's
+    /// first T-cycle) — the view the OAM decoder granted before any
+    /// mid-M-cycle RUTU onset (`resolve_read_latch` consumes it).
+    read_address_oam_lock: Option<bool>,
     /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF74
     /// (CGB mode only; open bus in compat), $FF75 bits 6-4 (the rest read 1).
     ff72: u8,
@@ -684,6 +688,7 @@ impl Default for Cgb {
             speed_switch_blackout: 0,
             pre_grid_stat: 0,
             pre_grid_read_lock: None,
+            read_address_oam_lock: None,
             ff72: 0,
             ff73: 0,
             ff74: 0,
@@ -909,6 +914,12 @@ impl Model for Cgb {
         }
     }
 
+    fn note_read_address_phase(&mut self, oam_lock: Option<bool>) {
+        if self.double_speed {
+            self.read_address_oam_lock = oam_lock;
+        }
+    }
+
     /// In double speed the read M-cycle is two dots, so a Low-arm latch runs in
     /// the same phase as that dot's ALET grid edge: `ppu_rise_edge` applies the
     /// mode 3→0 (XYMU.q↑) transition and the mode-2 OAM-lock onset before the
@@ -925,9 +936,17 @@ impl Model for Cgb {
                 const MODE_BITS: u8 = 0b0000_0011;
                 (value & !MODE_BITS) | (self.pre_grid_stat & MODE_BITS)
             }
-            // OAM/VRAM lock: the read floats (0xFF) iff the lock was asserted
-            // before the grid edge; otherwise it sees the accessible byte.
-            0xFE00..=0xFEFF | 0x8000..=0x9FFF => match self.pre_grid_read_lock {
+            // OAM floats (0xFF) only when locked from the address phase
+            // through the pre-grid view: a read the decoder granted at either
+            // sample saw the byte driven onto the bus, and the latch keeps it.
+            0xFE00..=0xFEFF => match (self.read_address_oam_lock, self.pre_grid_read_lock) {
+                (Some(false), _) => value,
+                (_, Some(true)) => 0xFF,
+                _ => value,
+            },
+            // VRAM: the read floats (0xFF) iff the mode-3 lock was asserted
+            // before the grid edge (the drive-enable sample).
+            0x8000..=0x9FFF => match self.pre_grid_read_lock {
                 Some(true) => 0xFF,
                 _ => value,
             },

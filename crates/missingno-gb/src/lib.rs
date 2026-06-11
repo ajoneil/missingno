@@ -215,6 +215,12 @@ pub trait Model: Default {
     /// latch always lands after a separate-phase rise) ignores them.
     fn note_pre_grid_read_view(&mut self, _stat_mode: u8, _read_lock: Option<bool>) {}
 
+    /// A pending OAM read's lock, sampled when the CPU asserts the address
+    /// (the M-cycle's first T-cycle). The OAM decoder grants the read there —
+    /// a RUTU lock onset later in the M-cycle cannot float a read already
+    /// granted. DMG (lockstep latch) ignores it.
+    fn note_read_address_phase(&mut self, _oam_lock: Option<bool>) {}
+
     /// Resolve the value a CPU read latches, given the generic
     /// `bus_value_at_latch` base value and whether the commit lands on the
     /// double-speed Low master-arm. DMG returns the base unchanged. CGB double
