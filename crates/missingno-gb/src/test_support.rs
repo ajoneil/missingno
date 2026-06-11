@@ -43,6 +43,11 @@ pub trait System {
     fn speed_switch_in_progress(&self) -> bool {
         false
     }
+    /// True while a VRAM DMA holds the CPU (the bus master's hold, not a
+    /// software STOP/HALT). Defaults false for systems without one.
+    fn vram_dma_holds_cpu(&self) -> bool {
+        false
+    }
     /// Peek a contiguous range of memory, bypassing bus conflicts and
     /// PPU mode gating. Used by tests that decode assertion records
     /// from WRAM after the test has halted.
@@ -74,6 +79,9 @@ impl<M: Model> System for Console<M> {
     }
     fn speed_switch_in_progress(&self) -> bool {
         Console::<M>::speed_switch_in_progress(self)
+    }
+    fn vram_dma_holds_cpu(&self) -> bool {
+        Console::<M>::vram_dma_holds_cpu(self)
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         Console::<M>::peek_range(self, start, len)
@@ -190,6 +198,9 @@ impl<M: Model> System for TestRun<M> {
     }
     fn speed_switch_in_progress(&self) -> bool {
         self.gb.speed_switch_in_progress()
+    }
+    fn vram_dma_holds_cpu(&self) -> bool {
+        self.gb.vram_dma_holds_cpu()
     }
     fn peek_range(&self, start: u16, len: u16) -> Vec<u8> {
         self.gb.peek_range(start, len)
@@ -450,7 +461,10 @@ pub fn is_infinite_loop<S: System>(s: &S) -> bool {
         return true;
     }
 
-    if s.cpu().halt.state != crate::cpu::HaltState::Running && !s.speed_switch_in_progress() {
+    if s.cpu().halt.state != crate::cpu::HaltState::Running
+        && !s.speed_switch_in_progress()
+        && !s.vram_dma_holds_cpu()
+    {
         if s.interrupts().enabled.is_empty() {
             return true;
         }

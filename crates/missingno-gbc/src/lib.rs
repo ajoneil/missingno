@@ -993,15 +993,24 @@ impl Model for Cgb {
                     // Arm HDMA: one 16-byte block per HBlank. A block already
                     // latched by the trigger is immune and keeps flowing; an
                     // arm landing during mode 0 pends at this fall's trigger
-                    // evaluation.
+                    // evaluation. With the LCD off no HBlank will come — the
+                    // arm strobe services one block immediately.
                     self.vram_dma.mode = TransferMode::HBlank;
                     self.vram_dma.remaining = length;
                     self.vram_dma.armed_this_fall = true;
+                    if !ppu.control().video_enabled() {
+                        self.vram_dma.block_remaining = 16;
+                        self.vram_dma.pend_from_arm = true;
+                        self.vram_dma.setup_cells = 0;
+                        self.vram_dma.ready_in = 2;
+                    }
                 } else if self.vram_dma.mode == TransferMode::HBlank {
                     // bit 7 = 0 while an HDMA runs clears the arming only (no
-                    // GDMA starts); a latched block completes, and `remaining`
-                    // is kept so the status read shows how far it got.
+                    // GDMA starts); a latched block completes. Bits 6-0 are
+                    // the length register and store on every write — the
+                    // status read reflects them.
                     self.vram_dma.mode = TransferMode::Idle;
+                    self.vram_dma.remaining = length;
                 } else {
                     // GDMA: copy the whole length while holding the CPU.
                     self.vram_dma.mode = TransferMode::General;

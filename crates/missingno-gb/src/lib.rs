@@ -596,6 +596,13 @@ impl<M: Model> Console<M> {
         self.model.speed_switch_in_progress()
     }
 
+    /// A VRAM DMA holds the CPU (GDMA whole-transfer hold or an HBlank
+    /// block's bus ownership) — the CPU's stop/park is the bus master's,
+    /// not a software STOP/HALT.
+    pub fn vram_dma_holds_cpu(&self) -> bool {
+        self.dma_cpu_hold || self.cpu.bus_suspended
+    }
+
     pub fn dma(&self) -> &Dma {
         &self.dma
     }
