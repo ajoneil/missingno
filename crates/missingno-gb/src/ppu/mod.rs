@@ -304,7 +304,7 @@ impl<P: PpuModel> Ppu<P> {
             model: P::default(),
         };
         if let Some(rendering) = ppu.pixel_pipeline.as_mut() {
-            rendering.capture_window_register_sync(&ppu.registers);
+            rendering.capture_register_sync(&ppu.registers);
         }
         ppu
     }
@@ -398,8 +398,8 @@ impl<P: PpuModel> Ppu<P> {
     /// Double-speed M-boundary fall on the half-dot edge that carries no PPU
     /// fall: the CPU-clocked STAT register synchroniser still captures (the
     /// PPU condition inputs are unchanged since the last dot's evaluation, so
-    /// only register-path edges can race here). The window crossing does not
-    /// — it captures at the M-cycle's last PPU fall instead.
+    /// only register-path edges can race here). The WY/WX/LCDC.5/LCDC.2
+    /// crossing does not — it captures at the M-cycle's last PPU fall instead.
     pub fn capture_register_sync_standalone(&mut self) -> bool {
         if !P::HAS_CLOCK_DOMAIN_SYNC {
             return false;

@@ -75,7 +75,7 @@ impl<P: PpuModel> Ppu<P> {
             // M-boundary fall: the register-file synchroniser captures here,
             // racing this fall's condition edges (ROPO captured pre-edge
             // PALY above, so the synced LYC lands in the next TALU(+)).
-            // The window decode's WY/WX/LCDC.5 crossing ticks inside
+            // The WY/WX/LCDC.5/LCDC.2 crossing ticks inside
             // `on_ppu_clock_fall` at the M-cycle's last PPU fall instead.
             let conditions = self.stat_conditions();
             let ly = self.video.ly();
@@ -105,7 +105,7 @@ impl<P: PpuModel> Ppu<P> {
         self.pixel_pipeline = Some(super::Rendering::new());
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             rendering.start_scanning();
-            rendering.capture_window_register_sync(&self.registers);
+            rendering.capture_register_sync(&self.registers);
         }
 
         // Prime the LALU baselines to avoid a spurious first edge on VID_RST deassertion.

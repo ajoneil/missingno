@@ -1,5 +1,5 @@
 use crate::dma::OamBusOwner;
-use crate::ppu::{PipelineRegisters, memory::Oam};
+use crate::ppu::memory::Oam;
 
 use crate::ppu::types::sprites::SpriteId;
 
@@ -94,7 +94,7 @@ impl ScanCounter {
         &mut self,
         line_number: u8,
         sprites: &mut SpriteStore,
-        regs: &PipelineRegisters,
+        height: u8,
         oam: &Oam,
         oam_bus: OamBusOwner,
     ) {
@@ -107,7 +107,6 @@ impl ScanCounter {
 
         if (sprites.count as usize) < MAX_SPRITES_PER_LINE {
             let delta = line_number.wrapping_add(16).wrapping_sub(self.stage1_y);
-            let height = regs.control.sprite_size().height();
             let is_match = delta < height;
 
             if is_match {

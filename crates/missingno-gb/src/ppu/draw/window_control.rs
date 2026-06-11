@@ -1,38 +1,47 @@
+use crate::ppu::types::sprites::SpriteSize;
 use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
 
-/// WY/WX/LCDC.5 as one word crossing the register-file synchroniser.
+/// WY/WX/LCDC.5/LCDC.2 as one word crossing the register-file synchroniser.
 #[derive(Clone, Copy)]
-struct WindowRegisterWord {
+struct RegisterWord {
     wy: u8,
     wx: u8,
     enabled: bool,
+    sprite_size: SpriteSize,
 }
 
-/// CGB crossing for the window decode (DffLatch pending/tick shape): `write`
-/// stages the CPU-side cells, `tick` is the capture edge — the write
-/// M-cycle's last PPU fall. SARY's coinciding TALU↑ capture reads the
-/// pre-tick output (DFF chain); the trigger chain (XOFO, the NUKO slave)
-/// reads post-tick.
-struct WindowRegisterSync {
-    pending: WindowRegisterWord,
-    output: WindowRegisterWord,
+/// CGB crossing for the window decode and the scan Y-comparator's XYMO view
+/// (DffLatch pending/tick shape): `write` stages the CPU-side cells, `tick`
+/// is the capture edge — the write M-cycle's last PPU fall. SARY's
+/// coinciding TALU↑ capture reads the pre-tick output (DFF chain); the
+/// trigger chain (XOFO, the NUKO slave) and the scan comparator read
+/// post-tick.
+struct RegisterSync {
+    pending: RegisterWord,
+    output: RegisterWord,
 }
 
-impl WindowRegisterSync {
+impl RegisterSync {
     fn new() -> Self {
-        let init = WindowRegisterWord {
+        let init = RegisterWord {
             wy: 0,
             wx: 0,
             enabled: false,
+            sprite_size: SpriteSize::Single,
         };
-        WindowRegisterSync {
+        RegisterSync {
             pending: init,
             output: init,
         }
     }
 
-    fn write(&mut self, wy: u8, wx: u8, enabled: bool) {
-        self.pending = WindowRegisterWord { wy, wx, enabled };
+    fn write(&mut self, wy: u8, wx: u8, enabled: bool, sprite_size: SpriteSize) {
+        self.pending = RegisterWord {
+            wy,
+            wx,
+            enabled,
+            sprite_size,
+        };
     }
 
     fn tick(&mut self) {
@@ -83,11 +92,11 @@ pub(in crate::ppu) struct WindowControl {
     /// REJO.q as PYCO's ROCO edge sees it: sampled before this fall's hclk/SARY→REJO update,
     /// since ROCO precedes the late hclk edge within the PX==WX pixel.
     rejo_at_roco: bool,
-    /// CGB WY/WX/LCDC.5 as the window decode and trigger chain see them:
-    /// register cells cross into the PPU domain at the write M-cycle's last
-    /// PPU fall (the STAT register file's sibling crossing). Unused on DMG
-    /// (the chain reads the cells live).
-    synced: WindowRegisterSync,
+    /// CGB WY/WX/LCDC.5/LCDC.2 as the window decode, trigger chain, and scan
+    /// Y-comparator see them: register cells cross into the PPU domain at the
+    /// write M-cycle's last PPU fall (the STAT register file's sibling
+    /// crossing). Unused on DMG (the consumers read the cells live).
+    synced: RegisterSync,
     /// REPU (vblank) holds the crossing transparent: a capture during vblank
     /// — and the first one after it — reads the cells live.
     vblank_at_last_capture: bool,
@@ -109,14 +118,24 @@ impl WindowControl {
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
             rejo_at_roco: false,
-            synced: WindowRegisterSync::new(),
+            synced: RegisterSync::new(),
             vblank_at_last_capture: true,
         }
     }
 
-    pub(in crate::ppu) fn capture_register_sync(&mut self, wy: u8, wx: u8, enabled: bool) {
-        self.synced.write(wy, wx, enabled);
+    pub(in crate::ppu) fn capture_register_sync(
+        &mut self,
+        wy: u8,
+        wx: u8,
+        enabled: bool,
+        sprite_size: SpriteSize,
+    ) {
+        self.synced.write(wy, wx, enabled, sprite_size);
         self.synced.tick();
+    }
+
+    pub(in crate::ppu) fn synced_sprite_size(&self) -> SpriteSize {
+        self.synced.output.sprite_size
     }
 
     pub(in crate::ppu) fn init_nuko_wx(&mut self, wx: u8) {

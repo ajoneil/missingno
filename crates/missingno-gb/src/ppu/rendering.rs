@@ -196,13 +196,14 @@ impl<P: PpuModel> Rendering<P> {
         self.scan.start_scanning();
     }
 
-    /// CGB register crossing into the window decode; the capture edge is the
-    /// write M-cycle's last PPU fall.
-    pub(super) fn capture_window_register_sync(&mut self, regs: &PipelineRegisters) {
+    /// CGB register crossing into the window decode and scan comparator; the
+    /// capture edge is the write M-cycle's last PPU fall.
+    pub(super) fn capture_register_sync(&mut self, regs: &PipelineRegisters) {
         self.window.capture_register_sync(
             regs.window.y,
             regs.window.x.output(),
             regs.control.window_enabled(),
+            regs.control.sprite_size(),
         );
     }
 
@@ -459,22 +460,39 @@ impl<P: PpuModel> Rendering<P> {
         self.window
             .tick_wy_match_falling(regs, video, talu_rising, P::HAS_CLOCK_DOMAIN_SYNC);
 
-        // The M-cycle's last PPU fall: the WY/WX/LCDC.5 crossing's capture
-        // edge (the boundary fall at single speed; the T2 fall in double
-        // speed when T3's edge carries no PPU fall). SARY's coinciding TALU↑
-        // capture reads the pre-tick output (DFF chain); XOFO and the NUKO
-        // slave read the post-tick output this same fall.
+        // The M-cycle's last PPU fall: the WY/WX/LCDC.5/LCDC.2 crossing's
+        // capture edge (the boundary fall at single speed; the T2 fall in
+        // double speed when T3's edge carries no PPU fall). SARY's coinciding
+        // TALU↑ capture reads the pre-tick output (DFF chain); XOFO, the NUKO
+        // slave, and the scan comparator read the post-tick output this same
+        // fall.
         if P::HAS_CLOCK_DOMAIN_SYNC && mcycle_last_fall {
-            self.capture_window_register_sync(regs);
+            self.capture_register_sync(regs);
         }
 
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();
 
+        // CGB: the scan Y-comparator's XYMO view is the live bit OR the
+        // register-crossing copy — a grow reaches GOVU live, a shrink waits
+        // for the crossing capture.
+        let scan_sprite_height = if P::HAS_CLOCK_DOMAIN_SYNC {
+            regs.control
+                .sprite_size()
+                .height()
+                .max(self.window.synced_sprite_size().height())
+        } else {
+            regs.control.sprite_size().height()
+        };
+
         // BYBA/AVAP co-locate on this XUPY-rising fall.
-        let scan = self
-            .scan
-            .advance_scan(scan_clock_rising, video.ly(), regs, oam, oam_bus);
+        let scan = self.scan.advance_scan(
+            scan_clock_rising,
+            video.ly(),
+            scan_sprite_height,
+            oam,
+            oam_bus,
+        );
         if scan.avap {
             // Mode 3 begins on AVAP-fall; AJUJ pulse asserts alongside mode3↑ for write-permit.
             self.hblank.pulse_ajuj_on_avap_fall();

@@ -1,7 +1,7 @@
 //! Mode 2 OAM scan state machine.
 
 use crate::dma::OamBusOwner;
-use crate::ppu::{PipelineRegisters, memory::Oam};
+use crate::ppu::memory::Oam;
 
 use super::oam_scan::{ScanCounter, SpriteStore};
 
@@ -158,7 +158,7 @@ impl SpriteScanner {
         &mut self,
         scan_clock_rising: bool,
         ly: u8,
-        regs: &PipelineRegisters,
+        sprite_height: u8,
         oam: &Oam,
         oam_bus: OamBusOwner,
     ) -> ScanSignals {
@@ -170,7 +170,7 @@ impl SpriteScanner {
         // sets, so the store stays empty though the counter still advances.
         if self.mode2_active {
             self.counter
-                .compare_and_store(ly, &mut self.sprites, regs, oam, oam_bus);
+                .compare_and_store(ly, &mut self.sprites, sprite_height, oam, oam_bus);
         }
 
         // DOBA captures OLD BYBA before BYBA captures FETO below.
