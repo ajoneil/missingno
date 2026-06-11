@@ -72,15 +72,20 @@ fn run_mooneye_screen_test(rom_path: &str, reference_path: &str) {
         "Mooneye test {rom_path} timed out without reaching infinite loop"
     );
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_reference_png(reference_path);
+    // DMG-compat colourised output: compare in full RGB — greyscale
+    // collapses the compat palette and can never match the reference.
+    let actual = gbc.screen().to_rgb_bytes();
+    let expected = common::load_reference_png_rgb(reference_path);
 
     let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+    for (i, (a, e)) in actual.chunks(3).zip(expected.chunks(3)).enumerate() {
         if a != e {
             if mismatches < 10 {
                 let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
+                eprintln!(
+                    "Pixel mismatch at ({x}, {y}): got #{:02X}{:02X}{:02X}, expected #{:02X}{:02X}{:02X}",
+                    a[0], a[1], a[2], e[0], e[1], e[2]
+                );
             }
             mismatches += 1;
         }
