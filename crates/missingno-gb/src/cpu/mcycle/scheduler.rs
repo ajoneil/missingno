@@ -35,7 +35,11 @@ impl Cpu {
                     }
                     _ => false,
                 };
-                if targets_bus {
+                // The dispatch sequence asserts bus ownership end-to-end,
+                // so its tenure cannot begin while the DMA owns the bus —
+                // the mirror of the grant deferring to an in-flight
+                // dispatch.
+                if targets_bus || self.in_dispatch() {
                     self.parked_action = Some(action);
                     action = MCycleAction::Internal { address: self.pc };
                 }
