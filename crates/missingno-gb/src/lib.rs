@@ -283,7 +283,13 @@ pub trait Model: Default {
     /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
     /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
     /// DMG: no VRAM DMA.
-    fn vram_dma_tick(&mut self, _mode: ppu::rendering::Mode, _cpu_halted: bool) {}
+    fn vram_dma_tick(
+        &mut self,
+        _mode: ppu::rendering::Mode,
+        _engine_gated: bool,
+        _cpu_halted: bool,
+    ) {
+    }
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting
     /// them stretch until release; the rest run concurrently. DMG: never.

@@ -454,8 +454,15 @@ impl<M: Model> Console<M> {
         // commits to cancel-immunity one fall later (the pend pipeline
         // lives in the model).
         if advance_ppu {
-            let cpu_gated = self.cpu.is_halted() || (self.cpu.is_stopped() && !self.dma_cpu_hold);
-            self.model.vram_dma_tick(pre_fall_mode, cpu_gated);
+            // The engine thaws at the IF rise, ahead of the CPU's halt-exit
+            // latency (a wake-coincident block is decided before the first
+            // fetch and the dispatch pick); level re-evaluation and the
+            // taken-clear wait for the CPU's own resume.
+            let cpu_halted = self.cpu.is_halted();
+            let engine_gated = (cpu_halted && !self.cpu.irq_latched())
+                || (self.cpu.is_stopped() && !self.dma_cpu_hold);
+            self.model
+                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
         }
 
         if let Some(video_result) = &video_result {

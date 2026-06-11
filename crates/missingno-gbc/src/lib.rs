@@ -595,6 +595,15 @@ struct VramDma {
     /// Dots until a committed block claims the bus (the transfer readies two
     /// dots after the commit).
     ready_in: u8,
+    /// Consecutive falls with the CPU halted — the taken-clear stays live
+    /// through the halt-latch M-cycle (4 falls), then freezes until resume.
+    halted_falls: u8,
+    /// The previous fall's mode view showed mode 0 — entry-edge detection for
+    /// the IF-rise-to-resume window (only an entry pends there).
+    prev_view_hblank: bool,
+    /// Falls since the registered request's entry: a request ≤2 dots old at
+    /// the IF-rise thaw commits there; an older one waits for the resume.
+    pend_age: u8,
 }
 
 impl VramDma {
@@ -1040,18 +1049,38 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, mode: Mode, cpu_gated: bool) {
+    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) {
         let in_hblank = mode == Mode::HorizontalBlank;
-        // The taken flag tracks the PPU mode — it clears at mode-0 exit
-        // whether or not the CPU clock is gated.
-        if !in_hblank {
+        let entry_edge = in_hblank && !self.vram_dma.prev_view_hblank;
+        self.vram_dma.prev_view_hblank = in_hblank;
+        if cpu_halted {
+            self.vram_dma.halted_falls = self.vram_dma.halted_falls.saturating_add(1);
+        } else {
+            self.vram_dma.halted_falls = 0;
+        }
+        // The taken-clear stays live through the halt-latch M-cycle, then
+        // freezes until the CPU's own resume (halt only; STOP freezes it
+        // outright via the engine gate).
+        if !in_hblank && (!cpu_halted || self.vram_dma.halted_falls <= 4) {
             self.vram_dma.hblank_block_taken = false;
         }
-
-        // A gated CPU clock (HALT, STOP) freezes the trigger — no pend, no
-        // commit — but a block already latched keeps draining.
-        if cpu_gated {
-            self.vram_dma.pend = false;
+        // The engine gate freezes commit/grant; the mode-0 entry detector
+        // keeps running — an entry registers a pend-request (consulting the
+        // taken flag) that persists through the freeze and commits at the
+        // thaw. A latched block keeps draining.
+        if engine_gated {
+            if self.vram_dma.pend {
+                self.vram_dma.pend_age = self.vram_dma.pend_age.saturating_add(1);
+            }
+            if cpu_halted
+                && entry_edge
+                && self.vram_dma.mode == TransferMode::HBlank
+                && !self.vram_dma.hblank_block_taken
+                && self.vram_dma.remaining > 0
+            {
+                self.vram_dma.pend = true;
+                self.vram_dma.pend_age = 0;
+            }
             self.vram_dma.quota = if self.vram_dma.moving() {
                 if self.double_speed { 1 } else { 2 }
             } else {
@@ -1065,7 +1094,10 @@ impl Model for Cgb {
         // cancel-immune block one fall later; an FF55 write at either fall
         // kills the pend (armed is consulted at both stages).
         let armed = self.vram_dma.mode == TransferMode::HBlank;
-        let committing = self.vram_dma.pend && armed && in_hblank;
+        let committing = self.vram_dma.pend
+            && armed
+            && in_hblank
+            && (!cpu_halted || self.vram_dma.pend_age <= 2);
         if committing {
             self.vram_dma.block_remaining = 16;
             self.vram_dma.hblank_block_taken = true;
@@ -1079,6 +1111,7 @@ impl Model for Cgb {
             && self.vram_dma.remaining > 0;
         if self.vram_dma.pend {
             self.vram_dma.pend_from_arm = self.vram_dma.armed_this_fall;
+            self.vram_dma.pend_age = 0;
         }
         self.vram_dma.armed_this_fall = false;
         if self.vram_dma.ready_in > 0 {
