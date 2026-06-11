@@ -40,6 +40,7 @@ impl<P: PpuModel> Ppu<P> {
     pub fn on_master_clock_fall(
         &mut self,
         is_mcycle: bool,
+        mcycle_last_fall: bool,
         oam_bus: OamBusOwner,
     ) -> PpuTickResult<P::Pixel> {
         let mut result = PpuTickResult::default();
@@ -63,16 +64,19 @@ impl<P: PpuModel> Ppu<P> {
         let talu_rising = self.advance_dividers(&mut result);
         self.registers
             .tick_on_master_clock_fall(self.mode2_active());
-        self.run_ppu_clock_fall(oam_bus, scan_clock_rising, talu_rising, &mut result);
+        self.run_ppu_clock_fall(
+            oam_bus,
+            scan_clock_rising,
+            talu_rising,
+            mcycle_last_fall,
+            &mut result,
+        );
         if P::HAS_CLOCK_DOMAIN_SYNC {
             // M-boundary fall: the register-file synchroniser captures here,
             // racing this fall's condition edges (ROPO captured pre-edge
             // PALY above, so the synced LYC lands in the next TALU(+)).
-            // The window decode's WY/LCDC.5 crossing captures on the same
-            // boundary, after this fall's SARY capture read the prior copy.
-            if is_mcycle && let Some(rendering) = self.pixel_pipeline.as_mut() {
-                rendering.capture_window_register_sync(&self.registers);
-            }
+            // The window decode's WY/WX/LCDC.5 crossing ticks inside
+            // `on_ppu_clock_fall` at the M-cycle's last PPU fall instead.
             let conditions = self.stat_conditions();
             let ly = self.video.ly();
             if self
@@ -161,6 +165,7 @@ impl<P: PpuModel> Ppu<P> {
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
         talu_rising: bool,
+        mcycle_last_fall: bool,
         result: &mut PpuTickResult<P::Pixel>,
     ) {
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -172,6 +177,7 @@ impl<P: PpuModel> Ppu<P> {
                 oam_bus,
                 scan_clock_rising,
                 talu_rising,
+                mcycle_last_fall,
             );
             if result.pixel.is_some() {
                 self.registers.palettes.note_bg_pixel_emit();

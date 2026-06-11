@@ -430,13 +430,22 @@ impl<M: Model> Console<M> {
         // boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = if advance_ppu {
             let oam_bus = self.dma.oam_bus_owner();
-            Some(self.ppu.on_master_clock_fall(is_mcycle_boundary, oam_bus))
+            // The M-cycle's last PPU fall: the boundary (T3) fall when that
+            // T-cycle carries one; in double speed PPU falls land on
+            // alternate T-cycles, so when T3's edge has none the M's last
+            // fall is T2's. The window register crossing captures there.
+            let mcycle_last_fall =
+                is_mcycle_boundary || (self.model.cpu_steps_per_dot() == 2 && tcycle.as_u8() == 2);
+            Some(
+                self.ppu
+                    .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus),
+            )
         } else {
             None
         };
         // Double-speed boundary fall sharing a dot with no PPU fall: the
-        // CPU-clocked register synchroniser still captures; its request joins
-        // the fall path's gating below.
+        // CPU-clocked STAT register synchroniser still captures; its request
+        // joins the fall path's gating below.
         let standalone_stat = video_result.is_none()
             && is_mcycle_boundary
             && self.ppu.capture_register_sync_standalone();

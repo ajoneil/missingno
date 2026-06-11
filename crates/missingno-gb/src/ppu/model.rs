@@ -146,6 +146,11 @@ pub trait PpuModel: Default {
     /// block on the boundary fall. DMG couples its registers combinationally.
     const HAS_CLOCK_DOMAIN_SYNC: bool = false;
 
+    /// The CGB window-hit latch is enable-qualified: the (synced) enable
+    /// dropping releases RYDY immediately, truncating the mode-3 extension
+    /// at that dot. The DMG's RYDY holds to PORY.
+    const ENABLE_QUALIFIED_WINDOW_HIT: bool = false;
+
     /// The CGB's revised OAM lock logic (the family that also removed the
     /// OAM corruption bug): the write lock equals the read lock — it carries
     /// the RUTU-pending term and has no AJUJ write-permit pulse. The DMG

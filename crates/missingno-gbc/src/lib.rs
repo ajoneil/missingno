@@ -344,6 +344,7 @@ impl PpuModel for CgbPpu {
     // written enables only, never all-enables-high.
     const STAT_WRITE_ALL_ENABLES_GLITCH: bool = false;
     const HAS_CLOCK_DOMAIN_SYNC: bool = true;
+    const ENABLE_QUALIFIED_WINDOW_HIT: bool = true;
     const REVISED_OAM_LOCK: bool = true;
 
     type Vram = CgbVram;

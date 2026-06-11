@@ -1,5 +1,45 @@
 use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
 
+/// WY/WX/LCDC.5 as one word crossing the register-file synchroniser.
+#[derive(Clone, Copy)]
+struct WindowRegisterWord {
+    wy: u8,
+    wx: u8,
+    enabled: bool,
+}
+
+/// CGB crossing for the window decode (DffLatch pending/tick shape): `write`
+/// stages the CPU-side cells, `tick` is the capture edge — the write
+/// M-cycle's last PPU fall. SARY's coinciding TALU↑ capture reads the
+/// pre-tick output (DFF chain); the trigger chain (XOFO, the NUKO slave)
+/// reads post-tick.
+struct WindowRegisterSync {
+    pending: WindowRegisterWord,
+    output: WindowRegisterWord,
+}
+
+impl WindowRegisterSync {
+    fn new() -> Self {
+        let init = WindowRegisterWord {
+            wy: 0,
+            wx: 0,
+            enabled: false,
+        };
+        WindowRegisterSync {
+            pending: init,
+            output: init,
+        }
+    }
+
+    fn write(&mut self, wy: u8, wx: u8, enabled: bool) {
+        self.pending = WindowRegisterWord { wy, wx, enabled };
+    }
+
+    fn tick(&mut self) {
+        self.output = self.pending;
+    }
+}
+
 use super::fetch_cascade::FetchCascade;
 use super::fetcher::TileFetcher;
 use super::fine_scroll::FineScroll;
@@ -34,6 +74,8 @@ pub(in crate::ppu) struct WindowControl {
     nuko_wx: u8,
     /// WAZY → VYNO ripple, clocked by PYNU 1→0 transitions during rendering.
     window_line_counter: u8,
+    /// SOVY: MYVO-clocked DFF delaying RYDY; SUZU = AND2(!RYDY, SOVY).
+    sovy: bool,
     /// SARY: hclk-clocked DFF sampling `wy_match = LCDC.5 ∧ (LY == WY)`.
     sary: DffLatch,
     /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
@@ -41,11 +83,11 @@ pub(in crate::ppu) struct WindowControl {
     /// REJO.q as PYCO's ROCO edge sees it: sampled before this fall's hclk/SARY→REJO update,
     /// since ROCO precedes the late hclk edge within the PX==WX pixel.
     rejo_at_roco: bool,
-    /// CGB WY/LCDC.5 as the WY-match decode sees them: register cells cross
-    /// into the PPU domain at the CPU M-boundary, the same crossing as the
-    /// STAT register file. Unused on DMG (the decode reads the cells live).
-    synced_wy: u8,
-    synced_window_enabled: bool,
+    /// CGB WY/WX/LCDC.5 as the window decode and trigger chain see them:
+    /// register cells cross into the PPU domain at the write M-cycle's last
+    /// PPU fall (the STAT register file's sibling crossing). Unused on DMG
+    /// (the chain reads the cells live).
+    synced: WindowRegisterSync,
     /// REPU (vblank) holds the crossing transparent: a capture during vblank
     /// — and the first one after it — reads the cells live.
     vblank_at_last_capture: bool,
@@ -63,31 +105,31 @@ impl WindowControl {
             window_rendered: false,
             nuko_wx: 0xFF,
             window_line_counter: 0,
+            sovy: false,
             sary: DffLatch::new(0),
             rejo: NorLatch::new(false),
             rejo_at_roco: false,
-            synced_wy: 0,
-            synced_window_enabled: false,
+            synced: WindowRegisterSync::new(),
             vblank_at_last_capture: true,
         }
     }
 
-    pub(in crate::ppu) fn capture_register_sync(&mut self, wy: u8, enabled: bool) {
-        self.synced_wy = wy;
-        self.synced_window_enabled = enabled;
+    pub(in crate::ppu) fn capture_register_sync(&mut self, wy: u8, wx: u8, enabled: bool) {
+        self.synced.write(wy, wx, enabled);
+        self.synced.tick();
     }
 
     pub(in crate::ppu) fn init_nuko_wx(&mut self, wx: u8) {
         self.nuko_wx = wx;
     }
 
-    pub(in crate::ppu) fn update_nuko_wx(&mut self, wx: u8) {
-        self.nuko_wx = wx;
+    pub(in crate::ppu) fn update_nuko_wx(&mut self, wx: u8, synced: bool) {
+        self.nuko_wx = if synced { self.synced.output.wx } else { wx };
     }
 
     fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
         let (wy, enabled) = if synced && !self.vblank_at_last_capture {
-            (self.synced_wy, self.synced_window_enabled)
+            (self.synced.output.wy, self.synced.output.enabled)
         } else {
             (regs.window.y, regs.control.window_enabled())
         };
@@ -127,19 +169,21 @@ impl WindowControl {
         self.update_rejo(video);
     }
 
-    /// Releases the window-hit latch (RYDY) when the fetcher-idle DFF (PORY) signals the
-    /// cascade restart. Returns true on the RYDY 1→0 edge — SUZU fires, which triggers TEVO's
-    /// load-window pulse.
+    /// PORY's RYDY reset arm, then SUZU = AND2(!RYDY, SOVY): true on any RYDY 1→0 —
+    /// PORY's release or the XOFO abort — triggering TEVO's load-window pulse.
     pub(in crate::ppu) fn release_window_hit_on_fetcher_reset(
         &mut self,
         fetcher_reset: bool,
     ) -> bool {
-        if fetcher_reset && self.rydy.output() {
+        if fetcher_reset {
             self.rydy.clear();
-            true
-        } else {
-            false
         }
+        self.sovy && !self.rydy.output()
+    }
+
+    /// SOVY captures RYDY on MYVO; free-runs even when NAFY gates the fetcher advance.
+    pub(in crate::ppu) fn tick_sovy_falling(&mut self) {
+        self.sovy = self.rydy.output();
     }
 
     fn compute_nuko(&self, pixel_counter: u8) -> bool {
@@ -157,9 +201,14 @@ impl WindowControl {
         self.compute_nuko(pixel_counter)
     }
 
-    /// XOFO during rendering simplifies to NOT(LCDC.5).
-    fn compute_xofo(&self, regs: &PipelineRegisters) -> bool {
-        !regs.control.window_enabled()
+    /// XOFO during rendering simplifies to NOT(LCDC.5) — read live on the
+    /// DMG, through the M-boundary crossing on the CGB.
+    fn compute_xofo(&self, regs: &PipelineRegisters, synced: bool) -> bool {
+        if synced {
+            !self.synced.output.enabled
+        } else {
+            !regs.control.window_enabled()
+        }
     }
 
     /// PPU rise: NOPA captures prior-fall PYNU; PYNU re-evaluates; MOSU↑ fires if NUNY rises.
@@ -213,11 +262,14 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
     ) -> bool {
-        let xofo = self.compute_xofo(regs);
+        let xofo = self.compute_xofo(regs, P::HAS_CLOCK_DOMAIN_SYNC);
         let prev_pynu_q = self.pynu.output();
 
         if xofo {
             self.pynu.clear();
+            if P::ENABLE_QUALIFIED_WINDOW_HIT {
+                self.rydy.clear();
+            }
         } else if self.nunu.output() != 0 {
             self.pynu.set();
         }
@@ -251,6 +303,7 @@ impl WindowControl {
     /// Models ATEJ↑'s XOFO pulse on PYNU: clear briefly, re-set from NUNU carryover, NOPA captures.
     pub(in crate::ppu) fn reset_scanline(&mut self) {
         self.rydy.clear();
+        self.sovy = false;
         if self.pynu.output() && self.window_rendered {
             self.window_line_counter = self.window_line_counter.wrapping_add(1);
             self.window_rendered = false;
@@ -269,8 +322,8 @@ impl WindowControl {
         self.rydy.output()
     }
 
-    pub(in crate::ppu) fn wx_triggered(&self, regs: &PipelineRegisters) -> bool {
-        self.pynu.output() && !self.compute_xofo(regs)
+    pub(in crate::ppu) fn wx_triggered(&self, regs: &PipelineRegisters, synced: bool) -> bool {
+        self.pynu.output() && !self.compute_xofo(regs, synced)
     }
 
     pub(in crate::ppu) fn window_rendered(&self) -> bool {

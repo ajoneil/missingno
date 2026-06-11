@@ -196,11 +196,14 @@ impl<P: PpuModel> Rendering<P> {
         self.scan.start_scanning();
     }
 
-    /// CGB M-boundary register crossing into the window decode (with the
-    /// STAT register-file capture).
+    /// CGB register crossing into the window decode; the capture edge is the
+    /// write M-cycle's last PPU fall.
     pub(super) fn capture_window_register_sync(&mut self, regs: &PipelineRegisters) {
-        self.window
-            .capture_register_sync(regs.window.y, regs.control.window_enabled());
+        self.window.capture_register_sync(
+            regs.window.y,
+            regs.window.x.output(),
+            regs.control.window_enabled(),
+        );
     }
 
     /// XYMU rendering latch; `true` during Mode 3 (opposite polarity to spec's active-low XYMU).
@@ -344,7 +347,7 @@ impl<P: PpuModel> Rendering<P> {
             fine_scroll_match: self.lcd.fine_scroll_match(),
             fetcher_idle_stage_3: self.cascade.pygo(),
             fetcher_ready: self.cascade.poky(),
-            wx_triggered: self.window.wx_triggered(regs),
+            wx_triggered: self.window.wx_triggered(regs, P::HAS_CLOCK_DOMAIN_SYNC),
             video_clock: video.scan_clock(),
             scan_done: self.scan.scan_done_flag(),
             scan_done_prev: self.scan.scan_done_prev(),
@@ -450,10 +453,20 @@ impl<P: PpuModel> Rendering<P> {
         oam_bus: OamBusOwner,
         scan_clock_rising: bool,
         talu_rising: bool,
+        mcycle_last_fall: bool,
     ) -> Option<DrawnPixel<P::Pixel>> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
         self.window
             .tick_wy_match_falling(regs, video, talu_rising, P::HAS_CLOCK_DOMAIN_SYNC);
+
+        // The M-cycle's last PPU fall: the WY/WX/LCDC.5 crossing's capture
+        // edge (the boundary fall at single speed; the T2 fall in double
+        // speed when T3's edge carries no PPU fall). SARY's coinciding TALU↑
+        // capture reads the pre-tick output (DFF chain); XOFO and the NUKO
+        // slave read the post-tick output this same fall.
+        if P::HAS_CLOCK_DOMAIN_SYNC && mcycle_last_fall {
+            self.capture_window_register_sync(regs);
+        }
 
         // Snapshot before AVAP reaction sets XYMU; the rise→rise gap models the 1-dot AVAP→LAXU delay.
         let was_rendering = self.hblank.rendering_active();
@@ -504,6 +517,7 @@ impl<P: PpuModel> Rendering<P> {
             };
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
+            self.window.tick_sovy_falling();
             self.mode3_pixel_pipeline(
                 model,
                 regs,
@@ -566,7 +580,7 @@ impl<P: PpuModel> Rendering<P> {
             self.pixel_counter.value(),
             self.fine_scroll.pixel_clock_active(),
             self.window.window_line_counter(),
-            self.window.wx_triggered(regs),
+            self.window.wx_triggered(regs, P::HAS_CLOCK_DOMAIN_SYNC),
             regs,
             video,
             vram,
@@ -754,7 +768,8 @@ impl<P: PpuModel> Rendering<P> {
             self.fine_scroll.reset_counter();
         }
 
-        self.window.update_nuko_wx(regs.window.x.output());
+        self.window
+            .update_nuko_wx(regs.window.x.output(), P::HAS_CLOCK_DOMAIN_SYNC);
 
         pixel_out
     }
