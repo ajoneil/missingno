@@ -197,8 +197,8 @@ pub struct Cpu {
     /// passive spin M-cycles, deferring instruction progress without touching
     /// its state. The ring keeps counting (timers/serial are free-running).
     pub(crate) bus_suspended: bool,
-    /// Bus cycle in flight when the gate engaged mid-M: it stretches across
-    /// the burst — committed edges stand, remaining edges occur after release.
+    /// Bus access selected while a DMA owns its bus: it waits at the pick —
+    /// no edge has run — and starts as the next M-cycle when the bus releases.
     pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can

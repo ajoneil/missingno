@@ -595,14 +595,18 @@ struct VramDma {
     /// Dots until a committed block claims the bus (the transfer readies two
     /// dots after the commit).
     ready_in: u8,
-    /// Consecutive falls with the CPU halted — the taken-clear stays live
-    /// through the halt-latch M-cycle (4 falls), then freezes until resume.
+    /// Falls since the halt gate rose: the taken-clear path runs one
+    /// boundary-clocked synchronizer stage behind the gate, so a clear in
+    /// flight at the halt latch (within its M-cycle, 4 falls) still lands;
+    /// later clears wait for the resume.
     halted_falls: u8,
     /// The previous fall's mode view showed mode 0 — entry-edge detection for
     /// the IF-rise-to-resume window (only an entry pends there).
     prev_view_hblank: bool,
-    /// Falls since the registered request's entry: a request ≤2 dots old at
-    /// the IF-rise thaw commits there; an older one waits for the resume.
+    /// Falls since the registered request entered the trigger's two-stage
+    /// pipe: a token still inside (≤2 falls) at the IF-rise thaw commits
+    /// there; an older token relaunches through the pipe — the one-fall
+    /// penalty that decides the grant-vs-dispatch tie.
     pend_age: u8,
 }
 
@@ -1079,6 +1083,7 @@ impl Model for Cgb {
                 && self.vram_dma.remaining > 0
             {
                 self.vram_dma.pend = true;
+                self.vram_dma.pend_from_arm = false;
                 self.vram_dma.pend_age = 0;
             }
             self.vram_dma.quota = if self.vram_dma.moving() {
