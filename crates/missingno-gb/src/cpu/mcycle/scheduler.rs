@@ -18,6 +18,16 @@ impl Cpu {
             // one STARTING while the DMA owns the VRAM/external buses waits
             // for release. IO/HRAM/OAM and internal M-cycles proceed
             // concurrently; the ring keeps counting throughout.
+            if self.bus_held {
+                // GDMA owns the full bus bandwidth: passive spin cells, each
+                // an instruction boundary, with no instruction-state advance.
+                self.boundary_flag = true;
+                self.current_action = Some(MCycleAction::Internal { address: self.pc });
+                self.tcycle = TCycle::ZERO;
+                self.mcycle_active = true;
+                self.dma_bus_claim = false;
+                self.handover_kill = false;
+            } else {
             let mut action = if self.parked_action.is_some() {
                 if self.bus_suspended {
                     MCycleAction::Internal { address: self.pc }
@@ -51,6 +61,7 @@ impl Cpu {
             // committed during the M-cycle that just ended.
             self.dma_bus_claim = false;
             self.handover_kill = false;
+            }
         }
 
         let tcycle = self.tcycle;

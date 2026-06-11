@@ -214,6 +214,10 @@ pub struct Cpu {
     /// during the current M-cycle with the bus free: it takes the
     /// halt-release fetch's cycle tail, killing the IDU increment.
     pub(crate) handover_kill: bool,
+    /// A bus master (CGB GDMA) holds every CPU cycle: the scheduler yields
+    /// passive spins without touching instruction or halt state. The
+    /// whole-bandwidth sibling of `bus_suspended`'s per-bus wait states.
+    pub(crate) bus_held: bool,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can
     /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
@@ -307,6 +311,7 @@ impl Cpu {
             stop_retained: None,
             post_halt_fetch: false,
             handover_kill: false,
+            bus_held: false,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
@@ -383,6 +388,7 @@ impl Cpu {
             stop_retained: None,
             post_halt_fetch: false,
             handover_kill: false,
+            bus_held: false,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
@@ -564,14 +570,21 @@ impl Cpu {
         self.boundary_flag = true;
     }
 
-    /// Hold the CPU in the STOP idle spin until `resume_from_stop`. Models a bus
-    /// master pausing the CPU clock while the peripherals keep running — the CGB
-    /// VRAM DMA. Call at an M-cycle boundary; the inverse of `resume_from_stop`.
-    pub fn begin_stop_hold(&mut self) {
-        self.halt.state = HaltState::Stopped;
-        self.halt.rs_latched = true;
-        self.phase = CpuPhase::Halted(HaltPhase::Spin);
+    /// Hold every CPU cycle until `end_bus_hold`: a bus master (CGB GDMA)
+    /// consumes the full bus bandwidth while the peripherals keep running.
+    /// Call at an instruction boundary; halt state is untouched — the spin
+    /// is the scheduler's.
+    pub fn begin_bus_hold(&mut self) {
+        self.bus_held = true;
+    }
+
+    /// Release the hold. The prefetch in flight when the hold engaged was
+    /// cancelled by the bus master taking the cycle; it re-issues from PC.
+    pub fn end_bus_hold(&mut self) {
+        self.bus_held = false;
+        self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
+        self.boundary_flag = true;
     }
 
     pub fn halt_rs_latched(&self) -> bool {

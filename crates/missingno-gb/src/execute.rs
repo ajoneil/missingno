@@ -194,12 +194,6 @@ impl<M: Model> Console<M> {
             return;
         }
 
-        // A VRAM-DMA bus hold parks the CPU in `Stopped` too; it is released by
-        // `manage_dma_hold`, not here, and must not drain a blackout or switch speed.
-        if self.dma_cpu_hold {
-            return;
-        }
-
         // Mid-blackout: drain the switch penalty, then re-engage. The divider
         // and PPU advanced through `elapsed_tcycles` while the CPU spun. The
         // model owns the blackout countdown (CGB-only).
@@ -238,9 +232,8 @@ impl<M: Model> Console<M> {
     }
 
     /// Engage or release the CPU-clock hold a VRAM DMA asserts. While the DMA
-    /// holds the bus the CPU spins (`Stopped`) and its bytes flow per M-cycle in
-    /// `tick_mcycle_boundary_fall`; the PPU/timers keep running. Distinct from a
-    /// real STOP via `dma_cpu_hold`, which `resolve_stop` guards on. Called at the
+    /// holds the bus the CPU spins and its bytes flow per M-cycle in
+    /// `tick_mcycle_boundary_fall`; the PPU/timers keep running. Called at the
     /// instruction boundary (also by external phase-stepping drivers).
     pub fn manage_dma_hold(&mut self) {
         // An HBlank block owning the bus finishes before a GDMA hold engages
@@ -251,10 +244,10 @@ impl<M: Model> Console<M> {
         let holds = self.model.vram_dma_holds_cpu();
         if holds && !self.dma_cpu_hold {
             self.dma_cpu_hold = true;
-            self.cpu.begin_stop_hold();
+            self.cpu.begin_bus_hold();
         } else if !holds && self.dma_cpu_hold {
             self.dma_cpu_hold = false;
-            self.cpu.resume_from_stop();
+            self.cpu.end_bus_hold();
         }
     }
 
@@ -459,8 +452,8 @@ impl<M: Model> Console<M> {
             // fetch and the dispatch pick); level re-evaluation and the
             // taken-clear wait for the CPU's own resume.
             let cpu_halted = self.cpu.is_halted();
-            let engine_gated = (cpu_halted && !self.cpu.irq_latched())
-                || (self.cpu.is_stopped() && !self.dma_cpu_hold);
+            let engine_gated =
+                (cpu_halted && !self.cpu.irq_latched()) || self.cpu.is_stopped();
             let claim = self
                 .model
                 .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
