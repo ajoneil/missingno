@@ -57,6 +57,15 @@ pub enum StopAction {
     SpeedSwitch,
 }
 
+/// The HDMA trigger's bus claim committed on a fall: `standing` marks a
+/// claim that aged through its synchronizer stage before committing (it
+/// wins the bus race against the halt-release fetch).
+#[derive(Copy, Clone, Default)]
+pub struct VramDmaClaim {
+    pub committed: bool,
+    pub standing: bool,
+}
+
 /// OAM byte a write-conflict lands under the shared external-bus model: a WRAM
 /// source (`$C0–$FF`) keeps its driver live through the OAM write phase and
 /// AND-mixes with the CPU value; a ROM/SRAM source releases, so the CPU value
@@ -282,15 +291,19 @@ pub trait Model: Default {
 
     /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
     /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
-    /// Returns whether the trigger committed a block this fall (the
-    /// cancel-immune bus claim). DMG: no VRAM DMA.
+    /// Returns the claim committed this fall: `committed` (the cancel-immune
+    /// bus claim) and `standing` (the claim aged through its synchronizer —
+    /// it wins the bus race against a halt-release fetch). DMG: no VRAM DMA.
     fn vram_dma_tick(
         &mut self,
         _mode: ppu::rendering::Mode,
         _engine_gated: bool,
         _cpu_halted: bool,
-    ) -> bool {
-        false
+    ) -> VramDmaClaim {
+        VramDmaClaim {
+            committed: false,
+            standing: false,
+        }
     }
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting

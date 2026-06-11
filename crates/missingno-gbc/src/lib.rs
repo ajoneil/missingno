@@ -34,7 +34,7 @@ use missingno_gb::ppu::{
     PpuModel, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu, dma::Dma,
+    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu, dma::Dma,
     joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
 };
 
@@ -1099,7 +1099,13 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) -> bool {
+    fn vram_dma_tick(
+        &mut self,
+        mode: Mode,
+        engine_gated: bool,
+        cpu_halted: bool,
+    ) -> VramDmaClaim {
+
         let in_hblank = mode == Mode::HorizontalBlank;
         let entry_edge = in_hblank && !self.vram_dma.prev_view_hblank;
         self.vram_dma.prev_view_hblank = in_hblank;
@@ -1137,7 +1143,7 @@ impl Model for Cgb {
             } else {
                 0
             };
-            return false;
+            return VramDmaClaim::default();
         }
 
         // Two-stage trigger, evaluated each fall on the post-rise mode view
@@ -1176,7 +1182,14 @@ impl Model for Cgb {
         } else {
             0
         };
-        committing
+        VramDmaClaim {
+            committed: committing,
+            // A claim is standing once it has aged through one full M-cycle
+            // of the freeze — the synchronizer stage that carries it into
+            // the CPU's M-grid domain; a younger claim hasn't crossed when
+            // the halt-release fetch starts.
+            standing: committing && self.vram_dma.pend_age >= 4,
+        }
     }
 
     fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {

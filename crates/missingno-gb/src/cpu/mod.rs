@@ -207,6 +207,13 @@ pub struct Cpu {
     /// The operand byte a yielded STOP discard-fetch latched: IR retains it
     /// through the stop spin; resume routes it as a just-fetched opcode.
     pub(super) stop_retained: Option<u8>,
+    /// The M-cycle in flight is the first fetch after a halt exit (the
+    /// halt-release path drives it); cleared when it routes.
+    pub(super) post_halt_fetch: bool,
+    /// A standing DMA claim (pend predating the wake comparator) committed
+    /// during the current M-cycle with the bus free: it takes the
+    /// halt-release fetch's cycle tail, killing the IDU increment.
+    pub(crate) handover_kill: bool,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can
     /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
@@ -298,6 +305,8 @@ impl Cpu {
             parked_action: None,
             dma_bus_claim: false,
             stop_retained: None,
+            post_halt_fetch: false,
+            handover_kill: false,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
@@ -372,6 +381,8 @@ impl Cpu {
             parked_action: None,
             dma_bus_claim: false,
             stop_retained: None,
+            post_halt_fetch: false,
+            handover_kill: false,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,

@@ -58,9 +58,15 @@ impl Cpu {
             Some(MCycleAction::Read { address }) => *address,
             _ => self.pc,
         };
+        // The halt-release fetch races the trigger: a standing claim
+        // committing during this fetch's M-cycle takes the cycle's tail and
+        // kills the IDU increment — the byte routes, PC holds (halt-bug
+        // family).
+        let handover_kill = self.handover_kill && self.post_halt_fetch;
+        self.post_halt_fetch = false;
         if self.halt.bug {
             self.halt.bug = false;
-        } else {
+        } else if !handover_kill {
             self.pc = fetch_addr.wrapping_add(1);
         }
 
@@ -102,6 +108,7 @@ impl Cpu {
         self.phase = CpuPhase::Fetch;
         self.exec_step = 0;
         self.boundary_flag = true;
+        self.post_halt_fetch = true;
         self.mcycle_fetch()
     }
 

@@ -461,11 +461,16 @@ impl<M: Model> Console<M> {
             let cpu_halted = self.cpu.is_halted();
             let engine_gated = (cpu_halted && !self.cpu.irq_latched())
                 || (self.cpu.is_stopped() && !self.dma_cpu_hold);
-            if self
+            let claim = self
                 .model
-                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted)
-            {
+                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
+            if claim.committed {
                 self.cpu.dma_bus_claim = true;
+            }
+            // A standing claim takes the halt-release fetch's cycle tail —
+            // unless the OAM DMA engine already owns the bus it would claim.
+            if claim.standing && self.dma.is_active_on_bus().is_none() {
+                self.cpu.handover_kill = true;
             }
         }
 

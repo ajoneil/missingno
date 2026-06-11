@@ -50,6 +50,7 @@ impl Cpu {
             // Claims are per-M-cycle: the pick above consumed any claim
             // committed during the M-cycle that just ended.
             self.dma_bus_claim = false;
+            self.handover_kill = false;
         }
 
         let tcycle = self.tcycle;
