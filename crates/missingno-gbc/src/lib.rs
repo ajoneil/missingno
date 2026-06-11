@@ -608,6 +608,9 @@ struct VramDma {
     /// there; an older token relaunches through the pipe — the one-fall
     /// penalty that decides the grant-vs-dispatch tie.
     pend_age: u8,
+    /// A speed-switch cancel caught the engine mid-byte: that byte completes
+    /// (pointers advance) without counting against the latched length.
+    escape_byte: bool,
 }
 
 impl VramDma {
@@ -822,6 +825,29 @@ impl Model for Cgb {
 
     fn resolve_stop(&mut self) -> StopAction {
         if self.key1_armed {
+            // Only the upward (single→double) swap disturbs the clock mux —
+            // the same direction that slips the clock train — and resets the
+            // trigger's request/commit chain; the CPU-written arming/length
+            // registers persist. A block not yet bus-eligible is discarded
+            // (service resumes post-switch); a bus-eligible block's dropped
+            // grant latches the stop condition — the transfer cancels, with
+            // the in-flight byte completing outside the latched length.
+            // Switching back down, the chain survives intact.
+            if !self.double_speed {
+                if self.vram_dma.mode == TransferMode::HBlank
+                    && self.vram_dma.block_remaining > 0
+                {
+                    if self.vram_dma.ready_in == 0 {
+                        self.vram_dma.mode = TransferMode::Idle;
+                        self.vram_dma.block_remaining = 1;
+                        self.vram_dma.escape_byte = true;
+                    } else {
+                        self.vram_dma.block_remaining = 0;
+                        self.vram_dma.ready_in = 0;
+                    }
+                }
+                self.vram_dma.pend = false;
+            }
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
             // The dispatcher's slip T-cycles count as blackout progress:
@@ -1147,10 +1173,15 @@ impl Model for Cgb {
         }
         let pair = (self.vram_dma.source, self.vram_dma.dest);
         // Pointers advance per byte and persist for any follow-on transfer; the
-        // destination wraps within VRAM.
+        // destination wraps within VRAM. A switch-cancel escape byte does not
+        // count against the latched length.
         self.vram_dma.source = self.vram_dma.source.wrapping_add(1);
         self.vram_dma.dest = 0x8000 | (self.vram_dma.dest.wrapping_add(1) & 0x1FFF);
-        self.vram_dma.remaining -= 1;
+        if self.vram_dma.escape_byte {
+            self.vram_dma.escape_byte = false;
+        } else {
+            self.vram_dma.remaining -= 1;
+        }
         self.vram_dma.quota -= 1;
         if self.vram_dma.block_remaining > 0 {
             self.vram_dma.block_remaining -= 1;
