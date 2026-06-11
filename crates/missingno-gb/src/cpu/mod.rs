@@ -200,6 +200,13 @@ pub struct Cpu {
     /// Bus access selected while a DMA owns its bus: it waits at the pick —
     /// no edge has run — and starts as the next M-cycle when the bus releases.
     pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
+    /// A DMA bus claim committed during the current M-cycle. STOP's operand
+    /// discard-fetch yields to it: the byte stays unconsumed and executes as
+    /// the next opcode after the stop resolves. Cleared at each M start.
+    pub(crate) dma_bus_claim: bool,
+    /// The operand byte a yielded STOP discard-fetch latched: IR retains it
+    /// through the stop spin; resume routes it as a just-fetched opcode.
+    pub(super) stop_retained: Option<u8>,
     /// Whether the next rise() should fire the M-cycle-boundary block.
     /// Decoupled from `mcycle_active` so the skip-boot constructor can
     /// encode "M-cycle in flight, but the opening CLK9↑'s boundary work
@@ -289,6 +296,8 @@ impl Cpu {
             mcycle_active: true,
             bus_suspended: false,
             parked_action: None,
+            dma_bus_claim: false,
+            stop_retained: None,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
             exec_step: 1,
@@ -361,6 +370,8 @@ impl Cpu {
             mcycle_active: false,
             bus_suspended: false,
             parked_action: None,
+            dma_bus_claim: false,
+            stop_retained: None,
             boundary_pending: true,
             current_action: None,
             exec_step: 0,
@@ -529,7 +540,15 @@ impl Cpu {
     pub fn resume_from_stop(&mut self) {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
-        self.phase = CpuPhase::Fetch;
+        self.phase = match self.stop_retained.take() {
+            // A yielded discard-fetch left its byte in IR: route it as a
+            // just-fetched opcode instead of re-fetching.
+            Some(opcode) => CpuPhase::Execute {
+                phase: Phase::RetainedOpcode { opcode },
+                step: 0,
+            },
+            None => CpuPhase::Fetch,
+        };
         self.exec_step = 0;
         self.boundary_flag = true;
     }

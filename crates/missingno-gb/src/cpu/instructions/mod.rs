@@ -46,7 +46,9 @@ impl Instruction {
         Some(match op {
             0x00 => Self::NoOperation,
             0x10 => {
-                ops.next()?;
+                // The operand is fetched and discarded — absent when the
+                // fetch yielded to a DMA bus claim (1-byte STOP).
+                ops.next();
                 Self::Stop
             }
             0x07 => Self::BitShift(BitShift::RotateA(

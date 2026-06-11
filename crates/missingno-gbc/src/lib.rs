@@ -1088,7 +1088,7 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) {
+    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) -> bool {
         let in_hblank = mode == Mode::HorizontalBlank;
         let entry_edge = in_hblank && !self.vram_dma.prev_view_hblank;
         self.vram_dma.prev_view_hblank = in_hblank;
@@ -1126,7 +1126,7 @@ impl Model for Cgb {
             } else {
                 0
             };
-            return;
+            return false;
         }
 
         // Two-stage trigger, evaluated each fall on the post-rise mode view
@@ -1165,6 +1165,7 @@ impl Model for Cgb {
         } else {
             0
         };
+        committing
     }
 
     fn vram_dma_next_byte(&mut self) -> Option<(u16, u16)> {

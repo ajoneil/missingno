@@ -282,13 +282,15 @@ pub trait Model: Default {
 
     /// Advance this console's VRAM DMA one M-cycle, refilling the bytes it may
     /// move this M-cycle. `mode` lets an H-Blank transfer gate on mode 0.
-    /// DMG: no VRAM DMA.
+    /// Returns whether the trigger committed a block this fall (the
+    /// cancel-immune bus claim). DMG: no VRAM DMA.
     fn vram_dma_tick(
         &mut self,
         _mode: ppu::rendering::Mode,
         _engine_gated: bool,
         _cpu_halted: bool,
-    ) {
+    ) -> bool {
+        false
     }
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting

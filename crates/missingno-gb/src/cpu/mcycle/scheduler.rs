@@ -47,6 +47,9 @@ impl Cpu {
             self.current_action = Some(action);
             self.tcycle = TCycle::ZERO;
             self.mcycle_active = true;
+            // Claims are per-M-cycle: the pick above consumed any claim
+            // committed during the M-cycle that just ended.
+            self.dma_bus_claim = false;
         }
 
         let tcycle = self.tcycle;

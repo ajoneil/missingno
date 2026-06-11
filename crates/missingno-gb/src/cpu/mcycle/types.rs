@@ -140,6 +140,11 @@ pub(crate) enum Phase {
         bytes_needed: u8,
     },
 
+    /// First M-cycle after a yielded-stop resume: IR retained the
+    /// operand byte the discard-fetch latched, so it routes as a
+    /// just-fetched opcode with no re-fetch.
+    RetainedOpcode { opcode: u8 },
+
     /// One memory read, then a CPU action.
     ReadOp { address: u16, action: ReadAction },
 

@@ -461,8 +461,12 @@ impl<M: Model> Console<M> {
             let cpu_halted = self.cpu.is_halted();
             let engine_gated = (cpu_halted && !self.cpu.irq_latched())
                 || (self.cpu.is_stopped() && !self.dma_cpu_hold);
-            self.model
-                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
+            if self
+                .model
+                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted)
+            {
+                self.cpu.dma_bus_claim = true;
+            }
         }
 
         if let Some(video_result) = &video_result {
