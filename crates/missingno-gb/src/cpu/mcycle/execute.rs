@@ -32,15 +32,14 @@ impl Cpu {
     /// Route a fetched opcode to its decoded phase: dispatch check,
     /// PC advance past the fetch address, then decode — 1-M
     /// instructions retire through the next fetch overlap.
-    fn route_fetched_opcode(
-        &mut self,
-        opcode: u8,
-        fetch_addr: u16,
-    ) -> (Option<MCycleAction>, bool) {
+    fn route_fetched_opcode(&mut self, opcode: u8, fetch_addr: u16) -> Option<MCycleAction> {
         // zacw captures dispatch_active.q HIGH at this M-cycle's
         // closing edge — dispatch saves PC = fetch_addr so RETI
         // resumes at the prefetched-then-discarded instruction.
         if self.dispatch.dispatch_active() {
+            // A dispatch preempting a just-yielded STOP abandons the stop;
+            // its retained byte must not survive into a later resume.
+            self.stop_retained = None;
             let pc = fetch_addr;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
@@ -52,7 +51,7 @@ impl Cpu {
             self.irq.pending_vector_resolve = false;
             self.boundary_flag = true;
             self.pc = pc;
-            return (self.next_mcycle(), false);
+            return self.next_mcycle();
         }
 
         if self.halt.bug {
@@ -67,14 +66,14 @@ impl Cpu {
             let (instruction, next_phase, next_commit) = self.decode_retire(bytes, 1);
             self.instruction = instruction;
             if matches!(next_phase, Phase::Empty) {
-                (Some(self.enter_fetch_overlap(next_commit)), false)
+                Some(self.enter_fetch_overlap(next_commit))
             } else {
                 self.phase = CpuPhase::Execute {
                     phase: next_phase,
                     step: 0,
                 };
                 self.exec_step = 0;
-                (self.next_mcycle(), false)
+                self.next_mcycle()
             }
         } else {
             self.phase = CpuPhase::Execute {
@@ -87,7 +86,7 @@ impl Cpu {
                 step: 0,
             };
             self.exec_step = 0;
-            (self.next_mcycle(), false)
+            self.next_mcycle()
         }
     }
 
@@ -115,11 +114,10 @@ impl Cpu {
                 // during its tenure: the discard is what gets dropped — the
                 // byte stays in IR through the stop spin and executes as
                 // the next opcode at resume (no re-fetch).
-                let yields_to_claim = bytes[0] == 0x10 && self.dma_bus_claim;
+                let yields_to_claim = bytes[0] == 0x10 && self.vram_dma_claim.committed;
                 if yields_to_claim {
                     self.stop_retained = Some(self.data_latch);
-                }
-                if !yields_to_claim {
+                } else {
                     bytes[*bytes_read as usize] = self.data_latch;
                     *bytes_read += 1;
                     *pc = pc.wrapping_add(1);
@@ -162,7 +160,7 @@ impl Cpu {
                     Some(MCycleAction::Read { address }) => *address,
                     _ => self.pc,
                 };
-                self.route_fetched_opcode(opcode, fetch_addr)
+                (self.route_fetched_opcode(opcode, fetch_addr), false)
             }
 
             // IR retained the yielded STOP operand through the stop spin;
@@ -170,7 +168,8 @@ impl Cpu {
             Phase::RetainedOpcode { opcode } => {
                 let opcode = *opcode;
                 let fetch_addr = self.pc;
-                self.route_fetched_opcode(opcode, fetch_addr)
+                self.ir_address = fetch_addr;
+                (self.route_fetched_opcode(opcode, fetch_addr), false)
             }
 
             Phase::ReadOp { address, action } => match current_step {

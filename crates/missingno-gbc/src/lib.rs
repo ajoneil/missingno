@@ -34,8 +34,8 @@ use missingno_gb::ppu::{
     PpuModel, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu, dma::Dma,
-    joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
+    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu,
+    dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -825,29 +825,22 @@ impl Model for Cgb {
 
     fn resolve_stop(&mut self) -> StopAction {
         if self.key1_armed {
-            // The clock-mux settle is bus-coupled: switching down, the
-            // trigger chain survives and a granted burst keeps the bus, so
-            // the settle waits for its release (retrying each boundary).
-            // Switching up, the chain reset drops the grant — nothing to
-            // wait for, and the in-flight block grades below.
-            if self.double_speed
-                && self.vram_dma.block_remaining > 0
-                && self.vram_dma.ready_in == 0
-            {
-                return StopAction::Remain;
-            }
-            // Only the upward (single→double) swap disturbs the clock mux —
-            // the same direction that slips the clock train — and resets the
-            // trigger's request/commit chain; the CPU-written arming/length
-            // registers persist. A block not yet bus-eligible is discarded
-            // (service resumes post-switch); a bus-eligible block's dropped
-            // grant latches the stop condition — the transfer cancels, with
-            // the in-flight byte completing outside the latched length.
-            // Switching back down, the chain survives intact.
-            if !self.double_speed {
-                if self.vram_dma.mode == TransferMode::HBlank
-                    && self.vram_dma.block_remaining > 0
-                {
+            // The clock-mux settle is bus-coupled, and only the upward swap
+            // disturbs the mux and resets the trigger's request/commit
+            // chain (the CPU-written arming/length registers persist).
+            if self.double_speed {
+                // Downward: the chain survives, so a granted burst keeps
+                // the bus and the settle waits for its release.
+                if self.vram_dma.block_remaining > 0 && self.vram_dma.ready_in == 0 {
+                    return StopAction::Remain;
+                }
+            } else {
+                // Upward: the reset grades the committed block, which is
+                // cancel-immune and ignores the arming flag. Not yet
+                // bus-eligible: discarded whole. Bus-eligible: the dropped
+                // grant latches the stop condition — the in-flight byte
+                // completes outside the latched length.
+                if self.vram_dma.block_remaining > 0 {
                     if self.vram_dma.ready_in == 0 {
                         self.vram_dma.mode = TransferMode::Idle;
                         self.vram_dma.block_remaining = 1;
@@ -855,6 +848,7 @@ impl Model for Cgb {
                     } else {
                         self.vram_dma.block_remaining = 0;
                         self.vram_dma.ready_in = 0;
+                        self.vram_dma.setup_cells = 0;
                     }
                 }
                 self.vram_dma.pend = false;
@@ -1099,13 +1093,7 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(
-        &mut self,
-        mode: Mode,
-        engine_gated: bool,
-        cpu_halted: bool,
-    ) -> VramDmaClaim {
-
+    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) -> VramDmaClaim {
         let in_hblank = mode == Mode::HorizontalBlank;
         let entry_edge = in_hblank && !self.vram_dma.prev_view_hblank;
         self.vram_dma.prev_view_hblank = in_hblank;

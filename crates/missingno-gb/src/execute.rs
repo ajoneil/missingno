@@ -194,6 +194,11 @@ impl<M: Model> Console<M> {
             return;
         }
 
+        // The settle is bus-coupled: a bus master holding the CPU defers it.
+        if self.cpu.bus_held {
+            return;
+        }
+
         // Mid-blackout: drain the switch penalty, then re-engage. The divider
         // and PPU advanced through `elapsed_tcycles` while the CPU spun. The
         // model owns the blackout countdown (CGB-only).
@@ -237,8 +242,9 @@ impl<M: Model> Console<M> {
     /// instruction boundary (also by external phase-stepping drivers).
     pub fn manage_dma_hold(&mut self) {
         // An HBlank block owning the bus finishes before a GDMA hold engages
-        // (the two cannot share the buses).
-        if self.cpu.bus_suspended {
+        // (the two cannot share the buses), and the dispatch tenure is
+        // indivisible — the hold waits for it like the HDMA grant does.
+        if self.cpu.bus_suspended || self.cpu.in_dispatch() {
             return;
         }
         let holds = self.model.vram_dma_holds_cpu();
@@ -452,18 +458,18 @@ impl<M: Model> Console<M> {
             // fetch and the dispatch pick); level re-evaluation and the
             // taken-clear wait for the CPU's own resume.
             let cpu_halted = self.cpu.is_halted();
-            let engine_gated =
-                (cpu_halted && !self.cpu.irq_latched()) || self.cpu.is_stopped();
+            let engine_gated = (cpu_halted && !self.cpu.irq_latched()) || self.cpu.is_stopped();
             let claim = self
                 .model
                 .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
             if claim.committed {
-                self.cpu.dma_bus_claim = true;
-            }
-            // A standing claim takes the halt-release fetch's cycle tail —
-            // unless the OAM DMA engine already owns the bus it would claim.
-            if claim.standing && self.dma.is_active_on_bus().is_none() {
-                self.cpu.handover_kill = true;
+                // An active OAM DMA already owns a bus, blocking the
+                // handover that would take the halt-release fetch's tail.
+                let bus_free = self.dma.is_active_on_bus().is_none();
+                self.cpu.vram_dma_claim = crate::VramDmaClaim {
+                    committed: true,
+                    standing: claim.standing && bus_free,
+                };
             }
         }
 

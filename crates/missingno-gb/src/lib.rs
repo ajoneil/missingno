@@ -300,10 +300,7 @@ pub trait Model: Default {
         _engine_gated: bool,
         _cpu_halted: bool,
     ) -> VramDmaClaim {
-        VramDmaClaim {
-            committed: false,
-            standing: false,
-        }
+        VramDmaClaim::default()
     }
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting

@@ -62,7 +62,7 @@ impl Cpu {
         // committing during this fetch's M-cycle takes the cycle's tail and
         // kills the IDU increment — the byte routes, PC holds (halt-bug
         // family).
-        let handover_kill = self.handover_kill && self.post_halt_fetch;
+        let handover_kill = self.vram_dma_claim.standing && self.post_halt_fetch;
         self.post_halt_fetch = false;
         if self.halt.bug {
             self.halt.bug = false;

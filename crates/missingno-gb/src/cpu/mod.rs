@@ -200,20 +200,17 @@ pub struct Cpu {
     /// Bus access selected while a DMA owns its bus: it waits at the pick —
     /// no edge has run — and starts as the next M-cycle when the bus releases.
     pub(crate) parked_action: Option<super::cpu::mcycle::MCycleAction>,
-    /// A DMA bus claim committed during the current M-cycle. STOP's operand
-    /// discard-fetch yields to it: the byte stays unconsumed and executes as
-    /// the next opcode after the stop resolves. Cleared at each M start.
-    pub(crate) dma_bus_claim: bool,
+    /// The DMA bus claim committed during the current M-cycle, cleared at
+    /// each M start. `committed` is what STOP's operand discard-fetch yields
+    /// to; `standing` (already masked by the bus being free) is what kills
+    /// the halt-release fetch's IDU increment.
+    pub(crate) vram_dma_claim: crate::VramDmaClaim,
     /// The operand byte a yielded STOP discard-fetch latched: IR retains it
     /// through the stop spin; resume routes it as a just-fetched opcode.
     pub(super) stop_retained: Option<u8>,
     /// The M-cycle in flight is the first fetch after a halt exit (the
     /// halt-release path drives it); cleared when it routes.
     pub(super) post_halt_fetch: bool,
-    /// A standing DMA claim (pend predating the wake comparator) committed
-    /// during the current M-cycle with the bus free: it takes the
-    /// halt-release fetch's cycle tail, killing the IDU increment.
-    pub(crate) handover_kill: bool,
     /// A bus master (CGB GDMA) holds every CPU cycle: the scheduler yields
     /// passive spins without touching instruction or halt state. The
     /// whole-bandwidth sibling of `bus_suspended`'s per-bus wait states.
@@ -307,10 +304,9 @@ impl Cpu {
             mcycle_active: true,
             bus_suspended: false,
             parked_action: None,
-            dma_bus_claim: false,
+            vram_dma_claim: crate::VramDmaClaim::default(),
             stop_retained: None,
             post_halt_fetch: false,
-            handover_kill: false,
             bus_held: false,
             boundary_pending: false,
             current_action: Some(MCycleAction::Read { address: 0x0100 }),
@@ -384,10 +380,9 @@ impl Cpu {
             mcycle_active: false,
             bus_suspended: false,
             parked_action: None,
-            dma_bus_claim: false,
+            vram_dma_claim: crate::VramDmaClaim::default(),
             stop_retained: None,
             post_halt_fetch: false,
-            handover_kill: false,
             bus_held: false,
             boundary_pending: true,
             current_action: None,
@@ -580,9 +575,14 @@ impl Cpu {
 
     /// Release the hold. The prefetch in flight when the hold engaged was
     /// cancelled by the bus master taking the cycle; it re-issues from PC.
+    /// A stop spin held through the hold stays a stop spin.
     pub fn end_bus_hold(&mut self) {
         self.bus_held = false;
-        self.phase = CpuPhase::Fetch;
+        self.phase = if self.halt.state == HaltState::Stopped {
+            CpuPhase::Halted(HaltPhase::Spin)
+        } else {
+            CpuPhase::Fetch
+        };
         self.exec_step = 0;
         self.boundary_flag = true;
     }

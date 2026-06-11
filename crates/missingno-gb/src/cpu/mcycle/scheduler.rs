@@ -18,50 +18,46 @@ impl Cpu {
             // one STARTING while the DMA owns the VRAM/external buses waits
             // for release. IO/HRAM/OAM and internal M-cycles proceed
             // concurrently; the ring keeps counting throughout.
-            if self.bus_held {
+            let action = if self.bus_held {
                 // GDMA owns the full bus bandwidth: passive spin cells, each
                 // an instruction boundary, with no instruction-state advance.
                 self.boundary_flag = true;
-                self.current_action = Some(MCycleAction::Internal { address: self.pc });
-                self.tcycle = TCycle::ZERO;
-                self.mcycle_active = true;
-                self.dma_bus_claim = false;
-                self.handover_kill = false;
+                MCycleAction::Internal { address: self.pc }
             } else {
-            let mut action = if self.parked_action.is_some() {
-                if self.bus_suspended {
-                    MCycleAction::Internal { address: self.pc }
-                } else {
-                    self.parked_action.take().expect("checked is_some")
-                }
-            } else {
-                self.next_mcycle()
-                    .expect("next_mcycle must always return Some (CPU chains at boundaries)")
-            };
-            if self.bus_suspended && self.parked_action.is_none() {
-                let targets_bus = match &action {
-                    MCycleAction::Read { address } | MCycleAction::Write { address, .. } => {
-                        crate::memory::Bus::of(*address).is_some()
+                let mut action = if self.parked_action.is_some() {
+                    if self.bus_suspended {
+                        MCycleAction::Internal { address: self.pc }
+                    } else {
+                        self.parked_action.take().expect("checked is_some")
                     }
-                    _ => false,
+                } else {
+                    self.next_mcycle()
+                        .expect("next_mcycle must always return Some (CPU chains at boundaries)")
                 };
-                // The dispatch sequence asserts bus ownership end-to-end,
-                // so its tenure cannot begin while the DMA owns the bus —
-                // the mirror of the grant deferring to an in-flight
-                // dispatch.
-                if targets_bus || self.in_dispatch() {
-                    self.parked_action = Some(action);
-                    action = MCycleAction::Internal { address: self.pc };
+                if self.bus_suspended && self.parked_action.is_none() {
+                    let targets_bus = match &action {
+                        MCycleAction::Read { address } | MCycleAction::Write { address, .. } => {
+                            crate::memory::Bus::of(*address).is_some()
+                        }
+                        _ => false,
+                    };
+                    // The dispatch sequence asserts bus ownership end-to-end,
+                    // so its tenure cannot begin while the DMA owns the bus —
+                    // the mirror of the grant deferring to an in-flight
+                    // dispatch.
+                    if targets_bus || self.in_dispatch() {
+                        self.parked_action = Some(action);
+                        action = MCycleAction::Internal { address: self.pc };
+                    }
                 }
-            }
+                action
+            };
             self.current_action = Some(action);
             self.tcycle = TCycle::ZERO;
             self.mcycle_active = true;
             // Claims are per-M-cycle: the pick above consumed any claim
             // committed during the M-cycle that just ended.
-            self.dma_bus_claim = false;
-            self.handover_kill = false;
-            }
+            self.vram_dma_claim = crate::VramDmaClaim::default();
         }
 
         let tcycle = self.tcycle;
