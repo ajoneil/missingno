@@ -347,6 +347,7 @@ impl PpuModel for CgbPpu {
     const ENABLE_QUALIFIED_WINDOW_HIT: bool = true;
     const WINDOW_RESTART_MASKS_MODE3_END: bool = true;
     const REVISED_OAM_LOCK: bool = true;
+    const TILE_SEL_RESET_GLITCH: bool = true;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;

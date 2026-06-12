@@ -160,6 +160,12 @@ impl<P: PpuModel> TileFetcher<P> {
         (bank, tile_data_offset(block_id, mapped_idx, fine_y, high))
     }
 
+    /// CGB TILE_SEL reset glitch: a bitplane read on the crossing-capture dot
+    /// of an LCDC.4-clearing write returns the tile index byte instead.
+    fn tile_sel_glitched_bitplane(&self, regs: &PipelineRegisters) -> Option<u8> {
+        (regs.tile_sel_reset_glitch.active() && self.tile_index < 0x80).then_some(self.tile_index)
+    }
+
     /// PPU fall: VRAM reads at counter 0/2/4 (no counter increment — LEBO only fires on rise).
     pub(in crate::ppu) fn advance_falling(
         &mut self,
@@ -191,13 +197,17 @@ impl<P: PpuModel> TileFetcher<P> {
                 let (bank, address) =
                     self.tile_data_address(window_line_counter, regs, video, false);
                 self.vram_address = address;
-                self.tile_data_low = vram.bank(bank).read_byte(address);
+                self.tile_data_low = self
+                    .tile_sel_glitched_bitplane(regs)
+                    .unwrap_or_else(|| vram.bank(bank).read_byte(address));
             }
             4 => {
                 let (bank, address) =
                     self.tile_data_address(window_line_counter, regs, video, true);
                 self.vram_address = address;
-                self.tile_data_high = vram.bank(bank).read_byte(address);
+                self.tile_data_high = self
+                    .tile_sel_glitched_bitplane(regs)
+                    .unwrap_or_else(|| vram.bank(bank).read_byte(address));
             }
             _ => {}
         }

@@ -57,8 +57,17 @@ impl<P: PpuModel> Ppu<P> {
                 let was_enabled = self.registers.control.video_enabled();
                 let old_bg_window_enabled = self.registers.control.background_and_window_enabled();
                 let old_sprites_enabled = self.registers.control.sprites_enabled();
+                let old_block0_tiles =
+                    self.registers.control.bits() & ControlFlags::TILE_ADDRESS_MODE.bits() != 0;
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
+
+                if P::TILE_SEL_RESET_GLITCH
+                    && old_block0_tiles
+                    && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0
+                {
+                    self.registers.tile_sel_reset_glitch.arm();
+                }
 
                 // Arm the VYXE/sprites-enabled OLD-overlay so the next resolve uses pre-transition.
                 // Gated on WUSA so prelude writes (off-LCD first cp_pad↑) are ignored.

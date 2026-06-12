@@ -48,6 +48,35 @@ impl OldOverlay {
     }
 }
 
+/// CGB TILE_SEL reset glitch: an LCDC.4-clearing write reaches the tile-data
+/// addressing at the crossing-capture dot; a bitplane read on that dot returns
+/// the tile index byte instead of VRAM data. Live for one dot.
+#[derive(Default)]
+pub(in crate::ppu) struct TileSelResetGlitch {
+    pending: bool,
+    active: bool,
+}
+
+impl TileSelResetGlitch {
+    pub(in crate::ppu) fn arm(&mut self) {
+        self.pending = true;
+    }
+
+    fn tick(&mut self) {
+        self.active = self.pending;
+        self.pending = false;
+    }
+
+    pub(in crate::ppu) fn active(&self) -> bool {
+        self.active
+    }
+
+    fn clear(&mut self) {
+        self.pending = false;
+        self.active = false;
+    }
+}
+
 /// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
 pub struct PipelineRegisters {
     pub control: Control,
@@ -63,6 +92,7 @@ pub struct PipelineRegisters {
     pub(in crate::ppu) sprites_enabled_overlay: OldOverlay,
     /// LCDC.1 snapshot taken at start of rise() before staged write applies; consumed by FEPO-for-TEKY (SOBU/CUPA race).
     pub(in crate::ppu) sprites_enabled_pre_cupa: bool,
+    pub(in crate::ppu) tile_sel_reset_glitch: TileSelResetGlitch,
 }
 
 impl PipelineRegisters {
@@ -84,6 +114,7 @@ impl PipelineRegisters {
 
         self.bg_window_enabled_overlay.tick();
         self.sprites_enabled_overlay.tick();
+        self.tile_sel_reset_glitch.tick();
     }
 
     /// Freeze latches at their current output (LCD off).
@@ -98,6 +129,7 @@ impl PipelineRegisters {
         self.control_latch.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
+        self.tile_sel_reset_glitch.clear();
     }
 
     /// VYXE state for the BG plane gate (RAJY/TADE), with OLD-overlay applied.

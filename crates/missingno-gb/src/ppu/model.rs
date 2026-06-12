@@ -165,6 +165,12 @@ pub trait PpuModel: Default {
     /// keeps both artifacts.
     const REVISED_OAM_LOCK: bool = false;
 
+    /// The CGB TILE_SEL reset glitch: an LCDC.4 clear landing on a bitplane
+    /// read's dot substitutes the fetched tile index byte as that bitplane's
+    /// data (indices < 0x80 only — higher indices address identically in both
+    /// modes). Absent on DMG and CGB revision D.
+    const TILE_SEL_RESET_GLITCH: bool = false;
+
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-grid clock
     /// domain — the same captured sample as the CRAM lock.
