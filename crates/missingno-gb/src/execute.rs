@@ -361,11 +361,8 @@ impl<M: Model> Console<M> {
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
             // OAM read lock at the address phase: the decoder grants the read
-            // when cpu_rd asserts, before any mid-M-cycle RUTU onset. Only the
-            // double-speed latch resolution consumes the sample.
-            if self.model.cpu_steps_per_dot() == 2
-                && let Some(address @ 0xFE00..=0xFEFF) = self.cpu_bus.pending_read()
-            {
+            // when cpu_rd asserts, before any mid-M-cycle RUTU onset.
+            if let Some(address @ 0xFE00..=0xFEFF) = self.cpu_bus.pending_read() {
                 self.model
                     .note_read_address_phase(self.ppu.read_lock(address));
             }
@@ -716,6 +713,12 @@ impl<M: Model> Console<M> {
                 let drive_lock = self.ppu.read_lock(address);
                 self.cpu_bus.record_read_drive_lock(drive_lock);
             }
+            // OAM read lock at the drive enable: the grant view tobe↑ samples
+            // before this fall's PPU advance applies any lock onset.
+            if let 0xFE00..=0xFEFF = address {
+                self.model
+                    .note_read_drive_phase(self.ppu.read_lock(address));
+            }
             self.cpu_bus.drive(value);
 
             // A VRAM-source bus conflict on a read forces the DMA's OAM deposit
@@ -746,23 +749,24 @@ impl<M: Model> Console<M> {
     fn commit_read_latch(&mut self) {
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
-            let base = self.bus_value_at_latch(address, self.cpu_bus.data);
-            // On the double-speed Low arm the latch shares this phase with the
-            // ALET grid edge, one capture too far; the model resolves it back to
-            // the pre-grid view. DMG / single speed / High arm pass `base`
-            // through. A lockable read whose live lock floated `base` to 0xFF is
-            // offered the unfloated accessible byte so the model can pick the
-            // pre-grid lock outcome (float, or the accessible value).
-            let on_low_arm =
-                self.clock_phase == ClockPhase::Low && self.model.cpu_steps_per_dot() == 2;
-            let accessible = if on_low_arm && self.ppu.read_lock(address).is_some() {
+            // A lockable read is offered the unfloated accessible byte; the
+            // model owns the float decision from its lock views (the live
+            // latch lock here, plus any address-phase / pre-grid samples it
+            // noted). Other addresses resolve through `bus_value_at_latch`.
+            let latch_lock = self.ppu.read_lock(address);
+            let accessible = if latch_lock.is_some() {
                 self.cpu_bus.data
             } else {
-                base
+                self.bus_value_at_latch(address, self.cpu_bus.data)
             };
+            // The double-speed Low arm's latch shares its phase with the ALET
+            // grid edge, one capture too far; the model resolves it back to
+            // the pre-grid view.
+            let on_low_arm =
+                self.clock_phase == ClockPhase::Low && self.model.cpu_steps_per_dot() == 2;
             let value = self
                 .model
-                .resolve_read_latch(address, accessible, on_low_arm);
+                .resolve_read_latch(address, accessible, on_low_arm, latch_lock);
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }

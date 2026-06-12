@@ -664,6 +664,10 @@ pub struct Cgb {
     /// first T-cycle) — the view the OAM decoder granted before any
     /// mid-M-cycle RUTU onset (`resolve_read_latch` consumes it).
     read_address_oam_lock: Option<bool>,
+    /// A pending OAM read's lock at the drive enable (tobe↑) — the
+    /// single-speed decisive grant sample, taken before that fall's lock
+    /// onset (`resolve_read_latch` consumes it).
+    read_drive_oam_lock: Option<bool>,
     /// Undocumented CGB scratch registers: $FF72/$FF73 full bytes, $FF74
     /// (CGB mode only; open bus in compat), $FF75 bits 6-4 (the rest read 1).
     ff72: u8,
@@ -689,6 +693,7 @@ impl Default for Cgb {
             pre_grid_stat: 0,
             pre_grid_read_lock: None,
             read_address_oam_lock: None,
+            read_drive_oam_lock: None,
             ff72: 0,
             ff73: 0,
             ff74: 0,
@@ -915,9 +920,11 @@ impl Model for Cgb {
     }
 
     fn note_read_address_phase(&mut self, oam_lock: Option<bool>) {
-        if self.double_speed {
-            self.read_address_oam_lock = oam_lock;
-        }
+        self.read_address_oam_lock = oam_lock;
+    }
+
+    fn note_read_drive_phase(&mut self, oam_lock: Option<bool>) {
+        self.read_drive_oam_lock = oam_lock;
     }
 
     /// In double speed the read M-cycle is two dots, so a Low-arm latch runs in
@@ -925,31 +932,50 @@ impl Model for Cgb {
     /// mode 3→0 (XYMU.q↑) transition and the mode-2 OAM-lock onset before the
     /// fall commits the read, but the read's `data_phase_n↑` precedes them.
     /// Resolve such a read to the pre-grid view sampled before the rise.
-    fn resolve_read_latch(&self, address: u16, value: u8, on_low_arm: bool) -> u8 {
-        if !on_low_arm {
-            return value;
+    fn resolve_read_latch(
+        &self,
+        address: u16,
+        value: u8,
+        on_low_arm: bool,
+        latch_lock: Option<bool>,
+    ) -> u8 {
+        if on_low_arm {
+            return match address {
+                // STAT mode bits (SADU/XATY) latch the pre-transition mode; bit 2
+                // (ROPO/LYC) and bits 3-7 keep their live `data_phase_n↑` value.
+                0xFF41 => {
+                    const MODE_BITS: u8 = 0b0000_0011;
+                    (value & !MODE_BITS) | (self.pre_grid_stat & MODE_BITS)
+                }
+                // OAM floats (0xFF) only when locked from the address phase
+                // through the pre-grid view: a read the decoder granted at either
+                // sample saw the byte driven onto the bus, and the latch keeps it.
+                0xFE00..=0xFEFF => match (self.read_address_oam_lock, self.pre_grid_read_lock) {
+                    (Some(false), _) => value,
+                    (_, Some(true)) => 0xFF,
+                    _ => value,
+                },
+                // VRAM: the read floats (0xFF) iff the mode-3 lock was asserted
+                // before the grid edge (the drive-enable sample).
+                0x8000..=0x9FFF => match self.pre_grid_read_lock {
+                    Some(true) => 0xFF,
+                    _ => value,
+                },
+                _ => value,
+            };
         }
         match address {
-            // STAT mode bits (SADU/XATY) latch the pre-transition mode; bit 2
-            // (ROPO/LYC) and bits 3-7 keep their live `data_phase_n↑` value.
-            0xFF41 => {
-                const MODE_BITS: u8 = 0b0000_0011;
-                (value & !MODE_BITS) | (self.pre_grid_stat & MODE_BITS)
-            }
-            // OAM floats (0xFF) only when locked from the address phase
-            // through the pre-grid view: a read the decoder granted at either
-            // sample saw the byte driven onto the bus, and the latch keeps it.
-            0xFE00..=0xFEFF => match (self.read_address_oam_lock, self.pre_grid_read_lock) {
+            // Single speed: OR-of-accessibility over the drive-enable grant
+            // sample and the latch-edge lock — the bus keeps the byte OAM
+            // drove while addressed and unlocked. (The earlier address-phase
+            // grant is double-speed-only; a single-speed onset between the
+            // address phase and tobe↑ still floats the read.)
+            0xFE00..=0xFEFF if !self.double_speed => match (self.read_drive_oam_lock, latch_lock) {
                 (Some(false), _) => value,
                 (_, Some(true)) => 0xFF,
                 _ => value,
             },
-            // VRAM: the read floats (0xFF) iff the mode-3 lock was asserted
-            // before the grid edge (the drive-enable sample).
-            0x8000..=0x9FFF => match self.pre_grid_read_lock {
-                Some(true) => 0xFF,
-                _ => value,
-            },
+            _ if latch_lock == Some(true) => 0xFF,
             _ => value,
         }
     }

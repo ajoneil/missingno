@@ -218,16 +218,32 @@ pub trait Model: Default {
     /// A pending OAM read's lock, sampled when the CPU asserts the address
     /// (the M-cycle's first T-cycle). The OAM decoder grants the read there —
     /// a RUTU lock onset later in the M-cycle cannot float a read already
-    /// granted. DMG (lockstep latch) ignores it.
+    /// granted. DMG ignores it.
     fn note_read_address_phase(&mut self, _oam_lock: Option<bool>) {}
 
-    /// Resolve the value a CPU read latches, given the generic
-    /// `bus_value_at_latch` base value and whether the commit lands on the
-    /// double-speed Low master-arm. DMG returns the base unchanged. CGB double
-    /// speed overrides a Low-arm `$FF41`/lockable read with its pre-grid view
-    /// (the latch lands one ALET-grid capture too far on that arm).
-    fn resolve_read_latch(&self, _address: u16, value: u8, _on_low_arm: bool) -> u8 {
-        value
+    /// A pending OAM read's lock at the drive enable (tobe↑, the read's third
+    /// T-cycle fall), sampled before that fall's PPU advance applies any lock
+    /// onset. DMG ignores it.
+    fn note_read_drive_phase(&mut self, _oam_lock: Option<bool>) {}
+
+    /// Resolve the value a CPU read latches. A lockable (OAM/VRAM) read
+    /// arrives unfloated with its live lock in `latch_lock`; the model owns
+    /// the float. DMG floats on the latch-edge lock alone. CGB also consults
+    /// its address-phase / pre-grid samples (`on_low_arm` marks the
+    /// double-speed Low master-arm, where the latch shares its phase with the
+    /// ALET grid edge and resolves to the pre-grid view).
+    fn resolve_read_latch(
+        &self,
+        _address: u16,
+        value: u8,
+        _on_low_arm: bool,
+        latch_lock: Option<bool>,
+    ) -> u8 {
+        if latch_lock == Some(true) {
+            0xFF
+        } else {
+            value
+        }
     }
 
     /// Does a CPU access at `cpu_addr` collide with the in-flight OAM-DMA
