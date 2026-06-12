@@ -122,6 +122,9 @@ pub struct Rendering<P: PpuModel> {
     cascade: FetchCascade,
     /// Fine-scroll counter + ROXY pixel-clock gate.
     fine_scroll: FineScroll,
+    /// CGB register-file crossing copy of FF43 read by the fine-scroll match
+    /// decode (POHU); captured at the write M-cycle's last PPU fall. Unused on DMG.
+    synced_scx: u8,
     /// RYDY latch, WX comparator, window line counter.
     window: WindowControl,
     /// `!FEPO && !WODU && !RYDY && POKY`; snapshotted at end of `mode3_rising`,
@@ -161,6 +164,7 @@ impl<P: PpuModel> Rendering<P> {
             fetcher: TileFetcher::new(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
+            synced_scx: 0,
             window: WindowControl::new(),
             tyfa: false,
             pixel_counter: PixelCounter::new(),
@@ -183,6 +187,7 @@ impl<P: PpuModel> Rendering<P> {
             fetcher: TileFetcher::post_boot(),
             cascade: FetchCascade::new(),
             fine_scroll: FineScroll::new(),
+            synced_scx: 0,
             window: WindowControl::new(),
             tyfa: false,
             pixel_counter: PixelCounter::post_boot(),
@@ -210,6 +215,7 @@ impl<P: PpuModel> Rendering<P> {
             regs.control.window_enabled(),
             regs.control.sprite_size(),
         );
+        self.synced_scx = regs.background_viewport.x.output();
     }
 
     /// XYMU rendering latch; `true` during Mode 3 (opposite polarity to spec's active-low XYMU).
@@ -690,8 +696,13 @@ impl<P: PpuModel> Rendering<P> {
             && self.cascade.poky();
 
         // POHU = (count == SCX & 7); ROXO captures POHU into PUXA on the falling edge.
-        self.fine_scroll
-            .compare_falling(regs.background_viewport.x.output());
+        // CGB reads FF43 through the register-file crossing.
+        let scx = if P::HAS_CLOCK_DOMAIN_SYNC {
+            self.synced_scx
+        } else {
+            regs.background_viewport.x.output()
+        };
+        self.fine_scroll.compare_falling(scx);
     }
 
     /// MYVO-clocked DFFs: SUDA, PORY, BG fetch counter (LEBO). Runs before the pixel pipeline
