@@ -151,6 +151,14 @@ pub trait PpuModel: Default {
     /// at that dot. The DMG's RYDY holds to PORY.
     const ENABLE_QUALIFIED_WINDOW_HIT: bool = false;
 
+    /// The CGB right-edge window restart is observable: RYDY masks WEGO's
+    /// XYMU clear until PORY completes the restarted fetch — mode 3 and the
+    /// OAM/VRAM locks run long — while the mode-0 STAT leg follows XUGU from
+    /// the restart to line end, unmasked by terminal sprite fetches. The DMG
+    /// clears XYMU unconditionally — its right-edge cascade is
+    /// observationally inert.
+    const WINDOW_RESTART_MASKS_MODE3_END: bool = false;
+
     /// The CGB's revised OAM lock logic (the family that also removed the
     /// OAM corruption bug): the write lock equals the read lock — it carries
     /// the RUTU-pending term and has no AJUJ write-permit pulse. The DMG

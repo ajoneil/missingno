@@ -512,7 +512,9 @@ impl<P: PpuModel> Ppu<P> {
         let sprites_enabled = self.registers.control.sprites_enabled();
 
         if !vblank
-            && (rendering.end_of_line_signal(sprites_enabled) || rendering.terminal_wodu_pulse())
+            && (rendering.end_of_line_signal(sprites_enabled)
+                || rendering.terminal_wodu_pulse()
+                || (P::WINDOW_RESTART_MASKS_MODE3_END && rendering.terminal_restart()))
         {
             conditions |= InterruptFlags::HORIZONTAL_BLANK;
         }

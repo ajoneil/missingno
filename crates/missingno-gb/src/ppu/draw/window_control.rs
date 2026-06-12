@@ -338,7 +338,9 @@ impl WindowControl {
     }
 
     /// Models ATEJ↑'s XOFO pulse on PYNU: clear briefly, re-set from NUNU carryover, NOPA captures.
-    pub(in crate::ppu) fn reset_scanline(&mut self) {
+    /// The CGB's extended XOFO reach clears PYCO/NUNU too — the right-edge NUNU=1 carryover dies,
+    /// so the cascade re-fires fresh each line where the DMG's stays armed.
+    pub(in crate::ppu) fn reset_scanline(&mut self, xofo_reaches_capture_chain: bool) {
         self.rydy.clear();
         self.sovy = false;
         if self.pynu.output() && self.window_rendered {
@@ -346,6 +348,10 @@ impl WindowControl {
             self.window_rendered = false;
         }
         self.pynu.clear();
+        if xofo_reaches_capture_chain {
+            self.pyco.write_immediate(0);
+            self.nunu.write_immediate(0);
+        }
         if self.nunu.output() != 0 {
             self.pynu.set();
         }

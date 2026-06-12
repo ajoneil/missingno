@@ -146,6 +146,9 @@ pub struct Rendering<P: PpuModel> {
     /// One-shot — set at the advance fall, cleared on the next rise — so the fall SUKO eval
     /// catches it but off-edge reads (the STAT-write glitch) see settled WODU.
     terminal_wodu_pulse: bool,
+    /// MOSU fired at terminal PX this line. The CGB mode-0 STAT leg follows XUGU from
+    /// here to line end — terminal sprite fetches no longer mask it. Unused on DMG.
+    terminal_restart: bool,
 }
 
 impl<P: PpuModel> Rendering<P> {
@@ -167,6 +170,7 @@ impl<P: PpuModel> Rendering<P> {
             pany_slip_pending: false,
             pending_window_trigger: false,
             terminal_wodu_pulse: false,
+            terminal_restart: false,
         }
     }
 
@@ -188,6 +192,7 @@ impl<P: PpuModel> Rendering<P> {
             pany_slip_pending: false,
             pending_window_trigger: false,
             terminal_wodu_pulse: false,
+            terminal_restart: false,
         }
     }
 
@@ -224,6 +229,11 @@ impl<P: PpuModel> Rendering<P> {
     /// into the Mode-0 STAT leg. One-shot, cleared on the next rise.
     pub(super) fn terminal_wodu_pulse(&self) -> bool {
         self.terminal_wodu_pulse
+    }
+
+    /// MOSU fired at terminal PX this line (CGB mode-0 STAT leg follows XUGU from there).
+    pub(super) fn terminal_restart(&self) -> bool {
+        self.terminal_restart
     }
 
     /// LCD-enable first line — no prior scanline boundary, so RUTU is suppressed.
@@ -412,7 +422,11 @@ impl<P: PpuModel> Rendering<P> {
 
         // VOGA.q captures on this rise; WEGO clears XYMU.
         // `end_of_line` flags VOGA's just-committed transition — LCD pushes screen_x=159 on this dot.
-        let end_of_line = self.hblank.commit_end_of_line_on_rise();
+        let end_of_line = if !P::WINDOW_RESTART_MASKS_MODE3_END || !self.window.rydy() {
+            self.hblank.commit_end_of_line_on_rise()
+        } else {
+            false
+        };
 
         let mux = pixel_output::current_mux::<P>(&self.bg_shifter, &self.obj_fifo);
         let post_shift_pixel = model.resolve(&mux, regs);
@@ -530,13 +544,19 @@ impl<P: PpuModel> Rendering<P> {
             // MOSU is also a direct NYXU input; the pulse holds the BG shifter on this dot.
             let advance_nyxu_pulse = mosu_fired || deferred_window_trigger || load_window_pulse;
             self.window.tick_sovy_falling();
-            self.mode3_pixel_pipeline(
+            let px = self.mode3_pixel_pipeline(
                 model,
                 regs,
                 rydy_before_pory,
                 advance_nyxu_pulse,
                 pixel_counter_before_sacu,
-            )
+            );
+            // A restart landing at terminal PX disconnects FEPO's WODU mask from the
+            // CGB mode-0 STAT leg for the rest of the line (the IRQ tree follows XUGU).
+            if mosu_fired && self.pixel_counter.terminal() {
+                self.terminal_restart = true;
+            }
+            px
         } else {
             None
         }
@@ -551,10 +571,11 @@ impl<P: PpuModel> Rendering<P> {
         self.fetcher.reset_scanline();
         self.cascade.reset();
         self.fine_scroll = FineScroll::new();
-        self.window.reset_scanline();
+        self.window.reset_scanline(P::ENABLE_QUALIFIED_WINDOW_HIT);
 
         self.tyfa = false;
         self.pany_slip_pending = false;
+        self.terminal_restart = false;
         // pixel_counter is async-reset by the ATEJ pulse — fires from `tick_scan_capture`
         // when CATU.q rises, ~1 dot after RUTU.q rises here.
         self.lcd.reset(scanline);
