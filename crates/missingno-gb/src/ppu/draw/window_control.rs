@@ -89,8 +89,8 @@ pub(in crate::ppu) struct WindowControl {
     sary: DffLatch,
     /// REJO WY-match frame latch. Set by SARY.q; reset by REPU = vblank (mode1).
     rejo: NorLatch,
-    /// REJO.q as PYCO's ROCO edge sees it: sampled before this fall's hclk/SARY→REJO update,
-    /// since ROCO precedes the late hclk edge within the PX==WX pixel.
+    /// REJO.q as NUKO's fall-phase consumer (PANY) sees it: sampled before this fall's
+    /// hclk/SARY→REJO update, since the NUKO decode precedes the late hclk edge.
     rejo_at_roco: bool,
     /// CGB WY/WX/LCDC.5/LCDC.2 as the window decode, trigger chain, and scan
     /// Y-comparator see them: register cells cross into the PPU domain at the
@@ -208,8 +208,29 @@ impl WindowControl {
         self.sovy = self.rydy.output();
     }
 
-    fn compute_nuko(&self, pixel_counter: u8) -> bool {
-        self.rejo_at_roco && pixel_counter == self.nuko_wx
+    fn compute_nuko(&self, pixel_counter: u8, rejo: bool) -> bool {
+        rejo && pixel_counter == self.nuko_wx
+    }
+
+    /// PYCO captures NUKO on ROCO↑ (ALET-phase, one half-dot before NUNU's
+    /// MEHE capture). PYCO holds when FEPO=1 or POKY=0: VYBO/TYFA halt ROCO.
+    /// On CGB, XOFO's reset reach dominates the capture (r-dominant dffr).
+    pub(in crate::ppu) fn capture_pyco_on_roco<P: PpuModel>(
+        &mut self,
+        pixel_counter: u8,
+        fetcher_ready: bool,
+        fepo: bool,
+        regs: &PipelineRegisters,
+    ) {
+        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, P::HAS_CLOCK_DOMAIN_SYNC) {
+            self.pyco.write_immediate(0);
+            return;
+        }
+        let nuko = self.compute_nuko(pixel_counter, self.rejo.output());
+        if fetcher_ready && !fepo {
+            self.pyco.write(if nuko { 1 } else { 0 });
+            self.pyco.tick();
+        }
     }
 
     fn nuny(&self) -> bool {
@@ -220,7 +241,7 @@ impl WindowControl {
     /// (drain-detector input). PANY's tile-boundary high window is where a same-dot hit lands
     /// as the cascade slip.
     pub(in crate::ppu) fn window_x_reached(&self, pixel_counter: u8) -> bool {
-        self.compute_nuko(pixel_counter)
+        self.compute_nuko(pixel_counter, self.rejo_at_roco)
     }
 
     /// XOFO during rendering simplifies to NOT(LCDC.5) — read live on the
@@ -249,27 +270,15 @@ impl WindowControl {
         self.update_pynu_and_check_mosu(regs, fetcher, cascade, fine_scroll)
     }
 
-    /// PPU fall: PYCO and NUNU both capture on this edge (ROCO and MEHE are both NOT(ALET)-phase).
-    /// NUNU captures the just-written PYCO value.
+    /// PPU fall: NUNU captures PYCO on MEHE↑ (= NOT(ALET)), one half-dot after
+    /// PYCO's ROCO capture on the rise.
     pub(in crate::ppu) fn tick_falling<P: PpuModel>(
         &mut self,
         fetcher: &mut TileFetcher<P>,
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
-        pixel_counter: u8,
-        fetcher_ready: bool,
-        fepo: bool,
         regs: &PipelineRegisters,
     ) -> bool {
-        let nuko = self.compute_nuko(pixel_counter);
-
-        // PYCO holds when FEPO=1: VYBO=NOR3(MYVO,FEPO,WODU)=0 → TYFA=0 halts ROCO, one ALET before TAKA latches.
-        if fetcher_ready && !fepo {
-            self.pyco.write(if nuko { 1 } else { 0 });
-            self.pyco.tick();
-        }
-
-        // NUNU captures the just-written PYCO.
         self.nunu.write(self.pyco.output());
         self.nunu.tick();
 
@@ -290,7 +299,13 @@ impl WindowControl {
         if xofo {
             self.pynu.clear();
             if P::ENABLE_QUALIFIED_WINDOW_HIT {
+                // CGB extends XOFO's reset reach into the capture chain: a hit
+                // landing while LCDC.5=0 cannot wait armed for a re-enable
+                // (DMG keeps PYCO/NUNU propagating and fires the deferred
+                // completion; CGB does not).
                 self.rydy.clear();
+                self.pyco.write_immediate(0);
+                self.nunu.write_immediate(0);
             }
         } else if self.nunu.output() != 0 {
             self.pynu.set();

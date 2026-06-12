@@ -511,16 +511,10 @@ impl<P: PpuModel> Rendering<P> {
 
             // MOSU↑ arming runs before mode3_advance_fetcher so the counter=0 VRAM read sees
             // fetching_window=true. When MOSU↑ fires, advance_fetcher is gated out for this dot.
-            let poky_for_window = self.cascade.poky();
-            // Pre-CUPA FEPO snapshot — matches `mode3_rising`'s read; gates PYCO via the VYBO halt path.
-            let fepo_for_window = self.fepo(regs.sprites_enabled_pre_cupa);
             let mosu_fired = self.window.tick_falling(
                 &mut self.fetcher,
                 &mut self.cascade,
                 &mut self.fine_scroll,
-                pixel_counter_before_sacu,
-                poky_for_window,
-                fepo_for_window,
                 regs,
             );
 
@@ -642,6 +636,16 @@ impl<P: PpuModel> Rendering<P> {
                 SpriteState::Idle => {}
             }
         }
+
+        // PYCO captures NUKO on ROCO↑ (ALET-phase); NUNU's MEHE capture follows on the fall.
+        // ROCO halts with the rest of the VYBO chain when WODU is high (PX terminal).
+        let roco_running = self.cascade.poky() && !self.pixel_counter.terminal();
+        self.window.capture_pyco_on_roco::<P>(
+            self.pixel_counter.value(),
+            roco_running,
+            self.fepo(regs.sprites_enabled_pre_cupa),
+            regs,
+        );
 
         // TEKY = AND4(FEPO, !RYDY, LYRY, !TAKA).
         let teky = fepo_pre_cupa
