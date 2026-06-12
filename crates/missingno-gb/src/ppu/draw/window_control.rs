@@ -97,8 +97,10 @@ pub(in crate::ppu) struct WindowControl {
     /// write M-cycle's last PPU fall (the STAT register file's sibling
     /// crossing). Unused on DMG (the consumers read the cells live).
     synced: RegisterSync,
-    /// REPU (vblank) holds the crossing transparent: a capture during vblank
-    /// — and the first one after it — reads the cells live.
+    /// POPU's output at the previous TALU capture = its pre-edge value at this
+    /// one (POPU only toggles on capture-co-located falls). REPU gates the CGB
+    /// SARY input: captures up to and including the vblank-exit one take 0, so
+    /// the first post-exit capture commits the frame's WY match.
     vblank_at_last_capture: bool,
 }
 
@@ -147,12 +149,13 @@ impl WindowControl {
     }
 
     fn capture_sary(&mut self, regs: &PipelineRegisters, video: &VideoControl, synced: bool) {
-        let (wy, enabled) = if synced && !self.vblank_at_last_capture {
-            (self.synced.output.wy, self.synced.output.enabled)
+        let wy_match = if synced {
+            !self.vblank_at_last_capture
+                && self.synced.output.enabled
+                && video.ly() == self.synced.output.wy
         } else {
-            (regs.window.y, regs.control.window_enabled())
+            regs.control.window_enabled() && video.ly() == regs.window.y
         };
-        let wy_match = enabled && video.ly() == wy;
         self.vblank_at_last_capture = video.vblank();
         self.sary.write(if wy_match { 1 } else { 0 });
         self.sary.tick();
