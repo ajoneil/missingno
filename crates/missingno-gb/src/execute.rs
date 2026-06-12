@@ -430,6 +430,14 @@ impl<M: Model> Console<M> {
             self.apply_read_drive_enable();
         }
 
+        // data_phase_n↑ precedes this fall's edge: sample LY pre-edge so an
+        // FF44 latch coincident with the RUTU-clocked capture resolves the
+        // mid-ripple flux.
+        let ly_at_latch = match self.cpu.last_bus_action {
+            BusAction::Read { address: 0xFF44 } => Some(self.read(0xFF44)),
+            _ => None,
+        };
+
         let pre_fall_mode = self.ppu.mode();
 
         // PPU master-clock fall: divider chain, CATU, scanline
@@ -460,7 +468,7 @@ impl<M: Model> Console<M> {
             self.sample_mid_cupa_lock();
         }
 
-        self.commit_read_latch();
+        self.commit_read_latch(ly_at_latch);
         self.commit_write();
 
         // HDMA trigger, evaluated each dot's fall with this fall's write
@@ -746,7 +754,7 @@ impl<M: Model> Console<M> {
     /// CPU data latch (data_phase_n↑ near the end of T-cycle 3).
     /// Resolves the drive-enable snapshot against mid-M-cycle flux
     /// before the SM83 captures cpu_port_d.
-    fn commit_read_latch(&mut self) {
+    fn commit_read_latch(&mut self, ly_at_latch: Option<u8>) {
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
             // A lockable read is offered the unfloated accessible byte; the
@@ -757,7 +765,7 @@ impl<M: Model> Console<M> {
             let accessible = if latch_lock.is_some() {
                 self.cpu_bus.data
             } else {
-                self.bus_value_at_latch(address, self.cpu_bus.data)
+                self.bus_value_at_latch(address, self.cpu_bus.data, ly_at_latch)
             };
             // The double-speed Low arm's latch shares its phase with the ALET
             // grid edge, one capture too far; the model resolves it back to

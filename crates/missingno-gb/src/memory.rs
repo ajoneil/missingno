@@ -383,17 +383,19 @@ impl<M: Model> Console<M> {
     /// override when the access-control gates assert at the latch
     /// edge) and STAT/LY per-bit flux (NOT_IF0 / NOT_IF1 driver
     /// settling within the drive window).
-    pub fn bus_value_at_latch(&self, address: u16, snapshot: u8) -> u8 {
+    pub fn bus_value_at_latch(&self, address: u16, snapshot: u8, ly_at_latch: Option<u8>) -> u8 {
         match address {
             // OAM/VRAM read locks: the on-chip OAM / off-chip VRAM
             // drivers tri-state at the latch edge, so the bus floats
             // high (0xFF).
             _ if self.ppu.read_locked(address) => 0xFF,
 
-            // LY: full byte fluxes via `wafu`-enabled NOT_IF0 drivers
-            // when LAMA fires (MYTA-driven LY reset). The drive-enable
-            // snapshot can be stale by the latch edge; re-read live.
-            0xFF44 => self.read(address),
+            // LY: the byte fluxes via NOT_IF0 drivers fed by the
+            // RUTU-clocked ripple counter. A latch coincident with the
+            // counter edge catches the ripple mid-settle: falling bits
+            // are visible, rising bits not yet ("0 wins"), so the read
+            // resolves to pre AND post.
+            0xFF44 => ly_at_latch.unwrap_or(snapshot) & self.read(address),
 
             // CH3 wave RAM: under the DMG fetch-strobe coupling the
             // `wave_data_latch` pulse can open and close within the
