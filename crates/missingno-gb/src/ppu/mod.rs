@@ -288,6 +288,7 @@ impl<P: PpuModel> Ppu<P> {
                 sprite1: DffLatch::new(snap.obp1),
                 recovery: types::palette::BgpRecovery::default(),
                 bgp_halt_wake_deferred: None,
+                capture_coincident_old: None,
             },
             bg_window_enabled_overlay: registers::OldOverlay::default(),
             sprites_enabled_overlay: registers::OldOverlay::default(),

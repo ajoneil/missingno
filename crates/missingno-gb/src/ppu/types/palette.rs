@@ -167,6 +167,9 @@ pub struct Palettes {
     pub(in crate::ppu) recovery: BgpRecovery,
     /// BGP write parked while CPU is in a HALT-wake handler; countdown shifts the visible transition 4-5 columns later.
     pub(in crate::ppu) bgp_halt_wake_deferred: Option<DeferredBgpWrite>,
+    /// Clean-DFF capture (CGB): the value an emit sampler clocked coincident
+    /// with this fall's BGP capture reads. Cleared at the next rise.
+    pub(in crate::ppu) capture_coincident_old: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -183,6 +186,7 @@ impl Default for Palettes {
             sprite1: DffLatch::new(0xFF),
             recovery: BgpRecovery::default(),
             bgp_halt_wake_deferred: None,
+            capture_coincident_old: None,
         }
     }
 }
@@ -197,7 +201,7 @@ impl Palettes {
         });
     }
 
-    pub fn tick_background(&mut self) -> bool {
+    pub fn tick_background(&mut self, bgp_write_race: bool) -> bool {
         // Commit a HALT-wake-deferred write into `pending` when its countdown expires.
         if let Some(deferred) = self.bgp_halt_wake_deferred.as_mut() {
             if deferred.ticks_remaining > 0 {
@@ -213,11 +217,19 @@ impl Palettes {
         let prior = self.background.output();
         let ticked = self.background.tick();
         if ticked {
-            self.recovery.commit_tick(prior, self.background.output());
+            if bgp_write_race {
+                self.recovery.commit_tick(prior, self.background.output());
+            } else {
+                self.capture_coincident_old = Some(prior);
+            }
         } else {
             self.recovery.clear_overlay();
         }
         ticked
+    }
+
+    pub fn clear_capture_coincident_old(&mut self) {
+        self.capture_coincident_old = None;
     }
 
     /// A visible cp_pad↑ has emitted a pixel; subsequent BGP CUPAs satisfy the recovery-engaged precondition.
@@ -236,6 +248,9 @@ impl Palettes {
         {
             return self.background.output() | pending;
         }
+        if let Some(old) = self.capture_coincident_old {
+            return old;
+        }
         self.background.output()
     }
 
@@ -246,5 +261,6 @@ impl Palettes {
 
     pub fn clear_background_overlay(&mut self) {
         self.recovery.reset();
+        self.capture_coincident_old = None;
     }
 }

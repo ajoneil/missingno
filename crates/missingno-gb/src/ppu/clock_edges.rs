@@ -22,6 +22,8 @@ impl<P: PpuModel> Ppu<P> {
             return result;
         }
 
+        self.registers.palettes.clear_capture_coincident_old();
+
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
             result.pixel = rendering.on_ppu_clock_rise(
                 &self.model,
@@ -63,7 +65,7 @@ impl<P: PpuModel> Ppu<P> {
 
         let talu_rising = self.advance_dividers(&mut result);
         self.registers
-            .tick_on_master_clock_fall(self.mode2_active());
+            .tick_on_master_clock_fall(self.mode2_active(), P::BGP_WRITE_RACE);
         self.run_ppu_clock_fall(
             oam_bus,
             scan_clock_rising,

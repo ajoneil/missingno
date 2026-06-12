@@ -171,6 +171,13 @@ pub trait PpuModel: Default {
     /// modes). Absent on DMG and CGB revision D.
     const TILE_SEL_RESET_GLITCH: bool = false;
 
+    /// The DMG BGP cell is a dlatch (NURA combiner): a capture-coincident
+    /// cp_pad sample sees the post-write value, and a second same-scanline
+    /// write presents OR(prior, new) for one emit. CGB rebuilt the block as a
+    /// clean DFF — the coincident sample sees the pre-capture value and no OR
+    /// transient exists.
+    const BGP_WRITE_RACE: bool = true;
+
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-grid clock
     /// domain — the same captured sample as the CRAM lock.
