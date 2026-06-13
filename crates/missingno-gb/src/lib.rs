@@ -207,13 +207,14 @@ pub trait Model: Default {
     }
 
     /// Sampled at the top of `rise_work`, before this dot's `ppu_rise_edge`
-    /// (the ALET-rising XYMU.q↑ / OAM-lock-onset grid edge). `stat_mode` is the
-    /// pre-grid STAT (`$FF41`) byte; `read_lock` is the pre-grid lock of a
+    /// (the ALET-rising XYMU.q↑ / OAM-lock-onset grid edge). `rendering` is the
+    /// pre-grid XYMU (mode-3) state — the only STAT mode signal VOGA captures one
+    /// ALET edge too far on the Low arm; `read_lock` is the pre-grid lock of a
     /// pending OAM/VRAM read (`None` when no lockable read is staged). A model
     /// whose CPU latch can land on the same phase as the grid edge stores these
     /// to resolve that read's `data_phase_n↑` to the pre-grid view. DMG (the CPU
     /// latch always lands after a separate-phase rise) ignores them.
-    fn note_pre_grid_read_view(&mut self, _stat_mode: u8, _read_lock: Option<bool>) {}
+    fn note_pre_grid_read_view(&mut self, _rendering: bool, _read_lock: Option<bool>) {}
 
     /// A pending OAM read's lock, sampled when the CPU asserts the address
     /// (the M-cycle's first T-cycle). The OAM decoder grants the read there —

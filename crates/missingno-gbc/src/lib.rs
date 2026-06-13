@@ -658,10 +658,12 @@ pub struct Cgb {
     /// stays `Stopped` (the divider/PPU keep running) until this drains, then
     /// re-engages at the new speed. 0 = not switching.
     speed_switch_blackout: u32,
-    /// STAT (`$FF41`) and a pending OAM/VRAM read's lock, sampled before this
-    /// dot's ALET grid edge — the pre-transition view a double-speed Low-arm
-    /// `data_phase_n↑` latch actually saw (`resolve_read_latch` consumes them).
-    pre_grid_stat: u8,
+    /// Pre-grid XYMU (mode-3) state and a pending OAM/VRAM read's lock, sampled
+    /// before this dot's ALET grid edge — the pre-transition view a double-speed
+    /// Low-arm `data_phase_n↑` latch actually saw (`resolve_read_latch` uses
+    /// them). XYMU is the only STAT mode signal VOGA captures one ALET edge too
+    /// far on the Low arm; ACYL/POPU/ROPO keep their live value.
+    pre_grid_rendering: bool,
     pre_grid_read_lock: Option<bool>,
     /// A pending OAM read's lock at the address phase (the read M-cycle's
     /// first T-cycle) — the view the OAM decoder granted before any
@@ -693,7 +695,7 @@ impl Default for Cgb {
             dmg_compat: false,
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
-            pre_grid_stat: 0,
+            pre_grid_rendering: false,
             pre_grid_read_lock: None,
             read_address_oam_lock: None,
             read_drive_oam_lock: None,
@@ -915,9 +917,9 @@ impl Model for Cgb {
         }
     }
 
-    fn note_pre_grid_read_view(&mut self, stat_mode: u8, read_lock: Option<bool>) {
+    fn note_pre_grid_read_view(&mut self, rendering: bool, read_lock: Option<bool>) {
         if self.double_speed {
-            self.pre_grid_stat = stat_mode;
+            self.pre_grid_rendering = rendering;
             self.pre_grid_read_lock = read_lock;
         }
     }
@@ -944,11 +946,14 @@ impl Model for Cgb {
     ) -> u8 {
         if on_low_arm {
             return match address {
-                // STAT mode bits (SADU/XATY) latch the pre-transition mode; bit 2
-                // (ROPO/LYC) and bits 3-7 keep their live `data_phase_n↑` value.
-                0xFF41 => {
+                // The mode 3→0 XYMU.q↑ is the one mode transition VOGA captures
+                // an ALET edge too far on the Low arm: when XYMU was rendering
+                // before the grid edge, the latch resolves to the pre-transition
+                // mode 3. ACYL/POPU/ROPO onsets (mode 2 / vblank / LYC) and bits
+                // 3-7 keep their live `data_phase_n↑` value.
+                0xFF41 if self.pre_grid_rendering => {
                     const MODE_BITS: u8 = 0b0000_0011;
-                    (value & !MODE_BITS) | (self.pre_grid_stat & MODE_BITS)
+                    value | MODE_BITS
                 }
                 // OAM floats (0xFF) only when locked from the address phase
                 // through the pre-grid view: a read the decoder granted at either

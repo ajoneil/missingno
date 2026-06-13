@@ -317,14 +317,14 @@ impl<M: Model> Console<M> {
 
         // Pre-grid read view: the mode 3→0 XYMU.q↑ and the mode-2 OAM-lock
         // onset both fire inside this dot's `ppu_rise_edge` below. Sample the
-        // STAT mode and a pending lockable read's pre-grid lock so a commit
-        // landing on the same phase (the double-speed Low arm) can latch the
-        // pre-transition view its `data_phase_n↑` actually saw. The two lock
-        // regions onset on different edges: VRAM (mode-3) on a fall, so its
-        // pre-grid view is the drive-enable sample; OAM (mode-2) on this rise,
-        // so its pre-grid view is the live lock sampled now (before the rise).
-        // Only the double-speed Low arm consumes this — skip the sampling cost
-        // when the CPU runs in lockstep (DMG and CGB single speed).
+        // pre-grid XYMU (mode-3) state and a pending lockable read's pre-grid
+        // lock so a commit landing on the same phase (the double-speed Low arm)
+        // can latch the pre-transition view its `data_phase_n↑` actually saw.
+        // The two lock regions onset on different edges: VRAM (mode-3) on a
+        // fall, so its pre-grid view is the drive-enable sample; OAM (mode-2) on
+        // this rise, so its pre-grid view is the live lock sampled now (before
+        // the rise). Only the double-speed Low arm consumes this — skip the
+        // sampling cost when the CPU runs in lockstep (DMG and CGB single speed).
         if advance_ppu && self.model.cpu_steps_per_dot() == 2 {
             let read_lock = self
                 .cpu_bus
@@ -334,7 +334,7 @@ impl<M: Model> Console<M> {
                     _ => self.ppu.read_lock(address),
                 });
             self.model
-                .note_pre_grid_read_view(self.read(0xFF41), read_lock);
+                .note_pre_grid_read_view(self.ppu.is_rendering(), read_lock);
         }
 
         if is_mcycle_boundary {
