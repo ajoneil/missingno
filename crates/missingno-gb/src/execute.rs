@@ -430,6 +430,25 @@ impl<M: Model> Console<M> {
         (new_screen, pixel)
     }
 
+    /// PPU falling-edge advance: divider chain, CATU, scanline boundaries,
+    /// fetcher, DFF8/DFF9, LCD-off. The caller applies the returned result's
+    /// IF requests and pixel output.
+    fn ppu_fall_edge(
+        &mut self,
+        is_mcycle_boundary: bool,
+        tcycle: TCycle,
+    ) -> ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel> {
+        let oam_bus = self.dma.oam_bus_owner();
+        // The M-cycle's last PPU fall: the boundary (T3) fall when that
+        // T-cycle carries one; in double speed PPU falls land on alternate
+        // T-cycles, so when T3's edge has none the M's last fall is T2's. The
+        // WY/WX/LCDC.5/LCDC.2 crossing captures there.
+        let mcycle_last_fall =
+            is_mcycle_boundary || (self.model.cpu_steps_per_dot() == 2 && tcycle.as_u8() == 2);
+        self.ppu
+            .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus)
+    }
+
     /// CPU + PPU work for a falling master-clock edge. `advance_ppu` gates this
     /// dot's PPU fall (and its IF requests) and the master-clock-domain APU
     /// wave latch; false on the extra double-speed CPU T-cycle that shares the
@@ -464,17 +483,7 @@ impl<M: Model> Console<M> {
         // PPU master-clock fall: divider chain, CATU, scanline
         // boundaries, fetcher, DFF8/DFF9, LCD-off.
         let video_result = if advance_ppu {
-            let oam_bus = self.dma.oam_bus_owner();
-            // The M-cycle's last PPU fall: the boundary (T3) fall when that
-            // T-cycle carries one; in double speed PPU falls land on
-            // alternate T-cycles, so when T3's edge has none the M's last
-            // fall is T2's. The WY/WX/LCDC.5/LCDC.2 crossing captures there.
-            let mcycle_last_fall =
-                is_mcycle_boundary || (self.model.cpu_steps_per_dot() == 2 && tcycle.as_u8() == 2);
-            Some(
-                self.ppu
-                    .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus),
-            )
+            Some(self.ppu_fall_edge(is_mcycle_boundary, tcycle))
         } else {
             None
         };
