@@ -179,7 +179,7 @@ pub trait PpuModel: Default {
     const BGP_WRITE_RACE: bool = true;
 
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
-    /// combinationally; the CGB arbiter samples it in the M-grid clock
+    /// combinationally; the CGB arbiter samples it in the M-cycle clock
     /// domain — the same captured sample as the CRAM lock.
     fn vram_cpu_lock(&self, live: bool) -> bool {
         live

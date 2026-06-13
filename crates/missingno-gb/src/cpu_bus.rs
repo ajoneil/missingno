@@ -23,7 +23,7 @@ enum Activity {
         address: u16,
         applied: bool,
         /// OAM/VRAM read-lock at the T-cycle 2 drive-enable. VRAM's mode-3
-        /// lock onsets on a fall edge, so a double-speed read's pre-grid view
+        /// lock onsets on a fall edge, so a double-speed read's pre-ALET-edge view
         /// of it is this drive-enable sample, not the post-onset latch lock.
         /// `None` outside OAM/VRAM or before the drive fires.
         locked_at_drive: Option<bool>,

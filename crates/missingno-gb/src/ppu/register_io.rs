@@ -122,7 +122,7 @@ impl<P: PpuModel> Ppu<P> {
                 }
 
                 // CGB: the cells update now (readback is write-time); the
-                // STAT-IRQ block sees them at the next sync-grid capture —
+                // STAT-IRQ block sees them at the next M-cycle-clock capture —
                 // a write never produces a same-tick edge.
                 self.video.stat.write_stat_bits_cell(value);
                 return false;

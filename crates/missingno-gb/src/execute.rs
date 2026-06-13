@@ -315,14 +315,14 @@ impl<M: Model> Console<M> {
         let mut new_screen = false;
         let mut pixel = None;
 
-        // Pre-grid read view: the mode 3→0 XYMU.q↑ and the mode-2 OAM-lock
+        // Pre-ALET-edge read view: the mode 3→0 XYMU.q↑ and the mode-2 OAM-lock
         // onset both fire inside this dot's `ppu_rise_edge` below. Sample the
-        // pre-grid XYMU (mode-3) state and a pending lockable read's pre-grid
+        // pre-ALET-rise XYMU (mode-3) state and a pending lockable read's pre-ALET-edge
         // lock so a commit landing on the same phase (the double-speed Low arm)
         // can latch the pre-transition view its `data_phase_n↑` actually saw.
         // The two lock regions onset on different edges: VRAM (mode-3) on a
-        // fall, so its pre-grid view is the drive-enable sample; OAM (mode-2) on
-        // this rise, so its pre-grid view is the live lock sampled now (before
+        // fall, so its pre-ALET-edge view is the drive-enable sample; OAM (mode-2) on
+        // this rise, so its pre-ALET-edge view is the live lock sampled now (before
         // the rise). Only the double-speed Low arm consumes this — skip the
         // sampling cost when the CPU runs in lockstep (DMG and CGB single speed).
         if advance_ppu && self.model.cpu_steps_per_dot() == 2 {
@@ -334,7 +334,7 @@ impl<M: Model> Console<M> {
                     _ => self.ppu.read_lock(address),
                 });
             self.model
-                .note_pre_grid_read_view(self.ppu.is_rendering(), read_lock);
+                .note_pre_alet_read_view(self.ppu.is_rendering(), read_lock);
         }
 
         if is_mcycle_boundary {
@@ -743,8 +743,8 @@ impl<M: Model> Console<M> {
         if let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
             // VRAM's mode-3 lock onsets on a fall, so a double-speed read's
-            // pre-grid lock view is this drive-enable sample (before the onset),
-            // not the post-grid latch lock. OAM's mode-2 onset is rise-driven
+            // pre-ALET-edge lock view is this drive-enable sample (before the onset),
+            // not the latch-edge lock (post-ALET-edge). OAM's mode-2 onset is rise-driven
             // and resolved by the pre-`ppu_rise_edge` sample instead. Only
             // double speed consumes the sample.
             if self.model.cpu_steps_per_dot() == 2 {
@@ -789,7 +789,7 @@ impl<M: Model> Console<M> {
             let address = *address;
             // A lockable read is offered the unfloated accessible byte; the
             // model owns the float decision from its lock views (the live
-            // latch lock here, plus any address-phase / pre-grid samples it
+            // latch lock here, plus any address-phase / pre-ALET-edge samples it
             // noted). Other addresses resolve through `bus_value_at_latch`.
             let latch_lock = self.ppu.read_lock(address);
             let accessible = if latch_lock.is_some() {
@@ -798,8 +798,8 @@ impl<M: Model> Console<M> {
                 self.bus_value_at_latch(address, self.cpu_bus.data, ly_at_latch)
             };
             // The double-speed Low arm's latch shares its phase with the ALET
-            // grid edge, one capture too far; the model resolves it back to
-            // the pre-grid view.
+            // ALET edge, one capture too far; the model resolves it back to
+            // the pre-ALET-edge view.
             let on_low_arm =
                 self.clock_phase == ClockPhase::Low && self.model.cpu_steps_per_dot() == 2;
             let value = self
