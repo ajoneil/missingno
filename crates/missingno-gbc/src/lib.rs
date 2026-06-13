@@ -809,9 +809,9 @@ impl Model for Cgb {
     }
 
     fn halt_wake_samples_early(&self) -> bool {
-        // Double speed: emulator limitation, not hardware — the sample
-        // point's sub-cycle placement awaits the DS clock-model pass.
-        !self.double_speed
+        // The T2-rise presample holds at both speeds — double speed shifts the
+        // dot↔T-cycle ratio, not where in the M-cycle the comparator samples.
+        true
     }
 
     /// CGB boot-ROM handoff divider phase. The boot ROM runs longer for a

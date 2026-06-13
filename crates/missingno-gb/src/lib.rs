@@ -100,9 +100,7 @@ pub trait Model: Default {
     const HAS_PCM_REGISTERS: bool = false;
 
     /// CGB's halt-release comparator samples IF&IE two T-cycles before
-    /// the M-cycle boundary; DMG samples at the boundary. (CGB double
-    /// speed: sub-cycle placement is owned by the deferred DS clock-model
-    /// pass — the model reports false there for now.)
+    /// the M-cycle boundary; DMG samples at the boundary.
     fn halt_wake_samples_early(&self) -> bool {
         false
     }
