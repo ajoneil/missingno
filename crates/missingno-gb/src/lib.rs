@@ -372,6 +372,14 @@ pub struct Console<M: Model> {
 
     /// Master clock signal level. Toggles each half-T-cycle.
     clock_phase: ClockPhase,
+    /// The PPU's own master-clock phase: which edge (`Low` = rise, `High` =
+    /// fall) the PPU advances next. The PPU is a free-running state machine on
+    /// the master clock, so this toggles every PPU step independently of the
+    /// CPU — during the speed-switch blackout it keeps advancing while the CPU
+    /// is frozen, so the post-switch CPU↔PPU alignment is emergent (no slip).
+    /// At single speed it tracks `clock_phase`; double speed is where it
+    /// diverges.
+    ppu_phase: ClockPhase,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
@@ -458,6 +466,7 @@ impl<M: Model> Console<M> {
             timers: timers::Timers::new(),
             dma: Dma::new(),
             clock_phase: ClockPhase::Low,
+            ppu_phase: ClockPhase::Low,
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
