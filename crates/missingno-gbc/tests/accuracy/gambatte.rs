@@ -63,6 +63,35 @@ fn screen_matches_hex(screen_greyscale: &[u8], expected_hex: &str) -> bool {
     true
 }
 
+/// Reverse of `screen_matches_hex`: read back the hex digits the screen
+/// actually shows, for diagnostics on failure. A digit slot that matches no
+/// tile (e.g. a blank screen) reads as `?`.
+fn decode_screen_hex(screen_greyscale: &[u8], num_digits: usize) -> String {
+    (0..num_digits)
+        .map(|idx| {
+            let x_off = idx * 8;
+            if x_off + 8 > 160 {
+                return '?';
+            }
+            for (digit, tile) in HEX_TILES.iter().enumerate() {
+                let matches = (0..8).all(|ty| {
+                    (0..8).all(|tx| {
+                        let screen_pixel = screen_greyscale[ty * 160 + x_off + tx];
+                        let expected_pixel = if tile[ty * 8 + tx] == 0 { 0x00 } else { 0xFF };
+                        (screen_pixel as i16 - expected_pixel as i16).unsigned_abs() <= 8
+                    })
+                });
+                if matches {
+                    return char::from_digit(digit as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase();
+                }
+            }
+            '?'
+        })
+        .collect()
+}
+
 fn extract_expected_hex(filename: &str) -> &str {
     let stem = filename
         .strip_suffix(".gbc")
@@ -76,10 +105,10 @@ fn check_screen(gbc: &missingno_gbc::GameBoyColor, rom_path: &str) {
     let screen = gbc.screen().to_greyscale_bytes();
     let filename = rom_path.rsplit('/').next().unwrap();
     let expected_hex = extract_expected_hex(filename);
-    assert!(
-        screen_matches_hex(&screen, expected_hex),
-        "Gambatte hex test {rom_path}: screen does not show expected hex value 0x{expected_hex}"
-    );
+    if !screen_matches_hex(&screen, expected_hex) {
+        let shown = decode_screen_hex(&screen, expected_hex.len());
+        panic!("Gambatte hex test {rom_path}: screen shows 0x{shown}, expected 0x{expected_hex}");
+    }
 }
 
 /// Extract the CGB-expected audio outcome from a Gambatte test
