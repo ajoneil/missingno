@@ -606,7 +606,8 @@ impl<M: Model> Console<M> {
 
         self.cpu_bus.clear_activity();
 
-        self.ppu.tick_clock_domain_capture();
+        self.ppu
+            .tick_clock_domain_capture(self.model.cpu_steps_per_dot() == 2);
 
         self.timers.mcycle();
         if let Some(interrupt) = self.timers.take_pending_interrupt() {

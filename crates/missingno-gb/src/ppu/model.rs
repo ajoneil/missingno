@@ -207,6 +207,10 @@ pub trait PpuModel: Default {
 pub struct DomainSamples {
     /// The mode-3 latch (XYMU view) the CGB palette block locks CRAM on.
     pub drawing: bool,
+    /// Whether the palette block's 4-dot (VENA) clock latches `drawing` this
+    /// boundary — false on the off-phase boundary at double speed, where the
+    /// CPU M-cycle runs twice as fast as the unchanged palette-block clock.
+    pub palette_capture: bool,
 }
 
 /// Which layer wins the shared DMG BG-vs-OBJ resolve, carrying its BGP/OBP-mapped

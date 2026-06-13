@@ -328,11 +328,14 @@ pub struct CgbPpu {
     obj_cram: ColorRam,
     dmg_compat: bool,
     opri: bool,
-    /// The palette block's data-port lock: the mode-3 latch sampled into
-    /// the block's 4-dot clock domain.
-    /// XYMU sampled at the M-boundary — the CGB's slow-domain view of
-    /// drawing, read by both the CRAM lock and the VRAM CPU arbiter.
+    /// XYMU sampled at the M-cycle (CPU-clock) boundary — the VRAM CPU
+    /// arbiter's slow-domain view of drawing.
     drawing_synced: bool,
+    /// XYMU sampled into the palette block's own 4-dot (VENA) clock — the
+    /// CRAM data-port lock. Tracks `drawing_synced` at single speed; lags it
+    /// by sampling half as often at double speed, where the palette clock is
+    /// unchanged while the CPU M-cycle runs at 2×.
+    palette_drawing_synced: bool,
 }
 
 impl PpuModel for CgbPpu {
@@ -468,6 +471,9 @@ impl PpuModel for CgbPpu {
 
     fn tick_clock_domain(&mut self, samples: DomainSamples) {
         self.drawing_synced = samples.drawing;
+        if samples.palette_capture {
+            self.palette_drawing_synced = samples.drawing;
+        }
     }
 
     fn vram_cpu_lock(&self, live: bool) -> bool {
@@ -487,7 +493,7 @@ impl PpuModel for CgbPpu {
         {
             return 0xFF;
         }
-        self.read_cram_register(register, self.drawing_synced)
+        self.read_cram_register(register, self.palette_drawing_synced)
     }
 
     fn write_color_register(&mut self, register: ColorRegister, value: u8) {
@@ -499,7 +505,7 @@ impl PpuModel for CgbPpu {
         {
             return;
         }
-        self.write_cram_register(register, value, self.drawing_synced);
+        self.write_cram_register(register, value, self.palette_drawing_synced);
     }
 
     fn trace_shade(pixel: Color555) -> u8 {

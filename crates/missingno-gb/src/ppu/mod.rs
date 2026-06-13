@@ -387,14 +387,21 @@ impl<P: PpuModel> Ppu<P> {
         self.model.set_object_priority_register(value);
     }
 
-    /// M-cycle-boundary rise: the CGB palette block's clock-domain sample
-    /// (CRAM mode-3 lock). The STAT register-file synchroniser captures on
-    /// the M-boundary fall instead — see `eval_synced` in the fall path.
-    pub fn tick_clock_domain_capture(&mut self) {
+    /// M-cycle-boundary rise: the CGB clock-domain samples. The VRAM CPU
+    /// arbiter reads the M-boundary (CPU-clock) sample; the palette block's
+    /// CRAM lock runs on the PPU's 4-dot (VENA) clock, unchanged by double
+    /// speed — so at 2× (CPU M-boundary = 2 dots) it captures only on the
+    /// VENA-aligned boundary, keeping its slow-set at the base rate. The STAT
+    /// register-file synchroniser captures on the M-boundary fall instead —
+    /// see `eval_synced` in the fall path.
+    pub fn tick_clock_domain_capture(&mut self, double_speed: bool) {
         if P::HAS_CLOCK_DOMAIN_SYNC {
             let drawing = self.mode() == Mode::Drawing;
-            self.model
-                .tick_clock_domain(model::DomainSamples { drawing });
+            let palette_capture = !double_speed || self.video.dividers.mcycle();
+            self.model.tick_clock_domain(model::DomainSamples {
+                drawing,
+                palette_capture,
+            });
         }
     }
 
