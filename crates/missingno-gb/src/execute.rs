@@ -25,6 +25,33 @@ pub struct PhaseResult {
     pub pixel: Option<ppu::PixelOutput>,
 }
 
+/// One master-clock edge's work within a `clock_phase`: a `rise_work` or
+/// `fall_work` call, with whether the PPU advances a dot on it.
+#[derive(Clone, Copy)]
+enum EdgeStep {
+    Rise { advance_ppu: bool },
+    Fall { advance_ppu: bool },
+}
+
+/// The clock-interleaving schedule: the ordered edges a `clock_phase` runs.
+/// Single speed runs one edge per phase (the PPU advances on it); double
+/// speed runs two CPU T-cycles' worth, with the PPU advancing only on the
+/// dot's rise (the Low arm's first edge) and fall (the High arm's last edge).
+fn phase_schedule(double_speed: bool, phase: ClockPhase) -> &'static [EdgeStep] {
+    match (double_speed, phase) {
+        (false, ClockPhase::Low) => &[EdgeStep::Rise { advance_ppu: true }],
+        (false, ClockPhase::High) => &[EdgeStep::Fall { advance_ppu: true }],
+        (true, ClockPhase::Low) => &[
+            EdgeStep::Rise { advance_ppu: true },
+            EdgeStep::Fall { advance_ppu: false },
+        ],
+        (true, ClockPhase::High) => &[
+            EdgeStep::Rise { advance_ppu: false },
+            EdgeStep::Fall { advance_ppu: true },
+        ],
+    }
+}
+
 impl<M: Model> Console<M> {
     pub fn step(&mut self) -> StepResult {
         self.step_traced(false).0
@@ -149,37 +176,31 @@ impl<M: Model> Console<M> {
     /// runs the rise half of the next T-cycle plus its fall half — so the CPU's
     /// T-cycle-keyed bus events (drive at T2, commit at T3) land on consecutive
     /// edges while the PPU still advances one dot per two edges.
+    ///
+    /// The per-phase sequence of `rise_work`/`fall_work` calls is the
+    /// clock-interleaving schedule (`phase_schedule`). `clock_phase` is held
+    /// fixed across the schedule and flipped only after — bus events keyed to
+    /// it (`commit_read_latch`'s `on_low_arm`) see one phase per dot-arm.
     fn execute_phase(&mut self) -> PhaseResult {
         let double_speed = self.model.cpu_steps_per_dot() == 2;
-        match self.clock_phase {
-            ClockPhase::Low => {
-                let (mut new_screen, mut pixel) = self.rise_work(true);
-                if double_speed {
-                    let (ns, px) = self.fall_work(false);
-                    new_screen |= ns;
-                    if pixel.is_none() {
-                        pixel = px;
-                    }
-                }
-                self.clock_phase = ClockPhase::High;
-                PhaseResult { new_screen, pixel }
-            }
-            ClockPhase::High => {
-                let (mut new_screen, mut pixel) = (false, None);
-                if double_speed {
-                    let (ns, px) = self.rise_work(false);
-                    new_screen |= ns;
-                    pixel = px;
-                }
-                let (ns, px) = self.fall_work(true);
-                new_screen |= ns;
-                if pixel.is_none() {
-                    pixel = px;
-                }
-                self.clock_phase = ClockPhase::Low;
-                PhaseResult { new_screen, pixel }
+        let phase = self.clock_phase;
+        let mut new_screen = false;
+        let mut pixel = None;
+        for &step in phase_schedule(double_speed, phase) {
+            let (ns, px) = match step {
+                EdgeStep::Rise { advance_ppu } => self.rise_work(advance_ppu),
+                EdgeStep::Fall { advance_ppu } => self.fall_work(advance_ppu),
+            };
+            new_screen |= ns;
+            if pixel.is_none() {
+                pixel = px;
             }
         }
+        self.clock_phase = match phase {
+            ClockPhase::Low => ClockPhase::High,
+            ClockPhase::High => ClockPhase::Low,
+        };
+        PhaseResult { new_screen, pixel }
     }
 
     /// Resolve a STOP the CPU has settled into (called at the M-cycle
