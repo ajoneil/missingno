@@ -177,6 +177,11 @@ impl ExternalBus {
             }
         }
     }
+
+    /// Advance the cartridge RTC (if any) by `dots` of master-clock time.
+    pub fn tick_rtc(&mut self, dots: u32) {
+        self.cartridge.tick_rtc(dots);
+    }
 }
 
 /// The VRAM data bus connects the SoC to video RAM (0x8000–0x9FFF).

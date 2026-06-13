@@ -63,4 +63,12 @@ impl Mbc {
             Mbc::Huc3(m) => m.write(address, value),
         }
     }
+
+    /// Advance any real-time clock by `dots` of master-clock time. Only MBC3's
+    /// RTC counts; all other cartridge types ignore it.
+    pub fn tick_rtc(&mut self, dots: u32) {
+        if let Mbc::Mbc3(m) = self {
+            m.tick_rtc(dots);
+        }
+    }
 }

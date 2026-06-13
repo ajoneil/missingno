@@ -36,7 +36,55 @@ pub struct ClockRegisters {
     pub days_upper: u8,
 }
 
+/// RTCDH bit 6 halts the RTC; bit 0 is day bit 8; bit 7 is the sticky day-overflow flag.
+const HALT_BIT: u8 = 0x40;
+/// Base master-clock dots per RTC second: the 32768 Hz crystal × 128 = the 2^22-dot base clock.
+const DOTS_PER_RTC_SECOND: u32 = 1 << 22;
+
 impl ClockRegisters {
+    /// Carry chain: each stage carries into the next ONLY on its true boundary
+    /// value, so a written out-of-range value (e.g. seconds 63) wraps to 0
+    /// without a carry.
+    fn increment_second(&mut self) {
+        if self.seconds == 59 {
+            self.seconds = 0;
+            self.increment_minute();
+        } else {
+            self.seconds = (self.seconds + 1) & 0x3f;
+        }
+    }
+
+    fn increment_minute(&mut self) {
+        if self.minutes == 59 {
+            self.minutes = 0;
+            self.increment_hour();
+        } else {
+            self.minutes = (self.minutes + 1) & 0x3f;
+        }
+    }
+
+    fn increment_hour(&mut self) {
+        if self.hours == 23 {
+            self.hours = 0;
+            self.increment_day();
+        } else {
+            self.hours = (self.hours + 1) & 0x1f;
+        }
+    }
+
+    fn increment_day(&mut self) {
+        let day = (((self.days_upper & 1) as u16) << 8) | self.days_lower as u16;
+        if day == 0x1ff {
+            self.days_lower = 0;
+            // Clear day bit 8, set the sticky overflow flag, keep the halt bit.
+            self.days_upper = (self.days_upper & 0xc0) | 0x80;
+        } else {
+            let day = day + 1;
+            self.days_lower = day as u8;
+            self.days_upper = (self.days_upper & 0xc0) | ((day >> 8) as u8 & 1);
+        }
+    }
+
     fn get(&self, register: ClockRegister) -> u8 {
         match register {
             ClockRegister::Seconds => self.seconds,
@@ -62,6 +110,8 @@ pub struct Clock {
     pub registers: ClockRegisters,
     pub latched: ClockRegisters,
     pub latch_ready: bool,
+    /// Master-clock dots accrued toward the next RTC-second increment.
+    sub_second_dots: u32,
 }
 
 impl Clock {
@@ -71,10 +121,27 @@ impl Clock {
 
     pub fn set_register(&mut self, register: ClockRegister, value: u8) {
         self.registers.set(register, value);
+        // A write to the seconds register re-phases the next tick to a full second.
+        if matches!(register, ClockRegister::Seconds) {
+            self.sub_second_dots = 0;
+        }
     }
 
     pub fn latch(&mut self) {
         self.latched = self.registers;
+    }
+
+    /// Advance the RTC by `dots` of real master-clock time. Halted by RTCDH
+    /// bit 6, in which case the sub-second counter freezes and resumes in place.
+    fn tick(&mut self, dots: u32) {
+        if self.registers.days_upper & HALT_BIT != 0 {
+            return;
+        }
+        self.sub_second_dots += dots;
+        while self.sub_second_dots >= DOTS_PER_RTC_SECOND {
+            self.sub_second_dots -= DOTS_PER_RTC_SECOND;
+            self.registers.increment_second();
+        }
     }
 }
 
@@ -119,6 +186,7 @@ impl Mbc3 {
                 registers: ClockRegisters::default(),
                 latched: ClockRegisters::default(),
                 latch_ready: false,
+                sub_second_dots: 0,
             }),
             _ => None,
         };
@@ -144,6 +212,12 @@ impl Mbc3 {
             None
         } else {
             Some(self.ram.iter().flatten().copied().collect())
+        }
+    }
+
+    pub fn tick_rtc(&mut self, dots: u32) {
+        if let Some(clock) = &mut self.clock {
+            clock.tick(dots);
         }
     }
 

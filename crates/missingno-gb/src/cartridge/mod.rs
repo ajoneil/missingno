@@ -117,6 +117,11 @@ impl Cartridge {
         }
     }
 
+    /// Advance the cartridge RTC (if any) by `dots` of master-clock time.
+    pub fn tick_rtc(&mut self, dots: u32) {
+        self.mbc.tick_rtc(dots);
+    }
+
     /// Returns true if SRAM has been written to since the last call.
     pub fn take_sram_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.sram_dirty, false)

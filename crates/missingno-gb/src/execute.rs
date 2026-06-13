@@ -849,6 +849,10 @@ impl<M: Model> Console<M> {
         }
 
         self.external.tick_decay();
+        // The RTC crystal is speed-independent: 4 base dots per M-cycle at
+        // single speed, 2 at double speed.
+        self.external
+            .tick_rtc(4 / self.model.cpu_steps_per_dot() as u32);
     }
 
     /// Advance the OAM-DMA control gates one master-clock edge (engage/
