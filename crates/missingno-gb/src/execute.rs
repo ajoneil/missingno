@@ -25,50 +25,59 @@ pub struct PhaseResult {
     pub pixel: Option<ppu::PixelOutput>,
 }
 
-/// One master-clock edge's work within a `clock_phase`. `ppu_edge` runs this
-/// dot's PPU rise/fall (and the pre-ALET read sample); `dot_work` runs the
-/// once-per-dot master-clock-domain work (APU tick, CH3 fall sync, HDMA
-/// trigger). Single speed couples the two onto its one edge; double speed
-/// places the PPU edge as a fittable half-dot parameter while the dot work
-/// stays pinned to the dot's rise/fall.
+/// Which PPU master-clock edge a CPU edge carries. The PPU clock is
+/// speed-independent: one rise and one fall per dot. At single speed they sit
+/// on the CPU's own rise and fall; at double speed the dot's master rise lands
+/// on the first CPU edge and the master fall half a dot later — the second CPU
+/// T-cycle's rise — not the dot's final edge.
+#[derive(Clone, Copy, PartialEq)]
+enum PpuEdge {
+    None,
+    Rise,
+    Fall,
+}
+
+/// One master-clock edge's work within a `clock_phase`. `ppu` selects which (if
+/// any) PPU edge this CPU edge carries; `dot_work` runs the once-per-dot
+/// master-clock-domain work (APU tick, CH3 fall sync, HDMA trigger).
 #[derive(Clone, Copy)]
 enum EdgeStep {
-    Rise { ppu_edge: bool, dot_work: bool },
-    Fall { ppu_edge: bool, dot_work: bool },
+    Rise { ppu: PpuEdge, dot_work: bool },
+    Fall { ppu: PpuEdge, dot_work: bool },
 }
 
 /// The clock-interleaving schedule: the ordered edges a `clock_phase` runs.
-/// Single speed runs one edge per phase (the PPU advances on it); double
-/// speed runs two CPU T-cycles' worth, with the PPU rise on the dot's first
-/// edge (the Low arm's rise) and the PPU fall on its last (the High arm's
-/// fall).
+/// Single speed runs one edge per phase, carrying that edge's PPU half-dot.
+/// Double speed runs two CPU T-cycles: the master rise on the Low arm's rise
+/// and the master fall half a dot later on the High arm's rise (the master
+/// fall's true position), with the per-dot work pinned to the dot's fall.
 fn phase_schedule(double_speed: bool, phase: ClockPhase) -> &'static [EdgeStep] {
     match (double_speed, phase) {
         (false, ClockPhase::Low) => &[EdgeStep::Rise {
-            ppu_edge: true,
+            ppu: PpuEdge::Rise,
             dot_work: true,
         }],
         (false, ClockPhase::High) => &[EdgeStep::Fall {
-            ppu_edge: true,
+            ppu: PpuEdge::Fall,
             dot_work: true,
         }],
         (true, ClockPhase::Low) => &[
             EdgeStep::Rise {
-                ppu_edge: true,
+                ppu: PpuEdge::Rise,
                 dot_work: true,
             },
             EdgeStep::Fall {
-                ppu_edge: false,
+                ppu: PpuEdge::None,
                 dot_work: false,
             },
         ],
         (true, ClockPhase::High) => &[
             EdgeStep::Rise {
-                ppu_edge: false,
+                ppu: PpuEdge::None,
                 dot_work: false,
             },
             EdgeStep::Fall {
-                ppu_edge: true,
+                ppu: PpuEdge::Fall,
                 dot_work: true,
             },
         ],
@@ -211,8 +220,8 @@ impl<M: Model> Console<M> {
         let mut pixel = None;
         for &step in phase_schedule(double_speed, phase) {
             let (ns, px) = match step {
-                EdgeStep::Rise { ppu_edge, dot_work } => self.rise_work(ppu_edge, dot_work),
-                EdgeStep::Fall { ppu_edge, dot_work } => self.fall_work(ppu_edge, dot_work),
+                EdgeStep::Rise { ppu, dot_work } => self.rise_work(ppu, dot_work),
+                EdgeStep::Fall { ppu, dot_work } => self.fall_work(ppu, dot_work),
             };
             new_screen |= ns;
             if pixel.is_none() {
@@ -260,8 +269,8 @@ impl<M: Model> Console<M> {
                 // T-cycles advances the T-ring against the master edges
                 // while the dot domain stands still.
                 for _ in 0..self.model.speed_switch_phase_slip_tcycles() {
-                    let _ = self.rise_work(false, false);
-                    let _ = self.fall_work(false, false);
+                    let _ = self.rise_work(PpuEdge::None, false);
+                    let _ = self.fall_work(PpuEdge::None, false);
                 }
                 // Hardware resets DIV across the switch (the model has already
                 // toggled its speed bit and armed its blackout).
@@ -329,12 +338,12 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// CPU + PPU work for a rising master-clock edge. `ppu_edge` gates this
-    /// dot's PPU rise and the pre-ALET read sample; `dot_work` gates the
-    /// master-clock-domain APU tick. Both are true on the edge that owns the
-    /// PPU rise, false on the extra double-speed CPU T-cycle that shares the
-    /// dot. Sets no clock phase — `execute_phase` owns that.
-    fn rise_work(&mut self, ppu_edge: bool, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
+    /// CPU work for a rising master-clock edge, optionally carrying a PPU edge.
+    /// `ppu` selects which PPU edge fires at this CPU edge's weld point (the
+    /// master rise on the dot's first CPU edge, the master fall on the second
+    /// T-cycle's rise at double speed); `dot_work` gates the master-clock-domain
+    /// APU tick. Sets no clock phase — `execute_phase` owns that.
+    fn rise_work(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
         let mut new_screen = false;
         let mut pixel = None;
@@ -349,7 +358,7 @@ impl<M: Model> Console<M> {
         // this rise, so its pre-ALET-edge view is the live lock sampled now (before
         // the rise). Only the double-speed Low arm consumes this — skip the
         // sampling cost when the CPU runs in lockstep (DMG and CGB single speed).
-        if ppu_edge && self.model.cpu_steps_per_dot() == 2 {
+        if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
             let read_lock = self
                 .cpu_bus
                 .read_address()
@@ -363,11 +372,10 @@ impl<M: Model> Console<M> {
 
         if is_mcycle_boundary {
             self.tick_mcycle_boundary_rise();
-            if ppu_edge {
-                let (ns, pix) = self.ppu_rise_edge();
-                new_screen |= ns;
-                pixel = pix;
-            }
+            let tc = self.cpu.last_tcycle();
+            let (ns, pix) = self.fire_dot_ppu(ppu, is_mcycle_boundary, tc);
+            new_screen |= ns;
+            pixel = pix;
         }
 
         // The HDMA grant is M-boundary-quantized: bus ownership asserts and
@@ -417,12 +425,10 @@ impl<M: Model> Console<M> {
         }
         if !is_mcycle_boundary {
             self.tick_non_boundary_rise(tcycle);
-            if ppu_edge {
-                let (ns, pix) = self.ppu_rise_edge();
-                new_screen |= ns;
-                if pixel.is_none() {
-                    pixel = pix;
-                }
+            let (ns, pix) = self.fire_dot_ppu(ppu, is_mcycle_boundary, tcycle);
+            new_screen |= ns;
+            if pixel.is_none() {
+                pixel = pix;
             }
             self.cpu
                 .dispatch
@@ -473,12 +479,51 @@ impl<M: Model> Console<M> {
             .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus)
     }
 
+    /// Apply a PPU fall's outputs: VBlank/STAT IF requests and the pixel/screen
+    /// commit. The `cpu_irq_ack1` re-assert is the caller's (it runs on every
+    /// CPU fall, not only the dot's PPU fall).
+    fn apply_ppu_fall(
+        &mut self,
+        video_result: &ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>,
+    ) -> (bool, Option<ppu::PixelOutput>) {
+        // VBlank IF: POPU transitions happen on the fall since the divider
+        // chain runs there.
+        if video_result.request_vblank {
+            self.interrupts.request(Interrupt::VideoBetweenFrames);
+        }
+        // STAT IF: the SUKO check folds into request_stat; cpu_irq_ack1_pulse
+        // (LALU.r_n=0) absorbs same-M-cycle SUKO rises.
+        if video_result.request_stat && !self.cpu.irq.cpu_irq_ack1_pulse {
+            self.interrupts.request(Interrupt::VideoStatus);
+        }
+        self.apply_ppu_result(video_result)
+    }
+
+    /// Run the PPU edge a CPU edge carries (if any). The rise outputs pixel +
+    /// VBlank/STAT-edge IF; the fall runs the divider chain and applies its
+    /// outputs. Double speed places the master fall on the High arm's rise.
+    fn fire_dot_ppu(
+        &mut self,
+        ppu: PpuEdge,
+        is_mcycle_boundary: bool,
+        tcycle: TCycle,
+    ) -> (bool, Option<ppu::PixelOutput>) {
+        match ppu {
+            PpuEdge::None => (false, None),
+            PpuEdge::Rise => self.ppu_rise_edge(),
+            PpuEdge::Fall => {
+                let video_result = self.ppu_fall_edge(is_mcycle_boundary, tcycle);
+                self.apply_ppu_fall(&video_result)
+            }
+        }
+    }
+
     /// CPU + PPU work for a falling master-clock edge. `ppu_edge` gates this
     /// dot's PPU fall (and its IF requests); `dot_work` gates the
     /// master-clock-domain CH3 wave latch and the HDMA trigger. Both are false
     /// on the extra double-speed CPU T-cycle that shares the dot. Sets no clock
     /// phase — `execute_phase` owns that.
-    fn fall_work(&mut self, ppu_edge: bool, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
+    fn fall_work(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
         let mut new_screen = false;
@@ -507,7 +552,7 @@ impl<M: Model> Console<M> {
 
         // PPU master-clock fall: divider chain, CATU, scanline
         // boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let video_result = if ppu_edge {
+        let video_result = if ppu == PpuEdge::Fall {
             Some(self.ppu_fall_edge(is_mcycle_boundary, tcycle))
         } else {
             None
