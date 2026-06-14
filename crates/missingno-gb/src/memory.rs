@@ -431,6 +431,14 @@ impl<M: Model> Console<M> {
                 }
             }
 
+            // NR52 channel-on bits (0-3) are driven status outputs of each
+            // channel's enable flip-flop — not bus-floated values — so they
+            // read live at the latch, not the T2 drive-enable snapshot. A
+            // length-stop that clears a channel between the snapshot and the
+            // latch edge is then visible (the snapshot holds the stale pre-stop
+            // value). Master/unused bits keep the snapshot.
+            0xFF26 => (snapshot & !0x0F) | (self.read(address) & 0x0F),
+
             _ => snapshot,
         }
     }
