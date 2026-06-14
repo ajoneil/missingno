@@ -381,6 +381,7 @@ impl Audio {
                 pending_overflow: false,
                 trigger_sync: channels::wave::TriggerSync::default(),
                 wave_data_latch: channels::wave::WaveDataLatch::default(),
+                sample_byte: 0,
             },
             ch4: NoiseChannel {
                 enabled: Enabled {

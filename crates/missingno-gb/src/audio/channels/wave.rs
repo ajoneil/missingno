@@ -98,6 +98,9 @@ pub struct WaveChannel {
 
     pub trigger_sync: TriggerSync,
     pub wave_data_latch: WaveDataLatch,
+    /// DAC byte latched on the `wave_data_latch` (AZUS) strobe; held until
+    /// the next strobe. Reset to 0, so the post-trigger phantom window is silent.
+    pub sample_byte: u8,
 }
 
 impl Default for WaveChannel {
@@ -124,6 +127,7 @@ impl Default for WaveChannel {
 
             trigger_sync: TriggerSync::default(),
             wave_data_latch: WaveDataLatch::default(),
+            sample_byte: 0,
         }
     }
 }
@@ -150,6 +154,7 @@ impl WaveChannel {
 
             trigger_sync: TriggerSync::default(),
             wave_data_latch: WaveDataLatch::default(),
+            sample_byte: 0,
         };
     }
 
@@ -349,7 +354,11 @@ impl WaveChannel {
     /// apu_4mhz ↑ at mid-T-cycle). Captures the two DFFs in the
     /// wave_data_latch chain that clock on apu_4mhz ↑.
     pub fn fall_sync(&mut self) {
+        let strobe_rising = !self.wave_data_latch.latched && self.wave_data_latch.sync_2;
         self.wave_data_latch.latched = self.wave_data_latch.sync_2;
+        if strobe_rising {
+            self.sample_byte = self.ram[self.wave_position as usize / 2];
+        }
         self.wave_data_latch.sync_1 = self.ch3_frst;
     }
 
@@ -366,7 +375,7 @@ impl WaveChannel {
         if !self.enabled.enabled {
             return 0;
         }
-        let byte = self.ram[self.wave_position as usize / 2];
+        let byte = self.sample_byte;
         let nibble = if self.wave_position.is_multiple_of(2) {
             byte >> 4
         } else {
