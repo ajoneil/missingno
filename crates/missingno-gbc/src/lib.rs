@@ -46,10 +46,11 @@ use crate::screen::{Color555, GREYSCALE, Screen};
 /// expected values.
 const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
 
-/// One LCD dot of CPU time at double speed (2 T-cycles): the 1×→2× clock-mux
-/// swap leaves the CPU domain one dot ahead of the dot clock; the 2×→1× swap
-/// re-locks cleanly.
-const SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES: u32 = 2;
+/// Master edges of clock-mux relock tail after the 1×→2× hold: the dot clock
+/// keeps stepping the PPU while the CPU clock is still settling, so the divider
+/// stays quiet here (DIV is set by the hold alone) but the PPU advances — that
+/// is the post-switch CPU↔dot re-phase. The 2×→1× swap re-locks cleanly (none).
+const SWITCH_TO_DOUBLE_RELOCK_EDGES: u32 = 5;
 
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
@@ -660,9 +661,10 @@ pub struct Cgb {
     dmg_compat: bool,
     /// VRAM DMA ($FF51-55).
     vram_dma: VramDma,
-    /// Remaining CPU T-cycles of the double-speed switch blackout. The CPU
-    /// stays `Stopped` (the divider/PPU keep running) until this drains, then
-    /// re-engages at the new speed. 0 = not switching.
+    /// Remaining master edges of the double-speed switch blackout. The CPU
+    /// clock is held (the dot clock / divider keep running off the master)
+    /// until this drains, then the SM83 re-engages at the new speed and the
+    /// dot-clock phase the count expired on. 0 = not switching.
     speed_switch_blackout: u32,
     /// Pre-ALET-rise XYMU (mode-3) state and a pending OAM/VRAM read's lock, sampled
     /// before this dot's ALET edge (where VOGA / the lock cells capture) — the pre-transition view a double-speed
@@ -715,6 +717,16 @@ impl Default for Cgb {
 }
 
 impl Cgb {
+    /// Master edges of the clock-mux relock tail at the end of the blackout —
+    /// nonzero only on the 1×→2× swap (`double_speed` holds the new speed).
+    fn relock_edges(&self) -> u32 {
+        if self.double_speed {
+            SWITCH_TO_DOUBLE_RELOCK_EDGES
+        } else {
+            0
+        }
+    }
+
     /// Index into `extra_oam` for a $FEA0-$FEFF address: row from address
     /// bits 6-5, offset from bits 2-0 (bits 3-4 ignored by the decoder).
     fn extra_oam_index(address: u16) -> usize {
@@ -886,7 +898,7 @@ impl Model for Cgb {
             }
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
-            self.speed_switch_blackout = self.speed_switch_blackout_tcycles();
+            self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain
@@ -902,22 +914,30 @@ impl Model for Cgb {
         self.speed_switch_blackout == 0
     }
 
+    fn speed_switch_divider_active(&self) -> bool {
+        // The divider runs through the hold but freezes during the relock tail:
+        // the CPU clock is still settling there, so it gains no edges (this keeps
+        // the re-phase from disturbing DIV). The tail is the final `relock`
+        // master edges of the count. Placing the quiet edges at the tail vs the
+        // head is observationally identical (no test in the corpus latches a
+        // divider-driven event in that window), so this picks the resume-side
+        // offset that SameBoy/gambatte also model.
+        self.speed_switch_blackout > self.relock_edges()
+    }
+
     fn cpu_steps_per_dot(&self) -> u8 {
         if self.double_speed { 2 } else { 1 }
     }
 
-    fn speed_switch_blackout_tcycles(&self) -> u32 {
-        SPEED_SWITCH_BLACKOUT_TCYCLES
-    }
-
-    fn speed_switch_ppu_nudge_edges(&self) -> u32 {
-        // `double_speed` already holds the new speed: the re-phase rides the
-        // 1×→2× leg only (SameBoy: ~2 PPU ticks s→d).
-        if self.double_speed {
-            SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES
-        } else {
-            0
-        }
+    fn speed_switch_blackout_master_edges(&self) -> u32 {
+        // The blackout is a fixed real-time hold; in master edges (dot-clock
+        // half-cycles) it is the same duration at either speed — the dot clock
+        // runs at a constant rate. `double_speed` already holds the new speed,
+        // so convert the T-cycle figure by the post-switch ratio (2 master
+        // edges per CPU T-cycle at single speed, 1 at double). The relock tail
+        // rides on the end (PPU only, divider quiet).
+        let hold = SPEED_SWITCH_BLACKOUT_TCYCLES * 2 / self.cpu_steps_per_dot() as u32;
+        hold + self.relock_edges()
     }
 
     fn note_pre_alet_read_view(&mut self, rendering: bool, read_lock: Option<bool>) {

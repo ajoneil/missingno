@@ -176,10 +176,17 @@ pub trait Model: Default {
         false
     }
 
-    /// Drain `elapsed` CPU T-cycles from the switch blackout; returns true on
-    /// the M-cycle it empties (the CPU re-engages at the new speed). DMG: never.
+    /// Drain `elapsed` master edges from the switch blackout; returns true on
+    /// the edge it empties (the CPU re-engages at the new speed). DMG: never.
     fn drain_speed_switch_blackout(&mut self, _elapsed: u32) -> bool {
         false
+    }
+
+    /// Whether the CPU-clock divider ticks this blackout edge. It runs through
+    /// the hold but freezes during the clock-mux relock tail, so the re-phase
+    /// doesn't disturb DIV. Only consulted mid-blackout (CGB).
+    fn speed_switch_divider_active(&self) -> bool {
+        true
     }
 
     /// CPU T-cycles advanced per PPU dot. 1 = lockstep (DMG always; CGB
@@ -189,18 +196,13 @@ pub trait Model: Default {
         1
     }
 
-    /// CPU T-cycles the CPU stays `Stopped` across a double-speed switch (the
-    /// blackout while the divider/PPU keep running). DMG never switches speed.
-    fn speed_switch_blackout_tcycles(&self) -> u32 {
-        0
-    }
-
-    /// Extra PPU master edges the switch's clock dynamics give the dot clock
-    /// while the CPU is mid-switch — the post-switch CPU↔PPU re-phase. Advances
-    /// `ppu_phase` against the held `clock_phase`. Queried after `resolve_stop`
-    /// returns `SpeedSwitch` (the model's speed bit already holds the new
-    /// speed). DMG never switches.
-    fn speed_switch_ppu_nudge_edges(&self) -> u32 {
+    /// Master edges (dot-clock half-cycles) the CPU stays held across a
+    /// double-speed switch — a fixed real-time blackout the dot clock runs
+    /// through while the SM83 is frozen. The count's residue past a whole CPU
+    /// M-cycle re-phases the SM83 against the dot clock when it re-engages, so
+    /// the post-switch CPU↔dot alignment emerges from this number alone. DMG
+    /// never switches speed.
+    fn speed_switch_blackout_master_edges(&self) -> u32 {
         0
     }
 
@@ -402,6 +404,12 @@ pub struct Console<M: Model> {
     /// `manage_dma_hold` releases it when the DMA stops asserting the hold.
     dma_cpu_hold: bool,
 
+    /// Master edges elapsed since a double-speed switch began (CGB). The CPU is
+    /// held through the blackout while the dot clock runs; this drives the
+    /// CPU-clock divider's phase off the master clock independently of the
+    /// frozen SM83. Reset at each switch, meaningless otherwise.
+    blackout_edge: u32,
+
     model: M,
 }
 
@@ -472,6 +480,7 @@ impl<M: Model> Console<M> {
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
             dma_cpu_hold: false,
+            blackout_edge: 0,
             model: M::default(),
         };
         console.rebuild_state();

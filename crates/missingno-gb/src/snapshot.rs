@@ -379,6 +379,7 @@ impl GameBoy {
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
             dma_cpu_hold: false,
+            blackout_edge: 0,
         }
     }
 }

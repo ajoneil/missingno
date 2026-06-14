@@ -547,8 +547,11 @@ impl Cpu {
     }
 
     /// Re-engage the CPU after STOP: resume at the instruction following
-    /// STOP. Called by the system when a CGB speed switch (or a joypad
-    /// wake) completes. Must be called at an M-cycle boundary.
+    /// STOP. Called by the system when a CGB speed switch (or a joypad wake)
+    /// completes. The blackout count expires on an arbitrary master edge, so
+    /// start a fresh M-cycle here (`mcycle_active=false`) and arm its boundary
+    /// work (`boundary_pending`); the fetch then runs on the next CPU rise,
+    /// offset from the dot grid by however many master edges the blackout held.
     pub fn resume_from_stop(&mut self) {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
@@ -562,6 +565,15 @@ impl Cpu {
             None => CpuPhase::Fetch,
         };
         self.exec_step = 0;
+        self.mcycle_active = false;
+        self.boundary_pending = true;
+        self.boundary_flag = true;
+    }
+
+    /// Mark an instruction boundary so the step driver returns. Used by the
+    /// held speed-switch blackout, which advances the master clock without
+    /// stepping the SM83's own M-cycle state machine.
+    pub fn mark_instruction_boundary(&mut self) {
         self.boundary_flag = true;
     }
 
