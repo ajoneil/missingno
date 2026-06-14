@@ -231,6 +231,14 @@ impl<M: Model> Console<M> {
                 {
                     self.interrupts.request(interrupt);
                 }
+
+                // EXPERIMENT: post-switch re-phase. The switch's clock dynamics
+                // give the PPU a few extra master edges while the CPU is held
+                // (SameBoy: "2 PPU ticks s→d"; gambatte: a 1-cc PPU nudge). This
+                // advances ppu_phase against the held clock_phase.
+                for _ in 0..self.model.speed_switch_ppu_nudge_edges() {
+                    self.nudge_ppu_master_edge();
+                }
             }
             StopAction::Remain => {}
         }
@@ -444,6 +452,24 @@ impl<M: Model> Console<M> {
             self.interrupts.request(Interrupt::VideoStatus);
         }
         self.apply_ppu_result(video_result)
+    }
+
+    /// Advance the master clock one edge, running only its PPU consumer (the CPU
+    /// is not touched). The speed switch's clock dynamics give the PPU a few
+    /// extra ticks while the CPU is mid-switch — a `ppu_phase` advance with
+    /// `clock_phase` held, which is the post-switch re-phase.
+    fn nudge_ppu_master_edge(&mut self) {
+        match self.ppu_phase {
+            ClockPhase::Low => {
+                self.ppu_rise_edge();
+            }
+            ClockPhase::High => {
+                let tcycle = self.cpu.last_tcycle();
+                let video_result = self.ppu_fall_edge(false, tcycle);
+                self.apply_ppu_fall(&video_result);
+            }
+        }
+        self.ppu_phase = self.ppu_phase.next();
     }
 
     /// Run the PPU edge a CPU edge carries (if any). The rise outputs pixel +

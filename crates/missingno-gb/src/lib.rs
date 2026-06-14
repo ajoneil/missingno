@@ -195,12 +195,12 @@ pub trait Model: Default {
         0
     }
 
-    /// CPU-domain T-cycles the CPU clock train slips against the dot stream
-    /// when a STOP speed switch resolves — the clock-mux swap catching the new
-    /// train mid-period. Queried after `resolve_stop` returns `SpeedSwitch`,
-    /// so the model's speed bit already holds the new speed. DMG never
-    /// switches.
-    fn speed_switch_phase_slip_tcycles(&self) -> u32 {
+    /// Extra PPU master edges the switch's clock dynamics give the dot clock
+    /// while the CPU is mid-switch — the post-switch CPU↔PPU re-phase. Advances
+    /// `ppu_phase` against the held `clock_phase`. Queried after `resolve_stop`
+    /// returns `SpeedSwitch` (the model's speed bit already holds the new
+    /// speed). DMG never switches.
+    fn speed_switch_ppu_nudge_edges(&self) -> u32 {
         0
     }
 

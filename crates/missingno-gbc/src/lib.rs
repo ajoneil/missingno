@@ -910,9 +910,9 @@ impl Model for Cgb {
         SPEED_SWITCH_BLACKOUT_TCYCLES
     }
 
-    fn speed_switch_phase_slip_tcycles(&self) -> u32 {
-        // `double_speed` already holds the new speed: the slip rides the
-        // 1×→2× leg only.
+    fn speed_switch_ppu_nudge_edges(&self) -> u32 {
+        // `double_speed` already holds the new speed: the re-phase rides the
+        // 1×→2× leg only (SameBoy: ~2 PPU ticks s→d).
         if self.double_speed {
             SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES
         } else {
