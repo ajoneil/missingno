@@ -37,53 +37,6 @@ enum PpuEdge {
     Fall,
 }
 
-/// One master-clock edge's work within a `clock_phase`. `ppu` selects which (if
-/// any) PPU edge this CPU edge carries; `dot_work` runs the once-per-dot
-/// master-clock-domain work (APU tick, CH3 fall sync, HDMA trigger).
-#[derive(Clone, Copy)]
-enum EdgeStep {
-    Rise { ppu: PpuEdge, dot_work: bool },
-    Fall { ppu: PpuEdge, dot_work: bool },
-}
-
-/// The clock-interleaving schedule: the ordered edges a `clock_phase` runs.
-/// Single speed runs one edge per phase, carrying that edge's PPU half-dot.
-/// Double speed runs two CPU T-cycles: the master rise on the Low arm's rise
-/// and the master fall half a dot later on the High arm's rise (the master
-/// fall's true position), with the per-dot work pinned to the dot's fall.
-fn phase_schedule(double_speed: bool, phase: ClockPhase) -> &'static [EdgeStep] {
-    match (double_speed, phase) {
-        (false, ClockPhase::Low) => &[EdgeStep::Rise {
-            ppu: PpuEdge::Rise,
-            dot_work: true,
-        }],
-        (false, ClockPhase::High) => &[EdgeStep::Fall {
-            ppu: PpuEdge::Fall,
-            dot_work: true,
-        }],
-        (true, ClockPhase::Low) => &[
-            EdgeStep::Rise {
-                ppu: PpuEdge::Rise,
-                dot_work: true,
-            },
-            EdgeStep::Fall {
-                ppu: PpuEdge::None,
-                dot_work: false,
-            },
-        ],
-        (true, ClockPhase::High) => &[
-            EdgeStep::Rise {
-                ppu: PpuEdge::None,
-                dot_work: false,
-            },
-            EdgeStep::Fall {
-                ppu: PpuEdge::Fall,
-                dot_work: true,
-            },
-        ],
-    }
-}
-
 impl<M: Model> Console<M> {
     pub fn step(&mut self) -> StepResult {
         self.step_traced(false).0
@@ -136,13 +89,9 @@ impl<M: Model> Console<M> {
         // from a boundary — we want to run until the NEXT one).
         self.cpu.take_instruction_boundary();
 
-        const PHASE_BUDGET: u32 = 400;
+        const PHASE_BUDGET: u32 = 800;
         let mut phases_remaining = PHASE_BUDGET;
         let mut tcycles = 0u32;
-
-        // Single speed completes a T-cycle every two edges (at the fall back to
-        // Low); double speed completes a full T-cycle on each edge.
-        let double_speed = self.model.cpu_steps_per_dot() == 2;
 
         loop {
             assert!(
@@ -154,8 +103,8 @@ impl<M: Model> Console<M> {
             let result = self.execute_phase();
             new_screen |= result.new_screen;
 
-            // Check for instruction boundary after completing a T-cycle.
-            if double_speed || self.clock_phase == ClockPhase::Low {
+            // A T-cycle completes every two CPU edges, at the fall back to Low.
+            if self.clock_phase == ClockPhase::Low {
                 tcycles += 1;
                 if self.cpu.at_instruction_boundary() {
                     break;
@@ -200,66 +149,41 @@ impl<M: Model> Console<M> {
         new_screen
     }
 
-    /// Advance the machine by one CPU step. The CPU and PPU are separate state
-    /// machines on the one master clock. At single speed the CPU divider is ÷1:
-    /// one CPU half-T-cycle per master edge, the PPU edge welded onto it
-    /// (`phase_schedule`). At double speed the divider is ÷2: a whole CPU
-    /// T-cycle runs per master edge, and the PPU advances its own next edge
-    /// (`ppu_phase`) once per T-cycle — the master rise on the first T-cycle, the
-    /// master fall on the second. `ppu_phase` is free-running, so across the
-    /// speed-switch blackout it keeps stepping while the CPU is frozen and the
-    /// post-switch alignment is emergent.
+    /// Advance the machine by one CPU edge. The CPU and PPU are separate state
+    /// machines on the one master clock. `clock_phase` is the CPU's own edge
+    /// (`Low` = rise, `High` = fall); `ppu_phase` is the PPU's own next edge.
+    /// The PPU is master-clocked: it advances one edge per CPU edge at single
+    /// speed (CPU divider ÷1, so the two clocks coincide), and one edge per CPU
+    /// T-cycle at double speed (divider ÷2 — only on the CPU rise edges). Because
+    /// `ppu_phase` is free-running, across the speed-switch blackout it keeps
+    /// stepping while the CPU is frozen, so the post-switch alignment is
+    /// emergent rather than a fixed map.
     fn execute_phase(&mut self) -> PhaseResult {
-        if self.model.cpu_steps_per_dot() == 2 {
-            return self.execute_double_speed_edge();
-        }
-
-        let phase = self.clock_phase;
-        let mut new_screen = false;
-        let mut pixel = None;
-        for &step in phase_schedule(false, phase) {
-            let (ns, px) = match step {
-                EdgeStep::Rise { ppu, dot_work } => self.rise_work(ppu, dot_work),
-                EdgeStep::Fall { ppu, dot_work } => self.fall_work(ppu, dot_work),
-            };
-            new_screen |= ns;
-            if pixel.is_none() {
-                pixel = px;
+        let double_speed = self.model.cpu_steps_per_dot() == 2;
+        let rising = self.clock_phase == ClockPhase::Low;
+        let ppu_advances = !double_speed || rising;
+        let ppu = if ppu_advances {
+            match self.ppu_phase {
+                ClockPhase::Low => PpuEdge::Rise,
+                ClockPhase::High => PpuEdge::Fall,
             }
-        }
-        self.clock_phase = self.clock_phase.next();
-        self.ppu_phase = self.ppu_phase.next();
-        PhaseResult { new_screen, pixel }
-    }
-
-    /// One double-speed master edge: a whole CPU T-cycle plus the PPU's next
-    /// edge. The master rise sits on the first T-cycle's rise; the master fall
-    /// on the second's. The PPU rise's outputs are independent of the CPU, so it
-    /// runs inline in `rise_work`. The PPU fall's divider/transitions advance at
-    /// the master-fall instant (before the T-cycle's read latch sees them), but
-    /// its IF/pixel outputs apply only after the CPU's write commit in
-    /// `fall_work` — that order is load-bearing for STAT IRQ timing.
-    fn execute_double_speed_edge(&mut self) -> PhaseResult {
-        let mut new_screen = false;
-        let mut pixel = None;
-        let mut emit = |(ns, px): (bool, Option<ppu::PixelOutput>)| {
-            new_screen |= ns;
-            if pixel.is_none() {
-                pixel = px;
-            }
+        } else {
+            PpuEdge::None
         };
-        match self.ppu_phase {
-            ClockPhase::Low => {
-                emit(self.rise_work(PpuEdge::Rise, true));
-                emit(self.fall_work(PpuEdge::None, false));
-            }
-            ClockPhase::High => {
-                emit(self.rise_work(PpuEdge::None, false));
-                emit(self.fall_work(PpuEdge::Fall, true));
-            }
-        }
+        // Per-dot master-clock work rides the PPU edges: the APU tick on the PPU
+        // rise, the CH3 fall-sync / HDMA trigger on the PPU fall (which at double
+        // speed lands on a CPU rise, so its work runs on the following CPU fall).
+        let (new_screen, pixel) = if rising {
+            self.rise_work(ppu, ppu == PpuEdge::Rise)
+        } else {
+            let dot_work =
+                ppu == PpuEdge::Fall || (double_speed && self.ppu_phase == ClockPhase::Low);
+            self.fall_work(ppu, dot_work)
+        };
         self.clock_phase = self.clock_phase.next();
-        self.ppu_phase = self.ppu_phase.next();
+        if ppu_advances {
+            self.ppu_phase = self.ppu_phase.next();
+        }
         PhaseResult { new_screen, pixel }
     }
 
