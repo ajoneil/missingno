@@ -153,7 +153,6 @@ impl Audio {
     pub fn tcycle(
         &mut self,
         div_counter: u16,
-        t_index: u8,
         double_speed: bool,
         wave_ram_coupling: wave::WaveRamCoupling,
     ) {
@@ -167,7 +166,7 @@ impl Audio {
         self.channels.ch2.tcycle(apu_reset_n);
         self.channels
             .ch3
-            .tcycle(t_index, apu_reset_n, wave_ram_coupling);
+            .tcycle(apu_reset_n, wave_ram_coupling);
         self.channels.ch4.tcycle(apu_reset_n);
 
         if !self.enabled {
@@ -212,6 +211,14 @@ impl Audio {
             self.sample_accum_left = 0.0;
             self.sample_accum_right = 0.0;
             self.sample_accum_count = 0;
+        }
+    }
+
+    /// CH3 `foba` arm capture, clocked by `apu_phi↑` (the CPU M-cycle boundary).
+    /// Gated by APU power, like the per-dot tick's `apu_reset_n`.
+    pub fn mcycle_boundary(&mut self) {
+        if self.enabled {
+            self.channels.ch3.arm_trigger();
         }
     }
 

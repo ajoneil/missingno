@@ -311,6 +311,7 @@ impl<M: Model> Console<M> {
 
         if is_mcycle_boundary {
             self.tick_mcycle_boundary_rise();
+            self.audio.mcycle_boundary();
             let tc = self.cpu.last_tcycle();
             let (ns, pix) = self.fire_dot_ppu(ppu, is_mcycle_boundary, tc);
             new_screen |= ns;
@@ -344,7 +345,6 @@ impl<M: Model> Console<M> {
             let double_speed = self.model.cpu_steps_per_dot() == 2;
             self.audio.tcycle(
                 self.timers.internal_counter(),
-                tcycle.as_u8(),
                 double_speed,
                 M::WAVE_RAM_COUPLING,
             );
@@ -474,12 +474,10 @@ impl<M: Model> Console<M> {
         let double_speed = self.model.cpu_steps_per_dot() == 2;
         let steps_per_dot = self.model.cpu_steps_per_dot() as u32;
         let mcycle_edges = (8 / steps_per_dot).max(1);
-        let edges_per_tcycle = (2 / steps_per_dot).max(1);
 
-        // The divider's phase, derived from elapsed master edges so it pulses
+        // The M-cycle phase, derived from elapsed master edges so it pulses
         // at the CPU rate independent of the frozen SM83.
         let mcycle_boundary = self.blackout_edge % mcycle_edges == 0;
-        let div_tcycle = ((self.blackout_edge / edges_per_tcycle) % 4) as u8;
 
         // The divider/STAT crossing run at the CPU rate through the hold but
         // freeze during the clock-mux relock tail (the CPU clock is settling),
@@ -494,7 +492,6 @@ impl<M: Model> Console<M> {
                 let r = self.ppu_rise_edge();
                 self.audio.tcycle(
                     self.timers.internal_counter(),
-                    div_tcycle,
                     double_speed,
                     M::WAVE_RAM_COUPLING,
                 );

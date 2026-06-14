@@ -227,7 +227,7 @@ impl WaveChannel {
         }
     }
 
-    pub fn tcycle(&mut self, t_index: u8, apu_reset_n: bool, coupling: WaveRamCoupling) {
+    pub fn tcycle(&mut self, apu_reset_n: bool, coupling: WaveRamCoupling) {
         // `cery` async-reset: held at 0 while `apu_reset = 1`. The
         // downstream divider / synchroniser chain is held inert via
         // `ch3_fdis = 1` and so doesn't need separate gating.
@@ -254,11 +254,6 @@ impl WaveChannel {
         // T-cycles.
         self.wave_data_latch.sync_2 = self.wave_data_latch.sync_1;
         self.wave_data_latch.extended = self.wave_data_latch.latched;
-
-        // foba captures gavu on apu_phi↑ (= M-cycle boundary, T=0).
-        if t_index == 0 {
-            self.trigger_sync.armed = self.trigger_sync.bit_latch;
-        }
 
         if fabo_rising {
             // gara/gyta sample on fabo↑. gyta captures the prior
@@ -303,6 +298,13 @@ impl WaveChannel {
                 self.pending_overflow = true;
             }
         }
+    }
+
+    /// `foba`: capture the trigger bit (`gavu`) on `apu_phi↑` (the CPU M-cycle
+    /// boundary). Driven from the step loop's M-boundary hook, not the per-dot
+    /// tick, so the capture is independent of the CPU↔dot phase at double speed.
+    pub fn arm_trigger(&mut self) {
+        self.trigger_sync.armed = self.trigger_sync.bit_latch;
     }
 
     /// `ch3_restart ↑` effects: wave-RAM corruption if the SRAM
