@@ -13,6 +13,13 @@ use crate::common;
 
 const TCYCLES: u32 = 1_053_360;
 
+/// Frames the hex tests run before sampling the result. The reference samples
+/// after the display settles in real time; a fixed T-cycle budget under-runs
+/// double-speed tests (a DS frame is twice the T-cycles, and the KEY1-switch
+/// blackouts further consume a cycle budget), so the hex runner counts frames.
+/// 15 frames matches the prior `TCYCLES` (= 15 × 70224 dots) at single speed.
+const FRAMES: u32 = 15;
+
 // Gambatte hex digit tile patterns (8x8 pixels each).
 // 0 = foreground (0x00 greyscale), 1 = background (0xFF greyscale).
 #[rustfmt::skip]
@@ -157,13 +164,13 @@ fn run_gambatte_audio_test(rom_path: &str) {
 
 fn run_gambatte_hex_test(rom_path: &str) {
     let mut gbc = common::load_rom(rom_path);
-    common::run_for_tcycles(&mut gbc, TCYCLES);
+    common::run_frames(&mut gbc, FRAMES);
     check_screen(&gbc, rom_path);
 }
 
 fn run_gambatte_hex_test_cgb(rom_path: &str) {
     let mut gbc = common::load_cgb_rom(rom_path);
-    common::run_for_tcycles(&mut gbc, TCYCLES);
+    common::run_frames(&mut gbc, FRAMES);
     check_screen(&gbc, rom_path);
 }
 
