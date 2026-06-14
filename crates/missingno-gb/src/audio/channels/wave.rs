@@ -187,6 +187,8 @@ impl WaveChannel {
                     // DAC-off raises `ch3_amp_en_n` which sets the
                     // `ch3_fdis` NAND-latch — divider clock gated.
                     self.ch3_fdis = true;
+                    // ch3_active clears, dropping the held output sample.
+                    self.sample_byte = 0;
                 }
             }
             Register::PeriodLow => self.period.set_low8(value),
