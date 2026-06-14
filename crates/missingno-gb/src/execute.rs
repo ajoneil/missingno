@@ -217,9 +217,10 @@ impl<M: Model> Console<M> {
         match self.model.resolve_stop() {
             StopAction::SpeedSwitch => {
                 // Hardware resets DIV across the switch (the model has already
-                // toggled its speed bit and armed its blackout). The post-switch
-                // CPU↔PPU alignment is emergent: the CPU clock is off through the
-                // blackout while the free-running PPU keeps stepping.
+                // toggled its speed bit and armed the blackout countdown). The
+                // CPU stays stopped through the blackout while the normal loop
+                // runs the PPU/divider every edge; the model drains the countdown
+                // and re-engages above.
                 let old_counter = self.timers.internal_counter();
                 self.timers
                     .write_register(crate::timers::Register::Divider, 0);
