@@ -46,10 +46,17 @@ use crate::screen::{Color555, GREYSCALE, Screen};
 /// expected values.
 const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
 
-/// One LCD dot of CPU time at double speed (2 T-cycles): the 1×→2× clock-mux
-/// swap leaves the CPU domain one dot ahead of the dot clock; the 2×→1× swap
-/// re-locks cleanly.
-const SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES: u32 = 2;
+/// Master edges of clock-mux relock tail after the 1×→2× hold: the dot clock
+/// keeps stepping the PPU while the CPU clock is still settling, so the divider
+/// stays quiet here (DIV is set by the hold alone) but the PPU advances — that
+/// is the post-switch CPU↔dot re-phase.
+const SWITCH_TO_DOUBLE_RELOCK_EDGES: u32 = 5;
+
+/// Relock tail for the 2×→1× swap. The downward mux also settles to a phase;
+/// it sets the CPU↔dot alignment the NEXT 1×→2× switch enters from, so over
+/// repeated switches it determines whether the post-switch reads converge to
+/// the single-switch alignment.
+const SWITCH_TO_SINGLE_RELOCK_EDGES: u32 = 2;
 
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
@@ -660,9 +667,10 @@ pub struct Cgb {
     dmg_compat: bool,
     /// VRAM DMA ($FF51-55).
     vram_dma: VramDma,
-    /// Remaining CPU T-cycles of the double-speed switch blackout. The CPU
-    /// stays `Stopped` (the divider/PPU keep running) until this drains, then
-    /// re-engages at the new speed. 0 = not switching.
+    /// Remaining master edges of the double-speed switch blackout. The CPU
+    /// clock is held (the dot clock / divider keep running off the master)
+    /// until this drains, then the SM83 re-engages at the new speed and the
+    /// dot-clock phase the count expired on. 0 = not switching.
     speed_switch_blackout: u32,
     /// Pre-ALET-rise XYMU (mode-3) state and a pending OAM/VRAM read's lock, sampled
     /// before this dot's ALET edge (where VOGA / the lock cells capture) — the pre-transition view a double-speed
@@ -715,6 +723,17 @@ impl Default for Cgb {
 }
 
 impl Cgb {
+    /// Master edges of the clock-mux relock tail at the end of the blackout.
+    /// `double_speed` holds the NEW speed: the 1×→2× swap settles one way, the
+    /// 2×→1× swap another (the latter sets the entry phase of the next swap).
+    fn relock_edges(&self) -> u32 {
+        if self.double_speed {
+            SWITCH_TO_DOUBLE_RELOCK_EDGES
+        } else {
+            SWITCH_TO_SINGLE_RELOCK_EDGES
+        }
+    }
+
     /// Index into `extra_oam` for a $FEA0-$FEFF address: row from address
     /// bits 6-5, offset from bits 2-0 (bits 3-4 ignored by the decoder).
     fn extra_oam_index(address: u16) -> usize {
@@ -886,10 +905,7 @@ impl Model for Cgb {
             }
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
-            // The dispatcher's slip T-cycles count as blackout progress:
-            // arm-to-resume CPU time including the slip is the full blackout.
-            self.speed_switch_blackout =
-                self.speed_switch_blackout_tcycles() - self.speed_switch_phase_slip_tcycles();
+            self.speed_switch_blackout = self.speed_switch_blackout_master_edges();
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain
@@ -905,22 +921,30 @@ impl Model for Cgb {
         self.speed_switch_blackout == 0
     }
 
+    fn speed_switch_divider_active(&self) -> bool {
+        // The divider runs through the hold but freezes during the relock tail:
+        // the CPU clock is still settling there, so it gains no edges (this keeps
+        // the re-phase from disturbing DIV). The tail is the final `relock`
+        // master edges of the count. Placing the quiet edges at the tail vs the
+        // head is observationally identical (no test in the corpus latches a
+        // divider-driven event in that window), so this picks the resume-side
+        // offset that SameBoy/gambatte also model.
+        self.speed_switch_blackout > self.relock_edges()
+    }
+
     fn cpu_steps_per_dot(&self) -> u8 {
         if self.double_speed { 2 } else { 1 }
     }
 
-    fn speed_switch_blackout_tcycles(&self) -> u32 {
-        SPEED_SWITCH_BLACKOUT_TCYCLES
-    }
-
-    fn speed_switch_phase_slip_tcycles(&self) -> u32 {
-        // `double_speed` already holds the new speed: the slip rides the
-        // 1×→2× leg only.
-        if self.double_speed {
-            SWITCH_TO_DOUBLE_LCD_DOT_TCYCLES
-        } else {
-            0
-        }
+    fn speed_switch_blackout_master_edges(&self) -> u32 {
+        // The blackout is a fixed real-time hold; in master edges (dot-clock
+        // half-cycles) it is the same duration at either speed — the dot clock
+        // runs at a constant rate. `double_speed` already holds the new speed,
+        // so convert the T-cycle figure by the post-switch ratio (2 master
+        // edges per CPU T-cycle at single speed, 1 at double). The relock tail
+        // rides on the end (PPU only, divider quiet).
+        let hold = SPEED_SWITCH_BLACKOUT_TCYCLES * 2 / self.cpu_steps_per_dot() as u32;
+        hold + self.relock_edges()
     }
 
     fn note_pre_alet_read_view(&mut self, rendering: bool, read_lock: Option<bool>) {
@@ -952,15 +976,6 @@ impl Model for Cgb {
     ) -> u8 {
         if on_low_arm {
             return match address {
-                // The mode 3→0 XYMU.q↑ is the one mode transition VOGA captures
-                // an ALET edge too far on the Low arm: when XYMU was rendering
-                // before the ALET edge, the latch resolves to the pre-transition
-                // mode 3. ACYL/POPU/ROPO onsets (mode 2 / vblank / LYC) and bits
-                // 3-7 keep their live `data_phase_n↑` value.
-                0xFF41 if self.pre_alet_rendering => {
-                    const MODE_BITS: u8 = 0b0000_0011;
-                    value | MODE_BITS
-                }
                 // OAM floats (0xFF) only when locked from the address phase
                 // through the pre-ALET-edge view: a read the decoder granted at either
                 // sample saw the byte driven onto the bus, and the latch keeps it.
@@ -979,6 +994,19 @@ impl Model for Cgb {
             };
         }
         match address {
+            // Double-speed STAT mode bits: the read's data_phase_n↑ latches
+            // before this dot's ALET edge, where VOGA clears XYMU (mode 3→0).
+            // So a read taken while the PPU was rendering just before that edge
+            // reads mode 3 even though the post-edge live mode has already
+            // fallen to 0. This is the CGB CPU↔ALET half-dot phase — distinct
+            // from the DMG, whose lockstep timing lands the latch after the edge.
+            0xFF41 if self.double_speed => {
+                if self.pre_alet_rendering {
+                    value | 0b11
+                } else {
+                    value
+                }
+            }
             // Single speed: OR-of-accessibility over the drive-enable grant
             // sample and the latch-edge lock — the bus keeps the byte OAM
             // drove while addressed and unlocked. (The earlier address-phase

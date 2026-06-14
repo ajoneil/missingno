@@ -374,10 +374,12 @@ impl GameBoy {
             model: crate::Dmg { sgb },
             bus_trace: crate::cpu_bus::BusTrace::new(),
             clock_phase: crate::ClockPhase::Low,
+            ppu_phase: crate::ClockPhase::Low,
             cpu_bus: crate::cpu_bus::CpuBus::new(),
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
             dma_cpu_hold: false,
+            blackout_edge: 0,
         }
     }
 }
