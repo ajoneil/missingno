@@ -216,16 +216,10 @@ impl<M: Model> Console<M> {
 
         match self.model.resolve_stop() {
             StopAction::SpeedSwitch => {
-                // The clock-mux swap can catch the new CPU clock train
-                // mid-period: the model's slip count of CPU-domain-only
-                // T-cycles advances the T-ring against the master edges
-                // while the dot domain stands still.
-                for _ in 0..self.model.speed_switch_phase_slip_tcycles() {
-                    let _ = self.rise_work(PpuEdge::None, false);
-                    let _ = self.fall_work(PpuEdge::None, false);
-                }
                 // Hardware resets DIV across the switch (the model has already
-                // toggled its speed bit and armed its blackout).
+                // toggled its speed bit and armed its blackout). The post-switch
+                // CPU↔PPU alignment is emergent: the CPU clock is off through the
+                // blackout while the free-running PPU keeps stepping.
                 let old_counter = self.timers.internal_counter();
                 self.timers
                     .write_register(crate::timers::Register::Divider, 0);

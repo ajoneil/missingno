@@ -886,10 +886,7 @@ impl Model for Cgb {
             }
             self.double_speed = !self.double_speed;
             self.key1_armed = false;
-            // The dispatcher's slip T-cycles count as blackout progress:
-            // arm-to-resume CPU time including the slip is the full blackout.
-            self.speed_switch_blackout =
-                self.speed_switch_blackout_tcycles() - self.speed_switch_phase_slip_tcycles();
+            self.speed_switch_blackout = self.speed_switch_blackout_tcycles();
             StopAction::SpeedSwitch
         } else {
             StopAction::Remain
