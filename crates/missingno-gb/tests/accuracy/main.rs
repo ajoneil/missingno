@@ -1,3 +1,7 @@
+// Test function names mirror their ROM filenames verbatim (e.g.
+// `lycEnable_ff45_disable_1_out1`) so a failure points straight at the ROM.
+#![allow(non_snake_case)]
+
 mod age;
 mod blargg;
 mod bully;
