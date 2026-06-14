@@ -124,6 +124,11 @@ pub struct Ppu<P: PpuModel> {
     /// CUPA↑ → XODO↓: set on LCDC.7 0→1 in the rise-edge staged write, consumed in the same fall.
     pub(super) lcd_on_init_pending: bool,
     pub(super) oam_corruption: oam_corruption::OamCorruption,
+    /// not_if1 mode-2 bit (bit1, WUGA) bus settling: master-half-edges left of the PRE
+    /// hold after a bit1 0→1 (BESU) transition, plus the bit1 value at the prior half-edge
+    /// to detect that edge. The contending bus reads the pre-transition 0 while settling.
+    mode2_settle: u8,
+    prev_mode2: bool,
     /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
     pub(super) model: P,
 }
@@ -178,6 +183,8 @@ impl<P: PpuModel> Ppu<P> {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
+            mode2_settle: 0,
+            prev_mode2: false,
             model: P::default(),
         }
     }
@@ -304,6 +311,8 @@ impl<P: PpuModel> Ppu<P> {
             frame_number: 0,
             lcd_on_init_pending: false,
             oam_corruption: oam_corruption::OamCorruption::default(),
+            mode2_settle: 0,
+            prev_mode2: false,
             model: P::default(),
         };
         if let Some(rendering) = ppu.pixel_pipeline.as_mut() {
@@ -351,6 +360,35 @@ impl<P: PpuModel> Ppu<P> {
         self.pixel_pipeline
             .as_ref()
             .is_some_and(|r| r.lcd_pushing_active())
+    }
+
+    /// Master half-edges the mode-2 `not_if1` bus holds PRE after a BESU 0→1 — the
+    /// slow companion-driver contention resolves within ~1 dot.
+    const MODE2_NOT_IF1_SETTLE: u8 = 2;
+
+    /// Live STAT mode-2 bit (bit1): rendering (XYMU) or OAM scan (ACYL/BESU).
+    fn live_mode2_bit(&self) -> bool {
+        self.pixel_pipeline
+            .as_ref()
+            .is_some_and(|r| r.rendering_active() || r.scan_mode2_active())
+    }
+
+    /// Advance the mode-2 `not_if1` bus settling one master half-edge. A bit1 0→1
+    /// (BESU) starts the contention hold; it drains one edge at a time.
+    pub fn tick_stat_mode2_settle(&mut self) {
+        let cur = self.live_mode2_bit();
+        if cur && !self.prev_mode2 {
+            self.mode2_settle = Self::MODE2_NOT_IF1_SETTLE;
+        } else if self.mode2_settle > 0 {
+            self.mode2_settle -= 1;
+        }
+        self.prev_mode2 = cur;
+    }
+
+    /// The mode-2 bit a CPU read latches: the contending `not_if1` bus holds the
+    /// pre-transition 0 (PRE) while settling, the live value once resolved.
+    pub fn stat_mode2_bus(&self) -> bool {
+        self.mode2_settle == 0 && self.live_mode2_bit()
     }
 }
 

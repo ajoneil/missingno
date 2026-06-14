@@ -410,15 +410,17 @@ impl<M: Model> Console<M> {
             // snapshot pins the read to the T=2 playback byte.
             0xFF30..=0xFF3F => snapshot,
 
-            // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via
-            // dmg_not_if1 cells with a bus-flux x-window during
-            // mode-bit cascades. Resolve to AND of snapshot and live
-            // ("0 wins" per dmg-sim's analog resolution). Bits 3-7
-            // come from stable enable-DRLATCH outputs.
+            // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via dmg_not_if1
+            // cells, resolved "0 wins" (AND with the live latch). The mode-2 bit
+            // (WUGA) carries the slow BESU companion-driver contention and reads
+            // its settling bus value; the vblank bit (TEBY) and LYC bit (SEGO)
+            // resolve fast off the drive-enable snapshot. Bits 3-7 are stable
+            // enable outputs.
             0xFF41 => {
                 let live = self.read(address);
-                const X_WINDOW: u8 = 0b0000_0111;
-                (snapshot & !X_WINDOW) | (snapshot & live & X_WINDOW)
+                const FAST_BITS: u8 = 0b0000_0101;
+                let mode2 = if self.ppu.stat_mode2_bus() { 0b0000_0010 } else { 0 };
+                (snapshot & !0b0000_0111) | (snapshot & live & FAST_BITS) | mode2
             }
 
             _ => snapshot,
