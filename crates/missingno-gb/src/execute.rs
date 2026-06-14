@@ -652,6 +652,15 @@ impl<M: Model> Console<M> {
         self.ppu
             .tick_clock_domain_capture(self.model.cpu_steps_per_dot() == 2);
 
+        self.tick_cpu_clock_mcycle();
+    }
+
+    /// The CPU-clock peripherals (BOGA M-cycle pulse): the timer divider and
+    /// serial shift clock. These are the SM83's own silicon, clocked by the
+    /// CPU clock — not by the instruction sequencer. When the SM83 runs, this
+    /// rides its M-cycle boundary; through the speed-switch blackout it keeps
+    /// pulsing off the master clock while the SM83 is frozen.
+    fn tick_cpu_clock_mcycle(&mut self) {
         self.timers.mcycle();
         if let Some(interrupt) = self.timers.take_pending_interrupt() {
             self.interrupts.request(interrupt);
