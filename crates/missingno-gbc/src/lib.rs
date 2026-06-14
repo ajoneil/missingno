@@ -952,15 +952,6 @@ impl Model for Cgb {
     ) -> u8 {
         if on_low_arm {
             return match address {
-                // The mode 3→0 XYMU.q↑ is the one mode transition VOGA captures
-                // an ALET edge too far on the Low arm: when XYMU was rendering
-                // before the ALET edge, the latch resolves to the pre-transition
-                // mode 3. ACYL/POPU/ROPO onsets (mode 2 / vblank / LYC) and bits
-                // 3-7 keep their live `data_phase_n↑` value.
-                0xFF41 if self.pre_alet_rendering => {
-                    const MODE_BITS: u8 = 0b0000_0011;
-                    value | MODE_BITS
-                }
                 // OAM floats (0xFF) only when locked from the address phase
                 // through the pre-ALET-edge view: a read the decoder granted at either
                 // sample saw the byte driven onto the bus, and the latch keeps it.

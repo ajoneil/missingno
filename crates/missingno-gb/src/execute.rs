@@ -233,22 +233,34 @@ impl<M: Model> Console<M> {
     }
 
     /// One double-speed master edge: a whole CPU T-cycle plus the PPU's next
-    /// edge. The PPU edge fires at the T-cycle's rise (the master edge it sits
-    /// on); the per-dot master-clock work splits across the two T-cycles — the
-    /// APU tick on the PPU rise, the CH3 fall-sync/HDMA trigger on the PPU fall.
+    /// edge. The master rise sits on the first T-cycle's rise; the master fall
+    /// on the second's. The PPU rise's outputs are independent of the CPU, so it
+    /// runs inline in `rise_work`. The PPU fall's divider/transitions advance at
+    /// the master-fall instant (before the T-cycle's read latch sees them), but
+    /// its IF/pixel outputs apply only after the CPU's write commit in
+    /// `fall_work` — that order is load-bearing for STAT IRQ timing.
     fn execute_double_speed_edge(&mut self) -> PhaseResult {
-        let (ppu, apu_tick, fall_work_dot) = match self.ppu_phase {
-            ClockPhase::Low => (PpuEdge::Rise, true, false),
-            ClockPhase::High => (PpuEdge::Fall, false, true),
+        let mut new_screen = false;
+        let mut pixel = None;
+        let mut emit = |(ns, px): (bool, Option<ppu::PixelOutput>)| {
+            new_screen |= ns;
+            if pixel.is_none() {
+                pixel = px;
+            }
         };
-        let (ns1, px1) = self.rise_work(ppu, apu_tick);
-        let (ns2, px2) = self.fall_work(PpuEdge::None, fall_work_dot);
+        match self.ppu_phase {
+            ClockPhase::Low => {
+                emit(self.rise_work(PpuEdge::Rise, true));
+                emit(self.fall_work(PpuEdge::None, false));
+            }
+            ClockPhase::High => {
+                emit(self.rise_work(PpuEdge::None, false));
+                emit(self.fall_work(PpuEdge::Fall, true));
+            }
+        }
         self.clock_phase = self.clock_phase.next();
         self.ppu_phase = self.ppu_phase.next();
-        PhaseResult {
-            new_screen: ns1 || ns2,
-            pixel: px1.or(px2),
-        }
+        PhaseResult { new_screen, pixel }
     }
 
     /// Resolve a STOP the CPU has settled into (called at the M-cycle
