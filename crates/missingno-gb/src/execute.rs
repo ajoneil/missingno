@@ -191,6 +191,7 @@ impl<M: Model> Console<M> {
         self.clock_phase = self.clock_phase.next();
         if ppu_advances {
             self.ppu_phase = self.ppu_phase.next();
+            self.ppu.tick_stat_mode2_settle();
         }
         PhaseResult { new_screen, pixel }
     }
