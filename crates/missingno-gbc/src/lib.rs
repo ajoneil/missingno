@@ -49,8 +49,14 @@ const SPEED_SWITCH_BLACKOUT_TCYCLES: u32 = 0x2_0000;
 /// Master edges of clock-mux relock tail after the 1×→2× hold: the dot clock
 /// keeps stepping the PPU while the CPU clock is still settling, so the divider
 /// stays quiet here (DIV is set by the hold alone) but the PPU advances — that
-/// is the post-switch CPU↔dot re-phase. The 2×→1× swap re-locks cleanly (none).
+/// is the post-switch CPU↔dot re-phase.
 const SWITCH_TO_DOUBLE_RELOCK_EDGES: u32 = 5;
+
+/// Relock tail for the 2×→1× swap. The downward mux also settles to a phase;
+/// it sets the CPU↔dot alignment the NEXT 1×→2× switch enters from, so over
+/// repeated switches it determines whether the post-switch reads converge to
+/// the single-switch alignment.
+const SWITCH_TO_SINGLE_RELOCK_EDGES: u32 = 2;
 
 /// One CGB colour-palette RAM (BG or OBJ): 8 palettes × 4 colours × 2 bytes,
 /// addressed by a 6-bit index that auto-increments on data writes (BCPS/OCPS
@@ -717,13 +723,14 @@ impl Default for Cgb {
 }
 
 impl Cgb {
-    /// Master edges of the clock-mux relock tail at the end of the blackout —
-    /// nonzero only on the 1×→2× swap (`double_speed` holds the new speed).
+    /// Master edges of the clock-mux relock tail at the end of the blackout.
+    /// `double_speed` holds the NEW speed: the 1×→2× swap settles one way, the
+    /// 2×→1× swap another (the latter sets the entry phase of the next swap).
     fn relock_edges(&self) -> u32 {
         if self.double_speed {
             SWITCH_TO_DOUBLE_RELOCK_EDGES
         } else {
-            0
+            SWITCH_TO_SINGLE_RELOCK_EDGES
         }
     }
 
