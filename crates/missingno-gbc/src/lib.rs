@@ -987,6 +987,19 @@ impl Model for Cgb {
             };
         }
         match address {
+            // Double-speed STAT mode bits: the read's data_phase_n↑ latches
+            // before this dot's ALET edge, where VOGA clears XYMU (mode 3→0).
+            // So a read taken while the PPU was rendering just before that edge
+            // reads mode 3 even though the post-edge live mode has already
+            // fallen to 0. This is the CGB CPU↔ALET half-dot phase — distinct
+            // from the DMG, whose lockstep timing lands the latch after the edge.
+            0xFF41 if self.double_speed => {
+                if self.pre_alet_rendering {
+                    value | 0b11
+                } else {
+                    value
+                }
+            }
             // Single speed: OR-of-accessibility over the drive-enable grant
             // sample and the latch-edge lock — the bus keeps the byte OAM
             // drove while addressed and unlocked. (The earlier address-phase
