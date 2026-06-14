@@ -411,16 +411,24 @@ impl<M: Model> Console<M> {
             0xFF30..=0xFF3F => snapshot,
 
             // STAT bits 0-2 (mode + LYC=LY) drive cpu_port_d via dmg_not_if1
-            // cells, resolved "0 wins" (AND with the live latch). The mode-2 bit
-            // (WUGA) carries the slow BESU companion-driver contention and reads
-            // its settling bus value; the vblank bit (TEBY) and LYC bit (SEGO)
-            // resolve fast off the drive-enable snapshot. Bits 3-7 are stable
-            // enable outputs.
+            // cells, resolved "0 wins" (AND with the live latch). At single speed
+            // the T2 drive-enable snapshot lands before the mode-bit transition,
+            // so the snapshot-vs-live x-window already captures the not_if1 PRE
+            // window. At double speed the read M-cycle is 2 dots and the snapshot
+            // lands after a BESU 0→1, so the mode-2 bit (WUGA) instead reads its
+            // explicit settling-bus value (the BESU contention hold); the vblank
+            // (TEBY) and LYC (SEGO) bits stay on the snapshot x-window. Bits 3-7
+            // are stable enable outputs.
             0xFF41 => {
                 let live = self.read(address);
-                const FAST_BITS: u8 = 0b0000_0101;
-                let mode2 = if self.ppu.stat_mode2_bus() { 0b0000_0010 } else { 0 };
-                (snapshot & !0b0000_0111) | (snapshot & live & FAST_BITS) | mode2
+                const X_WINDOW: u8 = 0b0000_0111;
+                if self.cpu_steps_per_dot() == 2 {
+                    const FAST_BITS: u8 = 0b0000_0101;
+                    let mode2 = if self.ppu.stat_mode2_bus() { 0b0000_0010 } else { 0 };
+                    (snapshot & !X_WINDOW) | (snapshot & live & FAST_BITS) | mode2
+                } else {
+                    (snapshot & !X_WINDOW) | (snapshot & live & X_WINDOW)
+                }
             }
 
             _ => snapshot,
