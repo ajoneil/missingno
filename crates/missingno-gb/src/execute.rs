@@ -300,26 +300,12 @@ impl<M: Model> Console<M> {
         let mut new_screen = false;
         let mut pixel = None;
 
-        // Pre-ALET-edge read view: the mode 3→0 XYMU.q↑ and the mode-2 OAM-lock
-        // onset both fire inside this dot's `ppu_rise_edge` below. Sample the
-        // pre-ALET-rise XYMU (mode-3) state and a pending lockable read's pre-ALET-edge
-        // lock so a commit landing on the same phase (the double-speed Low arm)
-        // can latch the pre-transition view its `data_phase_n↑` actually saw.
-        // The two lock regions onset on different edges: VRAM (mode-3) on a
-        // fall, so its pre-ALET-edge view is the drive-enable sample; OAM (mode-2) on
-        // this rise, so its pre-ALET-edge view is the live lock sampled now (before
-        // the rise). Only the double-speed Low arm consumes this — skip the
-        // sampling cost when the CPU runs in lockstep (DMG and CGB single speed).
+        // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
+        // this dot's `ppu_rise_edge` below. A double-speed FF41 read latching on
+        // the same phase resolves its mode to this pre-transition view (the CGB
+        // CPU↔ALET read placement). Only double speed consumes it.
         if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
-            let read_lock = self
-                .cpu_bus
-                .read_address()
-                .and_then(|address| match address {
-                    0x8000..=0x9FFF => self.cpu_bus.read_drive_lock(),
-                    _ => self.ppu.read_lock(address),
-                });
-            self.model
-                .note_pre_alet_read_view(self.ppu.is_rendering(), read_lock);
+            self.model.note_pre_alet_rendering(self.ppu.is_rendering());
         }
 
         if is_mcycle_boundary {
@@ -365,12 +351,6 @@ impl<M: Model> Console<M> {
 
         if is_mcycle_boundary {
             self.stage_mcycle_bus_activity();
-            // OAM read lock at the address phase: the decoder grants the read
-            // when cpu_rd asserts, before any mid-M-cycle RUTU onset.
-            if let Some(address @ 0xFE00..=0xFEFF) = self.cpu_bus.pending_read() {
-                self.model
-                    .note_read_address_phase(self.ppu.read_lock(address));
-            }
         }
         if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
             self.arm_oam_bugs();
@@ -861,15 +841,6 @@ impl<M: Model> Console<M> {
     fn apply_read_drive_enable(&mut self) {
         if let Some(address) = self.cpu_bus.pending_read() {
             let value = self.bus_value_at_drive_enable(address);
-            // VRAM's mode-3 lock onsets on a fall, so a double-speed read's
-            // pre-ALET-edge lock view is this drive-enable sample (before the onset),
-            // not the latch-edge lock (post-ALET-edge). OAM's mode-2 onset is rise-driven
-            // and resolved by the pre-`ppu_rise_edge` sample instead. Only
-            // double speed consumes the sample.
-            if self.model.cpu_steps_per_dot() == 2 {
-                let drive_lock = self.ppu.read_lock(address);
-                self.cpu_bus.record_read_drive_lock(drive_lock);
-            }
             // OAM read lock at the drive enable: the grant view tobe↑ samples
             // before this fall's PPU advance applies any lock onset.
             if let 0xFE00..=0xFEFF = address {
@@ -907,23 +878,17 @@ impl<M: Model> Console<M> {
         if let BusAction::Read { address } = &self.cpu.last_bus_action {
             let address = *address;
             // A lockable read is offered the unfloated accessible byte; the
-            // model owns the float decision from its lock views (the live
-            // latch lock here, plus any address-phase / pre-ALET-edge samples it
-            // noted). Other addresses resolve through `bus_value_at_latch`.
+            // model owns the float decision from its latch lock view. Other
+            // addresses resolve through `bus_value_at_latch`.
             let latch_lock = self.ppu.read_lock(address);
             let accessible = if latch_lock.is_some() {
                 self.cpu_bus.data
             } else {
                 self.bus_value_at_latch(address, self.cpu_bus.data, ly_at_latch)
             };
-            // The double-speed Low arm's latch shares its phase with the ALET
-            // ALET edge, one capture too far; the model resolves it back to
-            // the pre-ALET-edge view.
-            let on_low_arm =
-                self.clock_phase == ClockPhase::Low && self.model.cpu_steps_per_dot() == 2;
             let value = self
                 .model
-                .resolve_read_latch(address, accessible, on_low_arm, latch_lock);
+                .resolve_read_latch(address, accessible, latch_lock);
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }

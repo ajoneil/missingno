@@ -672,17 +672,11 @@ pub struct Cgb {
     /// until this drains, then the SM83 re-engages at the new speed and the
     /// dot-clock phase the count expired on. 0 = not switching.
     speed_switch_blackout: u32,
-    /// Pre-ALET-rise XYMU (mode-3) state and a pending OAM/VRAM read's lock, sampled
-    /// before this dot's ALET edge (where VOGA / the lock cells capture) — the pre-transition view a double-speed
-    /// Low-arm `data_phase_n↑` latch actually saw (`resolve_read_latch` uses
-    /// them). XYMU is the only STAT mode signal VOGA captures one ALET edge too
-    /// far on the Low arm; ACYL/POPU/ROPO keep their live value.
+    /// Pre-ALET-rise XYMU (mode-3) state, sampled before this dot's ALET edge
+    /// (where VOGA captures) — the pre-transition view a double-speed FF41 read's
+    /// `data_phase_n↑` latch saw; `resolve_read_latch` resolves the read's STAT
+    /// mode to it.
     pre_alet_rendering: bool,
-    pre_alet_read_lock: Option<bool>,
-    /// A pending OAM read's lock at the address phase (the read M-cycle's
-    /// first T-cycle) — the view the OAM decoder granted before any
-    /// mid-M-cycle RUTU onset (`resolve_read_latch` consumes it).
-    read_address_oam_lock: Option<bool>,
     /// A pending OAM read's lock at the drive enable (tobe↑) — the
     /// single-speed decisive grant sample, taken before that fall's lock
     /// onset (`resolve_read_latch` consumes it).
@@ -710,8 +704,6 @@ impl Default for Cgb {
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
             pre_alet_rendering: false,
-            pre_alet_read_lock: None,
-            read_address_oam_lock: None,
             read_drive_oam_lock: None,
             ff72: 0,
             ff73: 0,
@@ -947,52 +939,17 @@ impl Model for Cgb {
         hold + self.relock_edges()
     }
 
-    fn note_pre_alet_read_view(&mut self, rendering: bool, read_lock: Option<bool>) {
+    fn note_pre_alet_rendering(&mut self, rendering: bool) {
         if self.double_speed {
             self.pre_alet_rendering = rendering;
-            self.pre_alet_read_lock = read_lock;
         }
-    }
-
-    fn note_read_address_phase(&mut self, oam_lock: Option<bool>) {
-        self.read_address_oam_lock = oam_lock;
     }
 
     fn note_read_drive_phase(&mut self, oam_lock: Option<bool>) {
         self.read_drive_oam_lock = oam_lock;
     }
 
-    /// In double speed the read M-cycle is two dots, so a Low-arm latch runs in
-    /// the same phase as that dot's ALET edge: `ppu_rise_edge` applies the
-    /// mode 3→0 (XYMU.q↑) transition and the mode-2 OAM-lock onset before the
-    /// fall commits the read, but the read's `data_phase_n↑` precedes them.
-    /// Resolve such a read to the pre-ALET-edge view sampled before the rise.
-    fn resolve_read_latch(
-        &self,
-        address: u16,
-        value: u8,
-        on_low_arm: bool,
-        latch_lock: Option<bool>,
-    ) -> u8 {
-        if on_low_arm {
-            return match address {
-                // OAM floats (0xFF) only when locked from the address phase
-                // through the pre-ALET-edge view: a read the decoder granted at either
-                // sample saw the byte driven onto the bus, and the latch keeps it.
-                0xFE00..=0xFEFF => match (self.read_address_oam_lock, self.pre_alet_read_lock) {
-                    (Some(false), _) => value,
-                    (_, Some(true)) => 0xFF,
-                    _ => value,
-                },
-                // VRAM: the read floats (0xFF) iff the mode-3 lock was asserted
-                // before the ALET edge (the drive-enable sample).
-                0x8000..=0x9FFF => match self.pre_alet_read_lock {
-                    Some(true) => 0xFF,
-                    _ => value,
-                },
-                _ => value,
-            };
-        }
+    fn resolve_read_latch(&self, address: u16, value: u8, latch_lock: Option<bool>) -> u8 {
         match address {
             // Double-speed STAT mode bits: the read's data_phase_n↑ latches
             // before this dot's ALET edge, where VOGA clears XYMU (mode 3→0).

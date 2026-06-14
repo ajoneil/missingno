@@ -206,21 +206,11 @@ pub trait Model: Default {
         0
     }
 
-    /// Sampled at the top of `rise_work`, before this dot's `ppu_rise_edge`
-    /// (the ALET-rising XYMU.q↑ / OAM-lock-onset ALET edge). `rendering` is the
-    /// pre-ALET-rise XYMU (mode-3) state — the only STAT mode signal VOGA captures one
-    /// ALET edge too far on the Low arm; `read_lock` is the pre-ALET-edge lock of a
-    /// pending OAM/VRAM read (`None` when no lockable read is staged). A model
-    /// whose CPU latch can land on the same phase as the ALET edge stores these
-    /// to resolve that read's `data_phase_n↑` to the pre-ALET-edge view. DMG (the CPU
-    /// latch always lands after a separate-phase rise) ignores them.
-    fn note_pre_alet_read_view(&mut self, _rendering: bool, _read_lock: Option<bool>) {}
-
-    /// A pending OAM read's lock, sampled when the CPU asserts the address
-    /// (the M-cycle's first T-cycle). The OAM decoder grants the read there —
-    /// a RUTU lock onset later in the M-cycle cannot float a read already
-    /// granted. DMG ignores it.
-    fn note_read_address_phase(&mut self, _oam_lock: Option<bool>) {}
+    /// The pre-ALET-rise XYMU (mode-3) state, sampled before this dot's
+    /// `ppu_rise_edge` (the ALET-rising XYMU.q↑). A double-speed FF41 read
+    /// latching on that phase resolves its STAT mode to this pre-transition
+    /// view. DMG (latch always lands after a separate-phase rise) ignores it.
+    fn note_pre_alet_rendering(&mut self, _rendering: bool) {}
 
     /// A pending OAM read's lock at the drive enable (tobe↑, the read's third
     /// T-cycle fall), sampled before that fall's PPU advance applies any lock
@@ -229,17 +219,9 @@ pub trait Model: Default {
 
     /// Resolve the value a CPU read latches. A lockable (OAM/VRAM) read
     /// arrives unfloated with its live lock in `latch_lock`; the model owns
-    /// the float. DMG floats on the latch-edge lock alone. CGB also consults
-    /// its address-phase / pre-ALET-edge samples (`on_low_arm` marks the
-    /// double-speed Low master-arm, where the latch shares its phase with the
-    /// ALET edge and resolves to the pre-ALET-edge view).
-    fn resolve_read_latch(
-        &self,
-        _address: u16,
-        value: u8,
-        _on_low_arm: bool,
-        latch_lock: Option<bool>,
-    ) -> u8 {
+    /// the float. DMG floats on the latch-edge lock alone; CGB also applies its
+    /// double-speed read placement (the pre-ALET STAT view, drive-enable lock).
+    fn resolve_read_latch(&self, _address: u16, value: u8, latch_lock: Option<bool>) -> u8 {
         if latch_lock == Some(true) {
             0xFF
         } else {
