@@ -1162,8 +1162,10 @@ impl Model for Cgb {
         }
         // The taken-clear stays live through the halt-latch M-cycle, then
         // freezes until the CPU's own resume (halt only; STOP freezes it
-        // outright via the engine gate).
-        if !in_hblank && (!cpu_halted || self.vram_dma.halted_falls <= 4) {
+        // outright via the engine gate). One M-cycle is 4 PPU dots single
+        // speed, 2 in double speed.
+        let taken_clear_window = if self.double_speed { 2 } else { 4 };
+        if !in_hblank && (!cpu_halted || self.vram_dma.halted_falls <= taken_clear_window) {
             self.vram_dma.hblank_block_taken = false;
         }
         // The engine gate freezes commit/grant; the mode-0 entry detector
