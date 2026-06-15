@@ -884,9 +884,12 @@ impl<M: Model> Console<M> {
             } else {
                 self.bus_value_at_latch(address, self.cpu_bus.data, ly_at_latch)
             };
-            let value = self
-                .model
-                .resolve_read_latch(address, accessible, latch_lock);
+            let value = if let Some(source) = self.model.vram_dma_conflict_source(address) {
+                self.read_dma_source(source)
+            } else {
+                self.model
+                    .resolve_read_latch(address, accessible, latch_lock)
+            };
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }

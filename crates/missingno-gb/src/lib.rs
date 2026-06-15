@@ -314,6 +314,13 @@ pub trait Model: Default {
         false
     }
 
+    /// The DMA source for a VRAM address a committed HBlank block is about to
+    /// write: a CPU read of it is stalled past the write, so it sees the DMA's
+    /// value. `Some(source)` → read the source byte; `None` → normal read. DMG: never.
+    fn vram_dma_conflict_source(&self, _address: u16) -> Option<u16> {
+        None
+    }
+
     /// An entry-triggered block spends one leading no-data cell — the engine
     /// loading its working pointers from the HDMA1-4 holding registers (the
     /// FF55 arm strobe performs that load itself). Consumed once per block.

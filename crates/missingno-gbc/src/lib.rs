@@ -641,6 +641,10 @@ struct VramDma {
     /// A speed-switch cancel caught the engine mid-byte: that byte completes
     /// (pointers advance) without counting against the latched length.
     escape_byte: bool,
+    /// Falls the bus has been seized continuously. A CPU read of the block's
+    /// destination sees the written byte only once the seize has settled one
+    /// fall (the double-speed half-dot from bus seizure to byte-readable).
+    seize_falls: u8,
 }
 
 impl VramDma {
@@ -1232,6 +1236,11 @@ impl Model for Cgb {
         } else {
             0
         };
+        if self.vram_dma_seizes_bus() {
+            self.vram_dma.seize_falls = self.vram_dma.seize_falls.saturating_add(1);
+        } else {
+            self.vram_dma.seize_falls = 0;
+        }
         VramDmaClaim {
             committed: committing,
             // A claim is standing once it has aged through one full M-cycle
@@ -1275,6 +1284,19 @@ impl Model for Cgb {
         self.vram_dma.ready_in == 0
             && (self.vram_dma.setup_cells > 0
                 || (self.vram_dma.block_remaining > 0 && self.vram_dma.remaining > 0))
+    }
+
+    fn vram_dma_conflict_source(&self, address: u16) -> Option<u16> {
+        // Double speed only: at single speed the CPU read-latch lands after the
+        // block on its own (the byte-identical single-speed reads pass already);
+        // at 2× the read collides with the byte the block is writing — but only
+        // once the bus seizure has settled one full prior fall (the half-dot from
+        // seizure to byte-readable; the count includes this fall, so `>= 2`).
+        let writing = self.double_speed
+            && self.vram_dma.seize_falls >= 2
+            && self.vram_dma.block_remaining > 0
+            && self.vram_dma.remaining > 0;
+        (writing && address == self.vram_dma.dest).then_some(self.vram_dma.source)
     }
 
     fn vram_dma_take_setup_cell(&mut self) -> bool {
