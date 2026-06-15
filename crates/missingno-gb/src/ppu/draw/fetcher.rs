@@ -13,6 +13,9 @@ pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     /// The BG map attribute fetched alongside the tile index at counter 0; held
     /// through the cycle so the data reads and the shifter load see one cell.
     bg_cell: P::BgCell,
+    /// LCDC byte the tile-map-select read sampled at counter 0 (live on DMG, a
+    /// stale snapshot on CGB); held so the index fetch picks one map per cycle.
+    tile_map_byte: u8,
     tile_data_low: u8,
     tile_data_high: u8,
     /// Resampled from PYNU at counter=0 and held through the cycle so all VRAM accesses see the same selection.
@@ -52,6 +55,7 @@ impl<P: PpuModel> TileFetcher<P> {
             window_tile_x: 0,
             tile_index: 0,
             bg_cell: P::BgCell::default(),
+            tile_map_byte: 0,
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -65,6 +69,7 @@ impl<P: PpuModel> TileFetcher<P> {
             window_tile_x: 0,
             tile_index: 0,
             bg_cell: P::BgCell::default(),
+            tile_map_byte: 0,
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -116,7 +121,8 @@ impl<P: PpuModel> TileFetcher<P> {
         (self.window_tile_x, window_line_counter / 8)
     }
 
-    /// Reads SCX/SCY and tilemap-select bits live each fetch (mirrors AMUV/VEVY live arbitration).
+    /// Reads SCX/SCY live each fetch (mirrors AMUV/VEVY live arbitration); the
+    /// tilemap-select bit comes from `tile_map_byte`, captured at counter 0.
     fn tile_index_address(
         &self,
         pixel_counter: u8,
@@ -130,12 +136,9 @@ impl<P: PpuModel> TileFetcher<P> {
         } else {
             self.bg_tilemap_coords(pixel_counter, sacu_active, regs, video)
         };
-        let map_id = if self.fetching_window {
-            regs.window_tile_map()
-        } else {
-            regs.background_tile_map()
-        };
-        tile_map_offset(map_id.0, map_x, map_y)
+        let map_select_bit = if self.fetching_window { 6 } else { 3 };
+        let map_id_index = (self.tile_map_byte >> map_select_bit) & 1;
+        tile_map_offset(map_id_index, map_x, map_y)
     }
 
     fn bg_fine_y(regs: &PipelineRegisters, video: &VideoControl) -> u8 {
@@ -187,6 +190,7 @@ impl<P: PpuModel> TileFetcher<P> {
             0 => {
                 // BAFY/WUKO arming: latch live PYNU for the cycle; held through counters 1..5.
                 self.fetching_window = window_mode_active;
+                self.tile_map_byte = regs.tile_map_select_byte(P::TILE_MAP_READ_STALE_FALLS);
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
                     sacu_active,

@@ -1,7 +1,6 @@
 use super::dff::DffLatch;
 use super::types::control::{Control, ControlFlags};
 use super::types::palette::Palettes;
-use super::types::tiles::TileMapId;
 
 pub struct BackgroundViewportPosition {
     pub x: DffLatch,
@@ -83,11 +82,12 @@ pub struct PipelineRegisters {
     pub control: Control,
     /// DFF9 latch for full LCDC byte.
     pub control_latch: DffLatch,
-    /// LCDC byte the BG/window tile-map-select reads sample. Tracks `control`
-    /// except on CGB, where a mid-Mode-3 write is latched late
-    /// (TILE_MAP_WRITE_LAG_FALLS) so the map-select change reaches the fetch a
-    /// couple of falls later than the DMG's combinational read.
-    pub(in crate::ppu) tile_map_latch: DffLatch,
+    /// One- and two-fall-stale snapshots of the LCDC byte. The CGB tile-map-select
+    /// fetch reads a stale snapshot (TILE_MAP_READ_STALE_FALLS) referenced to the
+    /// fetcher's own counter-0 edge, so the map-select change reaches the fetch a
+    /// couple of falls after the DMG's combinational read.
+    pub(in crate::ppu) tile_map_prev: u8,
+    pub(in crate::ppu) tile_map_prev2: u8,
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
@@ -119,7 +119,8 @@ impl PipelineRegisters {
         if self.control_latch.tick() {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
-        self.tile_map_latch.tick();
+        self.tile_map_prev2 = self.tile_map_prev;
+        self.tile_map_prev = self.control.bits();
 
         self.palettes.tick_mode2_active(mode2_active);
 
@@ -138,29 +139,19 @@ impl PipelineRegisters {
         self.background_viewport.y.clear();
         self.window.x.clear();
         self.control_latch.clear();
-        self.tile_map_latch.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
         self.tile_sel_reset_glitch.clear();
     }
 
-    /// Mirror an LCDC write into the tile-map-select latch: immediate, or `falls`
-    /// late on the CGB mid-Mode-3 path.
-    pub fn write_tile_map_latch(&mut self, value: u8, falls: u8) {
-        if falls > 0 {
-            self.tile_map_latch.write_delayed(value, falls);
-        } else {
-            self.tile_map_latch.write_immediate(value);
+    /// The LCDC byte the tile-map-select fetch samples: live on DMG (`falls` = 0),
+    /// or a stale snapshot on CGB (the fetch looks back past a just-committed write).
+    pub fn tile_map_select_byte(&self, falls: u8) -> u8 {
+        match falls {
+            0 => self.control.bits(),
+            1 => self.tile_map_prev,
+            _ => self.tile_map_prev2,
         }
-    }
-
-    /// LCDC.3/.6 tile-map selects the fetch reads — the CGB-delayed byte.
-    pub fn background_tile_map(&self) -> TileMapId {
-        Control::new(ControlFlags::from_bits_retain(self.tile_map_latch.output())).background_tile_map()
-    }
-
-    pub fn window_tile_map(&self) -> TileMapId {
-        Control::new(ControlFlags::from_bits_retain(self.tile_map_latch.output())).window_tile_map()
     }
 
     /// VYXE state for the BG plane gate (RAJY/TADE), with OLD-overlay applied.

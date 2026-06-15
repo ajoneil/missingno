@@ -138,7 +138,8 @@ impl<P: PpuModel> Ppu<P> {
         Self {
             registers: PipelineRegisters {
                 control_latch: DffLatch::new(0),
-                tile_map_latch: DffLatch::new(0),
+                tile_map_prev: 0,
+                tile_map_prev2: 0,
                 control: Control::new(ControlFlags::empty()),
                 background_viewport: BackgroundViewportPosition {
                     x: DffLatch::new(0),
@@ -196,7 +197,8 @@ impl<P: PpuModel> Ppu<P> {
         let mut ppu = Self::new();
         ppu.registers.control = control;
         ppu.registers.control_latch = DffLatch::new(control.bits());
-        ppu.registers.tile_map_latch = DffLatch::new(control.bits());
+        ppu.registers.tile_map_prev = control.bits();
+        ppu.registers.tile_map_prev2 = control.bits();
         ppu.video = VideoControl {
             dividers: Dividers {
                 half_mcycle: true,
@@ -283,7 +285,8 @@ impl<P: PpuModel> Ppu<P> {
         let registers = PipelineRegisters {
             control,
             control_latch: DffLatch::new(snap.lcdc),
-            tile_map_latch: DffLatch::new(snap.lcdc),
+            tile_map_prev: snap.lcdc,
+            tile_map_prev2: snap.lcdc,
             background_viewport: BackgroundViewportPosition {
                 x: DffLatch::new(snap.scx),
                 y: DffLatch::new(snap.scy),
