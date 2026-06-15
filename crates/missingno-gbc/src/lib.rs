@@ -1201,7 +1201,9 @@ impl Model for Cgb {
         let armed = self.vram_dma.mode == TransferMode::HBlank;
         let committing = self.vram_dma.pend
             && armed
-            && in_hblank
+            // An arm-strobe pend latched while in HBlank commits even if HBlank
+            // ended in the one-fall pend->commit gap.
+            && (in_hblank || self.vram_dma.pend_from_arm)
             && (!cpu_halted || self.vram_dma.pend_age <= 2);
         if committing {
             self.vram_dma.block_remaining = 16;
