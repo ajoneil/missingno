@@ -152,6 +152,12 @@ pub trait Model: Default {
         Ppu::post_boot()
     }
 
+    /// Post-boot APU state when no boot ROM is present — the CGB boot ROM
+    /// hands off at a different frame-sequencer step and CH1 duty phase.
+    fn audio_post_boot(internal_counter: u16, _cgb_cart: bool) -> Audio {
+        Audio::post_boot(internal_counter)
+    }
+
     /// Post-boot joypad state — the CGB boot ROM deselects both key matrix
     /// lines; the DMG boot ROM leaves both selected.
     fn joypad_post_boot() -> Joypad {
@@ -528,7 +534,7 @@ impl<M: Model> Console<M> {
         self.audio = if has_boot_rom {
             Audio::new()
         } else {
-            Audio::post_boot(self.timers.internal_counter)
+            M::audio_post_boot(self.timers.internal_counter, cgb_cart)
         };
         self.dma = if has_boot_rom {
             Dma::new()

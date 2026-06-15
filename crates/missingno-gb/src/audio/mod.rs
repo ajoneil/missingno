@@ -79,6 +79,15 @@ impl Audio {
         }
     }
 
+    /// Post-boot state seeded with an explicit frame-sequencer step — each
+    /// console's boot ROM hands off at a different DIV-APU phase. The plain
+    /// `post_boot` is the DMG handoff (step 2).
+    pub fn post_boot_with_fs_step(internal_counter: u16, frame_sequencer_step: u8) -> Self {
+        let mut audio = Self::post_boot(internal_counter);
+        audio.frame_sequencer_step = frame_sequencer_step;
+        audio
+    }
+
     /// Power-on state: audio disabled, all registers zeroed.
     pub fn new() -> Self {
         Self {
@@ -164,9 +173,7 @@ impl Audio {
         let apu_reset_n = self.enabled;
         self.channels.ch1.tcycle(apu_reset_n);
         self.channels.ch2.tcycle(apu_reset_n);
-        self.channels
-            .ch3
-            .tcycle(apu_reset_n, wave_ram_coupling);
+        self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
         self.channels.ch4.tcycle(apu_reset_n);
 
         if !self.enabled {

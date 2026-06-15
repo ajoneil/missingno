@@ -34,8 +34,8 @@ use missingno_gb::ppu::{
     PpuModel, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, cartridge::Cartridge, cpu::Cpu,
-    dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
+    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio, cartridge::Cartridge,
+    cpu::Cpu, dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -843,6 +843,17 @@ impl Model for Cgb {
     /// DMG cartridge (compat-palette setup): FF04 reads $1E / $26.
     fn timers_post_boot(cgb_cart: bool) -> Timers {
         Timers::post_boot_with_counter(if cgb_cart { 0x47A8 } else { 0x099F })
+    }
+
+    /// The CGB boot ROM hands the APU off one frame-sequencer step earlier than
+    /// the DMG boot ROM (measured at PC=$0100). DMG-compat carts run a different
+    /// boot sequence whose phase is unmeasured, so they keep the DMG handoff.
+    fn audio_post_boot(internal_counter: u16, cgb_cart: bool) -> Audio {
+        if cgb_cart {
+            Audio::post_boot_with_fs_step(internal_counter, 1)
+        } else {
+            Audio::post_boot(internal_counter)
+        }
     }
 
     /// CGB boot-ROM handoff is mid-VBlank; the line depends on the boot
