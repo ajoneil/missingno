@@ -183,6 +183,12 @@ pub trait PpuModel: Default {
     /// The DMG dlatch OR transient is unmodelled (no test exercises it).
     const OBP_WRITE_RACE: bool = true;
 
+    /// The CGB BG fetch samples SCY one fetch-stage (2 dots) earlier than DMG: the two
+    /// tile-data fine-Y reads take the counter-0 and counter-2 SCY (DMG takes counter-2
+    /// and counter-4), and the once-latched map-row lags to the pre-write SCY where the
+    /// live value has just crossed an 8-pixel boundary. DMG keeps the unshifted hybrid.
+    const BG_FETCH_SCY_STAGE_EARLY: bool = false;
+
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-cycle clock
     /// domain — the same captured sample as the CRAM lock.

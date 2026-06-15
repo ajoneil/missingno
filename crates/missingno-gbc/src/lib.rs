@@ -360,6 +360,7 @@ impl PpuModel for CgbPpu {
     const TILE_SEL_RESET_GLITCH: bool = true;
     const BGP_WRITE_RACE: bool = false;
     const OBP_WRITE_RACE: bool = false;
+    const BG_FETCH_SCY_STAGE_EARLY: bool = true;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;
