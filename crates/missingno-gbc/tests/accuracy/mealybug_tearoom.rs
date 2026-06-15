@@ -64,6 +64,13 @@ macro_rules! shared {
             run_shared(stringify!($name));
         }
     };
+    ($name:ident, ignore = $reason:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            run_shared(stringify!($name));
+        }
+    };
 }
 
 macro_rules! change2 {
@@ -96,10 +103,25 @@ shared!(m3_scy_change);
 shared!(m3_window_timing);
 shared!(m3_window_timing_wx_0);
 shared!(m3_wx_4_change_sprites);
-shared!(m3_lcdc_win_en_change_multiple_wx);
-shared!(m3_wx_4_change);
-shared!(m3_wx_5_change);
-shared!(m3_wx_6_change);
+// Upstream ships no real CGB capture for these four — the _cgb_c.png is one
+// placeholder image reused byte-identically across all four ROMs, so no render
+// can match. The author's photos/ confirm the real CGB output differs per ROM.
+shared!(
+    m3_lcdc_win_en_change_multiple_wx,
+    ignore = "no real CGB reference upstream — expected PNG is a shared placeholder"
+);
+shared!(
+    m3_wx_4_change,
+    ignore = "no real CGB reference upstream — expected PNG is a shared placeholder"
+);
+shared!(
+    m3_wx_5_change,
+    ignore = "no real CGB reference upstream — expected PNG is a shared placeholder"
+);
+shared!(
+    m3_wx_6_change,
+    ignore = "no real CGB reference upstream — expected PNG is a shared placeholder"
+);
 
 // CGB-C-only `_change2` variants.
 change2!(m3_lcdc_bg_en_change2);
