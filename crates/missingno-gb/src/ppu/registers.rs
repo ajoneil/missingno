@@ -12,27 +12,27 @@ pub struct Window {
     pub x: DffLatch,
 }
 
-/// One-fall OLD-value overlay for an LCDC bit that transitioned mid-Mode-3.
-/// Arms with the pre-write value on a CPU write site; survives the same
-/// fall's tick (`just_set`) so the BG/OBJ resolve still sees OLD, then
-/// clears on the next fall.
+/// OLD-value overlay for an LCDC bit that transitioned mid-Mode-3. Arms with the
+/// pre-write value on a CPU write site and holds it for `hold` falls so the
+/// BG/OBJ resolve still sees OLD, then clears. The base hold of 1 covers the
+/// same fall's tick; CGB's clock-domain write lag (e.g. VYXE/RAJY) adds one more.
 #[derive(Default)]
 pub(in crate::ppu) struct OldOverlay {
     value: Option<bool>,
-    just_set: bool,
+    hold: u8,
 }
 
 impl OldOverlay {
-    fn arm(&mut self, old: bool, new: bool) {
+    fn arm(&mut self, old: bool, new: bool, extra_hold: u8) {
         if old != new {
             self.value = Some(old);
-            self.just_set = true;
+            self.hold = 1 + extra_hold;
         }
     }
 
     fn tick(&mut self) {
-        if self.just_set {
-            self.just_set = false;
+        if self.hold > 0 {
+            self.hold -= 1;
         } else {
             self.value = None;
         }
@@ -44,7 +44,7 @@ impl OldOverlay {
 
     fn clear(&mut self) {
         self.value = None;
-        self.just_set = false;
+        self.hold = 0;
     }
 }
 
@@ -142,9 +142,11 @@ impl PipelineRegisters {
             .resolve(self.control.background_and_window_enabled())
     }
 
-    /// Capture pre-write VYXE if LCDC.0 transitions during Mode 3.
-    pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
-        self.bg_window_enabled_overlay.arm(old_value, new_value);
+    /// Capture pre-write VYXE if LCDC.0 transitions during Mode 3. `extra_hold`
+    /// holds OLD one fall longer for the CGB clock-domain write lag.
+    pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool, extra_hold: u8) {
+        self.bg_window_enabled_overlay
+            .arm(old_value, new_value, extra_hold);
     }
 
     /// XYLO state for the OBJ-mux popper, with OLD-overlay applied. Sprite-fetch trigger does NOT use this.
@@ -155,6 +157,6 @@ impl PipelineRegisters {
 
     /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3.
     pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
-        self.sprites_enabled_overlay.arm(old_value, new_value);
+        self.sprites_enabled_overlay.arm(old_value, new_value, 0);
     }
 }

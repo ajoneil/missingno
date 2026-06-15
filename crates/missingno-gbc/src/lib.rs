@@ -361,6 +361,7 @@ impl PpuModel for CgbPpu {
     const BGP_WRITE_RACE: bool = false;
     const OBP_WRITE_RACE: bool = false;
     const BG_FETCH_SCY_STAGE_EARLY: bool = true;
+    const BG_ENABLE_WRITE_LAG: bool = true;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;

@@ -74,8 +74,12 @@ impl<P: PpuModel> Ppu<P> {
                 if is_drawing && self.lcd_pushing_active() {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
-                    self.registers
-                        .arm_bg_window_enabled_shadow(old_bg_window_enabled, new_bg_window_enabled);
+                    let bg_enable_extra_hold = u8::from(P::BG_ENABLE_WRITE_LAG);
+                    self.registers.arm_bg_window_enabled_shadow(
+                        old_bg_window_enabled,
+                        new_bg_window_enabled,
+                        bg_enable_extra_hold,
+                    );
                     let new_sprites_enabled = self.registers.control.sprites_enabled();
                     self.registers
                         .arm_sprites_enabled_shadow(old_sprites_enabled, new_sprites_enabled);

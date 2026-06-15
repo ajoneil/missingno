@@ -189,6 +189,11 @@ pub trait PpuModel: Default {
     /// live value has just crossed an 8-pixel boundary. DMG keeps the unshifted hybrid.
     const BG_FETCH_SCY_STAGE_EARLY: bool = false;
 
+    /// The CGB synchronises a mid-Mode-3 LCDC.0 (VYXE) write onto its own clock,
+    /// so the BG-plane blank (RAJY) lands one dot later than the DMG's combinational
+    /// path — the OLD-overlay holds the pre-write value one extra dot. DMG: no lag.
+    const BG_ENABLE_WRITE_LAG: bool = false;
+
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-cycle clock
     /// domain — the same captured sample as the CRAM lock.
