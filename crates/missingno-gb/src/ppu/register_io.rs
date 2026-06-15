@@ -69,9 +69,13 @@ impl<P: PpuModel> Ppu<P> {
                     self.registers.tile_sel_reset_glitch.arm();
                 }
 
-                // Arm the VYXE/sprites-enabled OLD-overlay so the next resolve uses pre-transition.
-                // Gated on WUSA so prelude writes (off-LCD first cp_pad↑) are ignored.
-                if is_drawing && self.lcd_pushing_active() {
+                // Arm the VYXE/sprites-enabled OLD-overlays so the next resolve uses pre-transition.
+                // is_drawing already excludes the off-LCD prelude (first cp_pad↑). The CGB bg-enable
+                // lag also covers the boundary write before the first pixel is pushed (WUSA still low),
+                // holding OLD across the left edge; DMG's combinational RAJY applies at once, so it
+                // keeps the WUSA gate.
+                let pushing = self.lcd_pushing_active();
+                if is_drawing && (pushing || P::BG_ENABLE_WRITE_LAG) {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
                     let bg_enable_extra_hold = u8::from(P::BG_ENABLE_WRITE_LAG);
@@ -80,6 +84,8 @@ impl<P: PpuModel> Ppu<P> {
                         new_bg_window_enabled,
                         bg_enable_extra_hold,
                     );
+                }
+                if is_drawing && pushing {
                     let new_sprites_enabled = self.registers.control.sprites_enabled();
                     self.registers
                         .arm_sprites_enabled_shadow(old_sprites_enabled, new_sprites_enabled);
