@@ -13,10 +13,6 @@ pub(in crate::ppu) struct TileFetcher<P: PpuModel> {
     /// The BG map attribute fetched alongside the tile index at counter 0; held
     /// through the cycle so the data reads and the shifter load see one cell.
     bg_cell: P::BgCell,
-    /// SCY snapshotted at counter 0 / counter 2 — the CGB BG fetch's fine-Y reads use
-    /// the earlier-stage value (`BG_FETCH_SCY_STAGE_EARLY`); unused on DMG (live reads).
-    scy0: u8,
-    scy2: u8,
     tile_data_low: u8,
     tile_data_high: u8,
     /// Resampled from PYNU at counter=0 and held through the cycle so all VRAM accesses see the same selection.
@@ -56,8 +52,6 @@ impl<P: PpuModel> TileFetcher<P> {
             window_tile_x: 0,
             tile_index: 0,
             bg_cell: P::BgCell::default(),
-            scy0: 0,
-            scy2: 0,
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -71,8 +65,6 @@ impl<P: PpuModel> TileFetcher<P> {
             window_tile_x: 0,
             tile_index: 0,
             bg_cell: P::BgCell::default(),
-            scy0: 0,
-            scy2: 0,
             tile_data_low: 0,
             tile_data_high: 0,
             fetching_window: false,
@@ -113,10 +105,9 @@ impl<P: PpuModel> TileFetcher<P> {
         )
     }
 
-    /// The BG map row (vertical tile index), sampled live at counter 0 on both cores.
-    /// (The CGB map-row also lags to the pre-write SCY on a sub-dot map_row-vs-fine-Y
-    /// capture straddling a write at 8-boundary crossings — a ~76px effect on
-    /// m3_scy_change needing CGB gate timing, not modelled.)
+    /// The BG map row (vertical tile index). Reads SCY live; on CGB the SCY cell
+    /// itself lags the mid-Mode-3 write (SCY_WRITE_LAG_FALLS), so the map-row and
+    /// the fine-Y reads all see the same delayed value.
     fn bg_map_row(regs: &PipelineRegisters, video: &VideoControl) -> u8 {
         (video.ly().wrapping_add(regs.background_viewport.y.output()) / 8) & 31
     }
@@ -168,11 +159,6 @@ impl<P: PpuModel> TileFetcher<P> {
         let (block_id, mapped_idx) = regs.control.tile_address_mode().tile(tile_index);
         let raw_fine_y = if self.fetching_window {
             Self::window_fine_y(window_line_counter)
-        } else if P::BG_FETCH_SCY_STAGE_EARLY {
-            // CGB: the low bitplane (counter 2) fine-Y uses the counter-0 SCY, the high
-            // bitplane (counter 4) the counter-2 SCY — one fetch-stage behind DMG's live read.
-            let scy = if high { self.scy2 } else { self.scy0 };
-            video.ly().wrapping_add(scy) % 8
         } else {
             Self::bg_fine_y(regs, video)
         };
@@ -201,7 +187,6 @@ impl<P: PpuModel> TileFetcher<P> {
             0 => {
                 // BAFY/WUKO arming: latch live PYNU for the cycle; held through counters 1..5.
                 self.fetching_window = window_mode_active;
-                self.scy0 = regs.background_viewport.y.output();
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
                     sacu_active,
@@ -215,7 +200,6 @@ impl<P: PpuModel> TileFetcher<P> {
                 self.bg_cell = P::bg_attribute(vram, self.vram_address);
             }
             2 => {
-                self.scy2 = regs.background_viewport.y.output();
                 let (bank, address) =
                     self.tile_data_address(window_line_counter, regs, video, false);
                 self.vram_address = address;

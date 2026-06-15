@@ -95,6 +95,15 @@ impl<P: PpuModel> Ppu<P> {
                 self.registers.window.x.write(value);
                 false
             }
+            Register::BackgroundViewportY if is_drawing && P::SCY_WRITE_LAG_FALLS > 0 => {
+                // CGB latches the mid-Mode-3 SCY write onto its own clock; the BG
+                // fetch samples it SCY_WRITE_LAG_FALLS falls late.
+                self.registers
+                    .background_viewport
+                    .y
+                    .write_delayed(value, P::SCY_WRITE_LAG_FALLS);
+                false
+            }
             Register::BackgroundViewportX if is_drawing => {
                 self.registers.background_viewport.x.write(value);
                 false

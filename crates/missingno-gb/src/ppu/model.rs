@@ -183,11 +183,11 @@ pub trait PpuModel: Default {
     /// The DMG dlatch OR transient is unmodelled (no test exercises it).
     const OBP_WRITE_RACE: bool = true;
 
-    /// The CGB BG fetch samples SCY one fetch-stage (2 dots) earlier than DMG: the two
-    /// tile-data fine-Y reads take the counter-0 and counter-2 SCY (DMG takes counter-2
-    /// and counter-4), and the once-latched map-row lags to the pre-write SCY where the
-    /// live value has just crossed an 8-pixel boundary. DMG keeps the unshifted hybrid.
-    const BG_FETCH_SCY_STAGE_EARLY: bool = false;
+    /// The CGB latches a mid-Mode-3 SCY write onto its own clock, so the BG fetch
+    /// samples it this many falls late (the documented 2-T-cycle lag) — both the
+    /// map-row and the two tile-data fine-Y reads see the delayed value. DMG: 0,
+    /// the write is immediate.
+    const SCY_WRITE_LAG_FALLS: u8 = 0;
 
     /// The CGB synchronises a mid-Mode-3 LCDC.0 (VYXE) write onto its own clock,
     /// so the BG-plane blank (RAJY) lands one dot later than the DMG's combinational
