@@ -170,6 +170,10 @@ pub struct Palettes {
     /// Clean-DFF capture (CGB): the value an emit sampler clocked coincident
     /// with this fall's BGP capture reads. Cleared at the next rise.
     pub(in crate::ppu) capture_coincident_old: Option<u8>,
+    /// CGB clean-DFF capture for the OBP0/OBP1 (WUFU/MOKA) cells — same coincident-emit
+    /// OLD read as `capture_coincident_old`, per object palette. Cleared at the next rise.
+    pub(in crate::ppu) sprite0_coincident_old: Option<u8>,
+    pub(in crate::ppu) sprite1_coincident_old: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -187,6 +191,8 @@ impl Default for Palettes {
             recovery: BgpRecovery::default(),
             bgp_halt_wake_deferred: None,
             capture_coincident_old: None,
+            sprite0_coincident_old: None,
+            sprite1_coincident_old: None,
         }
     }
 }
@@ -228,8 +234,23 @@ impl Palettes {
         ticked
     }
 
+    /// Tick the OBP0/OBP1 latches; on CGB (`!obp_write_race`) a committed write captures
+    /// the pre-write value a coincident emit reads — the clean-DFF analogue of `tick_background`.
+    pub fn tick_sprites(&mut self, obp_write_race: bool) {
+        let prior0 = self.sprite0.output();
+        if self.sprite0.tick() && !obp_write_race {
+            self.sprite0_coincident_old = Some(prior0);
+        }
+        let prior1 = self.sprite1.output();
+        if self.sprite1.tick() && !obp_write_race {
+            self.sprite1_coincident_old = Some(prior1);
+        }
+    }
+
     pub fn clear_capture_coincident_old(&mut self) {
         self.capture_coincident_old = None;
+        self.sprite0_coincident_old = None;
+        self.sprite1_coincident_old = None;
     }
 
     /// A visible cp_pad↑ has emitted a pixel; subsequent BGP CUPAs satisfy the recovery-engaged precondition.
@@ -254,6 +275,20 @@ impl Palettes {
         self.background.output()
     }
 
+    pub fn sprite0_for_resolve(&self) -> u8 {
+        if let Some(old) = self.sprite0_coincident_old {
+            return old;
+        }
+        self.sprite0.output()
+    }
+
+    pub fn sprite1_for_resolve(&self) -> u8 {
+        if let Some(old) = self.sprite1_coincident_old {
+            return old;
+        }
+        self.sprite1.output()
+    }
+
     /// BESU↑ at Mode 2 entry releases the BGP NURA-overlay recovery (dlatch has settled through HBlank).
     pub(in crate::ppu) fn tick_mode2_active(&mut self, mode2_active: bool) {
         self.recovery.tick_mode2_active(mode2_active);
@@ -262,5 +297,7 @@ impl Palettes {
     pub fn clear_background_overlay(&mut self) {
         self.recovery.reset();
         self.capture_coincident_old = None;
+        self.sprite0_coincident_old = None;
+        self.sprite1_coincident_old = None;
     }
 }

@@ -98,10 +98,14 @@ pub struct PipelineRegisters {
 impl PipelineRegisters {
     /// Per-fall work: tick palette/DFF9 latches, run the BESU↑ edge detector, then advance
     /// OLD-overlay shadows. Order matters — pipeline consumers read `reg_old` before any tick fires.
-    pub fn tick_on_master_clock_fall(&mut self, mode2_active: bool, bgp_write_race: bool) {
+    pub fn tick_on_master_clock_fall(
+        &mut self,
+        mode2_active: bool,
+        bgp_write_race: bool,
+        obp_write_race: bool,
+    ) {
         self.palettes.tick_background(bgp_write_race);
-        self.palettes.sprite0.tick();
-        self.palettes.sprite1.tick();
+        self.palettes.tick_sprites(obp_write_race);
 
         self.background_viewport.x.tick();
         self.background_viewport.y.tick();

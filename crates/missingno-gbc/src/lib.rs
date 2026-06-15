@@ -359,6 +359,7 @@ impl PpuModel for CgbPpu {
     const REVISED_OAM_LOCK: bool = true;
     const TILE_SEL_RESET_GLITCH: bool = true;
     const BGP_WRITE_RACE: bool = false;
+    const OBP_WRITE_RACE: bool = false;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;

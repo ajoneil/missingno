@@ -64,8 +64,11 @@ impl<P: PpuModel> Ppu<P> {
         let scan_clock_rising = !self.video.tick_dot();
 
         let talu_rising = self.advance_dividers(&mut result);
-        self.registers
-            .tick_on_master_clock_fall(self.mode2_active(), P::BGP_WRITE_RACE);
+        self.registers.tick_on_master_clock_fall(
+            self.mode2_active(),
+            P::BGP_WRITE_RACE,
+            P::OBP_WRITE_RACE,
+        );
         self.run_ppu_clock_fall(
             oam_bus,
             scan_clock_rising,

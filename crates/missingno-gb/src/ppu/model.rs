@@ -178,6 +178,11 @@ pub trait PpuModel: Default {
     /// transient exists.
     const BGP_WRITE_RACE: bool = true;
 
+    /// The OBP0/OBP1 cells (WUFU/MOKA) share BGP's `dlatch_ee` silicon; on CGB they
+    /// are clean DFFs, so a write-coincident object emit reads the pre-capture value.
+    /// The DMG dlatch OR transient is unmodelled (no test exercises it).
+    const OBP_WRITE_RACE: bool = true;
+
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-cycle clock
     /// domain — the same captured sample as the CRAM lock.
@@ -234,9 +239,9 @@ pub fn resolve_dmg_pixel<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> DmgP
         let spr_color = (mux.spr_hi << 1) | mux.spr_lo;
         if spr_color != 0 && (mux.spr_pri == 0 || bg_color == 0) {
             let obp = if mux.spr_pal == 0 {
-                regs.palettes.sprite0.output()
+                regs.palettes.sprite0_for_resolve()
             } else {
-                regs.palettes.sprite1.output()
+                regs.palettes.sprite1_for_resolve()
             };
             return DmgPixel::Object {
                 palette: mux.spr_pal,
