@@ -131,9 +131,9 @@ impl<P: PpuModel> TileFetcher<P> {
             self.bg_tilemap_coords(pixel_counter, sacu_active, regs, video)
         };
         let map_id = if self.fetching_window {
-            regs.control.window_tile_map()
+            regs.window_tile_map()
         } else {
-            regs.control.background_tile_map()
+            regs.background_tile_map()
         };
         tile_map_offset(map_id.0, map_x, map_y)
     }

@@ -62,6 +62,14 @@ impl<P: PpuModel> Ppu<P> {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
+                // CGB latches the mid-Mode-3 tile-map-select write late; otherwise immediate.
+                let tile_map_falls = if is_drawing && self.lcd_pushing_active() {
+                    P::TILE_MAP_WRITE_LAG_FALLS
+                } else {
+                    0
+                };
+                self.registers.write_tile_map_latch(value, tile_map_falls);
+
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0

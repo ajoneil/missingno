@@ -189,6 +189,13 @@ pub trait PpuModel: Default {
     /// the write is immediate.
     const SCY_WRITE_LAG_FALLS: u8 = 0;
 
+    /// The CGB latches a mid-Mode-3 LCDC.3/.6 (BG/window tile-map select) write
+    /// onto its own clock, so the fetch samples the new map this many falls late
+    /// (the documented 2-T-cycle lag); the DMG reads the bit combinationally. A
+    /// delayed sample (not an OLD-overlay) — it translates the OLD/NEW-map
+    /// boundary rather than superimposing the old tile.
+    const TILE_MAP_WRITE_LAG_FALLS: u8 = 0;
+
     /// The CGB synchronises a mid-Mode-3 LCDC.0 (VYXE) write onto its own clock,
     /// so the BG-plane blank (RAJY) lands one dot later than the DMG's combinational
     /// path — the OLD-overlay holds the pre-write value one extra dot. DMG: no lag.
