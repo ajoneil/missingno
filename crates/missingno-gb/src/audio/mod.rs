@@ -50,6 +50,15 @@ pub struct Audio {
 }
 
 impl Audio {
+    /// Override CH1's post-boot duty/divider phase. The boot chime leaves CH1
+    /// free-running with the duty position un-reset across triggers; the CGB
+    /// boot ROM's chime ends at a different phase than the DMG one, which the
+    /// `Default` channel state encodes.
+    pub fn set_ch1_post_boot_phase(&mut self, wave_duty_position: u8, divider: u16) {
+        self.channels.ch1.wave_duty_position = wave_duty_position;
+        self.channels.ch1.divider.counter = divider;
+    }
+
     /// Post-boot state at PC=0x0100. `prev_div_apu_bit` derives from the
     /// M-cycle `reg_div16` (the ripple advance stays divider-locked). The
     /// (caru, bylu, JYNA) frame-sequencer ripple is apu_reset-reset, so its
@@ -90,9 +99,11 @@ impl Audio {
 
     /// Power-on state: audio disabled, all registers zeroed.
     pub fn new() -> Self {
+        let mut channels = Channels::default();
+        channels.reset_all();
         Self {
             enabled: false,
-            channels: Channels::default(),
+            channels,
             volume_left: Volume(0),
             volume_right: Volume(0),
             nr50: 0x00,
