@@ -208,6 +208,12 @@ impl PulseSweepChannel {
     }
 
     pub fn trigger(&mut self) {
+        // ch1_fdis (set by DAC-off / apu_reset, cleared by a trigger) gates the
+        // divider toggle clock. Only the channel-enabling trigger — the one that
+        // clears fdis 1→0 — freezes a load tick (the +1 first overflow); a
+        // re-trigger of a running channel reloads with no +1. `2` flags the
+        // enabling case to the reload arm.
+        let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         if self.length_counter == 0 {
             self.length_counter = 64;
@@ -216,7 +222,7 @@ impl PulseSweepChannel {
         // ch1_1mhz↑, not on this write edge. A coincident natural
         // overflow on that wrap is suppressed (dyru async-resets
         // comy before cala can clock).
-        self.pending_trigger_sync = 1;
+        self.pending_trigger_sync = if was_running { 1 } else { 2 };
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
         self.envelope_stopped = false;
@@ -255,8 +261,8 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn tcycle(&mut self, apu_reset_n: bool) {
-        let calo_rose = self.prescaler.tcycle(apu_reset_n);
+    pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
+        let calo_rose = self.prescaler.tcycle(apu_reset_n, t_index, double_speed);
         // BEXA samples coze at the first ajer↑ of each M-cycle —
         // prescaler counter == 1 after the advance. Sample even when
         // the channel is disabled so a same-cycle re-trigger window
@@ -271,9 +277,11 @@ impl PulseSweepChannel {
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
         if self.pending_trigger_sync != 0 {
+            // Enabling trigger (2) freezes the load tick → +1 first overflow;
+            // re-trigger (1) reloads with no +1.
+            self.divider_load_settle = self.pending_trigger_sync == 2;
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
-            self.divider_load_settle = true;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {

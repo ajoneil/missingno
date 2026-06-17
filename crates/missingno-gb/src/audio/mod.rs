@@ -173,6 +173,7 @@ impl Audio {
     pub fn tcycle(
         &mut self,
         div_counter: u16,
+        t_index: u8,
         double_speed: bool,
         wave_ram_coupling: wave::WaveRamCoupling,
     ) {
@@ -182,8 +183,8 @@ impl Audio {
             DIV_APU_BIT
         };
         let apu_reset_n = self.enabled;
-        self.channels.ch1.tcycle(apu_reset_n);
-        self.channels.ch2.tcycle(apu_reset_n);
+        self.channels.ch1.tcycle(apu_reset_n, t_index, double_speed);
+        self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
         self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
         self.channels.ch4.tcycle(apu_reset_n);
 

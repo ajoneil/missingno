@@ -170,13 +170,17 @@ impl PulseChannel {
     }
 
     pub fn trigger(&mut self) {
+        // Only the channel-enabling trigger (ch2_fdis 1→0) freezes the load tick
+        // (the +1 first overflow); a re-trigger of a running channel reloads with
+        // no +1. `2` flags the enabling case.
+        let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
         // Arm the ch2_restart sync: the reload applies at the next
         // ch2_1mhz↑, not on this write edge.
-        self.pending_trigger_sync = 1;
+        self.pending_trigger_sync = if was_running { 1 } else { 2 };
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
         self.envelope_stopped = false;
@@ -190,15 +194,16 @@ impl PulseChannel {
         }
     }
 
-    pub fn tcycle(&mut self, apu_reset_n: bool) {
-        if !self.prescaler.tcycle(apu_reset_n) || !self.enabled.enabled {
+    pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
+        if !self.prescaler.tcycle(apu_reset_n, t_index, double_speed) || !self.enabled.enabled {
             return;
         }
         if self.pending_trigger_sync != 0 {
+            // Enabling trigger (2) freezes the load tick → +1 first overflow;
+            // re-trigger (1) reloads with no +1.
+            self.divider_load_settle = self.pending_trigger_sync == 2;
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
-            // First post-reload tick is consumed by load-mode settle.
-            self.divider_load_settle = true;
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {

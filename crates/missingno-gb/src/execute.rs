@@ -345,6 +345,7 @@ impl<M: Model> Console<M> {
             let double_speed = self.model.cpu_steps_per_dot() == 2;
             self.audio.tcycle(
                 self.timers.internal_counter(),
+                tcycle.as_u8(),
                 double_speed,
                 M::WAVE_RAM_COUPLING,
             );
@@ -492,6 +493,7 @@ impl<M: Model> Console<M> {
                 let r = self.ppu_rise_edge();
                 self.audio.tcycle(
                     self.timers.internal_counter(),
+                    0,
                     double_speed,
                     M::WAVE_RAM_COUPLING,
                 );

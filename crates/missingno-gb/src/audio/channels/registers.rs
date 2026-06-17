@@ -122,12 +122,22 @@ impl Prescaler {
     /// Advance by one master-clock rise. Counter packs
     /// `(CALO << 1) | AJER`; returns true on CALO↑ (= chN_1mhz↑) which
     /// clocks the period divider. Held at 0 while `apu_reset_n = 0`.
-    pub fn tcycle(&mut self, apu_reset_n: bool) -> bool {
+    ///
+    /// AJER toggles at the start of every T-cycle and CALO halves it, so the
+    /// counter is the M-cycle T-index phase. The FST anchor places CALO↑
+    /// (chN_1mhz↑, the divider clock) at T1 of every M-cycle, so the counter
+    /// tracks `t_index + 1`. In double speed the APU ticks once per two CPU
+    /// T-cycles, so the counter free-runs (the DS phase is a separate question).
+    pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) -> bool {
         if !apu_reset_n {
             self.counter = 0;
             return false;
         }
-        self.counter = (self.counter + 1) & 0b11;
+        self.counter = if double_speed {
+            (self.counter + 1) & 0b11
+        } else {
+            (t_index + 1) & 0b11
+        };
         self.counter == 2
     }
 
