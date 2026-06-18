@@ -227,8 +227,7 @@ impl<M: Model> Console<M> {
                 // `run_blackout_chunk` advances the master clock every edge and
                 // re-engages at the phase the count expires on.
                 let old_counter = self.timers.internal_counter();
-                self.timers
-                    .write_register(crate::timers::Register::Divider, 0);
+                self.timers.reset_for_speed_switch();
                 self.audio.on_div_write(old_counter);
                 if let Some(interrupt) = self
                     .serial

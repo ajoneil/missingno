@@ -123,6 +123,26 @@ impl Timers {
         self.internal_counter
     }
 
+    /// Divider reset driven by the KEY1 speed switch (not a CPU FF04 write).
+    /// DIV reads 0 right after the switch and the post-reset ramp is unchanged.
+    /// The immediate 1→0 increment for the 4KHz tap (bit 7, the highest
+    /// TAC-selectable divider bit) is sampled one BOGA M-cycle late — the reset
+    /// ripples up to bit 7 a cycle behind the lower taps — so its edge reads the
+    /// divider one M-cycle before the reset. Faster taps see it at the reset.
+    pub fn reset_for_speed_switch(&mut self) {
+        let sel = self.control.selected_bit();
+        let edge_counter = if sel == 1 << 7 {
+            self.internal_counter.wrapping_sub(1)
+        } else {
+            self.internal_counter
+        };
+        let edge = self.control.enabled() && (edge_counter & sel) != 0;
+        self.internal_counter = 0;
+        if edge {
+            self.increment_tima();
+        }
+    }
+
     pub fn read_register(&self, register: Register) -> u8 {
         match register {
             Register::Divider => (self.internal_counter >> 6) as u8,
