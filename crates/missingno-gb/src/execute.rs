@@ -228,7 +228,7 @@ impl<M: Model> Console<M> {
                 // re-engages at the phase the count expires on.
                 let old_counter = self.timers.internal_counter();
                 self.timers.reset_for_speed_switch();
-                self.audio.on_div_write(old_counter);
+                self.audio.on_div_write(old_counter, false);
                 if let Some(interrupt) = self
                     .serial
                     .on_div_write(old_counter, self.model.has_serial_fast_clock())

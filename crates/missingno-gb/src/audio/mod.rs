@@ -299,13 +299,20 @@ impl Audio {
         }
     }
 
-    /// Called when DIV is written (resetting internal counter to 0).
-    /// If bit 12 was previously set, this is a falling edge → tick the frame sequencer.
-    pub fn on_div_write(&mut self, old_counter: u16) {
-        if self.enabled && old_counter & DIV_APU_BIT != 0 {
+    /// Called when DIV resets the internal counter to 0 (FF04 write or KEY1 speed
+    /// switch). If the DIV-APU tap bit for the divider's speed was set, the 1→0 edge
+    /// ticks the frame sequencer. `double_speed` is the speed in effect for
+    /// `old_counter` — the PRE-switch speed on the speed-switch path.
+    pub fn on_div_write(&mut self, old_counter: u16, double_speed: bool) {
+        let div_apu_bit = if double_speed {
+            DIV_APU_BIT_DOUBLE
+        } else {
+            DIV_APU_BIT
+        };
+        if self.enabled && old_counter & div_apu_bit != 0 {
             self.tick_frame_sequencer();
         }
-        self.prev_div_apu_bit = false; // counter is now 0, bit 10 is clear
+        self.prev_div_apu_bit = false; // counter is now 0, both taps clear
         self.fs_edge_pending = false; // divider reset supersedes any armed tap edge
     }
 
