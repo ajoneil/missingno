@@ -186,7 +186,23 @@ impl<M: Model> Console<M> {
         } else {
             let dot_work =
                 ppu == PpuEdge::Fall || (double_speed && self.ppu_phase == ClockPhase::Low);
-            self.fall_work(ppu, dot_work)
+            // The PPU fall is its own domain's edge, sequenced here between the
+            // CPU's pre- and post-fall work rather than welded inside it.
+            let (tcycle, is_mcycle_boundary, ly_at_latch, pre_fall_mode) =
+                self.fall_cpu_pre(dot_work);
+            let video_result = if ppu == PpuEdge::Fall {
+                Some(self.ppu_fall_edge(is_mcycle_boundary, tcycle))
+            } else {
+                None
+            };
+            self.fall_cpu_post(
+                tcycle,
+                is_mcycle_boundary,
+                ly_at_latch,
+                pre_fall_mode,
+                video_result,
+                dot_work,
+            )
         };
         self.clock_phase = self.clock_phase.next();
         if ppu_advances {
@@ -536,16 +552,12 @@ impl<M: Model> Console<M> {
         }
     }
 
-    /// CPU + PPU work for a falling master-clock edge. `ppu_edge` gates this
-    /// dot's PPU fall (and its IF requests); `dot_work` gates the
-    /// master-clock-domain CH3 wave latch and the HDMA trigger. Both are false
-    /// on the extra double-speed CPU T-cycle that shares the dot. Sets no clock
-    /// phase — `execute_phase` owns that.
-    fn fall_work(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
+    /// CPU work on a falling edge before its PPU fall: CH3 wave-latch sync, the
+    /// T2 read drive-enable, the pre-edge LY sample, and the pre-fall mode the
+    /// HDMA trigger reads. The PPU fall is the caller's, sequenced after this.
+    fn fall_cpu_pre(&mut self, dot_work: bool) -> (TCycle, bool, Option<u8>, ppu::Mode) {
         let tcycle = self.cpu.last_tcycle();
         let is_mcycle_boundary = self.cpu.at_mcycle_boundary();
-        let mut new_screen = false;
-        let mut pixel = None;
 
         // CH3's BUSA / AZUS DFFs latch on apu_4mhz ↑ (= our fall);
         // settle before the T=2 drive-enable so wave-RAM reads see
@@ -568,13 +580,24 @@ impl<M: Model> Console<M> {
 
         let pre_fall_mode = self.ppu.mode();
 
-        // PPU master-clock fall: divider chain, CATU, scanline
-        // boundaries, fetcher, DFF8/DFF9, LCD-off.
-        let video_result = if ppu == PpuEdge::Fall {
-            Some(self.ppu_fall_edge(is_mcycle_boundary, tcycle))
-        } else {
-            None
-        };
+        (tcycle, is_mcycle_boundary, ly_at_latch, pre_fall_mode)
+    }
+
+    /// CPU work on a falling edge after its PPU fall: STAT-sync capture, the
+    /// read latch and write commit, the HDMA trigger, the fall path's IF
+    /// requests, and the DMA/timer ticks. `video_result` is the PPU fall's
+    /// output, `None` on the double-speed CPU T-cycle that carries no PPU fall.
+    fn fall_cpu_post(
+        &mut self,
+        tcycle: TCycle,
+        is_mcycle_boundary: bool,
+        ly_at_latch: Option<u8>,
+        pre_fall_mode: ppu::Mode,
+        video_result: Option<ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel>>,
+        dot_work: bool,
+    ) -> (bool, Option<ppu::PixelOutput>) {
+        let mut new_screen = false;
+        let mut pixel = None;
         // Double-speed boundary fall sharing a dot with no PPU fall: the
         // CPU-clocked STAT register synchroniser still captures; its request
         // joins the fall path's gating below.
