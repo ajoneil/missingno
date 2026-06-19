@@ -182,7 +182,13 @@ impl<M: Model> Console<M> {
         // rise, the CH3 fall-sync / HDMA trigger on the PPU fall (which at double
         // speed lands on a CPU rise, so its work runs on the following CPU fall).
         let (new_screen, pixel) = if rising {
-            self.rise_work(ppu, ppu == PpuEdge::Rise)
+            let dot_work = ppu == PpuEdge::Rise;
+            // The PPU rise is its own domain's edge, sequenced here between the
+            // CPU's pre- and post-rise work rather than welded inside it.
+            let (is_mcycle_boundary, ppu_tcycle) = self.rise_cpu_pre(ppu, dot_work);
+            let edge = self.fire_dot_ppu(ppu, is_mcycle_boundary, ppu_tcycle);
+            self.rise_cpu_post(is_mcycle_boundary, ppu_tcycle, dot_work);
+            edge
         } else {
             let dot_work =
                 ppu == PpuEdge::Fall || (double_speed && self.ppu_phase == ClockPhase::Low);
@@ -307,42 +313,10 @@ impl<M: Model> Console<M> {
     }
 
     /// CPU work for a rising master-clock edge, optionally carrying a PPU edge.
-    /// `ppu` selects which PPU edge fires at this CPU edge's weld point (the
-    /// master rise on the dot's first CPU edge, the master fall on the second
-    /// T-cycle's rise at double speed); `dot_work` gates the master-clock-domain
-    /// APU tick. Sets no clock phase — `execute_phase` owns that.
-    fn rise_work(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, Option<ppu::PixelOutput>) {
-        let is_mcycle_boundary = self.cpu.consume_boundary_pending();
-        let mut new_screen = false;
-        let mut pixel = None;
-
-        // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
-        // this dot's `ppu_rise_edge` below. A double-speed FF41 read latching on
-        // the same phase resolves its mode to this pre-transition view (the CGB
-        // CPU↔ALET read placement). Only double speed consumes it.
-        if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
-            self.model.note_pre_alet_rendering(self.ppu.is_rendering());
-        }
-
-        if is_mcycle_boundary {
-            self.tick_mcycle_boundary_rise();
-            self.audio.mcycle_boundary();
-            let tc = self.cpu.last_tcycle();
-            let (ns, pix) = self.fire_dot_ppu(ppu, is_mcycle_boundary, tc);
-            new_screen |= ns;
-            pixel = pix;
-        }
-
-        // The HDMA grant is M-boundary-quantized: bus ownership asserts and
-        // releases between M-cycles only. A dispatch sequence already in
-        // flight when the transfer became ready holds the bus through its
-        // M-cycles (the grant defers); a dispatch starting with the transfer
-        // ready parks behind the block. Granted ownership is never revoked.
-        if is_mcycle_boundary {
-            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
-                && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
-        }
-
+    /// The CPU's per-rise advance shared by both boundary paths: the T-cycle
+    /// step, vector resolve at T3, dispatch logic, and the APU prescaler tick.
+    /// Runs before the PPU rise off a boundary, after it on an M-boundary.
+    fn rise_cpu_advance(&mut self, dot_work: bool) -> TCycle {
         self.cpu.next_tcycle();
         // cpu_irq_ack1↑ at +2.993 dots into the dispatching M-cycle —
         // tcycle 3 rise in our half-phase resolution. Deferring to
@@ -365,31 +339,68 @@ impl<M: Model> Console<M> {
                 M::WAVE_RAM_COUPLING,
             );
         }
+        tcycle
+    }
+
+    /// CPU work on a rising edge before its PPU rise, plus the T-cycle the PPU
+    /// edge is keyed to. On an M-boundary the rise fires early (after the
+    /// boundary CPU work, before the T-cycle advance); off a boundary the
+    /// advance/dispatch run first, so the rise fires after them.
+    fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, TCycle) {
+        let is_mcycle_boundary = self.cpu.consume_boundary_pending();
+
+        // Pre-ALET-rise XYMU (mode-3) view: the mode 3→0 XYMU.q↑ fires inside
+        // this dot's `ppu_rise_edge`. A double-speed FF41 read latching on the
+        // same phase resolves its mode to this pre-transition view (the CGB
+        // CPU↔ALET read placement). Only double speed consumes it.
+        if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
+            self.model.note_pre_alet_rendering(self.ppu.is_rendering());
+        }
 
         if is_mcycle_boundary {
-            self.stage_mcycle_bus_activity();
-        }
-        if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
-            self.arm_oam_bugs();
-        }
-        if !is_mcycle_boundary {
-            self.tick_non_boundary_rise(tcycle);
-            let (ns, pix) = self.fire_dot_ppu(ppu, is_mcycle_boundary, tcycle);
-            new_screen |= ns;
-            if pixel.is_none() {
-                pixel = pix;
+            self.tick_mcycle_boundary_rise();
+            self.audio.mcycle_boundary();
+            (true, self.cpu.last_tcycle())
+        } else {
+            let tcycle = self.rise_cpu_advance(dot_work);
+            if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
+                self.arm_oam_bugs();
             }
+            self.tick_non_boundary_rise(tcycle);
+            (false, tcycle)
+        }
+    }
+
+    /// CPU work on a rising edge after its PPU rise: on an M-boundary the HDMA
+    /// grant, T-cycle advance, bus-activity staging and OAM-bug arm; off a
+    /// boundary the dispatch latch update. An armed OAM bug fires last on both.
+    fn rise_cpu_post(&mut self, is_mcycle_boundary: bool, ppu_tcycle: TCycle, dot_work: bool) {
+        let tcycle = if is_mcycle_boundary {
+            // The HDMA grant is M-boundary-quantized: bus ownership asserts and
+            // releases between M-cycles only. A dispatch sequence already in
+            // flight when the transfer became ready holds the bus through its
+            // M-cycles (the grant defers); a dispatch starting with the transfer
+            // ready parks behind the block. Granted ownership is never revoked.
+            self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
+                && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
+
+            let tcycle = self.rise_cpu_advance(dot_work);
+            self.stage_mcycle_bus_activity();
+            if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
+                self.arm_oam_bugs();
+            }
+            tcycle
+        } else {
             self.cpu
                 .dispatch
                 .update_latch(self.interrupts.enabled, self.interrupts.requested);
-        }
+            ppu_tcycle
+        };
 
         // MOPA-rising fires any armed OAM bug.
         if M::HAS_OAM_BUG && tcycle.as_u8() == 2 {
             self.ppu.apply_pending_oam_bug();
         }
-
-        (new_screen, pixel)
     }
 
     /// PPU rising-edge advance and its interrupt readback: pixel output,
