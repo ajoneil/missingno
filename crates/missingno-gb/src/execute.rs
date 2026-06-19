@@ -187,7 +187,7 @@ impl<M: Model> Console<M> {
             // CPU's pre- and post-rise work rather than welded inside it.
             let (is_mcycle_boundary, ppu_tcycle) = self.rise_cpu_pre(ppu, dot_work);
             let edge = self.fire_dot_ppu(ppu, is_mcycle_boundary, ppu_tcycle);
-            self.rise_cpu_post(is_mcycle_boundary, ppu_tcycle, dot_work);
+            self.rise_cpu_post(is_mcycle_boundary, ppu_tcycle);
             edge
         } else {
             let dot_work =
@@ -342,10 +342,11 @@ impl<M: Model> Console<M> {
         tcycle
     }
 
-    /// CPU work on a rising edge before its PPU rise, plus the T-cycle the PPU
-    /// edge is keyed to. On an M-boundary the rise fires early (after the
-    /// boundary CPU work, before the T-cycle advance); off a boundary the
-    /// advance/dispatch run first, so the rise fires after them.
+    /// All CPU work on a rising edge before its PPU rise, plus the T-cycle the
+    /// PPU edge is keyed to. The PPU rise fires after the T-cycle advance on
+    /// every dot — one consistent CPU↔PPU phase (the spec pins a single fixed
+    /// lattice; there is no per-dot CPU edge for it to vary against). The
+    /// M-boundary additionally runs its boundary CPU work and the HDMA grant.
     fn rise_cpu_pre(&mut self, ppu: PpuEdge, dot_work: bool) -> (bool, TCycle) {
         let is_mcycle_boundary = self.cpu.consume_boundary_pending();
 
@@ -357,25 +358,9 @@ impl<M: Model> Console<M> {
             self.model.note_pre_alet_rendering(self.ppu.is_rendering());
         }
 
-        if is_mcycle_boundary {
+        let tcycle = if is_mcycle_boundary {
             self.tick_mcycle_boundary_rise();
             self.audio.mcycle_boundary();
-            (true, self.cpu.last_tcycle())
-        } else {
-            let tcycle = self.rise_cpu_advance(dot_work);
-            if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
-                self.arm_oam_bugs();
-            }
-            self.tick_non_boundary_rise(tcycle);
-            (false, tcycle)
-        }
-    }
-
-    /// CPU work on a rising edge after its PPU rise: on an M-boundary the HDMA
-    /// grant, T-cycle advance, bus-activity staging and OAM-bug arm; off a
-    /// boundary the dispatch latch update. An armed OAM bug fires last on both.
-    fn rise_cpu_post(&mut self, is_mcycle_boundary: bool, ppu_tcycle: TCycle, dot_work: bool) {
-        let tcycle = if is_mcycle_boundary {
             // The HDMA grant is M-boundary-quantized: bus ownership asserts and
             // releases between M-cycles only. A dispatch sequence already in
             // flight when the transfer became ready holds the bus through its
@@ -383,22 +368,33 @@ impl<M: Model> Console<M> {
             // ready parks behind the block. Granted ownership is never revoked.
             self.cpu.bus_suspended = self.model.vram_dma_seizes_bus()
                 && (self.cpu.bus_suspended || !self.cpu.in_dispatch());
-
             let tcycle = self.rise_cpu_advance(dot_work);
             self.stage_mcycle_bus_activity();
-            if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
-                self.arm_oam_bugs();
-            }
             tcycle
         } else {
+            self.rise_cpu_advance(dot_work)
+        };
+
+        if M::HAS_OAM_BUG && tcycle.as_u8() == 0 {
+            self.arm_oam_bugs();
+        }
+        if !is_mcycle_boundary {
+            self.tick_non_boundary_rise(tcycle);
+        }
+        (is_mcycle_boundary, tcycle)
+    }
+
+    /// CPU work on a rising edge after its PPU rise: off a boundary the dispatch
+    /// latch update; an armed OAM bug fires last on both paths.
+    fn rise_cpu_post(&mut self, is_mcycle_boundary: bool, ppu_tcycle: TCycle) {
+        if !is_mcycle_boundary {
             self.cpu
                 .dispatch
                 .update_latch(self.interrupts.enabled, self.interrupts.requested);
-            ppu_tcycle
-        };
+        }
 
         // MOPA-rising fires any armed OAM bug.
-        if M::HAS_OAM_BUG && tcycle.as_u8() == 2 {
+        if M::HAS_OAM_BUG && ppu_tcycle.as_u8() == 2 {
             self.ppu.apply_pending_oam_bug();
         }
     }
