@@ -22,3 +22,12 @@ impl ClockPhase {
         }
     }
 }
+
+impl From<crate::clock::Edge> for ClockPhase {
+    fn from(edge: crate::clock::Edge) -> ClockPhase {
+        match edge {
+            crate::clock::Edge::Rise => ClockPhase::Low,
+            crate::clock::Edge::Fall => ClockPhase::High,
+        }
+    }
+}

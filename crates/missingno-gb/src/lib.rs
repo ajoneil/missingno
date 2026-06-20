@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod cartridge;
+pub mod clock;
 pub mod cpu;
 pub mod cpu_bus;
 pub mod debugger;
@@ -34,6 +35,7 @@ use ppu::memory::Vram;
 use ppu::model::PpuModel;
 
 pub use audio::channels::wave::WaveRamCoupling;
+pub use clock::{CpuDivider, CpuGate, Edge, MasterClock, Tick};
 pub use master_clock::ClockPhase;
 pub use memory::BootRom;
 pub use ppu::PixelOutput;
@@ -367,16 +369,15 @@ pub struct Console<M: Model> {
     timers: timers::Timers,
     dma: Dma,
 
-    /// Master clock signal level. Toggles each half-T-cycle.
-    clock_phase: ClockPhase,
-    /// The PPU's own master-clock phase: which edge (`Low` = rise, `High` =
-    /// fall) the PPU advances next. The PPU is a free-running state machine on
-    /// the master clock, so this toggles every PPU step independently of the
-    /// CPU — during the speed-switch blackout it keeps advancing while the CPU
-    /// is frozen, so the post-switch CPU↔PPU alignment is emergent (no slip).
-    /// At single speed it tracks `clock_phase`; double speed is where it
-    /// diverges.
-    ppu_phase: ClockPhase,
+    /// The master-clock phase layer: the CPU CLK9 edge, the free-running PPU dot
+    /// edge, and the `÷1`/`÷2` divider between them. Owns the per-edge dispatch
+    /// schedule (`advance`) that `execute_phase` consumes. At `÷1` the CPU and
+    /// dot edges coincide every master edge (today's `clock_phase ==
+    /// ppu_phase`); the CGB KEY1 switch sets `÷2`, where the dot edge advances on
+    /// alternate CPU edges. The dot phase free-runs through the speed-switch
+    /// blackout while the CPU is frozen, so the post-switch alignment is
+    /// emergent.
+    clock: MasterClock,
     /// Shared CPU data bus: current `cpu_port_d[7:0]` value plus the
     /// staged read/write activity for the in-flight M-cycle.
     cpu_bus: CpuBus,
@@ -468,8 +469,7 @@ impl<M: Model> Console<M> {
             serial: serial_transfer::Serial::new(),
             timers: timers::Timers::new(),
             dma: Dma::new(),
-            clock_phase: ClockPhase::Low,
-            ppu_phase: ClockPhase::Low,
+            clock: MasterClock::new(CpuDivider::One),
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
@@ -558,7 +558,9 @@ impl<M: Model> Console<M> {
         }
 
         self.bus_trace = cpu_bus::BusTrace::new();
-        self.clock_phase = ClockPhase::Low;
+        // Re-anchor the CPU clock to a rise; the free-running dot phase is left
+        // as-is (the old reset touched only `clock_phase`).
+        self.clock.engage_on_rise();
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
         self.dma_conflict_oam_zero = None;
@@ -600,7 +602,7 @@ impl<M: Model> Console<M> {
     }
 
     pub fn clock_phase(&self) -> ClockPhase {
-        self.clock_phase
+        self.clock.cpu_edge().into()
     }
 
     /// CPU T-cycles advanced per PPU dot (1 single speed, 2 CGB double speed).
