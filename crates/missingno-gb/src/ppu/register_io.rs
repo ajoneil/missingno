@@ -174,7 +174,7 @@ impl<P: PpuModel> Ppu<P> {
             Register::WindowY => self.registers.window.y = value,
             Register::WindowX => self.registers.window.x.write_immediate(value),
             Register::InterruptOnScanline => {
-                if P::HAS_CLOCK_DOMAIN_SYNC {
+                if P::LYC_CROSSING.is_synced() {
                     self.video.stat.write_lyc_cell(value);
                 } else {
                     self.video.write_lyc(value, self.model.stat_shadow_mut());
