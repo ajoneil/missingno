@@ -199,11 +199,13 @@ pub trait PpuModel: Default {
     /// combinational collapse.
     const LYC_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
-    /// The CGB tile-map-select (LCDC.3/.6) fetch reads the select bit this many
-    /// falls stale — captured at the fetcher's own counter-0 edge, it looks back
-    /// past a just-committed mid-Mode-3 write (the documented CGB resync lag),
-    /// translating the OLD/NEW-map boundary. DMG reads it live (0).
-    const TILE_MAP_READ_STALE_FALLS: u8 = 0;
+    /// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing.
+    /// The DMG couples it combinationally (the fetch reads LCDC live); the CGB
+    /// latches the write onto its own clock and the fetch samples the select bit
+    /// the descriptor's falls late — the documented CGB resync lag translating the
+    /// OLD/NEW-map boundary. The non-zero CGB value is authored behind the
+    /// `missingno-gbc` wall — the DMG core names only the combinational collapse.
+    const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The CGB synchronises a mid-Mode-3 LCDC.0 (VYXE) write onto its own clock,
     /// so the BG-plane blank (RAJY) lands one dot later than the DMG's combinational

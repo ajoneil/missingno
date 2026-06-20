@@ -363,7 +363,7 @@ impl PpuModel for CgbPpu {
     const OBP_WRITE_RACE: bool = false;
     const SCY_CROSSING: CaptureSpec = crate::timing::SCY_CROSSING;
     const LYC_CROSSING: CaptureSpec = crate::timing::LYC_CROSSING;
-    const TILE_MAP_READ_STALE_FALLS: u8 = 2;
+    const TILE_MAP_CROSSING: CaptureSpec = crate::timing::TILE_MAP_CROSSING;
     const BG_ENABLE_WRITE_LAG: bool = true;
 
     type Vram = CgbVram;

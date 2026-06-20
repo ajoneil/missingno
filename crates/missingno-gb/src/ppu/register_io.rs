@@ -62,6 +62,16 @@ impl<P: PpuModel> Ppu<P> {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
+                // The tile-map-select fetch samples LCDC live on DMG; the CGB
+                // latches a mid-Mode-3 write onto its own clock and the fetch
+                // reads it the crossing's falls late.
+                let tile_map_falls = if is_drawing {
+                    P::TILE_MAP_CROSSING.write_delayed_falls()
+                } else {
+                    0
+                };
+                self.registers.write_tile_map_select(value, tile_map_falls);
+
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0

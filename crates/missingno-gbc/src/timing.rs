@@ -35,6 +35,17 @@ pub const LYC_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 0,
 };
 
+/// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing on
+/// the CGB: the write crosses on the M-cycle-last-fall edge and the BG fetch
+/// samples the select bit two falls late — the documented CGB resync lag
+/// (mealybug `m3_lcdc_bg_map_change`). Like SCY, the fetch ticks the cell on the
+/// dot-fall grid, so this is the (iv) register-path offset alone; `cgb_extra_falls`
+/// is the *total* carried fall count.
+pub const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 2,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +62,13 @@ mod tests {
     #[test]
     fn lyc_crossing_carries_no_extra_falls() {
         assert_eq!(LYC_CROSSING.write_delayed_falls(), 0);
+    }
+
+    /// The CGB tile-map-select crossing must hand `DffLatch::write_delayed` a
+    /// total of 2 falls — bit-identical to the pre-migration
+    /// `TILE_MAP_READ_STALE_FALLS = 2` ring depth at the fetch sample point.
+    #[test]
+    fn tile_map_crossing_carries_two_falls() {
+        assert_eq!(TILE_MAP_CROSSING.write_delayed_falls(), 2);
     }
 }

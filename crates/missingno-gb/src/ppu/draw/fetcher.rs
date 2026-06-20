@@ -191,7 +191,7 @@ impl<P: PpuModel> TileFetcher<P> {
             0 => {
                 // BAFY/WUKO arming: latch live PYNU for the cycle; held through counters 1..5.
                 self.fetching_window = window_mode_active;
-                self.tile_map_byte = regs.tile_map_select_byte(P::TILE_MAP_READ_STALE_FALLS);
+                self.tile_map_byte = regs.tile_map_select_byte();
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
                     sacu_active,

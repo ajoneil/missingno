@@ -82,12 +82,10 @@ pub struct PipelineRegisters {
     pub control: Control,
     /// DFF9 latch for full LCDC byte.
     pub control_latch: DffLatch,
-    /// One- and two-fall-stale snapshots of the LCDC byte. The CGB tile-map-select
-    /// fetch reads a stale snapshot (TILE_MAP_READ_STALE_FALLS) referenced to the
-    /// fetcher's own counter-0 edge, so the map-select change reaches the fetch a
-    /// couple of falls after the DMG's combinational read.
-    pub(in crate::ppu) tile_map_prev: u8,
-    pub(in crate::ppu) tile_map_prev2: u8,
+    /// The LCDC byte the tile-map-select fetch samples. DMG tracks `control`
+    /// combinationally; the CGB latches a mid-Mode-3 LCDC write onto its own
+    /// clock so the map-select change reaches the fetch the crossing's falls late.
+    pub(in crate::ppu) tile_map_select: DffLatch,
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
@@ -119,8 +117,7 @@ impl PipelineRegisters {
         if self.control_latch.tick() {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
-        self.tile_map_prev2 = self.tile_map_prev;
-        self.tile_map_prev = self.control.bits();
+        self.tile_map_select.tick();
 
         self.palettes.tick_mode2_active(mode2_active);
 
@@ -139,18 +136,25 @@ impl PipelineRegisters {
         self.background_viewport.y.clear();
         self.window.x.clear();
         self.control_latch.clear();
+        self.tile_map_select.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
         self.tile_sel_reset_glitch.clear();
     }
 
-    /// The LCDC byte the tile-map-select fetch samples: live on DMG (`falls` = 0),
-    /// or a stale snapshot on CGB (the fetch looks back past a just-committed write).
-    pub fn tile_map_select_byte(&self, falls: u8) -> u8 {
-        match falls {
-            0 => self.control.bits(),
-            1 => self.tile_map_prev,
-            _ => self.tile_map_prev2,
+    /// The LCDC byte the tile-map-select fetch samples — the live byte on DMG,
+    /// the crossing-lagged byte on CGB.
+    pub fn tile_map_select_byte(&self) -> u8 {
+        self.tile_map_select.output()
+    }
+
+    /// Apply an LCDC write to the tile-map-select view: immediate on DMG
+    /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
+    pub fn write_tile_map_select(&mut self, value: u8, falls: u8) {
+        if falls > 0 {
+            self.tile_map_select.write_delayed(value, falls);
+        } else {
+            self.tile_map_select.write_immediate(value);
         }
     }
 
@@ -162,7 +166,12 @@ impl PipelineRegisters {
 
     /// Capture pre-write VYXE if LCDC.0 transitions during Mode 3. `extra_hold`
     /// holds OLD one fall longer for the CGB clock-domain write lag.
-    pub fn arm_bg_window_enabled_shadow(&mut self, old_value: bool, new_value: bool, extra_hold: u8) {
+    pub fn arm_bg_window_enabled_shadow(
+        &mut self,
+        old_value: bool,
+        new_value: bool,
+        extra_hold: u8,
+    ) {
         self.bg_window_enabled_overlay
             .arm(old_value, new_value, extra_hold);
     }
