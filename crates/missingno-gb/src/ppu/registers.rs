@@ -1,6 +1,7 @@
 use super::dff::DffLatch;
 use super::types::control::{Control, ControlFlags};
 use super::types::palette::Palettes;
+use super::types::tiles::TileAddressMode;
 
 pub struct BackgroundViewportPosition {
     pub x: DffLatch,
@@ -88,6 +89,10 @@ pub struct PipelineRegisters {
     /// combinationally; the CGB latches a mid-Mode-3 LCDC write onto its own
     /// clock so the map-select change reaches the fetch the crossing's falls late.
     pub(in crate::ppu) tile_map_select: DffLatch,
+    /// The LCDC byte the BG tile-data fetch samples (LCDC.4). DMG tracks `control`
+    /// combinationally; the CGB latches a mid-Mode-3 LCDC write onto its own clock
+    /// so the tile-data-select change reaches the fetch the crossing's falls late.
+    pub(in crate::ppu) tile_data_select: DffLatch,
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
@@ -120,6 +125,7 @@ impl PipelineRegisters {
             self.control = Control::new(ControlFlags::from_bits_retain(self.control_latch.output));
         }
         self.tile_map_select.tick();
+        self.tile_data_select.tick();
 
         self.palettes.tick_mode2_active(mode2_active);
 
@@ -139,6 +145,7 @@ impl PipelineRegisters {
         self.window.x.clear();
         self.control_latch.clear();
         self.tile_map_select.clear();
+        self.tile_data_select.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
         self.tile_sel_reset_glitch.clear();
@@ -157,6 +164,25 @@ impl PipelineRegisters {
             self.tile_map_select.write_delayed(value, falls);
         } else {
             self.tile_map_select.write_immediate(value);
+        }
+    }
+
+    /// The tile-data addressing mode the BG fetch samples — the live LCDC.4 on
+    /// DMG, the crossing-lagged bit on CGB.
+    pub fn tile_data_address_mode(&self) -> TileAddressMode {
+        Control::new(ControlFlags::from_bits_retain(
+            self.tile_data_select.output(),
+        ))
+        .tile_address_mode()
+    }
+
+    /// Apply an LCDC write to the tile-data-select view: immediate on DMG
+    /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
+    pub fn write_tile_data_select(&mut self, value: u8, falls: u8) {
+        if falls > 0 {
+            self.tile_data_select.write_delayed(value, falls);
+        } else {
+            self.tile_data_select.write_immediate(value);
         }
     }
 

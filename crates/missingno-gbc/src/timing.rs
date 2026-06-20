@@ -36,6 +36,15 @@ pub const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 2,
 };
 
+/// The mid-Mode-3 LCDC.4 (TILE_SEL) tile-data-select write → BG-fetch crossing on
+/// the CGB: the write crosses on the M-cycle-last-fall edge and the BG tile-data
+/// fetch samples the select bit two falls late — the same resync as the LCDC.3/.6
+/// tile-map siblings. `cgb_extra_falls` is the *total* carried fall count.
+pub const TILE_DATA_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 2,
+};
+
 /// The FF43 (SCX) → fine-scroll-match crossing on the CGB: the cell crosses
 /// into the pixel pipeline on the resolved capture edge with no register-path
 /// lag on top — pure (ii) clock phase, like LYC. The phase arrives from the
@@ -105,6 +114,13 @@ mod tests {
     #[test]
     fn tile_map_crossing_carries_two_falls() {
         assert_eq!(TILE_MAP_CROSSING.write_delayed_falls(), 2);
+    }
+
+    /// The CGB tile-data-select crossing must hand `DffLatch::write_delayed` a
+    /// total of 2 falls — the same fetch-sample depth as the tile-map siblings.
+    #[test]
+    fn tile_data_crossing_carries_two_falls() {
+        assert_eq!(TILE_DATA_CROSSING.write_delayed_falls(), 2);
     }
 
     /// The CGB BG-enable crossing must hand the OLD-overlay one extra hold fall

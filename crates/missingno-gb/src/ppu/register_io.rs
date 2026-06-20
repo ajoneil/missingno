@@ -72,6 +72,16 @@ impl<P: PpuModel> Ppu<P> {
                 };
                 self.registers.write_tile_map_select(value, tile_map_falls);
 
+                // LCDC.4 (tile-data select) follows the same crossing: live on DMG,
+                // the crossing's falls late on the CGB clock.
+                let tile_data_falls = if is_drawing {
+                    P::TILE_DATA_CROSSING.write_delayed_falls()
+                } else {
+                    0
+                };
+                self.registers
+                    .write_tile_data_select(value, tile_data_falls);
+
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0

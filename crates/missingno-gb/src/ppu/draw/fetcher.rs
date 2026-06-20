@@ -150,8 +150,9 @@ impl<P: PpuModel> TileFetcher<P> {
         window_line_counter % 8
     }
 
-    /// Reads LCDC.4 (TILE_SEL) live each fetch. Returns the VRAM bank (the CGB
-    /// attribute may redirect the tile data to bank 1) and the byte offset.
+    /// Samples LCDC.4 (TILE_SEL) through the tile-data-select cell — live on DMG,
+    /// crossing-lagged on CGB. Returns the VRAM bank (the CGB attribute may
+    /// redirect the tile data to bank 1) and the byte offset.
     fn tile_data_address(
         &self,
         window_line_counter: u8,
@@ -160,7 +161,7 @@ impl<P: PpuModel> TileFetcher<P> {
         high: bool,
     ) -> (u8, u16) {
         let tile_index = TileIndex(self.tile_index);
-        let (block_id, mapped_idx) = regs.control.tile_address_mode().tile(tile_index);
+        let (block_id, mapped_idx) = regs.tile_data_address_mode().tile(tile_index);
         let raw_fine_y = if self.fetching_window {
             Self::window_fine_y(window_line_counter)
         } else {

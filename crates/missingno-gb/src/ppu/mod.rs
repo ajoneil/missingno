@@ -141,6 +141,7 @@ impl<P: PpuModel> Ppu<P> {
             registers: PipelineRegisters {
                 control_latch: DffLatch::new(0),
                 tile_map_select: DffLatch::new(0),
+                tile_data_select: DffLatch::new(0),
                 control: Control::new(ControlFlags::empty()),
                 background_viewport: BackgroundViewportPosition {
                     x: DffLatch::new(0),
@@ -285,6 +286,7 @@ impl<P: PpuModel> Ppu<P> {
             control,
             control_latch: DffLatch::new(snap.lcdc),
             tile_map_select: DffLatch::new(snap.lcdc),
+            tile_data_select: DffLatch::new(snap.lcdc),
             background_viewport: BackgroundViewportPosition {
                 x: DffLatch::new(snap.scx),
                 y: DffLatch::new(snap.scy),

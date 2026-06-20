@@ -242,6 +242,13 @@ pub trait PpuModel: Default {
     /// `missingno-gbc` wall — the DMG core names only the combinational collapse.
     const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
+    /// The mid-Mode-3 LCDC.4 (TILE_SEL/WEXU) write → BG tile-data fetch crossing.
+    /// The DMG couples it combinationally (the fetch reads LCDC live); the CGB
+    /// latches the write onto its own clock and the tile-data fetch samples the
+    /// select bit the descriptor's falls late — the same resync as the LCDC.3/.6
+    /// tile-map siblings. DMG names only the combinational collapse.
+    const TILE_DATA_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
     /// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank (RAJY) crossing. The
     /// DMG couples it combinationally; the CGB synchronises the write onto its
     /// own clock, so the OLD-overlay holds the pre-write value the crossing's
