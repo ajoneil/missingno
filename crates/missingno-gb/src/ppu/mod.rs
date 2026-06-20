@@ -10,6 +10,7 @@ use types::control::{Control, ControlFlags};
 use types::palette::Palettes;
 use types::sprites::{Sprite, SpriteId};
 
+pub use crossing::{CaptureEdge, CaptureSpec};
 pub use dff::{DffLatch, NorLatch};
 pub use model::{
     CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PixelMux, PpuModel,
@@ -24,6 +25,7 @@ pub use stat_interrupt::{InterruptFlags, StatInterrupt};
 pub use video_control::VideoControl;
 
 mod clock_edges;
+mod crossing;
 mod dff;
 mod dividers;
 mod draw;

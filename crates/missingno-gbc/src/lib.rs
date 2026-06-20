@@ -23,6 +23,7 @@
 //! CGB-B-only ROMs are excluded from the CGB-C-passing set.
 
 pub mod screen;
+pub mod timing;
 
 mod dmg_palette_data;
 
@@ -30,8 +31,8 @@ use missingno_gb::ppu::memory::{Vram, VramAddress, VramBank};
 use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
-    CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PipelineRegisters, PixelMux, Ppu,
-    PpuModel, resolve_dmg_pixel,
+    CaptureSpec, CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PipelineRegisters,
+    PixelMux, Ppu, PpuModel, resolve_dmg_pixel,
 };
 use missingno_gb::{
     Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio, cartridge::Cartridge,
@@ -360,7 +361,7 @@ impl PpuModel for CgbPpu {
     const TILE_SEL_RESET_GLITCH: bool = true;
     const BGP_WRITE_RACE: bool = false;
     const OBP_WRITE_RACE: bool = false;
-    const SCY_WRITE_LAG_FALLS: u8 = 2;
+    const SCY_CROSSING: CaptureSpec = crate::timing::SCY_CROSSING;
     const TILE_MAP_READ_STALE_FALLS: u8 = 2;
     const BG_ENABLE_WRITE_LAG: bool = true;
 

@@ -111,8 +111,9 @@ impl<P: PpuModel> TileFetcher<P> {
     }
 
     /// The BG map row (vertical tile index). Reads SCY live; on CGB the SCY cell
-    /// itself lags the mid-Mode-3 write (SCY_WRITE_LAG_FALLS), so the map-row and
-    /// the fine-Y reads all see the same delayed value.
+    /// itself lags the mid-Mode-3 write (the SCY crossing's register-path
+    /// offset), so the map-row and the fine-Y reads all see the same delayed
+    /// value.
     fn bg_map_row(regs: &PipelineRegisters, video: &VideoControl) -> u8 {
         (video.ly().wrapping_add(regs.background_viewport.y.output()) / 8) & 31
     }

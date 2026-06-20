@@ -7,6 +7,7 @@
 //! conditional-free code, and the CGB colour hardware (CRAM, attributes, the
 //! colour resolve) lives in `missingno-gbc`'s impl rather than behind a flag.
 
+use super::crossing::CaptureSpec;
 use super::draw::shifters::ObjShifter;
 use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
@@ -183,11 +184,13 @@ pub trait PpuModel: Default {
     /// The DMG dlatch OR transient is unmodelled (no test exercises it).
     const OBP_WRITE_RACE: bool = true;
 
-    /// The CGB latches a mid-Mode-3 SCY write onto its own clock, so the BG fetch
-    /// samples it this many falls late (the documented 2-T-cycle lag) — both the
-    /// map-row and the two tile-data fine-Y reads see the delayed value. DMG: 0,
-    /// the write is immediate.
-    const SCY_WRITE_LAG_FALLS: u8 = 0;
+    /// The mid-Mode-3 SCY ($FF42) write → BG-fetch crossing. The DMG couples it
+    /// combinationally (the write is immediate); the CGB latches it onto its own
+    /// clock and the BG fetch samples it the descriptor's falls late (both the
+    /// map-row and the two tile-data fine-Y reads see the delayed value). The
+    /// non-zero CGB value is authored behind the `missingno-gbc` wall — the DMG
+    /// core names only the combinational collapse.
+    const SCY_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The CGB tile-map-select (LCDC.3/.6) fetch reads the select bit this many
     /// falls stale — captured at the fetcher's own counter-0 edge, it looks back
