@@ -21,7 +21,7 @@ pub use rendering::{
     Mode, PipelineSnapshot, PpuTraceSnapshot, SpriteFetchPhase, SpriteStoreEntrySnapshot,
     SpriteStoreSnapshot,
 };
-pub use stat_interrupt::{InterruptFlags, StatInterrupt};
+pub use stat_interrupt::{InterruptFlags, StatInterrupt, StatShadow, SyncedStatCells};
 pub use video_control::VideoControl;
 
 mod clock_edges;
@@ -272,7 +272,6 @@ impl<P: PpuModel> Ppu<P> {
                 enables,
                 legs_was_high: InterruptFlags::empty(),
                 conditions_was: InterruptFlags::empty(),
-                irq_domain: stat_interrupt::StatIrqDomain::mirroring(enables, snap.lyc),
             },
             line_end: LineEndPipeline {
                 delayed_line_end: false,
@@ -322,6 +321,9 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             model: P::default(),
         };
+        let shadow = ppu.model.stat_shadow_mut();
+        shadow.set_synced_enables(enables);
+        shadow.set_synced_lyc(snap.lyc);
         if let Some(rendering) = ppu.pixel_pipeline.as_mut() {
             rendering.capture_register_sync(&ppu.registers);
         }
@@ -460,13 +462,20 @@ impl<P: PpuModel> Ppu<P> {
         // lands here too.
         if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             let ly = self.video.ly();
-            self.video.stat.capture_synced_lyc(ly);
+            self.video
+                .stat
+                .capture_synced_lyc(ly, self.model.stat_shadow_mut());
         }
-        if !matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+        if !matches!(
+            P::STAT_ENABLES_CROSSING.capture,
+            CaptureEdge::MCycleLastFall
+        ) {
             return false;
         }
         let conditions = self.stat_conditions();
-        self.video.stat.eval_synced(conditions, false, true)
+        self.video
+            .stat
+            .eval_synced(conditions, false, true, self.model.stat_shadow_mut())
     }
 
     /// CPU read of a CGB colour-palette register; the model's clock-domain
@@ -590,8 +599,11 @@ impl<P: PpuModel> Ppu<P> {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     /// The CGB reads the enables through the register-file synchroniser.
     pub fn stat_legs(&self) -> InterruptFlags {
-        let enables = if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
-            self.video.stat.synced_enables()
+        let enables = if matches!(
+            P::STAT_ENABLES_CROSSING.capture,
+            CaptureEdge::MCycleLastFall
+        ) {
+            self.model.stat_shadow().synced_enables()
         } else {
             self.video.stat.enables()
         };
@@ -610,8 +622,16 @@ impl<P: PpuModel> Ppu<P> {
             return false;
         }
         let conditions = self.stat_conditions();
-        if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
-            return self.video.stat.eval_synced(conditions, false, false);
+        if matches!(
+            P::STAT_ENABLES_CROSSING.capture,
+            CaptureEdge::MCycleLastFall
+        ) {
+            return self.video.stat.eval_synced(
+                conditions,
+                false,
+                false,
+                self.model.stat_shadow_mut(),
+            );
         }
         self.video.stat.eval_conditions(conditions, false)
     }

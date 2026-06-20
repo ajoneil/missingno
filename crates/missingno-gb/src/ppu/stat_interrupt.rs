@@ -14,23 +14,57 @@ bitflags! {
     }
 }
 
-/// CGB synchroniser between the FF41/FF45 register cells and the STAT-IRQ
-/// block: DFF copies of the cells, captured on the CPU-clock M-cycle
-/// boundary. The cells themselves stay CPU-visible at write time; only the
-/// IRQ block reads the synced copies. On DMG the cells feed the legs
-/// combinationally and the copies just mirror the cells (read only through
-/// the comparator's LYC view, where mirror == cell).
-pub(in crate::ppu) struct StatIrqDomain {
-    synced_enables: InterruptFlags,
-    synced_lyc: u8,
+/// The synchroniser between the FF41/FF45 register cells and the STAT-IRQ
+/// block: DFF copies of the enables and LYC cells, captured on the CPU-clock
+/// M-cycle boundary. The cells stay CPU-visible at write time; only the IRQ
+/// block reads these copies. Lives on the model — the CGB owns the real cells
+/// ([`SyncedStatCells`]), the DMG a ZST `()`, since the DMG feeds the legs and
+/// comparator combinationally off the cells and never crosses the domain.
+pub trait StatShadow {
+    fn synced_enables(&self) -> InterruptFlags;
+    fn set_synced_enables(&mut self, value: InterruptFlags);
+    /// PALY's LYC input. DMG reads the cell directly (no synchroniser), so its
+    /// ZST forwards the `cell` argument; the CGB returns its captured copy.
+    fn synced_lyc(&self, cell: u8) -> u8;
+    fn set_synced_lyc(&mut self, value: u8);
 }
 
-impl StatIrqDomain {
-    pub(in crate::ppu) fn mirroring(enables: InterruptFlags, lyc: u8) -> Self {
-        Self {
-            synced_enables: enables,
-            synced_lyc: lyc,
-        }
+/// The CGB FF41/FF45 synchroniser DFFs.
+#[derive(Default)]
+pub struct SyncedStatCells {
+    enables: InterruptFlags,
+    lyc: u8,
+}
+
+impl StatShadow for SyncedStatCells {
+    fn synced_enables(&self) -> InterruptFlags {
+        self.enables
+    }
+    fn set_synced_enables(&mut self, value: InterruptFlags) {
+        self.enables = value;
+    }
+    fn synced_lyc(&self, _cell: u8) -> u8 {
+        self.lyc
+    }
+    fn set_synced_lyc(&mut self, value: u8) {
+        self.lyc = value;
+    }
+}
+
+impl StatShadow for () {
+    fn synced_enables(&self) -> InterruptFlags {
+        InterruptFlags::empty()
+    }
+    fn set_synced_enables(&mut self, _value: InterruptFlags) {}
+    fn synced_lyc(&self, cell: u8) -> u8 {
+        cell
+    }
+    fn set_synced_lyc(&mut self, _value: u8) {}
+}
+
+impl Default for InterruptFlags {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
@@ -48,7 +82,6 @@ pub struct StatInterrupt {
     /// Condition-input values at the previous evaluation (per-source,
     /// pre-enable) — the waveform scan's transition baseline on both cores.
     pub(in crate::ppu) conditions_was: InterruptFlags,
-    pub(in crate::ppu) irq_domain: StatIrqDomain,
 }
 
 impl StatInterrupt {
@@ -61,7 +94,6 @@ impl StatInterrupt {
             enables: InterruptFlags::empty(),
             legs_was_high: InterruptFlags::empty(),
             conditions_was: InterruptFlags::empty(),
-            irq_domain: StatIrqDomain::mirroring(InterruptFlags::empty(), 0),
         }
     }
 
@@ -73,7 +105,6 @@ impl StatInterrupt {
             enables: InterruptFlags::DUMMY,
             legs_was_high: InterruptFlags::empty(),
             conditions_was: InterruptFlags::empty(),
-            irq_domain: StatIrqDomain::mirroring(InterruptFlags::DUMMY, 0),
         }
     }
 
@@ -88,9 +119,9 @@ impl StatInterrupt {
     }
 
     /// PALY recompute: `pending = (ly == lyc)`. PALY's LYC input is the IRQ
-    /// domain's view (on DMG the mirror keeps it equal to the cell).
-    pub(in crate::ppu) fn update_comparison(&mut self, ly: u8) {
-        self.comparison_pending = ly == self.irq_domain.synced_lyc;
+    /// domain's view — the cell on DMG, the synchroniser copy on CGB.
+    pub(in crate::ppu) fn update_comparison(&mut self, ly: u8, shadow: &impl StatShadow) {
+        self.comparison_pending = ly == shadow.synced_lyc(self.lyc);
     }
 
     /// ROPO captures comparison_pending on TALU rising.
@@ -121,15 +152,15 @@ impl StatInterrupt {
         self.enables = flags;
     }
 
-    pub(in crate::ppu) fn write_lyc(&mut self, value: u8, ly: u8) {
+    pub(in crate::ppu) fn write_lyc(&mut self, value: u8, ly: u8, shadow: &mut impl StatShadow) {
         self.lyc = value;
-        self.irq_domain.synced_lyc = value;
-        self.update_comparison(ly);
+        shadow.set_synced_lyc(value);
+        self.update_comparison(ly, shadow);
     }
 
-    pub(in crate::ppu) fn write_stat_bits(&mut self, value: u8) {
+    pub(in crate::ppu) fn write_stat_bits(&mut self, value: u8, shadow: &mut impl StatShadow) {
         self.enables = InterruptFlags::from_bits_truncate(value);
-        self.irq_domain.synced_enables = self.enables;
+        shadow.set_synced_enables(self.enables);
     }
 
     /// CGB FF45 write: the cell updates now (readback is write-time); the IRQ
@@ -141,18 +172,14 @@ impl StatInterrupt {
     /// The FF45→IRQ-block crossing: copy the LYC cell into the synchroniser DFF
     /// and recompute PALY against it. Fired on the LYC crossing's resolved
     /// capture edge; the synced value feeds the comparator for the next TALU↑.
-    pub(in crate::ppu) fn capture_synced_lyc(&mut self, ly: u8) {
-        self.irq_domain.synced_lyc = self.lyc;
-        self.update_comparison(ly);
+    pub(in crate::ppu) fn capture_synced_lyc(&mut self, ly: u8, shadow: &mut impl StatShadow) {
+        shadow.set_synced_lyc(self.lyc);
+        self.update_comparison(ly, shadow);
     }
 
     /// CGB FF41 write: cell-only, as `write_lyc_cell`.
     pub(in crate::ppu) fn write_stat_bits_cell(&mut self, value: u8) {
         self.enables = InterruptFlags::from_bits_truncate(value);
-    }
-
-    pub(in crate::ppu) fn synced_enables(&self) -> InterruptFlags {
-        self.irq_domain.synced_enables
     }
 
     /// DMG SUKO evaluation against the live enables (no synchroniser; the
@@ -184,16 +211,17 @@ impl StatInterrupt {
         conditions: InterruptFlags,
         talu_rising: bool,
         boundary_capture: bool,
+        shadow: &mut impl StatShadow,
     ) -> bool {
-        let enables_before = self.irq_domain.synced_enables;
+        let enables_before = shadow.synced_enables();
         let register_edges = if boundary_capture {
             let delta = enables_before ^ self.enables;
-            self.irq_domain.synced_enables = self.enables;
+            shadow.set_synced_enables(self.enables);
             delta & !InterruptFlags::DUMMY
         } else {
             InterruptFlags::empty()
         };
-        let enables_after = self.irq_domain.synced_enables;
+        let enables_after = shadow.synced_enables();
         self.eval_core(
             conditions,
             talu_rising,

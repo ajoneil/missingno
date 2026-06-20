@@ -11,6 +11,7 @@ use super::crossing::CaptureSpec;
 use super::draw::shifters::ObjShifter;
 use super::memory::{Vram, VramBank};
 use super::registers::PipelineRegisters;
+use super::stat_interrupt::StatShadow;
 use super::types::palette::{PaletteIndex, PaletteMap};
 use super::types::sprites::{self, ObjAttr};
 
@@ -101,6 +102,16 @@ pub trait PpuModel: Default {
     /// method: the CGB reads its 3-bit palette (OAM bits 0-2) in full-CGB mode
     /// but the DMG OBP-select (bit 4) in DMG-compatibility mode.
     fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr;
+
+    /// The FF41/FF45 → STAT-IRQ-block synchroniser. The CGB holds DFF copies of
+    /// the enables and LYC cells ([`SyncedStatCells`]); the DMG feeds the IRQ
+    /// block combinationally off the cells and carries a ZST `()`.
+    ///
+    /// [`SyncedStatCells`]: super::stat_interrupt::SyncedStatCells
+    type StatShadow: StatShadow + Default;
+
+    fn stat_shadow(&self) -> &Self::StatShadow;
+    fn stat_shadow_mut(&mut self) -> &mut Self::StatShadow;
 
     /// The console's object FIFO. The DMG resolves overlaps by fetch order with a
     /// 1-bit OBP-select; the CGB resolves by OAM index with a 3-bit palette. The
@@ -326,12 +337,25 @@ pub fn resolve_shade<C>(mux: &PixelMux<C>, regs: &PipelineRegisters) -> u8 {
 
 /// The original Game Boy PPU: a 2-bit shade per pixel, no colour memory.
 #[derive(Default)]
-pub struct DmgPpu;
+pub struct DmgPpu {
+    /// The STAT-IRQ block reads the cells combinationally — the synchroniser is
+    /// a ZST.
+    stat_shadow: (),
+}
 
 impl PpuModel for DmgPpu {
     type Vram = VramBank;
     type BgCell = ();
     type Pixel = PaletteIndex;
+
+    type StatShadow = ();
+
+    fn stat_shadow(&self) -> &() {
+        &self.stat_shadow
+    }
+    fn stat_shadow_mut(&mut self) -> &mut () {
+        &mut self.stat_shadow
+    }
 
     fn bg_attribute(_vram: &VramBank, _map_offset: u16) {}
 

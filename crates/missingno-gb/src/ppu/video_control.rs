@@ -3,7 +3,7 @@
 use crate::ppu::dividers::Dividers;
 use crate::ppu::line_counter::LineCounter;
 use crate::ppu::line_end_pipeline::{LineEndEdge, LineEndPipeline};
-use crate::ppu::stat_interrupt::StatInterrupt;
+use crate::ppu::stat_interrupt::{StatInterrupt, StatShadow};
 
 pub struct VideoControl {
     pub dividers: Dividers,
@@ -50,14 +50,14 @@ impl VideoControl {
         self.lines.y.write_ly(value);
     }
 
-    pub fn update_ly_comparison(&mut self) {
+    pub fn update_ly_comparison(&mut self, shadow: &impl StatShadow) {
         let ly = self.lines.ly();
-        self.stat.update_comparison(ly);
+        self.stat.update_comparison(ly, shadow);
     }
 
-    pub fn write_lyc(&mut self, value: u8) {
+    pub fn write_lyc(&mut self, value: u8, shadow: &mut impl StatShadow) {
         let ly = self.lines.ly();
-        self.stat.write_lyc(value, ly);
+        self.stat.write_lyc(value, ly, shadow);
     }
 
     /// XOTA rising: toggle WUVU. Returns previous WUVU.Q.

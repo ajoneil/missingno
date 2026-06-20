@@ -150,7 +150,9 @@ impl<P: PpuModel> Ppu<P> {
                     let glitch_legs = self.stat_legs();
                     let glitch_edge = self.video.stat.detect_suko_edge(glitch_legs);
 
-                    self.video.stat.write_stat_bits(value);
+                    self.video
+                        .stat
+                        .write_stat_bits(value, self.model.stat_shadow_mut());
                     let final_legs = self.stat_legs();
                     let final_edge = self.video.stat.detect_suko_edge(final_legs);
 
@@ -175,7 +177,7 @@ impl<P: PpuModel> Ppu<P> {
                 if P::HAS_CLOCK_DOMAIN_SYNC {
                     self.video.stat.write_lyc_cell(value);
                 } else {
-                    self.video.write_lyc(value);
+                    self.video.write_lyc(value, self.model.stat_shadow_mut());
                 }
             }
             Register::BackgroundPalette => {

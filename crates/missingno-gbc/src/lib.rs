@@ -32,7 +32,7 @@ use missingno_gb::ppu::rendering::Mode;
 use missingno_gb::ppu::types::sprites::{Attributes, ObjAttr};
 use missingno_gb::ppu::{
     CaptureSpec, CartridgeBootHeader, ColorRegister, DmgPixel, DomainSamples, PipelineRegisters,
-    PixelMux, Ppu, PpuModel, resolve_dmg_pixel,
+    PixelMux, Ppu, PpuModel, SyncedStatCells, resolve_dmg_pixel,
 };
 use missingno_gb::{
     Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio, cartridge::Cartridge,
@@ -344,6 +344,8 @@ pub struct CgbPpu {
     /// by sampling half as often at double speed, where the palette clock is
     /// unchanged while the CPU M-cycle runs at 2×.
     palette_drawing_synced: bool,
+    /// FF41/FF45 → STAT-IRQ-block synchroniser DFFs.
+    stat_shadow: SyncedStatCells,
 }
 
 impl PpuModel for CgbPpu {
@@ -373,6 +375,15 @@ impl PpuModel for CgbPpu {
     type Vram = CgbVram;
     type BgCell = BgAttribute;
     type Pixel = Color555;
+
+    type StatShadow = SyncedStatCells;
+
+    fn stat_shadow(&self) -> &SyncedStatCells {
+        &self.stat_shadow
+    }
+    fn stat_shadow_mut(&mut self) -> &mut SyncedStatCells {
+        &mut self.stat_shadow
+    }
 
     fn bg_attribute(vram: &CgbVram, map_offset: u16) -> BgAttribute {
         BgAttribute(vram.bank(1).read_byte(map_offset))

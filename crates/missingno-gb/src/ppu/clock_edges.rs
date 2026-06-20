@@ -81,15 +81,25 @@ impl<P: PpuModel> Ppu<P> {
         // LYC lands in the next TALU↑.
         if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) && mcycle_last_fall {
             let ly = self.video.ly();
-            self.video.stat.capture_synced_lyc(ly);
+            self.video
+                .stat
+                .capture_synced_lyc(ly, self.model.stat_shadow_mut());
         }
         let conditions = self.stat_conditions();
-        let edge = if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+        let edge = if matches!(
+            P::STAT_ENABLES_CROSSING.capture,
+            CaptureEdge::MCycleLastFall
+        ) {
             // M-boundary fall: the FF41 synchroniser captures here, racing this
             // fall's condition edges (ROPO captured pre-edge PALY above). The
             // WY/WX/LCDC.5/LCDC.2 crossing ticks inside `on_ppu_clock_fall` at
             // the M-cycle's last PPU fall instead.
-            self.video.stat.eval_synced(conditions, talu_rising, is_mcycle)
+            self.video.stat.eval_synced(
+                conditions,
+                talu_rising,
+                is_mcycle,
+                self.model.stat_shadow_mut(),
+            )
         } else {
             self.video.stat.eval_conditions(conditions, talu_rising)
         };
@@ -104,7 +114,7 @@ impl<P: PpuModel> Ppu<P> {
     pub(super) fn initialize_lcd_on(&mut self) {
         self.video.vid_rst();
         // ROPO is not VID_RST-reset; PALY is combinational so recompute now.
-        self.video.update_ly_comparison();
+        self.video.update_ly_comparison(self.model.stat_shadow());
 
         self.pixel_pipeline = Some(super::Rendering::new());
         if let Some(rendering) = self.pixel_pipeline.as_mut() {
@@ -133,15 +143,15 @@ impl<P: PpuModel> Ppu<P> {
         let talu_rising = !vena_was && vena_now;
         if talu_rising {
             // VENA↑ = TALU↑: ROPO captures PALY; NYPE captures POPU/MYTA; LX advances.
-            self.video.update_ly_comparison();
+            self.video.update_ly_comparison(self.model.stat_shadow());
             self.video.stat.latch_comparison();
             self.video.on_lx_counter_clock_rise();
-            self.video.update_ly_comparison();
+            self.video.update_ly_comparison(self.model.stat_shadow());
         }
         if vena_was && !vena_now {
             // VENA↓ = SONO↑ = TALU↓: RUTU captures SANU; LY advances.
             scanline_boundary = self.video.on_lx_counter_clock_fall();
-            self.video.update_ly_comparison();
+            self.video.update_ly_comparison(self.model.stat_shadow());
         }
 
         if scanline_boundary && let Some(rendering) = self.pixel_pipeline.as_mut() {

@@ -730,13 +730,12 @@ mod cgb_residual_size {
         pub const TOTAL: usize = 55;
     }
 
-    /// `StatInterrupt` CGB-only fields, via the `StatIrqDomain` shadow
-    /// (ppu/stat_interrupt.rs):
-    /// - `irq_domain.synced_enables: InterruptFlags` — 1
-    /// - `irq_domain.synced_lyc: u8` — 1
+    /// `StatInterrupt`: the FF41/FF45 synchroniser DFFs are relocated behind the
+    /// `PpuModel::StatShadow` seam (`SyncedStatCells` on CGB, ZST `()` on DMG),
+    /// so the DMG `StatInterrupt` carries no CGB-only storage.
     mod stat_interrupt {
-        pub const CGB_BYTES: usize = 1 + 1;
-        pub const TOTAL: usize = 8;
+        pub const CGB_BYTES: usize = 0;
+        pub const TOTAL: usize = 6;
     }
 
     #[test]
@@ -773,6 +772,6 @@ mod cgb_residual_size {
             + cpu::CGB_BYTES
             + pipeline_registers::CGB_BYTES
             + stat_interrupt::CGB_BYTES;
-        assert_eq!(REMAINING, 32, "CGB-only residual byte budget changed");
+        assert_eq!(REMAINING, 30, "CGB-only residual byte budget changed");
     }
 }
