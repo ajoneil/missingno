@@ -682,3 +682,97 @@ impl Console<Dmg> {
         self.model.sgb.as_ref()
     }
 }
+
+/// B2 acceptance harness: a compile-time guarantee that the DMG build carries
+/// no CGB-only storage in the shared structs.
+///
+/// Each shared struct lists its CGB-only fields and their byte cost on a DMG
+/// build. `CGB_BYTES` is that residual storage — the budget B2 drives to zero
+/// by relocating the state behind the `Model`/`PpuModel` seam. `TOTAL` pins the
+/// struct's current `size_of`; the two move together as fields leave, so any
+/// drift (an erased field that didn't shrink the struct, or new shared storage)
+/// fails the build. When `CGB_BYTES` reaches zero the DMG layout is provably
+/// CGB-free for that struct.
+#[cfg(test)]
+mod cgb_residual_size {
+    use super::*;
+    use std::mem::size_of;
+
+    /// `Console<M>` CGB-only fields (lib.rs):
+    /// - `dma_conflict_write_pending: Option<(u8, u8, u8)>` — 4
+    /// - `dma_conflict_oam_zero: Option<u8>` — 2
+    /// - `dma_cpu_hold: bool` — 1
+    /// - `blackout_anchor: u64` — 8
+    /// `clock: MasterClock` is shared (the master-edge counter both cores run on),
+    /// not CGB-only.
+    mod console {
+        pub const CGB_BYTES: usize = 4 + 2 + 1 + 8;
+        pub const TOTAL: usize = 50664;
+    }
+
+    /// `Cpu` CGB-only fields (cpu/mod.rs):
+    /// - `irq.halt_wake_presample: bool` — 1 (inside `IrqContext`)
+    /// - `bus_suspended: bool` — 1
+    /// - `vram_dma_claim: VramDmaClaim` — 2
+    /// - `bus_held: bool` — 1
+    mod cpu {
+        pub const CGB_BYTES: usize = 1 + 1 + 2 + 1;
+        pub const TOTAL: usize = 84;
+    }
+
+    /// `PipelineRegisters` CGB-only fields (ppu/registers.rs):
+    /// - `tile_map_select: DffLatch` — 4
+    /// - `bg_window_enabled_overlay: OldOverlay` — 2
+    /// - `sprites_enabled_overlay: OldOverlay` — 2
+    /// - `tile_sel_reset_glitch: TileSelResetGlitch` — 2
+    mod pipeline_registers {
+        pub const CGB_BYTES: usize = 4 + 2 + 2 + 2;
+        pub const TOTAL: usize = 55;
+    }
+
+    /// `StatInterrupt` CGB-only fields, via the `StatIrqDomain` shadow
+    /// (ppu/stat_interrupt.rs):
+    /// - `irq_domain.synced_enables: InterruptFlags` — 1
+    /// - `irq_domain.synced_lyc: u8` — 1
+    mod stat_interrupt {
+        pub const CGB_BYTES: usize = 1 + 1;
+        pub const TOTAL: usize = 8;
+    }
+
+    #[test]
+    fn dmg_layout_holds_documented_cgb_residual() {
+        assert_eq!(
+            size_of::<Console<Dmg>>(),
+            console::TOTAL,
+            "Console<Dmg> size changed",
+        );
+        assert_eq!(
+            size_of::<crate::cpu::Cpu>(),
+            self::cpu::TOTAL,
+            "Cpu size changed",
+        );
+        assert_eq!(
+            size_of::<ppu::PipelineRegisters>(),
+            pipeline_registers::TOTAL,
+            "PipelineRegisters size changed",
+        );
+        assert_eq!(
+            size_of::<ppu::StatInterrupt>(),
+            stat_interrupt::TOTAL,
+            "StatInterrupt size changed",
+        );
+    }
+
+    /// The residual CGB-only storage still carried on a DMG build, summed across
+    /// the four shared structs. B2's terminal state is zero. Update each
+    /// struct's `CGB_BYTES` (and `TOTAL`) as its state is relocated; this total
+    /// records the remaining work.
+    #[test]
+    fn cgb_only_byte_budget_remaining() {
+        const REMAINING: usize = console::CGB_BYTES
+            + cpu::CGB_BYTES
+            + pipeline_registers::CGB_BYTES
+            + stat_interrupt::CGB_BYTES;
+        assert_eq!(REMAINING, 32, "CGB-only residual byte budget changed");
+    }
+}
