@@ -1,6 +1,6 @@
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    PipelineRegisters, PpuModel,
+    PpuModel,
     memory::{Oam, Vram},
 };
 
@@ -62,11 +62,12 @@ impl SpriteFetch {
         self.fetch_counter
     }
 
-    /// Reads `sprite_size` live at fetch time, matching the combinational gejy/XYMO path on hardware.
+    /// Resolves the tile row from the scan-consistent object size: live on DMG, the scan's
+    /// synced `max(live, synced)` gejy/XYMO size on CGB, so the fetched row matches `line_offset`.
     fn read_tile_data<P: PpuModel>(
         &mut self,
         model: &P,
-        regs: &PipelineRegisters,
+        sprite_size: SpriteSize,
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &P::Vram,
@@ -88,7 +89,7 @@ impl SpriteFetch {
         self.attributes = attributes;
         self.stage1_capture = (tile.0, attributes.0);
 
-        let tile_index = if regs.control.sprite_size() == SpriteSize::Double {
+        let tile_index = if sprite_size == SpriteSize::Double {
             TileIndex(tile.0 & 0xFE)
         } else {
             tile
@@ -96,12 +97,12 @@ impl SpriteFetch {
         let (block_id, mapped_idx) = TileAddressMode::Block0Block1.tile(tile_index);
 
         let flipped_y = if attributes.flip_y() {
-            (regs.control.sprite_size().height() as i16 - 1 - self.entry.line_offset as i16) as u8
+            (sprite_size.height() as i16 - 1 - self.entry.line_offset as i16) as u8
         } else {
             self.entry.line_offset
         };
 
-        let (final_block, final_idx, final_y) = match regs.control.sprite_size() {
+        let (final_block, final_idx, final_y) = match sprite_size {
             SpriteSize::Single => (block_id, mapped_idx, flipped_y & 0x07),
             SpriteSize::Double if flipped_y < 8 => (block_id, mapped_idx, flipped_y),
             SpriteSize::Double => (block_id, TileIndex(mapped_idx.0 + 1), flipped_y - 8),
@@ -118,17 +119,19 @@ impl SpriteFetch {
     pub(in crate::ppu) fn advance<P: PpuModel>(
         &mut self,
         model: &P,
-        regs: &PipelineRegisters,
+        sprite_size: SpriteSize,
         oam: &Oam,
         oam_bus: OamBusOwner,
         vram: &P::Vram,
     ) -> bool {
         match self.fetch_counter {
             2 => {
-                self.tile_data_low = self.read_tile_data(model, regs, oam, oam_bus, vram, false);
+                self.tile_data_low =
+                    self.read_tile_data(model, sprite_size, oam, oam_bus, vram, false);
             }
             4 => {
-                self.tile_data_high = self.read_tile_data(model, regs, oam, oam_bus, vram, true);
+                self.tile_data_high =
+                    self.read_tile_data(model, sprite_size, oam, oam_bus, vram, true);
             }
             5 => {
                 return true;

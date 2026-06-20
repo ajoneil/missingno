@@ -4,8 +4,9 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam,
-    types::sprites::SpriteId,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl,
+    memory::Oam,
+    types::sprites::{SpriteId, SpriteSize},
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -653,10 +654,20 @@ impl<P: PpuModel> Rendering<P> {
         // SABE clock fires on ALET rising. Placed before the TEKY/RYCE block so a newly
         // initiated sprite fetch doesn't advance on its first dot.
         if self.sprite_trigger.fetch_running() {
+            // The fetch resolves its tile row from the same object size the scan comparator
+            // used: live on DMG, the synced max(live, synced) gejy/XYMO size on CGB.
+            let effective_sprite_size = if Self::window_synced()
+                && (regs.control.sprite_size() == SpriteSize::Double
+                    || self.window.synced_sprite_size() == SpriteSize::Double)
+            {
+                SpriteSize::Double
+            } else {
+                regs.control.sprite_size()
+            };
             match self.sprite_state {
                 SpriteState::Fetching(ref mut sf) => {
                     let slot_index = sf.slot_index;
-                    let done = sf.advance(model, regs, oam, oam_bus, vram);
+                    let done = sf.advance(model, effective_sprite_size, oam, oam_bus, vram);
                     if done {
                         let (s1y, s1x) = sf.stage1_capture();
                         sf.merge_into(model, &mut self.obj_fifo);
