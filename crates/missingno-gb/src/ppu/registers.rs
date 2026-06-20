@@ -182,8 +182,11 @@ impl PipelineRegisters {
             .resolve(self.control.sprites_enabled())
     }
 
-    /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3.
-    pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool) {
-        self.sprites_enabled_overlay.arm(old_value, new_value, 0);
+    /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3. `extra_hold`
+    /// holds OLD longer for a CGB clock-domain write lag (zero on both cores
+    /// today — XYLO has no register-path offset).
+    pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool, extra_hold: u8) {
+        self.sprites_enabled_overlay
+            .arm(old_value, new_value, extra_hold);
     }
 }

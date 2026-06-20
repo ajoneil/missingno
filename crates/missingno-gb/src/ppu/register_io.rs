@@ -85,10 +85,10 @@ impl<P: PpuModel> Ppu<P> {
                 // holding OLD across the left edge; DMG's combinational RAJY applies at once, so it
                 // keeps the WUSA gate.
                 let pushing = self.lcd_pushing_active();
-                if is_drawing && (pushing || P::BG_ENABLE_WRITE_LAG) {
+                let bg_enable_extra_hold = P::BG_ENABLE_CROSSING.write_delayed_falls();
+                if is_drawing && (pushing || bg_enable_extra_hold > 0) {
                     let new_bg_window_enabled =
                         self.registers.control.background_and_window_enabled();
-                    let bg_enable_extra_hold = u8::from(P::BG_ENABLE_WRITE_LAG);
                     self.registers.arm_bg_window_enabled_shadow(
                         old_bg_window_enabled,
                         new_bg_window_enabled,
@@ -97,8 +97,11 @@ impl<P: PpuModel> Ppu<P> {
                 }
                 if is_drawing && pushing {
                     let new_sprites_enabled = self.registers.control.sprites_enabled();
-                    self.registers
-                        .arm_sprites_enabled_shadow(old_sprites_enabled, new_sprites_enabled);
+                    self.registers.arm_sprites_enabled_shadow(
+                        old_sprites_enabled,
+                        new_sprites_enabled,
+                        P::OBJ_ENABLE_CROSSING.write_delayed_falls(),
+                    );
                 }
 
                 // CUPA↑ → XODO↓: schedule divider/scanner reset for this fall.

@@ -364,7 +364,8 @@ impl PpuModel for CgbPpu {
     const SCY_CROSSING: CaptureSpec = crate::timing::SCY_CROSSING;
     const LYC_CROSSING: CaptureSpec = crate::timing::LYC_CROSSING;
     const TILE_MAP_CROSSING: CaptureSpec = crate::timing::TILE_MAP_CROSSING;
-    const BG_ENABLE_WRITE_LAG: bool = true;
+    const BG_ENABLE_CROSSING: CaptureSpec = crate::timing::BG_ENABLE_CROSSING;
+    const OBJ_ENABLE_CROSSING: CaptureSpec = crate::timing::OBJ_ENABLE_CROSSING;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;

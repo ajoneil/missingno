@@ -46,6 +46,22 @@ pub const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 2,
 };
 
+/// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank crossing on the CGB: the
+/// write crosses on the M-cycle-last-fall edge and the OLD-overlay holds the
+/// pre-write value one extra fall — RAJY lands one dot later than the DMG's
+/// combinational path. The OLD-overlay carries its own same-fall base hold, so
+/// `cgb_extra_falls` is the extra-falls offset on top, matching the historical
+/// `BG_ENABLE_WRITE_LAG`'s `extra_hold = 1`.
+pub const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 1,
+};
+
+/// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing on the CGB: no
+/// register-path lag — the OLD-overlay's same-fall base hold is the whole story
+/// on both cores, so this stays combinational.
+pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +86,20 @@ mod tests {
     #[test]
     fn tile_map_crossing_carries_two_falls() {
         assert_eq!(TILE_MAP_CROSSING.write_delayed_falls(), 2);
+    }
+
+    /// The CGB BG-enable crossing must hand the OLD-overlay one extra hold fall
+    /// — bit-identical to the pre-migration `BG_ENABLE_WRITE_LAG`'s
+    /// `extra_hold = 1`.
+    #[test]
+    fn bg_enable_crossing_carries_one_extra_fall() {
+        assert_eq!(BG_ENABLE_CROSSING.write_delayed_falls(), 1);
+    }
+
+    /// The CGB OBJ-enable crossing carries no register-path lag — combinational
+    /// on both cores, `extra_hold = 0`.
+    #[test]
+    fn obj_enable_crossing_carries_no_extra_falls() {
+        assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 0);
     }
 }

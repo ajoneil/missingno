@@ -207,10 +207,17 @@ pub trait PpuModel: Default {
     /// `missingno-gbc` wall — the DMG core names only the combinational collapse.
     const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
-    /// The CGB synchronises a mid-Mode-3 LCDC.0 (VYXE) write onto its own clock,
-    /// so the BG-plane blank (RAJY) lands one dot later than the DMG's combinational
-    /// path — the OLD-overlay holds the pre-write value one extra dot. DMG: no lag.
-    const BG_ENABLE_WRITE_LAG: bool = false;
+    /// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank (RAJY) crossing. The
+    /// DMG couples it combinationally; the CGB synchronises the write onto its
+    /// own clock, so the OLD-overlay holds the pre-write value the crossing's
+    /// extra falls longer (RAJY lands that many dots later). DMG names only the
+    /// combinational collapse.
+    const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
+    /// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing. Combinational on
+    /// both cores — the OLD-overlay only covers the same-fall tick, with no
+    /// register-path lag on either DMG or CGB.
+    const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-cycle clock
