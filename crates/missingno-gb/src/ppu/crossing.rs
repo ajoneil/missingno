@@ -67,14 +67,10 @@ impl CaptureSpec {
     ///
     /// [`DffLatch::write_delayed`]: super::DffLatch::write_delayed
     pub const fn write_delayed_falls(&self) -> u8 {
-        match self.capture {
-            CaptureEdge::Combinational => self.cgb_extra_falls,
-            // The CGB register-path offset already carries the base "next fall"
-            // hold — `cgb_extra_falls` is the total, matching the historical
-            // `SCY_WRITE_LAG_FALLS = 2` (a `base + offset` reading would
-            // over-delay by one fall).
-            CaptureEdge::MCycleLastFall => self.cgb_extra_falls,
-        }
+        // `cgb_extra_falls` is the TOTAL hold, not a base + offset: the CGB
+        // register-path offset already carries the base "next fall" hold (a
+        // `base + offset` reading would over-delay by one fall).
+        self.cgb_extra_falls
     }
 }
 
