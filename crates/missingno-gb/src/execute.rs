@@ -455,12 +455,12 @@ impl<M: Model> Console<M> {
         tcycle: TCycle,
     ) -> ppu::PpuTickResult<<M::Ppu as ppu::PpuModel>::Pixel> {
         let oam_bus = self.dma.oam_bus_owner();
-        // The M-cycle's last PPU fall: the boundary (T3) fall when that
-        // T-cycle carries one; in double speed PPU falls land on alternate
-        // T-cycles, so when T3's edge has none the M's last fall is T2's. The
-        // WY/WX/LCDC.5/LCDC.2 crossing captures there.
-        let mcycle_last_fall =
-            is_mcycle_boundary || (self.model.cpu_steps_per_dot() == 2 && tcycle.as_u8() == 2);
+        // The M-cycle's last PPU fall, where the WY/WX/LCDC.5/LCDC.2 crossing
+        // captures — resolved by the divider cell from the ratio.
+        let mcycle_last_fall = self
+            .clock
+            .divider()
+            .mcycle_last_fall(is_mcycle_boundary, tcycle.as_u8());
         self.ppu
             .on_master_clock_fall(is_mcycle_boundary, mcycle_last_fall, oam_bus)
     }

@@ -133,9 +133,17 @@ impl StatInterrupt {
     }
 
     /// CGB FF45 write: the cell updates now (readback is write-time); the IRQ
-    /// domain sees it at the next boundary capture.
+    /// domain sees it at the LYC crossing's next resolved capture edge.
     pub(in crate::ppu) fn write_lyc_cell(&mut self, value: u8) {
         self.lyc = value;
+    }
+
+    /// The FF45→IRQ-block crossing: copy the LYC cell into the synchroniser DFF
+    /// and recompute PALY against it. Fired on the LYC crossing's resolved
+    /// capture edge; the synced value feeds the comparator for the next TALU↑.
+    pub(in crate::ppu) fn capture_synced_lyc(&mut self, ly: u8) {
+        self.irq_domain.synced_lyc = self.lyc;
+        self.update_comparison(ly);
     }
 
     /// CGB FF41 write: cell-only, as `write_lyc_cell`.
@@ -166,24 +174,21 @@ impl StatInterrupt {
     }
 
     /// CGB SUKO evaluation against the synchronised register file. At an
-    /// M-boundary fall (`boundary_capture`) the synchroniser DFFs capture the
-    /// cells first; the resulting register-path edges race this fall's
-    /// condition edges within the SUKO waveform. ROPO has already captured on
-    /// this same edge, so the synced LYC feeds PALY for the *next* TALU↑ —
-    /// the standard same-edge DFF-to-DFF rule.
+    /// M-boundary fall (`boundary_capture`) the FF41 synchroniser DFF captures
+    /// the enables cell first; the resulting register-path edges race this
+    /// fall's condition edges within the SUKO waveform. The FF45 crossing is
+    /// captured separately on its own resolved edge (`capture_synced_lyc`); its
+    /// synced value feeds PALY for the next TALU↑.
     pub(in crate::ppu) fn eval_synced(
         &mut self,
         conditions: InterruptFlags,
         talu_rising: bool,
         boundary_capture: bool,
-        ly: u8,
     ) -> bool {
         let enables_before = self.irq_domain.synced_enables;
         let register_edges = if boundary_capture {
             let delta = enables_before ^ self.enables;
             self.irq_domain.synced_enables = self.enables;
-            self.irq_domain.synced_lyc = self.lyc;
-            self.update_comparison(ly);
             delta & !InterruptFlags::DUMMY
         } else {
             InterruptFlags::empty()

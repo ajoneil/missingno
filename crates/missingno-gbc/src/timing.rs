@@ -26,6 +26,15 @@ pub const SCY_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 2,
 };
 
+/// The FF45 (LYC) → STAT-IRQ-block crossing on the CGB: the cell crosses into
+/// the IRQ block on the resolved capture edge with no register-path lag on top
+/// — pure (ii) clock phase. The phase arrives from the resolver; `cgb_extra_falls`
+/// stays 0.
+pub const LYC_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 0,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -35,5 +44,12 @@ mod tests {
     #[test]
     fn scy_crossing_carries_two_falls() {
         assert_eq!(SCY_CROSSING.write_delayed_falls(), 2);
+    }
+
+    /// The CGB LYC crossing carries no register-path lag — its phase rides the
+    /// capture edge alone.
+    #[test]
+    fn lyc_crossing_carries_no_extra_falls() {
+        assert_eq!(LYC_CROSSING.write_delayed_falls(), 0);
     }
 }

@@ -48,6 +48,20 @@ impl CpuDivider {
             CpuDivider::Two => 2,
         }
     }
+
+    /// Resolve [`CaptureEdge::MCycleLastFall`] to a concrete fall under this
+    /// ratio: is this PPU fall the last one of the writing M-cycle? At `÷1`
+    /// every T-cycle carries a PPU fall, so the M-cycle's last fall is its T3
+    /// boundary fall. At `÷2` PPU falls land on alternate T-cycles, so when the
+    /// T3 boundary edge carries no PPU fall the M's last fall is T2's. The
+    /// (ii) clock-domain phase the CGB crossing rides arrives entirely from
+    /// *which* edge this resolves to — never folded into a `cgb_extra_falls`
+    /// count.
+    ///
+    /// [`CaptureEdge::MCycleLastFall`]: crate::ppu::CaptureEdge::MCycleLastFall
+    pub fn mcycle_last_fall(self, is_mcycle_boundary: bool, tcycle: u8) -> bool {
+        is_mcycle_boundary || (self == CpuDivider::Two && tcycle == 2)
+    }
 }
 
 /// The CPU-clock gate handed to [`MasterClock::advance`]. `Running` clocks the
@@ -208,6 +222,26 @@ impl MasterClock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The resolver reproduces the inline `execute_phase` rule
+    /// `is_mcycle_boundary || (cpu_steps_per_dot()==2 && tcycle==2)` across the
+    /// full `(is_mcycle_boundary, tcycle)` domain at BOTH ratios — the (ii)
+    /// phase placement comes from this and nothing else.
+    #[test]
+    fn mcycle_last_fall_matches_inline_rule_at_both_ratios() {
+        for (divider, steps_per_dot) in [(CpuDivider::One, 1u8), (CpuDivider::Two, 2u8)] {
+            for is_boundary in [false, true] {
+                for tcycle in 0u8..=3 {
+                    let inline = is_boundary || (steps_per_dot == 2 && tcycle == 2);
+                    assert_eq!(
+                        divider.mcycle_last_fall(is_boundary, tcycle),
+                        inline,
+                        "ratio {steps_per_dot}, boundary {is_boundary}, tcycle {tcycle}"
+                    );
+                }
+            }
+        }
+    }
 
     /// The `advance()` truth table at `÷1`: every master edge carries a
     /// coincident CPU and dot edge, alternating Rise/Fall — the DMG

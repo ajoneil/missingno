@@ -192,6 +192,13 @@ pub trait PpuModel: Default {
     /// core names only the combinational collapse.
     const SCY_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
+    /// The FF45 (LYC) → STAT-IRQ-block crossing. The DMG feeds the comparator
+    /// combinationally (the cell drives PALY directly); the CGB crosses the cell
+    /// into the IRQ block on the resolved capture edge — pure (ii) clock phase,
+    /// no (iv) register-path lag (`cgb_extra_falls: 0`). DMG names only the
+    /// combinational collapse.
+    const LYC_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
     /// The CGB tile-map-select (LCDC.3/.6) fetch reads the select bit this many
     /// falls stale — captured at the fetcher's own counter-0 edge, it looks back
     /// past a just-committed mid-Mode-3 write (the documented CGB resync lag),

@@ -2,6 +2,7 @@
 
 use crate::dma::OamBusOwner;
 
+use super::crossing::CaptureEdge;
 use super::{Ppu, PpuModel, PpuTickResult, screen};
 
 impl<P: PpuModel> Ppu<P> {
@@ -77,17 +78,21 @@ impl<P: PpuModel> Ppu<P> {
             &mut result,
         );
         if P::HAS_CLOCK_DOMAIN_SYNC {
-            // M-boundary fall: the register-file synchroniser captures here,
-            // racing this fall's condition edges (ROPO captured pre-edge
-            // PALY above, so the synced LYC lands in the next TALU(+)).
-            // The WY/WX/LCDC.5/LCDC.2 crossing ticks inside
-            // `on_ppu_clock_fall` at the M-cycle's last PPU fall instead.
+            // The FF45→IRQ-block crossing captures on its resolved edge; the
+            // synced LYC lands in the next TALU↑.
+            if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) && mcycle_last_fall {
+                let ly = self.video.ly();
+                self.video.stat.capture_synced_lyc(ly);
+            }
+            // M-boundary fall: the FF41 synchroniser captures here, racing this
+            // fall's condition edges (ROPO captured pre-edge PALY above). The
+            // WY/WX/LCDC.5/LCDC.2 crossing ticks inside `on_ppu_clock_fall` at
+            // the M-cycle's last PPU fall instead.
             let conditions = self.stat_conditions();
-            let ly = self.video.ly();
             if self
                 .video
                 .stat
-                .eval_synced(conditions, talu_rising, is_mcycle, ly)
+                .eval_synced(conditions, talu_rising, is_mcycle)
             {
                 result.request_stat = true;
             }

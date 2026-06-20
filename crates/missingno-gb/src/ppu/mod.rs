@@ -462,9 +462,14 @@ impl<P: PpuModel> Ppu<P> {
         if !P::HAS_CLOCK_DOMAIN_SYNC {
             return false;
         }
+        // This is an M-cycle boundary, so the LYC crossing's resolved edge
+        // lands here too.
+        if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+            let ly = self.video.ly();
+            self.video.stat.capture_synced_lyc(ly);
+        }
         let conditions = self.stat_conditions();
-        let ly = self.video.ly();
-        self.video.stat.eval_synced(conditions, false, true, ly)
+        self.video.stat.eval_synced(conditions, false, true)
     }
 
     /// CPU read of a CGB colour-palette register; the model's clock-domain
@@ -609,8 +614,7 @@ impl<P: PpuModel> Ppu<P> {
         }
         let conditions = self.stat_conditions();
         if P::HAS_CLOCK_DOMAIN_SYNC {
-            let ly = self.video.ly();
-            return self.video.stat.eval_synced(conditions, false, false, ly);
+            return self.video.stat.eval_synced(conditions, false, false);
         }
         self.video.stat.eval_conditions(conditions, false)
     }
