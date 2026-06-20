@@ -66,6 +66,13 @@ impl CaptureSpec {
     /// arm on DMG).
     ///
     /// [`DffLatch::write_delayed`]: super::DffLatch::write_delayed
+    /// Whether the PPU samples this register on a named M-cycle edge (the CGB
+    /// crossing) rather than combinationally (DMG). The single predicate every
+    /// consumer keys its synced-vs-live branch on.
+    pub const fn is_synced(&self) -> bool {
+        !matches!(self.capture, CaptureEdge::Combinational)
+    }
+
     pub const fn write_delayed_falls(&self) -> u8 {
         // `cgb_extra_falls` is the TOTAL hold, not a base + offset: the CGB
         // register-path offset already carries the base "next fall" hold (a

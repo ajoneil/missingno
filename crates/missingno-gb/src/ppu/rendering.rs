@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, crossing::CaptureEdge, memory::Oam,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam,
     types::sprites::SpriteId,
 };
 
@@ -210,7 +210,7 @@ impl<P: PpuModel> Rendering<P> {
     /// Whether `P` crosses the window register file into the pixel pipeline on a
     /// named M-cycle edge — the CGB case. DMG reads the cells live.
     fn window_synced() -> bool {
-        matches!(P::WINDOW_CROSSING.capture, CaptureEdge::MCycleLastFall)
+        P::WINDOW_CROSSING.is_synced()
     }
 
     /// CGB register crossing into the window decode and scan comparator; the
@@ -222,7 +222,7 @@ impl<P: PpuModel> Rendering<P> {
             regs.control.window_enabled(),
             regs.control.sprite_size(),
         );
-        if matches!(P::SCX_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+        if P::SCX_CROSSING.is_synced() {
             self.synced_scx = regs.background_viewport.x.output();
         }
     }
@@ -706,7 +706,7 @@ impl<P: PpuModel> Rendering<P> {
 
         // POHU = (count == SCX & 7); ROXO captures POHU into PUXA on the falling edge.
         // CGB reads FF43 through the register-file crossing.
-        let scx = if matches!(P::SCX_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+        let scx = if P::SCX_CROSSING.is_synced() {
             self.synced_scx
         } else {
             regs.background_viewport.x.output()

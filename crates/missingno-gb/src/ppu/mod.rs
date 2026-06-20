@@ -460,16 +460,13 @@ impl<P: PpuModel> Ppu<P> {
     pub fn capture_register_sync_standalone(&mut self) -> bool {
         // This is an M-cycle boundary, so the LYC crossing's resolved edge
         // lands here too.
-        if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+        if P::LYC_CROSSING.is_synced() {
             let ly = self.video.ly();
             self.video
                 .stat
                 .capture_synced_lyc(ly, self.model.stat_shadow_mut());
         }
-        if !matches!(
-            P::STAT_ENABLES_CROSSING.capture,
-            CaptureEdge::MCycleLastFall
-        ) {
+        if !P::STAT_ENABLES_CROSSING.is_synced() {
             return false;
         }
         let conditions = self.stat_conditions();
@@ -599,10 +596,7 @@ impl<P: PpuModel> Ppu<P> {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     /// The CGB reads the enables through the register-file synchroniser.
     pub fn stat_legs(&self) -> InterruptFlags {
-        let enables = if matches!(
-            P::STAT_ENABLES_CROSSING.capture,
-            CaptureEdge::MCycleLastFall
-        ) {
+        let enables = if P::STAT_ENABLES_CROSSING.is_synced() {
             self.model.stat_shadow().synced_enables()
         } else {
             self.video.stat.enables()
@@ -622,10 +616,7 @@ impl<P: PpuModel> Ppu<P> {
             return false;
         }
         let conditions = self.stat_conditions();
-        if matches!(
-            P::STAT_ENABLES_CROSSING.capture,
-            CaptureEdge::MCycleLastFall
-        ) {
+        if P::STAT_ENABLES_CROSSING.is_synced() {
             return self.video.stat.eval_synced(
                 conditions,
                 false,

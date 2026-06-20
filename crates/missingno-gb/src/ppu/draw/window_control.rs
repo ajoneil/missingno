@@ -1,13 +1,5 @@
-use crate::ppu::crossing::CaptureEdge;
 use crate::ppu::types::sprites::SpriteSize;
 use crate::ppu::{DffLatch, NorLatch, PipelineRegisters, PpuModel, VideoControl};
-
-/// Whether `P` crosses the window register file (WY/WX/LCDC.5/LCDC.2) into the
-/// pixel pipeline on a named M-cycle edge — the CGB case. DMG reads the cells
-/// live.
-fn window_synced<P: PpuModel>() -> bool {
-    matches!(P::WINDOW_CROSSING.capture, CaptureEdge::MCycleLastFall)
-}
 
 /// WY/WX/LCDC.5/LCDC.2 as one word crossing the register-file synchroniser.
 #[derive(Clone, Copy)]
@@ -230,7 +222,7 @@ impl WindowControl {
         fepo: bool,
         regs: &PipelineRegisters,
     ) {
-        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, window_synced::<P>()) {
+        if P::ENABLE_QUALIFIED_WINDOW_HIT && self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced()) {
             self.pyco.write_immediate(0);
             return;
         }
@@ -301,7 +293,7 @@ impl WindowControl {
         cascade: &mut FetchCascade,
         fine_scroll: &mut FineScroll,
     ) -> bool {
-        let xofo = self.compute_xofo(regs, window_synced::<P>());
+        let xofo = self.compute_xofo(regs, P::WINDOW_CROSSING.is_synced());
         let prev_pynu_q = self.pynu.output();
 
         if xofo {
