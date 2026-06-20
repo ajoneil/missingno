@@ -1,21 +1,6 @@
-//! Register clock-domain crossing descriptors.
-//!
-//! A crossing is where a CPU-domain register value hands off to the PPU pixel
-//! pipeline. The handoff has two independent components:
-//!
-//! - **the capture edge** — which clock edge the PPU samples the value on. On
-//!   DMG the register couples combinationally (the PPU reads it the moment it is
-//!   written); on the CGB it crosses into the PPU on a named M-cycle-clock edge.
-//!   This is shared silicon: it is a function of the clock model, never of CGB
-//!   data.
-//! - **the CGB register-path offset** — a speed-independent extra hold the CGB
-//!   silicon adds on top of the capture edge, present at every CGB speed
-//!   (including single speed, ratio=1). This is CGB *data*, authored behind the
-//!   `missingno-gbc` wall; it is **not** derived from the CPU:dot ratio.
-//!
-//! [`CaptureSpec`] composes the two by addition, never by ratio-derivation. The
-//! ratio is deliberately not in scope of this descriptor — the (ii) clock-domain
-//! phase skew rides the capture edge, and the (iv) offset rides `cgb_extra_falls`.
+//! Register clock-domain crossing descriptors: [`CaptureSpec`] composes the
+//! shared-silicon capture edge and the speed-independent CGB register-path offset
+//! by addition, never by CPU:dot ratio-derivation.
 
 /// Which clock edge the PPU captures a crossed register on.
 ///

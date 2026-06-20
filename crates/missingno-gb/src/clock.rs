@@ -1,16 +1,6 @@
-//! The master-clock phase primitive.
-//!
-//! On hardware the CPU's CLK9 family and the PPU's ALET (dot) family are both
-//! derived from the one continuous `ck1_ck2` master clock. A single `÷1`-or-`÷2`
-//! divider cell sits between the master oscillator and the CPU clock: at `÷1`
-//! (DMG, and CGB single speed) every CPU edge carries a dot edge, so the two
-//! domains coincide; the CGB KEY1 switch flips it to `÷2`, splitting the CPU
-//! edge stream from the dot edge stream.
-//!
-//! `MasterClock::advance` is the one place the divider ratio is read and the one
-//! place the dispatch schedule is produced. At `÷1` it emits a `cpu` edge and a
-//! coincident `dot` edge every master edge — exactly the `clock_phase ==
-//! ppu_phase` lockstep the rest of the machine was built on.
+//! The master-clock phase primitive: the `÷1`-or-`÷2` KEY1 divider between the
+//! `ck1_ck2` master clock and the CPU CLK9 family is read in one place here, so
+//! `advance` is the sole producer of the CPU:dot dispatch schedule.
 
 /// One alternating edge of the continuous master clock (`ck1_ck2`). `Rise` and
 /// `Fall` are the two edges of one cycle — not an ordering. A DFF captures on

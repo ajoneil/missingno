@@ -103,9 +103,9 @@ pub trait PpuModel: Default {
     /// but the DMG OBP-select (bit 4) in DMG-compatibility mode.
     fn obj_attr(&self, attrs: sprites::Attributes) -> ObjAttr;
 
-    /// The FF41/FF45 → STAT-IRQ-block synchroniser. The CGB holds DFF copies of
-    /// the enables and LYC cells ([`SyncedStatCells`]); the DMG feeds the IRQ
-    /// block combinationally off the cells and carries a ZST `()`.
+    /// The FF41/FF45 → STAT-IRQ-block synchroniser: CGB holds DFF copies of the
+    /// enables and LYC cells ([`SyncedStatCells`]), DMG feeds the block
+    /// combinationally and carries a ZST `()`.
     ///
     /// [`SyncedStatCells`]: super::stat_interrupt::SyncedStatCells
     type StatShadow: StatShadow + Default;

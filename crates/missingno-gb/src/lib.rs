@@ -754,44 +754,33 @@ impl Console<Dmg> {
     }
 }
 
-/// B2 acceptance harness: a compile-time guarantee that the DMG build carries
-/// no CGB-only storage in the shared structs.
-///
-/// Each shared struct lists its CGB-only fields and their byte cost on a DMG
-/// build. `CGB_BYTES` is that residual storage — the budget B2 drives to zero by
-/// relocating the state behind the `Model`/`PpuModel` seam. The summed residual
-/// is the load-bearing invariant; absolute `size_of` is left unpinned so the
-/// test tracks the CGB residual, not unrelated struct padding.
+/// B2 acceptance harness: each shared struct's summed CGB-only residual storage
+/// on a DMG build is the load-bearing invariant (B2 drives it to zero behind the
+/// `Model`/`PpuModel` seam); absolute `size_of` is left unpinned to exclude
+/// unrelated struct padding.
 #[cfg(test)]
 mod cgb_residual_size {
-    /// `Console<M>` CGB-only state relocated behind the `Model::ConsoleState`
-    /// seam (`CgbConsoleState` on CGB, ZST `()` on DMG); the DMG `Console`
-    /// carries none of it.
+    /// `Console<M>` CGB-only state relocated behind the `Model::ConsoleState` seam.
     mod console {
         pub const CGB_BYTES: usize = 0;
     }
 
-    /// `Cpu` CGB-only fields: `irq.halt_wake_presample`, `bus_suspended`,
-    /// `vram_dma_claim`, `bus_held`.
+    /// `Cpu` CGB-only fields: `irq.halt_wake_presample`, `bus_suspended`, `vram_dma_claim`, `bus_held`.
     mod cpu {
         pub const CGB_BYTES: usize = 1 + 1 + 2 + 1;
     }
 
-    /// `PipelineRegisters` CGB-only field: `tile_sel_reset_glitch` (armed only
-    /// behind `P::TILE_SEL_RESET_GLITCH`).
+    /// `PipelineRegisters` CGB-only field: `tile_sel_reset_glitch` (`P::TILE_SEL_RESET_GLITCH`).
     mod pipeline_registers {
         pub const CGB_BYTES: usize = 2;
     }
 
-    /// `StatInterrupt` FF41/FF45 synchroniser DFFs relocated behind the
-    /// `PpuModel::StatShadow` seam (`SyncedStatCells` on CGB, ZST `()` on DMG).
+    /// `StatInterrupt` FF41/FF45 synchroniser DFFs relocated behind the `PpuModel::StatShadow` seam.
     mod stat_interrupt {
         pub const CGB_BYTES: usize = 0;
     }
 
-    /// The residual CGB-only storage still carried on a DMG build, summed across
-    /// the four shared structs. B2's terminal state is zero; update each struct's
-    /// `CGB_BYTES` as its state is relocated.
+    /// Residual CGB-only storage still carried on a DMG build, summed across the four shared structs.
     #[test]
     fn cgb_only_byte_budget_remaining() {
         const REMAINING: usize = console::CGB_BYTES

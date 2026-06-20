@@ -1,16 +1,6 @@
-//! CGB register-path timing data.
-//!
-//! The home for the speed-independent CGB register-crossing offsets — the
-//! `cgb_extra_falls` each [`CaptureSpec`] carries on top of its capture edge.
-//! These are CGB *data*: a real CGB-vs-DMG silicon timing delta present at every
-//! CGB speed, including single speed (ratio=1). They are **not** derived from the
-//! CPU:dot ratio — the (ii) double-speed clock model supplies the phase skew at
-//! ratio=2 and collapses to DMG at ratio=1, while these offsets ride on top per
-//! crossing.
-//!
-//! The shared `missingno-gb` core names only the [`CaptureSpec`] *type* and its
-//! [`CaptureSpec::COMBINATIONAL`] collapse; every non-zero value is authored here,
-//! behind the wall.
+//! CGB register-path timing data: the speed-independent `cgb_extra_falls` each
+//! [`CaptureSpec`] carries — a real CGB-vs-DMG silicon delta present at every CGB
+//! speed, authored behind the wall and never derived from the CPU:dot ratio.
 //!
 //! [`CaptureSpec`]: missingno_gb::ppu::CaptureSpec
 
