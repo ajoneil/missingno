@@ -46,6 +46,15 @@ pub const TILE_MAP_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 2,
 };
 
+/// The FF43 (SCX) → fine-scroll-match crossing on the CGB: the cell crosses
+/// into the pixel pipeline on the resolved capture edge with no register-path
+/// lag on top — pure (ii) clock phase, like LYC. The phase arrives from the
+/// resolver; `cgb_extra_falls` stays 0.
+pub const SCX_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 0,
+};
+
 /// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank crossing on the CGB: the
 /// write crosses on the M-cycle-last-fall edge and the OLD-overlay holds the
 /// pre-write value one extra fall — RAJY lands one dot later than the DMG's
@@ -101,5 +110,13 @@ mod tests {
     #[test]
     fn obj_enable_crossing_carries_no_extra_falls() {
         assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 0);
+    }
+
+    /// The CGB SCX crossing carries no register-path lag — its phase rides the
+    /// capture edge alone, like LYC.
+    #[test]
+    fn scx_crossing_carries_no_extra_falls() {
+        assert_eq!(SCX_CROSSING.write_delayed_falls(), 0);
+        assert_eq!(SCX_CROSSING.capture, CaptureEdge::MCycleLastFall);
     }
 }

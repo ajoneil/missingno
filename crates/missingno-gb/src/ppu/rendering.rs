@@ -4,7 +4,8 @@ use core::fmt;
 
 use crate::dma::OamBusOwner;
 use crate::ppu::{
-    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, memory::Oam, types::sprites::SpriteId,
+    DrawnPixel, PipelineRegisters, PpuModel, VideoControl, crossing::CaptureEdge, memory::Oam,
+    types::sprites::SpriteId,
 };
 
 use super::draw::fetch_cascade::FetchCascade;
@@ -215,7 +216,9 @@ impl<P: PpuModel> Rendering<P> {
             regs.control.window_enabled(),
             regs.control.sprite_size(),
         );
-        self.synced_scx = regs.background_viewport.x.output();
+        if matches!(P::SCX_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+            self.synced_scx = regs.background_viewport.x.output();
+        }
     }
 
     /// XYMU rendering latch; `true` during Mode 3 (opposite polarity to spec's active-low XYMU).
@@ -697,7 +700,7 @@ impl<P: PpuModel> Rendering<P> {
 
         // POHU = (count == SCX & 7); ROXO captures POHU into PUXA on the falling edge.
         // CGB reads FF43 through the register-file crossing.
-        let scx = if P::HAS_CLOCK_DOMAIN_SYNC {
+        let scx = if matches!(P::SCX_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             self.synced_scx
         } else {
             regs.background_viewport.x.output()

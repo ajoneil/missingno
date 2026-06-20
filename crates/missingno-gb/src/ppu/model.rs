@@ -199,6 +199,12 @@ pub trait PpuModel: Default {
     /// combinational collapse.
     const LYC_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
+    /// The FF43 (SCX) → fine-scroll-match (POHU) crossing. The DMG reads the
+    /// cell live; the CGB crosses it into the pixel pipeline on the resolved
+    /// capture edge — pure (ii) clock phase, no (iv) register-path lag
+    /// (`cgb_extra_falls: 0`). DMG names only the combinational collapse.
+    const SCX_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
     /// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing.
     /// The DMG couples it combinationally (the fetch reads LCDC live); the CGB
     /// latches the write onto its own clock and the fetch samples the select bit

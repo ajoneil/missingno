@@ -363,6 +363,7 @@ impl PpuModel for CgbPpu {
     const OBP_WRITE_RACE: bool = false;
     const SCY_CROSSING: CaptureSpec = crate::timing::SCY_CROSSING;
     const LYC_CROSSING: CaptureSpec = crate::timing::LYC_CROSSING;
+    const SCX_CROSSING: CaptureSpec = crate::timing::SCX_CROSSING;
     const TILE_MAP_CROSSING: CaptureSpec = crate::timing::TILE_MAP_CROSSING;
     const BG_ENABLE_CROSSING: CaptureSpec = crate::timing::BG_ENABLE_CROSSING;
     const OBJ_ENABLE_CROSSING: CaptureSpec = crate::timing::OBJ_ENABLE_CROSSING;
