@@ -179,17 +179,16 @@ impl<M: Model> Console<M> {
         // The pre-advance dot phase — the fall arm's standalone dot_work read of
         // the dot domain's current edge.
         let dot_phase_before = self.clock.dot_phase();
-        // The held blackout's elapsed master-edge count is the anchor difference
-        // (read pre-advance, so it is the count of held edges already completed).
-        // Meaningless on a running edge.
-        let held_elapsed = self
-            .clock
-            .master_edge()
-            .wrapping_sub(self.model.console_state().blackout_anchor());
+        let master_edge_before = self.clock.master_edge();
         let tick = self.clock.advance(gate);
         // A held edge: the CPU is frozen and the dot domain alone advanced.
         if tick.cpu.is_none() {
             let dot = tick.dot.expect("a held edge always carries a dot edge");
+            // Correctness relies on no Running edge falling between arming the
+            // blackout anchor and draining it: the elapsed count is the
+            // pre-advance anchor difference, the held edges already completed.
+            let held_elapsed =
+                master_edge_before.wrapping_sub(self.model.console_state().blackout_anchor());
             return self.held_dot_advance(dot, held_elapsed);
         }
         let ppu = match tick.dot {
