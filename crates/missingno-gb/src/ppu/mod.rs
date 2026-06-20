@@ -456,14 +456,14 @@ impl<P: PpuModel> Ppu<P> {
     /// only register-path edges can race here). The WY/WX/LCDC.5/LCDC.2
     /// crossing does not — it captures at the M-cycle's last PPU fall instead.
     pub fn capture_register_sync_standalone(&mut self) -> bool {
-        if !P::HAS_CLOCK_DOMAIN_SYNC {
-            return false;
-        }
         // This is an M-cycle boundary, so the LYC crossing's resolved edge
         // lands here too.
         if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             let ly = self.video.ly();
             self.video.stat.capture_synced_lyc(ly);
+        }
+        if !matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
+            return false;
         }
         let conditions = self.stat_conditions();
         self.video.stat.eval_synced(conditions, false, true)
@@ -590,7 +590,7 @@ impl<P: PpuModel> Ppu<P> {
     /// SUKO source-leg vector — one bit per enabled-source AND-term (matches AO2222 structure).
     /// The CGB reads the enables through the register-file synchroniser.
     pub fn stat_legs(&self) -> InterruptFlags {
-        let enables = if P::HAS_CLOCK_DOMAIN_SYNC {
+        let enables = if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             self.video.stat.synced_enables()
         } else {
             self.video.stat.enables()
@@ -610,7 +610,7 @@ impl<P: PpuModel> Ppu<P> {
             return false;
         }
         let conditions = self.stat_conditions();
-        if P::HAS_CLOCK_DOMAIN_SYNC {
+        if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             return self.video.stat.eval_synced(conditions, false, false);
         }
         self.video.stat.eval_conditions(conditions, false)

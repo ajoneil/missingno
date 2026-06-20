@@ -77,30 +77,24 @@ impl<P: PpuModel> Ppu<P> {
             mcycle_last_fall,
             &mut result,
         );
-        if P::HAS_CLOCK_DOMAIN_SYNC {
-            // The FF45→IRQ-block crossing captures on its resolved edge; the
-            // synced LYC lands in the next TALU↑.
-            if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) && mcycle_last_fall {
-                let ly = self.video.ly();
-                self.video.stat.capture_synced_lyc(ly);
-            }
+        // The FF45→IRQ-block crossing captures on its resolved edge; the synced
+        // LYC lands in the next TALU↑.
+        if matches!(P::LYC_CROSSING.capture, CaptureEdge::MCycleLastFall) && mcycle_last_fall {
+            let ly = self.video.ly();
+            self.video.stat.capture_synced_lyc(ly);
+        }
+        let conditions = self.stat_conditions();
+        let edge = if matches!(P::STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall) {
             // M-boundary fall: the FF41 synchroniser captures here, racing this
             // fall's condition edges (ROPO captured pre-edge PALY above). The
             // WY/WX/LCDC.5/LCDC.2 crossing ticks inside `on_ppu_clock_fall` at
             // the M-cycle's last PPU fall instead.
-            let conditions = self.stat_conditions();
-            if self
-                .video
-                .stat
-                .eval_synced(conditions, talu_rising, is_mcycle)
-            {
-                result.request_stat = true;
-            }
+            self.video.stat.eval_synced(conditions, talu_rising, is_mcycle)
         } else {
-            let conditions = self.stat_conditions();
-            if self.video.stat.eval_conditions(conditions, talu_rising) {
-                result.request_stat = true;
-            }
+            self.video.stat.eval_conditions(conditions, talu_rising)
+        };
+        if edge {
+            result.request_stat = true;
         }
 
         result

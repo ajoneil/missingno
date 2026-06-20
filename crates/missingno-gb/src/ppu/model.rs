@@ -212,6 +212,17 @@ pub trait PpuModel: Default {
     /// the combinational collapse.
     const WINDOW_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
+    /// The FF41 (STAT enables) → STAT-IRQ-block crossing. The DMG feeds the SUKO
+    /// legs combinationally (no register edge can occur inside a TALU
+    /// evaluation); the CGB crosses the enables cell into the IRQ block on the
+    /// resolved capture edge — the M-boundary fall — where the resulting
+    /// register-path edges race that fall's condition edges in the SUKO
+    /// waveform. Pure (ii) clock phase, no (iv) register-path lag
+    /// (`cgb_extra_falls: 0`); the intra-evaluation arrival is the separate
+    /// `REGISTER_PATH_ARRIVAL_PS` waveform constant. DMG names only the
+    /// combinational collapse.
+    const STAT_ENABLES_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
     /// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing.
     /// The DMG couples it combinationally (the fetch reads LCDC live); the CGB
     /// latches the write onto its own clock and the fetch samples the select bit

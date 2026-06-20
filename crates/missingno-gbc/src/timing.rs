@@ -55,6 +55,17 @@ pub const SCX_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 0,
 };
 
+/// The FF41 (STAT enables) → STAT-IRQ-block crossing on the CGB: the enables
+/// cell crosses into the IRQ block on the resolved capture edge (the M-boundary
+/// fall) with no register-path lag on top — pure (ii) clock phase, like LYC.
+/// The intra-evaluation register arrival that races the SUKO waveform is the
+/// separate `REGISTER_PATH_ARRIVAL_PS` constant, not this offset; `cgb_extra_falls`
+/// stays 0.
+pub const STAT_ENABLES_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 0,
+};
+
 /// The window register file (WY/WX/LCDC.5/LCDC.2) crossing on the CGB: the
 /// cells cross into the window decode and scan Y-comparator on the resolved
 /// capture edge with no register-path lag on top — pure (ii) clock phase, like
@@ -135,5 +146,14 @@ mod tests {
     fn window_crossing_carries_no_extra_falls() {
         assert_eq!(WINDOW_CROSSING.write_delayed_falls(), 0);
         assert_eq!(WINDOW_CROSSING.capture, CaptureEdge::MCycleLastFall);
+    }
+
+    /// The CGB STAT-enables crossing carries no register-path lag — its phase
+    /// rides the capture edge alone (the SUKO-waveform register arrival is the
+    /// separate `REGISTER_PATH_ARRIVAL_PS` constant).
+    #[test]
+    fn stat_enables_crossing_carries_no_extra_falls() {
+        assert_eq!(STAT_ENABLES_CROSSING.write_delayed_falls(), 0);
+        assert_eq!(STAT_ENABLES_CROSSING.capture, CaptureEdge::MCycleLastFall);
     }
 }
