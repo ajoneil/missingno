@@ -1,13 +1,7 @@
-//! The DMG master clock: the 4.19 MHz signal that drives every
-//! subsystem. One full master-clock cycle (Low → High → Low) is one
-//! T-cycle; four T-cycles make one M-cycle (the CPU's machine cycle).
-//!
-//! The executor alternates `rise()` (Low→High edge) and `fall()`
-//! (High→Low edge); together they advance one T-cycle.
+//! `ClockPhase` — the master-edge level type surfaced for the headless
+//! debugger API. The live clock model lives in [`crate::clock`].
 
-/// Master clock signal level. Alternates High → Low → High each
-/// half-T-cycle. `rise()` fires at the Low→High edge; `fall()` fires
-/// at the High→Low edge.
+/// Master-clock signal level (the `clock::Edge` view exposed to the debugger).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClockPhase {
     High,
