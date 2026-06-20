@@ -721,12 +721,16 @@ mod cgb_residual_size {
     }
 
     /// `PipelineRegisters` CGB-only fields (ppu/registers.rs):
-    /// - `tile_map_select: DffLatch` — 4
-    /// - `bg_window_enabled_overlay: OldOverlay` — 2
-    /// - `sprites_enabled_overlay: OldOverlay` — 2
-    /// - `tile_sel_reset_glitch: TileSelResetGlitch` — 2
+    /// - `tile_sel_reset_glitch: TileSelResetGlitch` — 2 (armed only behind
+    ///   `P::TILE_SEL_RESET_GLITCH`)
+    ///
+    /// Not CGB-only, so not counted: `tile_map_select` (DMG writes it immediately
+    /// and the fetcher reads it — the DMG's own LCDC-for-tilemap view), and the
+    /// `bg_window_enabled_overlay` / `sprites_enabled_overlay` (`OldOverlay`s
+    /// armed on both cores for the mid-Mode-3 LCDC.0/.1 same-fall OLD tick; CGB
+    /// only widens the hold). Relocating those would lose shared DMG behaviour.
     mod pipeline_registers {
-        pub const CGB_BYTES: usize = 4 + 2 + 2 + 2;
+        pub const CGB_BYTES: usize = 2;
         pub const TOTAL: usize = 55;
     }
 
@@ -772,6 +776,6 @@ mod cgb_residual_size {
             + cpu::CGB_BYTES
             + pipeline_registers::CGB_BYTES
             + stat_interrupt::CGB_BYTES;
-        assert_eq!(REMAINING, 30, "CGB-only residual byte budget changed");
+        assert_eq!(REMAINING, 22, "CGB-only residual byte budget changed");
     }
 }
