@@ -166,16 +166,8 @@ impl<M: Model> Console<M> {
     /// dot domain free-runs, so the post-switch alignment emerges from the held
     /// count rather than a fixed map.
     fn execute_phase(&mut self, gate: CpuGate) -> PhaseResult {
-        let double_speed = self.model.cpu_steps_per_dot() == 2;
-        // The ÷1/÷2 divider is the model's ratio; KEY1 mutates it through the
-        // speed switch, which drains the blackout and re-engages on a CPU rise,
-        // so the cpu_phase_in_dot==0 ⟺ cpu_phase==Rise invariant the dispatch
-        // relies on is restored before the next running edge.
-        self.clock.set_divider(if double_speed {
-            CpuDivider::Two
-        } else {
-            CpuDivider::One
-        });
+        // The clock owns the ÷1/÷2 ratio; KEY1 mutates it at the speed switch.
+        let double_speed = self.clock.divider() == CpuDivider::Two;
         // The pre-advance dot phase — the fall arm's standalone dot_work read of
         // the dot domain's current edge.
         let dot_phase_before = self.clock.dot_phase();
@@ -287,6 +279,13 @@ impl<M: Model> Console<M> {
                 {
                     self.interrupts.request(interrupt);
                 }
+                // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
+                // cell to the new ratio so the clock stays the sole ratio owner.
+                self.clock.set_divider(if self.model.cpu_steps_per_dot() == 2 {
+                    CpuDivider::Two
+                } else {
+                    CpuDivider::One
+                });
                 // Anchor the held-edge count at the current master edge; the
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
                 let anchor = self.clock.master_edge();

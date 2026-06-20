@@ -633,6 +633,13 @@ impl<M: Model> Console<M> {
         // Re-anchor the CPU clock to a rise; the free-running dot phase is left
         // as-is (the old reset touched only `clock_phase`).
         self.clock.engage_on_rise();
+        // The model resets to single speed; realign the clock's ÷1/÷2 cell so it
+        // stays the sole ratio owner across a reset.
+        self.clock.set_divider(if self.model.cpu_steps_per_dot() == 2 {
+            CpuDivider::Two
+        } else {
+            CpuDivider::One
+        });
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
         self.model.console_state_mut().set_dma_conflict_oam_zero(None);
