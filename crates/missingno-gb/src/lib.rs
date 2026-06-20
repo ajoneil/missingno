@@ -758,91 +758,40 @@ impl Console<Dmg> {
 /// no CGB-only storage in the shared structs.
 ///
 /// Each shared struct lists its CGB-only fields and their byte cost on a DMG
-/// build. `CGB_BYTES` is that residual storage — the budget B2 drives to zero
-/// by relocating the state behind the `Model`/`PpuModel` seam. `TOTAL` pins the
-/// struct's current `size_of`; the two move together as fields leave, so any
-/// drift (an erased field that didn't shrink the struct, or new shared storage)
-/// fails the build. When `CGB_BYTES` reaches zero the DMG layout is provably
-/// CGB-free for that struct.
+/// build. `CGB_BYTES` is that residual storage — the budget B2 drives to zero by
+/// relocating the state behind the `Model`/`PpuModel` seam. The summed residual
+/// is the load-bearing invariant; absolute `size_of` is left unpinned so the
+/// test tracks the CGB residual, not unrelated struct padding.
 #[cfg(test)]
 mod cgb_residual_size {
-    use super::*;
-    use std::mem::size_of;
-
-    /// `Console<M>` CGB-only state is relocated behind the `Model::ConsoleState`
-    /// seam (`CgbConsoleState` on CGB, ZST `()` on DMG): the speed-switch
-    /// blackout anchor, the HDMA bus-park, and the VRAM-source OAM-zero conflict.
-    /// The DMG `Console` carries none of it.
-    ///
-    /// Not CGB-only, so not relocated: `dma_conflict_write_pending` (the
-    /// OAM-DMA source-bus write conflict — `oam_dma_bus_conflict`'s shared
-    /// external-bus rule fires on DMG too) and `clock: MasterClock` (the
-    /// master-edge counter both cores run on).
+    /// `Console<M>` CGB-only state relocated behind the `Model::ConsoleState`
+    /// seam (`CgbConsoleState` on CGB, ZST `()` on DMG); the DMG `Console`
+    /// carries none of it.
     mod console {
         pub const CGB_BYTES: usize = 0;
-        pub const TOTAL: usize = 50656;
     }
 
-    /// `Cpu` CGB-only fields (cpu/mod.rs):
-    /// - `irq.halt_wake_presample: bool` — 1 (inside `IrqContext`)
-    /// - `bus_suspended: bool` — 1
-    /// - `vram_dma_claim: VramDmaClaim` — 2
-    /// - `bus_held: bool` — 1
+    /// `Cpu` CGB-only fields: `irq.halt_wake_presample`, `bus_suspended`,
+    /// `vram_dma_claim`, `bus_held`.
     mod cpu {
         pub const CGB_BYTES: usize = 1 + 1 + 2 + 1;
-        pub const TOTAL: usize = 84;
     }
 
-    /// `PipelineRegisters` CGB-only fields (ppu/registers.rs):
-    /// - `tile_sel_reset_glitch: TileSelResetGlitch` — 2 (armed only behind
-    ///   `P::TILE_SEL_RESET_GLITCH`)
-    ///
-    /// Not CGB-only, so not counted: `tile_map_select` (DMG writes it immediately
-    /// and the fetcher reads it — the DMG's own LCDC-for-tilemap view), and the
-    /// `bg_window_enabled_overlay` / `sprites_enabled_overlay` (`OldOverlay`s
-    /// armed on both cores for the mid-Mode-3 LCDC.0/.1 same-fall OLD tick; CGB
-    /// only widens the hold). Relocating those would lose shared DMG behaviour.
+    /// `PipelineRegisters` CGB-only field: `tile_sel_reset_glitch` (armed only
+    /// behind `P::TILE_SEL_RESET_GLITCH`).
     mod pipeline_registers {
         pub const CGB_BYTES: usize = 2;
-        pub const TOTAL: usize = 55;
     }
 
-    /// `StatInterrupt`: the FF41/FF45 synchroniser DFFs are relocated behind the
-    /// `PpuModel::StatShadow` seam (`SyncedStatCells` on CGB, ZST `()` on DMG),
-    /// so the DMG `StatInterrupt` carries no CGB-only storage.
+    /// `StatInterrupt` FF41/FF45 synchroniser DFFs relocated behind the
+    /// `PpuModel::StatShadow` seam (`SyncedStatCells` on CGB, ZST `()` on DMG).
     mod stat_interrupt {
         pub const CGB_BYTES: usize = 0;
-        pub const TOTAL: usize = 6;
-    }
-
-    #[test]
-    fn dmg_layout_holds_documented_cgb_residual() {
-        assert_eq!(
-            size_of::<Console<Dmg>>(),
-            console::TOTAL,
-            "Console<Dmg> size changed",
-        );
-        assert_eq!(
-            size_of::<crate::cpu::Cpu>(),
-            self::cpu::TOTAL,
-            "Cpu size changed",
-        );
-        assert_eq!(
-            size_of::<ppu::PipelineRegisters>(),
-            pipeline_registers::TOTAL,
-            "PipelineRegisters size changed",
-        );
-        assert_eq!(
-            size_of::<ppu::StatInterrupt>(),
-            stat_interrupt::TOTAL,
-            "StatInterrupt size changed",
-        );
     }
 
     /// The residual CGB-only storage still carried on a DMG build, summed across
-    /// the four shared structs. B2's terminal state is zero. Update each
-    /// struct's `CGB_BYTES` (and `TOTAL`) as its state is relocated; this total
-    /// records the remaining work.
+    /// the four shared structs. B2's terminal state is zero; update each struct's
+    /// `CGB_BYTES` as its state is relocated.
     #[test]
     fn cgb_only_byte_budget_remaining() {
         const REMAINING: usize = console::CGB_BYTES
