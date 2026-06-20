@@ -1,5 +1,5 @@
 use crate::{
-    Console, Model, audio,
+    Console, ConsoleShadow, Model, audio,
     cpu_bus::{BusAccess, BusAccessKind},
     dmg_sram,
     interrupts::{self, InterruptFlags},
@@ -594,7 +594,9 @@ impl<M: Model> Console<M> {
                         .model
                         .oam_dma_conflict_zeroes_oam(address, self.dma.source())
                     {
-                        self.dma_conflict_oam_zero = Some(dst_offset);
+                        self.model
+                            .console_state_mut()
+                            .set_dma_conflict_oam_zero(Some(dst_offset));
                     } else {
                         let src_byte = self.read_dma_source(src_addr);
                         self.dma_conflict_write_pending = Some((dst_offset, src_byte, value));

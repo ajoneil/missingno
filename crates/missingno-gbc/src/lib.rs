@@ -35,8 +35,9 @@ use missingno_gb::ppu::{
     PixelMux, Ppu, PpuModel, SyncedStatCells, resolve_dmg_pixel,
 };
 use missingno_gb::{
-    Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio, cartridge::Cartridge,
-    cpu::Cpu, dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte, timers::Timers,
+    CgbConsoleState, Console, Model, StopAction, VramDmaClaim, WaveRamCoupling, audio::Audio,
+    cartridge::Cartridge, cpu::Cpu, dma::Dma, joypad::Joypad, shared_oam_dma_write_conflict_byte,
+    timers::Timers,
 };
 
 use crate::screen::{Color555, GREYSCALE, Screen};
@@ -716,6 +717,9 @@ pub struct Cgb {
     /// address bits 3-4 (three 8-byte rows at $FEA0/$FEC0/$FEE0, each
     /// aliased 4x in its block).
     extra_oam: [u8; 24],
+    /// Console-level arbitration state (speed-switch blackout anchor, HDMA
+    /// bus-park, VRAM-source OAM-zero conflict).
+    console_state: CgbConsoleState,
 }
 
 impl Default for Cgb {
@@ -735,6 +739,7 @@ impl Default for Cgb {
             ff74: 0,
             ff75: 0,
             extra_oam: [0; 24],
+            console_state: CgbConsoleState::default(),
         }
     }
 }
@@ -809,6 +814,15 @@ impl Model for Cgb {
     const TRACE_MODEL_NAME: &'static str = "CGB-C";
     const WAVE_RAM_COUPLING: WaveRamCoupling = WaveRamCoupling::ChannelPosition;
     const HAS_PCM_REGISTERS: bool = true;
+
+    type ConsoleState = CgbConsoleState;
+
+    fn console_state(&self) -> &CgbConsoleState {
+        &self.console_state
+    }
+    fn console_state_mut(&mut self) -> &mut CgbConsoleState {
+        &mut self.console_state
+    }
 
     fn oam_dma_bus_conflict(&self, cpu_addr: u16, dma_source: u16) -> bool {
         cgb_bus(cpu_addr) == Some(cgb_dma_source_bus(dma_source))

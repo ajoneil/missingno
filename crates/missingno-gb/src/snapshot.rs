@@ -371,14 +371,14 @@ impl GameBoy {
                 .map(crate::memory::HighRam::from_bytes)
                 .unwrap_or_else(crate::memory::HighRam::new),
             external,
-            model: crate::Dmg { sgb },
+            model: crate::Dmg {
+                sgb,
+                ..Default::default()
+            },
             bus_trace: crate::cpu_bus::BusTrace::new(),
             clock: crate::MasterClock::new(crate::CpuDivider::One),
             cpu_bus: crate::cpu_bus::CpuBus::new(),
             dma_conflict_write_pending: None,
-            dma_conflict_oam_zero: None,
-            dma_cpu_hold: false,
-            blackout_anchor: 0,
         }
     }
 }

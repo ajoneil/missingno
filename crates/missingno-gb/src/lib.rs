@@ -50,6 +50,78 @@ pub trait ScreenBuffer: Default + Clone {
     fn blank(&mut self);
 }
 
+/// CGB-only console-level arbitration state, relocated off the shared
+/// [`Console`] so a DMG build carries none of it. The CGB model owns the real
+/// storage; the DMG model is a ZST `()`, since none of these paths — the
+/// speed-switch blackout, the HDMA bus-park, the VRAM-source OAM-zero conflict
+/// — exist on the DMG.
+pub trait ConsoleShadow {
+    /// The master-edge count a double-speed switch blackout began on; the
+    /// elapsed held edges are `master_edge - anchor`. Re-anchored at each switch.
+    fn blackout_anchor(&self) -> u64;
+    fn set_blackout_anchor(&mut self, edge: u64);
+
+    /// A VRAM DMA is holding the CPU clock this M-cycle (bus master owns the bus).
+    fn dma_cpu_hold(&self) -> bool;
+    fn set_dma_cpu_hold(&mut self, held: bool);
+
+    /// OAM offset whose DMA-deposited byte a VRAM-source bus conflict forces to
+    /// `$00`, drained at the M-cycle-boundary fall.
+    fn dma_conflict_oam_zero(&self) -> Option<u8>;
+    fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>);
+    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8>;
+}
+
+/// The CGB console-level arbitration state.
+#[derive(Default)]
+pub struct CgbConsoleState {
+    blackout_anchor: u64,
+    dma_cpu_hold: bool,
+    dma_conflict_oam_zero: Option<u8>,
+}
+
+impl ConsoleShadow for CgbConsoleState {
+    fn blackout_anchor(&self) -> u64 {
+        self.blackout_anchor
+    }
+    fn set_blackout_anchor(&mut self, edge: u64) {
+        self.blackout_anchor = edge;
+    }
+    fn dma_cpu_hold(&self) -> bool {
+        self.dma_cpu_hold
+    }
+    fn set_dma_cpu_hold(&mut self, held: bool) {
+        self.dma_cpu_hold = held;
+    }
+    fn dma_conflict_oam_zero(&self) -> Option<u8> {
+        self.dma_conflict_oam_zero
+    }
+    fn set_dma_conflict_oam_zero(&mut self, offset: Option<u8>) {
+        self.dma_conflict_oam_zero = offset;
+    }
+    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
+        self.dma_conflict_oam_zero.take()
+    }
+}
+
+impl ConsoleShadow for () {
+    fn blackout_anchor(&self) -> u64 {
+        0
+    }
+    fn set_blackout_anchor(&mut self, _edge: u64) {}
+    fn dma_cpu_hold(&self) -> bool {
+        false
+    }
+    fn set_dma_cpu_hold(&mut self, _held: bool) {}
+    fn dma_conflict_oam_zero(&self) -> Option<u8> {
+        None
+    }
+    fn set_dma_conflict_oam_zero(&mut self, _offset: Option<u8>) {}
+    fn take_dma_conflict_oam_zero(&mut self) -> Option<u8> {
+        None
+    }
+}
+
 /// What a STOP the CPU has settled into resolves to (decided by the model).
 pub enum StopAction {
     /// Stay stopped — DMG stop-mode, or CGB STOP with no armed speed switch.
@@ -90,6 +162,14 @@ pub trait Model: Default {
     /// Framebuffer storage; its pixel matches what `Self::Ppu` resolves
     /// (DMG = `PaletteIndex` shades, CGB = RGB555).
     type Screen: ScreenBuffer<Pixel = <Self::Ppu as PpuModel>::Pixel>;
+
+    /// CGB-only console-level arbitration state (speed-switch blackout anchor,
+    /// HDMA bus-park, VRAM-source OAM-zero conflict). The CGB holds the real
+    /// [`CgbConsoleState`]; the DMG carries a ZST `()`.
+    type ConsoleState: ConsoleShadow + Default;
+
+    fn console_state(&self) -> &Self::ConsoleState;
+    fn console_state_mut(&mut self) -> &mut Self::ConsoleState;
 
     /// DMG arms/fires the OAM-corruption bug (BOWA/CUFE); CGB silicon has none.
     const HAS_OAM_BUG: bool = false;
@@ -390,23 +470,6 @@ pub struct Console<M: Model> {
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_write_pending: Option<(u8, u8, u8)>,
 
-    /// OAM offset whose DMA-deposited byte a VRAM-source bus conflict forces to
-    /// `$00` (CGB). Set by a conflicting read or write on the VRAM bus, drained
-    /// in `tick_mcycle_boundary_fall`.
-    dma_conflict_oam_zero: Option<u8>,
-
-    /// A CGB VRAM DMA is holding the CPU clock this M-cycle (bus master owns the
-    /// bus). The CPU spins in `Stopped` and the DMA's bytes flow per M-cycle;
-    /// `manage_dma_hold` releases it when the DMA stops asserting the hold.
-    dma_cpu_hold: bool,
-
-    /// The master-edge count when a double-speed switch began (CGB). The CPU is
-    /// held through the blackout while the dot clock runs; the elapsed held edges
-    /// are `clock.master_edge() - blackout_anchor`, which drives the CPU-clock
-    /// divider's phase off the master clock independently of the frozen SM83.
-    /// Re-anchored at each switch, meaningless otherwise.
-    blackout_anchor: u64,
-
     model: M,
 }
 
@@ -415,12 +478,23 @@ pub struct Console<M: Model> {
 #[derive(Default)]
 pub struct Dmg {
     sgb: Option<sgb::Sgb>,
+    /// CGB console arbitration is statically unreachable on DMG — a ZST.
+    console_state: (),
 }
 
 impl Model for Dmg {
     type Ppu = ppu::model::DmgPpu;
     type Screen = ppu::screen::Screen;
     const HAS_OAM_BUG: bool = true;
+
+    type ConsoleState = ();
+
+    fn console_state(&self) -> &() {
+        &self.console_state
+    }
+    fn console_state_mut(&mut self) -> &mut () {
+        &mut self.console_state
+    }
 
     fn on_present(&mut self, screen: &ppu::screen::Screen) {
         if let Some(sgb) = &mut self.sgb {
@@ -474,9 +548,6 @@ impl<M: Model> Console<M> {
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
-            dma_conflict_oam_zero: None,
-            dma_cpu_hold: false,
-            blackout_anchor: 0,
             model: M::default(),
         };
         console.rebuild_state();
@@ -564,8 +635,8 @@ impl<M: Model> Console<M> {
         self.clock.engage_on_rise();
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
-        self.dma_conflict_oam_zero = None;
-        self.dma_cpu_hold = false;
+        self.model.console_state_mut().set_dma_conflict_oam_zero(None);
+        self.model.console_state_mut().set_dma_cpu_hold(false);
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);
         } else if let Some(address) = self.cpu.pending_bus_read() {
@@ -649,7 +720,7 @@ impl<M: Model> Console<M> {
     /// block's bus ownership) — the CPU's stop/park is the bus master's,
     /// not a software STOP/HALT.
     pub fn vram_dma_holds_cpu(&self) -> bool {
-        self.dma_cpu_hold || self.cpu.bus_suspended
+        self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended
     }
 
     pub fn dma(&self) -> &Dma {
@@ -698,16 +769,18 @@ mod cgb_residual_size {
     use super::*;
     use std::mem::size_of;
 
-    /// `Console<M>` CGB-only fields (lib.rs):
-    /// - `dma_conflict_write_pending: Option<(u8, u8, u8)>` — 4
-    /// - `dma_conflict_oam_zero: Option<u8>` — 2
-    /// - `dma_cpu_hold: bool` — 1
-    /// - `blackout_anchor: u64` — 8
-    /// `clock: MasterClock` is shared (the master-edge counter both cores run on),
-    /// not CGB-only.
+    /// `Console<M>` CGB-only state is relocated behind the `Model::ConsoleState`
+    /// seam (`CgbConsoleState` on CGB, ZST `()` on DMG): the speed-switch
+    /// blackout anchor, the HDMA bus-park, and the VRAM-source OAM-zero conflict.
+    /// The DMG `Console` carries none of it.
+    ///
+    /// Not CGB-only, so not relocated: `dma_conflict_write_pending` (the
+    /// OAM-DMA source-bus write conflict — `oam_dma_bus_conflict`'s shared
+    /// external-bus rule fires on DMG too) and `clock: MasterClock` (the
+    /// master-edge counter both cores run on).
     mod console {
-        pub const CGB_BYTES: usize = 4 + 2 + 1 + 8;
-        pub const TOTAL: usize = 50664;
+        pub const CGB_BYTES: usize = 0;
+        pub const TOTAL: usize = 50656;
     }
 
     /// `Cpu` CGB-only fields (cpu/mod.rs):
@@ -776,6 +849,6 @@ mod cgb_residual_size {
             + cpu::CGB_BYTES
             + pipeline_registers::CGB_BYTES
             + stat_interrupt::CGB_BYTES;
-        assert_eq!(REMAINING, 22, "CGB-only residual byte budget changed");
+        assert_eq!(REMAINING, 7, "CGB-only residual byte budget changed");
     }
 }

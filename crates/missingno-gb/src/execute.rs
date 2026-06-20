@@ -1,5 +1,5 @@
 use super::{
-    Console, Model, ScreenBuffer, StopAction,
+    Console, ConsoleShadow, Model, ScreenBuffer, StopAction,
     clock::{CpuDivider, CpuGate, Edge},
     cpu::mcycle::{BusAction, TCycle},
     cpu_bus::{BusAccess, BusAccessKind},
@@ -182,7 +182,10 @@ impl<M: Model> Console<M> {
         // The held blackout's elapsed master-edge count is the anchor difference
         // (read pre-advance, so it is the count of held edges already completed).
         // Meaningless on a running edge.
-        let held_elapsed = self.clock.master_edge().wrapping_sub(self.blackout_anchor);
+        let held_elapsed = self
+            .clock
+            .master_edge()
+            .wrapping_sub(self.model.console_state().blackout_anchor());
         let tick = self.clock.advance(gate);
         // A held edge: the CPU is frozen and the dot domain alone advanced.
         if tick.cpu.is_none() {
@@ -287,7 +290,8 @@ impl<M: Model> Console<M> {
                 }
                 // Anchor the held-edge count at the current master edge; the
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
-                self.blackout_anchor = self.clock.master_edge();
+                let anchor = self.clock.master_edge();
+                self.model.console_state_mut().set_blackout_anchor(anchor);
             }
             StopAction::Remain => {}
         }
@@ -305,11 +309,12 @@ impl<M: Model> Console<M> {
             return;
         }
         let holds = self.model.vram_dma_holds_cpu();
-        if holds && !self.dma_cpu_hold {
-            self.dma_cpu_hold = true;
+        let held = self.model.console_state().dma_cpu_hold();
+        if holds && !held {
+            self.model.console_state_mut().set_dma_cpu_hold(true);
             self.cpu.begin_bus_hold();
-        } else if !holds && self.dma_cpu_hold {
-            self.dma_cpu_hold = false;
+        } else if !holds && held {
+            self.model.console_state_mut().set_dma_cpu_hold(false);
             self.cpu.end_bus_hold();
         }
     }
@@ -922,7 +927,9 @@ impl<M: Model> Console<M> {
                     .oam_dma_conflict_zeroes_oam(address, self.dma.source())
                 && let Some((_, dst_offset)) = self.dma.peek_transfer()
             {
-                self.dma_conflict_oam_zero = Some(dst_offset);
+                self.model
+                    .console_state_mut()
+                    .set_dma_conflict_oam_zero(Some(dst_offset));
             }
         }
     }
@@ -991,7 +998,7 @@ impl<M: Model> Console<M> {
         // bus — gating on the hold keeps the transfer from overlapping the
         // arming instruction. (The trigger/quota tick ran before this edge's
         // write commit.) Idle (no-op) on the DMG.
-        if self.dma_cpu_hold || self.cpu.bus_suspended {
+        if self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended {
             if !self.model.vram_dma_take_setup_cell() {
                 while let Some((src, dst)) = self.model.vram_dma_next_byte() {
                     self.dma_move(src, dst);
@@ -1016,7 +1023,7 @@ impl<M: Model> Console<M> {
             });
         }
 
-        if let Some(dst_offset) = self.dma_conflict_oam_zero.take() {
+        if let Some(dst_offset) = self.model.console_state_mut().take_dma_conflict_oam_zero() {
             let dst_addr = 0xfe00 + dst_offset as u16;
             if let ppu::memory::MappedAddress::Oam(oam_addr) =
                 ppu::memory::MappedAddress::map(dst_addr)
