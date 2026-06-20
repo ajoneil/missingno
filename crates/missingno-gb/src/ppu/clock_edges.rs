@@ -77,7 +77,9 @@ impl<P: PpuModel> Ppu<P> {
             &mut result,
         );
         // The FF45→IRQ-block crossing captures on its resolved edge; the synced
-        // LYC lands in the next TALU↑.
+        // LYC lands in the next TALU↑. The DS double-capture (this last-fall and
+        // the standalone M-boundary fall) is safe: FF45 is write-stable across
+        // the intra-M-cycle falls, so both reads see the same cell value.
         if P::LYC_CROSSING.is_synced() && mcycle_last_fall {
             let ly = self.video.ly();
             self.video

@@ -80,7 +80,9 @@ impl TileSelResetGlitch {
 /// CPU → pixel pipeline register file (DFF bank). DFF8/DFF9 write-conflict behaviour during Mode 3 is specific to this group.
 pub struct PipelineRegisters {
     pub control: Control,
-    /// DFF9 latch for full LCDC byte.
+    /// DFF9 latch for full LCDC byte. `write_immediate`-only (no delayed LCDC
+    /// commit path), so `control` commits the next fall — this is what keeps it
+    /// in lock-step with `tile_map_select` when that crossing is also immediate.
     pub control_latch: DffLatch,
     /// The LCDC byte the tile-map-select fetch samples. DMG tracks `control`
     /// combinationally; the CGB latches a mid-Mode-3 LCDC write onto its own
