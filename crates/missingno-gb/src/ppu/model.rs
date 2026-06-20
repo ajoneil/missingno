@@ -205,6 +205,13 @@ pub trait PpuModel: Default {
     /// (`cgb_extra_falls: 0`). DMG names only the combinational collapse.
     const SCX_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
+    /// The window register file (WY/WX/LCDC.5/LCDC.2) → window-decode + scan
+    /// Y-comparator crossing. The DMG reads the cells live; the CGB crosses them
+    /// into the pixel pipeline on the resolved capture edge — pure (ii) clock
+    /// phase, no (iv) register-path lag (`cgb_extra_falls: 0`). DMG names only
+    /// the combinational collapse.
+    const WINDOW_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
     /// The mid-Mode-3 LCDC tile-map-select (LCDC.3/.6) write → BG-fetch crossing.
     /// The DMG couples it combinationally (the fetch reads LCDC live); the CGB
     /// latches the write onto its own clock and the fetch samples the select bit

@@ -55,6 +55,15 @@ pub const SCX_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 0,
 };
 
+/// The window register file (WY/WX/LCDC.5/LCDC.2) crossing on the CGB: the
+/// cells cross into the window decode and scan Y-comparator on the resolved
+/// capture edge with no register-path lag on top — pure (ii) clock phase, like
+/// LYC and SCX. The phase arrives from the resolver; `cgb_extra_falls` stays 0.
+pub const WINDOW_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 0,
+};
+
 /// The mid-Mode-3 LCDC.0 (VYXE) write → BG-plane-blank crossing on the CGB: the
 /// write crosses on the M-cycle-last-fall edge and the OLD-overlay holds the
 /// pre-write value one extra fall — RAJY lands one dot later than the DMG's
@@ -118,5 +127,13 @@ mod tests {
     fn scx_crossing_carries_no_extra_falls() {
         assert_eq!(SCX_CROSSING.write_delayed_falls(), 0);
         assert_eq!(SCX_CROSSING.capture, CaptureEdge::MCycleLastFall);
+    }
+
+    /// The CGB window register-file crossing carries no register-path lag — its
+    /// phase rides the capture edge alone, like LYC and SCX.
+    #[test]
+    fn window_crossing_carries_no_extra_falls() {
+        assert_eq!(WINDOW_CROSSING.write_delayed_falls(), 0);
+        assert_eq!(WINDOW_CROSSING.capture, CaptureEdge::MCycleLastFall);
     }
 }

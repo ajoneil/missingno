@@ -207,6 +207,12 @@ impl<P: PpuModel> Rendering<P> {
         self.scan.start_scanning();
     }
 
+    /// Whether `P` crosses the window register file into the pixel pipeline on a
+    /// named M-cycle edge — the CGB case. DMG reads the cells live.
+    fn window_synced() -> bool {
+        matches!(P::WINDOW_CROSSING.capture, CaptureEdge::MCycleLastFall)
+    }
+
     /// CGB register crossing into the window decode and scan comparator; the
     /// capture edge is the write M-cycle's last PPU fall.
     pub(super) fn capture_register_sync(&mut self, regs: &PipelineRegisters) {
@@ -367,7 +373,7 @@ impl<P: PpuModel> Rendering<P> {
             fine_scroll_match: self.lcd.fine_scroll_match(),
             fetcher_idle_stage_3: self.cascade.pygo(),
             fetcher_ready: self.cascade.poky(),
-            wx_triggered: self.window.wx_triggered(regs, P::HAS_CLOCK_DOMAIN_SYNC),
+            wx_triggered: self.window.wx_triggered(regs, Self::window_synced()),
             video_clock: video.scan_clock(),
             scan_done: self.scan.scan_done_flag(),
             scan_done_prev: self.scan.scan_done_prev(),
@@ -481,7 +487,7 @@ impl<P: PpuModel> Rendering<P> {
     ) -> Option<DrawnPixel<P::Pixel>> {
         // SARY captures wy_match on TALU↑ (hclk); REJO re-evaluates every PPU fall for vblank↓.
         self.window
-            .tick_wy_match_falling(regs, video, talu_rising, P::HAS_CLOCK_DOMAIN_SYNC);
+            .tick_wy_match_falling(regs, video, talu_rising, Self::window_synced());
 
         // The M-cycle's last PPU fall: the WY/WX/LCDC.5/LCDC.2 crossing's
         // capture edge (the boundary fall at single speed; the T2 fall in
@@ -489,7 +495,7 @@ impl<P: PpuModel> Rendering<P> {
         // TALU↑ capture reads the pre-tick output (DFF chain); XOFO, the NUKO
         // slave, and the scan comparator read the post-tick output this same
         // fall.
-        if P::HAS_CLOCK_DOMAIN_SYNC && mcycle_last_fall {
+        if Self::window_synced() && mcycle_last_fall {
             self.capture_register_sync(regs);
         }
 
@@ -499,7 +505,7 @@ impl<P: PpuModel> Rendering<P> {
         // CGB: the scan Y-comparator's XYMO view is the live bit OR the
         // register-crossing copy — a grow reaches GOVU live, a shrink waits
         // for the crossing capture.
-        let scan_sprite_height = if P::HAS_CLOCK_DOMAIN_SYNC {
+        let scan_sprite_height = if Self::window_synced() {
             regs.control
                 .sprite_size()
                 .height()
@@ -622,7 +628,7 @@ impl<P: PpuModel> Rendering<P> {
             self.pixel_counter.value(),
             self.fine_scroll.pixel_clock_active(),
             self.window.window_line_counter(),
-            self.window.wx_triggered(regs, P::HAS_CLOCK_DOMAIN_SYNC),
+            self.window.wx_triggered(regs, Self::window_synced()),
             regs,
             video,
             vram,
@@ -826,7 +832,7 @@ impl<P: PpuModel> Rendering<P> {
         }
 
         self.window
-            .update_nuko_wx(regs.window.x.output(), P::HAS_CLOCK_DOMAIN_SYNC);
+            .update_nuko_wx(regs.window.x.output(), Self::window_synced());
 
         pixel_out
     }
