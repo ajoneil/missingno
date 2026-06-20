@@ -400,11 +400,12 @@ pub struct Console<M: Model> {
     /// `manage_dma_hold` releases it when the DMA stops asserting the hold.
     dma_cpu_hold: bool,
 
-    /// Master edges elapsed since a double-speed switch began (CGB). The CPU is
-    /// held through the blackout while the dot clock runs; this drives the
-    /// CPU-clock divider's phase off the master clock independently of the
-    /// frozen SM83. Reset at each switch, meaningless otherwise.
-    blackout_edge: u32,
+    /// The master-edge count when a double-speed switch began (CGB). The CPU is
+    /// held through the blackout while the dot clock runs; the elapsed held edges
+    /// are `clock.master_edge() - blackout_anchor`, which drives the CPU-clock
+    /// divider's phase off the master clock independently of the frozen SM83.
+    /// Re-anchored at each switch, meaningless otherwise.
+    blackout_anchor: u64,
 
     model: M,
 }
@@ -475,7 +476,7 @@ impl<M: Model> Console<M> {
             dma_conflict_write_pending: None,
             dma_conflict_oam_zero: None,
             dma_cpu_hold: false,
-            blackout_edge: 0,
+            blackout_anchor: 0,
             model: M::default(),
         };
         console.rebuild_state();

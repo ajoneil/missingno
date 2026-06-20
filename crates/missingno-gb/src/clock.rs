@@ -51,23 +51,33 @@ impl CpuDivider {
 }
 
 /// The CPU-clock gate handed to [`MasterClock::advance`]. `Running` clocks the
-/// CPU normally. (The `Held` arm — the speed-switch blackout and the HDMA park —
-/// is a later spike; this primitive only fields `Running`.)
+/// CPU normally; `Held` freezes the CPU CLK9 family while the dot domain keeps
+/// free-running — the speed-switch blackout (and, in a later step, the HDMA
+/// park). The gate is NOT a bool: `Held` records the dot edge the freeze landed
+/// on, so the distinguishing DS-HDMA phase survives the unification (the dot
+/// phase a bit-identical straddle differs by).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuGate {
     Running,
+    /// CPU CLK9 frozen; the dot domain free-runs. `froze_on` is the dot edge the
+    /// most recent held advance landed on — recorded from day one so the phase
+    /// signal exists for the deferred HDMA fall-counter re-expression.
+    Held {
+        froze_on: Edge,
+    },
 }
 
 /// What one master edge schedules. The step loop matches on this instead of
 /// re-deriving the schedule from a speed flag. At `÷1`, `cpu` and `dot` are
-/// always both `Some`/equal.
+/// always both `Some`/equal. `cpu` is `None` only on a `Held` edge (CPU frozen);
+/// `dot` is `None` only on the bare second `÷2` running CPU edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tick {
-    /// The CPU's edge this master edge.
-    pub cpu: Edge,
-    /// The dot edge this CPU edge carries, or `None` on the bare second `÷2` CPU
-    /// edge (no dot edge). At `÷1` always `Some` — the dot domain advances every
-    /// CPU edge.
+    /// The CPU's edge this master edge, or `None` while the CPU clock is `Held`.
+    pub cpu: Option<Edge>,
+    /// The dot edge this master edge carries, or `None` on the bare second `÷2`
+    /// running CPU edge (no dot edge). At `÷1` always `Some` — the dot domain
+    /// advances every CPU edge — and on every `Held` edge the dot domain steps.
     pub dot: Option<Edge>,
 }
 
@@ -157,19 +167,15 @@ impl MasterClock {
         self.cpu_phase_in_dot = 0;
     }
 
-    /// Advance the dot domain one master edge without clocking the CPU — the
-    /// frozen-CPU blackout edge. The CPU phase is untouched; the dot phase
-    /// free-runs.
-    pub fn advance_dot_only(&mut self) {
-        self.dot_phase = self.dot_phase.flip();
-    }
-
-    /// Advance one master edge. THE single place the `÷2` ratio is read and the
-    /// dispatch schedule is produced. Returns which domain edges fire.
+    /// Advance one master edge. THE single place the `÷2` ratio is read, the
+    /// dispatch schedule is produced, and the CPU clock can be frozen. The
+    /// running machine passes `Running`; the speed-switch blackout passes `Held`,
+    /// which freezes the CPU phase and free-runs the dot domain. Returns which
+    /// domain edges fire.
     pub fn advance(&mut self, gate: CpuGate) -> Tick {
+        self.master_edge += 1;
         match gate {
             CpuGate::Running => {
-                self.master_edge += 1;
                 let cpu = self.cpu_phase;
                 let dot = self.dot_edge();
                 self.cpu_phase = self.cpu_phase.flip();
@@ -179,7 +185,21 @@ impl MasterClock {
                 if self.cpu_phase_in_dot == 0 {
                     self.dot_phase = self.dot_phase.flip();
                 }
-                Tick { cpu, dot }
+                Tick {
+                    cpu: Some(cpu),
+                    dot,
+                }
+            }
+            CpuGate::Held { .. } => {
+                // CPU CLK9 gated: `cpu_phase` / `cpu_phase_in_dot` frozen, the dot
+                // domain free-runs (VID_RST releases the PPU dividers; they count
+                // from zero). The dot edge fired is this edge's pre-flip phase.
+                let dot = self.dot_phase;
+                self.dot_phase = self.dot_phase.flip();
+                Tick {
+                    cpu: None,
+                    dot: Some(dot),
+                }
             }
         }
     }
@@ -197,19 +217,19 @@ mod tests {
         let mut clock = MasterClock::new(CpuDivider::One);
         let expected = [
             Tick {
-                cpu: Edge::Rise,
+                cpu: Some(Edge::Rise),
                 dot: Some(Edge::Rise),
             },
             Tick {
-                cpu: Edge::Fall,
+                cpu: Some(Edge::Fall),
                 dot: Some(Edge::Fall),
             },
             Tick {
-                cpu: Edge::Rise,
+                cpu: Some(Edge::Rise),
                 dot: Some(Edge::Rise),
             },
             Tick {
-                cpu: Edge::Fall,
+                cpu: Some(Edge::Fall),
                 dot: Some(Edge::Fall),
             },
         ];
@@ -233,29 +253,29 @@ mod tests {
         let expected = [
             // dot rise on the dot's first CPU edge (a CPU rise)
             Tick {
-                cpu: Edge::Rise,
+                cpu: Some(Edge::Rise),
                 dot: Some(Edge::Rise),
             },
             // bare second CPU edge of the dot — no dot edge
             Tick {
-                cpu: Edge::Fall,
+                cpu: Some(Edge::Fall),
                 dot: None,
             },
             // next dot's first CPU edge carries the dot fall
             Tick {
-                cpu: Edge::Rise,
+                cpu: Some(Edge::Rise),
                 dot: Some(Edge::Fall),
             },
             Tick {
-                cpu: Edge::Fall,
+                cpu: Some(Edge::Fall),
                 dot: None,
             },
             Tick {
-                cpu: Edge::Rise,
+                cpu: Some(Edge::Rise),
                 dot: Some(Edge::Rise),
             },
             Tick {
-                cpu: Edge::Fall,
+                cpu: Some(Edge::Fall),
                 dot: None,
             },
         ];
@@ -277,6 +297,45 @@ mod tests {
             clock.advance(CpuGate::Running);
         }
         assert_eq!(dot_steps, 50);
+    }
+
+    /// A `Held` advance freezes the CPU phase and free-runs the dot domain: the
+    /// CPU edge is `None` and unchanged across the hold, the dot edge fires every
+    /// held edge, and `master_edge` increments so an anchor difference counts the
+    /// held edges.
+    #[test]
+    fn held_advance_freezes_cpu_and_free_runs_dot() {
+        let mut clock = MasterClock::new(CpuDivider::Two);
+        // Advance one running edge so the CPU lands on a Fall — the phase the
+        // freeze should preserve.
+        clock.advance(CpuGate::Running);
+        let frozen_cpu = clock.cpu_edge();
+        assert_eq!(frozen_cpu, Edge::Fall);
+
+        let anchor = clock.master_edge();
+        let mut dots = Vec::new();
+        for _ in 0..6 {
+            let froze_on = clock.dot_phase();
+            let tick = clock.advance(CpuGate::Held { froze_on });
+            assert_eq!(tick.cpu, None, "CPU is frozen across the hold");
+            dots.push(tick.dot.expect("a held edge always carries a dot edge"));
+            // The CPU phase never moves during the hold.
+            assert_eq!(clock.cpu_edge(), frozen_cpu);
+        }
+        // The dot domain alternated every held edge from its current phase.
+        assert_eq!(
+            dots,
+            [
+                Edge::Rise,
+                Edge::Fall,
+                Edge::Rise,
+                Edge::Fall,
+                Edge::Rise,
+                Edge::Fall,
+            ]
+        );
+        // master_edge - anchor counts the held edges exactly.
+        assert_eq!(clock.master_edge() - anchor, 6);
     }
 
     // ----------------------------------------------------------------------
@@ -357,14 +416,15 @@ mod tests {
     fn new_dispatch(clock: &mut MasterClock, double_speed: bool) -> OldDispatch {
         let dot_phase_before = clock.dot_phase();
         let tick = clock.advance(CpuGate::Running);
+        let cpu = tick.cpu.expect("running edge carries a CPU edge");
         OldDispatch {
-            cpu: tick.cpu,
+            cpu,
             dot: tick.dot,
             // The dot phase toggles lazily here (after the dot's second CPU edge),
             // inverting the eager `ppu_phase == Low` the old code read — a pending
             // dot rise reads as the held phase being `Fall`. Only meaningful on a
             // fall edge (the fall arm).
-            fall_arm_dot_work_extra: tick.cpu == Edge::Fall
+            fall_arm_dot_work_extra: cpu == Edge::Fall
                 && double_speed
                 && dot_phase_before == Edge::Fall,
         }
