@@ -390,6 +390,9 @@ impl<M: Model> Console<M> {
         // CPU↔ALET read placement). Only double speed consumes it.
         if ppu == PpuEdge::Rise && self.model.cpu_steps_per_dot() == 2 {
             self.model.note_pre_alet_rendering(self.ppu.is_rendering());
+            if let Some(address) = self.cpu_bus.read_address() {
+                self.model.note_pre_alet_lock(self.ppu.read_lock(address));
+            }
         }
 
         let tcycle = if is_mcycle_boundary {

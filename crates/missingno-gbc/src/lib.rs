@@ -704,6 +704,11 @@ pub struct Cgb {
     /// `data_phase_n↑` latch saw; `resolve_read_latch` resolves the read's STAT
     /// mode to it.
     pre_alet_rendering: bool,
+    /// Pre-ALET-rise lock for a pending lockable (OAM/VRAM) read — the lock
+    /// analogue of `pre_alet_rendering`. A double-speed read's `data_phase_n↑`
+    /// latch saw this pre-transition lock; `resolve_read_latch` ORs it with the
+    /// latch-edge lock so a mode-3→0 release between the two still floats.
+    pre_alet_lock: Option<bool>,
     /// A pending OAM read's lock at the drive enable (tobe↑) — the
     /// single-speed decisive grant sample, taken before that fall's lock
     /// onset (`resolve_read_latch` consumes it).
@@ -734,6 +739,7 @@ impl Default for Cgb {
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
             pre_alet_rendering: false,
+            pre_alet_lock: None,
             read_drive_oam_lock: None,
             ff72: 0,
             ff73: 0,
@@ -1010,6 +1016,12 @@ impl Model for Cgb {
         }
     }
 
+    fn note_pre_alet_lock(&mut self, lock: Option<bool>) {
+        if self.double_speed {
+            self.pre_alet_lock = lock;
+        }
+    }
+
     fn note_read_drive_phase(&mut self, oam_lock: Option<bool>) {
         self.read_drive_oam_lock = oam_lock;
     }
@@ -1039,6 +1051,18 @@ impl Model for Cgb {
                 (_, Some(true)) => 0xFF,
                 _ => value,
             },
+            // Double-speed VRAM/OAM lock: data_phase_n↑ latches before this dot's
+            // ALET edge — the same CGB CPU↔ALET half-dot phase as the STAT mode bits.
+            // The read floats if it was locked at the pre-ALET view OR at the latch
+            // edge, so a mode-3→0 release landing between them still floats. OR like
+            // the single-speed OAM grant/latch arm — never removes a lock the latch sees.
+            0x8000..=0x9FFF | 0xFE00..=0xFEFF if self.double_speed => {
+                if self.pre_alet_lock == Some(true) || latch_lock == Some(true) {
+                    0xFF
+                } else {
+                    value
+                }
+            }
             _ if latch_lock == Some(true) => 0xFF,
             _ => value,
         }

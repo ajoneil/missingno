@@ -300,6 +300,11 @@ pub trait Model: Default {
     /// view. DMG (latch always lands after a separate-phase rise) ignores it.
     fn note_pre_alet_rendering(&mut self, _rendering: bool) {}
 
+    /// A pending lockable (OAM/VRAM) read's lock at the pre-ALET rise, sampled
+    /// before this dot's `ppu_rise_edge` lock onset/release — the lock analogue
+    /// of `note_pre_alet_rendering`. DMG ignores it.
+    fn note_pre_alet_lock(&mut self, _lock: Option<bool>) {}
+
     /// A pending OAM read's lock at the drive enable (tobe↑, the read's third
     /// T-cycle fall), sampled before that fall's PPU advance applies any lock
     /// onset. DMG ignores it.
