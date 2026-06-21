@@ -392,12 +392,15 @@ pub fn run_until_infinite_loop<S: System>(s: &mut S, timeout_frames: u32) -> boo
     false
 }
 
-/// Run the emulator until `LD B,B` (opcode 0x40) is about to execute, or until a timeout.
+/// Run the emulator until `LD B,B` (opcode 0x40) is about to execute in
+/// ROM/WRAM, or until a timeout.
 pub fn run_until_breakpoint<S: System>(s: &mut S, timeout_frames: u32) -> bool {
     for _ in 0..timeout_frames {
         loop {
             let pc = s.cpu().ir_address;
-            if s.read(pc) == 0x40 {
+            // A 0x40 fetched from I/O space (e.g. DIV during `call rDIV`) is the
+            // register value being executed, not the LD B,B completion marker.
+            if pc < 0xFF00 && s.read(pc) == 0x40 {
                 return true;
             }
             if s.step().new_screen {
