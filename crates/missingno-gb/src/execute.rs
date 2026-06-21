@@ -281,11 +281,12 @@ impl<M: Model> Console<M> {
                 }
                 // KEY1 has flipped the model's speed bit; align the clock's ÷1/÷2
                 // cell to the new ratio so the clock stays the sole ratio owner.
-                self.clock.set_divider(if self.model.cpu_steps_per_dot() == 2 {
-                    CpuDivider::Two
-                } else {
-                    CpuDivider::One
-                });
+                self.clock
+                    .set_divider(if self.model.cpu_steps_per_dot() == 2 {
+                        CpuDivider::Two
+                    } else {
+                        CpuDivider::One
+                    });
                 // Anchor the held-edge count at the current master edge; the
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
                 let anchor = self.clock.master_edge();
@@ -973,6 +974,14 @@ impl<M: Model> Console<M> {
     fn commit_write(&mut self) {
         if let BusAction::Write { address, value: _ } = &self.cpu.last_bus_action {
             let address = *address;
+            if self.dma.is_active_on_bus().is_some()
+                && self
+                    .model
+                    .oam_dma_source_bank_write(address, self.dma.source())
+            {
+                self.dma_pending_bank_write = Some((address, self.cpu_bus.data));
+                return;
+            }
             let (locked_at_snapshot, locked_at_mid) = self.cpu_bus.write_lock_samples();
             self.write_byte_with_cupa_lock(
                 address,
@@ -990,6 +999,12 @@ impl<M: Model> Console<M> {
     fn tick_mcycle_boundary_fall(&mut self) {
         if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
             self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
+        }
+
+        // A source-bank register write (VBK/SVBK) latches here at the boundary,
+        // after the coincident byte's source read above reads the pre-write bank.
+        if let Some((address, value)) = self.dma_pending_bank_write.take() {
+            self.write_byte_with_cupa_lock(address, value, None, None);
         }
 
         // CGB VRAM DMA: commit the bytes it moves while it actually holds the

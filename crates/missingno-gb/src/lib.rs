@@ -348,6 +348,15 @@ pub trait Model: Default {
         false
     }
 
+    /// Does a CPU write to `address` re-bank the bus an active OAM DMA sources
+    /// from — VBK while it reads VRAM, SVBK while it reads WRAM? Such a write
+    /// latches at the M-cycle boundary, after the coincident DMA byte's source
+    /// read, so its effect is deferred past that byte. DMG has no banked DMA
+    /// source and never defers.
+    fn oam_dma_source_bank_write(&self, _address: u16, _dma_source: u16) -> bool {
+        false
+    }
+
     /// The byte a DMA source read yields when the source address opens the
     /// bus rather than addressing storage — shared by OAM DMA and CGB VRAM
     /// DMA, which both fetch through `read_dma_source`. DMG never opens the
@@ -469,6 +478,11 @@ pub struct Console<M: Model> {
     /// the OAM write phase. Set in `write_byte_with_cupa_lock`, drained
     /// in `tick_mcycle_boundary_fall`.
     dma_conflict_write_pending: Option<(u8, u8, u8)>,
+    /// Source-bank register write (VBK/SVBK) deferred from `commit_write` to the
+    /// M-cycle boundary, so the coincident OAM-DMA byte reads the pre-write bank.
+    /// Tuple is `(register address, value)`; drained in `tick_mcycle_boundary_fall`
+    /// after the byte commit.
+    dma_pending_bank_write: Option<(u16, u8)>,
 
     model: M,
 }
@@ -548,6 +562,7 @@ impl<M: Model> Console<M> {
             cpu_bus: CpuBus::new(),
             bus_trace: cpu_bus::BusTrace::new(),
             dma_conflict_write_pending: None,
+            dma_pending_bank_write: None,
             model: M::default(),
         };
         console.rebuild_state();
@@ -635,14 +650,18 @@ impl<M: Model> Console<M> {
         self.clock.engage_on_rise();
         // The model resets to single speed; realign the clock's ÷1/÷2 cell so it
         // stays the sole ratio owner across a reset.
-        self.clock.set_divider(if self.model.cpu_steps_per_dot() == 2 {
-            CpuDivider::Two
-        } else {
-            CpuDivider::One
-        });
+        self.clock
+            .set_divider(if self.model.cpu_steps_per_dot() == 2 {
+                CpuDivider::Two
+            } else {
+                CpuDivider::One
+            });
         self.cpu_bus = CpuBus::new();
         self.dma_conflict_write_pending = None;
-        self.model.console_state_mut().set_dma_conflict_oam_zero(None);
+        self.dma_pending_bank_write = None;
+        self.model
+            .console_state_mut()
+            .set_dma_conflict_oam_zero(None);
         self.model.console_state_mut().set_dma_cpu_hold(false);
         if let Some((address, _value)) = self.cpu.pending_bus_write() {
             self.cpu_bus.stage_write(address);

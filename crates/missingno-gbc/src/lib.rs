@@ -853,6 +853,16 @@ impl Model for Cgb {
         cgb_dma_source_bus(dma_source) == CgbBus::Video && cgb_bus(cpu_addr) == Some(CgbBus::Video)
     }
 
+    /// VBK re-banks a VRAM-source DMA, SVBK a WRAM-source DMA; the matching write
+    /// latches one byte late so the coincident DMA byte reads the prior bank.
+    fn oam_dma_source_bank_write(&self, address: u16, dma_source: u16) -> bool {
+        match address {
+            0xFF4F => cgb_dma_source_bus(dma_source) == CgbBus::Video,
+            0xFF70 => cgb_dma_source_bus(dma_source) == CgbBus::WorkRam,
+            _ => false,
+        }
+    }
+
     fn dma_source_open_bus(&self, address: u16) -> Option<u8> {
         (address >= 0xE000).then_some(0xFF)
     }

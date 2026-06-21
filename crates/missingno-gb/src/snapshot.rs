@@ -379,6 +379,7 @@ impl GameBoy {
             clock: crate::MasterClock::new(crate::CpuDivider::One),
             cpu_bus: crate::cpu_bus::CpuBus::new(),
             dma_conflict_write_pending: None,
+            dma_pending_bank_write: None,
         }
     }
 }
