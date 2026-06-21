@@ -131,6 +131,8 @@ pub struct Ppu<P: PpuModel> {
     /// to detect that edge. The contending bus reads the pre-transition 0 while settling.
     mode2_settle: u8,
     prev_mode2: bool,
+    mode3_settle: u8,
+    prev_mode3: bool,
     /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
     pub(super) model: P,
 }
@@ -189,6 +191,8 @@ impl<P: PpuModel> Ppu<P> {
             oam_corruption: oam_corruption::OamCorruption::default(),
             mode2_settle: 0,
             prev_mode2: false,
+            mode3_settle: 0,
+            prev_mode3: false,
             model: P::default(),
         }
     }
@@ -321,6 +325,8 @@ impl<P: PpuModel> Ppu<P> {
             oam_corruption: oam_corruption::OamCorruption::default(),
             mode2_settle: 0,
             prev_mode2: false,
+            mode3_settle: 0,
+            prev_mode3: false,
             model: P::default(),
         };
         let shadow = ppu.model.stat_shadow_mut();
@@ -377,6 +383,10 @@ impl<P: PpuModel> Ppu<P> {
     /// slow companion-driver contention resolves within ~1 dot.
     const MODE2_NOT_IF1_SETTLE: u8 = 2;
 
+    /// The mode-3 (XYMU) bus holds PRE after a rendering 0→1 (AVAP↑/XYMU↓) onset —
+    /// the symmetric counterpart to `not_if1`, for the mode-2→3 onset contention.
+    const MODE3_ONSET_SETTLE: u8 = 2;
+
     /// Live STAT mode-2 bit (bit1): rendering (XYMU) or OAM scan (ACYL/BESU).
     fn live_mode2_bit(&self) -> bool {
         self.pixel_pipeline
@@ -394,6 +404,21 @@ impl<P: PpuModel> Ppu<P> {
             self.mode2_settle -= 1;
         }
         self.prev_mode2 = cur;
+
+        let cur3 = self.is_rendering();
+        if cur3 && !self.prev_mode3 {
+            self.mode3_settle = Self::MODE3_ONSET_SETTLE;
+        } else if self.mode3_settle > 0 {
+            self.mode3_settle -= 1;
+        }
+        self.prev_mode3 = cur3;
+    }
+
+    /// The mode-3 (XYMU) bit holds its pre-onset 0 (PRE) while the AVAP↑ contention
+    /// settles — a double-speed read landing in this window reads the pre-transition
+    /// mode 2, not the post-onset mode 3.
+    pub fn in_mode3_onset_settle(&self) -> bool {
+        self.mode3_settle > 0
     }
 
     /// The mode-2 bit a CPU read latches: the contending `not_if1` bus holds the

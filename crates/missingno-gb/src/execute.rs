@@ -966,6 +966,17 @@ impl<M: Model> Console<M> {
                 self.model
                     .resolve_read_latch(address, accessible, latch_lock)
             };
+            // Mode-3 onset (XYMU↓ at AVAP↑) bus-settle, the symmetric counterpart to
+            // the mode-2 not_if1 hold: a double-speed STAT read landing in the onset
+            // contention window holds the XYMU bit at its pre-onset 0 (PRE mode 2).
+            let value = if address == 0xFF41
+                && self.model.cpu_steps_per_dot() == 2
+                && self.ppu.in_mode3_onset_settle()
+            {
+                value & !0b01
+            } else {
+                value
+            };
             self.cpu.data_latch = value;
             self.commit_bus_read(address, value);
         }
