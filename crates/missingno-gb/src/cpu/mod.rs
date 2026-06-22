@@ -562,11 +562,19 @@ impl Cpu {
         // return target, not run before the handler. PC already sits on it.
         if dispatch_pending {
             let pc = self.pc;
+            // The dispatch's M1 (the discarded-prefetch internal cycle) was
+            // already spent as STOP's operand fetch before the DIV reset, so
+            // the post-switch dispatch resumes at M2 (step 1). IME clears here
+            // as M1 would have.
+            self.irq
+                .ime
+                .write_immediate(InterruptMasterEnable::Disabled);
+            self.irq.ime_delay = false;
             self.phase = CpuPhase::InterruptDispatch {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
                 pc_lo: (pc & 0xff) as u8,
-                step: 0,
+                step: 1,
             };
             self.irq.pending_vector_resolve = false;
         } else {
