@@ -618,7 +618,9 @@ enum TransferMode {
 struct VramDma {
     /// Running source pointer, 16-byte aligned (HDMA1/HDMA2).
     source: u16,
-    /// Running destination, a VRAM address $8000..=$9FF0 (HDMA3/HDMA4).
+    /// Running destination, a raw 16-bit HDMA3/HDMA4 pointer. The write address
+    /// folds to VRAM via `write_address`; the transfer ends when it carries past
+    /// $FFFF rather than wrapping back into VRAM.
     dest: u16,
     mode: TransferMode,
     /// Bytes left in the whole transfer.
@@ -673,6 +675,12 @@ impl VramDma {
     fn moving(&self) -> bool {
         (self.block_remaining > 0 && self.remaining > 0 && self.ready_in == 0)
             || (self.mode == TransferMode::General && self.remaining > 0)
+    }
+
+    /// VRAM address the next byte lands on; the dest register is 16-bit but VRAM
+    /// decodes only the low 13 bits.
+    fn write_address(&self) -> u16 {
+        0x8000 | (self.dest & 0x1FFF)
     }
 }
 
@@ -1178,13 +1186,11 @@ impl Model for Cgb {
                 true
             }
             0xFF53 => {
-                let low = self.vram_dma.dest & 0x00FF;
-                self.vram_dma.dest = 0x8000 | ((((value as u16) << 8) | low) & 0x1FF0);
+                self.vram_dma.dest = ((value as u16) << 8) | (self.vram_dma.dest & 0x00FF);
                 true
             }
             0xFF54 => {
-                self.vram_dma.dest =
-                    0x8000 | ((self.vram_dma.dest & 0x1F00) | (value & 0xF0) as u16);
+                self.vram_dma.dest = (self.vram_dma.dest & 0xFF00) | (value & 0xF0) as u16;
                 true
             }
             0xFF55 => {
@@ -1362,12 +1368,12 @@ impl Model for Cgb {
         if self.vram_dma.quota == 0 || !self.vram_dma.moving() {
             return None;
         }
-        let pair = (self.vram_dma.source, self.vram_dma.dest);
-        // Pointers advance per byte and persist for any follow-on transfer; the
-        // destination wraps within VRAM. A switch-cancel escape byte does not
-        // count against the latched length.
+        let pair = (self.vram_dma.source, self.vram_dma.write_address());
+        // Pointers advance per byte and persist for any follow-on transfer. A
+        // switch-cancel escape byte does not count against the latched length.
         self.vram_dma.source = self.vram_dma.source.wrapping_add(1);
-        self.vram_dma.dest = 0x8000 | (self.vram_dma.dest.wrapping_add(1) & 0x1FFF);
+        let (next_dest, carried) = self.vram_dma.dest.overflowing_add(1);
+        self.vram_dma.dest = next_dest;
         if self.vram_dma.escape_byte {
             self.vram_dma.escape_byte = false;
         } else {
@@ -1376,6 +1382,11 @@ impl Model for Cgb {
         self.vram_dma.quota -= 1;
         if self.vram_dma.block_remaining > 0 {
             self.vram_dma.block_remaining -= 1;
+        }
+        if carried {
+            // The 16-bit dest register carried out of $FFFF — the transfer ends
+            // here rather than wrapping back into VRAM.
+            self.vram_dma.remaining = 0;
         }
         if self.vram_dma.remaining == 0 {
             self.vram_dma.mode = TransferMode::Idle;
@@ -1403,7 +1414,7 @@ impl Model for Cgb {
             && self.vram_dma.seize_falls >= 2
             && self.vram_dma.block_remaining > 0
             && self.vram_dma.remaining > 0;
-        (writing && address == self.vram_dma.dest).then_some(self.vram_dma.source)
+        (writing && address == self.vram_dma.write_address()).then_some(self.vram_dma.source)
     }
 
     fn vram_dma_take_setup_cell(&mut self) -> bool {
