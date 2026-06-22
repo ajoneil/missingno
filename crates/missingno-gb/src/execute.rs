@@ -271,8 +271,11 @@ impl<M: Model> Console<M> {
                 // `step_blackout_chunk` advances the master clock every edge and
                 // re-engages at the phase the count expires on.
                 let old_counter = self.timers.internal_counter();
+                let to_double = self.model.cpu_steps_per_dot() == 2;
                 self.timers.reset_for_speed_switch();
-                self.audio.on_div_write(old_counter, false);
+                self.audio
+                    .on_div_write(old_counter.wrapping_sub(1), !to_double);
+                self.audio.on_speed_switch(to_double);
                 if let Some(interrupt) = self
                     .serial
                     .on_div_write(old_counter, self.model.has_serial_fast_clock())
@@ -578,6 +581,8 @@ impl<M: Model> Console<M> {
             self.cpu.resume_from_stop();
             // The fetch begins on a CPU rising edge.
             self.clock.engage_on_rise();
+            // Reinstate the DIV-APU tap-retune slip now the divider is live again.
+            self.audio.on_speed_resume();
         }
 
         PhaseResult { new_screen, pixel }

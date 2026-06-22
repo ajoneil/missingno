@@ -37,6 +37,13 @@ pub struct Audio {
     // DIV-APU bit-10 fell last tcycle; the (caru, bylu, JYNA) ripple strobes
     // land one tcycle later (kylo/kene_inst buffer delay) — kene↓ in T1, not T0.
     pub(crate) fs_edge_pending: bool,
+    // The →double tap retune slips the DIV-APU edge one M-cycle when the →double
+    // count is odd. `parity` tracks that low bit; `lag` is the active slip set at
+    // resume; `predelay` carries an armed edge one extra tcycle so the strobe lands
+    // a cycle later (real divider used for detection — no view-shift artifacts).
+    pub(crate) div_apu_double_parity: bool,
+    pub(crate) div_apu_switch_lag: bool,
+    pub(crate) fs_edge_predelay: bool,
     sample_counter: f32,
     // Digital channel sums accumulate as integers; fold_pending() applies
     // the DAC scale and NR50 volume when either changes or a window closes.
@@ -77,6 +84,9 @@ impl Audio {
             // reg_div16≡0x1800, three advances past the divider's 0.
             frame_sequencer_step: 2,
             fs_edge_pending: false,
+            div_apu_double_parity: false,
+            div_apu_switch_lag: false,
+            fs_edge_predelay: false,
             sample_counter: 0.0,
             pending_left: 0,
             pending_right: 0,
@@ -110,6 +120,9 @@ impl Audio {
             prev_div_apu_bit: false, // internal_counter starts at 0, bit 12 = 0
             frame_sequencer_step: 0,
             fs_edge_pending: false,
+            div_apu_double_parity: false,
+            div_apu_switch_lag: false,
+            fs_edge_predelay: false,
             sample_counter: 0.0,
             pending_left: 0,
             pending_right: 0,
@@ -194,6 +207,11 @@ impl Audio {
             // frame sequencer, so drop any armed ripple edge.
             self.prev_div_apu_bit = div_counter & div_apu_bit != 0;
             self.fs_edge_pending = false;
+            self.fs_edge_predelay = false;
+            // Power-off re-locks the frame sequencer, so the →double tap-retune
+            // slip and its parity are cleared too.
+            self.div_apu_switch_lag = false;
+            self.div_apu_double_parity = false;
             return;
         }
 
@@ -209,11 +227,22 @@ impl Audio {
             self.fs_edge_pending = false;
             self.tick_frame_sequencer();
         }
+        // A →double-slipped edge waits one extra tcycle: last tcycle's predelay
+        // becomes this tcycle's pending, so the strobe lands a cycle later.
+        if self.fs_edge_predelay {
+            self.fs_edge_predelay = false;
+            self.fs_edge_pending = true;
+        }
 
-        // DIV-APU bit-10 fall arms the ripple advance for next tcycle.
+        // DIV-APU bit-10 fall arms the ripple advance for next tcycle — via the
+        // extra predelay stage while the →double tap-retune slip holds.
         let div_apu_high = div_counter & div_apu_bit != 0;
         if self.prev_div_apu_bit && !div_apu_high {
-            self.fs_edge_pending = true;
+            if self.div_apu_switch_lag && double_speed {
+                self.fs_edge_predelay = true;
+            } else {
+                self.fs_edge_pending = true;
+            }
         }
         self.prev_div_apu_bit = div_apu_high;
 
@@ -314,6 +343,22 @@ impl Audio {
         }
         self.prev_div_apu_bit = false; // counter is now 0, both taps clear
         self.fs_edge_pending = false; // divider reset supersedes any armed tap edge
+        self.fs_edge_predelay = false; // and any slipped edge still in its extra cycle
+    }
+
+    /// KEY1 entry: a →double swap toggles the tap-retune parity (the slip is
+    /// present when the →double count is odd); the active slip is dropped for the
+    /// blackout and reinstated from the parity at resume.
+    pub fn on_speed_switch(&mut self, to_double: bool) {
+        if to_double {
+            self.div_apu_double_parity = !self.div_apu_double_parity;
+        }
+        self.div_apu_switch_lag = false;
+    }
+
+    /// Blackout resume: apply the tap-retune slip for the current →double parity.
+    pub fn on_speed_resume(&mut self) {
+        self.div_apu_switch_lag = self.div_apu_double_parity;
     }
 
     pub fn drain_samples(&mut self) -> Vec<(f32, f32)> {
@@ -436,6 +481,9 @@ impl Audio {
             prev_div_apu_bit: snap.prev_div_apu_bit,
             frame_sequencer_step: snap.frame_sequencer_step,
             fs_edge_pending: false,
+            div_apu_double_parity: false,
+            div_apu_switch_lag: false,
+            fs_edge_predelay: false,
             sample_counter: 0.0,
             pending_left: 0,
             pending_right: 0,
