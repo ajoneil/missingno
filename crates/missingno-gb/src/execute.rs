@@ -332,6 +332,10 @@ impl<M: Model> Console<M> {
     /// The single byte-transfer OAM DMA and the CGB VRAM DMA share.
     fn dma_move(&mut self, source: u16, dest: u16) {
         let byte = self.read_dma_source(source);
+        self.dma_commit(source, dest, byte);
+    }
+
+    fn dma_commit(&mut self, source: u16, dest: u16, byte: u8) {
         match ppu::memory::MappedAddress::map(dest) {
             ppu::memory::MappedAddress::Oam(address) => self.ppu.write_oam(address, byte),
             ppu::memory::MappedAddress::Vram(address) => {
@@ -1057,7 +1061,11 @@ impl<M: Model> Console<M> {
         if self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended {
             if !self.model.vram_dma_take_setup_cell() {
                 while let Some((src, dst)) = self.model.vram_dma_next_byte() {
-                    self.dma_move(src, dst);
+                    let byte = match self.model.vram_dma_source_open_bus(src) {
+                        Some(open) => open,
+                        None => self.read_dma_source(src),
+                    };
+                    self.dma_commit(src, dst, byte);
                 }
             }
         }

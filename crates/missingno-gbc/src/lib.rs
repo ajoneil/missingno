@@ -887,6 +887,10 @@ impl Model for Cgb {
         (address >= 0xE000).then_some(0xFF)
     }
 
+    fn vram_dma_source_open_bus(&self, source: u16) -> Option<u8> {
+        (0x8000..=0x9FFF).contains(&source).then_some(0xFF)
+    }
+
     fn cpu_post_boot(_checksum: u8) -> Cpu {
         Cpu::post_boot_cgb()
     }

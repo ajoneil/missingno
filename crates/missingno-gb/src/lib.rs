@@ -389,6 +389,14 @@ pub trait Model: Default {
         None
     }
 
+    /// Open-bus value a *VRAM-DMA* source read returns, or None to read the bus
+    /// normally. A VRAM-DMA source must be ROM/cart-RAM; VRAM ($8000-$9FFF) is
+    /// off that source bus and floats to `$FF`. OAM-DMA — whose source range
+    /// includes VRAM — does not use this. DMG has no VRAM-DMA.
+    fn vram_dma_source_open_bus(&self, _source: u16) -> Option<u8> {
+        None
+    }
+
     /// This console's own memory map: the registers/regions its map defines
     /// that the shared map doesn't. DMG adds nothing. CGB adds KEY1, VBK,
     /// SVBK, BCPS/BCPD, OCPS/OCPD, HDMA1-5, OPRI, and banked WRAM. Consulted
