@@ -588,15 +588,21 @@ impl<M: Model> Console<M> {
         // interrupt already pending at the STOP). Only past the relock tail.
         let woken_by_interrupt =
             self.model.speed_switch_divider_active() && self.interrupts.triggered().is_some();
-        let drain = if woken_by_interrupt { u32::MAX } else { 1 };
+        // The mid-HALT timer wake spends the HALT-wake's WakeIntake M-cycle (the
+        // divider ticking through it) before re-engaging; the pending-at-STOP
+        // preempt path drains the bare relock tail with no such wake.
+        let woken_ready =
+            woken_by_interrupt && self.model.speed_switch_wake_ready(mcycle_boundary);
+        let drain = if woken_ready { u32::MAX } else { 1 };
         if self.model.drain_speed_switch_blackout(drain) {
-            // A pending interrupt (IME set) is serviced the instant the CPU
-            // re-engages, dispatching from the post-STOP boundary rather than
-            // running the byte after STOP first.
-            let dispatch_pending = !woken_by_interrupt
-                && self.cpu.interrupts_enabled()
-                && self.interrupts.triggered().is_some();
-            self.cpu.resume_from_stop(dispatch_pending);
+            // An enabled interrupt is serviced at re-engage, dispatching from the
+            // post-STOP boundary. The mid-HALT timer wake is a HALT wake (M1, the
+            // byte after STOP its return target); the pending-at-STOP 1-byte STOP
+            // resumes mid-dispatch at M2 (its M1 was the pre-reset operand fetch).
+            let dispatch_step = (self.cpu.interrupts_enabled()
+                && self.interrupts.triggered().is_some())
+            .then_some(if woken_by_interrupt { 0 } else { 1 });
+            self.cpu.resume_from_stop(dispatch_step);
             // The fetch begins on a CPU rising edge.
             self.clock.engage_on_rise();
             // Reinstate the DIV-APU tap-retune slip now the divider is live again.

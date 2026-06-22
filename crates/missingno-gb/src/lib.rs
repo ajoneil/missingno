@@ -302,6 +302,15 @@ pub trait Model: Default {
     /// the divider doesn't ramp before dispatch. DMG never switches speed.
     fn preempt_speed_switch_halt(&mut self) {}
 
+    /// A timer overflowing during the post-STOP HALT wakes it like any HALT:
+    /// the IF-set edge spends one WakeIntake M-cycle (the divider ticking)
+    /// before the dispatch. Arms on the first call, counts down at M-cycle
+    /// boundaries, returns true once the intake elapses (then the CPU
+    /// re-engages). DMG has no blackout, so it re-engages immediately.
+    fn speed_switch_wake_ready(&mut self, _mcycle_boundary: bool) -> bool {
+        true
+    }
+
     /// The pre-ALET-rise XYMU (mode-3) state, sampled before this dot's
     /// `ppu_rise_edge` (the ALET-rising XYMU.q↑). A double-speed FF41 read
     /// latching on that phase resolves its STAT mode to this pre-transition

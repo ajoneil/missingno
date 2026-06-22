@@ -552,20 +552,18 @@ impl Cpu {
     /// start a fresh M-cycle here (`mcycle_active=false`) and arm its boundary
     /// work (`boundary_pending`); the fetch then runs on the next CPU rise,
     /// offset from the dot grid by however many master edges the blackout held.
-    pub fn resume_from_stop(&mut self, dispatch_pending: bool) {
+    pub fn resume_from_stop(&mut self, dispatch_step: Option<u8>) {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
 
-        // A pending interrupt with IME set dispatches straight from the
-        // post-STOP boundary, exactly like an ordinary HALT wake: the byte
-        // after STOP (the 1-byte opcode's "next instruction") is the pushed
-        // return target, not run before the handler. PC already sits on it.
-        if dispatch_pending {
+        // An interrupt serviced at re-engage dispatches from the post-STOP
+        // boundary, exactly like an ordinary HALT wake: the byte after STOP is
+        // the pushed return target, not run before the handler. The 1-byte STOP
+        // (pending at the STOP) resumes at M2 — its dispatch M1 was the operand
+        // fetch spent before the DIV reset. The 2-byte STOP (a timer waking the
+        // HALT) resumes at M1, after the HALT-wake's WakeIntake cycle.
+        if let Some(step) = dispatch_step {
             let pc = self.pc;
-            // The dispatch's M1 (the discarded-prefetch internal cycle) was
-            // already spent as STOP's operand fetch before the DIV reset, so
-            // the post-switch dispatch resumes at M2 (step 1). IME clears here
-            // as M1 would have.
             self.irq
                 .ime
                 .write_immediate(InterruptMasterEnable::Disabled);
@@ -574,7 +572,7 @@ impl Cpu {
                 sp: self.stack_pointer,
                 pc_hi: (pc >> 8) as u8,
                 pc_lo: (pc & 0xff) as u8,
-                step: 1,
+                step,
             };
             self.irq.pending_vector_resolve = false;
         } else {

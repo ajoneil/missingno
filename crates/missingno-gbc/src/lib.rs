@@ -699,6 +699,11 @@ pub struct Cgb {
     /// until this drains, then the SM83 re-engages at the new speed and the
     /// dot-clock phase the count expired on. 0 = not switching.
     speed_switch_blackout: u32,
+    /// HALT-wake intake countdown: a timer overflowing during the post-STOP
+    /// HALT spends one WakeIntake M-cycle (the divider ticking through it)
+    /// before its dispatch, like any HALT wake. -1 = no wake in flight; armed
+    /// to 1 on the IF-set edge, re-engaging once it reaches 0.
+    speed_switch_wake_latency: i32,
     /// Pre-ALET-rise XYMU (mode-3) state, sampled before this dot's ALET edge
     /// (where VOGA captures) — the pre-transition view a double-speed FF41 read's
     /// `data_phase_n↑` latch saw; `resolve_read_latch` resolves the read's STAT
@@ -738,6 +743,7 @@ impl Default for Cgb {
             dmg_compat: false,
             vram_dma: VramDma::default(),
             speed_switch_blackout: 0,
+            speed_switch_wake_latency: -1,
             pre_alet_rendering: false,
             pre_alet_lock: None,
             read_drive_oam_lock: None,
@@ -982,12 +988,25 @@ impl Model for Cgb {
         self.speed_switch_blackout = self.relock_edges();
     }
 
+    fn speed_switch_wake_ready(&mut self, mcycle_boundary: bool) -> bool {
+        if self.speed_switch_wake_latency < 0 {
+            // First IF-set edge: arm the WakeIntake M-cycle.
+            self.speed_switch_wake_latency = 1;
+        } else if mcycle_boundary && self.speed_switch_wake_latency > 0 {
+            self.speed_switch_wake_latency -= 1;
+        }
+        self.speed_switch_wake_latency == 0
+    }
+
     fn speed_switch_in_progress(&self) -> bool {
         self.speed_switch_blackout > 0
     }
 
     fn drain_speed_switch_blackout(&mut self, elapsed: u32) -> bool {
         self.speed_switch_blackout = self.speed_switch_blackout.saturating_sub(elapsed);
+        if self.speed_switch_blackout == 0 {
+            self.speed_switch_wake_latency = -1;
+        }
         self.speed_switch_blackout == 0
     }
 
