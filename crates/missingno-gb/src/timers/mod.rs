@@ -20,6 +20,10 @@ pub struct Timers {
     /// the interrupt immediately. On the next CLK9 tick (next dot),
     /// this is drained and the interrupt is returned.
     pub g151_pending: bool,
+    /// Set when `mcycle()` incremented TIMA on the selected bit's natural 1→0
+    /// fall this M-cycle, so a coinciding speed-switch DIV reset doesn't
+    /// double-count the same edge.
+    pub tima_fell_this_mcycle: bool,
 }
 
 impl Timers {
@@ -38,6 +42,7 @@ impl Timers {
             overflow_pending: false,
             reloading: false,
             g151_pending: false,
+            tima_fell_this_mcycle: false,
         }
     }
 
@@ -67,6 +72,7 @@ impl Timers {
             overflow_pending: false,
             reloading: false,
             g151_pending: false,
+            tima_fell_this_mcycle: false,
         }
     }
 
@@ -103,7 +109,8 @@ impl Timers {
         self.internal_counter = self.internal_counter.wrapping_add(1);
         let is_set = self.selected_bit_set();
 
-        if was_set && !is_set {
+        self.tima_fell_this_mcycle = was_set && !is_set;
+        if self.tima_fell_this_mcycle {
             self.increment_tima();
         }
     }
@@ -138,7 +145,9 @@ impl Timers {
         };
         let edge = self.control.enabled() && (edge_counter & sel) != 0;
         self.internal_counter = 0;
-        if edge {
+        // Don't double-count: if this M-cycle's natural 1→0 fall already
+        // incremented TIMA, the reset's coinciding edge is the same one.
+        if edge && !self.tima_fell_this_mcycle {
             self.increment_tima();
         }
     }
@@ -197,6 +206,7 @@ impl Timers {
             overflow_pending: snap.overflow_pending,
             reloading: snap.reloading,
             g151_pending: false,
+            tima_fell_this_mcycle: false,
         }
     }
 }
