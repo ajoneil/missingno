@@ -197,6 +197,7 @@ impl StatInterrupt {
             enables,
             enables,
             InterruptFlags::empty(),
+            false,
         )
     }
 
@@ -228,6 +229,7 @@ impl StatInterrupt {
             enables_before,
             enables_after,
             register_edges,
+            true,
         )
     }
 
@@ -238,6 +240,7 @@ impl StatInterrupt {
         enables_before: InterruptFlags,
         enables_after: InterruptFlags,
         register_edges: InterruptFlags,
+        synced: bool,
     ) -> bool {
         let conditions_before = self.conditions_was;
         self.conditions_was = conditions;
@@ -255,6 +258,7 @@ impl StatInterrupt {
             enables_before,
             enables_after,
             register_edges,
+            synced,
         )
     }
 
@@ -271,15 +275,30 @@ impl StatInterrupt {
         enables_before: InterruptFlags,
         enables_after: InterruptFlags,
         register_edges: InterruptFlags,
+        synced: bool,
     ) -> bool {
         const STEADY_PS: i32 = i32::MAX / 2;
         self.legs_was_high = conditions_after & enables_after;
         let rising_conditions = (conditions_before ^ conditions_after) & conditions_after;
 
+        // CGB: the LYC coincidence that gates a mode-0 STAT fire lingers one fall
+        // past ROPO's clear (the FF45 crossing's extra synchroniser stage). When
+        // LYC falls as the mode-0 leg rises on the same fall, hold LYC high for
+        // this waveform so SUKO stays high over the mode-0 edge; the real clear
+        // (in conditions_was) drops it on the next fall. Scoped to a coincident
+        // mode-0 rise — the LYC term gates mode-0, not the OAM/VBlank legs.
+        let lyc_lingers = synced
+            && conditions_before.contains(InterruptFlags::CURRENT_LINE_COMPARE)
+            && !conditions_after.contains(InterruptFlags::CURRENT_LINE_COMPARE)
+            && rising_conditions.contains(InterruptFlags::HORIZONTAL_BLANK);
+
         // Per-leg breakpoints: at most one enable edge and one condition edge.
         let mut times = [0i32; 9];
         let mut time_count = 1; // t = 0 (initial state)
         for leg in (conditions_before ^ conditions_after).iter() {
+            if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
+                continue;
+            }
             let arrival = arrival(leg);
             times[time_count] = if conditions_after.contains(leg) {
                 arrival.rising_ps as i32
@@ -306,7 +325,9 @@ impl StatInterrupt {
                 } else {
                     arrival(leg).falling_ps as i32
                 };
-                let cond = if cond_changed && t >= cond_arrival {
+                let cond = if lyc_lingers && leg == InterruptFlags::CURRENT_LINE_COMPARE {
+                    true
+                } else if cond_changed && t >= cond_arrival {
                     conditions_after.contains(leg)
                 } else {
                     conditions_before.contains(leg)
