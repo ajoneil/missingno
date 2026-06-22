@@ -552,18 +552,34 @@ impl Cpu {
     /// start a fresh M-cycle here (`mcycle_active=false`) and arm its boundary
     /// work (`boundary_pending`); the fetch then runs on the next CPU rise,
     /// offset from the dot grid by however many master edges the blackout held.
-    pub fn resume_from_stop(&mut self) {
+    pub fn resume_from_stop(&mut self, dispatch_pending: bool) {
         self.halt.state = HaltState::Running;
         self.halt.rs_latched = false;
-        self.phase = match self.stop_retained.take() {
-            // A yielded discard-fetch left its byte in IR: route it as a
-            // just-fetched opcode instead of re-fetching.
-            Some(opcode) => CpuPhase::Execute {
-                phase: Phase::RetainedOpcode { opcode },
+
+        // A pending interrupt with IME set dispatches straight from the
+        // post-STOP boundary, exactly like an ordinary HALT wake: the byte
+        // after STOP (the 1-byte opcode's "next instruction") is the pushed
+        // return target, not run before the handler. PC already sits on it.
+        if dispatch_pending {
+            let pc = self.pc;
+            self.phase = CpuPhase::InterruptDispatch {
+                sp: self.stack_pointer,
+                pc_hi: (pc >> 8) as u8,
+                pc_lo: (pc & 0xff) as u8,
                 step: 0,
-            },
-            None => CpuPhase::Fetch,
-        };
+            };
+            self.irq.pending_vector_resolve = false;
+        } else {
+            self.phase = match self.stop_retained.take() {
+                // A yielded discard-fetch left its byte in IR: route it as a
+                // just-fetched opcode instead of re-fetching.
+                Some(opcode) => CpuPhase::Execute {
+                    phase: Phase::RetainedOpcode { opcode },
+                    step: 0,
+                },
+                None => CpuPhase::Fetch,
+            };
+        }
         self.exec_step = 0;
         self.mcycle_active = false;
         self.boundary_pending = true;

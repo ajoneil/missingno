@@ -294,6 +294,14 @@ pub trait Model: Default {
         0
     }
 
+    /// An interrupt pending with IME set at the speed-switch STOP makes it a
+    /// 1-byte opcode that doesn't enter the post-STOP oscillation-stabilization
+    /// HALT (Pan Docs STOP decision table): the switch still resets DIV and
+    /// changes speed, but the long wait is preempted and the interrupt is
+    /// serviced at once. Collapse the blackout to the bare clock-mux settle so
+    /// the divider doesn't ramp before dispatch. DMG never switches speed.
+    fn preempt_speed_switch_halt(&mut self) {}
+
     /// The pre-ALET-rise XYMU (mode-3) state, sampled before this dot's
     /// `ppu_rise_edge` (the ALET-rising XYMU.q↑). A double-speed FF41 read
     /// latching on that phase resolves its STAT mode to this pre-transition

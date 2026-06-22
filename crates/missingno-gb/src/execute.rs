@@ -290,6 +290,12 @@ impl<M: Model> Console<M> {
                     } else {
                         CpuDivider::One
                     });
+                // An interrupt pending with IME set at the STOP preempts the
+                // post-STOP HALT: the switch happens but the CPU services the
+                // interrupt at once (DIV ≈ 0), not after the long wait.
+                if self.cpu.interrupts_enabled() && self.interrupts.triggered().is_some() {
+                    self.model.preempt_speed_switch_halt();
+                }
                 // Anchor the held-edge count at the current master edge; the
                 // blackout's elapsed count is `master_edge - blackout_anchor`.
                 let anchor = self.clock.master_edge();
@@ -576,9 +582,21 @@ impl<M: Model> Console<M> {
             }
         };
 
-        // One master edge of the blackout spent; re-engage the moment it empties.
-        if self.model.drain_speed_switch_blackout(1) {
-            self.cpu.resume_from_stop();
+        // One master edge of the blackout spent; re-engage the moment it empties —
+        // or early, the moment an enabled interrupt is pending. The post-STOP HALT
+        // wakes on IE&IF like an ordinary HALT (a timer overflowing mid-wait, or an
+        // interrupt already pending at the STOP). Only past the relock tail.
+        let woken_by_interrupt =
+            self.model.speed_switch_divider_active() && self.interrupts.triggered().is_some();
+        let drain = if woken_by_interrupt { u32::MAX } else { 1 };
+        if self.model.drain_speed_switch_blackout(drain) {
+            // A pending interrupt (IME set) is serviced the instant the CPU
+            // re-engages, dispatching from the post-STOP boundary rather than
+            // running the byte after STOP first.
+            let dispatch_pending = !woken_by_interrupt
+                && self.cpu.interrupts_enabled()
+                && self.interrupts.triggered().is_some();
+            self.cpu.resume_from_stop(dispatch_pending);
             // The fetch begins on a CPU rising edge.
             self.clock.engage_on_rise();
             // Reinstate the DIV-APU tap-retune slip now the divider is live again.

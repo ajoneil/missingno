@@ -975,6 +975,13 @@ impl Model for Cgb {
         }
     }
 
+    fn preempt_speed_switch_halt(&mut self) {
+        // No oscillation-stabilization HALT: only the clock-mux relock tail
+        // remains, during which the divider is frozen — so DIV stays 0 until
+        // the CPU re-engages and services the pending interrupt.
+        self.speed_switch_blackout = self.relock_edges();
+    }
+
     fn speed_switch_in_progress(&self) -> bool {
         self.speed_switch_blackout > 0
     }
