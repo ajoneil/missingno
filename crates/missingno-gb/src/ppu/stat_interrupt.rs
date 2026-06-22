@@ -274,6 +274,7 @@ impl StatInterrupt {
     ) -> bool {
         const STEADY_PS: i32 = i32::MAX / 2;
         self.legs_was_high = conditions_after & enables_after;
+        let rising_conditions = (conditions_before ^ conditions_after) & conditions_after;
 
         // Per-leg breakpoints: at most one enable edge and one condition edge.
         let mut times = [0i32; 9];
@@ -287,8 +288,8 @@ impl StatInterrupt {
             };
             time_count += 1;
         }
-        if !register_edges.is_empty() {
-            times[time_count] = REGISTER_PATH_ARRIVAL_PS as i32;
+        for leg in register_edges.iter() {
+            times[time_count] = register_arrival(leg, rising_conditions) as i32;
             time_count += 1;
         }
         let times = &mut times[..time_count];
@@ -310,7 +311,8 @@ impl StatInterrupt {
                 } else {
                     conditions_before.contains(leg)
                 };
-                let enable = if register_edges.contains(leg) && t >= REGISTER_PATH_ARRIVAL_PS as i32
+                let enable = if register_edges.contains(leg)
+                    && t >= register_arrival(leg, rising_conditions) as i32
                 {
                     enables_after.contains(leg)
                 } else {
@@ -409,11 +411,24 @@ const MODE_2_ARRIVAL: LegArrival = LegArrival {
 /// (1,524 ps) bracket the empirical threshold.
 const SUKO_CAPTURE_THRESHOLD_PS: i32 = 1_700;
 
-/// CGB register-path propagation from the synchroniser DFF outputs to the
-/// leg AND-terms. No CGB netlist exists; the gambatte cgb04c corpus pins it
-/// to [2_574, 4_000) ps (fires need E−874 ≥ threshold; the m1-fall block
-/// needs E−2_300 < threshold).
-const REGISTER_PATH_ARRIVAL_PS: u16 = 3_300;
+/// CGB register-path propagation from the FF41 synchroniser DFF output to a
+/// leg's enable AND-term. The default holds the LYC (`E−874 ≥ threshold`) and
+/// mode-1-fall (`E−2_300 < threshold`) corpus bounds. The deep mode-0 (WODU)
+/// arm is slow enough that a same-fall enable-clear can't suppress a mode-0
+/// condition rising on the same fall before its SUKO pulse is captured
+/// (`E ≥ MODE_0_ARRIVAL.rising + SUKO_CAPTURE_THRESHOLD_PS`); it applies only to
+/// that coincident-rising race, not to a steady mode-0 leg. No CGB netlist;
+/// gambatte cgb04c pins these.
+const REGISTER_ARRIVAL_DEFAULT: u16 = 3_300;
+const REGISTER_ARRIVAL_MODE_0: u16 = 6_000;
+
+fn register_arrival(leg: InterruptFlags, rising_conditions: InterruptFlags) -> u16 {
+    if leg == InterruptFlags::HORIZONTAL_BLANK && rising_conditions.contains(leg) {
+        REGISTER_ARRIVAL_MODE_0
+    } else {
+        REGISTER_ARRIVAL_DEFAULT
+    }
+}
 
 fn arrival(leg: InterruptFlags) -> LegArrival {
     if leg == InterruptFlags::CURRENT_LINE_COMPARE {
