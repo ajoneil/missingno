@@ -121,6 +121,14 @@ impl ColorRam {
         }
     }
 
+    /// Seed every colour of all 8 palettes — the CGB boot ROM fades the BG
+    /// palettes to white before handing off to the game.
+    fn fill(&mut self, colour: Color555) {
+        for palette in 0..8 {
+            self.install(palette, [colour.0; 4]);
+        }
+    }
+
     fn advance(&mut self) {
         if self.auto_increment {
             self.index = (self.index + 1) & 0x3F;
@@ -440,6 +448,8 @@ impl PpuModel for CgbPpu {
     }
 
     fn init_post_boot(&mut self, header: &CartridgeBootHeader) {
+        // The CGB boot ROM fades all BG palettes to white before handoff.
+        self.bg_cram.fill(Color555::grey(31));
         if !header.is_cgb {
             self.dmg_compat = true;
             // The boot ROM selects DMG object priority (OPRI=1) for a DMG cart.
