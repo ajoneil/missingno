@@ -25,6 +25,10 @@ pub struct NoiseChannel {
     /// Stop latch (CH4 mirror of CH1/CH2's JEME): a fire that samples a
     /// saturated volume counter latches it until the next trigger.
     pub envelope_stopped: bool,
+    /// Envelope-fire arm (CH4 mirror of CH1/CH2's `kyvo`/JOPA): set at kene↓
+    /// on counter saturation; the volume commit is deferred to the next
+    /// horu_512hz↑ sample.
+    pub kyvo: bool,
     pub length_counter: u16,
 }
 
@@ -45,6 +49,7 @@ impl Default for NoiseChannel {
             current_volume: 0,
             envelope_timer: 0,
             envelope_stopped: false,
+            kyvo: false,
             length_counter: 0,
         }
     }
@@ -63,6 +68,7 @@ impl NoiseChannel {
         self.current_volume = 0;
         self.envelope_timer = 0;
         self.envelope_stopped = false;
+        self.kyvo = false;
         self.length_counter = length_counter;
     }
 
@@ -131,6 +137,8 @@ impl NoiseChannel {
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
         self.envelope_stopped = false;
+        // ch4_restart resets JOPA: any prior armed kyvo is dropped.
+        self.kyvo = false;
 
         // DAC check
         if self.volume_and_envelope.0 & 0xf8 == 0 {
@@ -170,36 +178,49 @@ impl NoiseChannel {
         }
     }
 
-    pub fn tick_envelope(&mut self) {
+    /// kene↓ edge (fs step 7→0). Advances the envelope counter and arms
+    /// `kyvo` on saturation; the volume update is deferred to the next
+    /// horu_512hz↑ sample.
+    pub fn tick_envelope_counter(&mut self) {
         let pace = self.volume_and_envelope.sweep_pace();
         if pace == 0 {
             return;
         }
-
         if self.envelope_timer > 0 {
             self.envelope_timer -= 1;
         }
         if self.envelope_timer == 0 {
             self.envelope_timer = pace;
-            if self.envelope_stopped {
-                return;
-            }
-            // A fire that samples a saturated counter latches the stop
-            // instead of stepping — no arithmetic clamp.
-            match self.volume_and_envelope.direction() {
-                EnvelopeDirection::Increase => {
-                    if self.current_volume == 15 {
-                        self.envelope_stopped = true;
-                    } else {
-                        self.current_volume += 1;
-                    }
+            self.kyvo = true;
+        }
+    }
+
+    /// horu_512hz↑ edge (every fs step transition). Commits an armed `kyvo`
+    /// into the volume counter — one 512 Hz tick after the kene↓ that armed it.
+    pub fn sample_envelope_jopa(&mut self) {
+        if !self.kyvo {
+            return;
+        }
+        self.kyvo = false;
+        let pace = self.volume_and_envelope.sweep_pace();
+        if pace == 0 || !self.enabled.enabled || self.envelope_stopped {
+            return;
+        }
+        // A fire that samples a saturated counter latches the stop
+        // instead of stepping — no arithmetic clamp.
+        match self.volume_and_envelope.direction() {
+            EnvelopeDirection::Increase => {
+                if self.current_volume == 15 {
+                    self.envelope_stopped = true;
+                } else {
+                    self.current_volume += 1;
                 }
-                EnvelopeDirection::Decrease => {
-                    if self.current_volume == 0 {
-                        self.envelope_stopped = true;
-                    } else {
-                        self.current_volume -= 1;
-                    }
+            }
+            EnvelopeDirection::Decrease => {
+                if self.current_volume == 0 {
+                    self.envelope_stopped = true;
+                } else {
+                    self.current_volume -= 1;
                 }
             }
         }

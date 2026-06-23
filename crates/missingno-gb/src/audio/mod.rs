@@ -20,8 +20,8 @@ const SAMPLE_RATE: f32 = 44100.0;
 const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
 const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
 const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
-// In double speed the M-cycle counter runs at 2× the dot clock, so the tap
-// shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
+                                  // In double speed the M-cycle counter runs at 2× the dot clock, so the tap
+                                  // shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
 const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
 
 #[derive(Clone)]
@@ -304,6 +304,7 @@ impl Audio {
         // the intervening M-cycles clears kyvo and suppresses the fire.
         self.channels.ch1.sample_envelope_jopa();
         self.channels.ch2.sample_envelope_jopa();
+        self.channels.ch4.sample_envelope_jopa();
 
         // bure↑ advances the (caru, bylu, JYNA) ripple; the strobes are
         // its bit-fall edges.
@@ -324,7 +325,7 @@ impl Audio {
         if c == 0 {
             self.channels.ch1.tick_envelope_counter();
             self.channels.ch2.tick_envelope_counter();
-            self.channels.ch4.tick_envelope();
+            self.channels.ch4.tick_envelope_counter();
         }
     }
 
@@ -374,11 +375,11 @@ impl Audio {
         };
         use channels::wave::Volume as WaveVolume;
         use channels::{
-            Enabled,
             noise::NoiseChannel,
             pulse::PulseChannel,
             pulse_sweep::{PulseSweepChannel, Sweep},
             wave::WaveChannel,
+            Enabled,
         };
 
         let channels = Channels {
@@ -468,6 +469,7 @@ impl Audio {
                 current_volume: 0,
                 envelope_timer: snap.ch4_envelope_timer,
                 envelope_stopped: false,
+                kyvo: false,
                 length_counter: 0,
             },
         };

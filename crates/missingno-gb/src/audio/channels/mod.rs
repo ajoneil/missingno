@@ -28,7 +28,7 @@ impl Channels {
     pub fn tick_envelope_all(&mut self) {
         self.ch1.tick_envelope_counter();
         self.ch2.tick_envelope_counter();
-        self.ch4.tick_envelope();
+        self.ch4.tick_envelope_counter();
     }
 
     pub fn reset_all(&mut self) {
