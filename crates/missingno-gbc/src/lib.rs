@@ -756,8 +756,13 @@ pub struct Cgb {
 
 impl Default for Cgb {
     fn default() -> Self {
+        // WRAM powers on with the SRAM stripe pattern, not zeroed.
+        let mut wram = Box::new([0u8; 0x8000]);
+        for bank in wram.chunks_mut(0x2000) {
+            missingno_gb::dmg_sram::fill(bank);
+        }
         Self {
-            wram: Box::new([0; 0x8000]),
+            wram,
             svbk: 1,
             key1_armed: false,
             double_speed: false,
