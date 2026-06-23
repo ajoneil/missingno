@@ -465,6 +465,7 @@ impl Audio {
                 length_enabled: snap.ch4_length_enabled,
                 frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),
                 frequency_timer: 0,
+                skip_first_clock: false,
                 lfsr: 0x7FFF,
                 current_volume: 0,
                 envelope_timer: snap.ch4_envelope_timer,

@@ -19,6 +19,9 @@ pub struct NoiseChannel {
     pub frequency_and_randomness: FrequencyAndRandomness,
 
     pub frequency_timer: u16,
+    /// Set by a re-trigger of a running channel: its first divider expiry is
+    /// swallowed so the first LFSR shift lands one sample later than a cold trigger.
+    pub skip_first_clock: bool,
     pub lfsr: u16,
     pub current_volume: u8,
     pub envelope_timer: u8,
@@ -45,6 +48,7 @@ impl Default for NoiseChannel {
             frequency_and_randomness: FrequencyAndRandomness(0),
 
             frequency_timer: 0,
+            skip_first_clock: false,
             lfsr: 0x7fff,
             current_volume: 0,
             envelope_timer: 0,
@@ -64,6 +68,7 @@ impl NoiseChannel {
         self.frequency_and_randomness = FrequencyAndRandomness(0);
 
         self.frequency_timer = 0;
+        self.skip_first_clock = false;
         self.lfsr = 0x7fff;
         self.current_volume = 0;
         self.envelope_timer = 0;
@@ -128,11 +133,16 @@ impl NoiseChannel {
     }
 
     pub fn trigger(&mut self) {
+        let was_running = self.enabled.enabled;
         self.enabled.enabled = true;
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
         self.frequency_timer = self.frequency_and_randomness.timer_period();
+        // Re-triggering a running channel clocks the first LFSR shift one sample
+        // later than a cold trigger: the divider keeps its phase across the
+        // restart instead of starting fresh, so the first tap is one period out.
+        self.skip_first_clock = was_running;
         self.lfsr = 0x7fff;
         self.current_volume = self.volume_and_envelope.initial_volume();
         self.envelope_timer = self.volume_and_envelope.sweep_pace();
@@ -156,15 +166,20 @@ impl NoiseChannel {
         if self.frequency_timer == 0 {
             self.frequency_timer = self.frequency_and_randomness.timer_period();
 
-            // Clock LFSR
-            let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
-            self.lfsr >>= 1;
-            self.lfsr |= xor_result << 14;
+            if self.skip_first_clock {
+                // A re-trigger swallows its first divider expiry (one sample late).
+                self.skip_first_clock = false;
+            } else {
+                // Clock LFSR
+                let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
+                self.lfsr >>= 1;
+                self.lfsr |= xor_result << 14;
 
-            // 7-bit width mode
-            if self.frequency_and_randomness.short_mode() {
-                self.lfsr &= !(1 << 6);
-                self.lfsr |= xor_result << 6;
+                // 7-bit width mode
+                if self.frequency_and_randomness.short_mode() {
+                    self.lfsr &= !(1 << 6);
+                    self.lfsr |= xor_result << 6;
+                }
             }
         }
     }
