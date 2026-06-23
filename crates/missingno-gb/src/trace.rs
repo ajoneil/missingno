@@ -632,7 +632,7 @@ impl Tracer {
                 Emitter::Ch3LenCnt => w.set_u8(col, channels.ch3.length_counter as u8),
                 // APU internal — channel 4
                 Emitter::Ch4Active => w.set_bool(col, channels.ch4.enabled.enabled),
-                Emitter::Ch4FreqCnt => w.set_u16(col, channels.ch4.frequency_timer),
+                Emitter::Ch4FreqCnt => w.set_u16(col, channels.ch4.divider),
                 Emitter::Ch4EnvVol => w.set_u8(col, channels.ch4.current_volume),
                 Emitter::Ch4Lfsr => w.set_u16(col, channels.ch4.lfsr),
                 Emitter::Ch4LenCnt => w.set_u8(col, channels.ch4.length_counter as u8),

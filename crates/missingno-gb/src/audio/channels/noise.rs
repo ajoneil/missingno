@@ -18,7 +18,17 @@ pub struct NoiseChannel {
     pub length_enabled: bool,
     pub frequency_and_randomness: FrequencyAndRandomness,
 
-    pub frequency_timer: u16,
+    /// 14-bit shift divider (CEXO…ESEP). The NR43 shift code combinationally
+    /// taps bit `shift`; the LFSR shifts on its rising edge. Free-running once
+    /// started — a mid-run NR43 write re-taps it without disturbing its phase.
+    pub divider: u16,
+    /// T-cycles to the next divider tick (= divisor/2 = `timer_period >> (shift+1)`).
+    pub divider_subcounter: u16,
+    /// Cold synchroniser hold: the divider is frozen for this many T after a
+    /// trigger so the first tap lands at `sync_delay + period/2` = the cold-load.
+    pub sync_delay: u16,
+    /// Previous tapped-bit level, for rising-edge detection.
+    pub prev_tap: bool,
     /// `ch4_1mhz` /4 prescaler (BAVU), `t_index`-anchored — same cell as the
     /// pulse channels' chN_1mhz divider; drives the hama half-phase.
     pub mhz_prescaler: Prescaler,
@@ -53,7 +63,10 @@ impl Default for NoiseChannel {
             length_enabled: false,
             frequency_and_randomness: FrequencyAndRandomness(0),
 
-            frequency_timer: 0,
+            divider: 0,
+            divider_subcounter: 0,
+            sync_delay: 0,
+            prev_tap: false,
             mhz_prescaler: Prescaler::default(),
             jeso: false,
             skip_first_clock: false,
@@ -75,7 +88,10 @@ impl NoiseChannel {
         self.length_enabled = false;
         self.frequency_and_randomness = FrequencyAndRandomness(0);
 
-        self.frequency_timer = 0;
+        self.divider = 0;
+        self.divider_subcounter = 0;
+        self.sync_delay = 0;
+        self.prev_tap = false;
         self.mhz_prescaler = Prescaler::default();
         self.jeso = false;
         self.skip_first_clock = false;
@@ -114,7 +130,7 @@ impl NoiseChannel {
                 }
             }
             Register::FrequencyAndRandomness => {
-                self.frequency_and_randomness = FrequencyAndRandomness(value)
+                self.frequency_and_randomness = FrequencyAndRandomness(value);
             }
             Register::Control => {
                 let ctrl = Control(value);
@@ -148,22 +164,23 @@ impl NoiseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        // Cold first shift = the zeroed divider's first tap (period/2) + the
-        // hama synchroniser. At one hama half-phase the sync sits mid-cell
-        // (period/2 + 4); at the other it snaps to the 8 T hama grid — only
-        // visible for code ≥ 1 (code 0 pre-loads the prescaler to terminal, so
-        // no fdis settle quantises it). Snap up for code 1, down for code ≥ 2.
-        let half = self.frequency_and_randomness.timer_period() / 2;
-        self.frequency_timer = if self.frequency_and_randomness.divisor_code() == 0 || self.jeso {
-            half + 4
+        // The divider restarts from 0; its first tap lands at period/2. The
+        // cold synchroniser adds a hama-phase-dependent hold so the first tap is
+        // at the measured cold-load (sync_delay + period/2): mid-cell / code 0
+        // → +4; code 1 hama edge → +8; code ≥ 2 hama edge → +0 (snapped to the
+        // 8 T hama grid by the fdis load-settle, code ≥ 1 only).
+        self.sync_delay = if self.frequency_and_randomness.divisor_code() == 0 || self.jeso {
+            4
         } else if self.frequency_and_randomness.divisor_code() == 1 {
-            half + 8
+            8
         } else {
-            half
+            0
         };
+        self.divider = 0;
+        self.prev_tap = false;
+        self.divider_subcounter = self.frequency_and_randomness.divisor_half();
         // Re-triggering a running channel clocks the first LFSR shift one sample
-        // later than a cold trigger: the divider keeps its phase across the
-        // restart instead of starting fresh.
+        // later than a cold trigger: swallow the first tap.
         self.skip_first_clock = was_running;
         self.lfsr = 0x7fff;
         self.current_volume = self.volume_and_envelope.initial_volume();
@@ -189,25 +206,39 @@ impl NoiseChannel {
         if mhz_rise {
             self.jeso = !self.jeso;
         }
-        if self.frequency_timer > 0 {
-            self.frequency_timer -= 1;
+        // Cold synchroniser holds the divider, then it free-runs at the divisor
+        // rate (divisor/2 T per tick). The NR43 shift code combinationally taps
+        // bit `shift`; the divisor reloads with the live value each tick (a
+        // mid-run NR43 write re-taps and re-divides without resetting the count).
+        if self.sync_delay > 0 {
+            self.sync_delay -= 1;
+            return;
         }
-        if self.frequency_timer == 0 {
-            self.frequency_timer = self.frequency_and_randomness.timer_period();
+        if self.divider_subcounter > 0 {
+            self.divider_subcounter -= 1;
+        }
+        if self.divider_subcounter == 0 {
+            let shift = self.frequency_and_randomness.clock_shift();
+            self.divider_subcounter = self.frequency_and_randomness.divisor_half();
+            self.divider = self.divider.wrapping_add(1) & 0x3fff;
+            let tap = (self.divider >> shift) & 1 != 0;
+            let rose = !self.prev_tap && tap;
+            self.prev_tap = tap;
+            if rose {
+                if self.skip_first_clock {
+                    // A re-trigger swallows its first tap (one sample late).
+                    self.skip_first_clock = false;
+                } else {
+                    // Clock LFSR
+                    let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
+                    self.lfsr >>= 1;
+                    self.lfsr |= xor_result << 14;
 
-            if self.skip_first_clock {
-                // A re-trigger swallows its first divider expiry (one sample late).
-                self.skip_first_clock = false;
-            } else {
-                // Clock LFSR
-                let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
-                self.lfsr >>= 1;
-                self.lfsr |= xor_result << 14;
-
-                // 7-bit width mode
-                if self.frequency_and_randomness.short_mode() {
-                    self.lfsr &= !(1 << 6);
-                    self.lfsr |= xor_result << 6;
+                    // 7-bit width mode
+                    if self.frequency_and_randomness.short_mode() {
+                        self.lfsr &= !(1 << 6);
+                        self.lfsr |= xor_result << 6;
+                    }
                 }
             }
         }
@@ -321,11 +352,14 @@ impl FrequencyAndRandomness {
         self.0 & 0b111
     }
 
-    fn timer_period(&self) -> u16 {
+    /// The CEXO prescaler's ÷2 output: the divider's tick period in T-cycles.
+    /// Independent of the shift code (which only selects the tap bit), so this
+    /// never overflows the way `divisor << shift` would for shift 14/15.
+    fn divisor_half(&self) -> u16 {
         let divisor = match self.divisor_code() {
             0 => 8,
             n => (n as u16) * 16,
         };
-        divisor << self.clock_shift()
+        divisor >> 1
     }
 }

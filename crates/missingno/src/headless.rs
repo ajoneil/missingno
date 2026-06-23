@@ -1139,7 +1139,7 @@ fn audio_state<M: Model>(gb: &Console<M>) -> serde_json::Value {
             "length_enabled": ch4.length_enabled,
             "length_counter": ch4.length_counter,
             "frequency_and_randomness": ch4.frequency_and_randomness.0,
-            "frequency_timer": ch4.frequency_timer,
+            "divider": ch4.divider,
             "lfsr": format!("{:04x}", ch4.lfsr),
             "current_volume": ch4.current_volume,
             "envelope_timer": ch4.envelope_timer,
