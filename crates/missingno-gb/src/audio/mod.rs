@@ -199,7 +199,7 @@ impl Audio {
         self.channels.ch1.tcycle(apu_reset_n, t_index, double_speed);
         self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
         self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
-        self.channels.ch4.tcycle(apu_reset_n);
+        self.channels.ch4.tcycle(apu_reset_n, t_index, double_speed);
 
         if !self.enabled {
             // Keep tracking the DIV-APU bit so we have the right edge
@@ -465,6 +465,8 @@ impl Audio {
                 length_enabled: snap.ch4_length_enabled,
                 frequency_and_randomness: FrequencyAndRandomness(snap.ch4_freq),
                 frequency_timer: 0,
+                mhz_prescaler: Prescaler::default(),
+                jeso: false,
                 skip_first_clock: false,
                 lfsr: 0x7FFF,
                 current_volume: 0,
