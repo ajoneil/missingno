@@ -138,10 +138,14 @@ impl NoiseChannel {
         if self.length_counter == 0 {
             self.length_counter = 64;
         }
-        self.frequency_timer = self.frequency_and_randomness.timer_period();
+        // Cold first shift lands at the zeroed divider's first tap (count
+        // 2^shift = period/2) plus the two-stage hama synchroniser; +4 packs
+        // that ~3 T sync and the down-counter's 1-tick offset. At shift 0 this
+        // equals period, so the first tap is one period out as before.
+        self.frequency_timer = self.frequency_and_randomness.timer_period() / 2 + 4;
         // Re-triggering a running channel clocks the first LFSR shift one sample
         // later than a cold trigger: the divider keeps its phase across the
-        // restart instead of starting fresh, so the first tap is one period out.
+        // restart instead of starting fresh.
         self.skip_first_clock = was_running;
         self.lfsr = 0x7fff;
         self.current_volume = self.volume_and_envelope.initial_volume();
