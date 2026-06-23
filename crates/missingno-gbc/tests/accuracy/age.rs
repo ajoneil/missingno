@@ -89,15 +89,19 @@ fn run_screen_cgb(rom_file: &str, reference_file: &str) {
         "AGE test {rom_file} timed out without reaching LD B,B"
     );
 
-    let actual = gbc.screen().to_greyscale_bytes();
-    let expected = common::load_cgb_reference_png(&format!("age-test-roms/{reference_file}"));
+    let actual = gbc.screen().to_rgb_bytes();
+    let expected = common::load_cgb_reference_png_rgb(&format!("age-test-roms/{reference_file}"));
 
     let mut mismatches = 0;
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
+    for (i, (a, e)) in actual
+        .chunks_exact(3)
+        .zip(expected.chunks_exact(3))
+        .enumerate()
+    {
         if a != e {
             if mismatches < 10 {
                 let (x, y) = (i % 160, i / 160);
-                eprintln!("Pixel mismatch at ({x}, {y}): got 0x{a:02X}, expected 0x{e:02X}");
+                eprintln!("Pixel mismatch at ({x}, {y}): got {a:?}, expected {e:?}");
             }
             mismatches += 1;
         }
