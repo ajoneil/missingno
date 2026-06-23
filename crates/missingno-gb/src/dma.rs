@@ -49,6 +49,10 @@ pub struct Dma {
     /// NAKY..MUGU 8-bit ripple counter — OAM offset / source low byte.
     dma_a: u8,
 
+    /// Master edge at which `dma_run` engaged — the byte clock's phase origin
+    /// (1.5 M-cycles after FF46), used to align against a concurrent VRAM-DMA bus.
+    start_edge: u64,
+
     /// Previous `data_phase` for `dma_phi`/`dma_phi_n` edge detection.
     prev_data_phase: bool,
 }
@@ -66,6 +70,7 @@ impl Dma {
             loky: false,
             dma_run: false,
             dma_a: 0,
+            start_edge: 0,
             prev_data_phase: false,
         }
     }
@@ -120,6 +125,11 @@ impl Dma {
         self.lyxe = true;
     }
 
+    /// Master edge at which `dma_run` engaged — the byte clock's phase origin.
+    pub fn start_edge(&self) -> u64 {
+        self.start_edge
+    }
+
     /// Advance the control gates one master-clock edge. `data_phase` is
     /// the CPU data-phase net; `dma_phi = !data_phase` clocks the
     /// run/counter DFFs (MATU/LUVY/counter) on its rising edge,
@@ -127,7 +137,7 @@ impl Dma {
     /// separately at the M-cycle data phase via `peek_transfer`. During
     /// HALT `data_phase` is held low, so `dma_phi` never rises and the
     /// engine freezes.
-    pub fn tick(&mut self, data_phase: bool) {
+    pub fn tick(&mut self, data_phase: bool, master_edge: u64) {
         let dma_phi_rising = self.prev_data_phase && !data_phase;
         let dma_phi_n_rising = !self.prev_data_phase && data_phase;
         self.prev_data_phase = data_phase;
@@ -147,6 +157,10 @@ impl Dma {
                 self.dma_a = self.dma_a.wrapping_add(1);
             }
             self.luvy = self.lyxe;
+            // `dma_run` engaging marks the byte clock's phase origin.
+            if !self.dma_run && self.loky {
+                self.start_edge = master_edge;
+            }
             self.dma_run = self.loky;
             self.settle_latches();
         }

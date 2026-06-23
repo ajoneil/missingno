@@ -431,8 +431,22 @@ pub trait Model: Default {
         _mode: ppu::rendering::Mode,
         _engine_gated: bool,
         _cpu_halted: bool,
+        _master_edge: u64,
     ) -> VramDmaClaim {
         VramDmaClaim::default()
+    }
+
+    /// Whether the VRAM DMA will move at least one byte this M-cycle (block
+    /// active, quota available, no setup cell pending) — read-only, for the
+    /// OAM-DMA bus-contention check. DMG: never.
+    fn vram_dma_will_move(&self) -> bool {
+        false
+    }
+
+    /// Master edge at which the active HBlank block fired — its byte clock's
+    /// phase origin, for aligning a concurrent OAM-DMA's bus latch. DMG: 0.
+    fn vram_dma_block_start_edge(&self) -> u64 {
+        0
     }
 
     /// A ready HBlank block owns the VRAM/external buses: M-cycles targeting

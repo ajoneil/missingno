@@ -706,9 +706,10 @@ impl<M: Model> Console<M> {
             // taken-clear wait for the CPU's own resume.
             let cpu_halted = self.cpu.is_halted();
             let engine_gated = (cpu_halted && !self.cpu.irq_latched()) || self.cpu.is_stopped();
-            let claim = self
-                .model
-                .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted);
+            let master_edge = self.clock.master_edge();
+            let claim =
+                self.model
+                    .vram_dma_tick(pre_fall_mode, engine_gated, cpu_halted, master_edge);
             if claim.committed {
                 // An active OAM DMA already owns a bus, blocking the
                 // handover that would take the halt-release fetch's tail.
@@ -1044,8 +1045,19 @@ impl<M: Model> Console<M> {
     /// that collided with DMA on the source bus open-drains at the OAM
     /// slot DMA deposits. (Audio mcycle is at boundary rise.)
     fn tick_mcycle_boundary_fall(&mut self) {
-        if let Some((src_addr, dst_offset)) = self.dma.peek_transfer() {
-            self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
+        let double_speed = self.clock.divider() == CpuDivider::Two;
+        let oam = self.dma.peek_transfer();
+        let hdma_active = self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended;
+        // The two engines share one bus: when an OAM-DMA and a VRAM-DMA block
+        // both move a byte this M-cycle, the OAM-DMA latches the VRAM-DMA byte
+        // that coincides with its write rather than its own source.
+        let contended =
+            !double_speed && oam.is_some() && hdma_active && self.model.vram_dma_will_move();
+
+        if !contended {
+            if let Some((src_addr, dst_offset)) = oam {
+                self.dma_move(src_addr, 0xfe00 + dst_offset as u16);
+            }
         }
 
         // A source-bank register write (VBK/SVBK) latches here at the boundary,
@@ -1058,7 +1070,8 @@ impl<M: Model> Console<M> {
         // bus — gating on the hold keeps the transfer from overlapping the
         // arming instruction. (The trigger/quota tick ran before this edge's
         // write commit.) Idle (no-op) on the DMG.
-        if self.model.console_state().dma_cpu_hold() || self.cpu.bus_suspended {
+        let mut hdma_bytes: (Option<(u16, u8)>, Option<(u16, u8)>) = (None, None);
+        if hdma_active {
             if !self.model.vram_dma_take_setup_cell() {
                 while let Some((src, dst)) = self.model.vram_dma_next_byte() {
                     let byte = match self.model.vram_dma_source_open_bus(src) {
@@ -1066,7 +1079,35 @@ impl<M: Model> Console<M> {
                         None => self.read_dma_source(src),
                     };
                     self.dma_commit(src, dst, byte);
+                    if contended {
+                        if hdma_bytes.0.is_none() {
+                            hdma_bytes.0 = Some((src, byte));
+                        } else if hdma_bytes.1.is_none() {
+                            hdma_bytes.1 = Some((src, byte));
+                        }
+                    }
                 }
+            }
+        }
+
+        // The OAM-DMA's deposit this M-cycle is the coinciding VRAM-DMA byte,
+        // landing at OAM[source_low]. Which of the M-cycle's two VRAM-DMA bytes
+        // coincides is the phase between the two byte clocks (the OAM-DMA's start
+        // edge vs the block's), 2nd byte at residue {0,3}.
+        if contended {
+            let phase = self
+                .model
+                .vram_dma_block_start_edge()
+                .wrapping_sub(self.dma.start_edge())
+                / 2
+                % 4;
+            let coinciding = if matches!(phase, 0 | 3) {
+                hdma_bytes.1.or(hdma_bytes.0)
+            } else {
+                hdma_bytes.0
+            };
+            if let Some((hsrc, hdata)) = coinciding {
+                self.dma_commit(hsrc, 0xfe00 | (hsrc & 0xFF), hdata);
             }
         }
 
@@ -1112,7 +1153,8 @@ impl<M: Model> Console<M> {
     /// release/counter). The byte transfer itself commits at the M-cycle
     /// data phase in `tick_mcycle_boundary_fall`.
     fn drive_dma(&mut self, data_phase: bool) {
-        self.dma.tick(data_phase);
+        let master_edge = self.clock.master_edge();
+        self.dma.tick(data_phase, master_edge);
     }
 
     /// Re-capture interrupt state after bus writes and M-cycle

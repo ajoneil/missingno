@@ -628,6 +628,9 @@ struct VramDma {
     /// Bytes left in the current HBlank block (HBlank mode). The CPU is held
     /// while this is >0.
     block_remaining: u8,
+    /// Master edge at which the current HBlank block fired — its byte clock's
+    /// phase origin, aligned against a concurrent OAM-DMA's bus.
+    block_start_edge: u64,
     /// Bytes still movable this M-cycle (refilled per tick: 2 single, 1 double).
     quota: u8,
     /// This HBlank's block has been latched — one block per mode-0 period.
@@ -1272,7 +1275,13 @@ impl Model for Cgb {
         }
     }
 
-    fn vram_dma_tick(&mut self, mode: Mode, engine_gated: bool, cpu_halted: bool) -> VramDmaClaim {
+    fn vram_dma_tick(
+        &mut self,
+        mode: Mode,
+        engine_gated: bool,
+        cpu_halted: bool,
+        master_edge: u64,
+    ) -> VramDmaClaim {
         let in_hblank = mode == Mode::HorizontalBlank;
         let entry_edge = in_hblank && !self.vram_dma.prev_view_hblank;
         self.vram_dma.prev_view_hblank = in_hblank;
@@ -1328,6 +1337,7 @@ impl Model for Cgb {
             && (!cpu_halted || self.vram_dma.pend_age <= 2);
         if committing {
             self.vram_dma.block_remaining = 16;
+            self.vram_dma.block_start_edge = master_edge;
             self.vram_dma.hblank_block_taken = true;
             self.vram_dma.ready_in = 2;
             self.vram_dma.setup_cells = if self.vram_dma.pend_from_arm { 0 } else { 1 };
@@ -1400,6 +1410,14 @@ impl Model for Cgb {
 
     fn vram_dma_holds_cpu(&self) -> bool {
         self.vram_dma.mode == TransferMode::General && self.vram_dma.remaining > 0
+    }
+
+    fn vram_dma_will_move(&self) -> bool {
+        self.vram_dma.setup_cells == 0 && self.vram_dma.quota > 0 && self.vram_dma.moving()
+    }
+
+    fn vram_dma_block_start_edge(&self) -> u64 {
+        self.vram_dma.block_start_edge
     }
 
     fn vram_dma_seizes_bus(&self) -> bool {
