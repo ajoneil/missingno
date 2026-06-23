@@ -1416,6 +1416,19 @@ impl Model for Cgb {
         self.vram_dma.setup_cells == 0 && self.vram_dma.quota > 0 && self.vram_dma.moving()
     }
 
+    fn vram_dma_lcd_disabled(&mut self) {
+        if self.vram_dma.mode == TransferMode::HBlank
+            && self.vram_dma.remaining > 0
+            && !self.vram_dma.hblank_block_taken
+            && self.vram_dma.block_remaining == 0
+        {
+            self.vram_dma.block_remaining = 16;
+            self.vram_dma.pend_from_arm = true;
+            self.vram_dma.setup_cells = 0;
+            self.vram_dma.ready_in = 2;
+        }
+    }
+
     fn vram_dma_block_start_edge(&self) -> u64 {
         self.vram_dma.block_start_edge
     }

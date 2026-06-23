@@ -551,6 +551,14 @@ impl<M: Model> Console<M> {
     /// write quirk).
     pub fn drive_ppu_bus(&mut self, address: u16, value: u8) -> bool {
         if let MappedAddress::PpuRegister(register) = MappedAddress::map(address) {
+            // Disabling the LCD services an armed-but-unserviced HBlank DMA block
+            // at once — no H-Blank will come.
+            if register == ppu::Register::Control
+                && value & 0x80 == 0
+                && self.ppu.control().video_enabled()
+            {
+                self.model.vram_dma_lcd_disabled();
+            }
             let halt_wake_active = self.cpu.is_halt_wake_active();
             self.ppu.write_register(register, value, halt_wake_active)
         } else {

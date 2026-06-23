@@ -481,6 +481,11 @@ pub trait Model: Default {
     fn vram_dma_holds_cpu(&self) -> bool {
         false
     }
+
+    /// The LCD was just disabled. A CGB HBlank VRAM-DMA block armed but not yet
+    /// serviced runs one block now — no H-Blank will come (the same strobe as
+    /// arming FF55 while the LCD is already off). DMG: no VRAM DMA.
+    fn vram_dma_lcd_disabled(&mut self) {}
 }
 
 /// A Game Boy–family console: the SM83 CPU, the shared PPU/APU/timer/DMA
