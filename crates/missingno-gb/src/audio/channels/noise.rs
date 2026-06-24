@@ -22,7 +22,7 @@ pub struct NoiseChannel {
     /// taps bit `shift`; the LFSR shifts on its rising edge. Free-running once
     /// started — a mid-run NR43 write re-taps it without disturbing its phase.
     pub divider: u16,
-    /// T-cycles to the next divider tick (= divisor/2 = `timer_period >> (shift+1)`).
+    /// T-cycles to the next divider tick (= `divisor_half()`, i.e. divisor/2).
     pub divider_subcounter: u16,
     /// Cold synchroniser hold: the divider is frozen for this many T after a
     /// trigger so the first tap lands at `sync_delay + period/2` = the cold-load.

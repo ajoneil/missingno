@@ -20,8 +20,8 @@ const SAMPLE_RATE: f32 = 44100.0;
 const T_CYCLES_PER_SECOND: f32 = 4_194_304.0;
 const T_CYCLES_PER_SAMPLE: f32 = T_CYCLES_PER_SECOND / SAMPLE_RATE;
 const DIV_APU_BIT: u16 = 1 << 10; // Bit 10 of M-cycle counter drives frame sequencer
-                                  // In double speed the M-cycle counter runs at 2× the dot clock, so the tap
-                                  // shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
+// In double speed the M-cycle counter runs at 2× the dot clock, so the tap
+// shifts up one bit to hold the frame sequencer at 512 Hz (DIV bit 6 vs bit 5).
 const DIV_APU_BIT_DOUBLE: u16 = 1 << 11;
 
 #[derive(Clone)]
@@ -375,11 +375,11 @@ impl Audio {
         };
         use channels::wave::Volume as WaveVolume;
         use channels::{
+            Enabled,
             noise::NoiseChannel,
             pulse::PulseChannel,
             pulse_sweep::{PulseSweepChannel, Sweep},
             wave::WaveChannel,
-            Enabled,
         };
 
         let channels = Channels {
