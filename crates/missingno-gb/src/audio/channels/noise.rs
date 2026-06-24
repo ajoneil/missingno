@@ -124,6 +124,10 @@ impl NoiseChannel {
                     self.current_volume = (self.current_volume + 1) & 0xf;
                 }
                 self.volume_and_envelope = VolumeAndEnvelope(value);
+                // pace=0 → JOPA async-reset; any armed kyvo is dropped before horu↑.
+                if self.volume_and_envelope.sweep_pace() == 0 {
+                    self.kyvo = false;
+                }
                 // Disabling the DAC immediately disables the channel
                 if value & 0xf8 == 0 {
                     self.enabled.enabled = false;
