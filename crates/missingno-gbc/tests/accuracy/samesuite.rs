@@ -6,6 +6,21 @@
 //! - `-cgb0B`, `-cgb0`, `-cgbB`, `-A`, `-cgbDE`, `-cgbE` → revisions without C (excluded)
 //! - SGB tests excluded entirely
 //!
+//! Omitted by *content*, not by suffix (these ROMs are suffix-less, so the
+//! rule above doesn't catch them): the NRx2 "Zombie Mode" glitch ROMs
+//! `channel_{1,2}_nrx2_glitch` and `channel_{1,2}_restart_nrx2_glitch`.
+//! SameSuite measures that glitch's volume arithmetic only on revision E,
+//! so their expected values are CGB-E-only and a CGB-C core cannot satisfy
+//! them. NOTE: `channel_{1,2}_nrx2_speed_change` is a *different*,
+//! revision-shared test (envelope-enable timing) and IS kept — don't
+//! confuse the two.
+//!
+//! The channel 1/2/4 `CorrectResults` are themselves measured on CGB-E; on
+//! real CGB-C those tests fail via the PCM12/PCM34 same-M-cycle read glitch
+//! (rev C and older), which we don't model — so we pass them with clean
+//! (E-like) PCM reads, and the remaining failures are ordinary shared APU
+//! timing bugs, not CGB-E behaviour.
+//!
 //! Three ROMs that work on DMG too (`channel_3_wave_ram_*`,
 //! `ei_delay_halt`) live in `missingno-gb`'s roms tree and use
 //! [`common::load_rom`]; the remainder live in this crate's roms tree
@@ -135,8 +150,6 @@ cgb!(
     channel_1_freq_change_timing_cgb0bc,
     "samesuite/apu/channel_1/channel_1_freq_change_timing-cgb0BC.gb"
 );
-// The nrx2_glitch ROMs document CGB-D/E volume arithmetic (SameSuite
-// only tests revision E); this core targets CGB-C.
 cgb!(
     channel_1_nrx2_speed_change,
     "samesuite/apu/channel_1/channel_1_nrx2_speed_change.gb"
@@ -196,8 +209,6 @@ cgb!(
     channel_2_freq_change,
     "samesuite/apu/channel_2/channel_2_freq_change.gb"
 );
-// The nrx2_glitch ROMs document CGB-D/E volume arithmetic (SameSuite
-// only tests revision E); this core targets CGB-C.
 cgb!(
     channel_2_nrx2_speed_change,
     "samesuite/apu/channel_2/channel_2_nrx2_speed_change.gb"
