@@ -416,6 +416,8 @@ impl Audio {
                 kyvo: false,
                 envelope_stopped: false,
                 coze: false,
+                sweep_calc_steps: 0,
+                sweep_calc_restart: false,
             },
             ch2: PulseChannel {
                 enabled: Enabled {

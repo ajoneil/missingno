@@ -63,6 +63,17 @@ pub struct PulseSweepChannel {
     /// An NR10 pace=0 write in the intervening T-cycles clears it via
     /// the hafe async-reset path.
     pub coze: bool,
+    /// `byra/caja/copa` — the sweep adder's shift-step counter, counting the
+    /// steps left in the running calculation. The adder reads a *registered*
+    /// snapshot of `shadow` and `shadow >> shift`, reloaded only when
+    /// `ch1_ld_sum` pulses — which happens once this counter, loaded with
+    /// `~shift`, saturates: `shift` steps, one per M-cycle (the `>> shift`
+    /// operand is built a bit at a time). The overflow check fires at that
+    /// reload. So a calc takes `shift` M-cycles. 0 = no calc running.
+    pub sweep_calc_steps: u8,
+    /// `ch1_restart` armed by a trigger; the adder calc reloads at the next
+    /// ch1_1mhz↑ (the synced trigger edge), not on the NRx4 write.
+    pub sweep_calc_restart: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -96,6 +107,8 @@ impl Default for PulseSweepChannel {
             sweep_enabled: false,
             sweep_negate_used: false,
             coze: false,
+            sweep_calc_steps: 0,
+            sweep_calc_restart: false,
         }
     }
 }
@@ -127,6 +140,8 @@ impl PulseSweepChannel {
             sweep_enabled: false,
             sweep_negate_used: false,
             coze: false,
+            sweep_calc_steps: 0,
+            sweep_calc_restart: false,
         }
     }
 
@@ -174,9 +189,12 @@ impl PulseSweepChannel {
                     self.enabled.enabled = false;
                 }
                 // pace=0 raises bury → hafe=0 → BEXA async-reset; any
-                // armed coze is dropped before the next ajer↑.
+                // armed coze — and a running adder calculation — is dropped
+                // before ch1_ld_sum can latch an overflow into the stop latch.
                 if self.sweep.pace() == 0 {
                     self.coze = false;
+                    self.sweep_calc_steps = 0;
+                    self.sweep_calc_restart = false;
                 }
             }
             Register::PeriodLow => self.period.set_low8(value),
@@ -238,11 +256,10 @@ impl PulseSweepChannel {
         self.sweep_enabled = pace != 0 || self.sweep.step() != 0;
         // ch1_restart resets BEXA: any prior coze arm is dropped.
         self.coze = false;
-
-        // If step is non-zero, do overflow check
-        if self.sweep.step() != 0 && self.calculate_sweep_frequency() > 2047 {
-            self.enabled.enabled = false;
-        }
+        // The adder calc restarts on ch1_restart — the *synced* trigger that
+        // lands at the next ch1_1mhz↑ (where the divider reloads too), not on
+        // this write edge. Armed here, loaded in `tcycle` at that wrap.
+        self.sweep_calc_restart = true;
 
         // DAC check
         if self.volume_and_envelope.0 & 0xf8 == 0 {
@@ -268,10 +285,20 @@ impl PulseSweepChannel {
         // the channel is disabled so a same-cycle re-trigger window
         // sees the cleared coze.
         if apu_reset_n && self.prescaler.counter == 1 {
+            self.tick_sweep_calc();
             self.sample_sweep_bexa();
         }
         if !calo_rose || !self.enabled.enabled {
             return;
+        }
+        // ch1_restart latches the adder's ~shift step counter at this synced
+        // ch1_1mhz↑ — the trigger's calc starts here, not on the NRx4 write.
+        // ch1_ld_sum holds high one extra M-cycle while the counter loads
+        // (the +1 the fire's continuing ld_sum cycle doesn't pay).
+        if self.sweep_calc_restart {
+            let shift = self.sweep.step();
+            self.sweep_calc_steps = if shift != 0 { shift + 1 } else { 0 };
+            self.sweep_calc_restart = false;
         }
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
@@ -401,13 +428,30 @@ impl PulseSweepChannel {
         }
         let new_frequency = self.calculate_sweep_frequency();
         if new_frequency > 2047 {
+            // calc1 overflow: with shift = 0 the new period is 2 × shadow, so
+            // the disable lands at the fire — no step counter, no delay.
             self.enabled.enabled = false;
         } else if self.sweep.step() != 0 {
+            // Commit calc1, then restart the adder calculation: the recheck on
+            // the committed period overflows `shift` M-cycles on (ch1_ld_sum).
             self.shadow_frequency = new_frequency;
             self.period.0 = new_frequency;
-            if self.calculate_sweep_frequency() > 2047 {
-                self.enabled.enabled = false;
-            }
+            self.sweep_calc_steps = self.sweep.step();
+        }
+    }
+
+    /// The sweep adder's `~shift` step counter, advanced one step per M-cycle.
+    /// When it saturates, `ch1_ld_sum` re-snapshots `shadow` / `shadow >> shift`
+    /// into the adder operands; if the result overflows (direction = add), the
+    /// stop latch (`cyto`) clears. So an overflow disables the channel `shift`
+    /// M-cycles after the fire/trigger that started the calculation.
+    pub fn tick_sweep_calc(&mut self) {
+        if self.sweep_calc_steps == 0 {
+            return;
+        }
+        self.sweep_calc_steps -= 1;
+        if self.sweep_calc_steps == 0 && self.calculate_sweep_frequency() > 2047 {
+            self.enabled.enabled = false;
         }
     }
 
