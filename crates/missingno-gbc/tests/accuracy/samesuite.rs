@@ -111,6 +111,15 @@ macro_rules! cgb {
             run_cgb($path);
         }
     };
+    // #[ignore]'d variant: a CPU-CGB-rev-E-only expectation a CGB-C core
+    // cannot satisfy; $reason names the divergence.
+    (ignore: $reason:literal, $name:ident, $path:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            run_cgb($path);
+        }
+    };
 }
 
 // apu/channel_3 / interrupt — DMG-compatible, shared with missingno-gb.
@@ -178,7 +187,13 @@ cgb!(
     channel_1_sweep_restart_2,
     "samesuite/apu/channel_1/channel_1_sweep_restart_2.gb"
 );
+// rev-E-only: the live-volume change from a pace-0 NRx2 write ("zombie mode")
+// is revision-specific — CPU-CGB-C (our target) steps the volume +1 (dmg-sim
+// measurement + Pan Docs; SameBoy branches the glitch at `model <= CGB_C`),
+// but SameSuite measures rev E, where the same write leaves the volume
+// unchanged. A faithful CGB-C core cannot produce the rev-E expected values.
 cgb!(
+    ignore: "rev-E zombie-write expectation; CGB-C steps the volume +1",
     channel_1_volume,
     "samesuite/apu/channel_1/channel_1_volume.gb"
 );
@@ -225,7 +240,9 @@ cgb!(
     channel_2_stop_restart,
     "samesuite/apu/channel_2/channel_2_stop_restart.gb"
 );
+// rev-E-only zombie-write divergence — see channel_1_volume above.
 cgb!(
+    ignore: "rev-E zombie-write expectation; CGB-C steps the volume +1",
     channel_2_volume,
     "samesuite/apu/channel_2/channel_2_volume.gb"
 );
