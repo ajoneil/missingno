@@ -130,7 +130,19 @@ impl NoiseChannel {
                 }
             }
             Register::FrequencyAndRandomness => {
+                let old_shift = self.frequency_and_randomness.clock_shift();
                 self.frequency_and_randomness = FrequencyAndRandomness(value);
+                let new_shift = self.frequency_and_randomness.clock_shift();
+                // Combinational tap re-select: a shift change clocks the LFSR if the
+                // newly tapped bit sits on its own rising edge; the divider keeps phase.
+                if new_shift != old_shift {
+                    let tap = (self.divider >> new_shift) & 1 != 0;
+                    let tap_prev = (self.divider.wrapping_sub(1) >> new_shift) & 1 != 0;
+                    if tap && !tap_prev {
+                        self.clock_lfsr();
+                    }
+                    self.prev_tap = tap;
+                }
             }
             Register::Control => {
                 let ctrl = Control(value);
@@ -229,18 +241,20 @@ impl NoiseChannel {
                     // A re-trigger swallows its first tap (one sample late).
                     self.skip_first_clock = false;
                 } else {
-                    // Clock LFSR
-                    let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
-                    self.lfsr >>= 1;
-                    self.lfsr |= xor_result << 14;
-
-                    // 7-bit width mode
-                    if self.frequency_and_randomness.short_mode() {
-                        self.lfsr &= !(1 << 6);
-                        self.lfsr |= xor_result << 6;
-                    }
+                    self.clock_lfsr();
                 }
             }
+        }
+    }
+
+    fn clock_lfsr(&mut self) {
+        let xor_result = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
+        self.lfsr >>= 1;
+        self.lfsr |= xor_result << 14;
+        // 7-bit width mode
+        if self.frequency_and_randomness.short_mode() {
+            self.lfsr &= !(1 << 6);
+            self.lfsr |= xor_result << 6;
         }
     }
 
