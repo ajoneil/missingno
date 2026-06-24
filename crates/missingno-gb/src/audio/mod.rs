@@ -339,12 +339,18 @@ impl Audio {
         } else {
             DIV_APU_BIT
         };
-        if self.enabled && old_counter & div_apu_bit != 0 {
-            self.tick_frame_sequencer();
-        }
+        // The DIV-write 1→0 edge on the tap bit clocks the ripple — BURE↑ trails the
+        // reset edge by ≈1 T-cycle (the same gate behaviour as a free-running tap fall),
+        // so arm the edge for the next tcycle rather than firing synchronously here.
+        let fire = self.enabled && old_counter & div_apu_bit != 0;
         self.prev_div_apu_bit = false; // counter is now 0, both taps clear
-        self.fs_edge_pending = false; // divider reset supersedes any armed tap edge
-        self.fs_edge_predelay = false; // and any slipped edge still in its extra cycle
+        if fire && self.div_apu_switch_lag && double_speed {
+            self.fs_edge_predelay = true;
+            self.fs_edge_pending = false;
+        } else {
+            self.fs_edge_pending = fire;
+            self.fs_edge_predelay = false;
+        }
     }
 
     /// KEY1 entry: a →double swap toggles the tap-retune parity (the slip is
