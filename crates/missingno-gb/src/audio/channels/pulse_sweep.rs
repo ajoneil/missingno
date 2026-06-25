@@ -74,6 +74,11 @@ pub struct PulseSweepChannel {
     /// `ch1_restart` armed by a trigger; the adder calc reloads at the next
     /// ch1_1mhz↑ (the synced trigger edge), not on the NRx4 write.
     pub sweep_calc_restart: bool,
+    /// `ch1_frst` overflow pulse — high for one `ch1_1mhz` cycle after an
+    /// overflow. `duwo` captures the pre-advance duty on its rise (the
+    /// overflow edge); the duty counter (`dajo`) clocks on its fall, one
+    /// cycle later. So capture precedes advance.
+    pub ch1_frst: bool,
 }
 
 impl Default for PulseSweepChannel {
@@ -109,6 +114,7 @@ impl Default for PulseSweepChannel {
             coze: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
+            ch1_frst: false,
         }
     }
 }
@@ -142,6 +148,7 @@ impl PulseSweepChannel {
             coze: false,
             sweep_calc_steps: 0,
             sweep_calc_restart: false,
+            ch1_frst: false,
         }
     }
 
@@ -300,6 +307,13 @@ impl PulseSweepChannel {
             self.sweep_calc_steps = if shift != 0 { shift + 1 } else { 0 };
             self.sweep_calc_restart = false;
         }
+        // ch1_frst↓ (one ch1_1mhz↑ after an overflow): the duty counter
+        // (dajo) clocks on the fall, so the advance trails duwo's capture by
+        // one cycle.
+        if self.ch1_frst {
+            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.ch1_frst = false;
+        }
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
@@ -312,11 +326,11 @@ impl PulseSweepChannel {
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
-            // Natural overflow: capture duwo from the pre-advance
-            // duty step, then advance and reload.
+            // ch1_frst↑ (the overflow): duwo captures the pre-advance duty
+            // step and the divider reloads; the counter advances next cycle.
             let duty = self.waveform_and_initial_length.waveform() as usize;
             self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
-            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.ch1_frst = true;
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
             self.divider.counter += 1;

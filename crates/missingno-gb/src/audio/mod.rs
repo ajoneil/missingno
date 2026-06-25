@@ -418,6 +418,7 @@ impl Audio {
                 coze: false,
                 sweep_calc_steps: 0,
                 sweep_calc_restart: false,
+                ch1_frst: false,
             },
             ch2: PulseChannel {
                 enabled: Enabled {
