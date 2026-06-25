@@ -34,6 +34,11 @@ pub struct PulseChannel {
     pub wave_duty_position: u8,
     /// `dome` PWM latch (CH2 mirror of CH1's `duwo`).
     pub pwm_latch: bool,
+    /// `ch2_frst` overflow pulse — high for one `ch2_1mhz` cycle after an
+    /// overflow. `dome` captures the pre-advance duty on its rise; the duty
+    /// counter (`cule`) clocks on its fall, one cycle later (CH2 mirror of
+    /// CH1's `ch1_frst`).
+    pub ch2_frst: bool,
     /// `ch2_restart` sync stage; non-zero between NR24 trigger write
     /// and the next ch2_1mhz↑ that applies the reload.
     pub pending_trigger_sync: u8,
@@ -72,6 +77,7 @@ impl Default for PulseChannel {
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
+            ch2_frst: false,
             pending_trigger_sync: 0,
             divider_load_settle: false,
             current_volume: 0,
@@ -97,6 +103,7 @@ impl PulseChannel {
             divider: PeriodDivider::default(),
             wave_duty_position: 0,
             pwm_latch: false,
+            ch2_frst: false,
             pending_trigger_sync: 0,
             divider_load_settle: false,
             current_volume: 0,
@@ -198,6 +205,12 @@ impl PulseChannel {
         if !self.prescaler.tcycle(apu_reset_n, t_index, double_speed) || !self.enabled.enabled {
             return;
         }
+        // ch2_frst↓ (one ch2_1mhz↑ after an overflow): the duty counter (cule)
+        // clocks on the fall, so the advance trails dome's capture by one cycle.
+        if self.ch2_frst {
+            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.ch2_frst = false;
+        }
         if self.pending_trigger_sync != 0 {
             // Enabling trigger (2) freezes the load tick → +1 first overflow;
             // re-trigger (1) reloads with no +1.
@@ -207,9 +220,11 @@ impl PulseChannel {
         } else if self.divider_load_settle {
             self.divider_load_settle = false;
         } else if self.divider.counter >= 0x7FF {
+            // ch2_frst↑ (the overflow): dome captures the pre-advance duty step
+            // and the divider reloads; the counter advances next cycle.
             let duty = self.waveform_and_initial_length.waveform() as usize;
             self.pwm_latch = DUTY_TABLE[duty][self.wave_duty_position as usize] != 0;
-            self.wave_duty_position = (self.wave_duty_position + 1) % 8;
+            self.ch2_frst = true;
             self.divider.counter = (self.period.0) & 0x7FF;
         } else {
             self.divider.counter += 1;

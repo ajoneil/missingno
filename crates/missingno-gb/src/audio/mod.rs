@@ -434,6 +434,7 @@ impl Audio {
                 divider: PeriodDivider::default(),
                 wave_duty_position: 0,
                 pwm_latch: false,
+                ch2_frst: false,
                 pending_trigger_sync: 0,
                 divider_load_settle: false,
                 current_volume: 0,
