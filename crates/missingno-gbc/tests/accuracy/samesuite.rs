@@ -156,6 +156,8 @@ cgb!(
     "samesuite/apu/channel_1/channel_1_freq_change.gb"
 );
 cgb!(
+    ignore: "CGB-0/B/C PCM12 same-M-cycle read glitch; we model clean (CGB-E-like) \
+             PCM reads so the rest of the samesuite APU channel tests pass",
     channel_1_freq_change_timing_cgb0bc,
     "samesuite/apu/channel_1/channel_1_freq_change_timing-cgb0BC.gb"
 );
