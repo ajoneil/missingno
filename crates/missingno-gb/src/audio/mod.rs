@@ -314,6 +314,16 @@ impl Audio {
         // caru↓ (bufy_256hz↓ → deme↑): C entered an even value.
         if c % 2 == 0 {
             self.channels.tick_length_all();
+            // Envelope-enable bug (enable on an odd step): the next even DIV-APU
+            // tick advances the envelope counter. An enable on an even step is
+            // handled at the write (that step's tick already ran). On c==0 the
+            // kene↓ tick below does it.
+            if self.channels.ch1.take_envelope_enable_tick_pending() && c != 0 {
+                self.channels.ch1.tick_envelope_counter();
+            }
+            if self.channels.ch2.take_envelope_enable_tick_pending() && c != 0 {
+                self.channels.ch2.tick_envelope_counter();
+            }
         }
         // bylu↓ (cate_128hz↓): arm coze; BEXA samples at next ajer↑
         // inside pulse_sweep::tcycle.
@@ -415,6 +425,7 @@ impl Audio {
                 sweep_negate_used: snap.ch1_sweep_negate_used,
                 kyvo: false,
                 envelope_stopped: false,
+                envelope_enable_tick_pending: false,
                 coze: false,
                 sweep_calc_steps: 0,
                 sweep_calc_restart: false,
@@ -442,6 +453,7 @@ impl Audio {
                 length_counter: 0,
                 kyvo: false,
                 envelope_stopped: false,
+                envelope_enable_tick_pending: false,
             },
             ch3: WaveChannel {
                 enabled: Enabled {

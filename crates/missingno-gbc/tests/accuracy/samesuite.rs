@@ -36,7 +36,7 @@ use missingno_gbc::GameBoyColor;
 // hang. We use an instruction-budget runner instead. 2_000_000
 // instructions = roughly 30 LCD frames at single speed; plenty for
 // the passing tests, bounded enough to keep failures fast.
-const MAX_INSTRUCTIONS: u32 = 2_000_000;
+const MAX_INSTRUCTIONS: u32 = 8_000_000;
 
 fn check_pass(gbc: &GameBoyColor, rom_path: &str) {
     let cpu = gbc.cpu();

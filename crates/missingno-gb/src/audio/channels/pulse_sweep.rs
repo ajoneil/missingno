@@ -53,6 +53,10 @@ pub struct PulseSweepChannel {
     /// JEME stop latch: a fire that samples a saturated volume counter
     /// latches it; pins HOFO until the next trigger clears it.
     pub envelope_stopped: bool,
+    /// Envelope-enable bug: an NRx2 write that turns the envelope on
+    /// (pace 0→non-zero) makes the next *even* DIV-APU tick advance the
+    /// envelope counter, even on a step it would not otherwise tick.
+    pub envelope_enable_tick_pending: bool,
     pub length_counter: u16,
     pub shadow_frequency: u16,
     pub sweep_timer: u8,
@@ -106,6 +110,7 @@ impl Default for PulseSweepChannel {
             envelope_timer: 0,
             kyvo: false,
             envelope_stopped: true, // chime decay ran to saturation; JEME latched
+            envelope_enable_tick_pending: false,
             length_counter: 0,
             shadow_frequency: 0,
             sweep_timer: 0,
@@ -140,6 +145,7 @@ impl PulseSweepChannel {
             envelope_timer: 0,
             kyvo: false,
             envelope_stopped: false,
+            envelope_enable_tick_pending: false,
             length_counter,
             shadow_frequency: 0,
             sweep_timer: 0,
@@ -173,13 +179,26 @@ impl PulseSweepChannel {
                 // cells settle, so JUPU dips iff the old pace was 0 and
                 // HOFO completes one pulse — one +1 volume clock, free
                 // 4-bit wrap (JEME never latches under pace 0).
-                if self.volume_and_envelope.sweep_pace() == 0 && !self.envelope_stopped {
+                let old_pace = self.volume_and_envelope.sweep_pace();
+                if old_pace == 0 && !self.envelope_stopped {
                     self.current_volume = (self.current_volume + 1) & 0xf;
                 }
                 self.volume_and_envelope = VolumeAndEnvelope(value);
+                let new_pace = self.volume_and_envelope.sweep_pace();
+                // Turning the envelope on (pace 0→non-zero) on a running
+                // channel makes the next even DIV-APU tick advance the envelope
+                // counter. If this write lands on an even step its tick already
+                // ran, so apply it now; otherwise defer to the next even step.
+                if old_pace == 0 && new_pace != 0 && self.enabled.enabled {
+                    if caru_low {
+                        self.tick_envelope_counter();
+                    } else {
+                        self.envelope_enable_tick_pending = true;
+                    }
+                }
                 // pace=0 raises jupu → hafe=0 → KOZY async-reset; any
                 // armed kyvo is dropped before the next horu_512hz↑.
-                if self.volume_and_envelope.sweep_pace() == 0 {
+                if new_pace == 0 {
                     self.kyvo = false;
                 }
                 // Disabling the DAC immediately disables the channel
@@ -344,6 +363,14 @@ impl PulseSweepChannel {
                 self.enabled.enabled = false;
             }
         }
+    }
+
+    /// Consume the envelope-enable-bug arm set by the last enabling NRx2
+    /// write; the caller advances the envelope counter on the even tick.
+    pub fn take_envelope_enable_tick_pending(&mut self) -> bool {
+        let pending = self.envelope_enable_tick_pending;
+        self.envelope_enable_tick_pending = false;
+        pending
     }
 
     /// kene↓ edge (fs step 7→0). Advances the envelope counter and
