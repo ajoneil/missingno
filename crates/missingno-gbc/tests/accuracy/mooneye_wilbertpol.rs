@@ -459,6 +459,16 @@ macro_rules! wilbertpol_cgb_test {
             run_wilbertpol_cgb_test($path);
         }
     };
+    // #[ignore]'d variant: a CPU-CGB-revision-specific expectation a CGB-C core
+    // cannot satisfy; $reason names the divergence. Confirmed against SameBoy
+    // (`--model cgb-c` fails, `--model cgb-e` passes).
+    (ignore: $reason:literal, $name:ident, $path:literal) => {
+        #[test]
+        #[ignore = $reason]
+        fn $name() {
+            run_wilbertpol_cgb_test($path);
+        }
+    };
 }
 
 wilbertpol_cgb_test!(misc_boot_hwio_c, "mooneye-wilbertpol/misc/boot_hwio-C.gb");
@@ -483,6 +493,7 @@ wilbertpol_cgb_test!(
     "mooneye-wilbertpol/acceptance/gpu/ly00_mode1_2-C.gb"
 );
 wilbertpol_cgb_test!(
+    ignore: "rev-E LY=LYC coincidence-flag read timing; CGB-C sets bit 2 one position later",
     gpu_ly_lyc_0_c,
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_0-C.gb"
 );
@@ -491,10 +502,12 @@ wilbertpol_cgb_test!(
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_0_write-C.gb"
 );
 wilbertpol_cgb_test!(
+    ignore: "rev-E LY=LYC coincidence-flag read timing; CGB-C sets bit 2 one position later",
     gpu_ly_lyc_144_c,
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_144-C.gb"
 );
 wilbertpol_cgb_test!(
+    ignore: "rev-E LY=LYC coincidence-flag read timing; CGB-C sets bit 2 one position later",
     gpu_ly_lyc_153_c,
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_153-C.gb"
 );
@@ -503,6 +516,7 @@ wilbertpol_cgb_test!(
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_153_write-C.gb"
 );
 wilbertpol_cgb_test!(
+    ignore: "rev-E LY=LYC coincidence-flag read timing; CGB-C sets bit 2 one position later",
     gpu_ly_lyc_c,
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc-C.gb"
 );
@@ -511,6 +525,7 @@ wilbertpol_cgb_test!(
     "mooneye-wilbertpol/acceptance/gpu/ly_lyc_write-C.gb"
 );
 wilbertpol_cgb_test!(
+    ignore: "rev-E readLY 153→0 hold is 8 cyc; CGB-C/MGB hold 4 cyc and read 0x00 here",
     gpu_ly_new_frame_c,
     "mooneye-wilbertpol/acceptance/gpu/ly_new_frame-C.gb"
 );
