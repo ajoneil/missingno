@@ -111,8 +111,9 @@ macro_rules! cgb {
             run_cgb($path);
         }
     };
-    // #[ignore]'d variant: a CPU-CGB-rev-E-only expectation a CGB-C core
-    // cannot satisfy; $reason names the divergence.
+    // #[ignore]'d variant: a CPU-CGB-revision-specific expectation a CGB-C
+    // core cannot satisfy (rev-E zombie writes, the CGB-0/B/C PCM read
+    // glitch, …); $reason names the divergence.
     (ignore: $reason:literal, $name:ident, $path:literal) => {
         #[test]
         #[ignore = $reason]
