@@ -679,6 +679,11 @@ struct VramDma {
     /// destination sees the written byte only once the seize has settled one
     /// fall (the double-speed half-dot from bus seizure to byte-readable).
     seize_falls: u8,
+    /// HBlank blocks granted in-halt but not yet drained. A halted CPU does not
+    /// contend the bus, so an in-halt mode-0 grants a block (status complete)
+    /// while its bus-seizure transfer stays on the post-resume path; this offsets
+    /// the FF55 block count until the post-resume drain catches up.
+    granted_ahead: u8,
 }
 
 impl VramDma {
@@ -1161,9 +1166,10 @@ impl Model for Cgb {
             // in bits 6-0. Idle/done/stopped reads bit 7 = 1 (done = $FF). A GDMA
             // is never observable here — it holds the CPU for its whole duration.
             0xFF55 => {
-                let active = self.vram_dma.mode == TransferMode::HBlank;
-                let blocks = self.vram_dma.remaining / 16;
-                Some(((!active as u8) << 7) | (blocks.wrapping_sub(1) & 0x7F) as u8)
+                let visible =
+                    (self.vram_dma.remaining / 16).saturating_sub(self.vram_dma.granted_ahead as u16);
+                let active = self.vram_dma.mode == TransferMode::HBlank && visible > 0;
+                Some(((!active as u8) << 7) | (visible.wrapping_sub(1) & 0x7F) as u8)
             }
             0xFF68 => Some(ppu.read_color_register(ColorRegister::BackgroundIndex)), // BCPS
             0xFF69 => Some(ppu.read_color_register(ColorRegister::BackgroundData)),  // BCPD
@@ -1225,6 +1231,7 @@ impl Model for Cgb {
             }
             0xFF55 => {
                 let length = ((value & 0x7F) as u16 + 1) * 16;
+                self.vram_dma.granted_ahead = 0;
                 if value & 0x80 != 0 {
                     // Arm HDMA: one 16-byte block per HBlank. A block already
                     // latched by the trigger is immune and keeps flowing; an
@@ -1339,6 +1346,17 @@ impl Model for Cgb {
                 self.vram_dma.pend_from_arm = false;
                 self.vram_dma.pend_age = 0;
             }
+            // An in-halt mode-0 within the halt-latch window grants the block's
+            // FF55 status (the halted CPU does not contend); the seizure transfer
+            // still waits for the resume.
+            if cpu_halted
+                && entry_edge
+                && self.vram_dma.mode == TransferMode::HBlank
+                && self.vram_dma.halted_falls <= 2
+                && self.vram_dma.remaining / 16 > self.vram_dma.granted_ahead as u16
+            {
+                self.vram_dma.granted_ahead += 1;
+            }
             self.vram_dma.quota = if self.vram_dma.moving() {
                 if self.double_speed { 1 } else { 2 }
             } else {
@@ -1419,6 +1437,11 @@ impl Model for Cgb {
         self.vram_dma.quota -= 1;
         if self.vram_dma.block_remaining > 0 {
             self.vram_dma.block_remaining -= 1;
+            // A block granted ahead in-halt rejoins the FF55 count as its bytes
+            // finally drain on the post-resume path.
+            if self.vram_dma.block_remaining == 0 && self.vram_dma.granted_ahead > 0 {
+                self.vram_dma.granted_ahead -= 1;
+            }
         }
         if carried {
             // The 16-bit dest register carried out of $FFFF — the transfer ends
