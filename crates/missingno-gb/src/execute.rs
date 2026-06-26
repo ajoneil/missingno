@@ -775,7 +775,12 @@ impl<M: Model> Console<M> {
         // ~8 ps before this CLK9↑. Clear at boundary entry so
         // check_stat_edge below sees r_n released.
         self.cpu.irq.cpu_irq_ack1_pulse = false;
-        self.cpu.irq.irq_ack_held = None;
+        // On CGB the IF-bit reset trails the boundary's own timer/serial
+        // set (tick_cpu_clock_mcycle below), so hold it past that set and
+        // release after; DMG releases here, ahead of the set.
+        if !self.model.irq_ack_holds_through_boundary_set() {
+            self.cpu.irq.irq_ack_held = None;
+        }
 
         // yoii captures dispatch.latched() before data_phase_n↑ refreshes
         // the per-bit irq_latch — preserves pre-release values held
@@ -805,6 +810,16 @@ impl<M: Model> Console<M> {
             .tick_clock_domain_capture(self.model.cpu_steps_per_dot() == 2);
 
         self.tick_cpu_clock_mcycle();
+
+        // CGB: the ack reset-hold extends past the boundary set above, so a
+        // timer/serial IF assertion coincident with the dispatch boundary is
+        // re-cleared before the hold releases.
+        if self.model.irq_ack_holds_through_boundary_set() {
+            if let Some(interrupt) = self.cpu.irq.irq_ack_held {
+                self.interrupts.clear(interrupt);
+            }
+            self.cpu.irq.irq_ack_held = None;
+        }
     }
 
     /// The CPU-clock peripherals (BOGA M-cycle pulse): the timer divider and

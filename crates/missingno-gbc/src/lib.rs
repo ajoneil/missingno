@@ -923,6 +923,11 @@ impl Model for Cgb {
         true
     }
 
+    fn irq_ack_holds_through_boundary_set(&self) -> bool {
+        // Silicon property of the ack reset-hold, independent of DMG-compat.
+        true
+    }
+
     /// CGB boot-ROM handoff divider phase. The boot ROM runs longer for a
     /// DMG cartridge (compat-palette setup): FF04 reads $1E / $26.
     fn timers_post_boot(cgb_cart: bool) -> Timers {

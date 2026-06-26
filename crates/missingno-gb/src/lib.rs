@@ -187,6 +187,15 @@ pub trait Model: Default {
         false
     }
 
+    /// cpu_irq_ack1 (LALU.r_n) holds the dispatched IF bit in reset across
+    /// the ack window. On CGB the release trails by one step, so a timer or
+    /// serial IF assertion landing on the dispatch's M-cycle boundary is still
+    /// caught by the reset — the serviced bit reads back clear where DMG, which
+    /// releases just ahead of that boundary set, reads it set.
+    fn irq_ack_holds_through_boundary_set(&self) -> bool {
+        false
+    }
+
     /// Hardware revision name recorded in gbtrace captures.
     const TRACE_MODEL_NAME: &'static str = "DMG-B";
 
