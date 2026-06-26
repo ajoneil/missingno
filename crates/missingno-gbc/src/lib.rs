@@ -938,7 +938,7 @@ impl Model for Cgb {
     /// the DMG boot ROM (measured at PC=$0100). DMG-compat carts run a different
     /// boot sequence whose phase is unmeasured, so they keep the DMG handoff.
     fn audio_post_boot(internal_counter: u16, cgb_cart: bool) -> Audio {
-        if cgb_cart {
+        let mut audio = if cgb_cart {
             let mut audio = Audio::post_boot_with_fs_step(internal_counter, 1);
             // The CGB boot chime leaves CH1 at this duty/divider phase, distinct
             // from the DMG handoff the `Default` channel state encodes.
@@ -946,7 +946,10 @@ impl Model for Cgb {
             audio
         } else {
             Audio::post_boot(internal_counter)
-        }
+        };
+        // CGB silicon widens the CH1 sweep-counter load-hold (DMG-compat too).
+        audio.set_wide_sweep_load_hold(true);
+        audio
     }
 
     /// CGB boot-ROM handoff is mid-VBlank; the line depends on the boot

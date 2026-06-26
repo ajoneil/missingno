@@ -44,6 +44,11 @@ pub struct PulseSweepChannel {
     /// Set on the reload edge; the first count is suppressed so the
     /// divider DFFs settle out of load mode before counting resumes.
     pub divider_load_settle: bool,
+    /// ch1_ld_sum holds the sweep counter across the trigger reload — a
+    /// cate_128hz↓ in the load window is dropped. On CGB the hold spans one
+    /// extra ch1_1mhz↑ beyond the divider's single-cycle settle (counts down
+    /// per ch1_1mhz↑); 0 elsewhere, so DMG keeps the single-cycle settle.
+    pub sweep_load_hold: u8,
     pub current_volume: u8,
     pub envelope_timer: u8,
     /// `kyvo` (envelope-counter saturation). Set at kene↓ when the
@@ -106,6 +111,7 @@ impl Default for PulseSweepChannel {
             pwm_latch: false,
             pending_trigger_sync: 0,
             divider_load_settle: false,
+            sweep_load_hold: 0,
             current_volume: 0,
             envelope_timer: 0,
             kyvo: false,
@@ -141,6 +147,7 @@ impl PulseSweepChannel {
             pwm_latch: false,
             pending_trigger_sync: 0,
             divider_load_settle: false,
+            sweep_load_hold: 0,
             current_volume: 0,
             envelope_timer: 0,
             kyvo: false,
@@ -304,7 +311,13 @@ impl PulseSweepChannel {
         }
     }
 
-    pub fn tcycle(&mut self, apu_reset_n: bool, t_index: u8, double_speed: bool) {
+    pub fn tcycle(
+        &mut self,
+        apu_reset_n: bool,
+        t_index: u8,
+        double_speed: bool,
+        wide_sweep_hold: bool,
+    ) {
         let calo_rose = self.prescaler.tcycle(apu_reset_n, t_index, double_speed);
         // BEXA samples coze at the first ajer↑ of each M-cycle —
         // prescaler counter == 1 after the advance. Sample even when
@@ -333,6 +346,7 @@ impl PulseSweepChannel {
             self.wave_duty_position = (self.wave_duty_position + 1) % 8;
             self.ch1_frst = false;
         }
+        self.sweep_load_hold = self.sweep_load_hold.saturating_sub(1);
         // Prescaler wrapped (ch1_1mhz↑). Trigger reload and natural
         // overflow are mutually exclusive on the same edge — trigger
         // wins via dyru's async-reset of comy.
@@ -340,6 +354,13 @@ impl PulseSweepChannel {
             // Enabling trigger (2) freezes the load tick → +1 first overflow;
             // re-trigger (1) reloads with no +1.
             self.divider_load_settle = self.pending_trigger_sync == 2;
+            // CGB holds the sweep counter one ch1_1mhz↑ longer than the
+            // divider settle, so a cate_128hz↓ just past the reload is dropped.
+            self.sweep_load_hold = if wide_sweep_hold && self.pending_trigger_sync == 2 {
+                2
+            } else {
+                0
+            };
             self.divider.counter = (self.period.0) & 0x7FF;
             self.pending_trigger_sync = 0;
         } else if self.divider_load_settle {
@@ -436,8 +457,9 @@ impl PulseSweepChannel {
     /// suppress the fire via the bury async-reset path.
     pub fn tick_sweep_counter(&mut self) {
         // dmg_tffnl holds the counter while the divider load window is open —
-        // a cate_128hz↓ inside the window is skipped.
-        if self.divider_load_settle {
+        // a cate_128hz↓ inside the window is skipped. `sweep_load_hold` carries
+        // the CGB extra cycle (0 on DMG, leaving the single-cycle settle).
+        if self.divider_load_settle || self.sweep_load_hold > 0 {
             return;
         }
         if !self.sweep_enabled {

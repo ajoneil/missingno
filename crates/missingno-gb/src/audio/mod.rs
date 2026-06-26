@@ -31,6 +31,9 @@ pub struct Audio {
     pub(crate) volume_left: Volume,
     pub(crate) volume_right: Volume,
     pub(crate) nr50: u8,
+    /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑; DMG keeps
+    /// the single-cycle divider settle. Set once at console init.
+    wide_sweep_load_hold: bool,
 
     pub(crate) prev_div_apu_bit: bool,
     pub(crate) frame_sequencer_step: u8,
@@ -66,6 +69,11 @@ impl Audio {
         self.channels.ch1.divider.counter = divider;
     }
 
+    /// CGB widens the CH1 sweep-counter load-hold by one ch1_1mhz↑.
+    pub fn set_wide_sweep_load_hold(&mut self, wide: bool) {
+        self.wide_sweep_load_hold = wide;
+    }
+
     /// Post-boot state at PC=0x0100. `prev_div_apu_bit` derives from the
     /// M-cycle `reg_div16` (the ripple advance stays divider-locked). The
     /// (caru, bylu, JYNA) frame-sequencer ripple is apu_reset-reset, so its
@@ -94,6 +102,7 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
+            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
         }
     }
@@ -130,6 +139,7 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
+            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
         }
     }
@@ -196,7 +206,12 @@ impl Audio {
             DIV_APU_BIT
         };
         let apu_reset_n = self.enabled;
-        self.channels.ch1.tcycle(apu_reset_n, t_index, double_speed);
+        self.channels.ch1.tcycle(
+            apu_reset_n,
+            t_index,
+            double_speed,
+            self.wide_sweep_load_hold,
+        );
         self.channels.ch2.tcycle(apu_reset_n, t_index, double_speed);
         self.channels.ch3.tcycle(apu_reset_n, wave_ram_coupling);
         self.channels.ch4.tcycle(apu_reset_n, t_index, double_speed);
@@ -416,6 +431,7 @@ impl Audio {
                 pwm_latch: false,
                 pending_trigger_sync: 0,
                 divider_load_settle: false,
+                sweep_load_hold: 0,
                 current_volume: 0,
                 envelope_timer: snap.ch1_envelope_timer,
                 length_counter: 0,
@@ -521,6 +537,7 @@ impl Audio {
             sample_accum_left: 0.0,
             sample_accum_right: 0.0,
             sample_accum_count: 0,
+            wide_sweep_load_hold: false,
             sample_buffer: Vec::new(),
         }
     }
