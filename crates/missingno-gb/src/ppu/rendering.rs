@@ -706,7 +706,17 @@ impl<P: PpuModel> Rendering<P> {
         }
 
         // Post-CUPA FEPO drives TYFA's combinational AND (CUPA→AROR→FEPO settles well before SACU).
-        let fepo_post_cupa = self.fepo(regs.control.sprites_enabled());
+        // On the CGB an OBJ-disable lands on AROR/FEPO a crossing late, so it can't un-commit an
+        // in-flight fetch: the SACU freeze holds the fetch's FEPO through to WUTY and the penalty
+        // isn't cut short. DMG's combinational AROR releases the freeze at once.
+        let obj_enable_for_freeze = if P::OBJ_ENABLE_CROSSING.write_delayed_falls() > 0
+            && self.sprite_trigger.fetch_running()
+        {
+            true
+        } else {
+            regs.control.sprites_enabled()
+        };
+        let fepo_post_cupa = self.fepo(obj_enable_for_freeze);
 
         // TYFA = AND3(SOCY, POKY, VYBO). VYBO = NOR3(FEPO_old, WODU_old, MYVO).
         // rydy_pre_mosu is the pre-MOSU value so in-flight pre-window SACU fires on MOSU↑.
