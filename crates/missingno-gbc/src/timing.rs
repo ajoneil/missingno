@@ -98,14 +98,15 @@ pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
 
 /// The mid-Mode-3 LCDC.2 (OBJ size) write → sprite-fetch crossing on the CGB:
 /// the write crosses on the M-cycle-last-fall edge and the sprite fetch samples
-/// the size two falls late at both its tile-data reads — the same fetch-sample
-/// depth as the LCDC.4 tile-data sibling, so an 8x8↔8x16 change mid-fetch splits
-/// the low (counter-2) and high (counter-4) bitplanes across two tile rows
-/// (mealybug `m3_lcdc_obj_size_change`). `cgb_extra_falls` is the *total* carried
-/// fall count.
+/// the size three falls late at its two tile-data reads — one fall deeper than
+/// the LCDC.4 tile-data sibling (the sprite-fetch read sits a dot later in the
+/// pipe than the BG fetch's). An 8x8↔8x16 change between the reads splits the low
+/// (counter-2) and high (counter-4) bitplanes across two tile rows: a grow gives
+/// {low 8, high 16}, a shrink {low 16, high 8} (mealybug `m3_lcdc_obj_size_change`
+/// and `_scx`). `cgb_extra_falls` is the *total* carried fall count.
 pub const OBJ_SIZE_CROSSING: CaptureSpec = CaptureSpec {
     capture: CaptureEdge::MCycleLastFall,
-    cgb_extra_falls: 2,
+    cgb_extra_falls: 3,
 };
 
 #[cfg(test)]
@@ -156,11 +157,12 @@ mod tests {
         assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 1);
     }
 
-    /// The CGB OBJ-size crossing must hand `DffLatch::write_delayed` a total of 2
-    /// falls — the same fetch-sample depth as the tile-data sibling.
+    /// The CGB OBJ-size crossing must hand `DffLatch::write_delayed` a total of 3
+    /// falls — one deeper than the tile-data sibling (the sprite-fetch read sits a
+    /// dot later in the pipe).
     #[test]
-    fn obj_size_crossing_carries_two_falls() {
-        assert_eq!(OBJ_SIZE_CROSSING.write_delayed_falls(), 2);
+    fn obj_size_crossing_carries_three_falls() {
+        assert_eq!(OBJ_SIZE_CROSSING.write_delayed_falls(), 3);
     }
 
     /// The CGB SCX crossing carries no register-path lag — its phase rides the
