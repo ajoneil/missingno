@@ -167,50 +167,37 @@ impl PipelineRegisters {
     /// Apply an LCDC write to the tile-map-select view: immediate on DMG
     /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
     pub fn write_tile_map_select(&mut self, value: u8, falls: u8) {
-        if falls > 0 {
-            self.tile_map_select.write_delayed(value, falls);
-        } else {
-            self.tile_map_select.write_immediate(value);
-        }
+        self.tile_map_select.write_crossing(value, falls);
     }
 
     /// The tile-data addressing mode the BG fetch samples — the live LCDC.4 on
     /// DMG, the crossing-lagged bit on CGB.
     pub fn tile_data_address_mode(&self) -> TileAddressMode {
-        Control::new(ControlFlags::from_bits_retain(
-            self.tile_data_select.output(),
-        ))
-        .tile_address_mode()
+        Self::latch_control(&self.tile_data_select).tile_address_mode()
     }
 
     /// Apply an LCDC write to the tile-data-select view: immediate on DMG
     /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
     pub fn write_tile_data_select(&mut self, value: u8, falls: u8) {
-        if falls > 0 {
-            self.tile_data_select.write_delayed(value, falls);
-        } else {
-            self.tile_data_select.write_immediate(value);
-        }
+        self.tile_data_select.write_crossing(value, falls);
     }
 
     /// The OBJ size the sprite fetch samples — the live LCDC.2 on DMG, the
     /// crossing-lagged bit on CGB (it reaches the c2/c4 reads the crossing's
     /// falls late, so a mid-fetch size change splits the two bitplanes).
     pub fn obj_size_for_fetch(&self) -> SpriteSize {
-        Control::new(ControlFlags::from_bits_retain(
-            self.obj_size_select.output(),
-        ))
-        .sprite_size()
+        Self::latch_control(&self.obj_size_select).sprite_size()
     }
 
     /// Apply an LCDC write to the obj-size-select view: immediate on DMG
     /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
     pub fn write_obj_size_select(&mut self, value: u8, falls: u8) {
-        if falls > 0 {
-            self.obj_size_select.write_delayed(value, falls);
-        } else {
-            self.obj_size_select.write_immediate(value);
-        }
+        self.obj_size_select.write_crossing(value, falls);
+    }
+
+    /// Decode a crossing-lagged LCDC latch byte into a `Control` view.
+    fn latch_control(latch: &DffLatch) -> Control {
+        Control::new(ControlFlags::from_bits_retain(latch.output()))
     }
 
     /// VYXE state for the BG plane gate (RAJY/TADE), with OLD-overlay applied.
@@ -238,8 +225,8 @@ impl PipelineRegisters {
     }
 
     /// Capture pre-write XYLO if LCDC.1 transitions during Mode 3. `extra_hold`
-    /// holds OLD longer for a CGB clock-domain write lag (zero on both cores
-    /// today — XYLO has no register-path offset).
+    /// holds OLD longer for the CGB clock-domain write lag — one fall on the CGB
+    /// (the XYLO crossing), zero on DMG.
     pub fn arm_sprites_enabled_shadow(&mut self, old_value: bool, new_value: bool, extra_hold: u8) {
         self.sprites_enabled_overlay
             .arm(old_value, new_value, extra_hold);

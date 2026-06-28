@@ -3,6 +3,7 @@
 use super::Ppu;
 use super::PpuModel;
 use super::Register;
+use super::crossing::CaptureSpec;
 use super::stat_interrupt::InterruptFlags;
 use super::types::control::{Control, ControlFlags};
 
@@ -62,34 +63,22 @@ impl<P: PpuModel> Ppu<P> {
                 self.apply_register_write(&register, value);
                 self.registers.control_latch.write_immediate(value);
 
-                // The tile-map-select fetch samples LCDC live on DMG; the CGB
-                // latches a mid-Mode-3 write onto its own clock and the fetch
-                // reads it the crossing's falls late.
-                let tile_map_falls = if is_drawing {
-                    P::TILE_MAP_CROSSING.write_delayed_falls()
-                } else {
-                    0
-                };
-                self.registers.write_tile_map_select(value, tile_map_falls);
-
-                // LCDC.4 (tile-data select) follows the same crossing: live on DMG,
-                // the crossing's falls late on the CGB clock.
-                let tile_data_falls = if is_drawing {
-                    P::TILE_DATA_CROSSING.write_delayed_falls()
-                } else {
-                    0
+                // Each LCDC-fetch view samples live on DMG; the CGB latches a
+                // mid-Mode-3 write onto its own clock, read the crossing's falls
+                // late (LCDC.3/.6 tile-map, LCDC.4 tile-data, LCDC.2 obj-size).
+                let crossing_falls = |spec: CaptureSpec| {
+                    if is_drawing {
+                        spec.write_delayed_falls()
+                    } else {
+                        0
+                    }
                 };
                 self.registers
-                    .write_tile_data_select(value, tile_data_falls);
-
-                // LCDC.2 (OBJ size) follows the same crossing for the sprite fetch:
-                // live on DMG, the crossing's falls late on the CGB clock.
-                let obj_size_falls = if is_drawing {
-                    P::OBJ_SIZE_CROSSING.write_delayed_falls()
-                } else {
-                    0
-                };
-                self.registers.write_obj_size_select(value, obj_size_falls);
+                    .write_tile_map_select(value, crossing_falls(P::TILE_MAP_CROSSING));
+                self.registers
+                    .write_tile_data_select(value, crossing_falls(P::TILE_DATA_CROSSING));
+                self.registers
+                    .write_obj_size_select(value, crossing_falls(P::OBJ_SIZE_CROSSING));
 
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles

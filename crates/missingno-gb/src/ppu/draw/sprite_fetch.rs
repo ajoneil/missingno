@@ -62,8 +62,9 @@ impl SpriteFetch {
         self.fetch_counter
     }
 
-    /// Resolves the tile row from the scan-consistent object size: live on DMG, the scan's
-    /// synced `max(live, synced)` gejy/XYMO size on CGB, so the fetched row matches `line_offset`.
+    /// Resolves the tile row from `sprite_size` — live LCDC.2 on DMG, the
+    /// crossing-lagged obj-size on CGB, so a mid-fetch 8x8↔8x16 change splits the
+    /// low (counter-2) and high (counter-4) bitplane reads across tile rows.
     fn read_tile_data<P: PpuModel>(
         &mut self,
         model: &P,

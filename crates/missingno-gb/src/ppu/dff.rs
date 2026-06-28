@@ -60,6 +60,16 @@ impl DffLatch {
         self.commit_in = 0;
     }
 
+    /// CGB register-crossing write: `falls` falls late when `falls > 0`, else the
+    /// DMG combinational path (immediate).
+    pub(super) fn write_crossing(&mut self, new_value: u8, falls: u8) {
+        if falls > 0 {
+            self.write_delayed(new_value, falls);
+        } else {
+            self.write_immediate(new_value);
+        }
+    }
+
     pub(super) fn clear(&mut self) {
         self.pending = None;
         self.commit_in = 0;
