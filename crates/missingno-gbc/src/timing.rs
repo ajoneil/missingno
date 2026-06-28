@@ -85,10 +85,16 @@ pub const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 1,
 };
 
-/// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing on the CGB: no
-/// register-path lag — the OLD-overlay's same-fall base hold is the whole story
-/// on both cores, so this stays combinational.
-pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+/// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing on the CGB: the write
+/// crosses on the M-cycle-last-fall edge and the OLD-overlay holds the pre-write
+/// OBJ-enable one extra fall — the OBJ-mux pops the held value one dot later than
+/// the DMG's combinational path, the LCDC.1 analogue of the LCDC.0 BG-enable
+/// crossing. The OLD-overlay carries its own same-fall base hold, so
+/// `cgb_extra_falls` is the extra-falls offset on top.
+pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 1,
+};
 
 #[cfg(test)]
 mod tests {
@@ -131,11 +137,11 @@ mod tests {
         assert_eq!(BG_ENABLE_CROSSING.write_delayed_falls(), 1);
     }
 
-    /// The CGB OBJ-enable crossing carries no register-path lag — combinational
-    /// on both cores, `extra_hold = 0`.
+    /// The CGB OBJ-enable crossing holds the OLD-overlay one extra fall, like
+    /// its BG-enable sibling — `extra_hold = 1`.
     #[test]
-    fn obj_enable_crossing_carries_no_extra_falls() {
-        assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 0);
+    fn obj_enable_crossing_carries_one_extra_fall() {
+        assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 1);
     }
 
     /// The CGB SCX crossing carries no register-path lag — its phase rides the
