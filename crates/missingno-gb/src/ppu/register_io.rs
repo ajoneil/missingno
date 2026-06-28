@@ -90,10 +90,10 @@ impl<P: PpuModel> Ppu<P> {
                 }
 
                 // Arm the VYXE/sprites-enabled OLD-overlays so the next resolve uses pre-transition.
-                // is_drawing already excludes the off-LCD prelude (first cp_pad↑). The CGB bg-enable
-                // lag also covers the boundary write before the first pixel is pushed (WUSA still low),
-                // holding OLD across the left edge; DMG's combinational RAJY applies at once, so it
-                // keeps the WUSA gate.
+                // is_drawing already excludes the off-LCD prelude (first cp_pad↑). A CGB enable-lag
+                // (RAJY for bg, XYLO for obj) also covers the boundary write before the first pixel
+                // is pushed (WUSA still low), holding OLD across the left edge; DMG's combinational
+                // paths apply at once, so they keep the WUSA gate.
                 let pushing = self.lcd_pushing_active();
                 let bg_enable_extra_hold = P::BG_ENABLE_CROSSING.write_delayed_falls();
                 if is_drawing && (pushing || bg_enable_extra_hold > 0) {
@@ -105,12 +105,13 @@ impl<P: PpuModel> Ppu<P> {
                         bg_enable_extra_hold,
                     );
                 }
-                if is_drawing && pushing {
+                let obj_enable_extra_hold = P::OBJ_ENABLE_CROSSING.write_delayed_falls();
+                if is_drawing && (pushing || obj_enable_extra_hold > 0) {
                     let new_sprites_enabled = self.registers.control.sprites_enabled();
                     self.registers.arm_sprites_enabled_shadow(
                         old_sprites_enabled,
                         new_sprites_enabled,
-                        P::OBJ_ENABLE_CROSSING.write_delayed_falls(),
+                        obj_enable_extra_hold,
                     );
                 }
 
