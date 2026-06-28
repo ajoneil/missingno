@@ -1,6 +1,7 @@
 use super::dff::DffLatch;
 use super::types::control::{Control, ControlFlags};
 use super::types::palette::Palettes;
+use super::types::sprites::SpriteSize;
 use super::types::tiles::TileAddressMode;
 
 pub struct BackgroundViewportPosition {
@@ -93,6 +94,10 @@ pub struct PipelineRegisters {
     /// combinationally; the CGB latches a mid-Mode-3 LCDC write onto its own clock
     /// so the tile-data-select change reaches the fetch the crossing's falls late.
     pub(in crate::ppu) tile_data_select: DffLatch,
+    /// The LCDC byte the sprite fetch samples for OBJ size (LCDC.2). DMG tracks
+    /// `control` combinationally; the CGB latches a mid-Mode-3 LCDC write onto its
+    /// own clock so the size change reaches the fetch reads the crossing's falls late.
+    pub(in crate::ppu) obj_size_select: DffLatch,
     pub background_viewport: BackgroundViewportPosition,
     pub window: Window,
     pub palettes: Palettes,
@@ -126,6 +131,7 @@ impl PipelineRegisters {
         }
         self.tile_map_select.tick();
         self.tile_data_select.tick();
+        self.obj_size_select.tick();
 
         self.palettes.tick_mode2_active(mode2_active);
 
@@ -146,6 +152,7 @@ impl PipelineRegisters {
         self.control_latch.clear();
         self.tile_map_select.clear();
         self.tile_data_select.clear();
+        self.obj_size_select.clear();
         self.bg_window_enabled_overlay.clear();
         self.sprites_enabled_overlay.clear();
         self.tile_sel_reset_glitch.clear();
@@ -183,6 +190,26 @@ impl PipelineRegisters {
             self.tile_data_select.write_delayed(value, falls);
         } else {
             self.tile_data_select.write_immediate(value);
+        }
+    }
+
+    /// The OBJ size the sprite fetch samples — the live LCDC.2 on DMG, the
+    /// crossing-lagged bit on CGB (it reaches the c2/c4 reads the crossing's
+    /// falls late, so a mid-fetch size change splits the two bitplanes).
+    pub fn obj_size_for_fetch(&self) -> SpriteSize {
+        Control::new(ControlFlags::from_bits_retain(
+            self.obj_size_select.output(),
+        ))
+        .sprite_size()
+    }
+
+    /// Apply an LCDC write to the obj-size-select view: immediate on DMG
+    /// (`falls` = 0), or `falls` falls late on the CGB clock-domain crossing.
+    pub fn write_obj_size_select(&mut self, value: u8, falls: u8) {
+        if falls > 0 {
+            self.obj_size_select.write_delayed(value, falls);
+        } else {
+            self.obj_size_select.write_immediate(value);
         }
     }
 

@@ -256,10 +256,16 @@ pub trait PpuModel: Default {
     /// combinational collapse.
     const BG_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
-    /// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing. Combinational on
-    /// both cores — the OLD-overlay only covers the same-fall tick, with no
-    /// register-path lag on either DMG or CGB.
+    /// The mid-Mode-3 LCDC.1 (XYLO) write → OBJ-mux crossing. Combinational by
+    /// default (DMG); the CGB overrides it with a register-path lag so the
+    /// OBJ-disable reaches the mux a crossing late.
     const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
+
+    /// The mid-Mode-3 LCDC.2 (OBJ size) write → sprite-fetch crossing.
+    /// Combinational by default (DMG reads obj-size live); the CGB overrides it
+    /// so the size reaches the fetch's two tile-data reads the crossing's falls
+    /// late, splitting an 8x8↔8x16 change across the low/high bitplanes.
+    const OBJ_SIZE_CROSSING: CaptureSpec = CaptureSpec::COMBINATIONAL;
 
     /// The CPU's view of the VRAM lock. The DMG CPU sees XYMU
     /// combinationally; the CGB arbiter samples it in the M-cycle clock

@@ -96,6 +96,18 @@ pub const OBJ_ENABLE_CROSSING: CaptureSpec = CaptureSpec {
     cgb_extra_falls: 1,
 };
 
+/// The mid-Mode-3 LCDC.2 (OBJ size) write → sprite-fetch crossing on the CGB:
+/// the write crosses on the M-cycle-last-fall edge and the sprite fetch samples
+/// the size two falls late at both its tile-data reads — the same fetch-sample
+/// depth as the LCDC.4 tile-data sibling, so an 8x8↔8x16 change mid-fetch splits
+/// the low (counter-2) and high (counter-4) bitplanes across two tile rows
+/// (mealybug `m3_lcdc_obj_size_change`). `cgb_extra_falls` is the *total* carried
+/// fall count.
+pub const OBJ_SIZE_CROSSING: CaptureSpec = CaptureSpec {
+    capture: CaptureEdge::MCycleLastFall,
+    cgb_extra_falls: 2,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +154,13 @@ mod tests {
     #[test]
     fn obj_enable_crossing_carries_one_extra_fall() {
         assert_eq!(OBJ_ENABLE_CROSSING.write_delayed_falls(), 1);
+    }
+
+    /// The CGB OBJ-size crossing must hand `DffLatch::write_delayed` a total of 2
+    /// falls — the same fetch-sample depth as the tile-data sibling.
+    #[test]
+    fn obj_size_crossing_carries_two_falls() {
+        assert_eq!(OBJ_SIZE_CROSSING.write_delayed_falls(), 2);
     }
 
     /// The CGB SCX crossing carries no register-path lag — its phase rides the

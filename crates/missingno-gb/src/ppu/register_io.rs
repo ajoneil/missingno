@@ -82,6 +82,15 @@ impl<P: PpuModel> Ppu<P> {
                 self.registers
                     .write_tile_data_select(value, tile_data_falls);
 
+                // LCDC.2 (OBJ size) follows the same crossing for the sprite fetch:
+                // live on DMG, the crossing's falls late on the CGB clock.
+                let obj_size_falls = if is_drawing {
+                    P::OBJ_SIZE_CROSSING.write_delayed_falls()
+                } else {
+                    0
+                };
+                self.registers.write_obj_size_select(value, obj_size_falls);
+
                 if P::TILE_SEL_RESET_GLITCH
                     && old_block0_tiles
                     && value & ControlFlags::TILE_ADDRESS_MODE.bits() == 0

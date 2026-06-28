@@ -381,6 +381,7 @@ impl PpuModel for CgbPpu {
     const TILE_DATA_CROSSING: CaptureSpec = crate::timing::TILE_DATA_CROSSING;
     const BG_ENABLE_CROSSING: CaptureSpec = crate::timing::BG_ENABLE_CROSSING;
     const OBJ_ENABLE_CROSSING: CaptureSpec = crate::timing::OBJ_ENABLE_CROSSING;
+    const OBJ_SIZE_CROSSING: CaptureSpec = crate::timing::OBJ_SIZE_CROSSING;
 
     type Vram = CgbVram;
     type BgCell = BgAttribute;
