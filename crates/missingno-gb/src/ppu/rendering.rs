@@ -630,6 +630,7 @@ impl<P: PpuModel> Rendering<P> {
         self.fetcher.advance_falling(
             self.pixel_counter.value(),
             self.fine_scroll.pixel_clock_active(),
+            self.synced_scx,
             self.window.window_line_counter(),
             self.window.wx_triggered(regs, Self::window_synced()),
             regs,

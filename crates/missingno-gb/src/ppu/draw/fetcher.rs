@@ -92,13 +92,18 @@ impl<P: PpuModel> TileFetcher<P> {
         &self,
         pixel_counter: u8,
         sacu_active: bool,
+        synced_scx: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
     ) -> (u8, u8) {
-        // The tilemap fetch samples SCX after the CUPA capture relative to a mid-Mode-3
-        // write, so it sees the value live; the fine-scroll discard (earlier ROXO↑) reads
-        // the committed output.
-        let scx = regs.background_viewport.x.live();
+        // DMG samples SCX live here (after the CUPA capture relative to a mid-Mode-3
+        // write); CGB reads it through the SCX register-file crossing — the same synced
+        // snapshot the fine-scroll discard (ROXO↑) uses.
+        let scx = if P::SCX_CROSSING.is_synced() {
+            synced_scx
+        } else {
+            regs.background_viewport.x.live()
+        };
         let effective_pix = if sacu_active {
             pixel_counter.wrapping_add(1)
         } else {
@@ -128,6 +133,7 @@ impl<P: PpuModel> TileFetcher<P> {
         &self,
         pixel_counter: u8,
         sacu_active: bool,
+        synced_scx: u8,
         window_line_counter: u8,
         regs: &PipelineRegisters,
         video: &VideoControl,
@@ -135,7 +141,7 @@ impl<P: PpuModel> TileFetcher<P> {
         let (map_x, map_y) = if self.fetching_window {
             self.window_tilemap_coords(window_line_counter)
         } else {
-            self.bg_tilemap_coords(pixel_counter, sacu_active, regs, video)
+            self.bg_tilemap_coords(pixel_counter, sacu_active, synced_scx, regs, video)
         };
         let map_select_bit = if self.fetching_window { 6 } else { 3 };
         let map_id_index = (self.tile_map_byte >> map_select_bit) & 1;
@@ -182,6 +188,7 @@ impl<P: PpuModel> TileFetcher<P> {
         &mut self,
         pixel_counter: u8,
         sacu_active: bool,
+        synced_scx: u8,
         window_line_counter: u8,
         window_mode_active: bool,
         regs: &PipelineRegisters,
@@ -196,6 +203,7 @@ impl<P: PpuModel> TileFetcher<P> {
                 self.vram_address = self.tile_index_address(
                     pixel_counter,
                     sacu_active,
+                    synced_scx,
                     window_line_counter,
                     regs,
                     video,
