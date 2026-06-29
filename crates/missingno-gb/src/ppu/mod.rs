@@ -133,6 +133,11 @@ pub struct Ppu<P: PpuModel> {
     prev_mode2: bool,
     mode3_settle: u8,
     prev_mode3: bool,
+    /// OAM read-lock onset hold: master half-edges left of the PRE (accessible)
+    /// hold after the RUTU onset, plus oam_locked() at the prior half-edge to
+    /// detect that 0→1. The OAM gate has no companion-driver settle of its own.
+    oam_onset_settle: u8,
+    prev_oam_locked: bool,
     /// The console's colour hardware (CRAM, OPRI, …); the DMG impl is a unit.
     pub(super) model: P,
 }
@@ -194,6 +199,8 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            oam_onset_settle: 0,
+            prev_oam_locked: false,
             model: P::default(),
         }
     }
@@ -329,6 +336,8 @@ impl<P: PpuModel> Ppu<P> {
             prev_mode2: false,
             mode3_settle: 0,
             prev_mode3: false,
+            oam_onset_settle: 0,
+            prev_oam_locked: false,
             model: P::default(),
         };
         let shadow = ppu.model.stat_shadow_mut();
@@ -389,6 +398,10 @@ impl<P: PpuModel> Ppu<P> {
     /// the symmetric counterpart to `not_if1`, for the mode-2→3 onset contention.
     const MODE3_ONSET_SETTLE: u8 = 2;
 
+    /// The OAM read-lock holds PRE (accessible) after the RUTU onset before ACYL
+    /// settles the gate closed — the OAM analogue of the not_if1 hold.
+    const OAM_ONSET_SETTLE: u8 = 4;
+
     /// Live STAT mode-2 bit (bit1): rendering (XYMU) or OAM scan (ACYL/BESU).
     fn live_mode2_bit(&self) -> bool {
         self.pixel_pipeline
@@ -396,9 +409,10 @@ impl<P: PpuModel> Ppu<P> {
             .is_some_and(|r| r.rendering_active() || r.scan_mode2_active())
     }
 
-    /// Advance the mode-2 `not_if1` bus settling one master half-edge. A bit1 0→1
-    /// (BESU) starts the contention hold; it drains one edge at a time.
-    pub fn tick_stat_mode2_settle(&mut self) {
+    /// Advance the onset contention holds one master half-edge. Each onset 0→1
+    /// starts its hold (mode-2 not_if1, mode-3 XYMU, OAM read-lock); it drains one
+    /// edge at a time.
+    pub fn tick_onset_settles(&mut self) {
         let cur = self.live_mode2_bit();
         if cur && !self.prev_mode2 {
             self.mode2_settle = Self::MODE2_NOT_IF1_SETTLE;
@@ -414,6 +428,14 @@ impl<P: PpuModel> Ppu<P> {
             self.mode3_settle -= 1;
         }
         self.prev_mode3 = cur3;
+
+        let oam = self.oam_locked();
+        if oam && !self.prev_oam_locked {
+            self.oam_onset_settle = Self::OAM_ONSET_SETTLE;
+        } else if self.oam_onset_settle > 0 {
+            self.oam_onset_settle -= 1;
+        }
+        self.prev_oam_locked = oam;
     }
 
     /// The mode-3 (XYMU) bit holds its pre-onset 0 (PRE) while the AVAP↑ contention
@@ -421,6 +443,12 @@ impl<P: PpuModel> Ppu<P> {
     /// mode 2, not the post-onset mode 3.
     pub fn in_mode3_onset_settle(&self) -> bool {
         self.mode3_settle > 0
+    }
+
+    /// The OAM read-lock holds its pre-onset accessible value while the RUTU onset
+    /// settles — a double-speed read landing in this window reads accessible.
+    pub fn in_oam_onset_settle(&self) -> bool {
+        self.oam_onset_settle > 0
     }
 
     /// The mode-2 bit a CPU read latches: the contending `not_if1` bus holds the

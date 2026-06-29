@@ -235,7 +235,7 @@ impl<M: Model> Console<M> {
         // `cpu_phase_in_dot==0`. `advance` already toggled
         // both phases; only the mode-2 settle ride stays here.
         if tick.dot.is_some() {
-            self.ppu.tick_stat_mode2_settle();
+            self.ppu.tick_onset_settles();
         }
         PhaseResult { new_screen, pixel }
     }
@@ -1023,6 +1023,17 @@ impl<M: Model> Console<M> {
                 && self.ppu.in_mode3_onset_settle()
             {
                 value & !0b01
+            } else {
+                value
+            };
+            // OAM read-lock onset hold (RUTU↑ before ACYL settles the gate closed): a
+            // double-speed OAM read landing in the onset window reads accessible — the
+            // OAM analogue of the not_if1 hold the bare OAM gate lacks.
+            let value = if matches!(address, 0xFE00..=0xFEFF)
+                && self.model.cpu_steps_per_dot() == 2
+                && self.ppu.in_oam_onset_settle()
+            {
+                accessible
             } else {
                 value
             };
